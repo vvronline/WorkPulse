@@ -1,0 +1,86 @@
+/* ============= WIDGETS GRID ============= */
+.widgets-grid {
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 0;
+}
+.widget-card {
+  text-align: center;
+  gap: 0.3rem;
+}
+.widget-icon {
+  font-size: 1.5rem;
+  margin-bottom: 0.25rem;
+}
+
+/* Animated widget hover */
+.animated-widget {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.animated-widget:hover {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+}
+
+.widget-icon-bg {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  margin: 0 auto 0.35rem;
+  -webkit-text-fill-color: initial;
+  background-clip: initial;
+  -webkit-background-clip: initial;
+}
+.avg-bg { background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.15)); }
+.punct-bg { background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(234, 179, 8, 0.15)); }
+.attend-bg { background: linear-gradient(135deg, rgba(34, 197, 94, 0.15), rgba(6, 182, 212, 0.15)); }
+.target-bg { background: linear-gradient(135deg, rgba(236, 72, 153, 0.15), rgba(139, 92, 246, 0.15)); }
+.leave-bg { background: linear-gradient(135deg, rgba(6, 182, 212, 0.15), rgba(34, 197, 94, 0.15)); }
+.mode-bg { background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(34, 197, 94, 0.15)); }
+
+/* Office / Remote split display */
+.mode-split {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.3rem;
+  font-size: 1.25rem;
+  font-weight: 800;
+  line-height: 1;
+  margin-bottom: 0.1rem;
+}
+.mode-office {
+  color: var(--primary);
+  -webkit-text-fill-color: var(--primary);
+}
+.mode-remote {
+  color: var(--success);
+  -webkit-text-fill-color: var(--success);
+}
+.mode-divider {
+  color: var(--text-muted);
+  -webkit-text-fill-color: var(--text-muted);
+  font-weight: 400;
+  font-size: 1rem;
+}
+
+/* ---- Responsive ---- */
+@media (max-width: 1200px) {
+  .widgets-grid { grid-template-columns: repeat(4, 1fr) !important; }
+}
+
+@media (max-width: 768px) {
+  .widgets-grid { grid-template-columns: repeat(2, 1fr) !important; }
+}
+
+@media (max-width: 480px) {
+  .widgets-grid { grid-template-columns: 1fr 1fr !important; }
+}
+
+@media (max-width: 360px) {
+  .widgets-grid { grid-template-columns: 1fr !important; }
+}

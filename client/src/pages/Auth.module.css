@@ -1,0 +1,150 @@
+/* ============= AUTH PAGES ============= */
+.auth-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: var(--bg);
+  padding: 1.5rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.auth-container::before {
+  content: '';
+  position: absolute;
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.2), transparent 70%);
+  top: -200px;
+  right: -100px;
+  pointer-events: none;
+}
+
+.auth-container::after {
+  content: '';
+  position: absolute;
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.15), transparent 70%);
+  bottom: -200px;
+  left: -100px;
+  pointer-events: none;
+}
+
+.auth-card {
+  background: var(--glass);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--glass-border);
+  border-radius: 24px;
+  padding: 3rem;
+  width: 100%;
+  max-width: 440px;
+  box-shadow: var(--shadow-lg);
+  position: relative;
+  z-index: 1;
+  animation: fadeInUp 0.5s ease;
+}
+
+.auth-icon {
+  width: 56px;
+  height: 56px;
+  background: linear-gradient(135deg, var(--primary), #8b5cf6);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 0 30px var(--primary-glow);
+}
+
+.auth-card h2 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+  color: var(--text);
+  letter-spacing: -0.03em;
+}
+
+.auth-card p {
+  color: var(--text-secondary);
+  margin-bottom: 2rem;
+  font-size: 0.9rem;
+}
+
+.auth-switch {
+  text-align: center;
+  margin-top: 1.75rem;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.auth-switch a {
+  color: var(--primary-light);
+  text-decoration: none;
+  font-weight: 600;
+  transition: color 0.2s;
+}
+
+.auth-switch a:hover {
+  color: #c4b5fd;
+}
+
+/* ---- Light Theme ---- */
+[data-theme="light"] .auth-card {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+/* ---- Responsive ---- */
+@media (max-width: 768px) {
+  .auth-card { padding: 2rem; }
+}
+
+/* ---- Forgot Password Link ---- */
+.auth-forgot {
+  text-align: right;
+  margin-top: -0.25rem;
+  margin-bottom: 1rem;
+  font-size: 0.85rem;
+}
+
+.auth-forgot a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.auth-forgot a:hover {
+  color: var(--primary-light);
+}
+
+/* ---- Success Message ---- */
+.success-msg {
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  color: #22c55e;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  margin-bottom: 1.25rem;
+  text-align: center;
+}
+
+/* ---- Reset Sent Confirmation ---- */
+.reset-sent {
+  text-align: center;
+  padding: 1.5rem 0;
+}
+
+.reset-sent-icon {
+  font-size: 2.5rem;
+  margin-bottom: 1rem;
+}
+
+.reset-sent p {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  margin-bottom: 0.5rem;
+}

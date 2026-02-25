@@ -1,0 +1,70 @@
+/* ============= WEEKLY MINI CHART ============= */
+.weekly-chart-card {
+  text-align: left !important;
+  margin-bottom: 0;
+  min-width: 280px;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+}
+.weekly-chart {
+  display: flex;
+  gap: 0.4rem;
+  align-items: flex-end;
+  flex: 1;
+  margin-top: 0.5rem;
+}
+.weekly-bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  height: 100%;
+}
+.weekly-bar-col.today { opacity: 1; }
+.weekly-bar-col:not(.today) { opacity: 0.7; }
+.weekly-bar-value {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  min-height: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.weekly-bar-track {
+  flex: 1;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+}
+.weekly-bar-fill {
+  width: 100%;
+  border-radius: 6px;
+  min-height: 2px;
+  transition: height 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  height: var(--bar-height, 0%);
+  background: var(--bar-color);
+}
+.weekly-bar-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+.weekly-bar-col.today .weekly-bar-label {
+  color: var(--primary);
+}
+
+/* Shared title used here too */
+.timeline-title {
+  margin-bottom: 0.35rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
