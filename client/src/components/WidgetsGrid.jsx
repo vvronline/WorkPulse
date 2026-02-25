@@ -7,7 +7,7 @@ function formatTime(totalMinutes) {
   return `${String(hrs).padStart(2, '0')}h ${String(mins).padStart(2, '0')}m`;
 }
 
-const WidgetsGrid = memo(function WidgetsGrid({ widgets }) {
+const WidgetsGrid = memo(function WidgetsGrid({ widgets, children }) {
   if (!widgets) return null;
 
   return (
@@ -50,6 +50,7 @@ const WidgetsGrid = memo(function WidgetsGrid({ widgets }) {
         </div>
         <div className="stat-label">Office / Remote</div>
       </div>
+      {children}
     </div>
   );
 });

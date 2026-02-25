@@ -1,7 +1,25 @@
-import React, { memo } from 'react';
+import React, { memo, useState, useEffect } from 'react';
 import s from './TasksSummary.module.css';
 
 const TasksSummary = memo(function TasksSummary({ taskSummary }) {
+  const [slideIndex, setSlideIndex] = useState(0);
+
+  // Setup auto-slide if there are multiple active tasks
+  useEffect(() => {
+    if (!taskSummary?.activeTasks || taskSummary.activeTasks.length <= 1) return;
+
+    // reset slide index if data changes length
+    if (slideIndex >= taskSummary.activeTasks.length) {
+      setSlideIndex(0);
+    }
+
+    const interval = setInterval(() => {
+      setSlideIndex(prev => (prev + 1) % taskSummary.activeTasks.length);
+    }, 4000); // Slide every 4 seconds
+
+    return () => clearInterval(interval);
+  }, [taskSummary?.activeTasks, slideIndex]);
+
   if (!taskSummary || taskSummary.total === 0) return null;
 
   return (
@@ -27,11 +45,30 @@ const TasksSummary = memo(function TasksSummary({ taskSummary }) {
         <div className={`${s['task-progress-fill']} ${s['done-fill']}`} style={{ '--fill-width': `${(taskSummary.done / taskSummary.total) * 100}%` }} />
         <div className={`${s['task-progress-fill']} ${s['progress-fill']}`} style={{ '--fill-width': `${(taskSummary.inProgress / taskSummary.total) * 100}%` }} />
       </div>
-      {taskSummary.nextTask && (
+      {/* Single next task (fallback for backward compatibility) */}
+      {taskSummary.nextTask && !taskSummary.activeTasks && (
         <div className={s['next-task']}>
           <span className={s['next-task-label']}>Next:</span>
           <span className={s['next-task-title']}>{taskSummary.nextTask.title}</span>
           <span className={`${s['next-task-priority']} ${s[taskSummary.nextTask.priority]}`}>{taskSummary.nextTask.priority}</span>
+        </div>
+      )}
+
+      {/* Multiple active tasks rotating carousel */}
+      {taskSummary.activeTasks && taskSummary.activeTasks.length > 0 && (
+        <div className={s['tasks-carousel-container']}>
+          <div
+            className={s['tasks-carousel']}
+            style={{ transform: `translateY(-${slideIndex * 38}px)` }}
+          >
+            {taskSummary.activeTasks.map((task, i) => (
+              <div key={i} className={s['carousel-item']}>
+                <span className={s['next-task-label']}>{task.status === 'in_progress' ? 'Doing:' : 'Next:'}</span>
+                <span className={s['next-task-title']}>{task.title}</span>
+                <span className={`${s['next-task-priority']} ${s[task.priority]}`}>{task.priority}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

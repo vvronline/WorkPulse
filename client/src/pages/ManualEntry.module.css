@@ -1,6 +1,6 @@
 /* ============= MANUAL ENTRY PAGE ============= */
 .manual-entry-page {
-  max-width: 1400px;
+  max-width: 1600px;
   margin: 2rem auto;
   padding: 0 2.5rem;
   animation: fadeInUp 0.4s ease;
@@ -96,7 +96,7 @@
   left: 0;
   right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
 }
 
 .manual-entry-card h3 {
@@ -341,14 +341,36 @@
     margin-left: auto;
     margin-right: auto;
   }
-  .manual-entry-grid { grid-template-columns: 1fr; }
-  .manual-entry-header { text-align: center; }
-  .break-row { flex-direction: column; align-items: stretch; }
-  .break-inputs { flex-direction: row; }
+
+  .manual-entry-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .manual-entry-header {
+    text-align: center;
+  }
+
+  .break-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .break-inputs {
+    flex-direction: row;
+  }
 }
 
 @media (max-width: 480px) {
-  .time-row { flex-direction: column; align-items: stretch; }
-  .time-arrow { display: none; }
-  .still-working-check { padding-bottom: 0; }
+  .time-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .time-arrow {
+    display: none;
+  }
+
+  .still-working-check {
+    padding-bottom: 0;
+  }
 }

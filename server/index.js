@@ -82,6 +82,13 @@ function autoClockOut() {
 autoClockOut();
 setInterval(autoClockOut, 5 * 60 * 1000);
 
+// Serve React frontend in production
+const clientDist = path.join(__dirname, '..', 'client', 'dist');
+app.use(express.static(clientDist));
+app.get('/{*splat}', (req, res) => {
+    res.sendFile(path.join(clientDist, 'index.html'));
+});
+
 // Global error handler (must be registered BEFORE app.listen)
 app.use((err, req, res, next) => {
     console.error('Unhandled error:', err);

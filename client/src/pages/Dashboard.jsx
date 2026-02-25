@@ -138,13 +138,13 @@ export default function Dashboard() {
         const next = floorAnchorRef.current.base + Math.floor((Date.now() - floorAnchorRef.current.at) / 1000);
         setLiveFloorSec(next);
         if (!notified8hr.current && next >= TARGET_HOURS * 60) {
-            notified8hr.current = true;
-            sendNotification('🎉 9 Hours Complete!', 'You\'ve completed your 9-hour target. Great job!');
-            if (!confettiTriggered.current) {
-              confettiTriggered.current = true;
-              setShowConfetti(true);
-              setTimeout(() => setShowConfetti(false), 5000);
-            }
+          notified8hr.current = true;
+          sendNotification('🎉 9 Hours Complete!', 'You\'ve completed your 9-hour target. Great job!');
+          if (!confettiTriggered.current) {
+            confettiTriggered.current = true;
+            setShowConfetti(true);
+            setTimeout(() => setShowConfetti(false), 5000);
+          }
         }
       }, 1000);
     } else if (status?.state === 'on_break') {
@@ -219,7 +219,7 @@ export default function Dashboard() {
   }, [state, completedTarget, liveFloorSec]);
 
   const confettiPieces = useMemo(() => {
-    const colors = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899'];
+    const colors = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899'];
     return [...Array(50)].map((_, i) => ({
       '--confetti-left': `${Math.random() * 100}%`,
       '--confetti-delay': `${Math.random() * 2}s`,
@@ -286,56 +286,77 @@ export default function Dashboard() {
       <div className={s['dashboard-row-1']}>
         {/* Left: Timer + Actions */}
         <div className={`status-card ${s['dash-timer-card']}`}>
-          <span className={`${s['status-badge']} ${s[isWeekend && state === 'logged_out' ? 'weekend' : state]}`}>
-            {isWeekend && state === 'logged_out' ? '🏖 Weekend Holiday' : getStateLabel(state, workMode)}
-          </span>
-          {state !== 'logged_out' && (
-            <span className={`${s['work-mode-badge']} ${s[workMode]}`}>
-              {workMode === 'office' ? '🏢 Office' : '🏠 Remote'}
+          <div className={s['dash-badges-row']}>
+            <span className={`${s['status-badge']} ${s[isWeekend && state === 'logged_out' ? 'weekend' : state]}`}>
+              {isWeekend && state === 'logged_out' ? '🏖 Weekend Holiday' : getStateLabel(state, workMode)}
             </span>
-          )}
+            {state !== 'logged_out' && (
+              <span className={`${s['work-mode-badge']} ${s[workMode]}`}>
+                {workMode === 'office' ? '🏢 Office' : '🏠 Remote'}
+              </span>
+            )}
+          </div>
 
           <div className={s['timer-and-progress']}>
-            {/* Circular Progress + Timer */}
-            <div className={s['circular-progress-wrapper']}>
-              <svg className={s['circular-progress']} viewBox="0 0 200 200">
-                <circle className={s['circular-bg']} cx="100" cy="100" r={radius} />
-                <circle
-                  className={s['circular-fill']}
-                  cx="100" cy="100" r={radius}
-                  style={{
-                    '--circ-dasharray': circumference,
-                    '--circ-dashoffset': strokeDashoffset,
-                    '--circ-stroke': progressColor.color,
-                    '--circ-glow': progressColor.glow
-                  }}
-                />
-              </svg>
-              <div className={s['circular-inner']}>
-                {state === 'on_floor' && (
-                  <>
-                    <div className={`${s['circular-time']} ${s['floor-timer']}`}>{formatTimeSec(liveFloorSec)}</div>
-                    <div className={s['circular-label']}>Working</div>
-                  </>
+
+            {/* Left Col: Timer + Badges */}
+            <div className={s['timer-left-col']}>
+              {/* Circular Progress + Timer */}
+              <div className={s['circular-progress-wrapper']}>
+                <svg className={s['circular-progress']} viewBox="0 0 200 200">
+                  <circle className={s['circular-bg']} cx="100" cy="100" r={radius} />
+                  <circle
+                    className={s['circular-fill']}
+                    cx="100" cy="100" r={radius}
+                    style={{
+                      '--circ-dasharray': circumference,
+                      '--circ-dashoffset': strokeDashoffset,
+                      '--circ-stroke': progressColor.color,
+                      '--circ-glow': progressColor.glow
+                    }}
+                  />
+                </svg>
+                <div className={s['circular-inner']}>
+                  {state === 'on_floor' && (
+                    <>
+                      <div className={`${s['circular-time']} ${s['floor-timer']}`}>{formatTimeSec(liveFloorSec)}</div>
+                      <div className={s['circular-label']}>Working</div>
+                    </>
+                  )}
+                  {state === 'on_break' && (
+                    <>
+                      <div className={`${s['circular-time']} ${s['break-timer-text']}`}>{formatTimeSec(liveBreakSec)}</div>
+                      <div className={s['circular-label']}>On Break</div>
+                      <div className={s['circular-sub']}>{formatTime(floorMinutes)} worked</div>
+                    </>
+                  )}
+                  {state === 'logged_out' && !isWeekend && (
+                    <>
+                      <div className={s['circular-time']}>{formatTime(0)}</div>
+                      <div className={s['circular-label']}>Ready</div>
+                    </>
+                  )}
+                  {state === 'logged_out' && isWeekend && (
+                    <>
+                      <div className={`${s['circular-time']} ${s['weekend-text']}`}>🌴</div>
+                      <div className={s['circular-label']}>Weekend</div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* ETA / Overtime info under timer */}
+              <div className={s['timer-under-badges']}>
+                {estimatedClockOut && (
+                  <div className={s['eta-banner']}>
+                    <span className="page-icon">🕐</span> 9hrs by <strong>{estimatedClockOut}</strong>
+                  </div>
                 )}
-                {state === 'on_break' && (
-                  <>
-                    <div className={`${s['circular-time']} ${s['break-timer-text']}`}>{formatTimeSec(liveBreakSec)}</div>
-                    <div className={s['circular-label']}>On Break</div>
-                    <div className={s['circular-sub']}>{formatTime(floorMinutes)} worked</div>
-                  </>
-                )}
-                {state === 'logged_out' && !isWeekend && (
-                  <>
-                    <div className={s['circular-time']}>{formatTime(0)}</div>
-                    <div className={s['circular-label']}>Ready</div>
-                  </>
-                )}
-                {state === 'logged_out' && isWeekend && (
-                  <>
-                    <div className={`${s['circular-time']} ${s['weekend-text']}`}>🌴</div>
-                    <div className={s['circular-label']}>Weekend</div>
-                  </>
+                {overtimeMinutes > 0 && (
+                  <div className={s['overtime-banner']}>
+                    <span className={s['overtime-icon']}>⚡</span>
+                    <span>Overtime: <strong>{formatTime(overtimeMinutes)}</strong></span>
+                  </div>
                 )}
               </div>
             </div>
@@ -344,67 +365,56 @@ export default function Dashboard() {
             <div className={s['timer-info-side']}>
               {/* Today's Stats - inline */}
               {state !== 'logged_out' && (
-              <div className={s['inline-stats']}>
-                <div className={s['inline-stat']}>
-                  <span className={`${s['inline-stat-icon']} ${s['work-icon']}`}>⏱</span>
-                  <div>
-                    <div className={s['inline-stat-label']}>Work</div>
-                    <div className={`${s['inline-stat-value']} ${s.floor}`}>{formatTime(floorMinutes)}</div>
+                <div className={s['inline-stats']}>
+                  <div className={s['inline-stat']}>
+                    <span className={`${s['inline-stat-icon']} ${s['work-icon']}`}>⏱</span>
+                    <div>
+                      <div className={s['inline-stat-label']}>Work</div>
+                      <div className={`${s['inline-stat-value']} ${s.floor}`}>{formatTime(floorMinutes)}</div>
+                    </div>
+                  </div>
+                  <div className={s['inline-stat']}>
+                    <span className={`${s['inline-stat-icon']} ${s['break-icon']}`}>
+                      ☕
+                      {breakCount > 0 && <span className={s['break-count-badge']}>{breakCount}</span>}
+                    </span>
+                    <div>
+                      <div className={s['inline-stat-label']}>Break</div>
+                      <div className={`${s['inline-stat-value']} ${s.break}`}>{formatTime(Math.floor(liveBreakSec / 60))}</div>
+                    </div>
+                  </div>
+                  <div className={s['inline-stat']}>
+                    <span className={`${s['inline-stat-icon']} ${s['total-icon']}`}>⏳</span>
+                    <div>
+                      <div className={s['inline-stat-label']}>Total</div>
+                      <div className={`${s['inline-stat-value']} ${s.total}`}>{formatTime(Math.floor(liveFloorSec / 60) + Math.floor(liveBreakSec / 60))}</div>
+                    </div>
                   </div>
                 </div>
-                <div className={s['inline-stat']}>
-                  <span className={`${s['inline-stat-icon']} ${s['break-icon']}`}>
-                    ☕
-                    {breakCount > 0 && <span className={s['break-count-badge']}>{breakCount}</span>}
-                  </span>
-                  <div>
-                    <div className={s['inline-stat-label']}>Break</div>
-                    <div className={`${s['inline-stat-value']} ${s.break}`}>{formatTime(Math.floor(liveBreakSec / 60))}</div>
-                  </div>
-                </div>
-                <div className={s['inline-stat']}>
-                  <span className={`${s['inline-stat-icon']} ${s['total-icon']}`}>⏳</span>
-                  <div>
-                    <div className={s['inline-stat-label']}>Total</div>
-                    <div className={`${s['inline-stat-value']} ${s.total}`}>{formatTime(Math.floor(liveFloorSec / 60) + Math.floor(liveBreakSec / 60))}</div>
-                  </div>
-                </div>
-              </div>
               )}
 
-              {/* ETA / Overtime info */}
-              {estimatedClockOut && (
-                <div className={s['eta-banner']}>
-                  <span className="page-icon">🕐</span> 9hrs by <strong>{estimatedClockOut}</strong>
-                </div>
-              )}
-              {overtimeMinutes > 0 && (
-                <div className={s['overtime-banner']}>
-                  <span className={s['overtime-icon']}>⚡</span>
-                  <span>Overtime: <strong>{formatTime(overtimeMinutes)}</strong></span>
-                </div>
-              )}
+              <WeeklyChart weeklyData={weeklyData} />
             </div>
           </div>
 
           {/* Progress Bar */}
           {state !== 'logged_out' && (
-          <div className={s['progress-section']}>
-            <div className={s['progress-text']}>
-              <span>{formatTime(floorMinutes)} of {formatTime(TARGET_HOURS)}</span>
-              <span>{Math.round(progressPercent)}%{!completedTarget ? ` • ${formatTime(remaining)} left` : ''}</span>
-            </div>
-            <div className={s['progress-bar-container']}>
-              <div
-                className={s['progress-bar-fill']}
-                style={{ '--progress-width': `${progressPercent}%`, '--progress-bg': `linear-gradient(90deg, ${progressColor.color}, ${progressColor.color}dd)` }}
-              />
-              {/* 8hr mandatory marker */}
-              <div className={s['mandatory-marker']} style={{ '--marker-left': `${(MANDATORY_HOURS / TARGET_HOURS) * 100}%` }} title="8hr mandatory">
-                <span className={s['mandatory-marker-label']}>8h</span>
+            <div className={s['progress-section']}>
+              <div className={s['progress-text']}>
+                <span>{formatTime(floorMinutes)} of {formatTime(TARGET_HOURS)}</span>
+                <span>{Math.round(progressPercent)}%{!completedTarget ? ` • ${formatTime(remaining)} left` : ''}</span>
+              </div>
+              <div className={s['progress-bar-container']}>
+                <div
+                  className={s['progress-bar-fill']}
+                  style={{ '--progress-width': `${progressPercent}%`, '--progress-bg': `linear-gradient(90deg, ${progressColor.color}, ${progressColor.color}dd)` }}
+                />
+                {/* 8hr mandatory marker */}
+                <div className={s['mandatory-marker']} style={{ '--marker-left': `${(MANDATORY_HOURS / TARGET_HOURS) * 100}%` }} title="8hr mandatory">
+                  <span className={s['mandatory-marker-label']}>8h</span>
+                </div>
               </div>
             </div>
-          </div>
           )}
 
           {completedMandatory && !completedTarget && (
@@ -474,10 +484,9 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ====== ROW 2: Widgets + Weekly Chart ====== */}
+      {/* ====== ROW 2: Widgets ====== */}
       <div className={s['dashboard-row-2']}>
         <WidgetsGrid widgets={widgets} />
-        <WeeklyChart weeklyData={weeklyData} />
       </div>
     </div>
   );
