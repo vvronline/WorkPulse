@@ -32,7 +32,7 @@ router.get('/', auth, (req, res) => {
         WHERE user_id = ? AND date = ?
         ORDER BY
             CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END,
-            CASE status WHEN 'in_progress' THEN 1 WHEN 'pending' THEN 2 WHEN 'done' THEN 3 END,
+            CASE status WHEN 'in_progress' THEN 1 WHEN 'in_review' THEN 2 WHEN 'pending' THEN 3 WHEN 'done' THEN 4 END,
             created_at ASC
     `).all(req.userId, targetDate);
 
@@ -67,7 +67,7 @@ router.patch('/:id/status', auth, (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
 
-    if (!['pending', 'in_progress', 'done'].includes(status)) {
+    if (!['pending', 'in_progress', 'in_review', 'done'].includes(status)) {
         return res.status(400).json({ error: 'Invalid status' });
     }
 

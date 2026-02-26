@@ -126,7 +126,19 @@ export default function Dashboard() {
     requestNotificationPermission();
     // Live clock update every minute
     clockRef.current = setInterval(() => setCurrentTime(new Date()), 60000);
-    return () => { if (clockRef.current) clearInterval(clockRef.current); };
+
+    // Refresh task summary whenever the tab becomes visible again (e.g. back from Tasks page)
+    const handleVisibility = () => {
+      if (!document.hidden) {
+        getTaskSummary().then(r => setTaskSummary(r.data)).catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      if (clockRef.current) clearInterval(clockRef.current);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, [fetchStatus]);
 
   // Live tick every second

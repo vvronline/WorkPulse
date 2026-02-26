@@ -514,14 +514,15 @@ router.get('/task-summary', auth, (req, res) => {
     const done = tasks.filter(t => t.status === 'done').length;
     const pending = tasks.filter(t => t.status === 'pending').length;
     const inProgress = tasks.filter(t => t.status === 'in_progress').length;
+    const inReview = tasks.filter(t => t.status === 'in_review').length;
 
     // Sort active tasks: in_progress first, then by priority (already sorted by DB)
     const activeTasks = tasks
-        .filter(t => t.status === 'in_progress' || t.status === 'pending')
+        .filter(t => t.status === 'in_progress' || t.status === 'in_review' || t.status === 'pending')
         .map(t => ({ title: t.title, priority: t.priority, status: t.status }));
 
     res.json({
-        total, done, pending, inProgress,
+        total, done, pending, inProgress, inReview,
         activeTasks
     });
 });

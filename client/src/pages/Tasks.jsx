@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { getTasks, addTask, updateTaskStatus, updateTask, deleteTask, carryForwardTasks, getLocalToday } from '../api';
 import s from './Tasks.module.css';
 
@@ -8,23 +8,12 @@ const PRIORITIES = [
   { value: 'low', label: 'Low', icon: '🟢', color: '#22c55e' },
 ];
 
-const STATUS_ICONS = {
-  pending: '○',
-  in_progress: '◐',
-  done: '●',
-};
-
-const STATUS_LABELS = {
-  pending: 'To Do',
-  in_progress: 'In Progress',
-  done: 'Done',
-};
-
-const NEXT_STATUS = {
-  pending: 'in_progress',
-  in_progress: 'done',
-  done: 'pending',
-};
+const COLUMNS = [
+  { id: 'pending', label: 'To Do', icon: '○', color: '#64748b' },
+  { id: 'in_progress', label: 'In Progress', icon: '◐', color: '#f59e0b' },
+  { id: 'in_review', label: 'In Review', icon: '◑', color: '#6366f1' },
+  { id: 'done', label: 'Done', icon: '●', color: '#22c55e' },
+];
 
 export default function Tasks() {
   const [tasks, setTasks] = useState([]);
@@ -38,6 +27,9 @@ export default function Tasks() {
   const [editingId, setEditingId] = useState(null);
   const [editTitle, setEditTitle] = useState('');
   const [editDesc, setEditDesc] = useState('');
+  const [dragOverCol, setDragOverCol] = useState(null);
+  const [formOpen, setFormOpen] = useState(true);
+  const dragTaskId = useRef(null);
 
   const fetchTasks = useCallback(async () => {
     try {
@@ -71,15 +63,6 @@ export default function Tasks() {
     }
   };
 
-  const handleStatusToggle = async (task) => {
-    try {
-      await updateTaskStatus(task.id, NEXT_STATUS[task.status]);
-      fetchTasks();
-    } catch {
-      setError('Failed to update status');
-    }
-  };
-
   const handleDelete = async (id) => {
     try {
       await deleteTask(id);
@@ -92,9 +75,7 @@ export default function Tasks() {
   const handleCarryForward = async () => {
     try {
       const res = await carryForwardTasks();
-      if (res.data.carried > 0) {
-        fetchTasks();
-      }
+      if (res.data.carried > 0) fetchTasks();
       setError('');
       alert(res.data.message);
     } catch {
@@ -124,15 +105,66 @@ export default function Tasks() {
     setEditDesc('');
   };
 
+  // ─── Drag & Drop handlers ────────────────────────────────────────────────
+  const onDragStart = (e, taskId) => {
+    dragTaskId.current = taskId;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(taskId));
+    const el = document.getElementById(`task-${taskId}`);
+    if (el) el.classList.add(s.dragging);
+  };
+
+  const onDragEnd = (e, taskId) => {
+    const el = document.getElementById(`task-${taskId}`);
+    if (el) el.classList.remove(s.dragging);
+    dragTaskId.current = null;
+    setDragOverCol(null);
+  };
+
+  const onDragOver = (e, colId) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverCol !== colId) setDragOverCol(colId);
+  };
+
+  const onDragLeave = (e) => {
+    // Only clear if leaving the column entirely, not just a child element
+    if (!e.currentTarget.contains(e.relatedTarget)) {
+      setDragOverCol(null);
+    }
+  };
+
+  const onDrop = async (e, colId) => {
+    e.preventDefault();
+    setDragOverCol(null);
+    // Read from dataTransfer first (more reliable cross-column), fallback to ref
+    const rawId = e.dataTransfer.getData('text/plain');
+    const taskId = rawId ? parseInt(rawId, 10) : dragTaskId.current;
+    dragTaskId.current = null;
+    if (!taskId) return;
+
+    const task = tasks.find(t => t.id === taskId);
+    if (!task || task.status === colId) return;
+
+    // Optimistic update
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: colId } : t));
+
+    try {
+      await updateTaskStatus(taskId, colId);
+      fetchTasks();
+    } catch {
+      setError('Failed to move task');
+      fetchTasks();
+    }
+  };
+
   const isToday = date === getLocalToday();
   const getPriority = (p) => PRIORITIES.find(pr => pr.value === p) || PRIORITIES[1];
-
-  const pendingTasks = tasks.filter(t => t.status === 'pending');
-  const inProgressTasks = tasks.filter(t => t.status === 'in_progress');
-  const doneTasks = tasks.filter(t => t.status === 'done');
+  const getColTasks = (colId) => tasks.filter(t => t.status === colId);
 
   return (
     <div className={s['tasks-page']}>
+      {/* Header */}
       <div className={s['tasks-header']}>
         <div>
           <h2><span className="page-icon">✅</span> Daily Tasks</h2>
@@ -150,34 +182,40 @@ export default function Tasks() {
               📥 Carry Forward
             </button>
           )}
+          <button
+            className={`btn btn-secondary ${s['add-task-toggle']}`}
+            onClick={() => setFormOpen(o => !o)}
+          >
+            {formOpen ? '✕ Close' : '➕ New Task'}
+          </button>
         </div>
       </div>
 
       {/* Progress Bar */}
       <div className={s['tasks-progress-card']}>
         <div className={s['tasks-progress-info']}>
-          <span className={s['tasks-progress-label']}>
-            {stats.done}/{stats.total} completed
-          </span>
+          <span className={s['tasks-progress-label']}>{stats.done}/{stats.total} completed</span>
           <span className={s['tasks-progress-pct']}>{stats.percent}%</span>
         </div>
         <div className={s['tasks-progress-bar']}>
           <div className={s['tasks-progress-fill']} style={{ '--fill-width': `${stats.percent}%` }} />
         </div>
         <div className={s['tasks-progress-counts']}>
-          <span>○ {stats.total - stats.done - stats.inProgress} to do</span>
-          <span>◐ {stats.inProgress} in progress</span>
-          <span>● {stats.done} done</span>
+          {COLUMNS.map(col => (
+            <span key={col.id} style={{ color: col.color }}>
+              {col.icon} {getColTasks(col.id).length} {col.label}
+            </span>
+          ))}
         </div>
       </div>
 
       {error && <div className="error-msg error-msg-mb">{error}</div>}
 
-      <div className={s['tasks-layout']}>
-        {/* Add Task Form */}
+      {/* Add Task Form (collapsible) */}
+      {formOpen && (
         <div className={s['tasks-form-card']}>
           <h3>➕ New Task</h3>
-          <form onSubmit={handleAdd}>
+          <form onSubmit={handleAdd} className={s['add-form']}>
             <div className="form-group">
               <input
                 type="text"
@@ -196,8 +234,7 @@ export default function Tasks() {
                 rows={2}
               />
             </div>
-            <div className="form-group">
-              <label>Priority</label>
+            <div className={s['form-bottom']}>
               <div className={s['priority-selector']}>
                 {PRIORITIES.map(p => (
                   <button
@@ -211,63 +248,79 @@ export default function Tasks() {
                   </button>
                 ))}
               </div>
+              <button type="submit" className="btn btn-primary">
+                Add Task
+              </button>
             </div>
-            <button type="submit" className="btn btn-primary btn-fullwidth">
-              Add Task
-            </button>
           </form>
         </div>
+      )}
 
-        {/* Task Lists */}
-        <div className={s['tasks-lists']}>
-          {loading ? (
-            <div className="loading-spinner"><div className="spinner"></div></div>
-          ) : tasks.length === 0 ? (
-            <div className={s['tasks-empty']}>
-              <div className={s['tasks-empty-icon']}>📋</div>
-              <p>No tasks for this day</p>
-              <span>Add a task to get started!</span>
-            </div>
-          ) : (
-            <>
-              {inProgressTasks.length > 0 && (
-                <div className={s['task-section']}>
-                  <h4 className={s['task-section-title']}>
-                    <span className={`${s['task-section-dot']} ${s.in_progress}`} /> In Progress ({inProgressTasks.length})
-                  </h4>
-                  {inProgressTasks.map(task => renderTask(task))}
+      {/* Kanban Board */}
+      {loading ? (
+        <div className="loading-spinner"><div className="spinner" /></div>
+      ) : (
+        <div className={s['kanban-board']}>
+          {COLUMNS.map(col => {
+            const colTasks = getColTasks(col.id);
+            const isDragOver = dragOverCol === col.id;
+
+            return (
+              <div
+                key={col.id}
+                className={`${s['kanban-column']} ${isDragOver ? s['drag-over'] : ''}`}
+                style={{ '--col-color': col.color }}
+                onDragOver={(e) => onDragOver(e, col.id)}
+                onDragLeave={onDragLeave}
+                onDrop={(e) => onDrop(e, col.id)}
+              >
+                {/* Column Header */}
+                <div className={s['column-header']}>
+                  <div className={s['column-header-left']}>
+                    <span className={s['column-dot']} style={{ background: col.color }} />
+                    <span className={s['column-label']}>{col.label}</span>
+                  </div>
+                  <span className={s['column-count']}>{colTasks.length}</span>
                 </div>
-              )}
-              {pendingTasks.length > 0 && (
-                <div className={s['task-section']}>
-                  <h4 className={s['task-section-title']}>
-                    <span className={`${s['task-section-dot']} ${s.pending}`} /> To Do ({pendingTasks.length})
-                  </h4>
-                  {pendingTasks.map(task => renderTask(task))}
+
+                {/* Drop zone visual hint */}
+                {isDragOver && (
+                  <div className={s['drop-indicator']}>
+                    Drop here
+                  </div>
+                )}
+
+                {/* Task Cards */}
+                <div className={s['column-tasks']}>
+                  {colTasks.length === 0 && !isDragOver && (
+                    <div className={s['column-empty']}>
+                      <span>No tasks</span>
+                    </div>
+                  )}
+                  {colTasks.map(task => renderCard(task, col))}
                 </div>
-              )}
-              {doneTasks.length > 0 && (
-                <div className={s['task-section']}>
-                  <h4 className={s['task-section-title']}>
-                    <span className={`${s['task-section-dot']} ${s.done}`} /> Done ({doneTasks.length})
-                  </h4>
-                  {doneTasks.map(task => renderTask(task))}
-                </div>
-              )}
-            </>
-          )}
+              </div>
+            );
+          })}
         </div>
-      </div>
+      )}
+
+      {tasks.length === 0 && !loading && (
+        <div className={s['tasks-empty']}>
+          <div className={s['tasks-empty-icon']}>📋</div>
+          <p>No tasks for this day</p>
+          <span>Add a task above to get started!</span>
+        </div>
+      )}
     </div>
   );
 
-  function renderTask(task) {
+  function renderCard(task, col) {
     const pri = getPriority(task.priority);
-    const isDone = task.status === 'done';
 
     if (editingId === task.id) {
       return (
-        <div key={task.id} className={`${s['task-item']} ${s.editing}`}>
+        <div key={task.id} className={`${s['task-card']} ${s.editing}`}>
           <input
             type="text"
             value={editTitle}
@@ -291,24 +344,34 @@ export default function Tasks() {
     }
 
     return (
-      <div key={task.id} className={`${s['task-item']} ${isDone ? s['task-done'] : ''}`}>
-        <button
-          className={`${s['task-status-btn']} ${s[task.status]}`}
-          onClick={() => handleStatusToggle(task)}
-          title={`Click: ${STATUS_LABELS[NEXT_STATUS[task.status]]}`}
-        >
-          {STATUS_ICONS[task.status]}
-        </button>
-        <div className={s['task-content']}>
-          <div className={s['task-title']}>{task.title}</div>
-          {task.description && <div className={s['task-desc']}>{task.description}</div>}
+      <div
+        key={task.id}
+        id={`task-${task.id}`}
+        className={`${s['task-card']} ${task.status === 'done' ? s['task-done'] : ''}`}
+        draggable
+        onDragStart={(e) => onDragStart(e, task.id)}
+        onDragEnd={(e) => onDragEnd(e, task.id)}
+      >
+        <div className={s['task-card-top']}>
+          <span
+            className={s['task-priority-badge']}
+            style={{ '--badge-bg': pri.color + '20', '--badge-color': pri.color }}
+          >
+            {pri.icon} {pri.label}
+          </span>
+          <div className={s['task-actions']}>
+            <button className={s['task-action-btn']} onClick={() => startEdit(task)} title="Edit">✏️</button>
+            <button
+              className={`${s['task-action-btn']} ${s['delete-btn']}`}
+              onClick={() => handleDelete(task.id)}
+              title="Delete"
+            >🗑</button>
+          </div>
         </div>
-        <span className={s['task-priority-badge']} style={{ '--badge-bg': pri.color + '20', '--badge-color': pri.color }}>
-          {pri.icon} {pri.label}
-        </span>
-        <div className={s['task-actions']}>
-          <button className={s['task-action-btn']} onClick={() => startEdit(task)} title="Edit">✏️</button>
-          <button className={`${s['task-action-btn']} ${s['delete-btn']}`} onClick={() => handleDelete(task.id)} title="Delete">🗑</button>
+        <div className={s['task-title']}>{task.title}</div>
+        {task.description && <div className={s['task-desc']}>{task.description}</div>}
+        <div className={s['task-card-footer']}>
+          <span className={s['drag-hint']}>⠿ drag to move</span>
         </div>
       </div>
     );

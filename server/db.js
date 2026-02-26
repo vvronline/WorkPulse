@@ -70,6 +70,36 @@ try { db.exec('ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT NULL'); } catch 
 // Add email column to users
 try { db.exec('ALTER TABLE users ADD COLUMN email TEXT DEFAULT NULL'); } catch (e) { /* column already exists */ }
 
+// Migrate tasks table to support 'in_review' status (SQLite can't ALTER CHECK constraints)
+try {
+  const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'").get();
+  if (tableInfo && !tableInfo.sql.includes('in_review')) {
+    const migrate = db.transaction(() => {
+      db.exec(`ALTER TABLE tasks RENAME TO tasks_old`);
+      db.exec(`
+        CREATE TABLE tasks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          date TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT,
+          priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('low', 'medium', 'high')),
+          status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'in_review', 'done')),
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          completed_at DATETIME,
+          FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+      `);
+      db.exec(`INSERT INTO tasks SELECT * FROM tasks_old`);
+      db.exec(`DROP TABLE tasks_old`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_user_date ON tasks(user_id, date)`);
+    });
+    migrate();
+    console.log('✓ Tasks table migrated to support in_review status');
+  }
+} catch (e) { console.error('Tasks migration error:', e.message); }
+
+
 // Password reset tokens table
 db.exec(`
   CREATE TABLE IF NOT EXISTS password_reset_tokens (

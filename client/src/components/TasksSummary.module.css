@@ -39,6 +39,10 @@
   color: var(--text-muted);
 }
 
+.review-stat .task-stat-num {
+  color: var(--primary-light);
+}
+
 .task-stat-label {
   font-size: 0.65rem;
   text-transform: uppercase;
@@ -160,4 +164,25 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+.title-arrow {
+  margin-left: auto;
+  font-size: 1rem;
+  color: var(--text-muted);
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.clickable {
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.clickable:hover {
+  background: var(--surface-hover) !important;
+}
+
+.clickable:hover .title-arrow {
+  transform: translateX(3px);
+  color: var(--primary-light);
 }

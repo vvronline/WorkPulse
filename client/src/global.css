@@ -348,31 +348,7 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   box-shadow: var(--shadow);
 }
 
-.stat-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  border-radius: 3px 3px 0 0;
-}
 
-.stat-card:nth-child(1)::before {
-  background: linear-gradient(90deg, var(--primary), #8b5cf6);
-}
-
-.stat-card:nth-child(2)::before {
-  background: linear-gradient(90deg, var(--warning), #f97316);
-}
-
-.stat-card:nth-child(3)::before {
-  background: linear-gradient(90deg, #06b6d4, #8b5cf6);
-}
-
-.stat-card:nth-child(4)::before {
-  background: linear-gradient(90deg, var(--success), #06b6d4);
-}
 
 .stat-card .stat-icon {
   width: 40px;

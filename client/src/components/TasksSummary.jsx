@@ -1,7 +1,9 @@
 import React, { memo, useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import s from './TasksSummary.module.css';
 
 const TasksSummary = memo(function TasksSummary({ taskSummary }) {
+  const navigate = useNavigate();
   const [slideIndex, setSlideIndex] = useState(0);
 
   // Setup auto-slide if there are multiple active tasks
@@ -23,9 +25,16 @@ const TasksSummary = memo(function TasksSummary({ taskSummary }) {
   if (!taskSummary || taskSummary.total === 0) return null;
 
   return (
-    <div className={`status-card ${s['tasks-summary-card']}`}>
+    <div
+      className={`status-card ${s['tasks-summary-card']} ${s['clickable']}`}
+      onClick={() => navigate('/tasks')}
+      role="button"
+      tabIndex={0}
+      onKeyDown={e => e.key === 'Enter' && navigate('/tasks')}
+    >
       <h3 className={s['timeline-title']}>
         <span className="page-icon">✅</span> Today's Tasks
+        <span className={s['title-arrow']}>›</span>
       </h3>
       <div className={s['tasks-summary-stats']}>
         <div className={`${s['task-stat']} ${s['done-stat']}`}>
@@ -35,6 +44,10 @@ const TasksSummary = memo(function TasksSummary({ taskSummary }) {
         <div className={`${s['task-stat']} ${s['progress-stat']}`}>
           <span className={s['task-stat-num']}>{taskSummary.inProgress}</span>
           <span className={s['task-stat-label']}>In Progress</span>
+        </div>
+        <div className={`${s['task-stat']} ${s['review-stat']}`}>
+          <span className={s['task-stat-num']}>{taskSummary.inReview ?? 0}</span>
+          <span className={s['task-stat-label']}>In Review</span>
         </div>
         <div className={`${s['task-stat']} ${s['pending-stat']}`}>
           <span className={s['task-stat-num']}>{taskSummary.pending}</span>
@@ -63,7 +76,9 @@ const TasksSummary = memo(function TasksSummary({ taskSummary }) {
           >
             {taskSummary.activeTasks.map((task, i) => (
               <div key={i} className={s['carousel-item']}>
-                <span className={s['next-task-label']}>{task.status === 'in_progress' ? 'Doing:' : 'Next:'}</span>
+                <span className={s['next-task-label']}>
+                  {task.status === 'in_progress' ? 'Doing:' : task.status === 'in_review' ? 'Review:' : 'Next:'}
+                </span>
                 <span className={s['next-task-title']}>{task.title}</span>
                 <span className={`${s['next-task-priority']} ${s[task.priority]}`}>{task.priority}</span>
               </div>
