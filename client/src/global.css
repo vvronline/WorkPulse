@@ -1,9 +1,9 @@
 /* ============= CSS VARIABLES ============= */
 :root,
 [data-theme="dark"] {
-  --primary: #1c223d;
+  --primary: #202747;
   /* Enterprise Navy */
-  --primary-light: #334155;
+  --primary-light: #283952;
   /* Slate */
   --primary-dark: #020617;
   /* Deep Navy */
