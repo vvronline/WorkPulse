@@ -22,7 +22,7 @@ function getTransporter() {
 }
 
 // Register
-router.post('/register', (req, res) => {
+router.post('/register', async (req, res) => {
     const { username, password, full_name, email } = req.body;
     if (!username || !password || !full_name || !email) {
         return res.status(400).json({ error: 'All fields are required' });
@@ -47,26 +47,26 @@ router.post('/register', (req, res) => {
         return res.status(400).json({ error: 'Email already registered' });
     }
 
-    const hash = bcrypt.hashSync(password, 10);
+    const hash = await bcrypt.hash(password, 10);
     const result = db.prepare('INSERT INTO users (username, password, full_name, email) VALUES (?, ?, ?, ?)').run(username, hash, full_name, email);
 
-    const token = jwt.sign({ id: result.lastInsertRowid, username }, process.env.JWT_SECRET, { expiresIn: '24h' });
+    const token = jwt.sign({ id: result.lastInsertRowid, username, tv: 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
     res.json({ token, user: { id: result.lastInsertRowid, username, full_name, email, avatar: null } });
 });
 
 // Login
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
         return res.status(400).json({ error: 'Username and password are required' });
     }
 
     const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
-    if (!user || !bcrypt.compareSync(password, user.password)) {
+    if (!user || !(await bcrypt.compare(password, user.password))) {
         return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    const token = jwt.sign({ id: user.id, username: user.username }, process.env.JWT_SECRET, { expiresIn: '24h' });
+    const token = jwt.sign({ id: user.id, username: user.username, tv: user.token_version || 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
     res.json({ token, user: { id: user.id, username: user.username, full_name: user.full_name, email: user.email || null, avatar: user.avatar || null } });
 });
 
@@ -120,7 +120,7 @@ router.post('/forgot-password', (req, res) => {
 });
 
 // Reset Password — validate token and update password
-router.post('/reset-password', (req, res) => {
+router.post('/reset-password', async (req, res) => {
     const { token, password } = req.body;
     if (!token || !password) {
         return res.status(400).json({ error: 'Token and new password are required' });
@@ -146,8 +146,8 @@ router.post('/reset-password', (req, res) => {
         return res.status(400).json({ error: 'This reset link has expired' });
     }
 
-    const hash = bcrypt.hashSync(password, 10);
-    db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hash, row.user_id);
+    const hash = await bcrypt.hash(password, 10);
+    db.prepare('UPDATE users SET password = ?, token_version = COALESCE(token_version, 0) + 1 WHERE id = ?').run(hash, row.user_id);
     db.prepare('UPDATE password_reset_tokens SET used = 1 WHERE id = ?').run(row.id);
 
     res.json({ message: 'Password has been reset successfully. You can now sign in.' });

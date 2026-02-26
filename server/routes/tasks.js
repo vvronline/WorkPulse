@@ -110,15 +110,25 @@ router.delete('/:id', auth, (req, res) => {
     res.json({ message: 'Task deleted' });
 });
 
-// Copy yesterday's incomplete tasks to today
+// Copy recent incomplete tasks to today (looks back up to 7 days to cover weekends/holidays)
 router.post('/carry-forward', auth, (req, res) => {
     const today = getLocalToday(req);
-    const yesterday = getLocalYesterday(req);
+
+    // Find the most recent previous day that has tasks (up to 7 days back)
+    const lastTaskDay = db.prepare(`
+        SELECT date FROM tasks
+        WHERE user_id = ? AND date < ? AND date >= date(?, '-7 days')
+        ORDER BY date DESC LIMIT 1
+    `).get(req.userId, today, today);
+
+    if (!lastTaskDay) {
+        return res.json({ message: 'No tasks to carry forward', carried: 0 });
+    }
 
     const incomplete = db.prepare(`
         SELECT title, description, priority FROM tasks
         WHERE user_id = ? AND date = ? AND status != 'done'
-    `).all(req.userId, yesterday);
+    `).all(req.userId, lastTaskDay.date);
 
     if (incomplete.length === 0) {
         return res.json({ message: 'No tasks to carry forward', carried: 0 });
@@ -142,7 +152,7 @@ router.post('/carry-forward', auth, (req, res) => {
     });
 
     const carried = tx();
-    res.json({ message: `${carried} task(s) carried forward from yesterday`, carried });
+    res.json({ message: `${carried} task(s) carried forward`, carried });
 });
 
 module.exports = router;

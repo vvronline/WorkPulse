@@ -1,4 +1,5 @@
-const CACHE_NAME = 'workpulse-v1';
+// IMPORTANT: Bump this version string on every deployment to bust the cache
+const CACHE_NAME = 'workpulse-v2';
 const PRECACHE_URLS = [
     '/',
     '/manifest.json'
@@ -10,6 +11,7 @@ self.addEventListener('install', (event) => {
             return cache.addAll(PRECACHE_URLS);
         })
     );
+    // Force the new service worker to activate immediately
     self.skipWaiting();
 });
 

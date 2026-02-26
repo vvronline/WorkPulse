@@ -32,7 +32,7 @@ API.interceptors.request.use(config => {
     return config;
 });
 
-// Handle expired/invalid tokens — rely on AxiosInterceptor component for routing
+// NProgress bar — AxiosInterceptor component handles 401/token expiration separately
 API.interceptors.response.use(
     response => {
         NProgress.done();

@@ -1,5 +1,12 @@
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
+
+// Ensure JWT_SECRET is set — tokens are insecure without it
+if (!process.env.JWT_SECRET) {
+    console.error('FATAL: JWT_SECRET environment variable is not set. Server cannot start.');
+    process.exit(1);
+}
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -28,11 +35,19 @@ const authLimiter = rateLimit({
     message: { error: 'Too many attempts. Please try again later.' }
 });
 
+// Stricter rate limiting for password-related endpoints
+const passwordLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    message: { error: 'Too many password attempts. Please try again later.' }
+});
+
 // Routes
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/tracker', trackerRoutes);
 app.use('/api/leaves', leaveRoutes);
 app.use('/api/tasks', taskRoutes);
+app.use('/api/profile/password', passwordLimiter);
 app.use('/api/profile', profileRoutes);
 
 // Health check
@@ -94,6 +109,13 @@ function autoClockOut() {
 autoClockOut();
 setInterval(autoClockOut, 5 * 60 * 1000);
 
+// Cleanup expired/used password reset tokens every hour
+setInterval(() => {
+    try {
+        db.prepare("DELETE FROM password_reset_tokens WHERE used = 1 OR expires_at < datetime('now')").run();
+    } catch (e) { console.error('Token cleanup error:', e.message); }
+}, 60 * 60 * 1000);
+
 // Serve React frontend in production
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
 app.use(express.static(clientDist));
@@ -107,6 +129,19 @@ app.use((err, req, res, next) => {
     res.status(500).json({ error: 'Internal server error' });
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });
+
+// Graceful shutdown — close SQLite cleanly to prevent WAL corruption
+function shutdown() {
+    console.log('Shutting down gracefully...');
+    server.close(() => {
+        db.close();
+        process.exit(0);
+    });
+    // Force exit after 5 seconds if server doesn't close
+    setTimeout(() => { db.close(); process.exit(1); }, 5000);
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);

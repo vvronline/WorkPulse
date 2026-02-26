@@ -3,6 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const db = require('../db');
 const auth = require('../middleware/auth');
 
@@ -26,10 +27,11 @@ const upload = multer({
     storage,
     limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
     fileFilter: (req, file, cb) => {
-        const allowed = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+        const allowedExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+        const allowedMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
         const ext = path.extname(file.originalname).toLowerCase();
-        if (allowed.includes(ext)) cb(null, true);
-        else cb(new Error('Only image files are allowed'));
+        if (allowedExts.includes(ext) && allowedMimes.includes(file.mimetype)) cb(null, true);
+        else cb(new Error('Only image files (jpg, png, webp, gif) are allowed'));
     }
 });
 
@@ -100,7 +102,7 @@ router.put('/email', auth, (req, res) => {
 });
 
 // Change password
-router.put('/password', auth, (req, res) => {
+router.put('/password', auth, async (req, res) => {
     const { current_password, new_password } = req.body;
     if (!current_password || !new_password) {
         return res.status(400).json({ error: 'Both current and new password are required' });
@@ -109,21 +111,24 @@ router.put('/password', auth, (req, res) => {
         return res.status(400).json({ error: 'New password must be at least 8 characters' });
     }
     const user = db.prepare('SELECT password FROM users WHERE id = ?').get(req.userId);
-    if (!bcrypt.compareSync(current_password, user.password)) {
+    if (!(await bcrypt.compare(current_password, user.password))) {
         return res.status(400).json({ error: 'Current password is incorrect' });
     }
-    const hash = bcrypt.hashSync(new_password, 10);
-    db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hash, req.userId);
-    res.json({ message: 'Password updated successfully' });
+    const hash = await bcrypt.hash(new_password, 10);
+    db.prepare('UPDATE users SET password = ?, token_version = COALESCE(token_version, 0) + 1 WHERE id = ?').run(hash, req.userId);
+    // Return a fresh token so the current session stays valid after invalidation
+    const updated = db.prepare('SELECT token_version FROM users WHERE id = ?').get(req.userId);
+    const token = jwt.sign({ id: req.userId, username: req.username, tv: updated.token_version || 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
+    res.json({ message: 'Password updated successfully', token });
 });
 
 // Delete account
-router.delete('/', auth, (req, res) => {
+router.delete('/', auth, async (req, res) => {
     const { password } = req.body;
     if (!password) return res.status(400).json({ error: 'Password is required to delete your account' });
 
     const user = db.prepare('SELECT password, avatar FROM users WHERE id = ?').get(req.userId);
-    if (!bcrypt.compareSync(password, user.password)) {
+    if (!(await bcrypt.compare(password, user.password))) {
         return res.status(400).json({ error: 'Incorrect password' });
     }
 

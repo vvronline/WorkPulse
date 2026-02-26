@@ -70,6 +70,9 @@ try { db.exec('ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT NULL'); } catch 
 // Add email column to users
 try { db.exec('ALTER TABLE users ADD COLUMN email TEXT DEFAULT NULL'); } catch (e) { /* column already exists */ }
 
+// Add token_version column to users (for invalidating tokens on password change)
+try { db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 0'); } catch (e) { /* column already exists */ }
+
 // Migrate tasks table to support 'in_review' status (SQLite can't ALTER CHECK constraints)
 try {
   const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'").get();
