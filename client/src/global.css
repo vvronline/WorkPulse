@@ -1,11 +1,11 @@
 /* ============= CSS VARIABLES ============= */
 :root,
 [data-theme="dark"] {
-  --primary: #202747;
+  --primary: #1b38b9;
   /* Enterprise Navy */
-  --primary-light: #283952;
+  --primary-light: #1652ac;
   /* Slate */
-  --primary-dark: #020617;
+  --primary-dark: #071555;
   /* Deep Navy */
   --primary-glow: rgba(15, 23, 42, 0.25);
 
