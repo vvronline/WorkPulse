@@ -103,6 +103,31 @@
   font-weight: 600;
 }
 
+/* ============= CARRY BANNER ============= */
+.carry-banner {
+  background: color-mix(in srgb, #22c55e 12%, transparent);
+  border: 1px solid color-mix(in srgb, #22c55e 35%, transparent);
+  color: #22c55e;
+  border-radius: 12px;
+  padding: 0.65rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  animation: bannerFadeOut 4s ease forwards;
+}
+
+@keyframes bannerFadeOut {
+
+  0%,
+  70% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
 /* ============= ADD TASK FORM ============= */
 .tasks-form-card {
   background: var(--glass);

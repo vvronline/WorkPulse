@@ -29,7 +29,9 @@ export default function Tasks() {
   const [editDesc, setEditDesc] = useState('');
   const [dragOverCol, setDragOverCol] = useState(null);
   const [formOpen, setFormOpen] = useState(true);
+  const [carriedCount, setCarriedCount] = useState(0);
   const dragTaskId = useRef(null);
+  const autoCarriedRef = useRef(false);
 
   const fetchTasks = useCallback(async () => {
     try {
@@ -48,6 +50,22 @@ export default function Tasks() {
     setLoading(true);
     fetchTasks();
   }, [fetchTasks]);
+
+  // Auto carry-forward: runs once when viewing today's date
+  useEffect(() => {
+    const today = getLocalToday();
+    if (date !== today || autoCarriedRef.current) return;
+    autoCarriedRef.current = true;
+    carryForwardTasks()
+      .then((res) => {
+        if (res.data.carried > 0) {
+          setCarriedCount(res.data.carried);
+          fetchTasks();
+          setTimeout(() => setCarriedCount(0), 4000);
+        }
+      })
+      .catch(() => { }); // silent — don't surface errors for auto action
+  }, [date, fetchTasks]);
 
   const handleAdd = async (e) => {
     e.preventDefault();
@@ -72,16 +90,7 @@ export default function Tasks() {
     }
   };
 
-  const handleCarryForward = async () => {
-    try {
-      const res = await carryForwardTasks();
-      if (res.data.carried > 0) fetchTasks();
-      setError('');
-      alert(res.data.message);
-    } catch {
-      setError('Failed to carry forward tasks');
-    }
-  };
+
 
   const startEdit = (task) => {
     setEditingId(task.id);
@@ -177,11 +186,6 @@ export default function Tasks() {
             onChange={(e) => setDate(e.target.value)}
             className={s['date-input']}
           />
-          {isToday && (
-            <button className="btn btn-secondary" onClick={handleCarryForward} title="Copy yesterday's incomplete tasks to today">
-              📥 Carry Forward
-            </button>
-          )}
           <button
             className={`btn btn-secondary ${s['add-task-toggle']}`}
             onClick={() => setFormOpen(o => !o)}
@@ -209,6 +213,11 @@ export default function Tasks() {
         </div>
       </div>
 
+      {carriedCount > 0 && (
+        <div className={s['carry-banner']}>
+          📥 {carriedCount} incomplete task{carriedCount > 1 ? 's' : ''} from yesterday carried forward automatically.
+        </div>
+      )}
       {error && <div className="error-msg error-msg-mb">{error}</div>}
 
       {/* Add Task Form (collapsible) */}
