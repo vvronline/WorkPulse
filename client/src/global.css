@@ -26,6 +26,7 @@
   --radius: 16px;
   --radius-sm: 10px;
   --radius-full: 9999px;
+  color-scheme: dark;
 }
 
 [data-theme="light"] {
@@ -41,6 +42,7 @@
   --border: rgba(0, 0, 0, 0.08);
   --shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
   --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.12);
+  color-scheme: light;
 }
 
 /* ============= RESET ============= */
@@ -237,6 +239,17 @@ body {
 .form-group input:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+/* Explicit native element coloring hack for Chrome */
+input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(1) hue-rotate(180deg);
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+[data-theme="light"] input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: none;
 }
 
 /* ============= MESSAGES ============= */

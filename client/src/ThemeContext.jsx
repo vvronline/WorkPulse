@@ -11,6 +11,7 @@ export function ThemeProvider({ children }) {
   // Apply theme to document
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
+    document.documentElement.style.colorScheme = theme;
     localStorage.setItem('theme', theme);
   }, [theme]);
 
@@ -19,7 +20,7 @@ export function ThemeProvider({ children }) {
     if (isAuthenticated) {
       getTheme().then(({ data }) => {
         setTheme(data.theme);
-      }).catch(() => {});
+      }).catch(() => { });
     }
   }, [isAuthenticated]);
 
@@ -27,7 +28,7 @@ export function ThemeProvider({ children }) {
     const newTheme = theme === 'dark' ? 'light' : 'dark';
     setTheme(newTheme);
     if (isAuthenticated) {
-      try { await updateTheme(newTheme); } catch(e) {}
+      try { await updateTheme(newTheme); } catch (e) { }
     }
   }, [theme, isAuthenticated]);
 
