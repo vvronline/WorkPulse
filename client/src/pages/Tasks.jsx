@@ -1,5 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { getTasks, addTask, updateTaskStatus, updateTask, deleteTask, carryForwardTasks, getLocalToday } from '../api';
+import ConfirmDialog from '../components/ConfirmDialog';
+import { useAutoDismiss } from '../hooks/useAutoDismiss';
+import ReactQuill from 'react-quill-new';
+import 'react-quill-new/dist/quill.snow.css';
 import s from './Tasks.module.css';
 
 const PRIORITIES = [
@@ -23,7 +27,8 @@ export default function Tasks() {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('medium');
-  const [error, setError] = useState('');
+  const [error, setError] = useAutoDismiss('');
+  const [taskToDelete, setTaskToDelete] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [editTitle, setEditTitle] = useState('');
   const [editDesc, setEditDesc] = useState('');
@@ -81,9 +86,15 @@ export default function Tasks() {
     }
   };
 
-  const handleDelete = async (id) => {
+  const handleDelete = (task) => {
+    setTaskToDelete(task);
+  };
+
+  const confirmDelete = async () => {
+    if (!taskToDelete) return;
     try {
-      await deleteTask(id);
+      await deleteTask(taskToDelete.id);
+      setTaskToDelete(null);
       fetchTasks();
     } catch {
       setError('Failed to delete task');
@@ -186,12 +197,14 @@ export default function Tasks() {
             onChange={(e) => setDate(e.target.value)}
             className={s['date-input']}
           />
-          <button
-            className={`btn btn-secondary ${s['add-task-toggle']}`}
-            onClick={() => setFormOpen(o => !o)}
-          >
-            {formOpen ? '✕ Close' : '➕ New Task'}
-          </button>
+          {!formOpen && (
+            <button
+              className={`btn btn-secondary ${s['add-task-toggle']}`}
+              onClick={() => setFormOpen(true)}
+            >
+              ➕ New Task
+            </button>
+          )}
         </div>
       </div>
 
@@ -223,7 +236,10 @@ export default function Tasks() {
       {/* Add Task Form (collapsible) */}
       {formOpen && (
         <div className={s['tasks-form-card']}>
-          <h3>➕ New Task</h3>
+          <div className={s['form-card-header']}>
+            <h3>➕ New Task</h3>
+            <button className={s['close-form-btn']} onClick={() => setFormOpen(false)} title="Close">✕</button>
+          </div>
           <form onSubmit={handleAdd} className={s['add-form']}>
             <div className="form-group">
               <input
@@ -235,12 +251,12 @@ export default function Tasks() {
                 autoFocus
               />
             </div>
-            <div className="form-group">
-              <textarea
+            <div className={`form-group ${s['quill-wrapper']}`}>
+              <ReactQuill
+                theme="snow"
                 value={description}
-                onChange={(e) => setDescription(e.target.value)}
+                onChange={setDescription}
                 placeholder="Details (optional)"
-                rows={2}
               />
             </div>
             <div className={s['form-bottom']}>
@@ -321,6 +337,15 @@ export default function Tasks() {
           <span>Add a task above to get started!</span>
         </div>
       )}
+
+      <ConfirmDialog
+        isOpen={!!taskToDelete}
+        title="Delete Task"
+        message={`Are you sure you want to delete "${taskToDelete?.title}"?`}
+        confirmText="Delete"
+        onConfirm={confirmDelete}
+        onCancel={() => setTaskToDelete(null)}
+      />
     </div>
   );
 
@@ -337,13 +362,14 @@ export default function Tasks() {
             className={s['task-edit-input']}
             autoFocus
           />
-          <textarea
-            value={editDesc}
-            onChange={(e) => setEditDesc(e.target.value)}
-            className={s['task-edit-textarea']}
-            placeholder="Description"
-            rows={2}
-          />
+          <div className={`form-group ${s['quill-wrapper']}`}>
+            <ReactQuill
+              theme="snow"
+              value={editDesc}
+              onChange={setEditDesc}
+              placeholder="Description"
+            />
+          </div>
           <div className={s['task-edit-actions']}>
             <button className="btn btn-primary btn-sm" onClick={() => saveEdit(task.id)}>Save</button>
             <button className="btn btn-secondary btn-sm" onClick={cancelEdit}>Cancel</button>
@@ -372,13 +398,18 @@ export default function Tasks() {
             <button className={s['task-action-btn']} onClick={() => startEdit(task)} title="Edit">✏️</button>
             <button
               className={`${s['task-action-btn']} ${s['delete-btn']}`}
-              onClick={() => handleDelete(task.id)}
+              onClick={() => handleDelete(task)}
               title="Delete"
             >🗑</button>
           </div>
         </div>
         <div className={s['task-title']}>{task.title}</div>
-        {task.description && <div className={s['task-desc']}>{task.description}</div>}
+        {task.description && (
+          <div
+            className={s['task-desc']}
+            dangerouslySetInnerHTML={{ __html: task.description }}
+          />
+        )}
         <div className={s['task-card-footer']}>
           <span className={s['drag-hint']}>⠿ drag to move</span>
         </div>

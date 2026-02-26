@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { resetPassword } from '../api';
+import PasswordInput from '../components/PasswordInput';
+import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import s from './Auth.module.css';
 
 export default function ResetPassword() {
   const { token } = useParams();
   const navigate = useNavigate();
   const [form, setForm] = useState({ password: '', confirm: '' });
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [error, setError] = useAutoDismiss('');
+  const [success, setSuccess] = useAutoDismiss('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
@@ -49,8 +51,7 @@ export default function ResetPassword() {
           <form onSubmit={handleSubmit}>
             <div className="form-group">
               <label>New Password</label>
-              <input
-                type="password"
+              <PasswordInput
                 value={form.password}
                 onChange={e => setForm({ ...form, password: e.target.value })}
                 placeholder="Enter new password"
@@ -60,8 +61,7 @@ export default function ResetPassword() {
             </div>
             <div className="form-group">
               <label>Confirm Password</label>
-              <input
-                type="password"
+              <PasswordInput
                 value={form.confirm}
                 onChange={e => setForm({ ...form, confirm: e.target.value })}
                 placeholder="Confirm new password"

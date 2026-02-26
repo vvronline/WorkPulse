@@ -140,10 +140,40 @@
   max-width: 640px;
 }
 
+.form-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.tasks-form-card .form-card-header h3 {
+  margin: 0;
+}
+
+.close-form-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.close-form-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-main);
+  transform: scale(1.1);
+}
+
 .tasks-form-card h3 {
   font-size: 1rem;
   font-weight: 700;
-  margin-bottom: 1rem;
   color: var(--text);
 }
 
@@ -217,9 +247,67 @@
 /* ============= KANBAN BOARD ============= */
 .kanban-board {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 1.25rem;
-  align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+  margin-top: 1rem;
+}
+
+/* ============= QUILL EDITOR OVERRIDES ============= */
+.quill-wrapper {
+  margin-bottom: 1rem;
+}
+
+.quill-wrapper :global(.ql-toolbar) {
+  border-top-left-radius: 10px;
+  border-top-right-radius: 10px;
+  background: var(--surface);
+  border-color: var(--glass-border) !important;
+}
+
+.quill-wrapper :global(.ql-toolbar .ql-stroke) {
+  stroke: var(--text-secondary);
+}
+
+.quill-wrapper :global(.ql-toolbar .ql-fill) {
+  fill: var(--text-secondary);
+}
+
+.quill-wrapper :global(.ql-container) {
+  border-bottom-left-radius: 10px;
+  border-bottom-right-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--glass-border) !important;
+  font-family: inherit;
+  font-size: 0.9rem;
+  color: var(--text);
+  min-height: 80px;
+}
+
+.quill-wrapper :global(.ql-editor.ql-blank::before) {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.quill-wrapper :global(.ql-toolbar .ql-picker-options) {
+  background: var(--surface);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border) !important;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.quill-wrapper :global(.ql-toolbar .ql-picker-label) {
+  color: var(--text-secondary);
+}
+
+.quill-wrapper :global(.ql-toolbar .ql-picker-item) {
+  color: var(--text);
+}
+
+.quill-wrapper :global(.ql-toolbar .ql-picker-item.ql-selected),
+.quill-wrapper :global(.ql-toolbar .ql-picker-item:hover) {
+  color: var(--primary) !important;
 }
 
 .kanban-column {

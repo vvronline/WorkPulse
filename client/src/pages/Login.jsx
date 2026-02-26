@@ -2,12 +2,14 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { login as loginApi } from '../api';
+import PasswordInput from '../components/PasswordInput';
+import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import s from './Auth.module.css';
 
 export default function Login() {
   const { saveAuth } = useAuth();
   const [form, setForm] = useState({ username: '', password: '' });
-  const [error, setError] = useState('');
+  const [error, setError] = useAutoDismiss('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
@@ -27,7 +29,7 @@ export default function Login() {
   return (
     <div className={s['auth-container']}>
       <div className={s['auth-card']}>
-        
+
         <div className={s['auth-icon']}>🔐</div>
         <h2>Welcome Back</h2>
         <p>Sign in to WorkPulse</p>
@@ -45,8 +47,7 @@ export default function Login() {
           </div>
           <div className="form-group">
             <label>Password</label>
-            <input
-              type="password"
+            <PasswordInput
               value={form.password}
               onChange={e => setForm({ ...form, password: e.target.value })}
               placeholder="Enter your password"

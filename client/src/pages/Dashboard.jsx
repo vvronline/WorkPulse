@@ -6,6 +6,7 @@ import WidgetsGrid from '../components/WidgetsGrid';
 import WeeklyChart from '../components/WeeklyChart';
 import TimelineCard from '../components/TimelineCard';
 import TasksSummary from '../components/TasksSummary';
+import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import s from './Dashboard.module.css';
 
 const TARGET_HOURS = 9 * 60; // 9 hours target in minutes
@@ -71,7 +72,7 @@ export default function Dashboard() {
   const [taskSummary, setTaskSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useAutoDismiss('');
   const [liveFloorSec, setLiveFloorSec] = useState(0);
   const [liveBreakSec, setLiveBreakSec] = useState(0);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -130,7 +131,7 @@ export default function Dashboard() {
     // Refresh task summary whenever the tab becomes visible again (e.g. back from Tasks page)
     const handleVisibility = () => {
       if (!document.hidden) {
-        getTaskSummary().then(r => setTaskSummary(r.data)).catch(() => {});
+        getTaskSummary().then(r => setTaskSummary(r.data)).catch(() => { });
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);

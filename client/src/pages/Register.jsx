@@ -2,12 +2,14 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { register as registerApi } from '../api';
+import PasswordInput from '../components/PasswordInput';
+import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import s from './Auth.module.css';
 
 export default function Register() {
   const { saveAuth } = useAuth();
   const [form, setForm] = useState({ username: '', password: '', full_name: '', email: '' });
-  const [error, setError] = useState('');
+  const [error, setError] = useAutoDismiss('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
@@ -64,8 +66,7 @@ export default function Register() {
           </div>
           <div className="form-group">
             <label>Password</label>
-            <input
-              type="password"
+            <PasswordInput
               value={form.password}
               onChange={e => setForm({ ...form, password: e.target.value })}
               placeholder="Choose a password"

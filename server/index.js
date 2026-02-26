@@ -43,10 +43,22 @@ app.get('/api/health', (req, res) => {
 // ============= AUTO LOGOUT =============
 // Check for users who forgot to logout yesterday (uses per-user stored timezone)
 function autoClockOut() {
-    const users = db.prepare('SELECT id, timezone_offset FROM users').all();
+    // Only process users whose latest time entry is NOT a clock_out
+    const activeUsers = db.prepare(`
+        SELECT u.id, u.timezone_offset 
+        FROM users u
+        JOIN (
+            SELECT user_id, entry_type 
+            FROM time_entries 
+            WHERE id IN (
+                SELECT MAX(id) FROM time_entries GROUP BY user_id
+            )
+        ) latest ON u.id = latest.user_id
+        WHERE latest.entry_type != 'clock_out'
+    `).all();
     const insert = db.prepare('INSERT INTO time_entries (user_id, entry_type, timestamp) VALUES (?, ?, ?)');
 
-    for (const user of users) {
+    for (const user of activeUsers) {
         const offsetMin = user.timezone_offset || 0;
         const shift = -offsetMin;
         const tzMod = `${shift >= 0 ? '+' : ''}${shift} minutes`;

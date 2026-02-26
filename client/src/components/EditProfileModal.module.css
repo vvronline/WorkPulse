@@ -1,0 +1,368 @@
+/* ============= OVERLAY & MODAL ============= */
+.overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    animation: overlayIn 0.2s ease;
+}
+
+@keyframes overlayIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+.modal {
+    background: var(--bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 22px;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.04);
+    width: 100%;
+    max-width: 480px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    animation: modalIn 0.25s cubic-bezier(.4, 0, .2, 1);
+}
+
+@keyframes modalIn {
+    from {
+        opacity: 0;
+        transform: translateY(20px) scale(0.97);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+/* ============= HEADER ============= */
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.25rem 1.5rem 1rem;
+    border-bottom: 1px solid var(--glass-border);
+    flex-shrink: 0;
+}
+
+.title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text);
+    margin: 0;
+}
+
+.closeBtn {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid var(--glass-border);
+    background: var(--surface);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+    transition: all 0.2s;
+}
+
+.closeBtn:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+    transform: scale(1.08);
+}
+
+/* ============= BODY (scrollable) ============= */
+.body {
+    overflow-y: auto;
+    padding: 1.25rem 1.5rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    scrollbar-width: thin;
+    scrollbar-color: var(--glass-border) transparent;
+}
+
+/* ============= SECTIONS ============= */
+.section {
+    padding: 0.25rem 0;
+}
+
+.sectionTitle {
+    font-size: 0.82rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+    margin: 0 0 0.85rem;
+}
+
+.divider {
+    height: 1px;
+    background: var(--glass-border);
+    margin: 1.25rem 0;
+}
+
+/* ============= FORM ============= */
+.form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.field label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.field input {
+    padding: 0.6rem 0.85rem;
+    border: 1.5px solid var(--glass-border);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.88rem;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.field input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+/* @ prefix input */
+.inputPrefix {
+    display: flex;
+    align-items: center;
+    border: 1.5px solid var(--glass-border);
+    border-radius: 10px;
+    background: var(--surface);
+    overflow: hidden;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.inputPrefix:focus-within {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+.inputPrefix span {
+    padding: 0 0.6rem;
+    color: var(--text-muted);
+    font-size: 0.88rem;
+    font-weight: 600;
+    border-right: 1.5px solid var(--glass-border);
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    background: color-mix(in srgb, var(--surface) 80%, transparent);
+    flex-shrink: 0;
+}
+
+.inputPrefix input {
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    flex: 1;
+}
+
+/* ============= BUTTONS ============= */
+.saveBtn {
+    align-self: flex-start;
+    padding: 0.55rem 1.25rem;
+    background: var(--primary);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.15s, box-shadow 0.2s;
+    box-shadow: 0 0 16px var(--primary-glow);
+}
+
+.saveBtn:hover:not(:disabled) {
+    background: var(--primary-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 0 22px var(--primary-glow);
+}
+
+.saveBtn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+/* ============= MESSAGES ============= */
+.success {
+    font-size: 0.8rem;
+    color: #4ade80;
+    font-weight: 600;
+    margin: 0;
+}
+
+.error {
+    font-size: 0.8rem;
+    color: #f87171;
+    font-weight: 600;
+    margin: 0;
+}
+
+/* ============= DANGER ZONE ============= */
+.dangerSection {
+    background: color-mix(in srgb, #ef4444 5%, transparent);
+    border: 1px solid color-mix(in srgb, #ef4444 20%, transparent);
+    border-radius: 14px;
+    padding: 1rem 1.1rem;
+}
+
+.dangerTitle {
+    color: #f87171 !important;
+}
+
+.dangerDesc {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin: 0 0 0.85rem;
+    line-height: 1.5;
+}
+
+.dangerBtn {
+    padding: 0.55rem 1.2rem;
+    background: transparent;
+    border: 1.5px solid #ef4444;
+    border-radius: 10px;
+    color: #f87171;
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.dangerBtn:hover {
+    background: rgba(239, 68, 68, 0.12);
+    color: #fca5a5;
+}
+
+.deleteConfirmBox {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.deleteConfirmLabel {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+.deleteInput {
+    padding: 0.6rem 0.85rem;
+    border: 1.5px solid #ef4444;
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.88rem;
+    width: 100%;
+    box-sizing: border-box;
+    transition: box-shadow 0.2s;
+}
+
+.deleteInput:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+}
+
+.deleteActions {
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.dangerBtnConfirm {
+    padding: 0.55rem 1.1rem;
+    background: #ef4444;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.15s;
+}
+
+.dangerBtnConfirm:hover:not(:disabled) {
+    background: #dc2626;
+    transform: translateY(-1px);
+}
+
+.dangerBtnConfirm:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.cancelBtn {
+    padding: 0.55rem 1rem;
+    background: transparent;
+    border: 1.5px solid var(--glass-border);
+    border-radius: 10px;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.cancelBtn:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+}
+
+/* ============= LIGHT THEME ============= */
+[data-theme="light"] .modal {
+    background: rgba(255, 255, 255, 0.98);
+}
+
+/* ============= RESPONSIVE ============= */
+@media (max-width: 520px) {
+    .modal {
+        max-height: 95vh;
+        border-radius: 18px 18px 0 0;
+        align-self: flex-end;
+    }
+
+    .overlay {
+        align-items: flex-end;
+        padding: 0;
+    }
+}

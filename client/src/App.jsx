@@ -9,6 +9,7 @@ import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import Dashboard from './pages/Dashboard';
 import Navbar from './components/Navbar';
+import AxiosInterceptor from './components/AxiosInterceptor';
 
 // Lazy-load non-critical pages for smaller initial bundle
 const Analytics = lazy(() => import('./pages/Analytics'));
@@ -33,7 +34,7 @@ function AppRoutes() {
   return (
     <div className="app">
       {isAuthenticated && <Navbar />}
-      <Suspense fallback={<div style={{maxWidth:'1400px',margin:'2rem auto',padding:'0 2.5rem'}}><div className="status-card"><div className="loading-spinner"><div className="spinner"></div></div></div></div>}>
+      <Suspense fallback={<div style={{ maxWidth: '1400px', margin: '2rem auto', padding: '0 2.5rem' }}><div className="status-card"><div className="loading-spinner"><div className="spinner"></div></div></div></div>}>
         <Routes>
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
           <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
@@ -57,7 +58,9 @@ export default function App() {
       <ThemeProvider>
         <WorkStateProvider>
           <BrowserRouter>
-            <AppRoutes />
+            <AxiosInterceptor>
+              <AppRoutes />
+            </AxiosInterceptor>
           </BrowserRouter>
         </WorkStateProvider>
       </ThemeProvider>

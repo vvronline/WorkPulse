@@ -1,4 +1,8 @@
 import axios from 'axios';
+import NProgress from 'nprogress';
+import 'nprogress/nprogress.css';
+
+NProgress.configure({ showSpinner: false });
 
 const API = axios.create({
     baseURL: '/api',
@@ -19,6 +23,7 @@ export function getLocalDate(daysAgo = 0) {
 
 // Attach token and timezone offset to every request
 API.interceptors.request.use(config => {
+    NProgress.start();
     const token = localStorage.getItem('token');
     if (token) {
         config.headers.Authorization = `Bearer ${token}`;
@@ -27,15 +32,14 @@ API.interceptors.request.use(config => {
     return config;
 });
 
-// Handle expired/invalid tokens — auto-logout on 401
+// Handle expired/invalid tokens — rely on AxiosInterceptor component for routing
 API.interceptors.response.use(
-    response => response,
+    response => {
+        NProgress.done();
+        return response;
+    },
     error => {
-        if (error.response?.status === 401) {
-            localStorage.removeItem('token');
-            localStorage.removeItem('user');
-            window.location.href = '/login';
-        }
+        NProgress.done();
         return Promise.reject(error);
     }
 );
@@ -86,7 +90,10 @@ export const carryForwardTasks = () => API.post('/tasks/carry-forward');
 
 // Profile
 export const getProfile = () => API.get('/profile');
+export const updateProfile = (data) => API.put('/profile', data);
 export const updateEmail = (email) => API.put('/profile/email', { email });
+export const updatePassword = (data) => API.put('/profile/password', data);
+export const deleteAccount = (password) => API.delete('/profile', { data: { password } });
 export const uploadAvatar = (file) => {
     const formData = new FormData();
     formData.append('avatar', file);

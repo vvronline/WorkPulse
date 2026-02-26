@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { useAuth } from '../AuthContext';
 import { updateEmail } from '../api';
+import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import s from './Auth.module.css';
 
 export default function SetEmail() {
   const { user, updateUser } = useAuth();
   const [email, setEmail] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useAutoDismiss('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {

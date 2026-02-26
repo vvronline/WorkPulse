@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const bcrypt = require('bcryptjs');
 const db = require('../db');
 const auth = require('../middleware/auth');
 
@@ -66,6 +67,24 @@ router.get('/', auth, (req, res) => {
     res.json(user);
 });
 
+// Update name & username
+router.put('/', auth, (req, res) => {
+    const { full_name, username } = req.body;
+    if (!full_name || !username) {
+        return res.status(400).json({ error: 'Name and username are required' });
+    }
+    if (username.length < 3) {
+        return res.status(400).json({ error: 'Username must be at least 3 characters' });
+    }
+    const existing = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(username, req.userId);
+    if (existing) {
+        return res.status(400).json({ error: 'Username already taken' });
+    }
+    db.prepare('UPDATE users SET full_name = ?, username = ? WHERE id = ?').run(full_name.trim(), username.trim(), req.userId);
+    const updated = db.prepare('SELECT id, username, full_name, email, avatar FROM users WHERE id = ?').get(req.userId);
+    res.json(updated);
+});
+
 // Update email
 router.put('/email', auth, (req, res) => {
     const { email } = req.body;
@@ -78,6 +97,53 @@ router.put('/email', auth, (req, res) => {
 
     db.prepare('UPDATE users SET email = ? WHERE id = ?').run(email, req.userId);
     res.json({ email });
+});
+
+// Change password
+router.put('/password', auth, (req, res) => {
+    const { current_password, new_password } = req.body;
+    if (!current_password || !new_password) {
+        return res.status(400).json({ error: 'Both current and new password are required' });
+    }
+    if (new_password.length < 8) {
+        return res.status(400).json({ error: 'New password must be at least 8 characters' });
+    }
+    const user = db.prepare('SELECT password FROM users WHERE id = ?').get(req.userId);
+    if (!bcrypt.compareSync(current_password, user.password)) {
+        return res.status(400).json({ error: 'Current password is incorrect' });
+    }
+    const hash = bcrypt.hashSync(new_password, 10);
+    db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hash, req.userId);
+    res.json({ message: 'Password updated successfully' });
+});
+
+// Delete account
+router.delete('/', auth, (req, res) => {
+    const { password } = req.body;
+    if (!password) return res.status(400).json({ error: 'Password is required to delete your account' });
+
+    const user = db.prepare('SELECT password, avatar FROM users WHERE id = ?').get(req.userId);
+    if (!bcrypt.compareSync(password, user.password)) {
+        return res.status(400).json({ error: 'Incorrect password' });
+    }
+
+    // Delete avatar file if exists
+    if (user.avatar) {
+        const avatarPath = path.join(__dirname, '..', user.avatar);
+        if (fs.existsSync(avatarPath)) fs.unlinkSync(avatarPath);
+    }
+
+    // Delete all user data in a transaction
+    const deleteAll = db.transaction(() => {
+        db.prepare('DELETE FROM time_entries WHERE user_id = ?').run(req.userId);
+        db.prepare('DELETE FROM leaves WHERE user_id = ?').run(req.userId);
+        db.prepare('DELETE FROM tasks WHERE user_id = ?').run(req.userId);
+        db.prepare('DELETE FROM password_reset_tokens WHERE user_id = ?').run(req.userId);
+        db.prepare('DELETE FROM users WHERE id = ?').run(req.userId);
+    });
+    deleteAll();
+
+    res.json({ message: 'Account deleted successfully' });
 });
 
 module.exports = router;

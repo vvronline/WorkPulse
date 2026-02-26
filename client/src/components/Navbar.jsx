@@ -4,6 +4,8 @@ import { useAuth } from '../AuthContext';
 import { useTheme } from '../ThemeContext';
 import { useWorkState } from '../WorkStateContext';
 import { clockOut as apiClockOut, uploadAvatar, removeAvatar } from '../api';
+import EditProfileModal from './EditProfileModal';
+import ConfirmDialog from './ConfirmDialog';
 import s from './Navbar.module.css';
 
 export default function Navbar() {
@@ -13,10 +15,17 @@ export default function Navbar() {
   const location = useLocation();
   const [profileOpen, setProfileOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [signoutConfirming, setSignoutConfirming] = useState(false);
+  const [removeAvatarConfirming, setRemoveAvatarConfirming] = useState(false);
   const profileRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  const handleSignOut = async () => {
+  const handleSignOutClick = () => {
+    setProfileOpen(false);
+    setSignoutConfirming(true);
+  };
+  const confirmSignOut = async () => {
     try { await apiClockOut(); } catch { }
     logout();
   };
@@ -59,14 +68,34 @@ export default function Navbar() {
     }
   };
 
-  const handleRemoveAvatar = async () => {
+  const handleRemoveAvatarClick = () => {
+    setProfileOpen(false);
+    setRemoveAvatarConfirming(true);
+  };
+
+  const confirmRemoveAvatar = async () => {
     try {
       await removeAvatar();
       updateUser({ avatar: null });
     } catch (err) {
       console.error('Remove failed:', err);
+    } finally {
+      setRemoveAvatarConfirming(false);
     }
   };
+
+  // Status dot: always shown — green online, amber away, grey offline
+  const statusDotClass = workState === 'on_floor'
+    ? s['dot-online']
+    : workState === 'on_break'
+      ? s['dot-away']
+      : s['dot-offline'];
+
+  const statusLabel = workState === 'on_floor'
+    ? (workMode === 'remote' ? '🟢 Working Remotely' : '🟢 Online')
+    : workState === 'on_break'
+      ? '🟡 Away (On Break)'
+      : '⚫ Offline';
 
   return (
     <>
@@ -95,9 +124,8 @@ export default function Navbar() {
                   ? <img src={avatarUrl} alt="" className={s['profile-avatar-img']} />
                   : <span className={s['profile-avatar-initials']}>{initials}</span>
                 }
-                {workState !== 'logged_out' && (
-                  <span className={`${s['profile-status-dot']} ${workState === 'on_break' ? s['on-break'] : ''}`} />
-                )}
+                {/* Always show status dot */}
+                <span className={`${s['profile-status-dot']} ${statusDotClass}`} />
               </div>
               <span className={s['profile-name']}>{user?.full_name}</span>
               <svg className={`${s['profile-chevron-icon']} ${profileOpen ? s.open : ''}`} width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -113,9 +141,8 @@ export default function Navbar() {
                       ? <img src={avatarUrl} alt="" className={s['profile-avatar-lg-img']} />
                       : <span className={s['profile-avatar-lg-initials']}>{initials}</span>
                     }
-                    {workState !== 'logged_out' && (
-                      <span className={`${s['profile-avatar-lg-status']} ${workState === 'on_break' ? s['on-break'] : ''}`} />
-                    )}
+                    {/* Always show status dot on large avatar */}
+                    <span className={`${s['profile-avatar-lg-status']} ${statusDotClass}`} />
                     <button
                       className={s['profile-avatar-edit']}
                       onClick={() => fileInputRef.current?.click()}
@@ -134,9 +161,12 @@ export default function Navbar() {
                   <div className={s['profile-dropdown-info']}>
                     <div className={s['profile-dropdown-name']}>{user?.full_name}</div>
                     <div className={s['profile-dropdown-user']}>@{user?.username}</div>
+                    {user?.email && (
+                      <div className={s['profile-dropdown-email']}>{user.email}</div>
+                    )}
                     <div className={s['profile-dropdown-badges']}>
                       <span className={`${s['dd-status-badge']} ${s[workState] || ''}`}>
-                        {workState === 'on_floor' ? (workMode === 'remote' ? '🟢 Working' : '🟢 On Floor') : workState === 'on_break' ? '🟡 On Break' : '⚪ Logged Out'}
+                        {statusLabel}
                       </span>
                       {workState !== 'logged_out' && (
                         <span className={`${s['dd-mode-badge']} ${s[`dd-mode-${workMode}`] || ''}`}>
@@ -148,8 +178,22 @@ export default function Navbar() {
                 </div>
 
                 <div className={s['profile-dropdown-body']}>
+                  {/* Edit Profile */}
+                  <button
+                    className={s['profile-dropdown-item']}
+                    onClick={() => { setProfileOpen(false); setEditModalOpen(true); }}
+                    style={{ animationDelay: '0.02s' }}
+                  >
+                    <span className={s['dd-item-icon']}>
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                        <path d="M11.5 2.5a1.414 1.414 0 012 2L5 13H2v-3L11.5 2.5z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </span>
+                    Edit Profile
+                  </button>
+
                   {avatarUrl && (
-                    <button className={s['profile-dropdown-item']} onClick={handleRemoveAvatar} style={{ animationDelay: '0.04s' }}>
+                    <button className={s['profile-dropdown-item']} onClick={handleRemoveAvatarClick} style={{ animationDelay: '0.04s' }}>
                       <span className={s['dd-item-icon']}>
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 6h8l-.7 7.3a1 1 0 01-1 .7H5.7a1 1 0 01-1-.7L4 6zM6 6V4a1 1 0 011-1h2a1 1 0 011 1v2M3 6h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
                       </span>
@@ -172,7 +216,7 @@ export default function Navbar() {
 
                 <div className={s['profile-dropdown-divider']} />
 
-                <button className={s['profile-dropdown-signout']} onClick={handleSignOut} style={{ animationDelay: '0.12s' }}>
+                <button className={s['profile-dropdown-signout']} onClick={handleSignOutClick} style={{ animationDelay: '0.12s' }}>
                   <span className={`${s['dd-item-icon']} ${s['dd-signout-icon']}`}>
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 14H3.33A1.33 1.33 0 012 12.67V3.33A1.33 1.33 0 013.33 2H6M10.67 11.33L14 8l-3.33-3.33M14 8H6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
                   </span>
@@ -207,6 +251,31 @@ export default function Navbar() {
           <span className={s['tab-label']}>Entry</span>
         </NavLink>
       </div>
+
+      {/* Edit Profile Modal */}
+      {editModalOpen && (
+        <EditProfileModal onClose={() => setEditModalOpen(false)} />
+      )}
+
+      <ConfirmDialog
+        isOpen={signoutConfirming}
+        title="Sign Out"
+        message="Are you sure you want to sign out?"
+        confirmText="Sign Out"
+        isDanger={true}
+        onConfirm={confirmSignOut}
+        onCancel={() => setSignoutConfirming(false)}
+      />
+
+      <ConfirmDialog
+        isOpen={removeAvatarConfirming}
+        title="Remove Photo"
+        message="Are you sure you want to remove your profile photo?"
+        confirmText="Remove"
+        isDanger={true}
+        onConfirm={confirmRemoveAvatar}
+        onCancel={() => setRemoveAvatarConfirming(false)}
+      />
     </>
   );
 }

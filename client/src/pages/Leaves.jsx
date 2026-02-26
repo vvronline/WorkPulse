@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { getLeaves, addLeave, addLeavesBatch, deleteLeave, getLeaveSummary } from '../api';
+import ConfirmDialog from '../components/ConfirmDialog';
+import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import s from './Leaves.module.css';
 
 const LEAVE_TYPES = [
@@ -34,9 +36,10 @@ export default function Leaves() {
   const [skipWeekends, setSkipWeekends] = useState(true);
   const [leaveType, setLeaveType] = useState('sick');
   const [reason, setReason] = useState('');
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [error, setError] = useAutoDismiss('');
+  const [success, setSuccess] = useAutoDismiss('');
   const [submitting, setSubmitting] = useState(false);
+  const [leaveToDelete, setLeaveToDelete] = useState(null);
   const [filterMonth, setFilterMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -130,9 +133,15 @@ export default function Leaves() {
     }
   };
 
-  const handleDelete = async (id) => {
+  const handleDeleteClick = (leave) => {
+    setLeaveToDelete(leave);
+  };
+
+  const confirmDelete = async () => {
+    if (!leaveToDelete) return;
     try {
-      await deleteLeave(id);
+      await deleteLeave(leaveToDelete.id);
+      setLeaveToDelete(null);
       fetchData();
     } catch {
       setError('Failed to delete leave');
@@ -334,7 +343,7 @@ export default function Leaves() {
                         </div>
                         {leave.reason && <div className={s['leave-item-reason']}>{leave.reason}</div>}
                       </div>
-                      <button className="btn-remove-break" onClick={() => handleDelete(leave.id)} title="Delete">
+                      <button className="btn-remove-break" onClick={() => handleDeleteClick(leave)} title="Delete">
                         ✕
                       </button>
                     </div>
@@ -345,6 +354,15 @@ export default function Leaves() {
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={!!leaveToDelete}
+        title="Delete Leave"
+        message={`Are you sure you want to delete this leave entry?`}
+        confirmText="Delete"
+        onConfirm={confirmDelete}
+        onCancel={() => setLeaveToDelete(null)}
+      />
     </div>
   );
 }
