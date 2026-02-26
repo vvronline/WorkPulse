@@ -1,6 +1,6 @@
 {
   "name": "WorkPulse",
-  "short_name": "FloorTime",
+  "short_name": "WorkPulse",
   "description": "Track your floor hours, breaks, and attendance",
   "start_url": "/",
   "display": "standalone",
