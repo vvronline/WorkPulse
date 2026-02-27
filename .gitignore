@@ -4,5 +4,5 @@ node_modules/
 *.db-shm
 *.db-wal
 client/dist/
-uploads/avatars/
+server/uploads/
 .vite/

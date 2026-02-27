@@ -115,9 +115,8 @@ function autoClockOut() {
     }
 }
 
-// Run auto logout on startup and every 5 minutes
 autoClockOut();
-setInterval(autoClockOut, 5 * 60 * 1000);
+// setInterval(autoClockOut, 5 * 60 * 1000);
 
 // Cleanup expired/used password reset tokens every hour
 setInterval(() => {
