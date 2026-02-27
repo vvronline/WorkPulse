@@ -27,10 +27,13 @@ app.use(helmet({
             ...helmet.contentSecurityPolicy.getDefaultDirectives(),
             "upgrade-insecure-requests": null, // Disable forcing HTTPS
         }
-    }
+    },
+    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
+    originAgentCluster: false
 }));
 app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:3000' }));
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // Serve uploaded avatars
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
