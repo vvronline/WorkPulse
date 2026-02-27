@@ -40,6 +40,14 @@ app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
+// --- DEBUG LOGGING ---
+app.use('/api', (req, res, next) => {
+    console.log(`[DEBUG] ${req.method} ${req.url}`);
+    console.log(`[DEBUG] Cookies received:`, req.cookies);
+    // console.log(`[DEBUG] Headers:`, req.headers.cookie);
+    next();
+});
+
 // Serve uploaded avatars
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
