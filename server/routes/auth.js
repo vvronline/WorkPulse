@@ -51,7 +51,13 @@ router.post('/register', async (req, res) => {
     const result = db.prepare('INSERT INTO users (username, password, full_name, email) VALUES (?, ?, ?, ?)').run(username, hash, full_name, email);
 
     const token = jwt.sign({ id: result.lastInsertRowid, username, tv: 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
-    res.json({ token, user: { id: result.lastInsertRowid, username, full_name, email, avatar: null } });
+    res.cookie('token', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    });
+    res.json({ user: { id: result.lastInsertRowid, username, full_name, email, avatar: null } });
 });
 
 // Login
@@ -67,7 +73,13 @@ router.post('/login', async (req, res) => {
     }
 
     const token = jwt.sign({ id: user.id, username: user.username, tv: user.token_version || 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
-    res.json({ token, user: { id: user.id, username: user.username, full_name: user.full_name, email: user.email || null, avatar: user.avatar || null } });
+    res.cookie('token', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    });
+    res.json({ user: { id: user.id, username: user.username, full_name: user.full_name, email: user.email || null, avatar: user.avatar || null } });
 });
 
 // Forgot Password — send reset link via email
@@ -151,6 +163,16 @@ router.post('/reset-password', async (req, res) => {
     db.prepare('UPDATE password_reset_tokens SET used = 1 WHERE id = ?').run(row.id);
 
     res.json({ message: 'Password has been reset successfully. You can now sign in.' });
+});
+
+// Logout — clear the HTTPOnly cookie
+router.post('/logout', (req, res) => {
+    res.clearCookie('token', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax'
+    });
+    res.json({ message: 'Logged out successfully' });
 });
 
 module.exports = router;

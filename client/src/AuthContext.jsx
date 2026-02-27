@@ -1,37 +1,36 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { getProfile, logoutUser } from './api';
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(localStorage.getItem('token'));
+  const [isInitializing, setIsInitializing] = useState(true);
 
   useEffect(() => {
-    const storedUser = localStorage.getItem('user');
-    if (storedUser && token) {
-      setUser(JSON.parse(storedUser));
-    }
-
-    if (token) {
-      import('./api').then(({ getProfile }) => {
-        getProfile().then(res => {
-          if (res.data) {
-            setUser(res.data);
-            localStorage.setItem('user', JSON.stringify(res.data));
-          }
-        }).catch(err => {
-          if (err.response?.status === 401) {
-            logout();
-          }
-        });
+    // Rely on the browser's HttpOnly cookie to see if we are currently authenticated
+    // We just ask the backend for the profile. If it succeeds, the cookie was valid!
+    getProfile()
+      .then(res => {
+        if (res.data) {
+          setUser(res.data);
+          localStorage.setItem('user', JSON.stringify(res.data));
+        }
+      })
+      .catch(err => {
+        // Ignore 401s (not logged in). Only log if another error.
+        if (err.response?.status === 401) {
+          localStorage.removeItem('user');
+          setUser(null);
+        }
+      })
+      .finally(() => {
+        setIsInitializing(false);
       });
-    }
-  }, [token]);
+  }, []);
 
-  const saveAuth = (token, user) => {
-    localStorage.setItem('token', token);
+  const saveAuth = (user) => {
     localStorage.setItem('user', JSON.stringify(user));
-    setToken(token);
     setUser(user);
   };
 
@@ -43,16 +42,24 @@ export function AuthProvider({ children }) {
     });
   };
 
-  const logout = () => {
-    localStorage.removeItem('token');
+  const logout = async () => {
+    try {
+      await logoutUser();
+    } catch (e) { /* ignore network error on logout */ }
     localStorage.removeItem('user');
-    setToken(null);
     setUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, saveAuth, updateUser, logout, isAuthenticated: !!token }}>
-      {children}
+    <AuthContext.Provider value={{
+      user,
+      saveAuth,
+      updateUser,
+      logout,
+      isAuthenticated: !!user,
+      isInitializing
+    }}>
+      {!isInitializing && children}
     </AuthContext.Provider>
   );
 }

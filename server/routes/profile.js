@@ -119,7 +119,13 @@ router.put('/password', auth, async (req, res) => {
     // Return a fresh token so the current session stays valid after invalidation
     const updated = db.prepare('SELECT token_version FROM users WHERE id = ?').get(req.userId);
     const token = jwt.sign({ id: req.userId, username: req.username, tv: updated.token_version || 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
-    res.json({ message: 'Password updated successfully', token });
+    res.cookie('token', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    });
+    res.json({ message: 'Password updated successfully' });
 });
 
 // Delete account

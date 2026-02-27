@@ -18,7 +18,7 @@ export default function Register() {
     setLoading(true);
     try {
       const { data } = await registerApi(form);
-      saveAuth(data.token, data.user);
+      saveAuth(data.user);
     } catch (err) {
       setError(err.response?.data?.error || 'Registration failed');
     } finally {

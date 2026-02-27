@@ -11,6 +11,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const cookieParser = require('cookie-parser');
 const db = require('./db');
 const authRoutes = require('./routes/auth');
 const trackerRoutes = require('./routes/tracker');
@@ -31,7 +32,11 @@ app.use(helmet({
     crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
     originAgentCluster: false
 }));
-app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:3000' }));
+app.use(cors({
+    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    credentials: true
+}));
+app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 

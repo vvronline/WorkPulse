@@ -18,7 +18,7 @@ export default function Login() {
     setLoading(true);
     try {
       const { data } = await loginApi(form);
-      saveAuth(data.token, data.user);
+      saveAuth(data.user);
     } catch (err) {
       setError(err.response?.data?.error || 'Login failed');
     } finally {

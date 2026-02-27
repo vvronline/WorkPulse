@@ -8,6 +8,7 @@ export const baseURL = process.env.NODE_ENV === 'production' ? '' : 'http://loca
 
 const API = axios.create({
     baseURL: '/api',
+    withCredentials: true
 });
 
 // Get today's date in local timezone as YYYY-MM-DD
@@ -23,13 +24,9 @@ export function getLocalDate(daysAgo = 0) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-// Attach token and timezone offset to every request
+// Attach timezone offset to every request (Auth token is sent automatically via HttpOnly cookie)
 API.interceptors.request.use(config => {
     NProgress.start();
-    const token = localStorage.getItem('token');
-    if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
-    }
     config.headers['x-timezone-offset'] = new Date().getTimezoneOffset();
     return config;
 });
@@ -49,6 +46,7 @@ API.interceptors.response.use(
 // Auth
 export const register = (data) => API.post('/auth/register', data);
 export const login = (data) => API.post('/auth/login', data);
+export const logoutUser = () => API.post('/auth/logout');
 export const forgotPassword = (data) => API.post('/auth/forgot-password', data);
 export const resetPassword = (data) => API.post('/auth/reset-password', data);
 
