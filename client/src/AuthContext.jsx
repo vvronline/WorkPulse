@@ -11,6 +11,21 @@ export function AuthProvider({ children }) {
     if (storedUser && token) {
       setUser(JSON.parse(storedUser));
     }
+
+    if (token) {
+      import('./api').then(({ getProfile }) => {
+        getProfile().then(res => {
+          if (res.data) {
+            setUser(res.data);
+            localStorage.setItem('user', JSON.stringify(res.data));
+          }
+        }).catch(err => {
+          if (err.response?.status === 401) {
+            logout();
+          }
+        });
+      });
+    }
   }, [token]);
 
   const saveAuth = (token, user) => {
