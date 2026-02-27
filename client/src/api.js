@@ -4,10 +4,10 @@ import 'nprogress/nprogress.css';
 
 NProgress.configure({ showSpinner: false });
 
-export const baseURL = process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5000';
+export const baseURL = process.env.NODE_ENV === 'production' ? '/api' : 'http://localhost:5000/api';
 
 const API = axios.create({
-    baseURL: '/api',
+    baseURL: baseURL,
     withCredentials: true
 });
 
