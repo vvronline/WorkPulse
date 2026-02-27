@@ -53,7 +53,7 @@ router.post('/register', async (req, res) => {
     const token = jwt.sign({ id: result.lastInsertRowid, username, tv: 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
     res.cookie('token', token, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        secure: false, // TODO: change to true once HTTPS Let's Encrypt is configured
         sameSite: 'lax',
         maxAge: 24 * 60 * 60 * 1000 // 24 hours
     });
@@ -75,7 +75,7 @@ router.post('/login', async (req, res) => {
     const token = jwt.sign({ id: user.id, username: user.username, tv: user.token_version || 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
     res.cookie('token', token, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        secure: false, // TODO: change to true once HTTPS Let's Encrypt is configured
         sameSite: 'lax',
         maxAge: 24 * 60 * 60 * 1000 // 24 hours
     });
@@ -169,7 +169,7 @@ router.post('/reset-password', async (req, res) => {
 router.post('/logout', (req, res) => {
     res.clearCookie('token', {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        secure: false,
         sameSite: 'lax'
     });
     res.json({ message: 'Logged out successfully' });

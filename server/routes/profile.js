@@ -121,7 +121,7 @@ router.put('/password', auth, async (req, res) => {
     const token = jwt.sign({ id: req.userId, username: req.username, tv: updated.token_version || 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
     res.cookie('token', token, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        secure: false, // TODO: change to true once HTTPS Let's Encrypt is configured
         sameSite: 'lax',
         maxAge: 24 * 60 * 60 * 1000 // 24 hours
     });
