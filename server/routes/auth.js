@@ -53,8 +53,10 @@ router.post('/register', async (req, res) => {
     const token = jwt.sign({ id: result.lastInsertRowid, username, tv: 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
     res.cookie('token', token, {
         httpOnly: true,
-        secure: false, // TODO: change to true once HTTPS Let's Encrypt is configured
-        sameSite: 'lax',
+        // When frontend and backend map to different IPs/ports, SameSite 'None' is required for cross-origin cookies.
+        // SameSite 'None' explicitly requires 'secure: true' in modern browsers
+        secure: true,
+        sameSite: 'none',
         maxAge: 24 * 60 * 60 * 1000 // 24 hours
     });
     res.json({ user: { id: result.lastInsertRowid, username, full_name, email, avatar: null } });
@@ -75,8 +77,8 @@ router.post('/login', async (req, res) => {
     const token = jwt.sign({ id: user.id, username: user.username, tv: user.token_version || 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
     res.cookie('token', token, {
         httpOnly: true,
-        secure: false, // TODO: change to true once HTTPS Let's Encrypt is configured
-        sameSite: 'lax',
+        secure: true,
+        sameSite: 'none',
         maxAge: 24 * 60 * 60 * 1000 // 24 hours
     });
     res.json({ user: { id: user.id, username: user.username, full_name: user.full_name, email: user.email || null, avatar: user.avatar || null } });
@@ -169,8 +171,8 @@ router.post('/reset-password', async (req, res) => {
 router.post('/logout', (req, res) => {
     res.clearCookie('token', {
         httpOnly: true,
-        secure: false,
-        sameSite: 'lax'
+        secure: true,
+        sameSite: 'none'
     });
     res.json({ message: 'Logged out successfully' });
 });

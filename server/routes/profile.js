@@ -121,8 +121,10 @@ router.put('/password', auth, async (req, res) => {
     const token = jwt.sign({ id: req.userId, username: req.username, tv: updated.token_version || 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
     res.cookie('token', token, {
         httpOnly: true,
-        secure: false, // TODO: change to true once HTTPS Let's Encrypt is configured
-        sameSite: 'lax',
+        // When frontend and backend map to different IPs/ports, SameSite 'None' is required for cross-origin cookies.
+        // SameSite 'None' explicitly requires 'secure: true' in modern browsers
+        secure: true,
+        sameSite: 'none',
         maxAge: 24 * 60 * 60 * 1000 // 24 hours
     });
     res.json({ message: 'Password updated successfully' });
