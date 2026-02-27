@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { useTheme } from '../ThemeContext';
 import { useWorkState } from '../WorkStateContext';
-import { clockOut as apiClockOut, uploadAvatar, removeAvatar } from '../api';
+import { clockOut as apiClockOut, uploadAvatar, removeAvatar, baseURL } from '../api';
 import EditProfileModal from './EditProfileModal';
 import ConfirmDialog from './ConfirmDialog';
 import s from './Navbar.module.css';
@@ -51,7 +51,7 @@ export default function Navbar() {
     ? user.full_name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
     : '?';
 
-  const avatarUrl = user?.avatar || null;
+  const avatarUrl = user?.avatar ? `${baseURL}${user.avatar}` : null;
 
   const handleAvatarUpload = async (e) => {
     const file = e.target.files?.[0];
