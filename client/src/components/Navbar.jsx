@@ -100,10 +100,10 @@ export default function Navbar() {
   return (
     <>
       <nav className={s.navbar}>
-        <div className={s['navbar-logo']}>
+        <NavLink to="/" className={s['navbar-logo']}>
           <div className={s['logo-icon']}>💼</div>
           <h1 className={s.title}>WorkPulse</h1>
-        </div>
+        </NavLink>
         <div className={s['navbar-right']}>
           {/* Desktop nav links — hidden on mobile via CSS */}
           <div className={`${s['nav-links']} ${s['nav-links-desktop']}`}>
