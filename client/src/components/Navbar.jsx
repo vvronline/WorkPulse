@@ -51,10 +51,13 @@ export default function Navbar() {
     ? user.full_name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
     : '?';
 
+  // Compute the correct base URL for static images (stripping /api if present)
+  const renderBaseURL = baseURL.endsWith('/api') ? baseURL.slice(0, -4) : baseURL;
+
   const avatarUrl = user?.avatar
     ? user.avatar.startsWith('http')
       ? user.avatar
-      : `${baseURL}${user.avatar}`
+      : `${renderBaseURL}${user.avatar}`
     : null;
 
   const handleAvatarUpload = async (e) => {
