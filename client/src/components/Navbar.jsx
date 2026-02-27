@@ -51,7 +51,11 @@ export default function Navbar() {
     ? user.full_name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
     : '?';
 
-  const avatarUrl = user?.avatar ? `${baseURL}${user.avatar}` : null;
+  const avatarUrl = user?.avatar
+    ? user.avatar.startsWith('http')
+      ? user.avatar
+      : `${baseURL}${user.avatar}`
+    : null;
 
   const handleAvatarUpload = async (e) => {
     const file = e.target.files?.[0];
