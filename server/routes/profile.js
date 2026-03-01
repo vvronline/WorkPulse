@@ -9,6 +9,18 @@ const auth = require('../middleware/auth');
 
 const router = express.Router();
 
+const isProduction = process.env.NODE_ENV === 'production';
+
+// Cookie options helper
+function cookieOptions() {
+    return {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: 'lax',
+        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    };
+}
+
 // Ensure uploads directory exists
 const uploadDir = path.join(__dirname, '..', 'uploads', 'avatars');
 if (!fs.existsSync(uploadDir)) {
@@ -65,7 +77,7 @@ router.delete('/avatar', auth, (req, res) => {
 
 // Get profile
 router.get('/', auth, (req, res) => {
-    const user = db.prepare('SELECT id, username, full_name, email, avatar FROM users WHERE id = ?').get(req.userId);
+    const user = db.prepare('SELECT id, username, full_name, email, avatar, role, org_id, team_id, department_id FROM users WHERE id = ?').get(req.userId);
     res.json(user);
 });
 
@@ -75,8 +87,11 @@ router.put('/', auth, (req, res) => {
     if (!full_name || !username) {
         return res.status(400).json({ error: 'Name and username are required' });
     }
-    if (username.length < 3) {
-        return res.status(400).json({ error: 'Username must be at least 3 characters' });
+    if (username.length < 3 || username.length > 50) {
+        return res.status(400).json({ error: 'Username must be 3-50 characters' });
+    }
+    if (full_name.length > 100) {
+        return res.status(400).json({ error: 'Full name must be 100 characters or less' });
     }
     const existing = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(username, req.userId);
     if (existing) {
@@ -119,12 +134,7 @@ router.put('/password', auth, async (req, res) => {
     // Return a fresh token so the current session stays valid after invalidation
     const updated = db.prepare('SELECT token_version FROM users WHERE id = ?').get(req.userId);
     const token = jwt.sign({ id: req.userId, username: req.username, tv: updated.token_version || 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
-    res.cookie('token', token, {
-        httpOnly: true,
-        secure: false,
-        sameSite: 'lax',
-        maxAge: 24 * 60 * 60 * 1000 // 24 hours
-    });
+    res.cookie('token', token, cookieOptions());
     res.json({ message: 'Password updated successfully' });
 });
 

@@ -1,49 +1,9 @@
 const express = require('express');
 const db = require('../db');
 const auth = require('../middleware/auth');
+const { getLocalToday, getLocalDow, getTzModifier, getLocalDateFromTs } = require('../utils/timezone');
 
 const router = express.Router();
-
-// Helper: get "today" in the client's local timezone using x-timezone-offset header
-// The header value is Date.getTimezoneOffset() in minutes (e.g. -330 for IST)
-function getLocalToday(req) {
-    const offsetMin = parseInt(req.headers['x-timezone-offset']);
-    if (!isNaN(offsetMin)) {
-        const now = new Date(Date.now() - offsetMin * 60000);
-        return now.toISOString().slice(0, 10);
-    }
-    return new Date().toISOString().slice(0, 10);
-}
-
-function getLocalDow(req) {
-    const offsetMin = parseInt(req.headers['x-timezone-offset']);
-    if (!isNaN(offsetMin)) {
-        const now = new Date(Date.now() - offsetMin * 60000);
-        return now.getUTCDay(); // 0=Sun, 6=Sat
-    }
-    return new Date().getUTCDay();
-}
-
-// SQLite modifier to convert UTC timestamps to client local time
-// e.g. for IST (offset=-330): returns '+330 minutes'
-function getTzModifier(req) {
-    const offsetMin = parseInt(req.headers['x-timezone-offset']);
-    if (!isNaN(offsetMin)) {
-        const shift = -offsetMin;
-        return `${shift >= 0 ? '+' : ''}${shift} minutes`;
-    }
-    return '+0 minutes';
-}
-
-// Convert a UTC timestamp string to local date string using client offset
-function getLocalDateFromTs(timestamp, req) {
-    const offsetMin = parseInt(req.headers['x-timezone-offset']);
-    if (!isNaN(offsetMin)) {
-        const utcMs = new Date(timestamp.replace(' ', 'T') + 'Z').getTime();
-        return new Date(utcMs - offsetMin * 60000).toISOString().slice(0, 10);
-    }
-    return timestamp.slice(0, 10);
-}
 
 // Get current status for today
 router.get('/status', auth, (req, res) => {

@@ -8,15 +8,18 @@ export default function SetEmail() {
   const { user, updateUser } = useAuth();
   const [email, setEmail] = useState('');
   const [error, setError] = useAutoDismiss('');
+  const [success, setSuccess] = useAutoDismiss('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setSuccess('');
     setLoading(true);
     try {
       await updateEmail(email);
       updateUser({ email });
+      setSuccess('Email saved successfully!');
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save email');
     } finally {
@@ -32,11 +35,13 @@ export default function SetEmail() {
         <p>Hi {user?.full_name || user?.username}, an email address is now required for account recovery.</p>
 
         {error && <div className="error-msg">{error}</div>}
+        {success && <div className="success-msg">{success}</div>}
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label>Email Address</label>
+            <label htmlFor="set-email">Email Address</label>
             <input
+              id="set-email"
               type="email"
               value={email}
               onChange={e => setEmail(e.target.value)}

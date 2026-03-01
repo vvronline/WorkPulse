@@ -36,8 +36,9 @@ export default function Login() {
         {error && <div className="error-msg">{error}</div>}
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label>Username</label>
+            <label htmlFor="login-username">Username</label>
             <input
+              id="login-username"
               type="text"
               value={form.username}
               onChange={e => setForm({ ...form, username: e.target.value })}
@@ -46,8 +47,9 @@ export default function Login() {
             />
           </div>
           <div className="form-group">
-            <label>Password</label>
+            <label htmlFor="login-password">Password</label>
             <PasswordInput
+              id="login-password"
               value={form.password}
               onChange={e => setForm({ ...form, password: e.target.value })}
               placeholder="Enter your password"

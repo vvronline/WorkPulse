@@ -17,9 +17,19 @@ const ManualEntry = lazy(() => import('./pages/ManualEntry'));
 const Leaves = lazy(() => import('./pages/Leaves'));
 const Tasks = lazy(() => import('./pages/Tasks'));
 
-function ProtectedRoute({ children }) {
-  const { isAuthenticated } = useAuth();
+// Enterprise pages
+const Admin = lazy(() => import('./pages/Admin'));
+const Organization = lazy(() => import('./pages/Organization'));
+const ManagerDashboard = lazy(() => import('./pages/ManagerDashboard'));
+const LeavePolicy = lazy(() => import('./pages/LeavePolicy'));
+
+function ProtectedRoute({ children, minRole }) {
+  const { isAuthenticated, user } = useAuth();
   if (!isAuthenticated) return <Navigate to="/login" />;
+  if (minRole) {
+    const levels = { employee: 1, team_lead: 2, manager: 3, hr_admin: 4, super_admin: 5 };
+    if ((levels[user?.role] || 1) < (levels[minRole] || 1)) return <Navigate to="/" />;
+  }
   return children;
 }
 
@@ -45,6 +55,10 @@ function AppRoutes() {
           <Route path="/manual-entry" element={<ProtectedRoute><ManualEntry /></ProtectedRoute>} />
           <Route path="/leaves" element={<ProtectedRoute><Leaves /></ProtectedRoute>} />
           <Route path="/tasks" element={<ProtectedRoute><Tasks /></ProtectedRoute>} />
+          <Route path="/admin" element={<ProtectedRoute minRole="hr_admin"><Admin /></ProtectedRoute>} />
+          <Route path="/organization" element={<ProtectedRoute><Organization /></ProtectedRoute>} />
+          <Route path="/manager" element={<ProtectedRoute minRole="team_lead"><ManagerDashboard /></ProtectedRoute>} />
+          <Route path="/leave-policy" element={<ProtectedRoute><LeavePolicy /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </Suspense>

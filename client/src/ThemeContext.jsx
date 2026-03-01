@@ -25,12 +25,14 @@ export function ThemeProvider({ children }) {
   }, [isAuthenticated]);
 
   const toggleTheme = useCallback(async () => {
-    const newTheme = theme === 'dark' ? 'light' : 'dark';
-    setTheme(newTheme);
-    if (isAuthenticated) {
-      try { await updateTheme(newTheme); } catch (e) { }
-    }
-  }, [theme, isAuthenticated]);
+    setTheme(prev => {
+      const newTheme = prev === 'dark' ? 'light' : 'dark';
+      if (isAuthenticated) {
+        updateTheme(newTheme).catch(() => {});
+      }
+      return newTheme;
+    });
+  }, [isAuthenticated]);
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme }}>

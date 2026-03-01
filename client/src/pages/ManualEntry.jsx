@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { addManualEntry, deleteEntries, getEntries, getLeaves, getStatus, getLocalToday } from '../api';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import s from './ManualEntry.module.css';
@@ -48,6 +48,7 @@ export default function ManualEntry() {
   const [workMode, setWorkMode] = useState('office');
   const [isEditMode, setIsEditMode] = useState(false);   // true when editing existing entries
   const [currentlyClocked, setCurrentlyClocked] = useState(false); // true if clocked in right now
+  const checkDateReqId = useRef(0); // guard against race conditions
 
   const addBreak = () => setBreaks([...breaks, { start: '', end: '' }]);
   const removeBreak = (index) => setBreaks(breaks.filter((_, i) => i !== index));
@@ -77,6 +78,7 @@ export default function ManualEntry() {
     setSuccess('');
     if (!dateVal) return;
 
+    const reqId = ++checkDateReqId.current;
     setCheckingDate(true);
     try {
       const today = getLocalToday();
@@ -84,6 +86,9 @@ export default function ManualEntry() {
         getEntries(dateVal),
         getLeaves(dateVal, dateVal),
       ]);
+
+      // Discard stale responses if user changed the date in the meantime
+      if (reqId !== checkDateReqId.current) return;
 
       if (entriesRes.data.length > 0) {
         setExistingEntries(entriesRes.data);
@@ -95,6 +100,7 @@ export default function ManualEntry() {
       // If today is selected, check if currently clocked in
       if (dateVal === today) {
         const statusRes = await getStatus();
+        if (reqId !== checkDateReqId.current) return;
         if (statusRes.data.state !== 'logged_out') {
           setCurrentlyClocked(true);
         }
@@ -102,7 +108,9 @@ export default function ManualEntry() {
     } catch {
       // ignore
     } finally {
-      setCheckingDate(false);
+      if (reqId === checkDateReqId.current) {
+        setCheckingDate(false);
+      }
     }
   };
 

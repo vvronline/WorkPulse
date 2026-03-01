@@ -7,6 +7,18 @@ const db = require('../db');
 
 const router = express.Router();
 
+const isProduction = process.env.NODE_ENV === 'production';
+
+// Cookie options helper
+function cookieOptions() {
+    return {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: 'lax',
+        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    };
+}
+
 // ---- Email transporter (lazy init) ----
 let transporter = null;
 function getTransporter() {
@@ -47,17 +59,19 @@ router.post('/register', async (req, res) => {
         return res.status(400).json({ error: 'Email already registered' });
     }
 
+    if (username.length < 3 || username.length > 50) {
+        return res.status(400).json({ error: 'Username must be 3-50 characters' });
+    }
+    if (full_name.length > 100) {
+        return res.status(400).json({ error: 'Full name must be 100 characters or less' });
+    }
+
     const hash = await bcrypt.hash(password, 10);
     const result = db.prepare('INSERT INTO users (username, password, full_name, email) VALUES (?, ?, ?, ?)').run(username, hash, full_name, email);
 
     const token = jwt.sign({ id: result.lastInsertRowid, username, tv: 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
-    res.cookie('token', token, {
-        httpOnly: true,
-        secure: false, // Set to true once HTTPS is enabled
-        sameSite: 'lax',
-        maxAge: 24 * 60 * 60 * 1000 // 24 hours
-    });
-    res.json({ user: { id: result.lastInsertRowid, username, full_name, email, avatar: null } });
+    res.cookie('token', token, cookieOptions());
+    res.json({ user: { id: result.lastInsertRowid, username, full_name, email, avatar: null, role: 'employee', org_id: null } });
 });
 
 // Login
@@ -72,14 +86,13 @@ router.post('/login', async (req, res) => {
         return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    if (!user.is_active) {
+        return res.status(403).json({ error: 'Your account has been deactivated. Contact your administrator.' });
+    }
+
     const token = jwt.sign({ id: user.id, username: user.username, tv: user.token_version || 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
-    res.cookie('token', token, {
-        httpOnly: true,
-        secure: false,
-        sameSite: 'lax',
-        maxAge: 24 * 60 * 60 * 1000 // 24 hours
-    });
-    res.json({ user: { id: user.id, username: user.username, full_name: user.full_name, email: user.email || null, avatar: user.avatar || null } });
+    res.cookie('token', token, cookieOptions());
+    res.json({ user: { id: user.id, username: user.username, full_name: user.full_name, email: user.email || null, avatar: user.avatar || null, role: user.role || 'employee', org_id: user.org_id || null } });
 });
 
 // Forgot Password — send reset link via email
@@ -169,7 +182,7 @@ router.post('/reset-password', async (req, res) => {
 router.post('/logout', (req, res) => {
     res.clearCookie('token', {
         httpOnly: true,
-        secure: false,
+        secure: isProduction,
         sameSite: 'lax'
     });
     res.json({ message: 'Logged out successfully' });

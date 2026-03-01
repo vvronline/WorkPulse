@@ -18,6 +18,10 @@ const trackerRoutes = require('./routes/tracker');
 const leaveRoutes = require('./routes/leaves');
 const taskRoutes = require('./routes/tasks');
 const profileRoutes = require('./routes/profile');
+const organizationRoutes = require('./routes/organization');
+const adminRoutes = require('./routes/admin');
+const managerRoutes = require('./routes/manager');
+const leavePolicyRoutes = require('./routes/leavePolicy');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -33,20 +37,27 @@ app.use(helmet({
     originAgentCluster: false
 }));
 app.use(cors({
-    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    origin: function (origin, callback) {
+        const allowed = process.env.CORS_ORIGIN
+            ? process.env.CORS_ORIGIN.split(',').map(s => s.trim())
+            : ['http://localhost:3000', 'http://localhost:3001'];
+        // Allow requests with no origin (mobile apps, curl, etc.)
+        if (!origin || allowed.includes(origin)) return callback(null, true);
+        callback(new Error('Not allowed by CORS'));
+    },
     credentials: true
 }));
 app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// --- DEBUG LOGGING ---
-app.use('/api', (req, res, next) => {
-    console.log(`[DEBUG] ${req.method} ${req.url}`);
-    console.log(`[DEBUG] Cookies received:`, req.cookies);
-    // console.log(`[DEBUG] Headers:`, req.headers.cookie);
-    next();
-});
+// --- DEBUG LOGGING (dev only) ---
+if (process.env.NODE_ENV !== 'production') {
+    app.use('/api', (req, res, next) => {
+        console.log(`[DEBUG] ${req.method} ${req.url}`);
+        next();
+    });
+}
 
 // Serve uploaded avatars
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -65,13 +76,24 @@ const passwordLimiter = rateLimit({
     message: { error: 'Too many password attempts. Please try again later.' }
 });
 
+// General rate limiter for API routes
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 300,
+    message: { error: 'Too many requests. Please try again later.' }
+});
+
 // Routes
 app.use('/api/auth', authLimiter, authRoutes);
-app.use('/api/tracker', trackerRoutes);
-app.use('/api/leaves', leaveRoutes);
-app.use('/api/tasks', taskRoutes);
+app.use('/api/tracker', apiLimiter, trackerRoutes);
+app.use('/api/leaves', apiLimiter, leaveRoutes);
+app.use('/api/tasks', apiLimiter, taskRoutes);
 app.use('/api/profile/password', passwordLimiter);
-app.use('/api/profile', profileRoutes);
+app.use('/api/profile', apiLimiter, profileRoutes);
+app.use('/api/org', apiLimiter, organizationRoutes);
+app.use('/api/admin', apiLimiter, adminRoutes);
+app.use('/api/manager', apiLimiter, managerRoutes);
+app.use('/api/leave-policy', apiLimiter, leavePolicyRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -129,7 +151,7 @@ function autoClockOut() {
 }
 
 autoClockOut();
-// setInterval(autoClockOut, 5 * 60 * 1000);
+setInterval(autoClockOut, 5 * 60 * 1000);
 
 // Cleanup expired/used password reset tokens every hour
 setInterval(() => {
@@ -138,17 +160,17 @@ setInterval(() => {
     } catch (e) { console.error('Token cleanup error:', e.message); }
 }, 60 * 60 * 1000);
 
-// Serve React frontend in production
-const clientDist = path.join(__dirname, '..', 'client', 'dist');
-app.use(express.static(clientDist));
-app.get(/.*/, (req, res) => {
-    res.sendFile(path.join(clientDist, 'index.html'));
-});
-
-// Global error handler (must be registered BEFORE app.listen)
+// Global error handler (must be registered BEFORE static/SPA fallback)
 app.use((err, req, res, next) => {
     console.error('Unhandled error:', err);
     res.status(500).json({ error: 'Internal server error' });
+});
+
+// Serve React frontend in production
+const clientDist = path.join(__dirname, '..', 'client', 'dist');
+app.use(express.static(clientDist));
+app.get('/{*splat}', (req, res) => {
+    res.sendFile(path.join(clientDist, 'index.html'));
 });
 
 const server = app.listen(PORT, () => {

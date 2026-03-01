@@ -63,12 +63,18 @@ export default function Navbar() {
   const handleAvatarUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    // Client-side file size check (5MB limit)
+    if (file.size > 5 * 1024 * 1024) {
+      alert('File is too large. Maximum size is 5MB.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
     setUploading(true);
     try {
       const { data } = await uploadAvatar(file);
       updateUser({ avatar: data.avatar });
     } catch (err) {
-      console.error('Upload failed:', err);
+      alert(err.response?.data?.error || 'Avatar upload failed. Please try again.');
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -85,7 +91,7 @@ export default function Navbar() {
       await removeAvatar();
       updateUser({ avatar: null });
     } catch (err) {
-      console.error('Remove failed:', err);
+      alert(err.response?.data?.error || 'Failed to remove photo. Please try again.');
     } finally {
       setRemoveAvatarConfirming(false);
     }
@@ -104,6 +110,12 @@ export default function Navbar() {
       ? '🟡 Away (On Break)'
       : '⚫ Offline';
 
+  // Role-based nav visibility
+  const roleLevels = { employee: 1, team_lead: 2, manager: 3, hr_admin: 4, super_admin: 5 };
+  const userLevel = roleLevels[user?.role] || 1;
+  const isTeamLead = userLevel >= 2;
+  const isHR = userLevel >= 4;
+
   return (
     <>
       <nav className={s.navbar}>
@@ -119,12 +131,18 @@ export default function Navbar() {
             <NavLink to="/leaves" className={location.pathname === '/leaves' ? s.active : ''}>Leaves</NavLink>
             <NavLink to="/tasks" className={location.pathname === '/tasks' ? s.active : ''}>Tasks</NavLink>
             <NavLink to="/manual-entry" className={location.pathname === '/manual-entry' ? s.active : ''}>Manual Entry</NavLink>
+            {user?.org_id && <NavLink to="/organization" className={location.pathname === '/organization' ? s.active : ''}>Org</NavLink>}
+            {user?.org_id && <NavLink to="/leave-policy" className={location.pathname === '/leave-policy' ? s.active : ''}>Leave Policy</NavLink>}
+            {isTeamLead && <NavLink to="/manager" className={location.pathname === '/manager' ? s.active : ''}>Manager</NavLink>}
+            {isHR && <NavLink to="/admin" className={location.pathname === '/admin' ? s.active : ''}>Admin</NavLink>}
           </div>
 
           <div className={s['profile-section']} ref={profileRef}>
             <button
               className={s['profile-trigger']}
               onClick={() => setProfileOpen(prev => !prev)}
+              aria-expanded={profileOpen}
+              aria-haspopup="true"
             >
               <div className={s['profile-avatar-wrapper']}>
                 {avatarUrl
@@ -253,10 +271,17 @@ export default function Navbar() {
           <span className={s['nav-icon']}>✅</span>
           <span className={s['tab-label']}>Tasks</span>
         </NavLink>
-        <NavLink to="/manual-entry" className={location.pathname === '/manual-entry' ? s.active : ''}>
-          <span className={s['nav-icon']}>📝</span>
-          <span className={s['tab-label']}>Entry</span>
-        </NavLink>
+        {isTeamLead ? (
+          <NavLink to="/manager" className={location.pathname === '/manager' ? s.active : ''}>
+            <span className={s['nav-icon']}>👔</span>
+            <span className={s['tab-label']}>Manage</span>
+          </NavLink>
+        ) : (
+          <NavLink to="/manual-entry" className={location.pathname === '/manual-entry' ? s.active : ''}>
+            <span className={s['nav-icon']}>📝</span>
+            <span className={s['tab-label']}>Entry</span>
+          </NavLink>
+        )}
       </div>
 
       {/* Edit Profile Modal */}

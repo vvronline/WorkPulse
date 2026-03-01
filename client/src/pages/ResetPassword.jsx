@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { resetPassword } from '../api';
 import PasswordInput from '../components/PasswordInput';
@@ -12,6 +12,14 @@ export default function ResetPassword() {
   const [error, setError] = useAutoDismiss('');
   const [success, setSuccess] = useAutoDismiss('');
   const [loading, setLoading] = useState(false);
+  const redirectTimerRef = useRef(null);
+
+  // Cleanup redirect timer on unmount
+  useEffect(() => {
+    return () => {
+      if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
+    };
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -21,15 +29,15 @@ export default function ResetPassword() {
     if (form.password !== form.confirm) {
       return setError('Passwords do not match');
     }
-    if (form.password.length < 4) {
-      return setError('Password must be at least 4 characters');
+    if (form.password.length < 8) {
+      return setError('Password must be at least 8 characters');
     }
 
     setLoading(true);
     try {
       const { data } = await resetPassword({ token, password: form.password });
       setSuccess(data.message);
-      setTimeout(() => navigate('/login'), 3000);
+      redirectTimerRef.current = setTimeout(() => navigate('/login'), 3000);
     } catch (err) {
       setError(err.response?.data?.error || 'Something went wrong');
     } finally {
@@ -50,23 +58,25 @@ export default function ResetPassword() {
         {!success ? (
           <form onSubmit={handleSubmit}>
             <div className="form-group">
-              <label>New Password</label>
+              <label htmlFor="reset-password">New Password</label>
               <PasswordInput
+                id="reset-password"
                 value={form.password}
                 onChange={e => setForm({ ...form, password: e.target.value })}
-                placeholder="Enter new password"
+                placeholder="Enter new password (min 8 chars)"
                 required
-                minLength={4}
+                minLength={8}
               />
             </div>
             <div className="form-group">
-              <label>Confirm Password</label>
+              <label htmlFor="reset-confirm">Confirm Password</label>
               <PasswordInput
+                id="reset-confirm"
                 value={form.confirm}
                 onChange={e => setForm({ ...form, confirm: e.target.value })}
                 placeholder="Confirm new password"
                 required
-                minLength={4}
+                minLength={8}
               />
             </div>
             <button type="submit" className="btn btn-primary" disabled={loading}>

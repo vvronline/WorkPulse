@@ -24,16 +24,18 @@
 }
 
 .modal {
-    background: var(--bg);
-    border: 1px solid var(--glass-border);
-    border-radius: 22px;
-    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.04);
+    background: rgba(12, 12, 20, 0.96);
+    backdrop-filter: blur(24px) saturate(1.5);
+    -webkit-backdrop-filter: blur(24px) saturate(1.5);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 20px;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
     width: 100%;
     max-width: 480px;
     max-height: 90vh;
     display: flex;
     flex-direction: column;
-    animation: modalIn 0.25s cubic-bezier(.4, 0, .2, 1);
+    animation: modalIn 0.2s cubic-bezier(.4, 0, .2, 1);
 }
 
 @keyframes modalIn {

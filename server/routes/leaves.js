@@ -1,36 +1,32 @@
 const express = require('express');
 const db = require('../db');
 const auth = require('../middleware/auth');
+const { loadUserContext } = require('../middleware/rbac');
+const { logAction } = require('../utils/audit');
+const { getLocalToday } = require('../utils/timezone');
 
 const router = express.Router();
 
-function getLocalToday(req) {
-    const offsetMin = parseInt(req.headers['x-timezone-offset']);
-    if (!isNaN(offsetMin)) {
-        const now = new Date(Date.now() - offsetMin * 60000);
-        return now.toISOString().slice(0, 10);
-    }
-    return new Date().toISOString().slice(0, 10);
-}
-
 // Get leaves for a date range
-router.get('/', auth, (req, res) => {
+router.get('/', auth, loadUserContext, (req, res) => {
     const { from, to } = req.query;
     const fromDate = from || new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
     const toDate = to || getLocalToday(req);
 
     const leaves = db.prepare(`
-        SELECT * FROM leaves
-        WHERE user_id = ? AND date BETWEEN ? AND ?
-        ORDER BY date DESC
+        SELECT l.*, u.full_name as approved_by_name
+        FROM leaves l
+        LEFT JOIN users u ON u.id = l.approved_by
+        WHERE l.user_id = ? AND l.date BETWEEN ? AND ?
+        ORDER BY l.date DESC
     `).all(req.userId, fromDate, toDate);
 
     res.json(leaves);
 });
 
-// Add a leave
-router.post('/', auth, (req, res) => {
-    const { date, leave_type, reason } = req.body;
+// Add a leave (with approval workflow if org exists)
+router.post('/', auth, loadUserContext, (req, res) => {
+    const { date, leave_type, reason, duration } = req.body;
 
     if (!date || !leave_type) {
         return res.status(400).json({ error: 'Date and leave type are required' });
@@ -45,33 +41,134 @@ router.post('/', auth, (req, res) => {
         return res.status(400).json({ error: 'Invalid leave type' });
     }
 
+    const validDurations = ['full', 'half', 'quarter'];
+    const leaveDuration = validDurations.includes(duration) ? duration : 'full';
+
     // Check for duplicate
     const existing = db.prepare('SELECT id FROM leaves WHERE user_id = ? AND date = ?').get(req.userId, date);
     if (existing) {
         return res.status(400).json({ error: 'Leave already exists for this date' });
     }
 
-    const result = db.prepare('INSERT INTO leaves (user_id, date, leave_type, reason) VALUES (?, ?, ?, ?)')
-        .run(req.userId, date, leave_type, reason || null);
+    // Check balance if user belongs to an org with policies
+    if (req.userOrgId) {
+        const policy = db.prepare('SELECT * FROM leave_policies WHERE org_id = ? AND leave_type = ?')
+            .get(req.userOrgId, leave_type);
 
-    res.json({ id: result.lastInsertRowid, message: 'Leave added successfully' });
+        if (policy) {
+            // Validate duration against policy
+            if (leaveDuration === 'half' && !policy.half_day_allowed) {
+                return res.status(400).json({ error: 'Half-day leave is not allowed for this leave type' });
+            }
+            if (leaveDuration === 'quarter' && !policy.quarter_day_allowed) {
+                return res.status(400).json({ error: 'Quarter-day leave is not allowed for this leave type' });
+            }
+
+            const year = parseInt(date.slice(0, 4));
+            const balance = db.prepare(
+                'SELECT * FROM leave_balances WHERE user_id = ? AND leave_type = ? AND year = ?'
+            ).get(req.userId, leave_type, year);
+
+            if (balance) {
+                const durationValue = leaveDuration === 'half' ? 0.5 : leaveDuration === 'quarter' ? 0.25 : 1;
+                const available = (balance.quota + balance.carried_forward) - balance.used;
+                if (durationValue > available) {
+                    return res.status(400).json({ error: `Insufficient ${leave_type} leave balance. Available: ${available} days` });
+                }
+            }
+        }
+    }
+
+    // Determine approval status
+    let leaveStatus = 'approved'; // Default for users without org
+    let needsApproval = false;
+
+    if (req.userOrgId) {
+        // HR admins+ auto-approve their own leaves
+        const { ROLE_LEVEL } = require('../middleware/rbac');
+        if ((ROLE_LEVEL[req.userRole] || 1) < ROLE_LEVEL.hr_admin) {
+            leaveStatus = 'pending';
+            needsApproval = true;
+        }
+    }
+
+    const result = db.prepare(
+        'INSERT INTO leaves (user_id, date, leave_type, reason, duration, status) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(req.userId, date, leave_type, reason || null, leaveDuration, leaveStatus);
+
+    // Create approval request if needed
+    if (needsApproval) {
+        // Find approver: team lead → manager → hr_admin
+        const approver = findApprover(req.userId, req.userOrgId);
+
+        db.prepare(`
+            INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
+            VALUES (?, ?, ?, 'leave', ?, ?, ?)
+        `).run(
+            req.userOrgId, req.userId, approver?.id || null,
+            result.lastInsertRowid, reason || null,
+            JSON.stringify({ date, leave_type, duration: leaveDuration })
+        );
+    }
+
+    // Update balance
+    if (leaveStatus === 'approved' && req.userOrgId) {
+        updateLeaveBalance(req.userId, leave_type, date, leaveDuration, 'add');
+    }
+
+    logAction(req, 'create', 'leave', result.lastInsertRowid, { date, leave_type, duration: leaveDuration, status: leaveStatus });
+
+    res.json({
+        id: result.lastInsertRowid,
+        status: leaveStatus,
+        message: needsApproval ? 'Leave request submitted for approval' : 'Leave added successfully'
+    });
 });
 
 // Add multiple leaves (batch)
-router.post('/batch', auth, (req, res) => {
-    const { dates, leave_type, reason } = req.body;
+router.post('/batch', auth, loadUserContext, (req, res) => {
+    const { dates, leave_type, reason, duration } = req.body;
 
     if (!dates || !Array.isArray(dates) || dates.length === 0 || !leave_type) {
         return res.status(400).json({ error: 'Dates array and leave type are required' });
     }
 
-    const insert = db.prepare('INSERT OR IGNORE INTO leaves (user_id, date, leave_type, reason) VALUES (?, ?, ?, ?)');
+    const leaveDuration = ['full', 'half', 'quarter'].includes(duration) ? duration : 'full';
+    let leaveStatus = 'approved';
+    let needsApproval = false;
+
+    if (req.userOrgId) {
+        const { ROLE_LEVEL } = require('../middleware/rbac');
+        if ((ROLE_LEVEL[req.userRole] || 1) < ROLE_LEVEL.hr_admin) {
+            leaveStatus = 'pending';
+            needsApproval = true;
+        }
+    }
+
+    const insert = db.prepare('INSERT OR IGNORE INTO leaves (user_id, date, leave_type, reason, duration, status) VALUES (?, ?, ?, ?, ?, ?)');
     const transaction = db.transaction(() => {
         let added = 0;
+        const approver = needsApproval ? findApprover(req.userId, req.userOrgId) : null;
+
         for (const date of dates) {
             if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-                const r = insert.run(req.userId, date, leave_type, reason || null);
-                if (r.changes > 0) added++;
+                const r = insert.run(req.userId, date, leave_type, reason || null, leaveDuration, leaveStatus);
+                if (r.changes > 0) {
+                    added++;
+                    if (needsApproval) {
+                        db.prepare(`
+                            INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
+                            VALUES (?, ?, ?, 'leave', ?, ?, ?)
+                        `).run(
+                            req.userOrgId, req.userId, approver?.id || null,
+                            r.lastInsertRowid, reason || null,
+                            JSON.stringify({ date, leave_type, duration: leaveDuration })
+                        );
+                    }
+                    if (leaveStatus === 'approved' && req.userOrgId) {
+                        updateLeaveBalance(req.userId, leave_type, date, leaveDuration, 'add');
+                    }
+                }
             }
         }
         return added;
@@ -79,14 +176,18 @@ router.post('/batch', auth, (req, res) => {
 
     try {
         const added = transaction();
-        res.json({ message: `${added} leave(s) added successfully` });
+        logAction(req, 'batch_create', 'leave', null, { count: added, leave_type });
+        res.json({
+            message: needsApproval ? `${added} leave request(s) submitted for approval` : `${added} leave(s) added successfully`,
+            status: leaveStatus
+        });
     } catch (err) {
         res.status(500).json({ error: 'Failed to add leaves' });
     }
 });
 
 // Delete a leave
-router.delete('/:id', auth, (req, res) => {
+router.delete('/:id', auth, loadUserContext, (req, res) => {
     const { id } = req.params;
     const leave = db.prepare('SELECT * FROM leaves WHERE id = ? AND user_id = ?').get(id, req.userId);
 
@@ -94,7 +195,17 @@ router.delete('/:id', auth, (req, res) => {
         return res.status(404).json({ error: 'Leave not found' });
     }
 
+    // If it was approved, restore balance
+    if (leave.status === 'approved' && req.userOrgId) {
+        updateLeaveBalance(req.userId, leave.leave_type, leave.date, leave.duration || 'full', 'subtract');
+    }
+
+    // Delete related approval request
+    db.prepare("DELETE FROM approval_requests WHERE type = 'leave' AND reference_id = ? AND requester_id = ?")
+        .run(Number(id), req.userId);
+
     db.prepare('DELETE FROM leaves WHERE id = ?').run(id);
+    logAction(req, 'delete', 'leave', Number(id), { date: leave.date, leave_type: leave.leave_type });
     res.json({ message: 'Leave deleted successfully' });
 });
 
@@ -129,5 +240,59 @@ router.get('/summary', auth, (req, res) => {
     const total = leaves.reduce((s, l) => s + l.count, 0);
     res.json({ month: m, year: y, total, weekendDays, breakdown: leaves });
 });
+
+// ==================== HELPERS ====================
+
+/**
+ * Find the appropriate approver for a user.
+ * Priority: Team lead → Manager → HR admin (from same org)
+ */
+function findApprover(userId, orgId) {
+    if (!orgId) return null;
+
+    const user = db.prepare('SELECT team_id, department_id FROM users WHERE id = ?').get(userId);
+
+    // 1. Team lead
+    if (user?.team_id) {
+        const team = db.prepare('SELECT lead_id FROM teams WHERE id = ?').get(user.team_id);
+        if (team?.lead_id && team.lead_id !== userId) {
+            return db.prepare('SELECT id FROM users WHERE id = ? AND is_active = 1').get(team.lead_id);
+        }
+    }
+
+    // 2. Department head
+    if (user?.department_id) {
+        const dept = db.prepare('SELECT head_id FROM departments WHERE id = ?').get(user.department_id);
+        if (dept?.head_id && dept.head_id !== userId) {
+            return db.prepare('SELECT id FROM users WHERE id = ? AND is_active = 1').get(dept.head_id);
+        }
+    }
+
+    // 3. Any HR admin in the org
+    const hrAdmin = db.prepare(
+        "SELECT id FROM users WHERE org_id = ? AND role IN ('hr_admin', 'super_admin') AND id != ? AND is_active = 1 LIMIT 1"
+    ).get(orgId, userId);
+
+    return hrAdmin || null;
+}
+
+/**
+ * Update leave balance when a leave is approved/deleted.
+ */
+function updateLeaveBalance(userId, leaveType, date, duration, operation) {
+    const year = parseInt(date.slice(0, 4));
+    const durationValue = duration === 'half' ? 0.5 : duration === 'quarter' ? 0.25 : 1;
+
+    const balance = db.prepare(
+        'SELECT id, used FROM leave_balances WHERE user_id = ? AND leave_type = ? AND year = ?'
+    ).get(userId, leaveType, year);
+
+    if (balance) {
+        const newUsed = operation === 'add'
+            ? balance.used + durationValue
+            : Math.max(0, balance.used - durationValue);
+        db.prepare('UPDATE leave_balances SET used = ? WHERE id = ?').run(newUsed, balance.id);
+    }
+}
 
 module.exports = router;

@@ -35,8 +35,9 @@ export default function Register() {
         {error && <div className="error-msg">{error}</div>}
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label>Full Name</label>
+            <label htmlFor="reg-fullname">Full Name</label>
             <input
+              id="reg-fullname"
               type="text"
               value={form.full_name}
               onChange={e => setForm({ ...form, full_name: e.target.value })}
@@ -45,8 +46,9 @@ export default function Register() {
             />
           </div>
           <div className="form-group">
-            <label>Email</label>
+            <label htmlFor="reg-email">Email</label>
             <input
+              id="reg-email"
               type="email"
               value={form.email}
               onChange={e => setForm({ ...form, email: e.target.value })}
@@ -55,8 +57,9 @@ export default function Register() {
             />
           </div>
           <div className="form-group">
-            <label>Username</label>
+            <label htmlFor="reg-username">Username</label>
             <input
+              id="reg-username"
               type="text"
               value={form.username}
               onChange={e => setForm({ ...form, username: e.target.value })}
@@ -65,13 +68,14 @@ export default function Register() {
             />
           </div>
           <div className="form-group">
-            <label>Password</label>
+            <label htmlFor="reg-password">Password</label>
             <PasswordInput
+              id="reg-password"
               value={form.password}
               onChange={e => setForm({ ...form, password: e.target.value })}
-              placeholder="Choose a password"
+              placeholder="Choose a password (min 8 chars)"
               required
-              minLength={4}
+              minLength={8}
             />
           </div>
           <button type="submit" className="btn btn-primary" disabled={loading}>

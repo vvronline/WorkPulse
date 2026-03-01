@@ -101,4 +101,57 @@ export const uploadAvatar = (file) => {
 };
 export const removeAvatar = () => API.delete('/profile/avatar');
 
+// ==================== ENTERPRISE API ====================
+
+// Organization
+export const createOrg = (name) => API.post('/org', { name });
+export const getCurrentOrg = () => API.get('/org/current');
+export const updateOrgSettings = (data) => API.put('/org/settings', data);
+export const getOrgMembers = (params) => API.get('/org/members', { params });
+export const inviteToOrg = (data) => API.post('/org/invite', data);
+export const removeMember = (userId) => API.post('/org/remove-member', { user_id: userId });
+export const getOrgDepartments = () => API.get('/org/departments');
+export const createDepartment = (data) => API.post('/org/departments', data);
+export const updateDepartment = (id, data) => API.put(`/org/departments/${id}`, data);
+export const deleteDepartment = (id) => API.delete(`/org/departments/${id}`);
+export const getOrgTeams = (params) => API.get('/org/teams', { params });
+export const createTeam = (data) => API.post('/org/teams', data);
+export const updateTeam = (id, data) => API.put(`/org/teams/${id}`, data);
+export const deleteTeam = (id) => API.delete(`/org/teams/${id}`);
+export const getOrgChart = () => API.get('/org/chart');
+
+// Admin
+export const getAdminUsers = (params) => API.get('/admin/users', { params });
+export const getAdminUser = (id) => API.get(`/admin/users/${id}`);
+export const createAdminUser = (data) => API.post('/admin/users', data);
+export const updateUserRole = (id, role) => API.put(`/admin/users/${id}/role`, { role });
+export const updateUserAssignment = (id, data) => API.put(`/admin/users/${id}/assignment`, data);
+export const toggleUserActive = (id) => API.put(`/admin/users/${id}/deactivate`);
+export const adminResetPassword = (id, password) => API.post(`/admin/users/${id}/reset-password`, { new_password: password });
+export const getAuditLogs = (params) => API.get('/admin/audit-logs', { params });
+export const getAdminStats = () => API.get('/admin/stats');
+
+// Manager Dashboard
+export const getTeamAttendance = () => API.get('/manager/team-attendance');
+export const getTeamAnalytics = (days) => API.get('/manager/team-analytics', { params: { days } });
+export const getApprovals = (params) => API.get('/manager/approvals', { params });
+export const getMyRequests = (params) => API.get('/manager/my-requests', { params });
+export const approveRequest = (id) => API.post(`/manager/approvals/${id}/approve`);
+export const rejectRequest = (id, reason) => API.post(`/manager/approvals/${id}/reject`, { reject_reason: reason });
+export const bulkApproval = (ids, action, reason) => API.post('/manager/approvals/bulk', { ids, action, reject_reason: reason });
+export const getMemberHours = (userId, params) => API.get(`/manager/member/${userId}/hours`, { params });
+export const getMemberTasks = (userId, params) => API.get(`/manager/member/${userId}/tasks`, { params });
+
+// Leave Policy
+export const getLeavePolicies = () => API.get('/leave-policy/policies');
+export const saveLeavePolicyAPI = (data) => API.post('/leave-policy/policies', data);
+export const deleteLeavePolicyAPI = (id) => API.delete(`/leave-policy/policies/${id}`);
+export const getLeaveBalances = (year) => API.get('/leave-policy/balances', { params: { year } });
+export const getUserLeaveBalances = (userId, year) => API.get(`/leave-policy/balances/${userId}`, { params: { year } });
+export const updateLeaveBalance = (userId, data) => API.put(`/leave-policy/balances/${userId}`, data);
+export const getHolidays = (year) => API.get('/leave-policy/holidays', { params: { year } });
+export const addHoliday = (data) => API.post('/leave-policy/holidays', data);
+export const addHolidaysBatch = (holidays) => API.post('/leave-policy/holidays/batch', { holidays });
+export const deleteHoliday = (id) => API.delete(`/leave-policy/holidays/${id}`);
+
 export default API;

@@ -187,8 +187,9 @@ export default function Leaves() {
             {/* Date Inputs */}
             {!isRange ? (
               <div className="form-group">
-                <label>Date</label>
+                <label htmlFor="leave-date">Date</label>
                 <input
+                  id="leave-date"
                   type="date"
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
@@ -259,8 +260,9 @@ export default function Leaves() {
             </div>
 
             <div className="form-group">
-              <label>Reason (optional)</label>
+              <label htmlFor="leave-reason">Reason (optional)</label>
               <textarea
+                id="leave-reason"
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 placeholder="Why are you taking leave?"

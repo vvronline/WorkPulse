@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { getTasks, addTask, updateTaskStatus, updateTask, deleteTask, carryForwardTasks, getLocalToday } from '../api';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
+import DOMPurify from 'dompurify';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import s from './Tasks.module.css';
@@ -407,7 +408,7 @@ export default function Tasks() {
         {task.description && (
           <div
             className={s['task-desc']}
-            dangerouslySetInnerHTML={{ __html: task.description }}
+            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(task.description) }}
           />
         )}
         <div className={s['task-card-footer']}>

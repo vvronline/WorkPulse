@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -32,6 +32,7 @@ export default function Analytics() {
   const [data, setData] = useState([]);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     const fetch = async () => {
@@ -46,8 +47,10 @@ export default function Analytics() {
         ]);
         setData(analyticsRes.data);
         setHistory(historyRes.data);
+        setError('');
       } catch (err) {
         console.error('Failed to load analytics', err);
+        setError('Failed to load analytics data. Please try again.');
       } finally {
         setLoading(false);
       }
@@ -55,19 +58,19 @@ export default function Analytics() {
     fetch();
   }, [days]);
 
-  const labels = data.map(d => {
+  const labels = useMemo(() => data.map(d => {
     const date = new Date(d.date + 'T00:00:00');
     return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-  });
+  }), [data]);
 
-  const floorHours = data.map(d => +(d.floorMinutes / 60).toFixed(2));
-  const breakHours = data.map(d => +(d.breakMinutes / 60).toFixed(2));
+  const floorHours = useMemo(() => data.map(d => +(d.floorMinutes / 60).toFixed(2)), [data]);
+  const breakHours = useMemo(() => data.map(d => +(d.breakMinutes / 60).toFixed(2)), [data]);
 
   const chartTextColor = '#94a3b8';
   const chartGridColor = 'rgba(255,255,255,0.05)';
 
   // Bar Chart: Floor vs Break time daily
-  const barData = {
+  const barData = useMemo(() => ({
     labels,
     datasets: [
       {
@@ -87,7 +90,7 @@ export default function Analytics() {
         borderSkipped: false,
       },
     ],
-  };
+  }), [labels, floorHours, breakHours]);
 
   const barOptions = {
     responsive: true,
@@ -121,7 +124,7 @@ export default function Analytics() {
   };
 
   // Line Chart: Trend with 8hr target line
-  const lineData = {
+  const lineData = useMemo(() => ({
     labels,
     datasets: [
       {
@@ -147,7 +150,7 @@ export default function Analytics() {
         fill: false,
       },
     ],
-  };
+  }), [labels, floorHours]);
 
   const lineOptions = {
     responsive: true,
@@ -178,10 +181,10 @@ export default function Analytics() {
   };
 
   // Doughnut: Total floor vs break in period
-  const totalFloor = data.reduce((sum, d) => sum + d.floorMinutes, 0);
-  const totalBreak = data.reduce((sum, d) => sum + d.breakMinutes, 0);
+  const totalFloor = useMemo(() => data.reduce((sum, d) => sum + d.floorMinutes, 0), [data]);
+  const totalBreak = useMemo(() => data.reduce((sum, d) => sum + d.breakMinutes, 0), [data]);
 
-  const doughnutData = {
+  const doughnutData = useMemo(() => ({
     labels: ['Work Time', 'Break Time'],
     datasets: [
       {
@@ -193,7 +196,7 @@ export default function Analytics() {
         spacing: 4,
       },
     ],
-  };
+  }), [totalFloor, totalBreak]);
 
   const doughnutOptions = {
     responsive: true,
@@ -244,6 +247,8 @@ export default function Analytics() {
 
       {loading ? (
         <div className="loading-spinner"><div className="spinner"></div></div>
+      ) : error ? (
+        <div className="error-msg" style={{ margin: '2rem 0' }}>{error}</div>
       ) : (
         <>
           {/* Summary Stats */}

@@ -1,26 +1,9 @@
 const express = require('express');
 const db = require('../db');
 const auth = require('../middleware/auth');
+const { getLocalToday, getLocalYesterday } = require('../utils/timezone');
 
 const router = express.Router();
-
-function getLocalToday(req) {
-    const offsetMin = parseInt(req.headers['x-timezone-offset']);
-    if (!isNaN(offsetMin)) {
-        const now = new Date(Date.now() - offsetMin * 60000);
-        return now.toISOString().slice(0, 10);
-    }
-    return new Date().toISOString().slice(0, 10);
-}
-
-function getLocalYesterday(req) {
-    const offsetMin = parseInt(req.headers['x-timezone-offset']);
-    if (!isNaN(offsetMin)) {
-        const now = new Date(Date.now() - offsetMin * 60000 - 86400000);
-        return now.toISOString().slice(0, 10);
-    }
-    return new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-}
 
 // Get tasks for a specific date
 router.get('/', auth, (req, res) => {
@@ -49,6 +32,12 @@ router.post('/', auth, (req, res) => {
 
     if (!title || !title.trim()) {
         return res.status(400).json({ error: 'Task title is required' });
+    }
+    if (title.trim().length > 200) {
+        return res.status(400).json({ error: 'Task title must be 200 characters or less' });
+    }
+    if (description && description.length > 5000) {
+        return res.status(400).json({ error: 'Task description must be 5000 characters or less' });
     }
 
     const targetDate = date || getLocalToday(req);
