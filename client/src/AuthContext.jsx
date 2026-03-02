@@ -8,8 +8,13 @@ export function AuthProvider({ children }) {
   const [isInitializing, setIsInitializing] = useState(true);
 
   useEffect(() => {
-    // Rely on the browser's HttpOnly cookie to see if we are currently authenticated
-    // We just ask the backend for the profile. If it succeeds, the cookie was valid!
+    // Only verify session if there's a cached user — avoids a 401 console error
+    // when the user was never logged in (no cookie exists).
+    const cached = localStorage.getItem('user');
+    if (!cached) {
+      setIsInitializing(false);
+      return;
+    }
     getProfile()
       .then(res => {
         if (res.data) {
@@ -18,7 +23,7 @@ export function AuthProvider({ children }) {
         }
       })
       .catch(err => {
-        // Ignore 401s (not logged in). Only log if another error.
+        // Session expired or invalid — clear cached user
         if (err.response?.status === 401) {
           localStorage.removeItem('user');
           setUser(null);

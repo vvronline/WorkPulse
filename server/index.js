@@ -62,6 +62,15 @@ if (process.env.NODE_ENV !== 'production') {
 // Serve uploaded avatars
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// CSRF protection: require custom header on state-changing requests
+// Browsers won't send custom headers cross-origin without CORS preflight
+app.use('/api', (req, res, next) => {
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+    const xrw = req.headers['x-requested-with'];
+    if (xrw === 'WorkPulse') return next();
+    return res.status(403).json({ error: 'Missing CSRF header' });
+});
+
 // Rate limiting for auth endpoints
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
@@ -79,7 +88,7 @@ const passwordLimiter = rateLimit({
 // General rate limiter for API routes
 const apiLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 300,
+    max: 5000,
     message: { error: 'Too many requests. Please try again later.' }
 });
 
@@ -107,14 +116,14 @@ function autoClockOut() {
     const activeUsers = db.prepare(`
         SELECT u.id, u.timezone_offset 
         FROM users u
-        JOIN (
-            SELECT user_id, entry_type 
-            FROM time_entries 
-            WHERE id IN (
-                SELECT MAX(id) FROM time_entries GROUP BY user_id
+        WHERE EXISTS (
+            SELECT 1 FROM time_entries t
+            WHERE t.user_id = u.id
+            AND t.entry_type != 'clock_out'
+            AND t.timestamp = (
+                SELECT MAX(t2.timestamp) FROM time_entries t2 WHERE t2.user_id = u.id
             )
-        ) latest ON u.id = latest.user_id
-        WHERE latest.entry_type != 'clock_out'
+        )
     `).all();
     const insert = db.prepare('INSERT INTO time_entries (user_id, entry_type, timestamp) VALUES (?, ?, ?)');
 

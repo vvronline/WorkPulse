@@ -6,7 +6,9 @@ import WidgetsGrid from '../components/WidgetsGrid';
 import WeeklyChart from '../components/WeeklyChart';
 import TimelineCard from '../components/TimelineCard';
 import TasksSummary from '../components/TasksSummary';
+import ConfirmDialog from '../components/ConfirmDialog';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
+import { useLiveTimer } from '../hooks/useLiveTimer';
 import s from './Dashboard.module.css';
 
 const TARGET_HOURS = 9 * 60; // 9 hours target in minutes
@@ -57,12 +59,6 @@ function requestNotificationPermission() {
   }
 }
 
-function sendNotification(title, body, icon = '⏱') {
-  if ('Notification' in window && Notification.permission === 'granted') {
-    new Notification(title, { body, icon });
-  }
-}
-
 export default function Dashboard() {
   const { user } = useAuth();
   const { setWorkState, setWorkMode: setContextWorkMode } = useWorkState();
@@ -73,19 +69,15 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState('');
   const [error, setError] = useAutoDismiss('');
-  const [liveFloorSec, setLiveFloorSec] = useState(0);
-  const [liveBreakSec, setLiveBreakSec] = useState(0);
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [showConfetti, setShowConfetti] = useState(false);
-  const [workMode, setWorkMode] = useState('office'); // 'office' or 'remote'
+  const [workMode, setWorkMode] = useState('office');
+  const [showClockOutConfirm, setShowClockOutConfirm] = useState(false);
   const [quoteIndex, setQuoteIndex] = useState(() => Math.floor(Math.random() * QUOTES.length));
   const quoteTimerRef = useRef(null);
-  const intervalRef = useRef(null);
   const clockRef = useRef(null);
-  const notified8hr = useRef(false);
-  const confettiTriggered = useRef(false);
-  const floorAnchorRef = useRef({ base: 0, at: Date.now() });
-  const breakAnchorRef = useRef({ base: 0, at: Date.now() });
+
+  // Live timer hook
+  const { liveFloorSec, liveBreakSec, showConfetti, reset: resetTimer } = useLiveTimer(status);
 
   // Rotate quotes every 20 seconds
   useEffect(() => {
@@ -107,12 +99,6 @@ export default function Dashboard() {
       setWidgets(widgetsRes.data);
       setWeeklyData(weeklyRes.data);
       setTaskSummary(taskRes.data);
-      const floorSec = statusRes.data.floorMinutes * 60;
-      const breakSec = statusRes.data.breakMinutes * 60;
-      setLiveFloorSec(floorSec);
-      setLiveBreakSec(breakSec);
-      floorAnchorRef.current = { base: floorSec, at: Date.now() };
-      breakAnchorRef.current = { base: breakSec, at: Date.now() };
       if (statusRes.data.workMode) setWorkMode(statusRes.data.workMode);
       setError('');
     } catch {
@@ -125,10 +111,8 @@ export default function Dashboard() {
   useEffect(() => {
     fetchStatus();
     requestNotificationPermission();
-    // Live clock update every minute
     clockRef.current = setInterval(() => setCurrentTime(new Date()), 60000);
 
-    // Refresh task summary whenever the tab becomes visible again (e.g. back from Tasks page)
     const handleVisibility = () => {
       if (!document.hidden) {
         getTaskSummary().then(r => setTaskSummary(r.data)).catch(() => { });
@@ -142,47 +126,13 @@ export default function Dashboard() {
     };
   }, [fetchStatus]);
 
-  // Live tick every second
-  useEffect(() => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
-
-    if (status?.state === 'on_floor') {
-      intervalRef.current = setInterval(() => {
-        const next = floorAnchorRef.current.base + Math.floor((Date.now() - floorAnchorRef.current.at) / 1000);
-        setLiveFloorSec(next);
-        if (!notified8hr.current && next >= TARGET_HOURS * 60) {
-          notified8hr.current = true;
-          sendNotification('🎉 9 Hours Complete!', 'You\'ve completed your 9-hour target. Great job!');
-          if (!confettiTriggered.current) {
-            confettiTriggered.current = true;
-            setShowConfetti(true);
-            setTimeout(() => setShowConfetti(false), 5000);
-          }
-        }
-      }, 1000);
-    } else if (status?.state === 'on_break') {
-      intervalRef.current = setInterval(() => {
-        const next = breakAnchorRef.current.base + Math.floor((Date.now() - breakAnchorRef.current.at) / 1000);
-        setLiveBreakSec(next);
-      }, 1000);
-    }
-
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [status?.state]);
-
   const handleAction = async (actionFn, actionName) => {
     setActionLoading(actionName);
     setError('');
     try {
       await actionFn();
       await fetchStatus();
-      // Reset UI state after logout
-      if (actionName === 'clockOut') {
-        setLiveFloorSec(0);
-        setLiveBreakSec(0);
-        notified8hr.current = false;
-        confettiTriggered.current = false;
-      }
+      if (actionName === 'clockOut') resetTimer();
     } catch (err) {
       setError(err.response?.data?.error || 'Action failed');
     } finally {
@@ -246,8 +196,18 @@ export default function Dashboard() {
   if (loading) {
     return (
       <div className={s.dashboard}>
-        <div className="status-card">
-          <div className="loading-spinner"><div className="spinner"></div></div>
+        <div className={s['skeleton-banner']} />
+        <div className={s['dashboard-row-1']}>
+          <div className={s['skeleton-timer-card']}>
+            <div className={s['skeleton-circle']} />
+            <div className={s['skeleton-line']} style={{ width: '60%', marginTop: '1rem' }} />
+            <div className={s['skeleton-line']} style={{ width: '80%' }} />
+            <div className={s['skeleton-line']} style={{ width: '40%' }} />
+          </div>
+          <div className={s['skeleton-right']}>
+            <div className={s['skeleton-card']} />
+            <div className={s['skeleton-card']} />
+          </div>
         </div>
       </div>
     );
@@ -463,7 +423,7 @@ export default function Dashboard() {
                   </button>
                 </div>
                 <button className="btn btn-success" onClick={() => handleAction(() => clockIn(workMode), 'clockIn')} disabled={!!actionLoading}>
-                  {actionLoading === 'clockIn' ? 'Logging in...' : '▶ Login'}
+                  {actionLoading === 'clockIn' ? 'Clocking in...' : '▶ Clock In'}
                 </button>
               </>
             )}
@@ -472,8 +432,8 @@ export default function Dashboard() {
                 <button className="btn btn-warning" onClick={() => handleAction(breakStart, 'breakStart')} disabled={!!actionLoading}>
                   {actionLoading === 'breakStart' ? 'Starting...' : '☕ Break'}
                 </button>
-                <button className="btn btn-danger" onClick={() => handleAction(clockOut, 'clockOut')} disabled={!!actionLoading}>
-                  {actionLoading === 'clockOut' ? 'Logging out...' : '⏹ Logout'}
+                <button className="btn btn-danger" onClick={() => setShowClockOutConfirm(true)} disabled={!!actionLoading}>
+                  ⏹ Clock Out
                 </button>
               </>
             )}
@@ -482,8 +442,8 @@ export default function Dashboard() {
                 <button className="btn btn-success" onClick={() => handleAction(breakEnd, 'breakEnd')} disabled={!!actionLoading}>
                   {actionLoading === 'breakEnd' ? 'Resuming...' : '▶ Resume'}
                 </button>
-                <button className="btn btn-danger" onClick={() => handleAction(clockOut, 'clockOut')} disabled={!!actionLoading}>
-                  {actionLoading === 'clockOut' ? 'Logging out...' : '⏹ Logout'}
+                <button className="btn btn-danger" onClick={() => setShowClockOutConfirm(true)} disabled={!!actionLoading}>
+                  ⏹ Clock Out
                 </button>
               </>
             )}
@@ -501,6 +461,16 @@ export default function Dashboard() {
       <div className={s['dashboard-row-2']}>
         <WidgetsGrid widgets={widgets} />
       </div>
+
+      {/* Clock Out Confirmation */}
+      <ConfirmDialog
+        isOpen={showClockOutConfirm}
+        title="Clock Out"
+        message={`You've worked ${formatTime(floorMinutes)} today${!completedMandatory ? ` (${formatTime(mandatoryRemaining)} short of 8hr minimum)` : ''}. Are you sure you want to clock out?`}
+        confirmLabel={actionLoading === 'clockOut' ? 'Clocking out...' : 'Clock Out'}
+        onConfirm={() => { setShowClockOutConfirm(false); handleAction(clockOut, 'clockOut'); }}
+        onCancel={() => setShowClockOutConfirm(false)}
+      />
     </div>
   );
 }

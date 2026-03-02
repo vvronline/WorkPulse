@@ -33,11 +33,42 @@ function getTransporter() {
     return transporter;
 }
 
+// Registration mode (public — no auth needed)
+router.get('/registration-mode', (req, res) => {
+    const row = db.prepare("SELECT value FROM app_settings WHERE key = 'registration_mode'").get();
+    res.json({ mode: row?.value || 'open' });
+});
+
 // Register
 router.post('/register', async (req, res) => {
-    const { username, password, full_name, email } = req.body;
+    const { username, password, full_name, email, invite_code } = req.body;
     if (!username || !password || !full_name || !email) {
         return res.status(400).json({ error: 'All fields are required' });
+    }
+
+    // Check registration mode
+    const regMode = db.prepare("SELECT value FROM app_settings WHERE key = 'registration_mode'").get();
+    const mode = regMode?.value || 'open';
+    if (mode === 'closed') {
+        return res.status(403).json({ error: 'Registration is currently closed. Contact an administrator.' });
+    }
+    let inviteRow = null;
+    if (mode === 'invite_only') {
+        if (!invite_code) {
+            return res.status(400).json({ error: 'An invite code is required to register.' });
+        }
+        inviteRow = db.prepare(`
+            SELECT * FROM invite_codes WHERE code = ? AND is_active = 1
+        `).get(invite_code);
+        if (!inviteRow) {
+            return res.status(400).json({ error: 'Invalid or expired invite code.' });
+        }
+        if (inviteRow.max_uses > 0 && inviteRow.used_count >= inviteRow.max_uses) {
+            return res.status(400).json({ error: 'This invite code has reached its usage limit.' });
+        }
+        if (inviteRow.expires_at && new Date(inviteRow.expires_at) < new Date()) {
+            return res.status(400).json({ error: 'This invite code has expired.' });
+        }
     }
 
     // Basic email validation
@@ -67,11 +98,19 @@ router.post('/register', async (req, res) => {
     }
 
     const hash = await bcrypt.hash(password, 10);
-    const result = db.prepare('INSERT INTO users (username, password, full_name, email) VALUES (?, ?, ?, ?)').run(username, hash, full_name, email);
+    // Determine org/role from invite code if applicable
+    const assignedOrgId = inviteRow?.org_id || null;
+    const assignedRole = inviteRow?.role || 'employee';
+    const result = db.prepare('INSERT INTO users (username, password, full_name, email, org_id, role) VALUES (?, ?, ?, ?, ?, ?)').run(username, hash, full_name, email, assignedOrgId, assignedRole);
+
+    // Bump invite code usage
+    if (inviteRow) {
+        db.prepare('UPDATE invite_codes SET used_count = used_count + 1 WHERE id = ?').run(inviteRow.id);
+    }
 
     const token = jwt.sign({ id: result.lastInsertRowid, username, tv: 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
     res.cookie('token', token, cookieOptions());
-    res.json({ user: { id: result.lastInsertRowid, username, full_name, email, avatar: null, role: 'employee', org_id: null } });
+    res.json({ user: { id: result.lastInsertRowid, username, full_name, email, avatar: null, role: assignedRole, org_id: assignedOrgId } });
 });
 
 // Login
@@ -92,7 +131,9 @@ router.post('/login', async (req, res) => {
 
     const token = jwt.sign({ id: user.id, username: user.username, tv: user.token_version || 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
     res.cookie('token', token, cookieOptions());
-    res.json({ user: { id: user.id, username: user.username, full_name: user.full_name, email: user.email || null, avatar: user.avatar || null, role: user.role || 'employee', org_id: user.org_id || null } });
+    // Check if user has direct reports (to show manager view)
+    const hasReports = db.prepare('SELECT 1 FROM users WHERE manager_id = ? AND is_active = 1 LIMIT 1').get(user.id);
+    res.json({ user: { id: user.id, username: user.username, full_name: user.full_name, email: user.email || null, avatar: user.avatar || null, role: user.role || 'employee', org_id: user.org_id || null, has_reports: !!hasReports, must_change_password: !!user.must_change_password } });
 });
 
 // Forgot Password — send reset link via email

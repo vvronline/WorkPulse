@@ -9,6 +9,30 @@ db.pragma('journal_mode = WAL');
 // Enable foreign key enforcement (SQLite has them OFF by default)
 db.pragma('foreign_keys = ON');
 
+// ============= MIGRATION FRAMEWORK =============
+db.exec(`
+  CREATE TABLE IF NOT EXISTS _migrations (
+    name TEXT PRIMARY KEY,
+    applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
+function runMigration(name, fn) {
+  const exists = db.prepare('SELECT 1 FROM _migrations WHERE name = ?').get(name);
+  if (exists) return;
+  try {
+    fn();
+    db.prepare('INSERT INTO _migrations (name) VALUES (?)').run(name);
+  } catch (e) {
+    // Column already exists or migration already applied — just record it
+    if (e.message.includes('duplicate column') || e.message.includes('already exists')) {
+      db.prepare('INSERT OR IGNORE INTO _migrations (name) VALUES (?)').run(name);
+    } else {
+      console.error(`Migration ${name} failed:`, e.message);
+    }
+  }
+}
+
 // ============= CORE TABLES =============
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -59,36 +83,69 @@ db.exec(`
 `);
 
 // ============= COLUMN MIGRATIONS (existing tables) =============
-try { db.exec('ALTER TABLE users ADD COLUMN theme TEXT DEFAULT \'dark\''); } catch (e) { /* exists */ }
-try { db.exec('ALTER TABLE time_entries ADD COLUMN work_mode TEXT DEFAULT \'office\''); } catch (e) { /* exists */ }
-try { db.exec('ALTER TABLE users ADD COLUMN timezone_offset INTEGER DEFAULT 0'); } catch (e) { /* exists */ }
-try { db.exec('ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT NULL'); } catch (e) { /* exists */ }
-try { db.exec('ALTER TABLE users ADD COLUMN email TEXT DEFAULT NULL'); } catch (e) { /* exists */ }
-try { db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 0'); } catch (e) { /* exists */ }
+runMigration('users_theme', () => db.exec("ALTER TABLE users ADD COLUMN theme TEXT DEFAULT 'dark'"));
+runMigration('time_entries_work_mode', () => db.exec("ALTER TABLE time_entries ADD COLUMN work_mode TEXT DEFAULT 'office'"));
+runMigration('users_timezone_offset', () => db.exec('ALTER TABLE users ADD COLUMN timezone_offset INTEGER DEFAULT 0'));
+runMigration('users_avatar', () => db.exec('ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT NULL'));
+runMigration('users_email', () => db.exec('ALTER TABLE users ADD COLUMN email TEXT DEFAULT NULL'));
+runMigration('users_token_version', () => db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 0'));
 
 // RBAC: role column on users (employee, team_lead, manager, hr_admin, super_admin)
-try { db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'employee'"); } catch (e) { /* exists */ }
+runMigration('users_role', () => db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'employee'"));
 // Soft-delete / deactivation
-try { db.exec('ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1'); } catch (e) { /* exists */ }
+runMigration('users_is_active', () => db.exec('ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1'));
 // Org & Team FK
-try { db.exec('ALTER TABLE users ADD COLUMN org_id INTEGER REFERENCES organizations(id)'); } catch (e) { /* exists */ }
-try { db.exec('ALTER TABLE users ADD COLUMN team_id INTEGER REFERENCES teams(id)'); } catch (e) { /* exists */ }
-try { db.exec('ALTER TABLE users ADD COLUMN department_id INTEGER REFERENCES departments(id)'); } catch (e) { /* exists */ }
+runMigration('users_org_id', () => db.exec('ALTER TABLE users ADD COLUMN org_id INTEGER REFERENCES organizations(id)'));
+runMigration('users_team_id', () => db.exec('ALTER TABLE users ADD COLUMN team_id INTEGER REFERENCES teams(id)'));
+runMigration('users_department_id', () => db.exec('ALTER TABLE users ADD COLUMN department_id INTEGER REFERENCES departments(id)'));
+// Direct manager assignment (works with or without org)
+runMigration('users_manager_id', () => db.exec('ALTER TABLE users ADD COLUMN manager_id INTEGER REFERENCES users(id)'));
+// Force password change on first login (admin-created accounts)
+runMigration('users_must_change_password', () => db.exec('ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0'));
+
+// Migration: make approval_requests.org_id nullable (was NOT NULL)
+runMigration('approval_requests_org_nullable', () => {
+  const colInfo = db.pragma("table_info(approval_requests)").find(c => c.name === 'org_id');
+  if (colInfo && colInfo.notnull === 1) {
+    db.exec(`
+      CREATE TABLE approval_requests_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        org_id INTEGER REFERENCES organizations(id),
+        requester_id INTEGER NOT NULL REFERENCES users(id),
+        approver_id INTEGER REFERENCES users(id),
+        type TEXT NOT NULL CHECK(type IN ('leave', 'manual_entry', 'overtime')),
+        reference_id INTEGER,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
+        reason TEXT,
+        reject_reason TEXT,
+        metadata TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        reviewed_at DATETIME
+      );
+      INSERT INTO approval_requests_new SELECT * FROM approval_requests;
+      DROP TABLE approval_requests;
+      ALTER TABLE approval_requests_new RENAME TO approval_requests;
+      CREATE INDEX IF NOT EXISTS idx_approval_requester ON approval_requests(requester_id, status);
+      CREATE INDEX IF NOT EXISTS idx_approval_approver ON approval_requests(approver_id, status);
+    `);
+    console.log('✓ Migrated approval_requests.org_id to nullable');
+  }
+});
 
 // Leave approval status + half-day support
-try { db.exec("ALTER TABLE leaves ADD COLUMN status TEXT NOT NULL DEFAULT 'approved'"); } catch (e) { /* exists */ }
-try { db.exec("ALTER TABLE leaves ADD COLUMN duration TEXT NOT NULL DEFAULT 'full'"); } catch (e) { /* exists */ }
-try { db.exec('ALTER TABLE leaves ADD COLUMN approved_by INTEGER REFERENCES users(id)'); } catch (e) { /* exists */ }
-try { db.exec('ALTER TABLE leaves ADD COLUMN reviewed_at DATETIME'); } catch (e) { /* exists */ }
-try { db.exec('ALTER TABLE leaves ADD COLUMN reject_reason TEXT'); } catch (e) { /* exists */ }
+runMigration('leaves_status', () => db.exec("ALTER TABLE leaves ADD COLUMN status TEXT NOT NULL DEFAULT 'approved'"));
+runMigration('leaves_duration', () => db.exec("ALTER TABLE leaves ADD COLUMN duration TEXT NOT NULL DEFAULT 'full'"));
+runMigration('leaves_approved_by', () => db.exec('ALTER TABLE leaves ADD COLUMN approved_by INTEGER REFERENCES users(id)'));
+runMigration('leaves_reviewed_at', () => db.exec('ALTER TABLE leaves ADD COLUMN reviewed_at DATETIME'));
+runMigration('leaves_reject_reason', () => db.exec('ALTER TABLE leaves ADD COLUMN reject_reason TEXT'));
 
 // Manual entry approval
-try { db.exec("ALTER TABLE time_entries ADD COLUMN is_manual INTEGER NOT NULL DEFAULT 0"); } catch (e) { /* exists */ }
-try { db.exec("ALTER TABLE time_entries ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'approved'"); } catch (e) { /* exists */ }
-try { db.exec('ALTER TABLE time_entries ADD COLUMN approved_by INTEGER REFERENCES users(id)'); } catch (e) { /* exists */ }
+runMigration('time_entries_is_manual', () => db.exec("ALTER TABLE time_entries ADD COLUMN is_manual INTEGER NOT NULL DEFAULT 0"));
+runMigration('time_entries_approval_status', () => db.exec("ALTER TABLE time_entries ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'approved'"));
+runMigration('time_entries_approved_by', () => db.exec('ALTER TABLE time_entries ADD COLUMN approved_by INTEGER REFERENCES users(id)'));
 
 // Migrate tasks table to support 'in_review' status
-try {
+runMigration('tasks_in_review_status', () => {
   const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'").get();
   if (tableInfo && !tableInfo.sql.includes('in_review')) {
     const migrate = db.transaction(() => {
@@ -114,7 +171,7 @@ try {
     migrate();
     console.log('✓ Tasks table migrated to support in_review status');
   }
-} catch (e) { console.error('Tasks migration error:', e.message); }
+});
 
 // Password reset tokens table
 db.exec(`
@@ -220,7 +277,7 @@ db.exec(`
 db.exec(`
   CREATE TABLE IF NOT EXISTS approval_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    org_id INTEGER NOT NULL REFERENCES organizations(id),
+    org_id INTEGER REFERENCES organizations(id),
     requester_id INTEGER NOT NULL REFERENCES users(id),
     approver_id INTEGER REFERENCES users(id),
     type TEXT NOT NULL CHECK(type IN ('leave', 'manual_entry', 'overtime')),
@@ -254,6 +311,40 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_audit_org ON audit_logs(org_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id);
 `);
+
+// ============= SETTINGS & INVITE CODES =============
+
+// App-wide settings (key-value)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
+// Invite codes for controlled registration
+db.exec(`
+  CREATE TABLE IF NOT EXISTS invite_codes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT UNIQUE NOT NULL,
+    created_by INTEGER NOT NULL REFERENCES users(id),
+    org_id INTEGER REFERENCES organizations(id),
+    role TEXT NOT NULL DEFAULT 'employee',
+    max_uses INTEGER NOT NULL DEFAULT 1,
+    used_count INTEGER NOT NULL DEFAULT 0,
+    expires_at DATETIME,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
+// Default: registration is closed (admin creates users)
+db.exec("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('registration_mode', 'closed')");
+// Migrate existing open/invite_only to closed
+runMigration('registration_mode_closed_default', () => {
+  db.exec("UPDATE app_settings SET value = 'closed' WHERE key = 'registration_mode' AND value = 'open'");
+});
 
 // ============= SEED: First user as super_admin =============
 try {

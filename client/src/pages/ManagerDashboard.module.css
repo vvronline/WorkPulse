@@ -1,0 +1,202 @@
+/* ManagerDashboard-specific styles — extracted from inline styles */
+
+/* Member Card */
+.memberCard {
+    background: var(--card-bg);
+    border-radius: 10px;
+    padding: 0.8rem;
+    border: 1px solid var(--border);
+    min-width: 220px;
+    cursor: pointer;
+    transition: border-color 0.2s;
+}
+.memberCard:hover {
+    border-color: var(--primary);
+}
+.memberCardHeader {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.memberCardMeta {
+    margin-top: 0.5rem;
+    display: flex;
+    gap: 0.75rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+.memberName {
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+.memberRole {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+.memberAvatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+}
+.memberAvatarLg {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+}
+
+/* Badges */
+.badge {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+.badgeSmall {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 99px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+/* Approval status badges */
+.badgePending { background: #f59e0b22; color: #f59e0b; }
+.badgeApproved { background: #22c55e22; color: #22c55e; }
+.badgeRejected { background: #ef444422; color: #ef4444; }
+
+/* Priority badges */
+.badgeHigh { background: #ef444422; color: #ef4444; }
+.badgeMedium { background: #f59e0b22; color: #f59e0b; }
+.badgeLow { background: #22c55e22; color: #22c55e; }
+
+/* Task status badges */
+.badgeInProgress { background: #3b82f622; color: #3b82f6; }
+.badgeInReview { background: #f59e0b22; color: #f59e0b; }
+.badgeDone { background: #22c55e22; color: #22c55e; }
+.badgeDefault { background: #6b728022; color: #6b7280; }
+
+/* Layout helpers */
+.sectionHeader {
+    margin-bottom: 0.75rem;
+}
+.sectionSpacing {
+    margin-top: 1.5rem;
+}
+.muted {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+.emptyState {
+    text-align: center;
+    padding: 2rem;
+    color: var(--text-secondary);
+}
+
+/* Employee back header */
+.employeeHeader {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+.employeeProfile {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+.employeeName {
+    font-size: 1.3rem;
+    margin: 0;
+}
+
+/* Groups */
+.groupSection {
+    margin-bottom: 1.25rem;
+}
+.groupTitle {
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+}
+.groupGrid {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+/* Date/select inputs */
+.inputField {
+    padding: 0.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--glass-border);
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-family: inherit;
+}
+.selectField {
+    padding: 0.5rem 1.8rem 0.5rem 0.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--glass-border);
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-family: inherit;
+}
+
+/* Utilization bar */
+.utilBar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.utilTrack {
+    flex: 1;
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+}
+.utilFill {
+    height: 100%;
+    border-radius: 3px;
+}
+.utilLabel {
+    font-size: 0.8rem;
+    font-weight: 600;
+    width: 35px;
+}
+
+/* Reject modal textarea */
+.rejectTextarea {
+    width: 100%;
+    padding: 0.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--input-bg);
+    color: var(--text-primary);
+    resize: vertical;
+}
+
+/* Action buttons in approval table */
+.btnApprove {
+    background: #22c55e;
+    color: #fff;
+}
+.btnReject {
+    background: #ef4444;
+    color: #fff;
+}
+
+/* Accent highlights */
+.taskHighlight {
+    color: var(--primary);
+    font-weight: 500;
+}
+
+/* Stat value colors */
+.colorGreen { color: #22c55e; }
+.colorAmber { color: #f59e0b; }
+.colorRed { color: #ef4444; }
+
+.dateInput {
+    margin-bottom: 1rem;
+}

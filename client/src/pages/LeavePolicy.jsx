@@ -82,7 +82,8 @@ function PoliciesTab() {
 }
 
 function PolicyForm({ initial, onClose, onSaved }) {
-    const [form, setForm] = useState({ ...initial });
+    const defaults = { name: '', leave_type: 'annual', days_allowed: 12, accrual_type: 'annual', carry_forward_limit: 0, min_service_days: 0, requires_approval: 1, half_day_allowed: 1, quarter_day_allowed: 0, description: '' };
+    const [form, setForm] = useState({ ...defaults, ...initial });
     const [error, setError] = useState('');
 
     const set = (k, v) => setForm({ ...form, [k]: v });

@@ -18,8 +18,12 @@ export default function Navbar() {
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [signoutConfirming, setSignoutConfirming] = useState(false);
   const [removeAvatarConfirming, setRemoveAvatarConfirming] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const profileRef = useRef(null);
   const fileInputRef = useRef(null);
+  const moreRef = useRef(null);
+  const mobileMoreRef = useRef(null);
 
   const handleSignOutClick = () => {
     setProfileOpen(false);
@@ -35,9 +39,19 @@ export default function Navbar() {
       if (profileRef.current && !profileRef.current.contains(e.target)) {
         setProfileOpen(false);
       }
+      if (moreRef.current && !moreRef.current.contains(e.target)) {
+        setMoreOpen(false);
+      }
+      if (mobileMoreRef.current && !mobileMoreRef.current.contains(e.target)) {
+        setMobileMoreOpen(false);
+      }
     };
     const handleEscape = (e) => {
-      if (e.key === 'Escape') setProfileOpen(false);
+      if (e.key === 'Escape') {
+        setProfileOpen(false);
+        setMoreOpen(false);
+        setMobileMoreOpen(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     document.addEventListener('keydown', handleEscape);
@@ -113,8 +127,15 @@ export default function Navbar() {
   // Role-based nav visibility
   const roleLevels = { employee: 1, team_lead: 2, manager: 3, hr_admin: 4, super_admin: 5 };
   const userLevel = roleLevels[user?.role] || 1;
-  const isTeamLead = userLevel >= 2;
+  const isTeamLead = userLevel >= 2 || user?.has_reports;
   const isHR = userLevel >= 4;
+
+  // Collect secondary nav items for "More" dropdown
+  const moreItems = [];
+  if (user?.org_id) moreItems.push({ to: '/leave-policy', label: 'Leave Policy' });
+  if (isTeamLead) moreItems.push({ to: '/manager', label: 'Manager' });
+  if (isHR) moreItems.push({ to: '/admin', label: 'Admin' });
+  const moreIsActive = moreItems.some(item => location.pathname === item.to);
 
   return (
     <>
@@ -131,10 +152,33 @@ export default function Navbar() {
             <NavLink to="/leaves" className={location.pathname === '/leaves' ? s.active : ''}>Leaves</NavLink>
             <NavLink to="/tasks" className={location.pathname === '/tasks' ? s.active : ''}>Tasks</NavLink>
             <NavLink to="/manual-entry" className={location.pathname === '/manual-entry' ? s.active : ''}>Manual Entry</NavLink>
-            {user?.org_id && <NavLink to="/organization" className={location.pathname === '/organization' ? s.active : ''}>Org</NavLink>}
-            {user?.org_id && <NavLink to="/leave-policy" className={location.pathname === '/leave-policy' ? s.active : ''}>Leave Policy</NavLink>}
-            {isTeamLead && <NavLink to="/manager" className={location.pathname === '/manager' ? s.active : ''}>Manager</NavLink>}
-            {isHR && <NavLink to="/admin" className={location.pathname === '/admin' ? s.active : ''}>Admin</NavLink>}
+            {moreItems.length > 0 && (
+              <div className={s['more-wrapper']} ref={moreRef}>
+                <button
+                  className={`${s['more-btn']} ${moreIsActive ? s.active : ''}`}
+                  onClick={() => setMoreOpen(prev => !prev)}
+                >
+                  More
+                  <svg className={`${s['more-chevron']} ${moreOpen ? s.open : ''}`} width="10" height="10" viewBox="0 0 12 12" fill="none">
+                    <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+                {moreOpen && (
+                  <div className={s['more-dropdown']}>
+                    {moreItems.map(item => (
+                      <NavLink
+                        key={item.to}
+                        to={item.to}
+                        className={location.pathname === item.to ? s.active : ''}
+                        onClick={() => setMoreOpen(false)}
+                      >
+                        {item.label}
+                      </NavLink>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className={s['profile-section']} ref={profileRef}>
@@ -271,17 +315,37 @@ export default function Navbar() {
           <span className={s['nav-icon']}>✅</span>
           <span className={s['tab-label']}>Tasks</span>
         </NavLink>
-        {isTeamLead ? (
-          <NavLink to="/manager" className={location.pathname === '/manager' ? s.active : ''}>
-            <span className={s['nav-icon']}>👔</span>
-            <span className={s['tab-label']}>Manage</span>
-          </NavLink>
-        ) : (
-          <NavLink to="/manual-entry" className={location.pathname === '/manual-entry' ? s.active : ''}>
-            <span className={s['nav-icon']}>📝</span>
-            <span className={s['tab-label']}>Entry</span>
-          </NavLink>
-        )}
+        <div className={s['mobile-more-wrapper']} ref={mobileMoreRef}>
+          <button
+            className={`${s['mobile-more-btn']} ${mobileMoreOpen ? s.active : ''}`}
+            onClick={() => setMobileMoreOpen(prev => !prev)}
+          >
+            <span className={s['nav-icon']}>⋯</span>
+            <span className={s['tab-label']}>More</span>
+          </button>
+          {mobileMoreOpen && (
+            <div className={s['mobile-more-popup']}>
+              <NavLink to="/manual-entry" onClick={() => setMobileMoreOpen(false)}>
+                <span>📝</span> Manual Entry
+              </NavLink>
+              {isTeamLead && (
+                <NavLink to="/manager" onClick={() => setMobileMoreOpen(false)}>
+                  <span>👔</span> Manager
+                </NavLink>
+              )}
+              {user?.org_id && (
+                <NavLink to="/leave-policy" onClick={() => setMobileMoreOpen(false)}>
+                  <span>📋</span> Leave Policy
+                </NavLink>
+              )}
+              {isHR && (
+                <NavLink to="/admin" onClick={() => setMobileMoreOpen(false)}>
+                  <span>⚙️</span> Admin
+                </NavLink>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Edit Profile Modal */}

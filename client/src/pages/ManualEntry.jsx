@@ -1,5 +1,5 @@
-import React, { useState, useRef } from 'react';
-import { addManualEntry, deleteEntries, getEntries, getLeaves, getStatus, getLocalToday } from '../api';
+import React, { useState, useRef, useEffect } from 'react';
+import { addManualEntry, deleteEntries, getEntries, getLeaves, getStatus, getLocalToday, getManualEntryRequests, submitOvertimeRequest, getOvertimeRequests } from '../api';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import s from './ManualEntry.module.css';
 
@@ -48,7 +48,25 @@ export default function ManualEntry() {
   const [workMode, setWorkMode] = useState('office');
   const [isEditMode, setIsEditMode] = useState(false);   // true when editing existing entries
   const [currentlyClocked, setCurrentlyClocked] = useState(false); // true if clocked in right now
+  const [pendingRequests, setPendingRequests] = useState([]);
+  const [overtimeRequests, setOvertimeRequests] = useState([]);
+  const [otDate, setOtDate] = useState('');
+  const [otHours, setOtHours] = useState('');
+  const [otReason, setOtReason] = useState('');
+  const [otLoading, setOtLoading] = useState(false);
+  const [otError, setOtError] = useAutoDismiss('');
+  const [otSuccess, setOtSuccess] = useAutoDismiss('');
   const checkDateReqId = useRef(0); // guard against race conditions
+
+  // Fetch pending manual entry requests + overtime requests
+  useEffect(() => {
+    getManualEntryRequests()
+      .then(r => setPendingRequests(Array.isArray(r.data) ? r.data : []))
+      .catch(() => {});
+    getOvertimeRequests()
+      .then(r => setOvertimeRequests(Array.isArray(r.data) ? r.data : []))
+      .catch(() => {});
+  }, []);
 
   const addBreak = () => setBreaks([...breaks, { start: '', end: '' }]);
   const removeBreak = (index) => setBreaks(breaks.filter((_, i) => i !== index));
@@ -165,9 +183,11 @@ export default function ManualEntry() {
         timezoneOffset: new Date().getTimezoneOffset(),
       });
 
-      setSuccess(`${isEditMode ? 'Entry updated' : 'Manual entry added'} for ${date}!`);
+      setSuccess(`${isEditMode ? 'Entry updated' : 'Manual entry submitted'} for ${date}!`);
       resetForm();
       setDate('');
+      // Re-fetch pending requests
+      getManualEntryRequests().then(r => setPendingRequests(r.data)).catch(() => {});
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save entry');
     } finally {
@@ -195,6 +215,30 @@ export default function ManualEntry() {
   // - Currently clocked in today
   const showForm = !leaveOnDate && !currentlyClocked && (!existingEntries || isEditMode);
   const formDisabled = loading;
+
+  const handleOvertimeSubmit = async (e) => {
+    e.preventDefault();
+    setOtError('');
+    setOtSuccess('');
+    if (!otDate || !otHours || !otReason.trim()) {
+      setOtError('Please fill in all fields');
+      return;
+    }
+    setOtLoading(true);
+    try {
+      const res = await submitOvertimeRequest({ date: otDate, hours: parseFloat(otHours), reason: otReason.trim() });
+      setOtSuccess(res.data.message || 'Overtime request submitted');
+      setOtDate('');
+      setOtHours('');
+      setOtReason('');
+      const updated = await getOvertimeRequests();
+      setOvertimeRequests(Array.isArray(updated.data) ? updated.data : []);
+    } catch (err) {
+      setOtError(err.response?.data?.error || 'Failed to submit overtime request');
+    } finally {
+      setOtLoading(false);
+    }
+  };
 
   return (
     <div className={s['manual-entry-page']}>
@@ -398,42 +442,106 @@ export default function ManualEntry() {
           </form>
         </div>
 
-        {/* Info Card */}
+        {/* Requests Card */}
         <div className={`${s['manual-entry-card']} ${s['info-card']}`}>
-          <h3>ℹ️ How It Works</h3>
-          <div className={s['info-steps']}>
-            <div className={s['info-step']}>
-              <div className={s['step-number']}>1</div>
-              <div>
-                <strong>Select the date</strong>
-                <p>Pick the date you forgot to track. Only past dates (or today after clock-out) are allowed.</p>
-              </div>
+          <h3>📋 Your Requests</h3>
+
+          {/* Pending Requests */}
+          {pendingRequests.length > 0 ? (
+            <div className={s['pending-requests']}>
+              {pendingRequests.map(r => {
+                const meta = r.metadata || {};
+                const statusColors = { pending: '#f59e0b', approved: '#22c55e', rejected: '#ef4444' };
+                return (
+                  <div key={r.request_id} className={s['pending-item']}>
+                    <div className={s['pending-item-date']}>
+                      {meta.date ? new Date(meta.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '—'}
+                    </div>
+                    <div className={s['pending-item-time']}>
+                      {meta.clock_in || ''}{meta.clock_out ? ` → ${meta.clock_out}` : ''}
+                    </div>
+                    <span
+                      className={s['pending-item-status']}
+                      style={{
+                        background: `${statusColors[r.approval_status] || '#6b7280'}22`,
+                        color: statusColors[r.approval_status] || '#6b7280'
+                      }}
+                    >
+                      {r.approval_status}
+                    </span>
+                    {r.reject_reason && (
+                      <div className={s['pending-item-reason']}>Reason: {r.reject_reason}</div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-            <div className={s['info-step']}>
-              <div className={s['step-number']}>2</div>
-              <div>
-                <strong>Enter login &amp; logout times</strong>
-                <p>When did you arrive and leave? Check "Still working" if you haven't left yet.</p>
+          ) : (
+            <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '2rem 0' }}>No requests yet.</p>
+          )}
+        </div>
+      </div>
+
+      {/* Overtime Request Section */}
+      <div className={s['overtime-section']}>
+        <h2><span className="page-icon">⏱️</span> Overtime Request</h2>
+        <div className={s['manual-entry-grid']}>
+          <div className={s['manual-entry-card']}>
+            <h3>➕ Request Overtime</h3>
+            {otError && <div className="error-msg">{otError}</div>}
+            {otSuccess && <div className="success-msg">{otSuccess}</div>}
+            <form onSubmit={handleOvertimeSubmit}>
+              <div className="form-group">
+                <label>Date</label>
+                <input type="date" value={otDate} onChange={e => setOtDate(e.target.value)} required />
               </div>
-            </div>
-            <div className={s['info-step']}>
-              <div className={s['step-number']}>3</div>
-              <div>
-                <strong>Add your breaks</strong>
-                <p>Add one or more break periods. Leave empty if no breaks were taken.</p>
+              <div className="form-group">
+                <label>Extra Hours</label>
+                <input type="number" step="0.5" min="0.5" max="24" value={otHours} onChange={e => setOtHours(e.target.value)} placeholder="e.g. 2" required />
               </div>
-            </div>
-            <div className={s['info-step']}>
-              <div className={s['step-number']}>4</div>
-              <div>
-                <strong>Save the entry</strong>
-                <p>Your entry will appear in the dashboard and analytics.</p>
+              <div className="form-group">
+                <label>Reason</label>
+                <textarea value={otReason} onChange={e => setOtReason(e.target.value)} placeholder="Why do you need overtime?" rows={3} required style={{ resize: 'vertical' }} />
               </div>
-            </div>
+              <button type="submit" className="btn btn-primary" disabled={otLoading}>
+                {otLoading ? 'Submitting...' : '✓ Submit Overtime Request'}
+              </button>
+            </form>
           </div>
 
-          <div className={s['info-note']}>
-            <strong>Tip:</strong> If entries already exist for a date, click <em>"Edit These Entries"</em> to modify them instead of starting from scratch.
+          <div className={`${s['manual-entry-card']} ${s['info-card']}`}>
+            <h3>📋 Overtime Requests</h3>
+            {overtimeRequests.length > 0 ? (
+              <div className={s['pending-requests']}>
+                {overtimeRequests.map(r => {
+                  const meta = r.metadata || {};
+                  const statusColors = { pending: '#f59e0b', approved: '#22c55e', rejected: '#ef4444' };
+                  return (
+                    <div key={r.id} className={s['pending-item']}>
+                      <div className={s['pending-item-date']}>
+                        {meta.date ? new Date(meta.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '—'}
+                      </div>
+                      <div className={s['pending-item-time']}>
+                        {meta.hours ? `${meta.hours}h overtime` : ''}
+                      </div>
+                      <span
+                        className={s['pending-item-status']}
+                        style={{
+                          background: `${statusColors[r.status] || '#6b7280'}22`,
+                          color: statusColors[r.status] || '#6b7280'
+                        }}
+                      >
+                        {r.status}
+                      </span>
+                      {r.reason && <div className={s['pending-item-reason']}>{r.reason}</div>}
+                      {r.reject_reason && <div className={s['pending-item-reason']} style={{ color: '#ef4444' }}>Rejected: {r.reject_reason}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '2rem 0' }}>No overtime requests yet.</p>
+            )}
           </div>
         </div>
       </div>

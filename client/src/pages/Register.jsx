@@ -1,16 +1,21 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
-import { register as registerApi } from '../api';
+import { register as registerApi, getRegistrationMode } from '../api';
 import PasswordInput from '../components/PasswordInput';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import s from './Auth.module.css';
 
 export default function Register() {
   const { saveAuth } = useAuth();
-  const [form, setForm] = useState({ username: '', password: '', full_name: '', email: '' });
+  const [form, setForm] = useState({ username: '', password: '', full_name: '', email: '', invite_code: '' });
   const [error, setError] = useAutoDismiss('');
   const [loading, setLoading] = useState(false);
+  const [regMode, setRegMode] = useState('open');
+
+  useEffect(() => {
+    getRegistrationMode().then(r => setRegMode(r.data.mode)).catch(() => {});
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -25,6 +30,21 @@ export default function Register() {
       setLoading(false);
     }
   };
+
+  if (regMode === 'closed') {
+    return (
+      <div className={s['auth-container']}>
+        <div className={s['auth-card']}>
+          <div className={s['auth-icon']}>🔒</div>
+          <h2>Registration Closed</h2>
+          <p>New registrations are currently not being accepted. Contact your administrator for access.</p>
+          <div className={s['auth-switch']}>
+            Already have an account? <Link to="/login">Sign in</Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={s['auth-container']}>
@@ -78,6 +98,19 @@ export default function Register() {
               minLength={8}
             />
           </div>
+          {regMode === 'invite_only' && (
+            <div className="form-group">
+              <label htmlFor="reg-invite">Invite Code</label>
+              <input
+                id="reg-invite"
+                type="text"
+                value={form.invite_code}
+                onChange={e => setForm({ ...form, invite_code: e.target.value.toUpperCase() })}
+                placeholder="Enter your invite code"
+                required
+              />
+            </div>
+          )}
           <button type="submit" className="btn btn-primary" disabled={loading}>
             {loading ? 'Creating...' : 'Create Account'}
           </button>

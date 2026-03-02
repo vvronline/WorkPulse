@@ -4,12 +4,13 @@ import { AuthProvider, useAuth } from './AuthContext';
 import { ThemeProvider } from './ThemeContext';
 import { WorkStateProvider } from './WorkStateContext';
 import Login from './pages/Login';
-import Register from './pages/Register';
+import ChangePassword from './pages/ChangePassword';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import Dashboard from './pages/Dashboard';
 import Navbar from './components/Navbar';
 import AxiosInterceptor from './components/AxiosInterceptor';
+import { ToastProvider } from './components/Toast';
 
 // Lazy-load non-critical pages for smaller initial bundle
 const Analytics = lazy(() => import('./pages/Analytics'));
@@ -19,15 +20,19 @@ const Tasks = lazy(() => import('./pages/Tasks'));
 
 // Enterprise pages
 const Admin = lazy(() => import('./pages/Admin'));
-const Organization = lazy(() => import('./pages/Organization'));
 const ManagerDashboard = lazy(() => import('./pages/ManagerDashboard'));
 const LeavePolicy = lazy(() => import('./pages/LeavePolicy'));
+const SetEmail = lazy(() => import('./pages/SetEmail'));
 
 function ProtectedRoute({ children, minRole }) {
   const { isAuthenticated, user } = useAuth();
   if (!isAuthenticated) return <Navigate to="/login" />;
+  // Force password change before accessing any route
+  if (user?.must_change_password) return <Navigate to="/change-password" />;
   if (minRole) {
     const levels = { employee: 1, team_lead: 2, manager: 3, hr_admin: 4, super_admin: 5 };
+    // Allow manager route if user has direct reports
+    if (minRole === 'team_lead' && user?.has_reports) return children;
     if ((levels[user?.role] || 1) < (levels[minRole] || 1)) return <Navigate to="/" />;
   }
   return children;
@@ -47,7 +52,7 @@ function AppRoutes() {
       <Suspense fallback={<div style={{ maxWidth: '1400px', margin: '2rem auto', padding: '0 2.5rem' }}><div className="status-card"><div className="loading-spinner"><div className="spinner"></div></div></div></div>}>
         <Routes>
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
-          <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
+          <Route path="/change-password" element={isAuthenticated ? <ChangePassword /> : <Navigate to="/login" />} />
           <Route path="/forgot-password" element={<PublicRoute><ForgotPassword /></PublicRoute>} />
           <Route path="/reset-password/:token" element={<PublicRoute><ResetPassword /></PublicRoute>} />
           <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
@@ -56,9 +61,9 @@ function AppRoutes() {
           <Route path="/leaves" element={<ProtectedRoute><Leaves /></ProtectedRoute>} />
           <Route path="/tasks" element={<ProtectedRoute><Tasks /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute minRole="hr_admin"><Admin /></ProtectedRoute>} />
-          <Route path="/organization" element={<ProtectedRoute><Organization /></ProtectedRoute>} />
           <Route path="/manager" element={<ProtectedRoute minRole="team_lead"><ManagerDashboard /></ProtectedRoute>} />
           <Route path="/leave-policy" element={<ProtectedRoute><LeavePolicy /></ProtectedRoute>} />
+          <Route path="/set-email" element={<ProtectedRoute><SetEmail /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </Suspense>
@@ -71,11 +76,13 @@ export default function App() {
     <AuthProvider>
       <ThemeProvider>
         <WorkStateProvider>
-          <BrowserRouter>
-            <AxiosInterceptor>
-              <AppRoutes />
-            </AxiosInterceptor>
-          </BrowserRouter>
+          <ToastProvider>
+            <BrowserRouter>
+              <AxiosInterceptor>
+                <AppRoutes />
+              </AxiosInterceptor>
+            </BrowserRouter>
+          </ToastProvider>
         </WorkStateProvider>
       </ThemeProvider>
     </AuthProvider>

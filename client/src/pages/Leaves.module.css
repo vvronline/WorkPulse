@@ -357,6 +357,19 @@
   border-color: rgba(0, 0, 0, 0.06);
 }
 
+/* ---- Status Badge ---- */
+.leave-status-badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 99px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+}
+
 /* ---- Responsive ---- */
 @media (max-width: 768px) {
   .leaves-page {
@@ -411,4 +424,57 @@
   .leave-type-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* ============= LEAVE BALANCE PANEL ============= */
+.leave-balance-panel {
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  border-radius: 10px;
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+}
+
+.leave-balance-panel h4 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.leave-balance-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.leave-balance-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.leave-balance-item:last-child {
+  border-bottom: none;
+}
+
+.leave-balance-icon {
+  font-size: 1rem;
+}
+
+.leave-balance-type {
+  flex: 1;
+  font-weight: 500;
+}
+
+.leave-balance-available {
+  font-weight: 700;
+  color: var(--type-color, var(--primary));
+}
+
+.leave-balance-detail {
+  font-size: 0.7rem;
+  color: var(--text-muted);
 }

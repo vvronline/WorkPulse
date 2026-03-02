@@ -26,7 +26,7 @@ const VALID_ROLES = Object.keys(ROLE_LEVEL);
  */
 function loadUserContext(req, res, next) {
     const user = db.prepare(
-        'SELECT role, org_id, team_id, department_id, is_active FROM users WHERE id = ?'
+        'SELECT role, org_id, team_id, department_id, manager_id, is_active FROM users WHERE id = ?'
     ).get(req.userId);
 
     if (!user) return res.status(401).json({ error: 'User not found' });
@@ -36,6 +36,7 @@ function loadUserContext(req, res, next) {
     req.userOrgId = user.org_id || null;
     req.userTeamId = user.team_id || null;
     req.userDeptId = user.department_id || null;
+    req.userManagerId = user.manager_id || null;
     req.roleLevel = ROLE_LEVEL[req.userRole] || 1;
     next();
 }
@@ -55,14 +56,15 @@ function requireRole(minRole) {
 }
 
 /**
- * Middleware: require that the user belongs to the same org.
- * Used for org-scoped operations.
+ * Middleware: require that the user belongs to an org OR has direct reports.
+ * Used for org-scoped operations and manager views.
  */
 function requireSameOrg(req, res, next) {
-    if (!req.userOrgId) {
-        return res.status(403).json({ error: 'You are not part of any organization' });
-    }
-    next();
+    if (req.userOrgId) return next();
+    // Allow if user has direct reports (is someone's manager)
+    const hasReports = db.prepare('SELECT 1 FROM users WHERE manager_id = ? AND is_active = 1 LIMIT 1').get(req.userId);
+    if (hasReports) return next();
+    return res.status(403).json({ error: 'You are not part of any organization and have no team members assigned' });
 }
 
 /**
@@ -76,29 +78,34 @@ function canManageUser(managerRole, targetRole) {
  * Get all users that a manager/lead can see (same org, subordinates).
  */
 function getVisibleUserIds(userId, role, orgId, teamId) {
-    if (!orgId) return [userId];
+    const idSet = new Set();
 
-    if (ROLE_LEVEL[role] >= ROLE_LEVEL.hr_admin) {
-        // HR admins and super admins see entire org
-        return db.prepare('SELECT id FROM users WHERE org_id = ? AND is_active = 1').all(orgId).map(u => u.id);
-    }
+    // Always include direct reports (users who have this user as manager_id)
+    const directReports = db.prepare('SELECT id FROM users WHERE manager_id = ? AND is_active = 1').all(userId);
+    directReports.forEach(u => idSet.add(u.id));
 
-    if (ROLE_LEVEL[role] >= ROLE_LEVEL.manager) {
-        // Managers see their department
-        const user = db.prepare('SELECT department_id FROM users WHERE id = ?').get(userId);
-        if (user?.department_id) {
-            return db.prepare('SELECT id FROM users WHERE org_id = ? AND department_id = ? AND is_active = 1')
-                .all(orgId, user.department_id).map(u => u.id);
+    if (orgId) {
+        if (ROLE_LEVEL[role] >= ROLE_LEVEL.hr_admin) {
+            // HR admins and super admins see entire org
+            db.prepare('SELECT id FROM users WHERE org_id = ? AND is_active = 1').all(orgId).forEach(u => idSet.add(u.id));
+        } else if (ROLE_LEVEL[role] >= ROLE_LEVEL.manager) {
+            // Managers see their department
+            const user = db.prepare('SELECT department_id FROM users WHERE id = ?').get(userId);
+            if (user?.department_id) {
+                db.prepare('SELECT id FROM users WHERE org_id = ? AND department_id = ? AND is_active = 1')
+                    .all(orgId, user.department_id).forEach(u => idSet.add(u.id));
+            }
+        } else if (ROLE_LEVEL[role] >= ROLE_LEVEL.team_lead && teamId) {
+            // Team leads see their team
+            db.prepare('SELECT id FROM users WHERE org_id = ? AND team_id = ? AND is_active = 1')
+                .all(orgId, teamId).forEach(u => idSet.add(u.id));
         }
     }
 
-    if (ROLE_LEVEL[role] >= ROLE_LEVEL.team_lead && teamId) {
-        // Team leads see their team
-        return db.prepare('SELECT id FROM users WHERE org_id = ? AND team_id = ? AND is_active = 1')
-            .all(orgId, teamId).map(u => u.id);
-    }
+    // If still empty, include self
+    if (idSet.size === 0) idSet.add(userId);
 
-    return [userId];
+    return [...idSet];
 }
 
 module.exports = {

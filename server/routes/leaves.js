@@ -1,9 +1,10 @@
 const express = require('express');
 const db = require('../db');
 const auth = require('../middleware/auth');
-const { loadUserContext } = require('../middleware/rbac');
+const { loadUserContext, ROLE_LEVEL } = require('../middleware/rbac');
 const { logAction } = require('../utils/audit');
 const { getLocalToday } = require('../utils/timezone');
+const { findApprover } = require('../utils/approver');
 
 const router = express.Router();
 
@@ -80,16 +81,15 @@ router.post('/', auth, loadUserContext, (req, res) => {
     }
 
     // Determine approval status
-    let leaveStatus = 'approved'; // Default for users without org
+    let leaveStatus = 'approved';
     let needsApproval = false;
 
-    if (req.userOrgId) {
-        // HR admins+ auto-approve their own leaves
-        const { ROLE_LEVEL } = require('../middleware/rbac');
-        if ((ROLE_LEVEL[req.userRole] || 1) < ROLE_LEVEL.hr_admin) {
-            leaveStatus = 'pending';
-            needsApproval = true;
-        }
+    // Needs approval if: user has a manager assigned, OR is in an org with role < hr_admin
+    const hasManager = req.userManagerId != null;
+    const isOrgSubordinate = req.userOrgId && (ROLE_LEVEL[req.userRole] || 1) < ROLE_LEVEL.hr_admin;
+    if (hasManager || isOrgSubordinate) {
+        leaveStatus = 'pending';
+        needsApproval = true;
     }
 
     const result = db.prepare(
@@ -98,20 +98,19 @@ router.post('/', auth, loadUserContext, (req, res) => {
 
     // Create approval request if needed
     if (needsApproval) {
-        // Find approver: team lead → manager → hr_admin
         const approver = findApprover(req.userId, req.userOrgId);
 
         db.prepare(`
             INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
             VALUES (?, ?, ?, 'leave', ?, ?, ?)
         `).run(
-            req.userOrgId, req.userId, approver?.id || null,
+            req.userOrgId || null, req.userId, approver?.id || null,
             result.lastInsertRowid, reason || null,
             JSON.stringify({ date, leave_type, duration: leaveDuration })
         );
     }
 
-    // Update balance
+    // Update balance only if auto-approved
     if (leaveStatus === 'approved' && req.userOrgId) {
         updateLeaveBalance(req.userId, leave_type, date, leaveDuration, 'add');
     }
@@ -133,16 +132,20 @@ router.post('/batch', auth, loadUserContext, (req, res) => {
         return res.status(400).json({ error: 'Dates array and leave type are required' });
     }
 
+    const validTypes = ['sick', 'holiday', 'planned', 'personal', 'other'];
+    if (!validTypes.includes(leave_type)) {
+        return res.status(400).json({ error: 'Invalid leave type' });
+    }
+
     const leaveDuration = ['full', 'half', 'quarter'].includes(duration) ? duration : 'full';
     let leaveStatus = 'approved';
     let needsApproval = false;
 
-    if (req.userOrgId) {
-        const { ROLE_LEVEL } = require('../middleware/rbac');
-        if ((ROLE_LEVEL[req.userRole] || 1) < ROLE_LEVEL.hr_admin) {
-            leaveStatus = 'pending';
-            needsApproval = true;
-        }
+    const hasManager = req.userManagerId != null;
+    const isOrgSubordinate = req.userOrgId && (ROLE_LEVEL[req.userRole] || 1) < ROLE_LEVEL.hr_admin;
+    if (hasManager || isOrgSubordinate) {
+        leaveStatus = 'pending';
+        needsApproval = true;
     }
 
     const insert = db.prepare('INSERT OR IGNORE INTO leaves (user_id, date, leave_type, reason, duration, status) VALUES (?, ?, ?, ?, ?, ?)');
@@ -160,7 +163,7 @@ router.post('/batch', auth, loadUserContext, (req, res) => {
                             INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
                             VALUES (?, ?, ?, 'leave', ?, ?, ?)
                         `).run(
-                            req.userOrgId, req.userId, approver?.id || null,
+                            req.userOrgId || null, req.userId, approver?.id || null,
                             r.lastInsertRowid, reason || null,
                             JSON.stringify({ date, leave_type, duration: leaveDuration })
                         );
@@ -243,38 +246,7 @@ router.get('/summary', auth, (req, res) => {
 
 // ==================== HELPERS ====================
 
-/**
- * Find the appropriate approver for a user.
- * Priority: Team lead → Manager → HR admin (from same org)
- */
-function findApprover(userId, orgId) {
-    if (!orgId) return null;
-
-    const user = db.prepare('SELECT team_id, department_id FROM users WHERE id = ?').get(userId);
-
-    // 1. Team lead
-    if (user?.team_id) {
-        const team = db.prepare('SELECT lead_id FROM teams WHERE id = ?').get(user.team_id);
-        if (team?.lead_id && team.lead_id !== userId) {
-            return db.prepare('SELECT id FROM users WHERE id = ? AND is_active = 1').get(team.lead_id);
-        }
-    }
-
-    // 2. Department head
-    if (user?.department_id) {
-        const dept = db.prepare('SELECT head_id FROM departments WHERE id = ?').get(user.department_id);
-        if (dept?.head_id && dept.head_id !== userId) {
-            return db.prepare('SELECT id FROM users WHERE id = ? AND is_active = 1').get(dept.head_id);
-        }
-    }
-
-    // 3. Any HR admin in the org
-    const hrAdmin = db.prepare(
-        "SELECT id FROM users WHERE org_id = ? AND role IN ('hr_admin', 'super_admin') AND id != ? AND is_active = 1 LIMIT 1"
-    ).get(orgId, userId);
-
-    return hrAdmin || null;
-}
+// ==================== HELPERS ====================
 
 /**
  * Update leave balance when a leave is approved/deleted.
@@ -296,3 +268,4 @@ function updateLeaveBalance(userId, leaveType, date, duration, operation) {
 }
 
 module.exports = router;
+module.exports.updateLeaveBalance = updateLeaveBalance;

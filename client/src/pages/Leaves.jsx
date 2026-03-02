@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { getLeaves, addLeave, addLeavesBatch, deleteLeave, getLeaveSummary } from '../api';
+import { getLeaves, addLeave, addLeavesBatch, deleteLeave, getLeaveSummary, getLeaveBalances } from '../api';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import s from './Leaves.module.css';
@@ -35,7 +35,9 @@ export default function Leaves() {
   const [dateTo, setDateTo] = useState('');
   const [skipWeekends, setSkipWeekends] = useState(true);
   const [leaveType, setLeaveType] = useState('sick');
+  const [duration, setDuration] = useState('full');
   const [reason, setReason] = useState('');
+  const [balances, setBalances] = useState([]);
   const [error, setError] = useAutoDismiss('');
   const [success, setSuccess] = useAutoDismiss('');
   const [submitting, setSubmitting] = useState(false);
@@ -58,12 +60,14 @@ export default function Leaves() {
       const lastDay = new Date(parseInt(y), parseInt(m), 0).getDate();
       const to = `${filterMonth}-${lastDay}`;
 
-      const [leavesRes, summaryRes] = await Promise.all([
+      const [leavesRes, summaryRes, balancesRes] = await Promise.all([
         getLeaves(from, to),
         getLeaveSummary(parseInt(m), parseInt(y)),
+        getLeaveBalances(parseInt(y)).catch(() => ({ data: [] })),
       ]);
       setLeaves(leavesRes.data);
       setSummary(summaryRes.data);
+      setBalances(balancesRes.data || []);
     } catch {
       setError('Failed to load leave data');
     } finally {
@@ -101,11 +105,12 @@ export default function Leaves() {
 
       setSubmitting(true);
       try {
-        const res = await addLeavesBatch({ dates: rangeDays, leave_type: leaveType, reason: reason.trim() || undefined });
-        setSuccess(res.data.message || `${rangeDays.length} leave(s) added!`);
+        const res = await addLeavesBatch({ dates: rangeDays, leave_type: leaveType, reason: reason.trim() || undefined, duration });
+        setSuccess(res.data?.message || `${rangeDays.length} leave(s) added!`);
         setDateFrom('');
         setDateTo('');
         setReason('');
+        setDuration('full');
         fetchData();
       } catch (err) {
         setError(err.response?.data?.error || 'Failed to add leaves');
@@ -120,10 +125,11 @@ export default function Leaves() {
 
       setSubmitting(true);
       try {
-        await addLeave({ date, leave_type: leaveType, reason: reason.trim() || undefined });
-        setSuccess('Leave added successfully!');
+        const res = await addLeave({ date, leave_type: leaveType, reason: reason.trim() || undefined, duration });
+        setSuccess(res.data?.message || 'Leave added successfully!');
         setDate('');
         setReason('');
+        setDuration('full');
         fetchData();
       } catch (err) {
         setError(err.response?.data?.error || 'Failed to add leave');
@@ -270,6 +276,37 @@ export default function Leaves() {
               />
             </div>
 
+            {/* Duration Selector */}
+            <div className="form-group">
+              <label>Duration</label>
+              <div className={s['leave-mode-toggle']}>
+                <button type="button" className={`${s['mode-btn']} ${duration === 'full' ? s.active : ''}`} onClick={() => setDuration('full')}>Full Day</button>
+                <button type="button" className={`${s['mode-btn']} ${duration === 'half' ? s.active : ''}`} onClick={() => setDuration('half')}>Half Day</button>
+                <button type="button" className={`${s['mode-btn']} ${duration === 'quarter' ? s.active : ''}`} onClick={() => setDuration('quarter')}>Quarter Day</button>
+              </div>
+            </div>
+
+            {/* Leave Balance */}
+            {balances.length > 0 && (
+              <div className={s['leave-balance-panel']}>
+                <h4>📊 Your Leave Balances</h4>
+                <div className={s['leave-balance-grid']}>
+                  {balances.map(b => {
+                    const available = (b.quota + (b.carried_forward || 0)) - b.used;
+                    const type = getType(b.leave_type);
+                    return (
+                      <div key={`${b.leave_type}-${b.year}`} className={s['leave-balance-item']} style={{ '--type-color': type.color }}>
+                        <span className={s['leave-balance-icon']}>{type.icon}</span>
+                        <span className={s['leave-balance-type']}>{type.label}</span>
+                        <span className={s['leave-balance-available']}>{available} available</span>
+                        <span className={s['leave-balance-detail']}>{b.used}/{b.quota + (b.carried_forward || 0)} used</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <button type="submit" className="btn btn-primary" disabled={submitting}>
               {submitting ? 'Saving...' : isRange ? `✓ Add ${rangeDays.length} Leave${rangeDays.length !== 1 ? 's' : ''}` : '✓ Add Leave'}
             </button>
@@ -333,17 +370,31 @@ export default function Leaves() {
               <div className={s['leave-list']}>
                 {leaves.map(leave => {
                   const type = getType(leave.leave_type);
+                  const statusColors = { pending: '#f59e0b', approved: '#22c55e', rejected: '#ef4444' };
+                  const statusColor = statusColors[leave.status] || '#6b7280';
                   return (
                     <div key={leave.id} className={s['leave-item']}>
                       <div className={s['leave-item-icon']} style={{ '--type-bg': type.color + '20', '--type-color': type.color }}>
                         {type.icon}
                       </div>
                       <div className={s['leave-item-info']}>
-                        <div className={s['leave-item-type']}>{type.label}</div>
+                        <div className={s['leave-item-type']}>
+                          {type.label}
+                          <span
+                            className={s['leave-status-badge']}
+                            style={{ background: `${statusColor}22`, color: statusColor }}
+                          >
+                            {leave.status || 'approved'}
+                          </span>
+                        </div>
                         <div className={s['leave-item-date']}>
                           {new Date(leave.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
                         </div>
                         {leave.reason && <div className={s['leave-item-reason']}>{leave.reason}</div>}
+                        {leave.reject_reason && <div className={s['leave-item-reason']} style={{ color: '#ef4444' }}>Rejected: {leave.reject_reason}</div>}
+                        {leave.approved_by_name && leave.status === 'approved' && (
+                          <div className={s['leave-item-reason']}>Approved by {leave.approved_by_name}</div>
+                        )}
                       </div>
                       <button className="btn-remove-break" onClick={() => handleDeleteClick(leave)} title="Delete">
                         ✕

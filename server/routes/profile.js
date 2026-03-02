@@ -77,7 +77,8 @@ router.delete('/avatar', auth, (req, res) => {
 
 // Get profile
 router.get('/', auth, (req, res) => {
-    const user = db.prepare('SELECT id, username, full_name, email, avatar, role, org_id, team_id, department_id FROM users WHERE id = ?').get(req.userId);
+    const user = db.prepare('SELECT id, username, full_name, email, avatar, role, org_id, team_id, department_id, must_change_password FROM users WHERE id = ?').get(req.userId);
+    if (user) user.must_change_password = !!user.must_change_password;
     res.json(user);
 });
 
@@ -130,7 +131,7 @@ router.put('/password', auth, async (req, res) => {
         return res.status(400).json({ error: 'Current password is incorrect' });
     }
     const hash = await bcrypt.hash(new_password, 10);
-    db.prepare('UPDATE users SET password = ?, token_version = COALESCE(token_version, 0) + 1 WHERE id = ?').run(hash, req.userId);
+    db.prepare('UPDATE users SET password = ?, token_version = COALESCE(token_version, 0) + 1, must_change_password = 0 WHERE id = ?').run(hash, req.userId);
     // Return a fresh token so the current session stays valid after invalidation
     const updated = db.prepare('SELECT token_version FROM users WHERE id = ?').get(req.userId);
     const token = jwt.sign({ id: req.userId, username: req.username, tv: updated.token_version || 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
@@ -160,6 +161,11 @@ router.delete('/', auth, async (req, res) => {
         db.prepare('DELETE FROM leaves WHERE user_id = ?').run(req.userId);
         db.prepare('DELETE FROM tasks WHERE user_id = ?').run(req.userId);
         db.prepare('DELETE FROM password_reset_tokens WHERE user_id = ?').run(req.userId);
+        db.prepare('DELETE FROM approval_requests WHERE requester_id = ?').run(req.userId);
+        db.prepare('DELETE FROM leave_balances WHERE user_id = ?').run(req.userId);
+        try { db.prepare('DELETE FROM audit_logs WHERE actor_id = ?').run(req.userId); } catch { }
+        // Unset manager_id for any reports
+        db.prepare('UPDATE users SET manager_id = NULL WHERE manager_id = ?').run(req.userId);
         db.prepare('DELETE FROM users WHERE id = ?').run(req.userId);
     });
     deleteAll();

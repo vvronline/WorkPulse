@@ -8,7 +8,8 @@ export const baseURL = process.env.NODE_ENV === 'production' ? '/api' : 'http://
 
 const API = axios.create({
     baseURL: baseURL,
-    withCredentials: true
+    withCredentials: true,
+    headers: { 'X-Requested-With': 'WorkPulse' }
 });
 
 // Get today's date in local timezone as YYYY-MM-DD
@@ -63,6 +64,11 @@ export const getAnalytics = (days) => API.get('/tracker/analytics', { params: { 
 export const addManualEntry = (data) => API.post('/tracker/manual-entry', data);
 export const deleteEntries = (date) => API.delete(`/tracker/entries/${date}`);
 export const getEntries = (date) => API.get(`/tracker/entries/${date}`);
+export const getManualEntryRequests = () => API.get('/tracker/manual-entries');
+
+// Overtime
+export const submitOvertimeRequest = (data) => API.post('/tracker/overtime-request', data);
+export const getOvertimeRequests = () => API.get('/tracker/overtime-requests');
 
 // Dashboard Widgets
 export const getWidgets = () => API.get('/tracker/widgets');
@@ -121,6 +127,11 @@ export const deleteTeam = (id) => API.delete(`/org/teams/${id}`);
 export const getOrgChart = () => API.get('/org/chart');
 
 // Admin
+export const getAdminOrganizations = () => API.get('/admin/organizations');
+export const getAdminOrganization = (id) => API.get(`/admin/organizations/${id}`);
+export const createAdminOrganization = (data) => API.post('/admin/organizations', data);
+export const updateAdminOrganization = (id, data) => API.put(`/admin/organizations/${id}`, data);
+export const deleteAdminOrganization = (id) => API.delete(`/admin/organizations/${id}`);
 export const getAdminUsers = (params) => API.get('/admin/users', { params });
 export const getAdminUser = (id) => API.get(`/admin/users/${id}`);
 export const createAdminUser = (data) => API.post('/admin/users', data);
@@ -130,17 +141,26 @@ export const toggleUserActive = (id) => API.put(`/admin/users/${id}/deactivate`)
 export const adminResetPassword = (id, password) => API.post(`/admin/users/${id}/reset-password`, { new_password: password });
 export const getAuditLogs = (params) => API.get('/admin/audit-logs', { params });
 export const getAdminStats = () => API.get('/admin/stats');
+export const getRegistrationSettings = () => API.get('/admin/registration-settings');
+export const updateRegistrationSettings = (mode) => API.put('/admin/registration-settings', { mode });
+export const getInviteCodes = () => API.get('/admin/invite-codes');
+export const createInviteCode = (data) => API.post('/admin/invite-codes', data);
+export const deactivateInviteCode = (id) => API.delete(`/admin/invite-codes/${id}`);
+export const getRegistrationMode = () => API.get('/auth/registration-mode');
 
 // Manager Dashboard
-export const getTeamAttendance = () => API.get('/manager/team-attendance');
+export const getTeamAttendance = (date) => API.get('/manager/team-attendance', { params: { date } });
 export const getTeamAnalytics = (days) => API.get('/manager/team-analytics', { params: { days } });
 export const getApprovals = (params) => API.get('/manager/approvals', { params });
 export const getMyRequests = (params) => API.get('/manager/my-requests', { params });
 export const approveRequest = (id) => API.post(`/manager/approvals/${id}/approve`);
 export const rejectRequest = (id, reason) => API.post(`/manager/approvals/${id}/reject`, { reject_reason: reason });
 export const bulkApproval = (ids, action, reason) => API.post('/manager/approvals/bulk', { ids, action, reject_reason: reason });
-export const getMemberHours = (userId, params) => API.get(`/manager/member/${userId}/hours`, { params });
-export const getMemberTasks = (userId, params) => API.get(`/manager/member/${userId}/tasks`, { params });
+export const getMemberHours = (userId, from, to) => API.get(`/manager/member/${userId}/hours`, { params: { from, to } });
+export const getMemberTasks = (userId, date) => API.get(`/manager/member/${userId}/tasks`, { params: { date } });
+export const getMemberLeaves = (userId, from, to) => API.get(`/manager/member/${userId}/leaves`, { params: { from, to } });
+export const getMemberRequests = (userId) => API.get(`/manager/member/${userId}/requests`);
+export const getMemberOverview = (userId) => API.get(`/manager/member/${userId}/overview`);
 
 // Leave Policy
 export const getLeavePolicies = () => API.get('/leave-policy/policies');

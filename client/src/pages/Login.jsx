@@ -64,7 +64,7 @@ export default function Login() {
           </button>
         </form>
         <div className={s['auth-switch']}>
-          New employee? <Link to="/register">Create account</Link>
+          Don't have an account? Contact your administrator.
         </div>
       </div>
     </div>

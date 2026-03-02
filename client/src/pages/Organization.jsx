@@ -24,7 +24,19 @@ export default function Organization() {
 
     if (loading) return <div className={s.adminPage}><div className={s.statCard}>Loading...</div></div>;
 
-    if (!org) return <CreateOrgView onCreated={() => { fetchOrg(); updateUser({ org_id: 1, role: 'super_admin' }); }} />;
+    if (!org) {
+        if (user?.role === 'super_admin') {
+            return <CreateOrgView onCreated={() => { fetchOrg(); updateUser({ org_id: 1, role: 'super_admin' }); }} />;
+        }
+        return (
+            <div className={s.adminPage}>
+                <h1>Organization</h1>
+                <p style={{ color: 'var(--text-secondary)', marginTop: '1rem' }}>
+                    You are not assigned to any organization yet. Please contact your administrator.
+                </p>
+            </div>
+        );
+    }
 
     return (
         <div className={s.adminPage}>
@@ -132,10 +144,13 @@ function OrgSettings({ org, onUpdate, userRole }) {
 
 function Departments({ orgId, userRole }) {
     const [departments, setDepartments] = useState([]);
+    const [members, setMembers] = useState([]);
     const [showForm, setShowForm] = useState(false);
     const [name, setName] = useState('');
+    const [headId, setHeadId] = useState('');
     const [editId, setEditId] = useState(null);
     const [editName, setEditName] = useState('');
+    const [editHeadId, setEditHeadId] = useState('');
     const [msg, setMsg] = useState('');
     const canManage = ['manager', 'hr_admin', 'super_admin'].includes(userRole);
 
@@ -145,11 +160,18 @@ function Departments({ orgId, userRole }) {
 
     useEffect(() => { fetchDepts(); }, [fetchDepts]);
 
+    useEffect(() => {
+        if (canManage) {
+            getOrgMembers({ is_active: true }).then(r => setMembers(r.data)).catch(() => {});
+        }
+    }, [canManage]);
+
     const handleCreate = async (e) => {
         e.preventDefault();
         try {
-            await createDepartment({ name });
+            await createDepartment({ name, head_id: headId || null });
             setName('');
+            setHeadId('');
             setShowForm(false);
             fetchDepts();
         } catch (e) { setMsg(e.response?.data?.error || 'Failed'); }
@@ -157,7 +179,7 @@ function Departments({ orgId, userRole }) {
 
     const handleUpdate = async (id) => {
         try {
-            await updateDepartment(id, { name: editName });
+            await updateDepartment(id, { name: editName, head_id: editHeadId || null });
             setEditId(null);
             fetchDepts();
         } catch (e) { setMsg(e.response?.data?.error || 'Failed'); }
@@ -177,8 +199,12 @@ function Departments({ orgId, userRole }) {
             {canManage && (
                 <div style={{ marginBottom: '1rem' }}>
                     {showForm ? (
-                        <form onSubmit={handleCreate} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        <form onSubmit={handleCreate} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
                             <input value={name} onChange={e => setName(e.target.value)} placeholder="Department name" required style={{ padding: '0.5rem', borderRadius: 8, border: '1px solid var(--glass-border)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontFamily: 'inherit' }} />
+                            <select value={headId} onChange={e => setHeadId(e.target.value)} style={{ padding: '0.5rem', borderRadius: 8, border: '1px solid var(--glass-border)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontFamily: 'inherit' }}>
+                                <option value="">No Head</option>
+                                {members.map(m => <option key={m.id} value={m.id}>{m.full_name || m.username}</option>)}
+                            </select>
                             <button type="submit" className={s.btnPrimary}>Add</button>
                             <button type="button" className={s.btnCancel} onClick={() => setShowForm(false)}>Cancel</button>
                         </form>
@@ -193,7 +219,12 @@ function Departments({ orgId, userRole }) {
                     {departments.map(d => (
                         <tr key={d.id}>
                             <td>{editId === d.id ? <input value={editName} onChange={e => setEditName(e.target.value)} style={{ padding: '0.3rem', borderRadius: 6, border: '1px solid var(--glass-border)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontFamily: 'inherit' }} /> : d.name}</td>
-                            <td>{d.head_name || '—'}</td>
+                            <td>{editId === d.id ? (
+                                <select value={editHeadId} onChange={e => setEditHeadId(e.target.value)} style={{ padding: '0.3rem', borderRadius: 6, border: '1px solid var(--glass-border)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontFamily: 'inherit' }}>
+                                    <option value="">No Head</option>
+                                    {members.map(m => <option key={m.id} value={m.id}>{m.full_name || m.username}</option>)}
+                                </select>
+                            ) : (d.head_name || '—')}</td>
                             <td>{d.member_count}</td>
                             {canManage && (
                                 <td>
@@ -205,7 +236,7 @@ function Departments({ orgId, userRole }) {
                                             </>
                                         ) : (
                                             <>
-                                                <button className={s.btnSmall} style={{ background: 'var(--accent)', color: '#fff' }} onClick={() => { setEditId(d.id); setEditName(d.name); }}>Edit</button>
+                                                <button className={s.btnSmall} style={{ background: 'var(--accent)', color: '#fff' }} onClick={() => { setEditId(d.id); setEditName(d.name); setEditHeadId(d.head_id || ''); }}>Edit</button>
                                                 <button className={s.btnSmall} style={{ background: '#ef4444', color: '#fff' }} onClick={() => handleDelete(d.id)}>Delete</button>
                                             </>
                                         )}
@@ -224,8 +255,11 @@ function Departments({ orgId, userRole }) {
 function Teams({ orgId, userRole }) {
     const [teams, setTeams] = useState([]);
     const [departments, setDepartments] = useState([]);
+    const [members, setMembers] = useState([]);
     const [showForm, setShowForm] = useState(false);
-    const [form, setForm] = useState({ name: '', department_id: '' });
+    const [form, setForm] = useState({ name: '', department_id: '', lead_id: '' });
+    const [editId, setEditId] = useState(null);
+    const [editForm, setEditForm] = useState({ name: '', department_id: '', lead_id: '' });
     const [msg, setMsg] = useState('');
     const canManage = ['team_lead', 'manager', 'hr_admin', 'super_admin'].includes(userRole);
 
@@ -236,12 +270,26 @@ function Teams({ orgId, userRole }) {
 
     useEffect(() => { fetchTeams(); }, [fetchTeams]);
 
+    useEffect(() => {
+        if (canManage) {
+            getOrgMembers({ is_active: true }).then(r => setMembers(r.data)).catch(() => {});
+        }
+    }, [canManage]);
+
     const handleCreate = async (e) => {
         e.preventDefault();
         try {
-            await createTeam({ name: form.name, department_id: form.department_id || null });
-            setForm({ name: '', department_id: '' });
+            await createTeam({ name: form.name, department_id: form.department_id || null, lead_id: form.lead_id || null });
+            setForm({ name: '', department_id: '', lead_id: '' });
             setShowForm(false);
+            fetchTeams();
+        } catch (e) { setMsg(e.response?.data?.error || 'Failed'); }
+    };
+
+    const handleUpdate = async (id) => {
+        try {
+            await updateTeam(id, { name: editForm.name, department_id: editForm.department_id || null, lead_id: editForm.lead_id || null });
+            setEditId(null);
             fetchTeams();
         } catch (e) { setMsg(e.response?.data?.error || 'Failed'); }
     };
@@ -251,6 +299,9 @@ function Teams({ orgId, userRole }) {
         try { await deleteTeam(id); fetchTeams(); } catch (e) { setMsg(e.response?.data?.error || 'Failed'); }
     };
 
+    const inputStyle = { padding: '0.5rem', borderRadius: 8, border: '1px solid var(--glass-border)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontFamily: 'inherit' };
+    const editInputStyle = { padding: '0.3rem', borderRadius: 6, border: '1px solid var(--glass-border)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontFamily: 'inherit' };
+
     return (
         <>
             {msg && <div className={s.success}>{msg}</div>}
@@ -258,10 +309,14 @@ function Teams({ orgId, userRole }) {
                 <div style={{ marginBottom: '1rem' }}>
                     {showForm ? (
                         <form onSubmit={handleCreate} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                            <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Team name" required style={{ padding: '0.5rem', borderRadius: 8, border: '1px solid var(--glass-border)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontFamily: 'inherit' }} />
-                            <select value={form.department_id} onChange={e => setForm({ ...form, department_id: e.target.value })} style={{ padding: '0.5rem 1.8rem 0.5rem 0.5rem', borderRadius: 8, border: '1px solid var(--glass-border)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontFamily: 'inherit' }}>
+                            <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Team name" required style={inputStyle} />
+                            <select value={form.department_id} onChange={e => setForm({ ...form, department_id: e.target.value })} style={inputStyle}>
                                 <option value="">No department</option>
                                 {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                            </select>
+                            <select value={form.lead_id} onChange={e => setForm({ ...form, lead_id: e.target.value })} style={inputStyle}>
+                                <option value="">No Lead</option>
+                                {members.map(m => <option key={m.id} value={m.id}>{m.full_name || m.username}</option>)}
                             </select>
                             <button type="submit" className={s.btnPrimary}>Add</button>
                             <button type="button" className={s.btnCancel} onClick={() => setShowForm(false)}>Cancel</button>
@@ -276,12 +331,36 @@ function Teams({ orgId, userRole }) {
                 <tbody>
                     {teams.map(t => (
                         <tr key={t.id}>
-                            <td>{t.name}</td>
-                            <td>{t.department_name || '—'}</td>
-                            <td>{t.lead_name || '—'}</td>
+                            <td>{editId === t.id ? <input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} style={editInputStyle} /> : t.name}</td>
+                            <td>{editId === t.id ? (
+                                <select value={editForm.department_id} onChange={e => setEditForm({ ...editForm, department_id: e.target.value })} style={editInputStyle}>
+                                    <option value="">No department</option>
+                                    {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                                </select>
+                            ) : (t.department_name || '—')}</td>
+                            <td>{editId === t.id ? (
+                                <select value={editForm.lead_id} onChange={e => setEditForm({ ...editForm, lead_id: e.target.value })} style={editInputStyle}>
+                                    <option value="">No Lead</option>
+                                    {members.map(m => <option key={m.id} value={m.id}>{m.full_name || m.username}</option>)}
+                                </select>
+                            ) : (t.lead_name || '—')}</td>
                             <td>{t.member_count}</td>
                             {canManage && (
-                                <td><button className={s.btnSmall} style={{ background: '#ef4444', color: '#fff' }} onClick={() => handleDelete(t.id)}>Delete</button></td>
+                                <td>
+                                    <div className={s.actions}>
+                                        {editId === t.id ? (
+                                            <>
+                                                <button className={s.btnSmall} style={{ background: 'var(--accent)', color: '#fff' }} onClick={() => handleUpdate(t.id)}>Save</button>
+                                                <button className={s.btnSmall} style={{ background: 'var(--border)', color: 'var(--text-primary)' }} onClick={() => setEditId(null)}>Cancel</button>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <button className={s.btnSmall} style={{ background: 'var(--accent)', color: '#fff' }} onClick={() => { setEditId(t.id); setEditForm({ name: t.name, department_id: t.department_id || '', lead_id: t.lead_id || '' }); }}>Edit</button>
+                                                <button className={s.btnSmall} style={{ background: '#ef4444', color: '#fff' }} onClick={() => handleDelete(t.id)}>Delete</button>
+                                            </>
+                                        )}
+                                    </div>
+                                </td>
                             )}
                         </tr>
                     ))}

@@ -86,6 +86,12 @@ router.get('/balances/:userId', requireRole('team_lead'), requireSameOrg, (req, 
     const targetUserId = Number(req.params.userId);
     const year = parseInt(req.query.year) || new Date().getFullYear();
 
+    // Verify the target user is in the same org
+    const targetUser = db.prepare('SELECT org_id FROM users WHERE id = ?').get(targetUserId);
+    if (!targetUser || targetUser.org_id !== req.userOrgId) {
+        return res.status(403).json({ error: 'Cannot view balances for users outside your organization' });
+    }
+
     initializeBalances(targetUserId, req.userOrgId, year);
 
     const balances = db.prepare(
@@ -102,6 +108,12 @@ router.put('/balances/:userId', requireRole('hr_admin'), requireSameOrg, (req, r
 
     if (!leave_type || !year) return res.status(400).json({ error: 'Leave type and year are required' });
 
+    // Verify the target user is in the same org
+    const targetUser = db.prepare('SELECT org_id FROM users WHERE id = ?').get(targetUserId);
+    if (!targetUser || targetUser.org_id !== req.userOrgId) {
+        return res.status(403).json({ error: 'Cannot modify balances for users outside your organization' });
+    }
+
     const existing = db.prepare(
         'SELECT id FROM leave_balances WHERE user_id = ? AND leave_type = ? AND year = ?'
     ).get(targetUserId, leave_type, year);
@@ -111,6 +123,9 @@ router.put('/balances/:userId', requireRole('hr_admin'), requireSameOrg, (req, r
         const params = [];
         if (quota !== undefined) { updates.push('quota = ?'); params.push(quota); }
         if (carried_forward !== undefined) { updates.push('carried_forward = ?'); params.push(carried_forward); }
+        if (updates.length === 0) {
+            return res.status(400).json({ error: 'No fields to update. Provide quota or carried_forward.' });
+        }
         params.push(existing.id);
         db.prepare(`UPDATE leave_balances SET ${updates.join(', ')} WHERE id = ?`).run(...params);
     } else {

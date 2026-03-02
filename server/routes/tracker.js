@@ -1,7 +1,11 @@
 const express = require('express');
 const db = require('../db');
 const auth = require('../middleware/auth');
+const { loadUserContext, ROLE_LEVEL } = require('../middleware/rbac');
+const { findApprover } = require('../utils/approver');
+const { logAction } = require('../utils/audit');
 const { getLocalToday, getLocalDow, getTzModifier, getLocalDateFromTs } = require('../utils/timezone');
+const { computeStatus, computeDaySummary } = require('../utils/timeCalc');
 
 const router = express.Router();
 
@@ -26,12 +30,21 @@ router.get('/status', auth, (req, res) => {
 });
 
 // Login
-router.post('/clock-in', auth, (req, res) => {
+router.post('/clock-in', auth, loadUserContext, (req, res) => {
     const today = getLocalToday(req);
     const tzMod = getTzModifier(req);
     const dow = getLocalDow(req);
-    if (dow === 0 || dow === 6) {
-        return res.status(400).json({ error: 'It\'s a weekend holiday! Enjoy your day off. 🎉' });
+
+    // Check org work_days if user belongs to an org, otherwise default to Mon-Fri
+    let workDays = [1, 2, 3, 4, 5]; // Mon-Fri default
+    if (req.userOrgId) {
+        const org = db.prepare('SELECT work_days FROM organizations WHERE id = ?').get(req.userOrgId);
+        if (org?.work_days) {
+            workDays = org.work_days.split(',').map(Number).filter(n => !isNaN(n));
+        }
+    }
+    if (!workDays.includes(dow)) {
+        return res.status(400).json({ error: 'It\'s a day off! Enjoy your rest. 🎉' });
     }
 
     const lastEntry = db.prepare(`
@@ -50,6 +63,7 @@ router.post('/clock-in', auth, (req, res) => {
     if (!isNaN(tzOffset)) {
         db.prepare('UPDATE users SET timezone_offset = ? WHERE id = ?').run(tzOffset, req.userId);
     }
+    logAction(req, 'clock_in', 'time_entry', null, { work_mode: req.body.work_mode || 'office' });
     res.json({ message: 'Logged in successfully' });
 });
 
@@ -71,6 +85,7 @@ router.post('/break-start', auth, (req, res) => {
     }
 
     db.prepare('INSERT INTO time_entries (user_id, entry_type) VALUES (?, ?)').run(req.userId, 'break_start');
+    logAction(req, 'break_start', 'time_entry', null, {});
     res.json({ message: 'Break started' });
 });
 
@@ -89,6 +104,7 @@ router.post('/break-end', auth, (req, res) => {
     }
 
     db.prepare('INSERT INTO time_entries (user_id, entry_type) VALUES (?, ?)').run(req.userId, 'break_end');
+    logAction(req, 'break_end', 'time_entry', null, {});
     res.json({ message: 'Break ended, back to work!' });
 });
 
@@ -112,7 +128,8 @@ router.post('/clock-out', auth, (req, res) => {
     }
 
     db.prepare('INSERT INTO time_entries (user_id, entry_type) VALUES (?, ?)').run(req.userId, 'clock_out');
-    res.json({ message: 'Logged out. See you tomorrow!' });
+    logAction(req, 'clock_out', 'time_entry', null, {});
+    res.json({ message: 'Clocked out. See you tomorrow!' });
 });
 
 // Get history for a date range
@@ -184,8 +201,26 @@ router.get('/analytics', auth, (req, res) => {
 
 // ============= MANUAL ENTRY =============
 
+// Get pending manual entries for current user
+router.get('/manual-entries', auth, loadUserContext, (req, res) => {
+    const entries = db.prepare(`
+        SELECT ar.id as request_id, ar.status as approval_status, ar.metadata, ar.created_at, ar.reviewed_at,
+               ar.reject_reason, u.full_name as approver_name
+        FROM approval_requests ar
+        LEFT JOIN users u ON u.id = ar.approver_id
+        WHERE ar.requester_id = ? AND ar.type = 'manual_entry'
+        ORDER BY ar.created_at DESC
+        LIMIT 50
+    `).all(req.userId);
+
+    res.json(entries.map(e => ({
+        ...e,
+        metadata: e.metadata ? JSON.parse(e.metadata) : null,
+    })));
+});
+
 // Add a complete manual day entry (login, optional breaks, logout)
-router.post('/manual-entry', auth, (req, res) => {
+router.post('/manual-entry', auth, loadUserContext, (req, res) => {
     const { date, clock_in, clock_out, breaks, timezoneOffset, work_mode } = req.body;
 
     if (!date || !clock_in) {
@@ -258,30 +293,61 @@ router.post('/manual-entry', auth, (req, res) => {
         }
     }
 
+    // Determine if approval is needed
+    let approvalStatus = 'approved';
+    let needsApproval = false;
+
+    // Needs approval if: user has a manager assigned, OR is in an org with role < hr_admin
+    const hasManager = req.userManagerId != null;
+    const isOrgSubordinate = req.userOrgId && (ROLE_LEVEL[req.userRole] || 1) < ROLE_LEVEL.hr_admin;
+    if (hasManager || isOrgSubordinate) {
+        approvalStatus = 'pending';
+        needsApproval = true;
+    }
+
     // Insert entries in a transaction
-    const insertEntry = db.prepare('INSERT INTO time_entries (user_id, entry_type, timestamp, work_mode) VALUES (?, ?, ?, ?)');
+    const insertEntry = db.prepare('INSERT INTO time_entries (user_id, entry_type, timestamp, work_mode, is_manual, approval_status) VALUES (?, ?, ?, ?, 1, ?)');
 
     const transaction = db.transaction(() => {
-        insertEntry.run(req.userId, 'clock_in', clockInTs, work_mode || 'office');
+        insertEntry.run(req.userId, 'clock_in', clockInTs, work_mode || 'office', approvalStatus);
 
         if (breaks && Array.isArray(breaks)) {
             // Sort breaks by start time
             const sorted = [...breaks].sort((a, b) => a.start.localeCompare(b.start));
             for (const brk of sorted) {
-                insertEntry.run(req.userId, 'break_start', toUTC(date, brk.start), null);
-                insertEntry.run(req.userId, 'break_end', toUTC(date, brk.end), null);
+                insertEntry.run(req.userId, 'break_start', toUTC(date, brk.start), null, approvalStatus);
+                insertEntry.run(req.userId, 'break_end', toUTC(date, brk.end), null, approvalStatus);
             }
         }
 
         if (clockOutTs) {
-            insertEntry.run(req.userId, 'clock_out', clockOutTs, null);
+            insertEntry.run(req.userId, 'clock_out', clockOutTs, null, approvalStatus);
+        }
+
+        // Create approval request if needed
+        if (needsApproval) {
+            const approver = findApprover(req.userId, req.userOrgId);
+            db.prepare(`
+                INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
+                VALUES (?, ?, ?, 'manual_entry', NULL, ?, ?)
+            `).run(
+                req.userOrgId || null, req.userId, approver?.id || null,
+                'Manual time entry',
+                JSON.stringify({ date, clock_in, clock_out: clock_out || null, work_mode: work_mode || 'office' })
+            );
         }
     });
 
     try {
         transaction();
-        res.json({ message: 'Manual entry added successfully' });
+        logAction(req, 'create', 'manual_entry', null, { date, clock_in, clock_out: clock_out || null, status: approvalStatus });
+        res.json({
+            message: needsApproval ? 'Manual entry submitted for approval' : 'Manual entry added successfully',
+            status: approvalStatus,
+            needsApproval
+        });
     } catch (err) {
+        console.error('Manual entry error:', err);
         res.status(500).json({ error: 'Failed to add manual entry' });
     }
 });
@@ -487,6 +553,66 @@ router.get('/task-summary', auth, (req, res) => {
     });
 });
 
+// ============= OVERTIME REQUEST =============
+router.post('/overtime-request', auth, loadUserContext, (req, res) => {
+    const { date, hours, reason } = req.body;
+    if (!date || !hours || !reason) {
+        return res.status(400).json({ error: 'Date, hours, and reason are required' });
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return res.status(400).json({ error: 'Invalid date format' });
+    }
+    const numHours = parseFloat(hours);
+    if (isNaN(numHours) || numHours <= 0 || numHours > 24) {
+        return res.status(400).json({ error: 'Hours must be between 0 and 24' });
+    }
+    // Check for duplicate
+    const existing = db.prepare(`
+        SELECT id FROM approval_requests
+        WHERE requester_id = ? AND type = 'overtime' AND status = 'pending'
+          AND json_extract(metadata, '$.date') = ?
+    `).get(req.userId, date);
+    if (existing) {
+        return res.status(400).json({ error: 'You already have a pending overtime request for this date' });
+    }
+
+    const approver = findApprover(req.userId, req.userOrgId);
+    db.prepare(`
+        INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
+        VALUES (?, ?, ?, 'overtime', NULL, ?, ?)
+    `).run(
+        req.userOrgId || null, req.userId, approver?.id || null,
+        reason,
+        JSON.stringify({ date, hours: numHours })
+    );
+    logAction(req, 'create', 'overtime_request', null, { date, hours: numHours });
+    res.json({ message: 'Overtime request submitted for approval' });
+});
+
+router.get('/overtime-requests', auth, (req, res) => {
+    try {
+        const rows = db.prepare(`
+            SELECT ar.id, ar.status, ar.reason, ar.metadata, ar.created_at, ar.reject_reason,
+                   u.full_name as approver_name
+            FROM approval_requests ar
+            LEFT JOIN users u ON u.id = ar.approver_id
+            WHERE ar.requester_id = ? AND ar.type = 'overtime'
+            ORDER BY ar.created_at DESC
+            LIMIT 50
+        `).all(req.userId);
+
+        const requests = rows.map(r => {
+            let meta = {};
+            try { meta = JSON.parse(r.metadata); } catch { }
+            return { ...r, metadata: meta };
+        });
+        res.json(requests);
+    } catch (err) {
+        console.error('Overtime requests error:', err);
+        res.status(500).json({ error: 'Failed to fetch overtime requests' });
+    }
+});
+
 // ============= THEME =============
 router.get('/theme', auth, (req, res) => {
     const user = db.prepare('SELECT theme FROM users WHERE id = ?').get(req.userId);
@@ -501,77 +627,5 @@ router.put('/theme', auth, (req, res) => {
     db.prepare('UPDATE users SET theme = ? WHERE id = ?').run(theme, req.userId);
     res.json({ theme, message: 'Theme updated' });
 });
-
-function computeStatus(entries) {
-    if (entries.length === 0) {
-        return { state: 'logged_out', floorMinutes: 0, breakMinutes: 0, entries: [] };
-    }
-
-    const last = entries[entries.length - 1];
-    let state = 'logged_out';
-    if (last.entry_type === 'clock_in' || last.entry_type === 'break_end') state = 'on_floor';
-    else if (last.entry_type === 'break_start') state = 'on_break';
-    else state = 'logged_out';
-
-    const summary = computeDaySummary(entries, true);
-    return { state, ...summary, entries };
-}
-
-function computeDaySummary(entries, isLive = false) {
-    let floorMs = 0;
-    let breakMs = 0;
-    let clockInTime = null;
-    let breakStartTime = null;
-    let workMode = null;
-
-    for (const e of entries) {
-        const t = new Date(e.timestamp.replace(' ', 'T') + 'Z').getTime();
-        switch (e.entry_type) {
-            case 'clock_in':
-                clockInTime = t;
-                if (!workMode && e.work_mode) workMode = e.work_mode;
-                break;
-            case 'break_start':
-                if (clockInTime) {
-                    floorMs += t - clockInTime;
-                    clockInTime = null;
-                }
-                breakStartTime = t;
-                break;
-            case 'break_end':
-                if (breakStartTime) {
-                    breakMs += t - breakStartTime;
-                    breakStartTime = null;
-                }
-                clockInTime = t;
-                break;
-            case 'clock_out':
-                if (breakStartTime) {
-                    breakMs += t - breakStartTime;
-                    breakStartTime = null;
-                }
-                if (clockInTime) {
-                    floorMs += t - clockInTime;
-                    clockInTime = null;
-                }
-                break;
-        }
-    }
-
-    // If still logged in or on break, compute up to now (only for live/today's data)
-    if (isLive) {
-        const now = Date.now();
-        if (clockInTime) floorMs += now - clockInTime;
-        if (breakStartTime) breakMs += now - breakStartTime;
-    }
-
-    return {
-        floorMinutes: Math.round(floorMs / 60000),
-        breakMinutes: Math.round(breakMs / 60000),
-        totalMinutes: Math.round((floorMs + breakMs) / 60000),
-        workMode: workMode || 'office',
-        entries
-    };
-}
 
 module.exports = router;

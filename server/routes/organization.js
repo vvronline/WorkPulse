@@ -4,7 +4,7 @@
 const express = require('express');
 const db = require('../db');
 const auth = require('../middleware/auth');
-const { loadUserContext, requireRole, requireSameOrg } = require('../middleware/rbac');
+const { loadUserContext, requireRole, requireSameOrg, ROLE_LEVEL } = require('../middleware/rbac');
 const { logAction } = require('../utils/audit');
 
 const router = express.Router();
@@ -14,15 +14,11 @@ router.use(auth, loadUserContext);
 
 // ==================== ORGANIZATIONS ====================
 
-// Create an organization (any authenticated user — becomes its super_admin)
-router.post('/', (req, res) => {
+// Create an organization (super_admin only)
+router.post('/', requireRole('super_admin'), (req, res) => {
     const { name } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'Organization name is required' });
     if (name.trim().length > 100) return res.status(400).json({ error: 'Name must be 100 characters or less' });
-
-    if (req.userOrgId) {
-        return res.status(400).json({ error: 'You already belong to an organization. Leave it first.' });
-    }
 
     const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     const existing = db.prepare('SELECT id FROM organizations WHERE slug = ?').get(slug);
@@ -125,6 +121,14 @@ router.post('/invite', requireRole('hr_admin'), requireSameOrg, (req, res) => {
     if (target.org_id) return res.status(400).json({ error: 'User already belongs to an organization' });
 
     const assignRole = role || 'employee';
+    // Validate the assigned role and prevent assigning a role >= your own
+    const validInviteRoles = ['employee', 'team_lead', 'manager', 'hr_admin'];
+    if (!validInviteRoles.includes(assignRole)) {
+        return res.status(400).json({ error: `Invalid role. Valid roles: ${validInviteRoles.join(', ')}` });
+    }
+    if ((ROLE_LEVEL[assignRole] || 1) >= (req.roleLevel || 1)) {
+        return res.status(403).json({ error: 'Cannot assign a role equal to or higher than your own' });
+    }
     db.prepare('UPDATE users SET org_id = ?, role = ?, department_id = ?, team_id = ? WHERE id = ?')
         .run(req.userOrgId, assignRole, department_id || null, team_id || null, user_id);
 
