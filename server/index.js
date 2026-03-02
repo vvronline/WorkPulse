@@ -177,17 +177,17 @@ setInterval(() => {
     } catch (e) { console.error('Token cleanup error:', e.message); }
 }, 60 * 60 * 1000);
 
-// Global error handler (must be registered BEFORE static/SPA fallback)
-app.use((err, req, res, next) => {
-    console.error('Unhandled error:', err);
-    res.status(500).json({ error: 'Internal server error' });
-});
-
 // Serve React frontend in production
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
 app.use(express.static(clientDist));
-app.get('/{*splat}', (req, res) => {
+app.get(/.*/, (req, res) => {
     res.sendFile(path.join(clientDist, 'index.html'));
+});
+
+// Global error handler (must be registered AFTER all routes/static handlers)
+app.use((err, req, res, next) => {
+    console.error('Unhandled error:', err);
+    res.status(500).json({ error: 'Internal server error' });
 });
 
 const server = app.listen(PORT, () => {
