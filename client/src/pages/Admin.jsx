@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../AuthContext';
 import {
     getAdminUsers, createAdminUser, updateUserRole, updateUserAssignment,
@@ -93,6 +93,8 @@ export default function AdminPanel() {
 function UserManagement({ userRole }) {
     const [users, setUsers] = useState([]);
     const [search, setSearch] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
+    const searchTimerRef = useRef(null);
     const [filterRole, setFilterRole] = useState('');
     const [filterActive, setFilterActive] = useState('');
     const [departments, setDepartments] = useState([]);
@@ -102,13 +104,20 @@ function UserManagement({ userRole }) {
     const [resetPwUser, setResetPwUser] = useState(null);
     const [msg, setMsg] = useState('');
 
+    // Debounce search input by 300ms
+    useEffect(() => {
+        if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+        searchTimerRef.current = setTimeout(() => setDebouncedSearch(search), 300);
+        return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
+    }, [search]);
+
     const fetchUsers = useCallback(() => {
         const params = {};
-        if (search) params.search = search;
+        if (debouncedSearch) params.search = debouncedSearch;
         if (filterRole) params.role = filterRole;
         if (filterActive) params.is_active = filterActive;
-        getAdminUsers(params).then(r => setUsers(r.data)).catch(() => {});
-    }, [search, filterRole, filterActive]);
+        getAdminUsers(params).then(r => setUsers(r.data?.data ?? r.data)).catch(() => {});
+    }, [debouncedSearch, filterRole, filterActive]);
 
     useEffect(() => { fetchUsers(); }, [fetchUsers]);
     useEffect(() => {
@@ -324,7 +333,7 @@ function CreateUser({ userRole, onCreated }) {
         }
         getOrgDepartments().then(r => setDepartments(r.data)).catch(() => {});
         getOrgTeams().then(r => setTeams(r.data)).catch(() => {});
-        getAdminUsers({}).then(r => setUsers(r.data)).catch(() => {});
+        getAdminUsers({}).then(r => setUsers(r.data?.data ?? r.data)).catch(() => {});
     }, [userRole]);
 
     const handleSubmit = async (e) => {
@@ -834,7 +843,7 @@ function Departments({ orgId, userRole }) {
 
     useEffect(() => {
         if (canManage) {
-            getOrgMembers({ is_active: true }).then(r => setMembers(r.data)).catch(() => {});
+            getOrgMembers({ is_active: true }).then(r => setMembers(r.data?.data ?? r.data)).catch(() => {});
         }
     }, [canManage]);
 
@@ -944,7 +953,7 @@ function Teams({ orgId, userRole }) {
 
     useEffect(() => {
         if (canManage) {
-            getOrgMembers({ is_active: true }).then(r => setMembers(r.data)).catch(() => {});
+            getOrgMembers({ is_active: true }).then(r => setMembers(r.data?.data ?? r.data)).catch(() => {});
         }
     }, [canManage]);
 

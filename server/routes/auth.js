@@ -79,6 +79,9 @@ router.post('/register', async (req, res) => {
     if (password.length < 8) {
         return res.status(400).json({ error: 'Password must be at least 8 characters' });
     }
+    if (password.length > 72) {
+        return res.status(400).json({ error: 'Password must be 72 characters or less' });
+    }
 
     const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
     if (existing) {
@@ -193,6 +196,9 @@ router.post('/reset-password', async (req, res) => {
     }
     if (password.length < 8) {
         return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+    if (password.length > 72) {
+        return res.status(400).json({ error: 'Password must be 72 characters or less' });
     }
 
     const row = db.prepare(`

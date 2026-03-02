@@ -26,6 +26,12 @@ router.post('/policies', requireRole('hr_admin'), requireSameOrg, (req, res) => 
 
     if (!leave_type) return res.status(400).json({ error: 'Leave type is required' });
 
+    // Validate numeric fields
+    const quota = Number(annual_quota) || 0;
+    const cfLimit = Number(carry_forward_limit) || 0;
+    if (quota < 0 || quota > 365) return res.status(400).json({ error: 'Annual quota must be between 0 and 365' });
+    if (cfLimit < 0 || cfLimit > 365) return res.status(400).json({ error: 'Carry forward limit must be between 0 and 365' });
+
     const existing = db.prepare('SELECT id FROM leave_policies WHERE org_id = ? AND leave_type = ?')
         .get(req.userOrgId, leave_type);
 
@@ -36,7 +42,7 @@ router.post('/policies', requireRole('hr_admin'), requireSameOrg, (req, res) => 
                 half_day_allowed = ?, quarter_day_allowed = ?
             WHERE id = ?
         `).run(
-            annual_quota || 0, accrual_type || 'annual', carry_forward_limit || 0,
+            quota, accrual_type || 'annual', cfLimit,
             half_day_allowed ? 1 : 0, quarter_day_allowed ? 1 : 0,
             existing.id
         );
@@ -46,8 +52,8 @@ router.post('/policies', requireRole('hr_admin'), requireSameOrg, (req, res) => 
         const result = db.prepare(`
             INSERT INTO leave_policies (org_id, leave_type, annual_quota, accrual_type, carry_forward_limit, half_day_allowed, quarter_day_allowed)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(req.userOrgId, leave_type, annual_quota || 0, accrual_type || 'annual', carry_forward_limit || 0, half_day_allowed ? 1 : 0, quarter_day_allowed ? 1 : 0);
-        logAction(req, 'create', 'leave_policy', result.lastInsertRowid, { leave_type, annual_quota });
+        `).run(req.userOrgId, leave_type, quota, accrual_type || 'annual', cfLimit, half_day_allowed ? 1 : 0, quarter_day_allowed ? 1 : 0);
+        logAction(req, 'create', 'leave_policy', result.lastInsertRowid, { leave_type, annual_quota: quota });
         res.json({ id: result.lastInsertRowid, message: `Leave policy for ${leave_type} created` });
     }
 });

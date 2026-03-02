@@ -49,9 +49,12 @@ router.post('/organizations', requireRole('super_admin'), (req, res) => {
     const existing = db.prepare('SELECT id FROM organizations WHERE slug = ?').get(slug);
     if (existing) return res.status(400).json({ error: 'An organization with a similar name already exists' });
 
+    const whpd = Number(work_hours_per_day) || 8;
+    if (whpd < 1 || whpd > 24) return res.status(400).json({ error: 'Work hours per day must be between 1 and 24' });
+
     const result = db.prepare(
         'INSERT INTO organizations (name, slug, created_by, work_hours_per_day, work_days, timezone) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(name.trim(), slug, req.userId, work_hours_per_day || 8, work_days || '1,2,3,4,5', timezone || 'UTC');
+    ).run(name.trim(), slug, req.userId, whpd, work_days || '1,2,3,4,5', timezone || 'UTC');
 
     logAction(req, 'admin_create', 'organization', result.lastInsertRowid, { name: name.trim() });
 
@@ -74,7 +77,11 @@ router.put('/organizations/:id', requireRole('super_admin'), (req, res) => {
         updates.push('name = ?');
         params.push(name.trim());
     }
-    if (work_hours_per_day !== undefined) { updates.push('work_hours_per_day = ?'); params.push(Number(work_hours_per_day)); }
+    if (work_hours_per_day !== undefined) {
+        const whpd = Number(work_hours_per_day);
+        if (isNaN(whpd) || whpd < 1 || whpd > 24) return res.status(400).json({ error: 'Work hours per day must be between 1 and 24' });
+        updates.push('work_hours_per_day = ?'); params.push(whpd);
+    }
     if (work_days) { updates.push('work_days = ?'); params.push(work_days); }
     if (timezone) { updates.push('timezone = ?'); params.push(timezone); }
     if (fiscal_year_start !== undefined) { updates.push('fiscal_year_start = ?'); params.push(Number(fiscal_year_start)); }
@@ -119,6 +126,8 @@ router.delete('/organizations/:id', requireRole('super_admin'), (req, res) => {
 // List all users (optionally across all orgs for super_admin)
 router.get('/users', (req, res) => {
     const { search, role, is_active, org_id } = req.query;
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const perPage = Math.min(Math.max(parseInt(req.query.per_page) || 50, 1), 100);
 
     let where = [];
     let params = [];
@@ -147,6 +156,8 @@ router.get('/users', (req, res) => {
 
     const whereClause = where.length > 0 ? 'WHERE ' + where.join(' AND ') : '';
 
+    const total = db.prepare(`SELECT COUNT(*) as count FROM users u ${whereClause}`).get(...params).count;
+
     const users = db.prepare(`
         SELECT u.id, u.username, u.full_name, u.email, u.avatar, u.role,
                u.is_active, u.org_id, u.department_id, u.team_id, u.manager_id, u.created_at,
@@ -159,9 +170,10 @@ router.get('/users', (req, res) => {
         LEFT JOIN users m ON m.id = u.manager_id
         ${whereClause}
         ORDER BY u.created_at DESC
-    `).all(...params);
+        LIMIT ? OFFSET ?
+    `).all(...params, perPage, (page - 1) * perPage);
 
-    res.json(users);
+    res.json({ data: users, total, page, perPage });
 });
 
 // Get single user details
@@ -252,6 +264,17 @@ router.put('/users/:id/assignment', (req, res) => {
         if (Number(manager_id) === Number(id)) return res.status(400).json({ error: 'Cannot assign user as their own manager' });
     }
 
+    // Validate department belongs to the target org
+    if (department_id) {
+        const dept = db.prepare('SELECT id FROM departments WHERE id = ? AND org_id = ?').get(Number(department_id), Number(newOrgId || 0));
+        if (!dept) return res.status(400).json({ error: 'Department not found in the target organization' });
+    }
+    // Validate team belongs to the target org
+    if (team_id) {
+        const team = db.prepare('SELECT id FROM teams WHERE id = ? AND org_id = ?').get(Number(team_id), Number(newOrgId || 0));
+        if (!team) return res.status(400).json({ error: 'Team not found in the target organization' });
+    }
+
     // If org changes, clear dept/team since they belong to the old org
     const newOrgId = org_id !== undefined ? (org_id || null) : target.org_id;
     const orgChanged = org_id !== undefined && Number(org_id || 0) !== Number(target.org_id || 0);
@@ -292,6 +315,9 @@ router.post('/users/:id/reset-password', async (req, res) => {
     if (!new_password || new_password.length < 8) {
         return res.status(400).json({ error: 'Password must be at least 8 characters' });
     }
+    if (new_password.length > 72) {
+        return res.status(400).json({ error: 'Password must be 72 characters or less' });
+    }
 
     const target = db.prepare('SELECT id, role, org_id, full_name FROM users WHERE id = ?').get(Number(id));
     if (!target) return res.status(404).json({ error: 'User not found' });
@@ -315,6 +341,7 @@ router.post('/users', async (req, res) => {
         return res.status(400).json({ error: 'Username, password, full name and email are required' });
     }
     if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    if (password.length > 72) return res.status(400).json({ error: 'Password must be 72 characters or less' });
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email' });
 
     const existing = db.prepare('SELECT id FROM users WHERE username = ? OR email = ?').get(username, email);
@@ -369,14 +396,14 @@ router.get('/audit-logs', (req, res) => {
 router.get('/stats', requireSameOrg, (req, res) => {
     const orgId = req.userOrgId;
 
-    const totalUsers = db.prepare('SELECT COUNT(*) as c FROM users WHERE org_id = ?').get(orgId).c;
-    const activeUsers = db.prepare('SELECT COUNT(*) as c FROM users WHERE org_id = ? AND is_active = 1').get(orgId).c;
-    const departments = db.prepare('SELECT COUNT(*) as c FROM departments WHERE org_id = ?').get(orgId).c;
-    const teams = db.prepare('SELECT COUNT(*) as c FROM teams WHERE org_id = ?').get(orgId).c;
-
-    const pendingApprovals = db.prepare(
-        'SELECT COUNT(*) as c FROM approval_requests WHERE org_id = ? AND status = ?'
-    ).get(orgId, 'pending').c;
+    const counts = db.prepare(`
+        SELECT
+            (SELECT COUNT(*) FROM users WHERE org_id = ?) AS totalUsers,
+            (SELECT COUNT(*) FROM users WHERE org_id = ? AND is_active = 1) AS activeUsers,
+            (SELECT COUNT(*) FROM departments WHERE org_id = ?) AS departments,
+            (SELECT COUNT(*) FROM teams WHERE org_id = ?) AS teams,
+            (SELECT COUNT(*) FROM approval_requests WHERE org_id = ? AND status = 'pending') AS pendingApprovals
+    `).get(orgId, orgId, orgId, orgId, orgId);
 
     // Today's attendance (use client timezone)
     const offsetMin = parseInt(req.headers['x-timezone-offset']) || 0;
@@ -392,10 +419,7 @@ router.get('/stats', requireSameOrg, (req, res) => {
           AND entry_type = 'clock_in'
     `).get(orgId, tzMod, today).c;
 
-    res.json({
-        totalUsers, activeUsers, departments, teams,
-        pendingApprovals, clockedInToday
-    });
+    res.json({ ...counts, clockedInToday });
 });
 
 // ============= REGISTRATION SETTINGS =============

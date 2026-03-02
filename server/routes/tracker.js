@@ -47,23 +47,35 @@ router.post('/clock-in', auth, loadUserContext, (req, res) => {
         return res.status(400).json({ error: 'It\'s a day off! Enjoy your rest. 🎉' });
     }
 
-    const lastEntry = db.prepare(`
-    SELECT * FROM time_entries 
-    WHERE user_id = ? AND date(timestamp, ?) = date(?)
-    ORDER BY timestamp DESC LIMIT 1
-  `).get(req.userId, tzMod, today);
+    // Wrap in transaction to prevent race conditions
+    const validWorkModes = ['office', 'remote', 'hybrid'];
+    const selectedWorkMode = validWorkModes.includes(req.body.work_mode) ? req.body.work_mode : 'office';
 
-    if (lastEntry && lastEntry.entry_type !== 'clock_out') {
-        return res.status(400).json({ error: 'Already logged in. Logout first.' });
+    const txResult = db.transaction(() => {
+        const lastEntry = db.prepare(`
+            SELECT * FROM time_entries 
+            WHERE user_id = ? AND date(timestamp, ?) = date(?)
+            ORDER BY timestamp DESC LIMIT 1
+        `).get(req.userId, tzMod, today);
+
+        if (lastEntry && lastEntry.entry_type !== 'clock_out') {
+            return { error: 'Already logged in. Logout first.' };
+        }
+
+        db.prepare('INSERT INTO time_entries (user_id, entry_type, work_mode) VALUES (?, ?, ?)').run(req.userId, 'clock_in', selectedWorkMode);
+        return { ok: true };
+    })();
+
+    if (txResult.error) {
+        return res.status(400).json({ error: txResult.error });
     }
-
-    db.prepare('INSERT INTO time_entries (user_id, entry_type, work_mode) VALUES (?, ?, ?)').run(req.userId, 'clock_in', req.body.work_mode || 'office');
     // Save user's timezone offset for autoClockOut
     const tzOffset = parseInt(req.headers['x-timezone-offset']);
     if (!isNaN(tzOffset)) {
-        db.prepare('UPDATE users SET timezone_offset = ? WHERE id = ?').run(tzOffset, req.userId);
+        const clampedTz = Math.max(-720, Math.min(840, tzOffset));
+        db.prepare('UPDATE users SET timezone_offset = ? WHERE id = ?').run(clampedTz, req.userId);
     }
-    logAction(req, 'clock_in', 'time_entry', null, { work_mode: req.body.work_mode || 'office' });
+    logAction(req, 'clock_in', 'time_entry', null, { work_mode: selectedWorkMode });
     res.json({ message: 'Logged in successfully' });
 });
 
@@ -167,7 +179,7 @@ router.get('/history', auth, (req, res) => {
 // Get weekly summary for charts
 router.get('/analytics', auth, (req, res) => {
     const { days } = req.query;
-    const numDays = parseInt(days) || 7;
+    const numDays = Math.min(Math.max(parseInt(days) || 7, 1), 365);
     const offsetMin = parseInt(req.headers['x-timezone-offset']) || 0;
     const fromDate = new Date(Date.now() - offsetMin * 60000 - numDays * 86400000).toISOString().slice(0, 10);
     const toDate = getLocalToday(req);
@@ -280,6 +292,9 @@ router.post('/manual-entry', auth, loadUserContext, (req, res) => {
 
     // Validate breaks (compare local times for ordering)
     if (breaks && Array.isArray(breaks)) {
+        if (breaks.length > 20) {
+            return res.status(400).json({ error: 'Maximum 20 breaks allowed per day' });
+        }
         for (const brk of breaks) {
             if (!brk.start || !brk.end || !timeRegex.test(brk.start) || !timeRegex.test(brk.end)) {
                 return res.status(400).json({ error: 'Each break must have valid start and end times (HH:MM)' });
@@ -421,7 +436,13 @@ router.get('/widgets', auth, (req, res) => {
     let targetMetDays = 0;
     let officeDays = 0;
     let remoteDays = 0;
-    const TARGET = 480; // 8 hours mandatory target
+    // Use org's work_hours_per_day if available, otherwise default to 8
+    let orgWhpd = 8;
+    if (req.userOrgId) {
+        const org = db.prepare('SELECT work_hours_per_day FROM organizations WHERE id = ?').get(req.userOrgId);
+        if (org?.work_hours_per_day) orgWhpd = org.work_hours_per_day;
+    }
+    const TARGET = orgWhpd * 60; // target in minutes
 
     Object.keys(grouped).forEach(date => {
         const dayEntries = grouped[date];

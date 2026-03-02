@@ -45,14 +45,16 @@ router.post('/', requireRole('super_admin'), (req, res) => {
 router.get('/current', (req, res) => {
     if (!req.userOrgId) return res.json(null);
 
-    const org = db.prepare('SELECT * FROM organizations WHERE id = ?').get(req.userOrgId);
+    const org = db.prepare(`
+        SELECT o.*,
+            (SELECT COUNT(*) FROM users WHERE org_id = o.id AND is_active = 1) AS memberCount,
+            (SELECT COUNT(*) FROM departments WHERE org_id = o.id) AS deptCount,
+            (SELECT COUNT(*) FROM teams WHERE org_id = o.id) AS teamCount
+        FROM organizations o WHERE o.id = ?
+    `).get(req.userOrgId);
     if (!org) return res.json(null);
 
-    const memberCount = db.prepare('SELECT COUNT(*) as count FROM users WHERE org_id = ? AND is_active = 1').get(req.userOrgId).count;
-    const deptCount = db.prepare('SELECT COUNT(*) as count FROM departments WHERE org_id = ?').get(req.userOrgId).count;
-    const teamCount = db.prepare('SELECT COUNT(*) as count FROM teams WHERE org_id = ?').get(req.userOrgId).count;
-
-    res.json({ ...org, memberCount, deptCount, teamCount });
+    res.json(org);
 });
 
 // Update org settings (hr_admin+)
@@ -63,7 +65,11 @@ router.put('/settings', requireRole('hr_admin'), requireSameOrg, (req, res) => {
     const params = [];
 
     if (name) { updates.push('name = ?'); params.push(name.trim()); }
-    if (work_hours_per_day !== undefined) { updates.push('work_hours_per_day = ?'); params.push(Number(work_hours_per_day)); }
+    if (work_hours_per_day !== undefined) {
+        const whpd = Number(work_hours_per_day);
+        if (isNaN(whpd) || whpd < 1 || whpd > 24) return res.status(400).json({ error: 'Work hours per day must be between 1 and 24' });
+        updates.push('work_hours_per_day = ?'); params.push(whpd);
+    }
     if (work_days) { updates.push('work_days = ?'); params.push(work_days); }
     if (timezone) { updates.push('timezone = ?'); params.push(timezone); }
     if (fiscal_year_start !== undefined) { updates.push('fiscal_year_start = ?'); params.push(Number(fiscal_year_start)); }
@@ -83,6 +89,8 @@ router.put('/settings', requireRole('hr_admin'), requireSameOrg, (req, res) => {
 // Get org members (team_lead+)
 router.get('/members', requireRole('team_lead'), requireSameOrg, (req, res) => {
     const { search, role, department_id, team_id, is_active } = req.query;
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const perPage = Math.min(Math.max(parseInt(req.query.per_page) || 50, 1), 100);
 
     let where = ['u.org_id = ?'];
     let params = [req.userOrgId];
@@ -97,6 +105,9 @@ router.get('/members', requireRole('team_lead'), requireSameOrg, (req, res) => {
     if (team_id) { where.push('u.team_id = ?'); params.push(Number(team_id)); }
     if (is_active !== undefined) { where.push('u.is_active = ?'); params.push(is_active === 'true' ? 1 : 0); }
 
+    const whereClause = where.join(' AND ');
+    const total = db.prepare(`SELECT COUNT(*) as count FROM users u WHERE ${whereClause}`).get(...params).count;
+
     const members = db.prepare(`
         SELECT u.id, u.username, u.full_name, u.email, u.avatar, u.role,
                u.department_id, u.team_id, u.is_active, u.created_at,
@@ -104,11 +115,12 @@ router.get('/members', requireRole('team_lead'), requireSameOrg, (req, res) => {
         FROM users u
         LEFT JOIN departments d ON d.id = u.department_id
         LEFT JOIN teams t ON t.id = u.team_id
-        WHERE ${where.join(' AND ')}
+        WHERE ${whereClause}
         ORDER BY u.full_name ASC
-    `).all(...params);
+        LIMIT ? OFFSET ?
+    `).all(...params, perPage, (page - 1) * perPage);
 
-    res.json(members);
+    res.json({ data: members, total, page, perPage });
 });
 
 // Invite / add a user to org (hr_admin+)
@@ -129,6 +141,18 @@ router.post('/invite', requireRole('hr_admin'), requireSameOrg, (req, res) => {
     if ((ROLE_LEVEL[assignRole] || 1) >= (req.roleLevel || 1)) {
         return res.status(403).json({ error: 'Cannot assign a role equal to or higher than your own' });
     }
+
+    // Validate department belongs to this org
+    if (department_id) {
+        const dept = db.prepare('SELECT id FROM departments WHERE id = ? AND org_id = ?').get(Number(department_id), req.userOrgId);
+        if (!dept) return res.status(400).json({ error: 'Department not found in this organization' });
+    }
+    // Validate team belongs to this org
+    if (team_id) {
+        const team = db.prepare('SELECT id FROM teams WHERE id = ? AND org_id = ?').get(Number(team_id), req.userOrgId);
+        if (!team) return res.status(400).json({ error: 'Team not found in this organization' });
+    }
+
     db.prepare('UPDATE users SET org_id = ?, role = ?, department_id = ?, team_id = ? WHERE id = ?')
         .run(req.userOrgId, assignRole, department_id || null, team_id || null, user_id);
 

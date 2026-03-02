@@ -162,7 +162,7 @@ function Departments({ orgId, userRole }) {
 
     useEffect(() => {
         if (canManage) {
-            getOrgMembers({ is_active: true }).then(r => setMembers(r.data)).catch(() => {});
+            getOrgMembers({ is_active: true }).then(r => setMembers(r.data?.data ?? r.data)).catch(() => {});
         }
     }, [canManage]);
 
@@ -272,7 +272,7 @@ function Teams({ orgId, userRole }) {
 
     useEffect(() => {
         if (canManage) {
-            getOrgMembers({ is_active: true }).then(r => setMembers(r.data)).catch(() => {});
+            getOrgMembers({ is_active: true }).then(r => setMembers(r.data?.data ?? r.data)).catch(() => {});
         }
     }, [canManage]);
 

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import { getProfile, logoutUser } from './api';
 
 const AuthContext = createContext(null);
@@ -34,36 +34,38 @@ export function AuthProvider({ children }) {
       });
   }, []);
 
-  const saveAuth = (user) => {
+  const saveAuth = useCallback((user) => {
     localStorage.setItem('user', JSON.stringify(user));
     setUser(user);
-  };
+  }, []);
 
-  const updateUser = (partial) => {
+  const updateUser = useCallback((partial) => {
     setUser(prev => {
       const updated = { ...prev, ...partial };
       localStorage.setItem('user', JSON.stringify(updated));
       return updated;
     });
-  };
+  }, []);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     try {
       await logoutUser();
     } catch (e) { /* ignore network error on logout */ }
     localStorage.removeItem('user');
     setUser(null);
-  };
+  }, []);
+
+  const value = useMemo(() => ({
+    user,
+    saveAuth,
+    updateUser,
+    logout,
+    isAuthenticated: !!user,
+    isInitializing
+  }), [user, saveAuth, updateUser, logout, isInitializing]);
 
   return (
-    <AuthContext.Provider value={{
-      user,
-      saveAuth,
-      updateUser,
-      logout,
-      isAuthenticated: !!user,
-      isInitializing
-    }}>
+    <AuthContext.Provider value={value}>
       {!isInitializing && children}
     </AuthContext.Provider>
   );

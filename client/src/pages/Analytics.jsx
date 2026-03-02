@@ -35,6 +35,7 @@ export default function Analytics() {
   const [error, setError] = useState('');
 
   useEffect(() => {
+    const controller = new AbortController();
     const fetch = async () => {
       setLoading(true);
       try {
@@ -45,17 +46,20 @@ export default function Analytics() {
             getLocalToday()
           )
         ]);
+        if (controller.signal.aborted) return;
         setData(analyticsRes.data);
         setHistory(historyRes.data);
         setError('');
       } catch (err) {
+        if (controller.signal.aborted) return;
         console.error('Failed to load analytics', err);
         setError('Failed to load analytics data. Please try again.');
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     };
     fetch();
+    return () => controller.abort();
   }, [days]);
 
   const labels = useMemo(() => data.map(d => {

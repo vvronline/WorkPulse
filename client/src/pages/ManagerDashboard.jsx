@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     getTeamAttendance, getTeamAnalytics, getApprovals, getMyRequests,
     approveRequest, rejectRequest, bulkApproval, getMemberHours, getMemberTasks,
@@ -119,15 +119,22 @@ function EmployeeDashboard({ member, onBack }) {
             .catch(() => setLoading(false));
     }, [member.id]);
 
+    const user = overview?.user || member;
+
     return (
         <div className={s.adminPage}>
             <div className={m.employeeHeader}>
                 <button onClick={onBack} className={s.btnCancel} style={{ padding: '0.4rem 0.8rem' }}>← Back</button>
                 <div className={m.employeeProfile}>
-                    {member.avatar ? <img src={member.avatar} className={m.memberAvatarLg} alt="" /> : <span className={s.initials} style={{ width: 42, height: 42, fontSize: '0.9rem' }}>{member.full_name?.charAt(0)}</span>}
+                    {user.avatar ? <img src={user.avatar} className={m.memberAvatarLg} alt="" /> : <span className={s.initials} style={{ width: 42, height: 42, fontSize: '0.9rem' }}>{user.full_name?.charAt(0)}</span>}
                     <div>
-                        <h2 className={m.employeeName}>{member.full_name}</h2>
-                        <span className={m.memberRole}>{ROLE_LABELS[member.role] || member.role}</span>
+                        <h2 className={m.employeeName}>{user.full_name}</h2>
+                        <div className={m.employeeMeta}>
+                            <span className={m.memberRole}>{ROLE_LABELS[user.role] || user.role}</span>
+                            {user.email && <span className={m.metaDot}>· {user.email}</span>}
+                            {user.department_name && <span className={m.metaDot}>· {user.department_name}</span>}
+                            {user.team_name && <span className={m.metaDot}>· {user.team_name}</span>}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -152,18 +159,139 @@ function EmployeeDashboard({ member, onBack }) {
 }
 
 function MemberOverview({ data }) {
+    const stats = data.stats30d || {};
+    const taskStats = data.monthTaskStats || {};
+
     return (
         <>
-            <div className={s.statsGrid}>
-                <div className={s.statCard}><div className={s.value}>{data.todayHours}h</div><div className={s.label}>Today's Hours</div></div>
-                <div className={s.statCard}><div className={s.value} style={{ color: '#f59e0b' }}>{data.pendingRequests}</div><div className={s.label}>Pending Requests</div></div>
-                <div className={s.statCard}><div className={s.value}>{data.monthLeaves}</div><div className={s.label}>Leaves This Month</div></div>
-                <div className={s.statCard}><div className={s.value}>{data.todayTasks?.length || 0}</div><div className={s.label}>Today's Tasks</div></div>
+            {/* Quick Stats */}
+            <div className={m.summaryGrid}>
+                <div className={m.summaryCard}>
+                    <div className={m.summaryIcon}>⏱</div>
+                    <div className={m.summaryValue}>{data.todayHours}h</div>
+                    <div className={m.summaryLabel}>Today's Hours</div>
+                </div>
+                <div className={m.summaryCard}>
+                    <div className={m.summaryIcon}>☕</div>
+                    <div className={m.summaryValue}>{formatMin(data.todayBreakMin || 0)}</div>
+                    <div className={m.summaryLabel}>Today's Break</div>
+                </div>
+                <div className={m.summaryCard}>
+                    <div className={m.summaryIcon}>📋</div>
+                    <div className={`${m.summaryValue} ${m.colorAmber}`}>{data.pendingRequests}</div>
+                    <div className={m.summaryLabel}>Pending Requests</div>
+                </div>
+                <div className={m.summaryCard}>
+                    <div className={m.summaryIcon}>🗓</div>
+                    <div className={m.summaryValue}>{data.monthLeaves}</div>
+                    <div className={m.summaryLabel}>Leaves This Month</div>
+                </div>
+                <div className={m.summaryCard}>
+                    <div className={m.summaryIcon}>✅</div>
+                    <div className={m.summaryValue}>{data.todayTasks?.length || 0}</div>
+                    <div className={m.summaryLabel}>Today's Tasks</div>
+                </div>
             </div>
 
+            {/* Weekly Trend */}
+            {data.weeklyTrend && data.weeklyTrend.length > 0 && (
+                <div className={m.overviewSection}>
+                    <h3 className={m.sectionTitle}>Weekly Trend (Last 7 Days)</h3>
+                    <div className={m.weeklyTrendGrid}>
+                        {data.weeklyTrend.map((day, i) => {
+                            const maxMin = Math.max(...data.weeklyTrend.map(d => d.floorMinutes || 0), 480, 1);
+                            const barH = ((day.floorMinutes || 0) / maxMin) * 100;
+                            return (
+                                <div key={i} className={m.weeklyDayCol}>
+                                    <div className={m.weeklyBarContainer}>
+                                        <div className={m.weeklyBar} style={{ height: `${barH}%`, background: day.floorMinutes >= 480 ? '#22c55e' : day.floorMinutes > 0 ? '#f59e0b' : 'var(--border)' }} />
+                                    </div>
+                                    <div className={m.weeklyDayLabel}>{day.dayLabel}</div>
+                                    <div className={m.weeklyDayHours}>{formatMin(day.floorMinutes)}</div>
+                                    {day.workMode && <div className={m.weeklyDayMode}>{day.workMode === 'remote' ? '🏠' : '🏢'}</div>}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+
+            {/* 30-Day Stats */}
+            {stats.daysWorked !== undefined && (
+                <div className={m.overviewSection}>
+                    <h3 className={m.sectionTitle}>30-Day Performance</h3>
+                    <div className={m.perfGrid}>
+                        <div className={m.perfItem}>
+                            <span className={m.perfValue}>{stats.daysWorked}</span>
+                            <span className={m.perfLabel}>Days Worked</span>
+                        </div>
+                        <div className={m.perfItem}>
+                            <span className={m.perfValue}>{formatMin(stats.totalFloorMinutes)}</span>
+                            <span className={m.perfLabel}>Total Floor Time</span>
+                        </div>
+                        <div className={m.perfItem}>
+                            <span className={m.perfValue}>{formatMin(stats.avgFloorMinutes)}</span>
+                            <span className={m.perfLabel}>Avg Floor/Day</span>
+                        </div>
+                        <div className={m.perfItem}>
+                            <span className={m.perfValue}>{formatMin(stats.avgBreakMinutes)}</span>
+                            <span className={m.perfLabel}>Avg Break/Day</span>
+                        </div>
+                        <div className={m.perfItem}>
+                            <span className={m.perfValue}>{stats.targetMetPercent}%</span>
+                            <span className={m.perfLabel}>Target Met</span>
+                        </div>
+                        <div className={m.perfItem}>
+                            <span className={m.perfValue}>{stats.punctualityPercent}%</span>
+                            <span className={m.perfLabel}>Punctuality</span>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Task Stats + Leave Balances side-by-side */}
+            <div className={m.twoColSection}>
+                {taskStats.total !== undefined && (
+                    <div className={m.overviewSection}>
+                        <h3 className={m.sectionTitle}>Tasks This Month</h3>
+                        <div className={m.taskStatsGrid}>
+                            <div className={m.taskStatCard}><span className={m.taskStatNum}>{taskStats.total}</span><span className={m.taskStatLbl}>Total</span></div>
+                            <div className={m.taskStatCard}><span className={`${m.taskStatNum} ${m.colorGreen}`}>{taskStats.done}</span><span className={m.taskStatLbl}>Done</span></div>
+                            <div className={m.taskStatCard}><span className={`${m.taskStatNum} ${m.colorAmber}`}>{taskStats.inProgress}</span><span className={m.taskStatLbl}>In Progress</span></div>
+                            <div className={m.taskStatCard}><span className={m.taskStatNum}>{taskStats.completionRate}%</span><span className={m.taskStatLbl}>Completion</span></div>
+                        </div>
+                    </div>
+                )}
+
+                {data.leaveBalances && data.leaveBalances.length > 0 && (
+                    <div className={m.overviewSection}>
+                        <h3 className={m.sectionTitle}>Leave Balances</h3>
+                        <div className={m.leaveBalanceList}>
+                            {data.leaveBalances.map((lb, i) => {
+                                const used = lb.used || 0;
+                                const total = lb.total_days || 0;
+                                const pct = total > 0 ? Math.round((used / total) * 100) : 0;
+                                return (
+                                    <div key={i} className={m.leaveBalanceRow}>
+                                        <div className={m.lbInfo}>
+                                            <span className={m.lbName}>{LEAVE_ICONS[lb.leave_type] || '📋'} {lb.policy_name || lb.leave_type}</span>
+                                            <span className={m.lbCount}>{used}/{total} used</span>
+                                        </div>
+                                        <div className={m.lbBarTrack}>
+                                            <div className={m.lbBarFill} style={{ width: `${Math.min(pct, 100)}%`, background: pct >= 90 ? '#ef4444' : pct >= 60 ? '#f59e0b' : '#22c55e' }} />
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            {/* Today's Tasks */}
             {data.todayTasks && data.todayTasks.length > 0 && (
-                <div style={{ marginTop: '1.5rem' }}>
-                    <h3 style={{ marginBottom: '0.75rem' }}>📋 Today's Tasks</h3>
+                <div className={m.overviewSection}>
+                    <h3 className={m.sectionTitle}>Today's Tasks</h3>
                     <table className={s.table}>
                         <thead><tr><th>Task</th><th>Priority</th><th>Status</th></tr></thead>
                         <tbody>
@@ -179,9 +307,10 @@ function MemberOverview({ data }) {
                 </div>
             )}
 
+            {/* Recent Leaves */}
             {data.recentLeaves && data.recentLeaves.length > 0 && (
-                <div style={{ marginTop: '1.5rem' }}>
-                    <h3 style={{ marginBottom: '0.75rem' }}>🗓 Recent Leaves</h3>
+                <div className={m.overviewSection}>
+                    <h3 className={m.sectionTitle}>Recent Leaves</h3>
                     <table className={s.table}>
                         <thead><tr><th>Date</th><th>Type</th><th>Status</th><th>Reason</th></tr></thead>
                         <tbody>
@@ -198,9 +327,10 @@ function MemberOverview({ data }) {
                 </div>
             )}
 
+            {/* Recent Requests */}
             {data.recentRequests && data.recentRequests.length > 0 && (
-                <div style={{ marginTop: '1.5rem' }}>
-                    <h3 style={{ marginBottom: '0.75rem' }}>📝 Recent Requests</h3>
+                <div className={m.overviewSection}>
+                    <h3 className={m.sectionTitle}>Recent Requests</h3>
                     <table className={s.table}>
                         <thead><tr><th>Type</th><th>Details</th><th>Status</th><th>Date</th></tr></thead>
                         <tbody>
@@ -460,62 +590,285 @@ function ApprovalsTab() {
 function TeamAnalytics({ onSelectMember }) {
     const [data, setData] = useState(null);
     const [range, setRange] = useState('7');
+    const [search, setSearch] = useState('');
+    const [sortBy, setSortBy] = useState('hours');
+    const [sortAsc, setSortAsc] = useState(false);
+    const [expandedId, setExpandedId] = useState(null);
+    const [filterDept, setFilterDept] = useState('');
 
     useEffect(() => {
         getTeamAnalytics(range).then(r => setData(r.data)).catch(() => {});
     }, [range]);
 
+    const departments = useMemo(() => {
+        if (!data?.members) return [];
+        const depts = new Set(data.members.map(m => m.department_name).filter(Boolean));
+        return [...depts].sort();
+    }, [data]);
+
+    const filteredMembers = useMemo(() => {
+        if (!data?.members) return [];
+        let list = data.members;
+        if (search) {
+            const q = search.toLowerCase();
+            list = list.filter(m => m.full_name?.toLowerCase().includes(q) || m.email?.toLowerCase().includes(q) || m.role?.toLowerCase().includes(q));
+        }
+        if (filterDept) list = list.filter(m => m.department_name === filterDept);
+        list = [...list].sort((a, b) => {
+            let av = a[sortBy], bv = b[sortBy];
+            if (typeof av === 'string') return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+            return sortAsc ? (av || 0) - (bv || 0) : (bv || 0) - (av || 0);
+        });
+        return list;
+    }, [data, search, filterDept, sortBy, sortAsc]);
+
+    const handleSort = (col) => {
+        if (sortBy === col) setSortAsc(!sortAsc);
+        else { setSortBy(col); setSortAsc(false); }
+    };
+    const SortIcon = ({ col }) => sortBy === col ? (sortAsc ? ' ▲' : ' ▼') : '';
+
     if (!data) return <p>Loading...</p>;
+
+    const rangeLabel = range === '7' ? 'This Week' : range === '30' ? 'This Month' : 'This Quarter';
 
     return (
         <>
-            <div style={{ marginBottom: '1rem' }}>
-                <select value={range} onChange={e => setRange(e.target.value)} style={{ padding: '0.5rem 1.8rem 0.5rem 0.5rem', borderRadius: 8, border: '1px solid var(--glass-border)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontFamily: 'inherit' }}>
+            {/* Controls */}
+            <div className={m.analyticsToolbar}>
+                <select value={range} onChange={e => setRange(e.target.value)} className={m.selectField}>
                     <option value="7">This Week</option>
                     <option value="30">This Month</option>
                     <option value="90">This Quarter</option>
                 </select>
+                <input placeholder="Search members..." value={search} onChange={e => setSearch(e.target.value)} className={m.inputField} />
+                {departments.length > 0 && (
+                    <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className={m.selectField}>
+                        <option value="">All Departments</option>
+                        {departments.map(d => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                )}
             </div>
 
-            <div className={s.statsGrid}>
-                <div className={s.statCard}><div className={s.value}>{data.totalMembers}</div><div className={s.label}>Team Members</div></div>
-                <div className={s.statCard}><div className={s.value}>{data.avgHours?.toFixed(1) || 0}h</div><div className={s.label}>Avg Hours/Day</div></div>
-                <div className={s.statCard}><div className={s.value}>{data.totalTasks || 0}</div><div className={s.label}>Tasks Completed</div></div>
-                <div className={s.statCard}><div className={s.value} style={{ color: '#f59e0b' }}>{data.pendingApprovals || 0}</div><div className={s.label}>Pending Approvals</div></div>
+            {/* Team Summary Cards */}
+            <div className={m.summaryGrid}>
+                <div className={m.summaryCard}>
+                    <div className={m.summaryIcon}>👥</div>
+                    <div className={m.summaryValue}>{data.totalMembers}</div>
+                    <div className={m.summaryLabel}>Team Members</div>
+                </div>
+                <div className={m.summaryCard}>
+                    <div className={m.summaryIcon}>⏱</div>
+                    <div className={m.summaryValue}>{data.avgHours?.toFixed(1) || 0}h</div>
+                    <div className={m.summaryLabel}>Avg Hours/Day</div>
+                </div>
+                <div className={m.summaryCard}>
+                    <div className={m.summaryIcon}>✅</div>
+                    <div className={m.summaryValue}>{data.totalTasksDone || 0}</div>
+                    <div className={m.summaryLabel}>Tasks Completed</div>
+                </div>
+                <div className={m.summaryCard}>
+                    <div className={m.summaryIcon}>🎯</div>
+                    <div className={m.summaryValue}>{data.avgTargetMet || 0}%</div>
+                    <div className={m.summaryLabel}>Avg Target Met</div>
+                </div>
+                <div className={m.summaryCard}>
+                    <div className={m.summaryIcon}>⏰</div>
+                    <div className={m.summaryValue}>{data.avgPunctuality || 0}%</div>
+                    <div className={m.summaryLabel}>Avg Punctuality</div>
+                </div>
+                <div className={m.summaryCard}>
+                    <div className={m.summaryIcon}>📋</div>
+                    <div className={`${m.summaryValue} ${m.colorAmber}`}>{data.pendingApprovals || 0}</div>
+                    <div className={m.summaryLabel}>Pending Approvals</div>
+                </div>
             </div>
 
-            <h3 style={{ marginTop: '1.5rem', marginBottom: '0.75rem' }}>Member Performance</h3>
-            <table className={s.table}>
-                <thead><tr><th>Member</th><th>Hours</th><th>Tasks Done</th><th>Leaves</th><th>Utilization</th></tr></thead>
-                <tbody>
-                    {(data.members || []).map(m => {
-                        const util = data.expectedHours ? Math.round((m.hours / data.expectedHours) * 100) : 0;
-                        return (
-                            <tr key={m.id} style={{ cursor: 'pointer' }} onClick={() => onSelectMember(m)}>
-                                <td>
-                                    <div className={s.userCell}>
-                                        {m.avatar ? <img src={m.avatar} style={{ width: 28, height: 28, borderRadius: '50%' }} alt="" /> : <span className={s.initials}>{m.full_name?.charAt(0)}</span>}
-                                        <div><div className={s.userName}>{m.full_name}</div><div className={s.userEmail}>{ROLE_LABELS[m.role] || m.role}</div></div>
-                                    </div>
-                                </td>
-                                <td>{m.hours?.toFixed(1) || 0}h</td>
-                                <td>{m.tasks || 0}</td>
-                                <td>{m.leaves || 0}</td>
-                                <td>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                        <div style={{ flex: 1, height: 6, background: 'var(--border)', borderRadius: 3 }}>
-                                            <div style={{ height: '100%', borderRadius: 3, width: `${Math.min(util, 100)}%`, background: util >= 80 ? '#22c55e' : util >= 50 ? '#f59e0b' : '#ef4444' }} />
+            {/* Member Table */}
+            <h3 className={m.sectionTitle}>Member Performance — {rangeLabel} <span className={m.memberCount}>({filteredMembers.length})</span></h3>
+            <div className={m.tableWrap}>
+                <table className={m.analyticsTable}>
+                    <thead>
+                        <tr>
+                            <th onClick={() => handleSort('full_name')} className={m.sortable}>Member<SortIcon col="full_name" /></th>
+                            <th>Today</th>
+                            <th onClick={() => handleSort('hours')} className={m.sortable}>Total Hours<SortIcon col="hours" /></th>
+                            <th onClick={() => handleSort('avgFloorMinutes')} className={m.sortable}>Avg/Day<SortIcon col="avgFloorMinutes" /></th>
+                            <th onClick={() => handleSort('tasksDone')} className={m.sortable}>Tasks<SortIcon col="tasksDone" /></th>
+                            <th onClick={() => handleSort('targetMetPercent')} className={m.sortable}>Target Met<SortIcon col="targetMetPercent" /></th>
+                            <th onClick={() => handleSort('punctualityPercent')} className={m.sortable}>Punctuality<SortIcon col="punctualityPercent" /></th>
+                            <th>Trend</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {filteredMembers.map(mem => (
+                            <React.Fragment key={mem.id}>
+                                <tr className={m.memberRow} onClick={() => setExpandedId(expandedId === mem.id ? null : mem.id)}>
+                                    <td>
+                                        <div className={m.memberInfo}>
+                                            {mem.avatar ? <img src={mem.avatar} className={m.memberAvatarSm} alt="" /> : <span className={m.avatarPlaceholder}>{mem.full_name?.charAt(0)}</span>}
+                                            <div>
+                                                <div className={m.memberNameCol}>{mem.full_name}</div>
+                                                <div className={m.memberMeta}>
+                                                    {ROLE_LABELS[mem.role] || mem.role}
+                                                    {mem.department_name && <> · {mem.department_name}</>}
+                                                    {mem.team_name && <> · {mem.team_name}</>}
+                                                </div>
+                                            </div>
                                         </div>
-                                        <span style={{ fontSize: '0.8rem', fontWeight: 600, width: 35 }}>{util}%</span>
-                                    </div>
-                                </td>
-                            </tr>
-                        );
-                    })}
-                </tbody>
-            </table>
+                                    </td>
+                                    <td><TodayStatusBadge status={mem.todayStatus} minutes={mem.todayHoursMin} /></td>
+                                    <td className={m.numCell}>{mem.hours?.toFixed(1)}h</td>
+                                    <td className={m.numCell}>{formatMin(mem.avgFloorMinutes)}</td>
+                                    <td className={m.numCell}>
+                                        <span className={m.tasksPill}>{mem.tasksDone}<span className={m.tasksSep}>/{mem.tasksTotal}</span></span>
+                                    </td>
+                                    <td><PercentBar value={mem.targetMetPercent} /></td>
+                                    <td><PercentBar value={mem.punctualityPercent} color="blue" /></td>
+                                    <td><MiniTrend data={mem.trend} target={data.targetMinutes} /></td>
+                                    <td>
+                                        <button className={m.viewBtn} onClick={(e) => { e.stopPropagation(); onSelectMember(mem); }} title="View full profile">→</button>
+                                    </td>
+                                </tr>
+                                {expandedId === mem.id && (
+                                    <tr className={m.expandedRow}>
+                                        <td colSpan={9}>
+                                            <MemberExpandedCard member={mem} targetMinutes={data.targetMinutes} expectedWeekdays={data.expectedWeekdays} />
+                                        </td>
+                                    </tr>
+                                )}
+                            </React.Fragment>
+                        ))}
+                        {filteredMembers.length === 0 && (
+                            <tr><td colSpan={9} className={m.emptyState}>No members match your filters</td></tr>
+                        )}
+                    </tbody>
+                </table>
+            </div>
         </>
     );
+}
+
+function TodayStatusBadge({ status, minutes }) {
+    const config = {
+        working: { label: 'Working', cls: 'badgeApproved', icon: '🟢' },
+        on_break: { label: 'Break', cls: 'badgePending', icon: '🟡' },
+        on_leave: { label: 'On Leave', cls: 'badgeRejected', icon: '🔴' },
+        left: { label: 'Left', cls: 'badgeDefault', icon: '⚪' },
+        absent: { label: 'Absent', cls: 'badgeDefault', icon: '⚫' },
+    };
+    const c = config[status] || config.absent;
+    return (
+        <div className={m.todayStatus}>
+            <span className={`${m.badge} ${m[c.cls]}`}>{c.icon} {c.label}</span>
+            {minutes > 0 && <span className={m.todayMins}>{formatMin(minutes)}</span>}
+        </div>
+    );
+}
+
+function PercentBar({ value, color }) {
+    const bg = color === 'blue'
+        ? (value >= 80 ? '#3b82f6' : value >= 50 ? '#6366f1' : '#94a3b8')
+        : (value >= 80 ? '#22c55e' : value >= 50 ? '#f59e0b' : '#ef4444');
+    return (
+        <div className={m.percentBarWrap}>
+            <div className={m.percentTrack}>
+                <div className={m.percentFill} style={{ width: `${Math.min(value, 100)}%`, background: bg }} />
+            </div>
+            <span className={m.percentLabel}>{value}%</span>
+        </div>
+    );
+}
+
+function MiniTrend({ data, target }) {
+    if (!data || data.length === 0) return <span className={m.muted}>—</span>;
+    const max = Math.max(...data, target || 480, 1);
+    return (
+        <div className={m.miniTrend}>
+            {data.map((val, i) => (
+                <div key={i} className={m.trendBarWrap} title={`${formatMin(val)}`}>
+                    <div
+                        className={m.trendBar}
+                        style={{
+                            height: `${Math.max((val / max) * 28, 2)}px`,
+                            background: val >= (target || 480) ? '#22c55e' : val > 0 ? '#f59e0b' : 'var(--border)',
+                        }}
+                    />
+                </div>
+            ))}
+        </div>
+    );
+}
+
+function MemberExpandedCard({ member: mem, targetMinutes, expectedWeekdays }) {
+    const utilization = expectedWeekdays > 0 ? Math.round((mem.hours / (expectedWeekdays * (targetMinutes / 60))) * 100) : 0;
+    return (
+        <div className={m.expandedContent}>
+            <div className={m.expandedGrid}>
+                <div className={m.expandedStat}>
+                    <span className={m.expandedStatLabel}>Email</span>
+                    <span className={m.expandedStatValue}>{mem.email || '—'}</span>
+                </div>
+                <div className={m.expandedStat}>
+                    <span className={m.expandedStatLabel}>Department</span>
+                    <span className={m.expandedStatValue}>{mem.department_name || '—'}</span>
+                </div>
+                <div className={m.expandedStat}>
+                    <span className={m.expandedStatLabel}>Team</span>
+                    <span className={m.expandedStatValue}>{mem.team_name || '—'}</span>
+                </div>
+                <div className={m.expandedStat}>
+                    <span className={m.expandedStatLabel}>Days Worked</span>
+                    <span className={m.expandedStatValue}>{mem.daysWorked}</span>
+                </div>
+                <div className={m.expandedStat}>
+                    <span className={m.expandedStatLabel}>Target Met</span>
+                    <span className={m.expandedStatValue}>{mem.targetMetDays}/{mem.daysWorked} days</span>
+                </div>
+                <div className={m.expandedStat}>
+                    <span className={m.expandedStatLabel}>Avg Break</span>
+                    <span className={m.expandedStatValue}>{formatMin(mem.avgBreakMinutes)}</span>
+                </div>
+                <div className={m.expandedStat}>
+                    <span className={m.expandedStatLabel}>Work Mode</span>
+                    <span className={m.expandedStatValue}>🏢 {mem.officeDays} · 🏠 {mem.remoteDays}</span>
+                </div>
+                <div className={m.expandedStat}>
+                    <span className={m.expandedStatLabel}>Utilization</span>
+                    <span className={m.expandedStatValue}>{utilization}%</span>
+                </div>
+                <div className={m.expandedStat}>
+                    <span className={m.expandedStatLabel}>Current Streak</span>
+                    <span className={m.expandedStatValue}>{mem.streak} day{mem.streak !== 1 ? 's' : ''} 🔥</span>
+                </div>
+                <div className={m.expandedStat}>
+                    <span className={m.expandedStatLabel}>Task Completion</span>
+                    <span className={m.expandedStatValue}>{mem.taskCompletionRate}% ({mem.tasksDone}/{mem.tasksTotal})</span>
+                </div>
+                <div className={m.expandedStat}>
+                    <span className={m.expandedStatLabel}>Leaves</span>
+                    <span className={m.expandedStatValue}>
+                        {mem.leaves} total
+                        {mem.leavesByType && Object.keys(mem.leavesByType).length > 0 && (
+                            <span className={m.leaveBreakdown}>
+                                {Object.entries(mem.leavesByType).map(([type, count]) => (
+                                    <span key={type} className={m.leaveChip}>{LEAVE_ICONS[type] || '📋'} {count}</span>
+                                ))}
+                            </span>
+                        )}
+                    </span>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function formatMin(totalMin) {
+    if (!totalMin) return '0h 0m';
+    const h = Math.floor(totalMin / 60);
+    const mins = totalMin % 60;
+    return `${h}h ${mins}m`;
 }
 
 // ==================== MY REQUESTS ====================

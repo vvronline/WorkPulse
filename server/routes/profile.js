@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const fsPromises = require('fs').promises;
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../db');
@@ -48,14 +49,14 @@ const upload = multer({
 });
 
 // Upload avatar
-router.post('/avatar', auth, upload.single('avatar'), (req, res) => {
+router.post('/avatar', auth, upload.single('avatar'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
     // Delete old avatar file if exists
     const user = db.prepare('SELECT avatar FROM users WHERE id = ?').get(req.userId);
     if (user?.avatar) {
         const oldPath = path.join(__dirname, '..', user.avatar);
-        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+        try { await fsPromises.unlink(oldPath); } catch { }
     }
 
     const avatarPath = `/uploads/avatars/${req.file.filename}`;
@@ -65,11 +66,11 @@ router.post('/avatar', auth, upload.single('avatar'), (req, res) => {
 });
 
 // Remove avatar
-router.delete('/avatar', auth, (req, res) => {
+router.delete('/avatar', auth, async (req, res) => {
     const user = db.prepare('SELECT avatar FROM users WHERE id = ?').get(req.userId);
     if (user?.avatar) {
         const oldPath = path.join(__dirname, '..', user.avatar);
-        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+        try { await fsPromises.unlink(oldPath); } catch { }
     }
     db.prepare('UPDATE users SET avatar = NULL WHERE id = ?').run(req.userId);
     res.json({ avatar: null });
@@ -126,6 +127,9 @@ router.put('/password', auth, async (req, res) => {
     if (new_password.length < 8) {
         return res.status(400).json({ error: 'New password must be at least 8 characters' });
     }
+    if (new_password.length > 72) {
+        return res.status(400).json({ error: 'New password must be 72 characters or less' });
+    }
     const user = db.prepare('SELECT password FROM users WHERE id = ?').get(req.userId);
     if (!(await bcrypt.compare(current_password, user.password))) {
         return res.status(400).json({ error: 'Current password is incorrect' });
@@ -152,7 +156,7 @@ router.delete('/', auth, async (req, res) => {
     // Delete avatar file if exists
     if (user.avatar) {
         const avatarPath = path.join(__dirname, '..', user.avatar);
-        if (fs.existsSync(avatarPath)) fs.unlinkSync(avatarPath);
+        try { await fsPromises.unlink(avatarPath); } catch { }
     }
 
     // Delete all user data in a transaction

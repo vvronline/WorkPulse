@@ -200,3 +200,432 @@
 .dateInput {
     margin-bottom: 1rem;
 }
+
+/* ==================== ANALYTICS TOOLBAR ==================== */
+.analyticsToolbar {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+/* ==================== SUMMARY GRID ==================== */
+.summaryGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+}
+.summaryCard {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem;
+    text-align: center;
+    transition: border-color 0.2s, transform 0.2s;
+}
+.summaryCard:hover {
+    border-color: var(--primary);
+    transform: translateY(-2px);
+}
+.summaryIcon {
+    font-size: 1.4rem;
+    margin-bottom: 0.25rem;
+}
+.summaryValue {
+    font-size: 1.5rem;
+    font-weight: 700;
+    line-height: 1.2;
+}
+.summaryLabel {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-top: 0.15rem;
+}
+
+/* ==================== SECTION TITLES ==================== */
+.sectionTitle {
+    margin: 1.25rem 0 0.75rem;
+    font-size: 1rem;
+    font-weight: 600;
+}
+.memberCount {
+    font-weight: 400;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+/* ==================== ANALYTICS TABLE ==================== */
+.tableWrap {
+    overflow-x: auto;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+}
+.analyticsTable {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+.analyticsTable thead {
+    background: var(--card-bg);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+.analyticsTable th {
+    padding: 0.6rem 0.75rem;
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+}
+.analyticsTable td {
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+}
+.sortable {
+    cursor: pointer;
+    user-select: none;
+}
+.sortable:hover {
+    color: var(--primary);
+}
+
+/* Member row */
+.memberRow {
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.memberRow:hover {
+    background: var(--card-bg);
+}
+.memberInfo {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-width: 180px;
+}
+.memberAvatarSm {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.avatarPlaceholder {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--primary);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.8rem;
+    flex-shrink: 0;
+}
+.memberNameCol {
+    font-weight: 600;
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+.memberMeta {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+.numCell {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* Tasks pill */
+.tasksPill {
+    font-weight: 600;
+}
+.tasksSep {
+    color: var(--text-secondary);
+    font-weight: 400;
+}
+
+/* Percent bar */
+.percentBarWrap {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 90px;
+}
+.percentTrack {
+    flex: 1;
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.percentFill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s;
+}
+.percentLabel {
+    font-size: 0.75rem;
+    font-weight: 600;
+    width: 32px;
+    text-align: right;
+}
+
+/* Today status badge */
+.todayStatus {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.1rem;
+}
+.todayMins {
+    font-size: 0.65rem;
+    color: var(--text-secondary);
+}
+
+/* Mini trend */
+.miniTrend {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 30px;
+}
+.trendBarWrap {
+    display: flex;
+    align-items: flex-end;
+    height: 100%;
+}
+.trendBar {
+    width: 6px;
+    border-radius: 2px;
+    min-height: 2px;
+    transition: height 0.3s;
+}
+
+/* View button */
+.viewBtn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s, border-color 0.2s;
+}
+.viewBtn:hover {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+}
+
+/* ==================== EXPANDED ROW ==================== */
+.expandedRow td {
+    background: var(--card-bg);
+    padding: 0 !important;
+}
+.expandedContent {
+    padding: 1rem 1.25rem;
+}
+.expandedGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 0.75rem;
+}
+.expandedStat {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+.expandedStatLabel {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+.expandedStatValue {
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+.leaveBreakdown {
+    display: inline-flex;
+    gap: 0.35rem;
+    margin-left: 0.5rem;
+}
+.leaveChip {
+    font-size: 0.7rem;
+    background: var(--border);
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+}
+
+/* ==================== EMPLOYEE META ==================== */
+.employeeMeta {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+    font-size: 0.8rem;
+}
+.metaDot {
+    color: var(--text-secondary);
+}
+
+/* ==================== MEMBER OVERVIEW SECTIONS ==================== */
+.overviewSection {
+    margin-bottom: 1.5rem;
+}
+
+/* Weekly Trend */
+.weeklyTrendGrid {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-end;
+    justify-content: space-between;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem;
+}
+.weeklyDayCol {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+    flex: 1;
+}
+.weeklyBarContainer {
+    width: 100%;
+    max-width: 36px;
+    height: 80px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+}
+.weeklyBar {
+    width: 100%;
+    border-radius: 4px 4px 0 0;
+    min-height: 2px;
+    transition: height 0.3s;
+}
+.weeklyDayLabel {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+.weeklyDayHours {
+    font-size: 0.65rem;
+    color: var(--text-secondary);
+}
+.weeklyDayMode {
+    font-size: 0.8rem;
+}
+
+/* 30-Day Performance Grid */
+.perfGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 0.6rem;
+}
+.perfItem {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+}
+.perfValue {
+    font-size: 1.15rem;
+    font-weight: 700;
+}
+.perfLabel {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    margin-top: 0.1rem;
+}
+
+/* Two-column section */
+.twoColSection {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+/* Task Stats */
+.taskStatsGrid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+}
+.taskStatCard {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.taskStatNum {
+    font-size: 1.25rem;
+    font-weight: 700;
+}
+.taskStatLbl {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+}
+
+/* Leave Balances */
+.leaveBalanceList {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+.leaveBalanceRow {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.6rem 0.75rem;
+}
+.lbInfo {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    margin-bottom: 0.35rem;
+}
+.lbName {
+    font-weight: 600;
+}
+.lbCount {
+    color: var(--text-secondary);
+}
+.lbBarTrack {
+    height: 5px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.lbBarFill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s;
+}

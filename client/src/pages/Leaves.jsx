@@ -76,7 +76,9 @@ export default function Leaves() {
   }, [filterMonth]);
 
   useEffect(() => {
+    const controller = new AbortController();
     fetchData();
+    return () => controller.abort();
   }, [fetchData]);
 
   const handleSubmit = async (e) => {

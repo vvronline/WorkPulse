@@ -109,6 +109,7 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
     fetchStatus();
     requestNotificationPermission();
     clockRef.current = setInterval(() => setCurrentTime(new Date()), 60000);
@@ -121,6 +122,7 @@ export default function Dashboard() {
     document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
+      controller.abort();
       if (clockRef.current) clearInterval(clockRef.current);
       document.removeEventListener('visibilitychange', handleVisibility);
     };

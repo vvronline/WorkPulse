@@ -53,8 +53,12 @@ export default function Tasks() {
   }, [date]);
 
   useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
-    fetchTasks();
+    fetchTasks().finally(() => {
+      if (!controller.signal.aborted) setLoading(false);
+    });
+    return () => controller.abort();
   }, [fetchTasks]);
 
   // Auto carry-forward: runs once when viewing today's date
