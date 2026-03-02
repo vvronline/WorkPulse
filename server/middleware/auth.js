@@ -22,8 +22,15 @@ function authMiddleware(req, res, next) {
         req.userId = decoded.id;
         req.username = decoded.username;
         next();
-    } catch {
-        return res.status(401).json({ error: 'Invalid token' });
+    } catch (err) {
+        if (err.name === 'TokenExpiredError') {
+            return res.status(401).json({ error: 'Token expired. Please sign in again.' });
+        }
+        if (err.name === 'JsonWebTokenError') {
+            return res.status(401).json({ error: 'Invalid token' });
+        }
+        console.error('Auth middleware error:', err.name, err.message);
+        return res.status(401).json({ error: 'Authentication failed' });
     }
 }
 

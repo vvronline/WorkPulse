@@ -62,6 +62,7 @@ export const getAnalytics = (days) => API.get('/tracker/analytics', { params: { 
 
 // Manual Entry
 export const addManualEntry = (data) => API.post('/tracker/manual-entry', data);
+export const updateManualEntry = (date, data) => API.put(`/tracker/manual-entry/${date}`, data);
 export const deleteEntries = (date) => API.delete(`/tracker/entries/${date}`);
 export const getEntries = (date) => API.get(`/tracker/entries/${date}`);
 export const getManualEntryRequests = () => API.get('/tracker/manual-entries');

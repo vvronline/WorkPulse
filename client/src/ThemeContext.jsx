@@ -20,7 +20,7 @@ export function ThemeProvider({ children }) {
     if (isAuthenticated) {
       getTheme().then(({ data }) => {
         setTheme(data.theme);
-      }).catch(() => { });
+      }).catch(e => console.error(e));
     }
   }, [isAuthenticated]);
 
@@ -28,7 +28,7 @@ export function ThemeProvider({ children }) {
     setTheme(prev => {
       const newTheme = prev === 'dark' ? 'light' : 'dark';
       if (isAuthenticated) {
-        updateTheme(newTheme).catch(() => {});
+        updateTheme(newTheme).catch(e => console.error(e));
       }
       return newTheme;
     });

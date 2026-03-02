@@ -78,7 +78,7 @@
   align-items: center;
   flex: 1;
   padding: 0.35rem 0;
-  border-bottom: 1px solid rgba(255,255,255,0.04);
+  border-bottom: 1px solid var(--border);
 }
 .timeline-entry:last-child .timeline-content {
   border-bottom: none;

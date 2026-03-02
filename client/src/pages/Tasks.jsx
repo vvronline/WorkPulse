@@ -8,16 +8,16 @@ import 'react-quill-new/dist/quill.snow.css';
 import s from './Tasks.module.css';
 
 const PRIORITIES = [
-  { value: 'high', label: 'High', icon: '🔴', color: '#ef4444' },
-  { value: 'medium', label: 'Medium', icon: '🟡', color: '#f59e0b' },
-  { value: 'low', label: 'Low', icon: '🟢', color: '#22c55e' },
+  { value: 'high', label: 'High', icon: '🔴', color: 'var(--danger)' },
+  { value: 'medium', label: 'Medium', icon: '🟡', color: 'var(--warning)' },
+  { value: 'low', label: 'Low', icon: '🟢', color: 'var(--success)' },
 ];
 
 const COLUMNS = [
-  { id: 'pending', label: 'To Do', icon: '○', color: '#64748b' },
-  { id: 'in_progress', label: 'In Progress', icon: '◐', color: '#f59e0b' },
-  { id: 'in_review', label: 'In Review', icon: '◑', color: '#6366f1' },
-  { id: 'done', label: 'Done', icon: '●', color: '#22c55e' },
+  { id: 'pending', label: 'To Do', icon: '○', color: 'var(--text-muted)' },
+  { id: 'in_progress', label: 'In Progress', icon: '◐', color: 'var(--warning)' },
+  { id: 'in_review', label: 'In Review', icon: '◑', color: 'var(--primary-light)' },
+  { id: 'done', label: 'Done', icon: '●', color: 'var(--success)' },
 ];
 
 export default function Tasks() {
@@ -74,7 +74,7 @@ export default function Tasks() {
           setTimeout(() => setCarriedCount(0), 4000);
         }
       })
-      .catch(() => { }); // silent — don't surface errors for auto action
+      .catch(e => console.error(e)); // silent — don't surface errors for auto action
   }, [date, fetchTasks]);
 
   const handleAdd = async (e) => {

@@ -92,7 +92,7 @@
 
 .weekly-bar-track {
   width: 100%;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface);
   border-radius: 2px;
   display: flex;
   align-items: flex-end;

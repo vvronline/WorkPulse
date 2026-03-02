@@ -18,7 +18,7 @@ router.use(auth, loadUserContext, requireRole('hr_admin'));
 // List all organizations (super_admin only)
 router.get('/organizations', requireRole('super_admin'), (req, res) => {
     const orgs = db.prepare(`
-        SELECT o.id, o.name, o.slug,
+        SELECT o.id, o.name, o.slug, o.timezone, o.work_hours_per_day, o.work_days, o.fiscal_year_start,
                (SELECT COUNT(*) FROM users WHERE org_id = o.id AND is_active = 1) as member_count
         FROM organizations o
         ORDER BY o.name
@@ -264,6 +264,9 @@ router.put('/users/:id/assignment', (req, res) => {
         if (Number(manager_id) === Number(id)) return res.status(400).json({ error: 'Cannot assign user as their own manager' });
     }
 
+    // Determine the target org (must be computed before dept/team validation)
+    const newOrgId = org_id !== undefined ? (org_id || null) : target.org_id;
+
     // Validate department belongs to the target org
     if (department_id) {
         const dept = db.prepare('SELECT id FROM departments WHERE id = ? AND org_id = ?').get(Number(department_id), Number(newOrgId || 0));
@@ -276,7 +279,6 @@ router.put('/users/:id/assignment', (req, res) => {
     }
 
     // If org changes, clear dept/team since they belong to the old org
-    const newOrgId = org_id !== undefined ? (org_id || null) : target.org_id;
     const orgChanged = org_id !== undefined && Number(org_id || 0) !== Number(target.org_id || 0);
     const finalDeptId = orgChanged ? null : (department_id || null);
     const finalTeamId = orgChanged ? null : (team_id || null);

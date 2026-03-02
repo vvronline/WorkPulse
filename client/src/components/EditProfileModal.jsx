@@ -108,11 +108,7 @@ export default function EditProfileModal({ onClose }) {
         }
         setPwLoading(true);
         try {
-            const res = await updatePassword({ current_password: curPw, new_password: newPw });
-            // Save the fresh token (old tokens are invalidated on password change)
-            if (res.data.token) {
-                localStorage.setItem('token', res.data.token);
-            }
+            await updatePassword({ current_password: curPw, new_password: newPw });
             setCurPw(''); setNewPw(''); setConfirmPw('');
             setPwMsg({ ok: true, text: 'Password changed successfully!' });
         } catch (err) {

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import './PasswordInput.css';
+import s from './PasswordInput.module.css';
 
 /**
  * Drop-in replacement for <input type="password">.
@@ -9,11 +9,11 @@ export default function PasswordInput({ className = '', style, ...props }) {
     const [show, setShow] = useState(false);
 
     return (
-        <div className={`pw-input-wrapper ${className}`} style={style}>
-            <input {...props} type={show ? 'text' : 'password'} className="pw-input" />
+        <div className={`${s.wrapper} ${className}`} style={style}>
+            <input {...props} type={show ? 'text' : 'password'} className={s.input} />
             <button
                 type="button"
-                className="pw-toggle"
+                className={s.toggle}
                 onClick={() => setShow(v => !v)}
                 tabIndex={-1}
                 aria-label={show ? 'Hide password' : 'Show password'}

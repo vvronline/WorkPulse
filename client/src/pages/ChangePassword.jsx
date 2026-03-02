@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import { useAuth } from '../AuthContext';
 import { updatePassword as changePasswordApi } from '../api';
 import PasswordInput from '../components/PasswordInput';
@@ -7,7 +8,7 @@ import s from './Auth.module.css';
 export default function ChangePassword() {
   const { user, updateUser, logout } = useAuth();
   const [form, setForm] = useState({ current_password: '', new_password: '', confirm_password: '' });
-  const [error, setError] = useState('');
+  const [error, setError] = useAutoDismiss('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {

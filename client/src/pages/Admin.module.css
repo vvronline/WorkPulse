@@ -539,3 +539,74 @@
         min-width: 100%;
     }
 }
+
+/* ============= UTILITY BUTTON VARIANTS ============= */
+.btnAccent {
+    background: var(--accent);
+    color: #fff;
+}
+
+.btnDanger {
+    background: var(--danger);
+    color: #fff;
+}
+
+.btnWarning {
+    background: var(--warning);
+    color: #fff;
+}
+
+.btnSuccess {
+    background: var(--success);
+    color: #fff;
+}
+
+.btnSecondary {
+    background: var(--border);
+    color: var(--text-primary);
+}
+
+/* ============= INLINE FORM ELEMENTS ============= */
+.inlineInput {
+    padding: 0.3rem 0.5rem;
+    border-radius: 6px;
+    border: 1px solid var(--glass-border);
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.85rem;
+}
+
+.inlineSelect {
+    padding: 0.3rem 1.8rem 0.3rem 0.5rem;
+    border-radius: 6px;
+    border: 1px solid var(--glass-border);
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.8rem;
+}
+
+/* ============= COMMON PATTERNS ============= */
+.emptyRow {
+    text-align: center;
+    padding: 2rem;
+    color: var(--text-secondary);
+}
+
+.sectionHeading {
+    font-size: 1.2rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.sectionDesc {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    margin-bottom: 1rem;
+}
+
+.hint {
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+}

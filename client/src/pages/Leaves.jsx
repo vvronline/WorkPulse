@@ -5,11 +5,11 @@ import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import s from './Leaves.module.css';
 
 const LEAVE_TYPES = [
-  { value: 'sick', label: 'Sick Leave', icon: '🤒', color: '#ef4444' },
-  { value: 'holiday', label: 'Holiday', icon: '🎉', color: '#f59e0b' },
-  { value: 'planned', label: 'Planned Leave', icon: '📅', color: '#6366f1' },
-  { value: 'personal', label: 'Personal', icon: '👤', color: '#8b5cf6' },
-  { value: 'other', label: 'Other', icon: '📝', color: '#64748b' },
+  { value: 'sick', label: 'Sick Leave', icon: '🤒', color: 'var(--danger)' },
+  { value: 'holiday', label: 'Holiday', icon: '🎉', color: 'var(--warning)' },
+  { value: 'planned', label: 'Planned Leave', icon: '📅', color: 'var(--primary-light)' },
+  { value: 'personal', label: 'Personal', icon: '👤', color: 'var(--primary-light)' },
+  { value: 'other', label: 'Other', icon: '📝', color: 'var(--text-muted)' },
 ];
 
 // Generate all dates between from and to (inclusive), skipping weekends
@@ -372,8 +372,8 @@ export default function Leaves() {
               <div className={s['leave-list']}>
                 {leaves.map(leave => {
                   const type = getType(leave.leave_type);
-                  const statusColors = { pending: '#f59e0b', approved: '#22c55e', rejected: '#ef4444' };
-                  const statusColor = statusColors[leave.status] || '#6b7280';
+                  const statusColors = { pending: 'var(--warning)', approved: 'var(--success)', rejected: 'var(--danger)' };
+                  const statusColor = statusColors[leave.status] || 'var(--text-muted)';
                   return (
                     <div key={leave.id} className={s['leave-item']}>
                       <div className={s['leave-item-icon']} style={{ '--type-bg': type.color + '20', '--type-color': type.color }}>
@@ -393,7 +393,7 @@ export default function Leaves() {
                           {new Date(leave.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
                         </div>
                         {leave.reason && <div className={s['leave-item-reason']}>{leave.reason}</div>}
-                        {leave.reject_reason && <div className={s['leave-item-reason']} style={{ color: '#ef4444' }}>Rejected: {leave.reject_reason}</div>}
+                        {leave.reject_reason && <div className={s['leave-item-reason']} style={{ color: 'var(--danger)' }}>Rejected: {leave.reject_reason}</div>}
                         {leave.approved_by_name && leave.status === 'approved' && (
                           <div className={s['leave-item-reason']}>Approved by {leave.approved_by_name}</div>
                         )}

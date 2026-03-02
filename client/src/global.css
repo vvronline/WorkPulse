@@ -37,6 +37,8 @@
   --border: rgba(255, 255, 255, 0.06);
   --shadow: 0 4px 32px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.5);
+  --modal-bg: rgba(12, 12, 20, 0.96);
+  --modal-border: rgba(255, 255, 255, 0.06);
   --radius: 16px;
   --radius-sm: 10px;
   --radius-full: 9999px;
@@ -72,6 +74,8 @@
   --border: rgba(99, 102, 241, 0.08);
   --shadow: 0 4px 24px rgba(99, 102, 241, 0.06);
   --shadow-lg: 0 20px 60px rgba(99, 102, 241, 0.1);
+  --modal-bg: rgba(255, 255, 255, 0.97);
+  --modal-border: rgba(99, 102, 241, 0.1);
   color-scheme: light;
 }
 
@@ -107,6 +111,10 @@ body {
   scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
 }
 
+[data-theme="light"] * {
+  scrollbar-color: rgba(0, 0, 0, 0.15) transparent;
+}
+
 ::-webkit-scrollbar {
   width: 6px;
 }
@@ -122,6 +130,14 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.2);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
 }
 
 /* ============= BUTTONS ============= */

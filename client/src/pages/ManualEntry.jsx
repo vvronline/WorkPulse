@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { addManualEntry, deleteEntries, getEntries, getLeaves, getStatus, getLocalToday, getManualEntryRequests, submitOvertimeRequest, getOvertimeRequests } from '../api';
+import { addManualEntry, updateManualEntry, deleteEntries, getEntries, getLeaves, getStatus, getLocalToday, getManualEntryRequests, submitOvertimeRequest, getOvertimeRequests } from '../api';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import s from './ManualEntry.module.css';
 
@@ -62,10 +62,10 @@ export default function ManualEntry() {
   useEffect(() => {
     getManualEntryRequests()
       .then(r => setPendingRequests(Array.isArray(r.data) ? r.data : []))
-      .catch(() => {});
+      .catch(e => console.error(e));
     getOvertimeRequests()
       .then(r => setOvertimeRequests(Array.isArray(r.data) ? r.data : []))
-      .catch(() => {});
+      .catch(e => console.error(e));
   }, []);
 
   const addBreak = () => setBreaks([...breaks, { start: '', end: '' }]);
@@ -169,25 +169,26 @@ export default function ManualEntry() {
     setLoading(true);
 
     try {
-      // If editing, delete existing entries first then re-insert
-      if (isEditMode) {
-        await deleteEntries(date);
-      }
-
-      await addManualEntry({
-        date,
+      const entryData = {
         clock_in: clockIn,
         clock_out: skipClockOut ? undefined : clockOut,
         breaks: validBreaks.length > 0 ? validBreaks : undefined,
         work_mode: workMode,
         timezoneOffset: new Date().getTimezoneOffset(),
-      });
+      };
+
+      // If editing, use atomic PUT to delete and re-insert in one transaction
+      if (isEditMode) {
+        await updateManualEntry(date, entryData);
+      } else {
+        await addManualEntry({ date, ...entryData });
+      }
 
       setSuccess(`${isEditMode ? 'Entry updated' : 'Manual entry submitted'} for ${date}!`);
       resetForm();
       setDate('');
       // Re-fetch pending requests
-      getManualEntryRequests().then(r => setPendingRequests(r.data)).catch(() => {});
+      getManualEntryRequests().then(r => setPendingRequests(r.data)).catch(e => console.error(e));
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save entry');
     } finally {
@@ -451,7 +452,7 @@ export default function ManualEntry() {
             <div className={s['pending-requests']}>
               {pendingRequests.map(r => {
                 const meta = r.metadata || {};
-                const statusColors = { pending: '#f59e0b', approved: '#22c55e', rejected: '#ef4444' };
+                const statusColors = { pending: 'var(--warning)', approved: 'var(--success)', rejected: 'var(--danger)' };
                 return (
                   <div key={r.request_id} className={s['pending-item']}>
                     <div className={s['pending-item-date']}>
@@ -463,8 +464,8 @@ export default function ManualEntry() {
                     <span
                       className={s['pending-item-status']}
                       style={{
-                        background: `${statusColors[r.approval_status] || '#6b7280'}22`,
-                        color: statusColors[r.approval_status] || '#6b7280'
+                        background: `${statusColors[r.approval_status] || 'var(--text-muted)'}22`,
+                        color: statusColors[r.approval_status] || 'var(--text-muted)'
                       }}
                     >
                       {r.approval_status}
@@ -515,7 +516,7 @@ export default function ManualEntry() {
               <div className={s['pending-requests']}>
                 {overtimeRequests.map(r => {
                   const meta = r.metadata || {};
-                  const statusColors = { pending: '#f59e0b', approved: '#22c55e', rejected: '#ef4444' };
+                  const statusColors = { pending: 'var(--warning)', approved: 'var(--success)', rejected: 'var(--danger)' };
                   return (
                     <div key={r.id} className={s['pending-item']}>
                       <div className={s['pending-item-date']}>
@@ -527,14 +528,14 @@ export default function ManualEntry() {
                       <span
                         className={s['pending-item-status']}
                         style={{
-                          background: `${statusColors[r.status] || '#6b7280'}22`,
-                          color: statusColors[r.status] || '#6b7280'
+                          background: `${statusColors[r.status] || 'var(--text-muted)'}22`,
+                          color: statusColors[r.status] || 'var(--text-muted)'
                         }}
                       >
                         {r.status}
                       </span>
                       {r.reason && <div className={s['pending-item-reason']}>{r.reason}</div>}
-                      {r.reject_reason && <div className={s['pending-item-reason']} style={{ color: '#ef4444' }}>Rejected: {r.reject_reason}</div>}
+                      {r.reject_reason && <div className={s['pending-item-reason']} style={{ color: 'var(--danger)' }}>Rejected: {r.reject_reason}</div>}
                     </div>
                   );
                 })}

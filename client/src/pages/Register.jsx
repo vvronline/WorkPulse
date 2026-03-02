@@ -14,7 +14,7 @@ export default function Register() {
   const [regMode, setRegMode] = useState('open');
 
   useEffect(() => {
-    getRegistrationMode().then(r => setRegMode(r.data.mode)).catch(() => {});
+    getRegistrationMode().then(r => setRegMode(r.data.mode)).catch(e => console.error(e));
   }, []);
 
   const handleSubmit = async (e) => {

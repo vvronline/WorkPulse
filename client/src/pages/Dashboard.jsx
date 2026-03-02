@@ -92,16 +92,21 @@ export default function Dashboard() {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const [statusRes, widgetsRes, weeklyRes, taskRes] = await Promise.all([
+      const [statusRes, widgetsRes, weeklyRes, taskRes] = await Promise.allSettled([
         getStatus(), getWidgets(), getWeeklyChart(), getTaskSummary()
       ]);
-      setStatus(statusRes.data);
-      setWidgets(widgetsRes.data);
-      setWeeklyData(weeklyRes.data);
-      setTaskSummary(taskRes.data);
-      if (statusRes.data.workMode) setWorkMode(statusRes.data.workMode);
-      setError('');
-    } catch {
+      if (statusRes.status === 'fulfilled') {
+        setStatus(statusRes.value.data);
+        if (statusRes.value.data.workMode) setWorkMode(statusRes.value.data.workMode);
+      } else {
+        console.error('Status fetch failed:', statusRes.reason);
+        setError('Failed to fetch status');
+      }
+      if (widgetsRes.status === 'fulfilled') setWidgets(widgetsRes.value.data);
+      if (weeklyRes.status === 'fulfilled') setWeeklyData(weeklyRes.value.data);
+      if (taskRes.status === 'fulfilled') setTaskSummary(taskRes.value.data);
+    } catch (err) {
+      console.error('Dashboard fetch error:', err);
       setError('Failed to fetch status');
     } finally {
       setLoading(false);
@@ -116,7 +121,7 @@ export default function Dashboard() {
 
     const handleVisibility = () => {
       if (!document.hidden) {
-        getTaskSummary().then(r => setTaskSummary(r.data)).catch(() => { });
+        getTaskSummary().then(r => setTaskSummary(r.data)).catch(e => console.error(e));
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
@@ -164,11 +169,11 @@ export default function Dashboard() {
     : null, [clockInEntry?.timestamp]);
 
   const progressColor = useMemo(() => {
-    if (progressPercent >= 90) return { color: '#22c55e', glow: 'rgba(34, 197, 94, 0.4)', label: 'progress-green' };
-    if (progressPercent >= 60) return { color: '#3b82f6', glow: 'rgba(59, 130, 246, 0.4)', label: 'progress-blue' };
-    if (progressPercent >= 35) return { color: '#eab308', glow: 'rgba(234, 179, 8, 0.4)', label: 'progress-yellow' };
-    if (progressPercent >= 10) return { color: '#f97316', glow: 'rgba(249, 115, 22, 0.4)', label: 'progress-orange' };
-    return { color: '#ef4444', glow: 'rgba(239, 68, 68, 0.4)', label: 'progress-red' };
+    if (progressPercent >= 90) return { color: 'var(--success)', glow: 'var(--success-glow)', label: 'progress-green' };
+    if (progressPercent >= 60) return { color: 'var(--primary)', glow: 'var(--primary-glow)', label: 'progress-blue' };
+    if (progressPercent >= 35) return { color: 'var(--warning)', glow: 'var(--warning-glow)', label: 'progress-yellow' };
+    if (progressPercent >= 10) return { color: 'var(--warning)', glow: 'var(--warning-glow)', label: 'progress-orange' };
+    return { color: 'var(--danger)', glow: 'var(--danger-glow)', label: 'progress-red' };
   }, [progressPercent]);
 
   const breakCount = useMemo(() => status?.entries?.filter(e => e.entry_type === 'break_start').length || 0, [status?.entries]);

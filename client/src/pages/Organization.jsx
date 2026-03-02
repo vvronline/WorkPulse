@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import { useAuth } from '../AuthContext';
 import {
     createOrg, getCurrentOrg, updateOrgSettings, getOrgDepartments,
@@ -26,7 +27,7 @@ export default function Organization() {
 
     if (!org) {
         if (user?.role === 'super_admin') {
-            return <CreateOrgView onCreated={() => { fetchOrg(); updateUser({ org_id: 1, role: 'super_admin' }); }} />;
+            return <CreateOrgView onCreated={(orgId) => { fetchOrg(); updateUser({ org_id: orgId, role: 'super_admin' }); }} />;
         }
         return (
             <div className={s.adminPage}>
@@ -66,13 +67,13 @@ export default function Organization() {
 
 function CreateOrgView({ onCreated }) {
     const [name, setName] = useState('');
-    const [error, setError] = useState('');
+    const [error, setError] = useAutoDismiss('');
 
     const handleCreate = async (e) => {
         e.preventDefault();
         try {
-            await createOrg(name);
-            onCreated();
+            const res = await createOrg(name);
+            onCreated(res.data.id);
         } catch (e) { setError(e.response?.data?.error || 'Failed'); }
     };
 
@@ -102,7 +103,7 @@ function OrgSettings({ org, onUpdate, userRole }) {
         timezone: org.timezone,
         fiscal_year_start: org.fiscal_year_start
     });
-    const [msg, setMsg] = useState('');
+    const [msg, setMsg] = useAutoDismiss('');
     const canEdit = ['hr_admin', 'super_admin'].includes(userRole);
 
     const handleSave = async (e) => {
@@ -151,18 +152,18 @@ function Departments({ orgId, userRole }) {
     const [editId, setEditId] = useState(null);
     const [editName, setEditName] = useState('');
     const [editHeadId, setEditHeadId] = useState('');
-    const [msg, setMsg] = useState('');
+    const [msg, setMsg] = useAutoDismiss('');
     const canManage = ['manager', 'hr_admin', 'super_admin'].includes(userRole);
 
     const fetchDepts = useCallback(() => {
-        getOrgDepartments().then(r => setDepartments(r.data)).catch(() => {});
+        getOrgDepartments().then(r => setDepartments(r.data)).catch(e => console.error(e));
     }, []);
 
     useEffect(() => { fetchDepts(); }, [fetchDepts]);
 
     useEffect(() => {
         if (canManage) {
-            getOrgMembers({ is_active: true }).then(r => setMembers(r.data?.data ?? r.data)).catch(() => {});
+            getOrgMembers({ is_active: true }).then(r => setMembers(r.data?.data ?? r.data)).catch(e => console.error(e));
         }
     }, [canManage]);
 
@@ -237,7 +238,7 @@ function Departments({ orgId, userRole }) {
                                         ) : (
                                             <>
                                                 <button className={s.btnSmall} style={{ background: 'var(--accent)', color: '#fff' }} onClick={() => { setEditId(d.id); setEditName(d.name); setEditHeadId(d.head_id || ''); }}>Edit</button>
-                                                <button className={s.btnSmall} style={{ background: '#ef4444', color: '#fff' }} onClick={() => handleDelete(d.id)}>Delete</button>
+                                                <button className={s.btnSmall} style={{ background: 'var(--danger)', color: '#fff' }} onClick={() => handleDelete(d.id)}>Delete</button>
                                             </>
                                         )}
                                     </div>
@@ -260,19 +261,19 @@ function Teams({ orgId, userRole }) {
     const [form, setForm] = useState({ name: '', department_id: '', lead_id: '' });
     const [editId, setEditId] = useState(null);
     const [editForm, setEditForm] = useState({ name: '', department_id: '', lead_id: '' });
-    const [msg, setMsg] = useState('');
+    const [msg, setMsg] = useAutoDismiss('');
     const canManage = ['team_lead', 'manager', 'hr_admin', 'super_admin'].includes(userRole);
 
     const fetchTeams = useCallback(() => {
-        getOrgTeams().then(r => setTeams(r.data)).catch(() => {});
-        getOrgDepartments().then(r => setDepartments(r.data)).catch(() => {});
+        getOrgTeams().then(r => setTeams(r.data)).catch(e => console.error(e));
+        getOrgDepartments().then(r => setDepartments(r.data)).catch(e => console.error(e));
     }, []);
 
     useEffect(() => { fetchTeams(); }, [fetchTeams]);
 
     useEffect(() => {
         if (canManage) {
-            getOrgMembers({ is_active: true }).then(r => setMembers(r.data?.data ?? r.data)).catch(() => {});
+            getOrgMembers({ is_active: true }).then(r => setMembers(r.data?.data ?? r.data)).catch(e => console.error(e));
         }
     }, [canManage]);
 
@@ -356,7 +357,7 @@ function Teams({ orgId, userRole }) {
                                         ) : (
                                             <>
                                                 <button className={s.btnSmall} style={{ background: 'var(--accent)', color: '#fff' }} onClick={() => { setEditId(t.id); setEditForm({ name: t.name, department_id: t.department_id || '', lead_id: t.lead_id || '' }); }}>Edit</button>
-                                                <button className={s.btnSmall} style={{ background: '#ef4444', color: '#fff' }} onClick={() => handleDelete(t.id)}>Delete</button>
+                                                <button className={s.btnSmall} style={{ background: 'var(--danger)', color: '#fff' }} onClick={() => handleDelete(t.id)}>Delete</button>
                                             </>
                                         )}
                                     </div>
@@ -375,7 +376,7 @@ function OrgChartView() {
     const [chart, setChart] = useState(null);
 
     useEffect(() => {
-        getOrgChart().then(r => setChart(r.data)).catch(() => {});
+        getOrgChart().then(r => setChart(r.data)).catch(e => console.error(e));
     }, []);
 
     if (!chart) return <div>Loading...</div>;

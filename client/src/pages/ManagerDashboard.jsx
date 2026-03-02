@@ -8,7 +8,7 @@ import s from './Admin.module.css';
 import m from './ManagerDashboard.module.css';
 
 const ROLE_LABELS = { employee: 'Employee', team_lead: 'Team Lead', manager: 'Manager', hr_admin: 'HR Admin', super_admin: 'Super Admin' };
-const STATUS_COLORS = { pending: '#f59e0b', approved: '#22c55e', rejected: '#ef4444' };
+const STATUS_COLORS = { pending: 'var(--warning)', approved: 'var(--success)', rejected: 'var(--danger)' };
 const LEAVE_ICONS = { sick: '🤒', holiday: '🎉', planned: '📅', personal: '👤', other: '📝' };
 
 export default function ManagerDashboard() {
@@ -204,7 +204,7 @@ function MemberOverview({ data }) {
                             return (
                                 <div key={i} className={m.weeklyDayCol}>
                                     <div className={m.weeklyBarContainer}>
-                                        <div className={m.weeklyBar} style={{ height: `${barH}%`, background: day.floorMinutes >= 480 ? '#22c55e' : day.floorMinutes > 0 ? '#f59e0b' : 'var(--border)' }} />
+                                        <div className={m.weeklyBar} style={{ height: `${barH}%`, background: day.floorMinutes >= 480 ? 'var(--success)' : day.floorMinutes > 0 ? 'var(--warning)' : 'var(--border)' }} />
                                     </div>
                                     <div className={m.weeklyDayLabel}>{day.dayLabel}</div>
                                     <div className={m.weeklyDayHours}>{formatMin(day.floorMinutes)}</div>
@@ -278,7 +278,7 @@ function MemberOverview({ data }) {
                                             <span className={m.lbCount}>{used}/{total} used</span>
                                         </div>
                                         <div className={m.lbBarTrack}>
-                                            <div className={m.lbBarFill} style={{ width: `${Math.min(pct, 100)}%`, background: pct >= 90 ? '#ef4444' : pct >= 60 ? '#f59e0b' : '#22c55e' }} />
+                                            <div className={m.lbBarFill} style={{ width: `${Math.min(pct, 100)}%`, background: pct >= 90 ? 'var(--danger)' : pct >= 60 ? 'var(--warning)' : 'var(--success)' }} />
                                         </div>
                                     </div>
                                 );
@@ -554,8 +554,8 @@ function ApprovalsTab() {
                                 {filter === 'pending' && (
                                     <td>
                                         <div className={s.actions}>
-                                            <button className={s.btnSmall} style={{ background: '#22c55e', color: '#fff' }} onClick={() => handleApprove(a.id)} disabled={!!processing}>{processing === a.id ? '…' : '✓'}</button>
-                                            <button className={s.btnSmall} style={{ background: '#ef4444', color: '#fff' }} onClick={() => setRejectId(a.id)} disabled={!!processing}>✗</button>
+                                            <button className={`${s.btnSmall} ${s.btnSuccess}`} onClick={() => handleApprove(a.id)} disabled={!!processing}>{processing === a.id ? '…' : '✓'}</button>
+                                            <button className={`${s.btnSmall} ${s.btnDanger}`} onClick={() => setRejectId(a.id)} disabled={!!processing}>✗</button>
                                         </div>
                                     </td>
                                 )}
@@ -597,7 +597,7 @@ function TeamAnalytics({ onSelectMember }) {
     const [filterDept, setFilterDept] = useState('');
 
     useEffect(() => {
-        getTeamAnalytics(range).then(r => setData(r.data)).catch(() => {});
+        getTeamAnalytics(range).then(r => setData(r.data)).catch(e => console.error(e));
     }, [range]);
 
     const departments = useMemo(() => {
@@ -769,8 +769,8 @@ function TodayStatusBadge({ status, minutes }) {
 
 function PercentBar({ value, color }) {
     const bg = color === 'blue'
-        ? (value >= 80 ? '#3b82f6' : value >= 50 ? '#6366f1' : '#94a3b8')
-        : (value >= 80 ? '#22c55e' : value >= 50 ? '#f59e0b' : '#ef4444');
+        ? (value >= 80 ? 'var(--primary)' : value >= 50 ? 'var(--primary-light)' : 'var(--text-secondary)')
+        : (value >= 80 ? 'var(--success)' : value >= 50 ? 'var(--warning)' : 'var(--danger)');
     return (
         <div className={m.percentBarWrap}>
             <div className={m.percentTrack}>
@@ -792,7 +792,7 @@ function MiniTrend({ data, target }) {
                         className={m.trendBar}
                         style={{
                             height: `${Math.max((val / max) * 28, 2)}px`,
-                            background: val >= (target || 480) ? '#22c55e' : val > 0 ? '#f59e0b' : 'var(--border)',
+                            background: val >= (target || 480) ? 'var(--success)' : val > 0 ? 'var(--warning)' : 'var(--border)',
                         }}
                     />
                 </div>

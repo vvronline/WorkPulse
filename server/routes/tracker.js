@@ -83,20 +83,26 @@ router.post('/clock-in', auth, loadUserContext, (req, res) => {
 router.post('/break-start', auth, (req, res) => {
     const today = getLocalToday(req);
     const tzMod = getTzModifier(req);
-    const lastEntry = db.prepare(`
-    SELECT * FROM time_entries 
-    WHERE user_id = ? AND date(timestamp, ?) = date(?)
-    ORDER BY timestamp DESC LIMIT 1
-  `).get(req.userId, tzMod, today);
 
-    if (!lastEntry || lastEntry.entry_type === 'clock_out') {
-        return res.status(400).json({ error: 'You must login first' });
-    }
-    if (lastEntry.entry_type === 'break_start') {
-        return res.status(400).json({ error: 'Already on break' });
-    }
+    const txResult = db.transaction(() => {
+        const lastEntry = db.prepare(`
+            SELECT * FROM time_entries 
+            WHERE user_id = ? AND date(timestamp, ?) = date(?)
+            ORDER BY timestamp DESC LIMIT 1
+        `).get(req.userId, tzMod, today);
 
-    db.prepare('INSERT INTO time_entries (user_id, entry_type) VALUES (?, ?)').run(req.userId, 'break_start');
+        if (!lastEntry || lastEntry.entry_type === 'clock_out') {
+            return { error: 'You must login first' };
+        }
+        if (lastEntry.entry_type === 'break_start') {
+            return { error: 'Already on break' };
+        }
+
+        db.prepare('INSERT INTO time_entries (user_id, entry_type) VALUES (?, ?)').run(req.userId, 'break_start');
+        return { ok: true };
+    })();
+
+    if (txResult.error) return res.status(400).json({ error: txResult.error });
     logAction(req, 'break_start', 'time_entry', null, {});
     res.json({ message: 'Break started' });
 });
@@ -105,17 +111,23 @@ router.post('/break-start', auth, (req, res) => {
 router.post('/break-end', auth, (req, res) => {
     const today = getLocalToday(req);
     const tzMod = getTzModifier(req);
-    const lastEntry = db.prepare(`
-    SELECT * FROM time_entries 
-    WHERE user_id = ? AND date(timestamp, ?) = date(?)
-    ORDER BY timestamp DESC LIMIT 1
-  `).get(req.userId, tzMod, today);
 
-    if (!lastEntry || lastEntry.entry_type !== 'break_start') {
-        return res.status(400).json({ error: 'You are not on break' });
-    }
+    const txResult = db.transaction(() => {
+        const lastEntry = db.prepare(`
+            SELECT * FROM time_entries 
+            WHERE user_id = ? AND date(timestamp, ?) = date(?)
+            ORDER BY timestamp DESC LIMIT 1
+        `).get(req.userId, tzMod, today);
 
-    db.prepare('INSERT INTO time_entries (user_id, entry_type) VALUES (?, ?)').run(req.userId, 'break_end');
+        if (!lastEntry || lastEntry.entry_type !== 'break_start') {
+            return { error: 'You are not on break' };
+        }
+
+        db.prepare('INSERT INTO time_entries (user_id, entry_type) VALUES (?, ?)').run(req.userId, 'break_end');
+        return { ok: true };
+    })();
+
+    if (txResult.error) return res.status(400).json({ error: txResult.error });
     logAction(req, 'break_end', 'time_entry', null, {});
     res.json({ message: 'Break ended, back to work!' });
 });
@@ -124,22 +136,28 @@ router.post('/break-end', auth, (req, res) => {
 router.post('/clock-out', auth, (req, res) => {
     const today = getLocalToday(req);
     const tzMod = getTzModifier(req);
-    const lastEntry = db.prepare(`
-    SELECT * FROM time_entries 
-    WHERE user_id = ? AND date(timestamp, ?) = date(?)
-    ORDER BY timestamp DESC LIMIT 1
-  `).get(req.userId, tzMod, today);
 
-    if (!lastEntry || lastEntry.entry_type === 'clock_out') {
-        return res.status(400).json({ error: 'You are not logged in' });
-    }
+    const txResult = db.transaction(() => {
+        const lastEntry = db.prepare(`
+            SELECT * FROM time_entries 
+            WHERE user_id = ? AND date(timestamp, ?) = date(?)
+            ORDER BY timestamp DESC LIMIT 1
+        `).get(req.userId, tzMod, today);
 
-    // If on break, end the break first
-    if (lastEntry.entry_type === 'break_start') {
-        db.prepare('INSERT INTO time_entries (user_id, entry_type) VALUES (?, ?)').run(req.userId, 'break_end');
-    }
+        if (!lastEntry || lastEntry.entry_type === 'clock_out') {
+            return { error: 'You are not logged in' };
+        }
 
-    db.prepare('INSERT INTO time_entries (user_id, entry_type) VALUES (?, ?)').run(req.userId, 'clock_out');
+        // If on break, end the break first
+        if (lastEntry.entry_type === 'break_start') {
+            db.prepare('INSERT INTO time_entries (user_id, entry_type) VALUES (?, ?)').run(req.userId, 'break_end');
+        }
+
+        db.prepare('INSERT INTO time_entries (user_id, entry_type) VALUES (?, ?)').run(req.userId, 'clock_out');
+        return { ok: true };
+    })();
+
+    if (txResult.error) return res.status(400).json({ error: txResult.error });
     logAction(req, 'clock_out', 'time_entry', null, {});
     res.json({ message: 'Clocked out. See you tomorrow!' });
 });
@@ -295,7 +313,10 @@ router.post('/manual-entry', auth, loadUserContext, (req, res) => {
         if (breaks.length > 20) {
             return res.status(400).json({ error: 'Maximum 20 breaks allowed per day' });
         }
-        for (const brk of breaks) {
+        // Sort breaks for overlap check
+        const sortedBreaks = [...breaks].sort((a, b) => (a.start || '').localeCompare(b.start || ''));
+        for (let i = 0; i < sortedBreaks.length; i++) {
+            const brk = sortedBreaks[i];
             if (!brk.start || !brk.end || !timeRegex.test(brk.start) || !timeRegex.test(brk.end)) {
                 return res.status(400).json({ error: 'Each break must have valid start and end times (HH:MM)' });
             }
@@ -304,6 +325,10 @@ router.post('/manual-entry', auth, loadUserContext, (req, res) => {
             }
             if (brk.start < clock_in || (clock_out && brk.end > clock_out)) {
                 return res.status(400).json({ error: 'Break times must be within clock-in and clock-out times' });
+            }
+            // Check for overlap with next break
+            if (i < sortedBreaks.length - 1 && brk.end > sortedBreaks[i + 1].start) {
+                return res.status(400).json({ error: 'Break times must not overlap' });
             }
         }
     }
@@ -364,6 +389,113 @@ router.post('/manual-entry', auth, loadUserContext, (req, res) => {
     } catch (err) {
         console.error('Manual entry error:', err);
         res.status(500).json({ error: 'Failed to add manual entry' });
+    }
+});
+
+// Atomic edit: delete existing entries for date and re-insert in one transaction
+router.put('/manual-entry/:date', auth, loadUserContext, (req, res) => {
+    const { date } = req.params;
+    const { clock_in, clock_out, breaks, timezoneOffset, work_mode } = req.body;
+
+    if (!date || !clock_in) {
+        return res.status(400).json({ error: 'Date and login time are required' });
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
+    }
+
+    const timeRegex = /^\d{2}:\d{2}$/;
+    if (!timeRegex.test(clock_in) || (clock_out && !timeRegex.test(clock_out))) {
+        return res.status(400).json({ error: 'Invalid time format. Use HH:MM' });
+    }
+    if (clock_out && clock_out <= clock_in) {
+        return res.status(400).json({ error: 'Logout time must be after login time' });
+    }
+
+    // Validate breaks
+    if (breaks && Array.isArray(breaks)) {
+        if (breaks.length > 20) return res.status(400).json({ error: 'Maximum 20 breaks allowed' });
+        const sortedBreaks = [...breaks].sort((a, b) => (a.start || '').localeCompare(b.start || ''));
+        for (let i = 0; i < sortedBreaks.length; i++) {
+            const brk = sortedBreaks[i];
+            if (!brk.start || !brk.end || !timeRegex.test(brk.start) || !timeRegex.test(brk.end)) {
+                return res.status(400).json({ error: 'Each break must have valid start and end times' });
+            }
+            if (brk.end <= brk.start) return res.status(400).json({ error: 'Break end must be after start' });
+            if (brk.start < clock_in || (clock_out && brk.end > clock_out)) {
+                return res.status(400).json({ error: 'Break times must be within clock-in/out' });
+            }
+            if (i < sortedBreaks.length - 1 && brk.end > sortedBreaks[i + 1].start) {
+                return res.status(400).json({ error: 'Break times must not overlap' });
+            }
+        }
+    }
+
+    const offsetMs = (typeof timezoneOffset === 'number') ? timezoneOffset * 60000 : 0;
+    function toUTC(dateStr, timeStr) {
+        const [year, month, day] = dateStr.split('-').map(Number);
+        const [hours, minutes] = timeStr.split(':').map(Number);
+        const baseMs = Date.UTC(year, month - 1, day, hours, minutes, 0);
+        return new Date(baseMs + offsetMs).toISOString().slice(0, 19).replace('T', ' ');
+    }
+
+    // Determine approval status
+    let approvalStatus = 'approved';
+    let needsApproval = false;
+    const hasManager = req.userManagerId != null;
+    const isOrgSubordinate = req.userOrgId && (ROLE_LEVEL[req.userRole] || 1) < ROLE_LEVEL.hr_admin;
+    if (hasManager || isOrgSubordinate) {
+        approvalStatus = 'pending';
+        needsApproval = true;
+    }
+
+    const tzMod = getTzModifier(req);
+    const clockInTs = toUTC(date, clock_in);
+    const clockOutTs = clock_out ? toUTC(date, clock_out) : null;
+
+    const insertEntry = db.prepare('INSERT INTO time_entries (user_id, entry_type, timestamp, work_mode, is_manual, approval_status) VALUES (?, ?, ?, ?, 1, ?)');
+
+    try {
+        db.transaction(() => {
+            // Delete existing entries for this date atomically
+            db.prepare(`DELETE FROM time_entries WHERE user_id = ? AND date(timestamp, ?) = date(?)`).run(req.userId, tzMod, date);
+
+            // Re-insert
+            insertEntry.run(req.userId, 'clock_in', clockInTs, work_mode || 'office', approvalStatus);
+            if (breaks && Array.isArray(breaks)) {
+                const sorted = [...breaks].sort((a, b) => a.start.localeCompare(b.start));
+                for (const brk of sorted) {
+                    insertEntry.run(req.userId, 'break_start', toUTC(date, brk.start), null, approvalStatus);
+                    insertEntry.run(req.userId, 'break_end', toUTC(date, brk.end), null, approvalStatus);
+                }
+            }
+            if (clockOutTs) {
+                insertEntry.run(req.userId, 'clock_out', clockOutTs, null, approvalStatus);
+            }
+
+            // Create approval request if needed
+            if (needsApproval) {
+                const approver = findApprover(req.userId, req.userOrgId);
+                db.prepare(`
+                    INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
+                    VALUES (?, ?, ?, 'manual_entry', NULL, ?, ?)
+                `).run(
+                    req.userOrgId || null, req.userId, approver?.id || null,
+                    'Manual time entry (edited)',
+                    JSON.stringify({ date, clock_in, clock_out: clock_out || null, work_mode: work_mode || 'office' })
+                );
+            }
+        })();
+
+        logAction(req, 'update', 'manual_entry', null, { date, clock_in, clock_out: clock_out || null, status: approvalStatus });
+        res.json({
+            message: needsApproval ? 'Entry updated and submitted for approval' : 'Entry updated successfully',
+            status: approvalStatus,
+            needsApproval
+        });
+    } catch (err) {
+        console.error('Manual entry edit error:', err);
+        res.status(500).json({ error: 'Failed to update entry' });
     }
 });
 

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -32,7 +33,7 @@ export default function Analytics() {
   const [data, setData] = useState([]);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useAutoDismiss('');
 
   useEffect(() => {
     const controller = new AbortController();

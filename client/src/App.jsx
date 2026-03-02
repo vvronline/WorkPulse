@@ -10,6 +10,7 @@ import ResetPassword from './pages/ResetPassword';
 import Dashboard from './pages/Dashboard';
 import Navbar from './components/Navbar';
 import AxiosInterceptor from './components/AxiosInterceptor';
+import ErrorBoundary from './components/ErrorBoundary';
 import { ToastProvider } from './components/Toast';
 
 // Lazy-load non-critical pages for smaller initial bundle
@@ -49,6 +50,7 @@ function AppRoutes() {
   return (
     <div className="app">
       {isAuthenticated && <Navbar />}
+      <ErrorBoundary>
       <Suspense fallback={<div style={{ maxWidth: '1400px', margin: '2rem auto', padding: '0 2.5rem' }}><div className="status-card"><div className="loading-spinner"><div className="spinner"></div></div></div></div>}>
         <Routes>
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
@@ -67,6 +69,7 @@ function AppRoutes() {
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </Suspense>
+      </ErrorBoundary>
     </div>
   );
 }

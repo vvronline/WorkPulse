@@ -127,7 +127,7 @@ function autoClockOut() {
     `).all();
     const insert = db.prepare('INSERT INTO time_entries (user_id, entry_type, timestamp) VALUES (?, ?, ?)');
 
-    for (const user of activeUsers) {
+    const autoClockOutUser = db.transaction((user) => {
         const offsetMin = user.timezone_offset || 0;
         const shift = -offsetMin;
         const tzMod = `${shift >= 0 ? '+' : ''}${shift} minutes`;
@@ -137,7 +137,7 @@ function autoClockOut() {
         const localYesterday = new Date(localNow.getTime() - 86400000);
         const yesterdayStr = localYesterday.toISOString().slice(0, 10);
 
-        // Find the last entry for yesterday (in user's local timezone)
+        // Re-verify inside transaction: find the last entry for yesterday
         const lastEntry = db.prepare(`
             SELECT entry_type, timestamp FROM time_entries
             WHERE user_id = ? AND date(timestamp, ?) = date(?)
@@ -155,6 +155,14 @@ function autoClockOut() {
             }
             insert.run(user.id, 'clock_out', autoTs);
             console.log(`Auto-logged out user ${user.id} for ${yesterdayStr} (local)`);
+        }
+    });
+
+    for (const user of activeUsers) {
+        try {
+            autoClockOutUser(user);
+        } catch (e) {
+            console.error(`Auto clock-out failed for user ${user.id}:`, e.message);
         }
     }
 }

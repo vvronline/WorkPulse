@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import { useAuth } from '../AuthContext';
 import {
     getLeavePolicies, saveLeavePolicyAPI, deleteLeavePolicyAPI,
@@ -35,7 +36,7 @@ function PoliciesTab() {
     const [showForm, setShowForm] = useState(false);
 
     const fetch = useCallback(() => {
-        getLeavePolicies().then(r => setPolicies(r.data)).catch(() => {});
+        getLeavePolicies().then(r => setPolicies(r.data)).catch(e => console.error(e));
     }, []);
 
     useEffect(() => { fetch(); }, [fetch]);
@@ -60,7 +61,7 @@ function PoliciesTab() {
                             </div>
                             <div style={{ display: 'flex', gap: '0.3rem' }}>
                                 <button className={s.btnSmall} style={{ background: 'var(--accent)', color: '#fff' }} onClick={() => { setEditing(p); setShowForm(true); }}>Edit</button>
-                                <button className={s.btnSmall} style={{ background: '#ef4444', color: '#fff' }} onClick={() => handleDelete(p.id)}>Delete</button>
+                                <button className={s.btnSmall} style={{ background: 'var(--danger)', color: '#fff' }} onClick={() => handleDelete(p.id)}>Delete</button>
                             </div>
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem', fontSize: '0.85rem' }}>
@@ -84,7 +85,7 @@ function PoliciesTab() {
 function PolicyForm({ initial, onClose, onSaved }) {
     const defaults = { name: '', leave_type: 'annual', days_allowed: 12, accrual_type: 'annual', carry_forward_limit: 0, min_service_days: 0, requires_approval: 1, half_day_allowed: 1, quarter_day_allowed: 0, description: '' };
     const [form, setForm] = useState({ ...defaults, ...initial });
-    const [error, setError] = useState('');
+    const [error, setError] = useAutoDismiss('');
 
     const set = (k, v) => setForm({ ...form, [k]: v });
 
@@ -193,7 +194,7 @@ function MyBalances() {
                                     <span>Balance: {b.balance}</span>
                                 </div>
                                 <div style={{ height: 8, background: 'var(--border)', borderRadius: 4 }}>
-                                    <div style={{ height: '100%', borderRadius: 4, width: `${Math.min(pct, 100)}%`, background: pct >= 80 ? '#ef4444' : pct >= 50 ? '#f59e0b' : '#22c55e', transition: 'width 0.3s' }} />
+                                    <div style={{ height: '100%', borderRadius: 4, width: `${Math.min(pct, 100)}%`, background: pct >= 80 ? 'var(--danger)' : pct >= 50 ? 'var(--warning)' : 'var(--success)', transition: 'width 0.3s' }} />
                                 </div>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
                                     <span>Total: {b.total_days}</span>
@@ -217,7 +218,7 @@ function HolidaysTab({ isHR }) {
     const [year, setYear] = useState(new Date().getFullYear());
 
     const fetch = useCallback(() => {
-        getHolidays(year).then(r => setHolidays(r.data)).catch(() => {});
+        getHolidays(year).then(r => setHolidays(r.data)).catch(e => console.error(e));
     }, [year]);
 
     useEffect(() => { fetch(); }, [fetch]);
@@ -320,7 +321,7 @@ function HolidayCard({ holiday: h, isHR, onDelete }) {
                     </div>
                 </div>
             </div>
-            {isHR && <button className={s.btnSmall} style={{ background: '#ef4444', color: '#fff' }} onClick={() => onDelete(h.id)}>✗</button>}
+            {isHR && <button className={s.btnSmall} style={{ background: 'var(--danger)', color: '#fff' }} onClick={() => onDelete(h.id)}>✗</button>}
         </div>
     );
 }

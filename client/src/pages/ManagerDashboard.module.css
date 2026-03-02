@@ -193,9 +193,9 @@
 }
 
 /* Stat value colors */
-.colorGreen { color: #22c55e; }
-.colorAmber { color: #f59e0b; }
-.colorRed { color: #ef4444; }
+.colorGreen { color: var(--success); }
+.colorAmber { color: var(--warning); }
+.colorRed { color: var(--danger); }
 
 .dateInput {
     margin-bottom: 1rem;
@@ -628,4 +628,38 @@
     height: 100%;
     border-radius: 3px;
     transition: width 0.3s;
+}
+
+/* ==================== RESPONSIVE ==================== */
+@media (max-width: 768px) {
+    .employeeHeader {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+    .summaryGrid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .analyticsToolbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .weeklyTrendGrid {
+        gap: 0.25rem;
+    }
+    .overviewGrid {
+        grid-template-columns: 1fr;
+    }
+    .taskStatsRow {
+        flex-wrap: wrap;
+    }
+}
+
+@media (max-width: 480px) {
+    .summaryGrid {
+        grid-template-columns: 1fr;
+    }
+    .employeeName {
+        font-size: 1rem;
+    }
 }
