@@ -1,76 +1,168 @@
-# WorkPulse GCP Deployment Guide (Docker)
+# WorkPulse Deployment Guide
 
-This is the fastest and most reliable way to deploy WorkPulse to a fresh Google Cloud Platform (GCP) Ubuntu Virtual Machine.
-
-## Prerequisites
-- **GCP VM:** Ubuntu 22.04 LTS (or newer).
-- **Firewall:** Ensure **"Allow HTTP Traffic"** is checked in your VM settings.
+Complete guide to deploy WorkPulse on a Google Cloud Platform (GCP) VM or any Ubuntu server.
 
 ---
 
-## ⚡ Quick Start (Docker Method)
+## Prerequisites
 
-### 1. Install Dependencies
-SSH into your fresh VM and run:
+- **GCP VM:** Ubuntu 22.04 LTS (or newer)
+- **Firewall:** Ensure **"Allow HTTP Traffic"** is checked in your VM settings
+  - GCP Console → Compute Engine → VM Instances → Click your VM → Edit → Firewalls → Check **"Allow HTTP traffic"** → Save
+- **SSH Access:** You must be able to SSH into the VM
+
+---
+
+## Method 1: Docker Deployment (Recommended)
+
+### Step 1: Install Docker
+
+SSH into your VM and install Docker:
+
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install git docker.io docker-compose -y
+sudo apt install git docker.io -y
 ```
 
-### 2. Clone & Configure
+> **Note:** Modern Ubuntu ships with Docker Compose v2 built into Docker (`docker compose` with a space). The legacy `docker-compose` (hyphenated) command is no longer needed.
+
+Add your user to the `docker` group so you don't need `sudo` for every Docker command:
+
+```bash
+sudo usermod -aG docker $USER
+```
+
+**Log out and SSH back in** for the group change to take effect:
+
+```bash
+exit
+# SSH back in
+```
+
+Verify Docker works without sudo:
+
+```bash
+docker --version
+docker compose version
+```
+
+### Step 2: Clone & Configure
+
 ```bash
 git clone https://github.com/vvronline/WorkPulse.git
 cd WorkPulse
+```
 
-# Create your environment file
+Create your environment file:
+
+```bash
 nano .env
 ```
-Paste this into `.env` (Replace with your actual IP):
+
+Paste this (replace `YOUR_SUPER_SECRET_KEY` with a strong random string):
+
 ```env
-JWT_SECRET=your_super_secret_key
-CORS_ORIGIN=http://YOUR_VM_IP
+JWT_SECRET=YOUR_SUPER_SECRET_KEY
 ```
 
-### 3. Deploy! 🚀
+> **Note:** `CORS_ORIGIN` does not need to be set for Docker deployments. The app automatically allows same-origin requests in production since the SPA and API are served from the same Express server.
+
+Save and exit (`Ctrl+O`, `Enter`, `Ctrl+X`).
+
+### Step 3: Build & Deploy
+
 ```bash
-sudo docker-compose up -d --build
+# Build the Docker image (first build takes ~5-10 minutes)
+docker compose build
+
+# Start the container in detached mode
+docker compose up -d
 ```
-*Your app is now live at http://YOUR_VM_IP!*
+
+### Step 4: Verify Deployment
+
+```bash
+# Check the container is running
+docker compose ps
+
+# Test the app responds
+curl -s -o /dev/null -w "%{http_code}" http://localhost:80
+# Should print: 200
+
+# Check logs if something is wrong
+docker compose logs --tail=30
+```
+
+Your app is now live at `http://YOUR_VM_IP`!
+
+### Step 5: Create Your First Account
+
+1. Open `http://YOUR_VM_IP` in your browser
+2. Click **Register** and create your account
+3. Back in the VM terminal, promote yourself to Super Admin:
+
+```bash
+docker compose exec workpulse sh -c "apk add --no-cache sqlite && sqlite3 /app/server/data/attendance.db \"UPDATE users SET role = 'super_admin' WHERE username = 'YOUR_USERNAME';\""
+```
+
+*(Replace `YOUR_USERNAME` with the username you just registered.)*
+
+4. Log out and log back in — you'll now have the **Admin** tab
+
+### Updating the App
+
+```bash
+cd ~/WorkPulse
+git pull
+
+# If only server code changed (fast — uses cached layers):
+docker compose build
+docker compose up -d
+
+# If dependencies or Dockerfile changed (full rebuild):
+docker compose build --no-cache
+docker compose up -d
+```
+
+### Useful Docker Commands
+
+```bash
+# View live logs
+docker compose logs -f --tail=50
+
+# Restart the container
+docker compose restart
+
+# Stop the container
+docker compose down
+
+# Stop and remove everything (including images)
+docker compose down --rmi all
+```
 
 ---
 
-## 🛠️ Post-Setup: Create Admin Account
-Since it's a fresh database, your first registered user needs to be promoted to Super Admin:
-```bash
-# Run this from the WorkPulse folder on the VM
-sqlite3 server/attendance.db "UPDATE users SET role = 'super_admin' WHERE username = 'YOUR_USERNAME';"
-```
+## Method 2: Manual Deployment (PM2 + Nginx)
 
----
-
-## Manual Deployment (PM2 + Nginx)
 *Use this only if you cannot use Docker.*
-SSH into your fresh GCP VM and run the following commands to update the system and install necessary packages (Node.js, NPM, Nginx, and Git).
+
+### Step 1: Install Dependencies
+
+SSH into your VM and install Node.js, Nginx, Git, and PM2:
 
 ```bash
-# Update package lists
 sudo apt update && sudo apt upgrade -y
-
-# Install Git and Nginx
 sudo apt install git nginx -y
 
-# Install Node.js (v20.x recommended)
+# Install Node.js v20.x
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs
 
-# Install PM2 globally (Process Manager for Node.js)
+# Install PM2 globally
 sudo npm install -g pm2
 ```
 
----
-
-## Step 2: Clone the Repository
-Clone the WorkPulse repository to your user's home directory.
+### Step 2: Clone the Repository
 
 ```bash
 cd ~
@@ -78,23 +170,15 @@ git clone https://github.com/vvronline/WorkPulse.git
 cd WorkPulse
 ```
 
----
-
-## Step 3: Backend Setup
-Install the backend dependencies, configure the environment, and start the server.
+### Step 3: Backend Setup
 
 ```bash
-# Navigate to the server directory
 cd ~/WorkPulse/server
-
-# Install dependencies
 npm install
-
-# Create the environment variables file
 nano .env
 ```
 
-Paste the following into your `.env` file. Replace `YOUR_VM_EXTERNAL_IP` with your actual GCP public IP address (e.g., `http://34.31.27.200`).
+Paste the following (replace `YOUR_VM_EXTERNAL_IP` with your actual IP, e.g., `34.31.27.200`):
 
 ```env
 PORT=5000
@@ -102,64 +186,48 @@ JWT_SECRET=your_super_secret_jwt_key_here
 CORS_ORIGIN=http://YOUR_VM_EXTERNAL_IP
 NODE_ENV=production
 ```
+
 Save and exit (`Ctrl+O`, `Enter`, `Ctrl+X`).
 
-Start the backend using PM2:
+Start the backend:
+
 ```bash
 sudo pm2 start index.js --name workpulse
-
-# Save the PM2 process list so it restarts on server reboots
 sudo pm2 save
 sudo pm2 startup
 ```
 
----
-
-## Step 4: Frontend Build
-Install the frontend dependencies and compile the React application using Vite.
+### Step 4: Frontend Build
 
 ```bash
-# Navigate to the client directory
 cd ~/WorkPulse/client
-
-# Install frontend dependencies
 npm install
-
-# Build the production bundle
 npm run build
 ```
-*Note: This generates the optimized static files in `~/WorkPulse/client/dist`.*
 
----
+*This generates optimized static files in `~/WorkPulse/client/dist`.*
 
-## Step 5: Nginx Configuration (Reverse Proxy & Static File Serving)
-Configure Nginx to safely serve the frontend directly and proxy API requests to your Node.js backend.
+### Step 5: Nginx Configuration
 
 ```bash
-# Create and open the Nginx config file
 sudo nano /etc/nginx/sites-available/workpulse
 ```
 
-Replace the contents with the following optimized configuration. 
-**Important:** Ensure the `server_name` matches your public IP (or domain), and `root` matches the exact path to your cloned repository.
+Paste this configuration (replace `YOUR_VM_EXTERNAL_IP` and `YOUR_USERNAME`):
 
 ```nginx
 server {
     listen 80;
-    server_name YOUR_VM_EXTERNAL_IP; # e.g., 34.31.27.200
+    server_name YOUR_VM_EXTERNAL_IP;
     client_max_body_size 10M;
 
-    # 1. Point Nginx directly to your built React files
     root /home/YOUR_USERNAME/WorkPulse/client/dist;
     index index.html;
 
-    # 2. Try answering requests with actual CSS/JS files first.
-    #    If the file isn't found, load index.html (React handles the rest)
     location / {
         try_files $uri $uri/ /index.html;
     }
 
-    # 3. Only forward API calls to the Node.js backend
     location /api/ {
         proxy_pass http://localhost:5000/api/;
         proxy_http_version 1.1;
@@ -168,7 +236,6 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 
-    # 4. Serve uploaded files securely and directly off the disk
     location /uploads/ {
         alias /home/YOUR_USERNAME/WorkPulse/server/uploads/;
         access_log off;
@@ -176,38 +243,96 @@ server {
     }
 }
 ```
-Save and exit (`Ctrl+O`, `Enter`, `Ctrl+X`).
 
-Enable the configuration and restart Nginx:
+Enable the config and restart Nginx:
+
 ```bash
-# Enable the site
 sudo ln -s /etc/nginx/sites-available/workpulse /etc/nginx/sites-enabled/
-
-# Remove the default Nginx page
-sudo rm /etc/nginx/sites-enabled/default
-
-# Test the config and restart
+sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
 sudo systemctl restart nginx
 ```
 
----
+### Step 6: Initial Access & Admin Setup
 
-## Step 6: Initial Access & Admin Setup
-1. Open your browser and navigate to `http://YOUR_VM_EXTERNAL_IP`. The WorkPulse application should load instantly.
-2. Click **Register** and create your first account.
-3. Because new accounts default to the `employee` role, you will be locked out of the Admin panel. You must promote your first user to Super Admin via the database.
+1. Open `http://YOUR_VM_EXTERNAL_IP` in your browser
+2. Click **Register** and create your first account
+3. Promote yourself to Super Admin:
 
-Back in your VM terminal, run:
 ```bash
 cd ~/WorkPulse/server
 sqlite3 attendance.db "UPDATE users SET role = 'super_admin' WHERE username = 'YOUR_USERNAME';"
 ```
-*(Replace `YOUR_USERNAME` with the username you just registered).*
 
-4. Go back to your browser, Log Out, and Log back in.
-5. You will now see the **Admin** tab. From here, you can set up Organizations, Departments, Teams, and manage registrations for your team!
+4. Log out and log back in — the **Admin** tab is now visible
+
+---
 
 ## Troubleshooting
-- **500 Internal Server Error on Login:** Double check that `CORS_ORIGIN` in your `.env` file exactly matches the URL you are visiting in your browser. If you changed it, run `sudo pm2 restart workpulse --update-env`.
-- **Blank white screen / MIME type errors:** Ensure Nginx is pointing to the correct absolute path in the `root` directive, and that you successfully ran `npm run build` in the `/client` directory.
+
+### GCP Firewall / `ERR_CONNECTION_TIMED_OUT`
+If the browser can't reach your VM at all, the GCP firewall is blocking port 80.
+- Go to **GCP Console** → **Compute Engine** → **VM Instances**
+- Click your VM → **Edit** → scroll to **Firewalls** → check **"Allow HTTP traffic"** → **Save**
+
+Verify from the VM:
+```bash
+# Docker method
+docker compose ps
+curl -s -o /dev/null -w "%{http_code}" http://localhost:80
+
+# Check if port 80 is listening
+ss -tlnp | grep :80
+```
+
+### Container Crash Loop (Docker)
+If `docker compose ps` shows `Restarting`, check logs:
+```bash
+docker compose logs --tail=30
+```
+Common causes:
+- **`ReferenceError: Database is not defined`** — Missing `better-sqlite3` require in `db.js`
+- **`JWT_SECRET is not set`** — Create a `.env` file with `JWT_SECRET=your_key`
+
+### 401 Unauthorized After Login
+If login appears to succeed but all API calls return 401, the JWT cookie isn't being stored.
+- **Cause:** The `Secure` cookie flag is set but the site uses HTTP (not HTTPS).
+- **Fix:** The app uses `USE_HTTPS=true` env var to enable secure cookies. Don't set this unless you have HTTPS configured.
+
+### Registration Shows "Closed"
+If you see "Registration Closed" on a fresh deployment with an existing database:
+```bash
+# Docker method
+docker compose exec workpulse sh -c "apk add --no-cache sqlite && sqlite3 /app/server/data/attendance.db \"UPDATE app_settings SET value = 'open' WHERE key = 'registration_mode';\""
+
+# PM2 method
+sqlite3 ~/WorkPulse/server/attendance.db "UPDATE app_settings SET value = 'open' WHERE key = 'registration_mode';"
+```
+
+### 500 Internal Server Error on Login (PM2 method)
+Double check that `CORS_ORIGIN` in your `.env` file exactly matches the URL in the browser (e.g., `http://34.31.27.200`). Then restart:
+```bash
+sudo pm2 restart workpulse --update-env
+```
+
+### Blank White Screen / MIME Type Errors
+- **Docker:** Check container logs — the Vite build may have failed
+- **PM2 + Nginx:** Ensure the `root` directive in Nginx points to the correct absolute path, and that `npm run build` completed successfully in the `client/` directory
+
+### `sudo` Not Working / "I'm sorry... I'm afraid I can't do that"
+If `sudo-rs` blocks your commands, check if you're in the `docker` group:
+```bash
+groups
+```
+If you see `docker` in the output, you can run Docker commands **without sudo**:
+```bash
+docker compose build
+docker compose up -d
+```
+
+### HTTPS Setup (Optional)
+To enable HTTPS, set up a reverse proxy (e.g., Nginx or Caddy) with SSL certificates, then add to your `.env`:
+```env
+USE_HTTPS=true
+```
+This enables the `Secure` flag on authentication cookies.
