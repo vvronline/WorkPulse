@@ -9,12 +9,14 @@ const { validatePassword, validateUsername } = require('../utils/password');
 const router = express.Router();
 
 const isProduction = process.env.NODE_ENV === 'production';
+// Only set Secure cookies when actually serving over HTTPS
+const useSecureCookie = isProduction && process.env.USE_HTTPS === 'true';
 
 // Cookie options helper
 function cookieOptions() {
     return {
         httpOnly: true,
-        secure: isProduction,
+        secure: useSecureCookie,
         sameSite: 'lax',
         maxAge: 24 * 60 * 60 * 1000 // 24 hours
     };
@@ -251,7 +253,7 @@ router.post('/reset-password', async (req, res) => {
 router.post('/logout', (req, res) => {
     res.clearCookie('token', {
         httpOnly: true,
-        secure: isProduction,
+        secure: useSecureCookie,
         sameSite: 'lax'
     });
     res.json({ message: 'Logged out successfully' });
