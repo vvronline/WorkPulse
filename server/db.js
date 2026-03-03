@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const Database = require('better-sqlite3');
 
 // Allow overriding database path via environment variable (useful for Docker)
 const dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'data', 'attendance.db');
