@@ -117,3 +117,28 @@ sudo chmod -R 755 /path/to/your/WorkPulse/server/uploads
 sudo chmod +x /path/to/your/WorkPulse   # Ensure parent path access
 sudo systemctl restart nginx
 ```
+
+---
+
+## Docker Deployment (Recommended)
+
+WorkPulse includes a multi-stage `Dockerfile` and a `docker-compose.yml` file for simple, containerized deployment without needing to manually install Node.js, PM2, or Nginx on your host machine.
+
+### Prerequisites
+- Docker and Docker Compose installed on your server or local machine.
+
+### 1. Configure Environment
+Create an `.env` file in the root directory (next to `docker-compose.yml`) to define your configuration:
+```env
+JWT_SECRET=your_super_secret_jwt_key_here
+CORS_ORIGIN=http://your-server-ip-or-domain
+```
+
+### 2. Start the Application
+Run the following command to build the React frontend, set up the backend container, and start the application in the background:
+```bash
+docker-compose up -d --build
+```
+
+The application will now be running on port `5000`. 
+*Note: The SQLite database (`server/attendance.db`) and user uploads are automatically volume-mounted so data is preserved if the container restarts or updates.*

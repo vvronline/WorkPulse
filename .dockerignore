@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# Build outputs
+client/dist/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# OS Files
+.DS_Store
+
+# Git
+.git
+.gitignore
+
+# Environment variables (SECURITY)
+.env
+.env.local
+
+# Databases (SQLite file shouldn't be copied in during build, it should be volume mounted)
+server/attendance.db
+server/attendance.db-journal
+server/attendance.db-wal
+
+# Uploads (Volume mounted, do not bake into image)
+server/uploads/

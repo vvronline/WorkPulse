@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  workpulse:
+    build: .
+    container_name: workpulse-app
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - NODE_ENV=production
+      # The JWT Secret MUST be defined in a .env file to be passed exactly. Default supplied here for clarity.
+      - JWT_SECRET=${JWT_SECRET:-your_super_secret_jwt_key_here}
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost}
+      # Email SMTP settings (Optional)
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+    volumes:
+      # Map the physical SQLite database file so registration data persists across Docker container restarts
+      - ./server/attendance.db:/app/server/attendance.db
+      # Map the avatar uploads folder to the host system
+      - ./server/uploads:/app/server/uploads
+    networks:
+      - workpulse-network
+
+networks:
+  workpulse-network:
+    driver: bridge
