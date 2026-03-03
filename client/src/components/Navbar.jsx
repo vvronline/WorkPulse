@@ -152,7 +152,7 @@ export default function Navbar() {
           <div className={`${s['nav-links']} ${s['nav-links-desktop']}`}>
             <NavLink to="/" className={location.pathname === '/' ? s.active : ''}>Dashboard</NavLink>
             <NavLink to="/analytics" className={location.pathname === '/analytics' ? s.active : ''}>Analytics</NavLink>
-            <NavLink to="/tasks" className={location.pathname === '/tasks' ? s.active : ''}>Tasks</NavLink>
+            <NavLink to="/tasks" className={location.pathname === '/tasks' ? s.active : ''}>Planner</NavLink>
             {moreItems.length > 0 && (
               <div className={s['more-wrapper']} ref={moreRef}>
                 <button
@@ -313,8 +313,8 @@ export default function Navbar() {
           <span className={s['tab-label']}>Leaves</span>
         </NavLink>
         <NavLink to="/tasks" className={location.pathname === '/tasks' ? s.active : ''}>
-          <span className={s['nav-icon']}>✅</span>
-          <span className={s['tab-label']}>Tasks</span>
+          <span className={s['nav-icon']}>📋</span>
+          <span className={s['tab-label']}>Planner</span>
         </NavLink>
         <div className={s['mobile-more-wrapper']} ref={mobileMoreRef}>
           <button

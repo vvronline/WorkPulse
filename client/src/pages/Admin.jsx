@@ -244,7 +244,7 @@ function UserManagement({ userRole }) {
                     <div className={s.modal} onClick={e => e.stopPropagation()}>
                         <h2>Delete User</h2>
                         <p>Are you sure you want to permanently delete <strong>{deletingUser.full_name}</strong> (@{deletingUser.username})?</p>
-                        <p style={{ color: 'var(--danger)', fontSize: '0.85rem', marginTop: '0.5rem' }}>⚠️ This will remove all their time entries, leaves, tasks, and other data. This action cannot be undone.</p>
+                        <p style={{ color: 'var(--danger)', fontSize: '0.85rem', marginTop: '0.5rem' }}>⚠️ This will remove all their time entries, leaves, planner items, and other data. This action cannot be undone.</p>
                         <div className={s.formActions}>
                             <button className={s.btnCancel} onClick={() => setDeletingUser(null)}>Cancel</button>
                             <button className={`${s.btnPrimary} ${s.btnDanger}`} onClick={async () => {

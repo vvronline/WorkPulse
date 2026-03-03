@@ -33,7 +33,7 @@ const TasksSummary = memo(function TasksSummary({ taskSummary }) {
       onKeyDown={e => e.key === 'Enter' && navigate('/tasks')}
     >
       <h3 className={s['timeline-title']}>
-        <span className="page-icon">✅</span> Today's Tasks
+        <span className="page-icon">📋</span> Today's Planner
         <span className={s['title-arrow']}>›</span>
       </h3>
       <div className={s['tasks-summary-stats']}>

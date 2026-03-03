@@ -187,9 +187,9 @@ function MemberOverview({ data }) {
                     <div className={m.summaryLabel}>Leaves This Month</div>
                 </div>
                 <div className={m.summaryCard}>
-                    <div className={m.summaryIcon}>✅</div>
+                    <div className={m.summaryIcon}>📋</div>
                     <div className={m.summaryValue}>{data.todayTasks?.length || 0}</div>
-                    <div className={m.summaryLabel}>Today's Tasks</div>
+                    <div className={m.summaryLabel}>Today's Planner</div>
                 </div>
             </div>
 
@@ -253,7 +253,7 @@ function MemberOverview({ data }) {
             <div className={m.twoColSection}>
                 {taskStats.total !== undefined && (
                     <div className={m.overviewSection}>
-                        <h3 className={m.sectionTitle}>Tasks This Month</h3>
+                        <h3 className={m.sectionTitle}>Planner This Month</h3>
                         <div className={m.taskStatsGrid}>
                             <div className={m.taskStatCard}><span className={m.taskStatNum}>{taskStats.total}</span><span className={m.taskStatLbl}>Total</span></div>
                             <div className={m.taskStatCard}><span className={`${m.taskStatNum} ${m.colorGreen}`}>{taskStats.done}</span><span className={m.taskStatLbl}>Done</span></div>
@@ -288,10 +288,10 @@ function MemberOverview({ data }) {
                 )}
             </div>
 
-            {/* Today's Tasks */}
+            {/* Today's Planner */}
             {data.todayTasks && data.todayTasks.length > 0 && (
                 <div className={m.overviewSection}>
-                    <h3 className={m.sectionTitle}>Today's Tasks</h3>
+                    <h3 className={m.sectionTitle}>Today's Planner</h3>
                     <table className={s.table}>
                         <thead><tr><th>Task</th><th>Priority</th><th>Status</th></tr></thead>
                         <tbody>
@@ -684,9 +684,9 @@ function TeamAnalytics({ onSelectMember }) {
                     <div className={m.summaryLabel}>Avg Hours/Day</div>
                 </div>
                 <div className={m.summaryCard}>
-                    <div className={m.summaryIcon}>✅</div>
+                    <div className={m.summaryIcon}>📋</div>
                     <div className={m.summaryValue}>{data.totalTasksDone || 0}</div>
-                    <div className={m.summaryLabel}>Tasks Completed</div>
+                    <div className={m.summaryLabel}>Planner Completed</div>
                 </div>
                 <div className={m.summaryCard}>
                     <div className={m.summaryIcon}>🎯</div>
@@ -715,7 +715,7 @@ function TeamAnalytics({ onSelectMember }) {
                             <th>Today</th>
                             <th onClick={() => handleSort('hours')} className={m.sortable}>Total Hours<SortIcon col="hours" /></th>
                             <th onClick={() => handleSort('avgFloorMinutes')} className={m.sortable}>Avg/Day<SortIcon col="avgFloorMinutes" /></th>
-                            <th onClick={() => handleSort('tasksDone')} className={m.sortable}>Tasks<SortIcon col="tasksDone" /></th>
+                            <th onClick={() => handleSort('tasksDone')} className={m.sortable}>Planner<SortIcon col="tasksDone" /></th>
                             <th onClick={() => handleSort('targetMetPercent')} className={m.sortable}>Target Met<SortIcon col="targetMetPercent" /></th>
                             <th onClick={() => handleSort('punctualityPercent')} className={m.sortable}>Punctuality<SortIcon col="punctualityPercent" /></th>
                             <th>Trend</th>

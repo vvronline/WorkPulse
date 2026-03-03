@@ -46,7 +46,7 @@ export default function Tasks() {
       setStats(res.data.stats);
       setError('');
     } catch {
-      setError('Failed to load tasks');
+      setError('Failed to load planner');
     } finally {
       setLoading(false);
     }
@@ -87,7 +87,7 @@ export default function Tasks() {
       setPriority('medium');
       fetchTasks();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to add task');
+      setError(err.response?.data?.error || 'Failed to add item');
     }
   };
 
@@ -102,7 +102,7 @@ export default function Tasks() {
       setTaskToDelete(null);
       fetchTasks();
     } catch {
-      setError('Failed to delete task');
+      setError('Failed to delete item');
     }
   };
 
@@ -120,7 +120,7 @@ export default function Tasks() {
       setEditingId(null);
       fetchTasks();
     } catch {
-      setError('Failed to update task');
+      setError('Failed to update item');
     }
   };
 
@@ -178,7 +178,7 @@ export default function Tasks() {
       await updateTaskStatus(taskId, colId);
       fetchTasks();
     } catch {
-      setError('Failed to move task');
+      setError('Failed to move item');
       fetchTasks();
     }
   };
@@ -192,7 +192,7 @@ export default function Tasks() {
       {/* Header */}
       <div className={s['tasks-header']}>
         <div>
-          <h2><span className="page-icon">✅</span> Daily Tasks</h2>
+          <h2><span className="page-icon">📋</span> Daily Planner</h2>
           <p>Plan and track your daily work</p>
         </div>
         <div className={s['tasks-header-actions']}>
@@ -233,7 +233,7 @@ export default function Tasks() {
 
       {carriedCount > 0 && (
         <div className={s['carry-banner']}>
-          📥 {carriedCount} incomplete task{carriedCount > 1 ? 's' : ''} from yesterday carried forward automatically.
+          📥 {carriedCount} incomplete item{carriedCount > 1 ? 's' : ''} from yesterday carried forward automatically.
         </div>
       )}
       {error && <div className="error-msg error-msg-mb">{error}</div>}
@@ -324,7 +324,7 @@ export default function Tasks() {
                 <div className={s['column-tasks']}>
                   {colTasks.length === 0 && !isDragOver && (
                     <div className={s['column-empty']}>
-                      <span>No tasks</span>
+                      <span>No items</span>
                     </div>
                   )}
                   {colTasks.map(task => renderCard(task, col))}
@@ -338,14 +338,14 @@ export default function Tasks() {
       {tasks.length === 0 && !loading && (
         <div className={s['tasks-empty']}>
           <div className={s['tasks-empty-icon']}>📋</div>
-          <p>No tasks for this day</p>
-          <span>Add a task above to get started!</span>
+          <p>No items for this day</p>
+          <span>Add an item above to get started!</span>
         </div>
       )}
 
       <ConfirmDialog
         isOpen={!!taskToDelete}
-        title="Delete Task"
+        title="Delete Item"
         message={`Are you sure you want to delete "${taskToDelete?.title}"?`}
         confirmText="Delete"
         onConfirm={confirmDelete}
