@@ -92,14 +92,12 @@
 .more-btn {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
+  justify-content: center;
   color: var(--text-secondary);
   background: none;
   border: none;
-  padding: 0.45rem 1rem;
+  padding: 0.45rem 0.6rem;
   border-radius: 8px;
-  font-size: 0.85rem;
-  font-weight: 500;
   cursor: pointer;
   transition: all 0.25s ease;
 }
@@ -121,6 +119,10 @@
 
 .more-chevron.open {
   transform: rotate(180deg);
+}
+
+.more-btn svg {
+  display: block;
 }
 
 .more-dropdown {

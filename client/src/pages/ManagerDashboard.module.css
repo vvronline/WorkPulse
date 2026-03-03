@@ -209,6 +209,16 @@
     flex-wrap: wrap;
     align-items: center;
 }
+.dateRangePicker {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.dateRangeSep {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 500;
+}
 
 /* ==================== SUMMARY GRID ==================== */
 .summaryGrid {

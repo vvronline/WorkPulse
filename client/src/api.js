@@ -152,7 +152,7 @@ export const getRegistrationMode = () => API.get('/auth/registration-mode');
 
 // Manager Dashboard
 export const getTeamAttendance = (date) => API.get('/manager/team-attendance', { params: { date } });
-export const getTeamAnalytics = (days) => API.get('/manager/team-analytics', { params: { days } });
+export const getTeamAnalytics = (days, from, to) => API.get('/manager/team-analytics', { params: { days, from, to } });
 export const getApprovals = (params) => API.get('/manager/approvals', { params });
 export const getMyRequests = (params) => API.get('/manager/my-requests', { params });
 export const approveRequest = (id) => API.post(`/manager/approvals/${id}/approve`);

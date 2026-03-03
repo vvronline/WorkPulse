@@ -590,6 +590,8 @@ function ApprovalsTab() {
 function TeamAnalytics({ onSelectMember }) {
     const [data, setData] = useState(null);
     const [range, setRange] = useState('7');
+    const [customFrom, setCustomFrom] = useState('');
+    const [customTo, setCustomTo] = useState('');
     const [search, setSearch] = useState('');
     const [sortBy, setSortBy] = useState('hours');
     const [sortAsc, setSortAsc] = useState(false);
@@ -597,8 +599,19 @@ function TeamAnalytics({ onSelectMember }) {
     const [filterDept, setFilterDept] = useState('');
 
     useEffect(() => {
+        if (range === 'custom') {
+            if (customFrom && customTo && customFrom <= customTo) {
+                getTeamAnalytics(null, customFrom, customTo).then(r => setData(r.data)).catch(e => console.error(e));
+            }
+            return;
+        }
         getTeamAnalytics(range).then(r => setData(r.data)).catch(e => console.error(e));
-    }, [range]);
+    }, [range, customFrom, customTo]);
+
+    const handleRangeChange = (val) => {
+        setRange(val);
+        if (val !== 'custom') { setCustomFrom(''); setCustomTo(''); }
+    };
 
     const departments = useMemo(() => {
         if (!data?.members) return [];
@@ -630,17 +643,25 @@ function TeamAnalytics({ onSelectMember }) {
 
     if (!data) return <p>Loading...</p>;
 
-    const rangeLabel = range === '7' ? 'This Week' : range === '30' ? 'This Month' : 'This Quarter';
+    const rangeLabel = range === '7' ? 'This Week' : range === '30' ? 'This Month' : range === '90' ? 'This Quarter' : (customFrom && customTo) ? `${customFrom} — ${customTo}` : 'Custom Range';
 
     return (
         <>
             {/* Controls */}
             <div className={m.analyticsToolbar}>
-                <select value={range} onChange={e => setRange(e.target.value)} className={m.selectField}>
+                <select value={range} onChange={e => handleRangeChange(e.target.value)} className={m.selectField}>
                     <option value="7">This Week</option>
                     <option value="30">This Month</option>
                     <option value="90">This Quarter</option>
+                    <option value="custom">Custom Range</option>
                 </select>
+                {range === 'custom' && (
+                    <div className={m.dateRangePicker}>
+                        <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} className={m.inputField} max={customTo || undefined} />
+                        <span className={m.dateRangeSep}>to</span>
+                        <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} className={m.inputField} min={customFrom || undefined} max={new Date().toISOString().split('T')[0]} />
+                    </div>
+                )}
                 <input placeholder="Search members..." value={search} onChange={e => setSearch(e.target.value)} className={m.inputField} />
                 {departments.length > 0 && (
                     <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className={m.selectField}>

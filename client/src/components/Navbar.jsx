@@ -131,7 +131,10 @@ export default function Navbar() {
   const isHR = userLevel >= 4;
 
   // Collect secondary nav items for "More" dropdown
-  const moreItems = [];
+  const moreItems = [
+    { to: '/leaves', label: 'Leaves' },
+    { to: '/manual-entry', label: 'Manual Entry' },
+  ];
   if (user?.org_id) moreItems.push({ to: '/leave-policy', label: 'Leave Policy' });
   if (isTeamLead) moreItems.push({ to: '/manager', label: 'Manager' });
   if (isHR) moreItems.push({ to: '/admin', label: 'Admin' });
@@ -149,18 +152,16 @@ export default function Navbar() {
           <div className={`${s['nav-links']} ${s['nav-links-desktop']}`}>
             <NavLink to="/" className={location.pathname === '/' ? s.active : ''}>Dashboard</NavLink>
             <NavLink to="/analytics" className={location.pathname === '/analytics' ? s.active : ''}>Analytics</NavLink>
-            <NavLink to="/leaves" className={location.pathname === '/leaves' ? s.active : ''}>Leaves</NavLink>
             <NavLink to="/tasks" className={location.pathname === '/tasks' ? s.active : ''}>Tasks</NavLink>
-            <NavLink to="/manual-entry" className={location.pathname === '/manual-entry' ? s.active : ''}>Manual Entry</NavLink>
             {moreItems.length > 0 && (
               <div className={s['more-wrapper']} ref={moreRef}>
                 <button
                   className={`${s['more-btn']} ${moreIsActive ? s.active : ''}`}
                   onClick={() => setMoreOpen(prev => !prev)}
+                  title="More"
                 >
-                  More
-                  <svg className={`${s['more-chevron']} ${moreOpen ? s.open : ''}`} width="10" height="10" viewBox="0 0 12 12" fill="none">
-                    <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                   </svg>
                 </button>
                 {moreOpen && (
@@ -320,7 +321,11 @@ export default function Navbar() {
             className={`${s['mobile-more-btn']} ${mobileMoreOpen ? s.active : ''}`}
             onClick={() => setMobileMoreOpen(prev => !prev)}
           >
-            <span className={s['nav-icon']}>⋯</span>
+            <span className={s['nav-icon']}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </span>
             <span className={s['tab-label']}>More</span>
           </button>
           {mobileMoreOpen && (

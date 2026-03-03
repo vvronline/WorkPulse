@@ -127,14 +127,24 @@ router.get('/team-attendance', (req, res) => {
 // ==================== TEAM ANALYTICS ====================
 
 router.get('/team-analytics', (req, res) => {
-    const { days } = req.query;
-    const numDays = days === 'month' ? 30 : days === 'quarter' ? 90 : parseInt(days) || 7;
+    const { days, from, to } = req.query;
     const visibleIds = getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId);
     if (visibleIds.length === 0) return res.json({ members: [], totalMembers: 0 });
 
     const offsetMin = parseInt(req.headers['x-timezone-offset']) || 0;
     const today = getLocalToday(req);
-    const fromDate = new Date(Date.now() - offsetMin * 60000 - numDays * 86400000).toISOString().slice(0, 10);
+    let fromDate, toDate;
+    if (from && to) {
+        // Custom date range
+        fromDate = from;
+        toDate = to > today ? today : to;
+    } else {
+        const numDays = days === 'month' ? 30 : days === 'quarter' ? 90 : parseInt(days) || 7;
+        fromDate = new Date(Date.now() - offsetMin * 60000 - numDays * 86400000).toISOString().slice(0, 10);
+        toDate = today;
+    }
+    // Compute numDays from the resolved range
+    const numDays = Math.round((new Date(toDate).getTime() - new Date(fromDate).getTime()) / 86400000) + 1;
     const tzMod = getTzModifier(req);
     const placeholders = visibleIds.map(() => '?').join(',');
 
@@ -142,7 +152,7 @@ router.get('/team-analytics', (req, res) => {
         SELECT * FROM time_entries
         WHERE user_id IN (${placeholders}) AND date(timestamp, ?) BETWEEN date(?) AND date(?)
         ORDER BY timestamp ASC
-    `).all(...visibleIds, tzMod, fromDate, today);
+    `).all(...visibleIds, tzMod, fromDate, toDate);
 
     // Group by user then by date
     const byUser = {};
@@ -172,7 +182,7 @@ router.get('/team-analytics', (req, res) => {
         FROM tasks
         WHERE user_id IN (${placeholders}) AND date BETWEEN ? AND ?
         GROUP BY user_id
-    `).all(...visibleIds, fromDate, today);
+    `).all(...visibleIds, fromDate, toDate);
     const taskMap = {};
     taskCounts.forEach(t => { taskMap[t.user_id] = { done: t.done, total: t.total }; });
 
@@ -181,7 +191,7 @@ router.get('/team-analytics', (req, res) => {
         SELECT user_id, leave_type, COUNT(*) as count FROM leaves
         WHERE user_id IN (${placeholders}) AND date BETWEEN ? AND ? AND status != 'rejected'
         GROUP BY user_id, leave_type
-    `).all(...visibleIds, fromDate, today);
+    `).all(...visibleIds, fromDate, toDate);
     const leaveMap = {};
     leaveCounts.forEach(l => {
         if (!leaveMap[l.user_id]) leaveMap[l.user_id] = { total: 0, byType: {} };
@@ -200,7 +210,7 @@ router.get('/team-analytics', (req, res) => {
         SELECT * FROM time_entries
         WHERE user_id IN (${placeholders}) AND date(timestamp, ?) = date(?)
         ORDER BY timestamp ASC
-    `).all(...visibleIds, tzMod, today);
+    `).all(...visibleIds, tzMod, toDate);
     const todayByUser = {};
     todayEntries.forEach(e => {
         if (!todayByUser[e.user_id]) todayByUser[e.user_id] = [];
@@ -208,13 +218,14 @@ router.get('/team-analytics', (req, res) => {
     });
 
     // Get today's leaves
-    const todayLeaves = db.prepare(`SELECT user_id FROM leaves WHERE user_id IN (${placeholders}) AND date = ? AND status != 'rejected'`).all(...visibleIds, today);
+    const todayLeaves = db.prepare(`SELECT user_id FROM leaves WHERE user_id IN (${placeholders}) AND date = ? AND status != 'rejected'`).all(...visibleIds, toDate);
     const todayLeaveSet = new Set(todayLeaves.map(l => l.user_id));
 
     let totalOrgFloor = 0, totalOrgDays = 0, totalTasksDone = 0, totalOrgBreak = 0;
     let expectedWeekdays = 0;
+    const fromMs = new Date(fromDate).getTime();
     for (let i = 0; i < numDays; i++) {
-        const d = new Date(Date.now() - offsetMin * 60000 - (numDays - 1 - i) * 86400000);
+        const d = new Date(fromMs + i * 86400000);
         const dow = d.getUTCDay();
         if (dow !== 0 && dow !== 6) expectedWeekdays++;
     }
@@ -229,8 +240,9 @@ router.get('/team-analytics', (req, res) => {
     // Build last 7 or fewer date keys for the daily trend
     const trendDays = Math.min(numDays, 7);
     const trendDates = [];
+    const toMs = new Date(toDate).getTime();
     for (let i = trendDays - 1; i >= 0; i--) {
-        const d = new Date(Date.now() - offsetMin * 60000 - i * 86400000);
+        const d = new Date(toMs - i * 86400000);
         trendDates.push(d.toISOString().slice(0, 10));
     }
 
