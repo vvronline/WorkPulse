@@ -1,15 +1,55 @@
-# WorkPulse GCP Deployment Guide
+# WorkPulse GCP Deployment Guide (Docker)
 
-This guide covers the complete, step-by-step process for deploying the WorkPulse application to a fresh Google Cloud Platform (GCP) Ubuntu Virtual Machine.
+This is the fastest and most reliable way to deploy WorkPulse to a fresh Google Cloud Platform (GCP) Ubuntu Virtual Machine.
 
 ## Prerequisites
-- A Google Cloud Platform (GCP) account.
-- A newly provisioned **Ubuntu 22.04 LTS (or newer)** VM instance.
-- **Firewall settings:** Ensure **"Allow HTTP Traffic"** (and HTTPS if applicable) is checked in your VM's network settings.
+- **GCP VM:** Ubuntu 22.04 LTS (or newer).
+- **Firewall:** Ensure **"Allow HTTP Traffic"** is checked in your VM settings.
 
 ---
 
-## Step 1: System Update & Dependencies
+## ⚡ Quick Start (Docker Method)
+
+### 1. Install Dependencies
+SSH into your fresh VM and run:
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install git docker.io docker-compose -y
+```
+
+### 2. Clone & Configure
+```bash
+git clone https://github.com/vvronline/WorkPulse.git
+cd WorkPulse
+
+# Create your environment file
+nano .env
+```
+Paste this into `.env` (Replace with your actual IP):
+```env
+JWT_SECRET=your_super_secret_key
+CORS_ORIGIN=http://YOUR_VM_IP
+```
+
+### 3. Deploy! 🚀
+```bash
+sudo docker-compose up -d --build
+```
+*Your app is now live at http://YOUR_VM_IP!*
+
+---
+
+## 🛠️ Post-Setup: Create Admin Account
+Since it's a fresh database, your first registered user needs to be promoted to Super Admin:
+```bash
+# Run this from the WorkPulse folder on the VM
+sqlite3 server/attendance.db "UPDATE users SET role = 'super_admin' WHERE username = 'YOUR_USERNAME';"
+```
+
+---
+
+## Manual Deployment (PM2 + Nginx)
+*Use this only if you cannot use Docker.*
 SSH into your fresh GCP VM and run the following commands to update the system and install necessary packages (Node.js, NPM, Nginx, and Git).
 
 ```bash
