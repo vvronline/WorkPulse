@@ -110,11 +110,31 @@ router.delete('/organizations/:id', requireRole('super_admin'), (req, res) => {
         return res.status(400).json({ error: `Cannot delete organization with ${activeUsers} active user(s). Deactivate or reassign users first.` });
     }
 
-    // Delete related data first (departments, teams, inactive users)
-    db.prepare('DELETE FROM teams WHERE org_id = ?').run(id);
-    db.prepare('DELETE FROM departments WHERE org_id = ?').run(id);
-    db.prepare('UPDATE users SET org_id = NULL, department_id = NULL, team_id = NULL WHERE org_id = ?').run(id);
-    db.prepare('DELETE FROM organizations WHERE id = ?').run(id);
+    // Delete/nullify all FK references before deleting the organization
+    const deleteTxn = db.transaction(() => {
+        // Nullify org_id in tables that should keep their records
+        db.prepare('UPDATE approval_requests SET org_id = NULL WHERE org_id = ?').run(id);
+        db.prepare('UPDATE audit_logs SET org_id = NULL WHERE org_id = ?').run(id);
+        // Remove invite codes for this org
+        db.prepare('DELETE FROM invite_codes WHERE org_id = ?').run(id);
+        // Cascade-handled tables (departments, teams, leave_policies, holidays) are auto-deleted,
+        // but explicitly clean up teams/departments first to avoid ordering issues
+        db.prepare('DELETE FROM teams WHERE org_id = ?').run(id);
+        db.prepare('DELETE FROM departments WHERE org_id = ?').run(id);
+        db.prepare('DELETE FROM leave_policies WHERE org_id = ?').run(id);
+        db.prepare('DELETE FROM holidays WHERE org_id = ?').run(id);
+        // Detach users from the org
+        db.prepare('UPDATE users SET org_id = NULL, department_id = NULL, team_id = NULL WHERE org_id = ?').run(id);
+        // Finally delete the organization
+        db.prepare('DELETE FROM organizations WHERE id = ?').run(id);
+    });
+
+    try {
+        deleteTxn();
+    } catch (e) {
+        console.error('Failed to delete organization:', e.message);
+        return res.status(500).json({ error: 'Failed to delete organization. Some data may still reference it.' });
+    }
 
     logAction(req, 'admin_delete', 'organization', id, { name: org.name });
 
@@ -397,6 +417,11 @@ router.get('/audit-logs', (req, res) => {
 
 router.get('/stats', requireSameOrg, (req, res) => {
     const orgId = req.userOrgId;
+
+    // If user has no org (e.g. super_admin not assigned), return zeroed stats
+    if (!orgId) {
+        return res.json({ totalUsers: 0, activeUsers: 0, departments: 0, teams: 0, pendingApprovals: 0, clockedInToday: 0 });
+    }
 
     const counts = db.prepare(`
         SELECT

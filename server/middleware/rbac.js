@@ -60,6 +60,8 @@ function requireRole(minRole) {
  * Used for org-scoped operations and manager views.
  */
 function requireSameOrg(req, res, next) {
+    // Super admins can access any org-scoped endpoint
+    if (req.userRole === 'super_admin') return next();
     if (req.userOrgId) return next();
     // Allow if user has direct reports (is someone's manager)
     const hasReports = db.prepare('SELECT 1 FROM users WHERE manager_id = ? AND is_active = 1 LIMIT 1').get(req.userId);
