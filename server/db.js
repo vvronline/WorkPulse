@@ -339,6 +339,43 @@ db.exec(`
   );
 `);
 
+// Migration: add 'leave_withdraw' to approval_requests type CHECK constraint
+runMigration('approval_requests_leave_withdraw_type', () => {
+  const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='approval_requests'").get();
+  if (tableInfo && !tableInfo.sql.includes('leave_withdraw')) {
+    db.exec(`
+      CREATE TABLE approval_requests_v2 (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        org_id INTEGER REFERENCES organizations(id),
+        requester_id INTEGER NOT NULL REFERENCES users(id),
+        approver_id INTEGER REFERENCES users(id),
+        type TEXT NOT NULL CHECK(type IN ('leave', 'manual_entry', 'overtime', 'leave_withdraw')),
+        reference_id INTEGER,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
+        reason TEXT,
+        reject_reason TEXT,
+        metadata TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        reviewed_at DATETIME
+      );
+      INSERT INTO approval_requests_v2 SELECT * FROM approval_requests;
+      DROP TABLE approval_requests;
+      ALTER TABLE approval_requests_v2 RENAME TO approval_requests;
+      CREATE INDEX IF NOT EXISTS idx_approval_requester ON approval_requests(requester_id, status);
+      CREATE INDEX IF NOT EXISTS idx_approval_approver ON approval_requests(approver_id, status);
+    `);
+    console.log('✓ Migrated approval_requests to support leave_withdraw type');
+  }
+});
+
+// Additional indexes for common query patterns
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_time_entries_manual ON time_entries(user_id, is_manual, approval_status);
+  CREATE INDEX IF NOT EXISTS idx_approval_type_status ON approval_requests(type, status);
+  CREATE INDEX IF NOT EXISTS idx_leaves_status ON leaves(user_id, status, date);
+  CREATE INDEX IF NOT EXISTS idx_time_entries_date ON time_entries(user_id, timestamp);
+`);
+
 // Default: registration is closed (admin creates users)
 db.exec("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('registration_mode', 'closed')");
 // Migrate existing open/invite_only to closed

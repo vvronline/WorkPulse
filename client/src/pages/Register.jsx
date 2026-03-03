@@ -11,10 +11,12 @@ export default function Register() {
   const [form, setForm] = useState({ username: '', password: '', full_name: '', email: '', invite_code: '' });
   const [error, setError] = useAutoDismiss('');
   const [loading, setLoading] = useState(false);
-  const [regMode, setRegMode] = useState('open');
+  const [regMode, setRegMode] = useState(null); // null = loading, safest default
 
   useEffect(() => {
-    getRegistrationMode().then(r => setRegMode(r.data.mode)).catch(e => console.error(e));
+    getRegistrationMode()
+      .then(r => setRegMode(r.data.mode))
+      .catch(() => setRegMode('closed')); // default to closed on error
   }, []);
 
   const handleSubmit = async (e) => {
@@ -30,6 +32,16 @@ export default function Register() {
       setLoading(false);
     }
   };
+
+  if (regMode === null) {
+    return (
+      <div className={s['auth-container']}>
+        <div className={s['auth-card']}>
+          <div className="loading-spinner"><div className="spinner"></div></div>
+        </div>
+      </div>
+    );
+  }
 
   if (regMode === 'closed') {
     return (
@@ -82,9 +94,13 @@ export default function Register() {
               id="reg-username"
               type="text"
               value={form.username}
-              onChange={e => setForm({ ...form, username: e.target.value })}
-              placeholder="Choose a username"
+              onChange={e => setForm({ ...form, username: e.target.value.replace(/[^a-zA-Z0-9._-]/g, '') })}
+              placeholder="Letters, numbers, dots, hyphens, underscores"
               required
+              minLength={3}
+              maxLength={50}
+              pattern="[a-zA-Z0-9._-]+"
+              title="Only letters, numbers, dots, hyphens and underscores"
             />
           </div>
           <div className="form-group">
@@ -93,7 +109,7 @@ export default function Register() {
               id="reg-password"
               value={form.password}
               onChange={e => setForm({ ...form, password: e.target.value })}
-              placeholder="Choose a password (min 8 chars)"
+              placeholder="Min 8 chars, upper+lower+digit+special"
               required
               minLength={8}
             />

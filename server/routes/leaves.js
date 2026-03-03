@@ -3,7 +3,7 @@ const db = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, ROLE_LEVEL } = require('../middleware/rbac');
 const { logAction } = require('../utils/audit');
-const { getLocalToday } = require('../utils/timezone');
+const { getLocalToday, getOffsetMin } = require('../utils/timezone');
 const { findApprover } = require('../utils/approver');
 
 const router = express.Router();
@@ -11,8 +11,13 @@ const router = express.Router();
 // Get leaves for a date range
 router.get('/', auth, loadUserContext, (req, res) => {
     const { from, to } = req.query;
-    const fromDate = from || new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
     const toDate = to || getLocalToday(req);
+    let fromDate = from;
+    if (!fromDate) {
+        const offsetMin = parseInt(req.headers['x-timezone-offset']) || 0;
+        const localNow = new Date(Date.now() - offsetMin * 60000 - 90 * 86400000);
+        fromDate = `${localNow.getUTCFullYear()}-${String(localNow.getUTCMonth() + 1).padStart(2, '0')}-${String(localNow.getUTCDate()).padStart(2, '0')}`;
+    }
 
     const leaves = db.prepare(`
         SELECT l.*, u.full_name as approved_by_name
@@ -201,8 +206,8 @@ router.post('/batch', auth, loadUserContext, (req, res) => {
     }
 });
 
-// Delete a leave
-router.delete('/:id', auth, loadUserContext, (req, res) => {
+// Withdraw a leave (requires manager approval)
+router.post('/:id/withdraw', auth, loadUserContext, (req, res) => {
     const { id } = req.params;
     const leave = db.prepare('SELECT * FROM leaves WHERE id = ? AND user_id = ?').get(id, req.userId);
 
@@ -210,18 +215,52 @@ router.delete('/:id', auth, loadUserContext, (req, res) => {
         return res.status(404).json({ error: 'Leave not found' });
     }
 
-    // If it was approved, restore balance
-    if (leave.status === 'approved' && req.userOrgId) {
-        updateLeaveBalance(req.userId, leave.leave_type, leave.date, leave.duration || 'full', 'subtract');
+    // Only pending or approved leaves can be withdrawn
+    if (leave.status === 'rejected') {
+        return res.status(403).json({ error: 'Rejected leaves cannot be withdrawn.' });
+    }
+    if (leave.status === 'withdraw_pending') {
+        return res.status(400).json({ error: 'Withdrawal already requested for this leave.' });
     }
 
-    // Delete related approval request
-    db.prepare("DELETE FROM approval_requests WHERE type = 'leave' AND reference_id = ? AND requester_id = ?")
-        .run(Number(id), req.userId);
+    // Determine if approval is needed
+    const hasManager = req.userManagerId != null;
+    const isOrgSubordinate = req.userOrgId && (ROLE_LEVEL[req.userRole] || 1) < ROLE_LEVEL.hr_admin;
+    const needsApproval = hasManager || isOrgSubordinate;
 
-    db.prepare('DELETE FROM leaves WHERE id = ?').run(id);
-    logAction(req, 'delete', 'leave', Number(id), { date: leave.date, leave_type: leave.leave_type });
-    res.json({ message: 'Leave deleted successfully' });
+    if (needsApproval) {
+        // Mark as withdraw_pending and create approval request
+        db.transaction(() => {
+            db.prepare('UPDATE leaves SET status = ? WHERE id = ?').run('withdraw_pending', leave.id);
+
+            const approver = findApprover(req.userId, req.userOrgId);
+
+            db.prepare(`
+                INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
+                VALUES (?, ?, ?, 'leave_withdraw', ?, ?, ?)
+            `).run(
+                req.userOrgId || null, req.userId, approver?.id || null,
+                leave.id, req.body.reason || 'Withdrawal requested',
+                JSON.stringify({ date: leave.date, leave_type: leave.leave_type, duration: leave.duration || 'full', previous_status: leave.status })
+            );
+        })();
+
+        logAction(req, 'withdraw_request', 'leave', Number(id), { date: leave.date, leave_type: leave.leave_type, previous_status: leave.status });
+        res.json({ message: 'Withdrawal request submitted for manager approval' });
+    } else {
+        // No approval needed — delete directly
+        db.transaction(() => {
+            if (leave.status === 'approved' && req.userOrgId) {
+                updateLeaveBalance(req.userId, leave.leave_type, leave.date, leave.duration || 'full', 'subtract');
+            }
+            db.prepare("DELETE FROM approval_requests WHERE type = 'leave' AND reference_id = ? AND requester_id = ?")
+                .run(Number(id), req.userId);
+            db.prepare('DELETE FROM leaves WHERE id = ?').run(id);
+        })();
+
+        logAction(req, 'withdraw', 'leave', Number(id), { date: leave.date, leave_type: leave.leave_type, status: leave.status });
+        res.json({ message: 'Leave withdrawn successfully' });
+    }
 });
 
 // Get monthly leave summary
@@ -238,7 +277,7 @@ router.get('/summary', auth, (req, res) => {
     `).all(req.userId, `${y}-${mStr}`);
 
     // Count weekend days (Sat + Sun) in this month up to today (using client timezone)
-    const offsetMin = parseInt(req.headers['x-timezone-offset']) || 0;
+    const offsetMin = getOffsetMin(req);
     const localNow = new Date(Date.now() - offsetMin * 60000);
     const todayYear = localNow.getUTCFullYear();
     const todayMonth = localNow.getUTCMonth() + 1;

@@ -48,8 +48,8 @@ app.use(cors({
     credentials: true
 }));
 app.use(cookieParser());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
+app.use(express.json({ limit: '100kb' }));
+app.use(express.urlencoded({ limit: '100kb', extended: true }));
 
 // --- DEBUG LOGGING (dev only) ---
 if (process.env.NODE_ENV !== 'production') {
@@ -59,8 +59,16 @@ if (process.env.NODE_ENV !== 'production') {
     });
 }
 
-// Serve uploaded avatars
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Serve uploaded avatars behind authentication
+const authMiddleware = require('./middleware/auth');
+app.use('/uploads', authMiddleware, (req, res, next) => {
+    // Validate the resolved path stays within the uploads directory
+    const resolved = path.resolve(__dirname, 'uploads', req.path.replace(/^\//, ''));
+    if (!resolved.startsWith(path.resolve(__dirname, 'uploads'))) {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+    next();
+}, express.static(path.join(__dirname, 'uploads')));
 
 // CSRF protection: require custom header on state-changing requests
 // Browsers won't send custom headers cross-origin without CORS preflight
@@ -78,6 +86,13 @@ const authLimiter = rateLimit({
     message: { error: 'Too many attempts. Please try again later.' }
 });
 
+// Stricter rate limiting for forgot-password (prevent email enumeration brute-force)
+const forgotPasswordLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 5,
+    message: { error: 'Too many password reset attempts. Please try again later.' }
+});
+
 // Stricter rate limiting for password-related endpoints
 const passwordLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -93,10 +108,13 @@ const apiLimiter = rateLimit({
 });
 
 // Routes
+app.use('/api/auth/forgot-password', forgotPasswordLimiter);
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/tracker', apiLimiter, trackerRoutes);
 app.use('/api/leaves', apiLimiter, leaveRoutes);
 app.use('/api/tasks', apiLimiter, taskRoutes);
+// Apply higher body limit only for avatar upload
+app.use('/api/profile/avatar', express.json({ limit: '10mb' }));
 app.use('/api/profile/password', passwordLimiter);
 app.use('/api/profile', apiLimiter, profileRoutes);
 app.use('/api/org', apiLimiter, organizationRoutes);
@@ -132,10 +150,10 @@ function autoClockOut() {
         const shift = -offsetMin;
         const tzMod = `${shift >= 0 ? '+' : ''}${shift} minutes`;
 
-        // Compute "yesterday" in the user's local timezone
+        // Compute "yesterday" in the user's local timezone (avoid toISOString UTC shift)
         const localNow = new Date(Date.now() - offsetMin * 60000);
         const localYesterday = new Date(localNow.getTime() - 86400000);
-        const yesterdayStr = localYesterday.toISOString().slice(0, 10);
+        const yesterdayStr = `${localYesterday.getUTCFullYear()}-${String(localYesterday.getUTCMonth() + 1).padStart(2, '0')}-${String(localYesterday.getUTCDate()).padStart(2, '0')}`;
 
         // Re-verify inside transaction: find the last entry for yesterday
         const lastEntry = db.prepare(`

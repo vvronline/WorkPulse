@@ -7,7 +7,7 @@ const db = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole, getVisibleUserIds, ROLE_LEVEL } = require('../middleware/rbac');
 const { logAction } = require('../utils/audit');
-const { getLocalToday, getTzModifier, getLocalDateFromTs } = require('../utils/timezone');
+const { getLocalToday, getTzModifier, getLocalDateFromTs, getOffsetMin } = require('../utils/timezone');
 const { computeFloorMs, computeBreakMs } = require('../utils/timeCalc');
 const { updateLeaveBalance } = require('./leaves');
 
@@ -131,7 +131,7 @@ router.get('/team-analytics', (req, res) => {
     const visibleIds = getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId);
     if (visibleIds.length === 0) return res.json({ members: [], totalMembers: 0 });
 
-    const offsetMin = parseInt(req.headers['x-timezone-offset']) || 0;
+    const offsetMin = getOffsetMin(req);
     const today = getLocalToday(req);
     let fromDate, toDate;
     if (from && to) {
@@ -464,6 +464,22 @@ router.post('/approvals/:id/approve', (req, res) => {
             if (leave) {
                 updateLeaveBalance(leave.user_id, leave.leave_type, leave.date, leave.duration || 'full', 'add');
             }
+        } else if (approval.type === 'leave_withdraw' && approval.reference_id) {
+            // Manager approved the withdrawal — delete the leave
+            const leave = db.prepare('SELECT * FROM leaves WHERE id = ?').get(approval.reference_id);
+            if (leave) {
+                let meta = {};
+                if (approval.metadata) { try { meta = JSON.parse(approval.metadata); } catch { } }
+                // Restore balance if the leave was previously approved
+                if (meta.previous_status === 'approved') {
+                    updateLeaveBalance(leave.user_id, leave.leave_type, leave.date, leave.duration || 'full', 'subtract');
+                }
+                // Delete the original leave approval request
+                db.prepare("DELETE FROM approval_requests WHERE type = 'leave' AND reference_id = ? AND requester_id = ?")
+                    .run(approval.reference_id, approval.requester_id);
+                // Delete the leave itself
+                db.prepare('DELETE FROM leaves WHERE id = ?').run(approval.reference_id);
+            }
         } else if (approval.type === 'manual_entry') {
             // Mark the time entries as approved by request reference
             let metadata = {};
@@ -510,6 +526,13 @@ router.post('/approvals/:id/reject', (req, res) => {
         if (approval.type === 'leave' && approval.reference_id) {
             db.prepare("UPDATE leaves SET status = 'rejected', reject_reason = ?, approved_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?")
                 .run(reject_reason || null, req.userId, approval.reference_id);
+        } else if (approval.type === 'leave_withdraw' && approval.reference_id) {
+            // Manager rejected the withdrawal — revert leave to its previous status
+            let meta = {};
+            if (approval.metadata) { try { meta = JSON.parse(approval.metadata); } catch { } }
+            const revertStatus = meta.previous_status || 'approved';
+            db.prepare('UPDATE leaves SET status = ? WHERE id = ?')
+                .run(revertStatus, approval.reference_id);
         } else if (approval.type === 'manual_entry') {
             let metadata = {};
             if (approval.metadata) { try { metadata = JSON.parse(approval.metadata); } catch { } }
@@ -576,6 +599,36 @@ router.post('/approvals/bulk', (req, res) => {
                         updateLeaveBalance(leave.user_id, leave.leave_type, leave.date, leave.duration || 'full', 'add');
                     }
                 }
+            } else if (approval.type === 'leave_withdraw' && approval.reference_id) {
+                if (action === 'approve') {
+                    const leave = db.prepare('SELECT * FROM leaves WHERE id = ?').get(approval.reference_id);
+                    if (leave) {
+                        let meta = {};
+                        if (approval.metadata) { try { meta = JSON.parse(approval.metadata); } catch { } }
+                        if (meta.previous_status === 'approved') {
+                            updateLeaveBalance(leave.user_id, leave.leave_type, leave.date, leave.duration || 'full', 'subtract');
+                        }
+                        db.prepare("DELETE FROM approval_requests WHERE type = 'leave' AND reference_id = ? AND requester_id = ?")
+                            .run(approval.reference_id, approval.requester_id);
+                        db.prepare('DELETE FROM leaves WHERE id = ?').run(approval.reference_id);
+                    }
+                } else {
+                    let meta = {};
+                    if (approval.metadata) { try { meta = JSON.parse(approval.metadata); } catch { } }
+                    db.prepare('UPDATE leaves SET status = ? WHERE id = ?')
+                        .run(meta.previous_status || 'approved', approval.reference_id);
+                }
+            } else if (approval.type === 'manual_entry') {
+                let metadata = {};
+                if (approval.metadata) { try { metadata = JSON.parse(approval.metadata); } catch { } }
+                if (metadata.date) {
+                    const tzMod = getTzModifier(req);
+                    const newStatus = action === 'approve' ? 'approved' : 'rejected';
+                    db.prepare(`
+                        UPDATE time_entries SET approval_status = ?, approved_by = ?
+                        WHERE user_id = ? AND date(timestamp, ?) = date(?) AND is_manual = 1
+                    `).run(newStatus, req.userId, approval.requester_id, tzMod, metadata.date);
+                }
             }
 
             processed++;
@@ -600,7 +653,7 @@ router.get('/member/:userId/hours', (req, res) => {
 
     const { from, to } = req.query;
     const today = getLocalToday(req);
-    const offsetMin = parseInt(req.headers['x-timezone-offset']) || 0;
+    const offsetMin = getOffsetMin(req);
     const fromDate = from || new Date(Date.now() - offsetMin * 60000 - 30 * 86400000).toISOString().slice(0, 10);
     const toDate = to || today;
     const tzMod = getTzModifier(req);
@@ -723,7 +776,7 @@ router.get('/member/:userId/overview', (req, res) => {
 
     const today = getLocalToday(req);
     const tzMod = getTzModifier(req);
-    const offsetMin = parseInt(req.headers['x-timezone-offset']) || 0;
+    const offsetMin = getOffsetMin(req);
     const monthStart = today.slice(0, 7) + '-01';
     const thirtyDaysAgo = new Date(Date.now() - offsetMin * 60000 - 30 * 86400000).toISOString().slice(0, 10);
 
@@ -766,20 +819,30 @@ router.get('/member/:userId/overview', (req, res) => {
 
     // --- ENHANCED DATA ---
 
-    // Weekly trend (last 7 days floor time)
+    // Weekly trend (last 7 days floor time) — single batch query instead of N+1
+    const trendStart = new Date(Date.now() - offsetMin * 60000 - 6 * 86400000);
+    const trendStartStr = `${trendStart.getUTCFullYear()}-${String(trendStart.getUTCMonth() + 1).padStart(2, '0')}-${String(trendStart.getUTCDate()).padStart(2, '0')}`;
+    const trendEntries = db.prepare(`
+        SELECT * FROM time_entries WHERE user_id = ? AND date(timestamp, ?) BETWEEN date(?) AND date(?)
+        ORDER BY timestamp ASC
+    `).all(targetUserId, tzMod, trendStartStr, today);
+    const trendGrouped = {};
+    trendEntries.forEach(e => {
+        const dateStr = getLocalDateFromTs(e.timestamp, req);
+        if (!trendGrouped[dateStr]) trendGrouped[dateStr] = [];
+        trendGrouped[dateStr].push(e);
+    });
     const weeklyTrend = [];
     for (let i = 6; i >= 0; i--) {
         const d = new Date(Date.now() - offsetMin * 60000 - i * 86400000);
-        const dateStr = d.toISOString().slice(0, 10);
-        const dayEntries = db.prepare(`
-            SELECT * FROM time_entries WHERE user_id = ? AND date(timestamp, ?) = date(?) ORDER BY timestamp ASC
-        `).all(targetUserId, tzMod, dateStr);
+        const dateStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+        const dayEntries = trendGrouped[dateStr] || [];
         const floorMin = dayEntries.length > 0 ? Math.round(computeFloorMs(dayEntries) / 60000) : 0;
         const breakMin = dayEntries.length > 0 ? Math.round(computeBreakMs(dayEntries) / 60000) : 0;
         const clockIn = dayEntries.find(e => e.entry_type === 'clock_in');
         weeklyTrend.push({
             date: dateStr,
-            dayLabel: d.toLocaleDateString('en-US', { weekday: 'short' }),
+            dayLabel: d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }),
             floorMinutes: floorMin,
             breakMinutes: breakMin,
             workMode: clockIn?.work_mode || null,
@@ -836,7 +899,8 @@ router.get('/member/:userId/overview', (req, res) => {
             SELECT lb.leave_type, lb.quota, lb.carried_forward, lb.used,
                    lp.annual_quota, lp.half_day_allowed, lp.quarter_day_allowed
             FROM leave_balances lb
-            LEFT JOIN leave_policies lp ON lp.org_id = lb.org_id AND lp.leave_type = lb.leave_type
+            LEFT JOIN users u2 ON u2.id = lb.user_id
+            LEFT JOIN leave_policies lp ON lp.org_id = u2.org_id AND lp.leave_type = lb.leave_type
             WHERE lb.user_id = ? AND lb.year = ?
         `).all(targetUserId, year);
     } catch { /* leave_balances might not exist */ }

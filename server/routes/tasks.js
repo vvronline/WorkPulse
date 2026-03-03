@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const auth = require('../middleware/auth');
-const { getLocalToday, getLocalYesterday } = require('../utils/timezone');
+const { getLocalToday } = require('../utils/timezone');
 
 const router = express.Router();
 

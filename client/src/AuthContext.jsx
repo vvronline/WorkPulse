@@ -3,6 +3,15 @@ import { getProfile, logoutUser } from './api';
 
 const AuthContext = createContext(null);
 
+// Only cache display-safe fields in localStorage to prevent privilege escalation
+// via tampered localStorage. Role, org_id, has_reports etc. always come from the server.
+const SAFE_CACHE_FIELDS = ['id', 'username', 'full_name', 'email', 'avatar'];
+function sanitizeForCache(user) {
+  const safe = {};
+  SAFE_CACHE_FIELDS.forEach(key => { if (user?.[key] !== undefined) safe[key] = user[key]; });
+  return safe;
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [isInitializing, setIsInitializing] = useState(true);
@@ -19,7 +28,7 @@ export function AuthProvider({ children }) {
       .then(res => {
         if (res.data) {
           setUser(res.data);
-          localStorage.setItem('user', JSON.stringify(res.data));
+          localStorage.setItem('user', JSON.stringify(sanitizeForCache(res.data)));
         }
       })
       .catch(err => {
@@ -27,6 +36,17 @@ export function AuthProvider({ children }) {
         if (err.response?.status === 401) {
           localStorage.removeItem('user');
           setUser(null);
+        } else {
+          // Non-401 error (500, network) — use cached display-safe fields only.
+          // Role/org_id/has_reports are NOT in the cache, so the user gets a
+          // basic view without admin or manager features until the server reconnects.
+          try {
+            const cachedUser = JSON.parse(cached);
+            setUser(sanitizeForCache(cachedUser));
+          } catch {
+            localStorage.removeItem('user');
+            setUser(null);
+          }
         }
       })
       .finally(() => {
@@ -35,14 +55,14 @@ export function AuthProvider({ children }) {
   }, []);
 
   const saveAuth = useCallback((user) => {
-    localStorage.setItem('user', JSON.stringify(user));
+    localStorage.setItem('user', JSON.stringify(sanitizeForCache(user)));
     setUser(user);
   }, []);
 
   const updateUser = useCallback((partial) => {
     setUser(prev => {
       const updated = { ...prev, ...partial };
-      localStorage.setItem('user', JSON.stringify(updated));
+      localStorage.setItem('user', JSON.stringify(sanitizeForCache(updated)));
       return updated;
     });
   }, []);

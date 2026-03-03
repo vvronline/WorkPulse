@@ -4,7 +4,7 @@ const auth = require('../middleware/auth');
 const { loadUserContext, ROLE_LEVEL } = require('../middleware/rbac');
 const { findApprover } = require('../utils/approver');
 const { logAction } = require('../utils/audit');
-const { getLocalToday, getLocalDow, getTzModifier, getLocalDateFromTs } = require('../utils/timezone');
+const { getLocalToday, getLocalDow, getTzModifier, getLocalDateFromTs, getOffsetMin } = require('../utils/timezone');
 const { computeStatus, computeDaySummary } = require('../utils/timeCalc');
 
 const router = express.Router();
@@ -69,12 +69,9 @@ router.post('/clock-in', auth, loadUserContext, (req, res) => {
     if (txResult.error) {
         return res.status(400).json({ error: txResult.error });
     }
-    // Save user's timezone offset for autoClockOut
-    const tzOffset = parseInt(req.headers['x-timezone-offset']);
-    if (!isNaN(tzOffset)) {
-        const clampedTz = Math.max(-720, Math.min(840, tzOffset));
-        db.prepare('UPDATE users SET timezone_offset = ? WHERE id = ?').run(clampedTz, req.userId);
-    }
+    // Save user's timezone offset for autoClockOut (already clamped by getOffsetMin)
+    const tzOffset = getOffsetMin(req);
+    db.prepare('UPDATE users SET timezone_offset = ? WHERE id = ?').run(tzOffset, req.userId);
     logAction(req, 'clock_in', 'time_entry', null, { work_mode: selectedWorkMode });
     res.json({ message: 'Logged in successfully' });
 });
@@ -165,7 +162,7 @@ router.post('/clock-out', auth, (req, res) => {
 // Get history for a date range
 router.get('/history', auth, (req, res) => {
     const { from, to } = req.query;
-    const offsetMin = parseInt(req.headers['x-timezone-offset']) || 0;
+    const offsetMin = getOffsetMin(req);
     const fromDate = from || new Date(Date.now() - offsetMin * 60000 - 30 * 86400000).toISOString().slice(0, 10);
     const toDate = to || getLocalToday(req);
     const tzMod = getTzModifier(req);
@@ -198,7 +195,7 @@ router.get('/history', auth, (req, res) => {
 router.get('/analytics', auth, (req, res) => {
     const { days } = req.query;
     const numDays = Math.min(Math.max(parseInt(days) || 7, 1), 365);
-    const offsetMin = parseInt(req.headers['x-timezone-offset']) || 0;
+    const offsetMin = getOffsetMin(req);
     const fromDate = new Date(Date.now() - offsetMin * 60000 - numDays * 86400000).toISOString().slice(0, 10);
     const toDate = getLocalToday(req);
     const tzMod = getTzModifier(req);
@@ -457,6 +454,13 @@ router.put('/manual-entry/:date', auth, loadUserContext, (req, res) => {
 
     try {
         db.transaction(() => {
+            // Cancel any existing pending approval requests for this date before creating a new one
+            db.prepare(`
+                UPDATE approval_requests SET status = 'rejected', reject_reason = 'Superseded by edit'
+                WHERE requester_id = ? AND type = 'manual_entry' AND status = 'pending'
+                  AND json_extract(metadata, '$.date') = ?
+            `).run(req.userId, date);
+
             // Delete existing entries for this date atomically
             db.prepare(`DELETE FROM time_entries WHERE user_id = ? AND date(timestamp, ?) = date(?)`).run(req.userId, tzMod, date);
 
@@ -507,6 +511,18 @@ router.delete('/entries/:date', auth, (req, res) => {
     }
 
     const tzMod = getTzModifier(req);
+
+    // Prevent deletion of entries that are pending approval or already approved manual entries
+    const protectedEntry = db.prepare(`
+        SELECT 1 FROM time_entries
+        WHERE user_id = ? AND date(timestamp, ?) = date(?) AND is_manual = 1
+          AND approval_status IN ('pending', 'approved')
+        LIMIT 1
+    `).get(req.userId, tzMod, date);
+    if (protectedEntry) {
+        return res.status(403).json({ error: 'Cannot delete entries that are pending approval or already approved. Contact your manager.' });
+    }
+
     const result = db.prepare(`
         DELETE FROM time_entries 
         WHERE user_id = ? AND date(timestamp, ?) = date(?)
@@ -532,7 +548,7 @@ router.get('/entries/:date', auth, (req, res) => {
 router.get('/widgets', auth, (req, res) => {
     const today = getLocalToday(req);
     const tzMod = getTzModifier(req);
-    const offsetMin = parseInt(req.headers['x-timezone-offset']) || 0;
+    const offsetMin = getOffsetMin(req);
 
     // Get last 30 days of entries grouped by date
     const entries = db.prepare(`
@@ -630,7 +646,7 @@ router.get('/widgets', auth, (req, res) => {
 
 // ============= WEEKLY CHART DATA =============
 router.get('/weekly', auth, (req, res) => {
-    const offsetMin = parseInt(req.headers['x-timezone-offset']) || 0;
+    const offsetMin = getOffsetMin(req);
     const now = new Date(Date.now() - offsetMin * 60000);
     const todayStr = getLocalToday(req);
     const dayOfWeek = now.getUTCDay(); // 0=Sun, 1=Mon...

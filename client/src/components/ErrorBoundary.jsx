@@ -14,6 +14,13 @@ export default class ErrorBoundary extends React.Component {
         console.error('ErrorBoundary caught:', error, errorInfo);
     }
 
+    componentDidUpdate(prevProps) {
+        // Reset error state when the resetKey changes (e.g., route navigation)
+        if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+            this.setState({ hasError: false, error: null });
+        }
+    }
+
     handleReload = () => {
         this.setState({ hasError: false, error: null });
         window.location.reload();

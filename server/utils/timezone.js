@@ -47,8 +47,14 @@ function getLocalDateFromTs(timestamp, req) {
     return new Date(utcMs - offsetMin * 60000).toISOString().slice(0, 10);
 }
 
+// Convenience: extract and clamp offset from request headers
+function getOffsetMin(req) {
+    return clampOffset(req.headers['x-timezone-offset']);
+}
+
 module.exports = {
     clampOffset,
+    getOffsetMin,
     getLocalToday,
     getLocalYesterday,
     getLocalDow,

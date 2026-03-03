@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { getLeaves, addLeave, addLeavesBatch, deleteLeave, getLeaveSummary, getLeaveBalances } from '../api';
+import { getLeaves, addLeave, addLeavesBatch, withdrawLeave, getLeaveSummary, getLeaveBalances } from '../api';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import s from './Leaves.module.css';
@@ -20,7 +20,11 @@ function getDateRange(from, to, skipWeekends = true) {
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const dow = d.getDay();
     if (skipWeekends && (dow === 0 || dow === 6)) continue;
-    dates.push(d.toISOString().slice(0, 10));
+    // Use local date parts to avoid UTC timezone shift
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    dates.push(`${yyyy}-${mm}-${dd}`);
   }
   return dates;
 }
@@ -148,11 +152,13 @@ export default function Leaves() {
   const confirmDelete = async () => {
     if (!leaveToDelete) return;
     try {
-      await deleteLeave(leaveToDelete.id);
+      const res = await withdrawLeave(leaveToDelete.id);
+      setSuccess(res.data?.message || 'Withdrawal request submitted');
       setLeaveToDelete(null);
       fetchData();
-    } catch {
-      setError('Failed to delete leave');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to withdraw leave');
+      setLeaveToDelete(null);
     }
   };
 
@@ -372,7 +378,8 @@ export default function Leaves() {
               <div className={s['leave-list']}>
                 {leaves.map(leave => {
                   const type = getType(leave.leave_type);
-                  const statusColors = { pending: 'var(--warning)', approved: 'var(--success)', rejected: 'var(--danger)' };
+                  const statusColors = { pending: 'var(--warning)', approved: 'var(--success)', rejected: 'var(--danger)', withdraw_pending: 'var(--primary-light)' };
+                  const statusLabels = { pending: 'pending', approved: 'approved', rejected: 'rejected', withdraw_pending: 'withdrawal pending' };
                   const statusColor = statusColors[leave.status] || 'var(--text-muted)';
                   return (
                     <div key={leave.id} className={s['leave-item']}>
@@ -386,7 +393,7 @@ export default function Leaves() {
                             className={s['leave-status-badge']}
                             style={{ background: `${statusColor}22`, color: statusColor }}
                           >
-                            {leave.status || 'approved'}
+                            {statusLabels[leave.status] || leave.status || 'approved'}
                           </span>
                         </div>
                         <div className={s['leave-item-date']}>
@@ -398,9 +405,11 @@ export default function Leaves() {
                           <div className={s['leave-item-reason']}>Approved by {leave.approved_by_name}</div>
                         )}
                       </div>
-                      <button className="btn-remove-break" onClick={() => handleDeleteClick(leave)} title="Delete">
-                        ✕
-                      </button>
+                      {(leave.status === 'pending' || leave.status === 'approved') && (
+                        <button className="btn-remove-break" onClick={() => handleDeleteClick(leave)} title="Withdraw request">
+                          ✕
+                        </button>
+                      )}
                     </div>
                   );
                 })}
@@ -412,9 +421,9 @@ export default function Leaves() {
 
       <ConfirmDialog
         isOpen={!!leaveToDelete}
-        title="Delete Leave"
-        message={`Are you sure you want to delete this leave entry?`}
-        confirmText="Delete"
+        title="Withdraw Leave Request"
+        message={`Are you sure you want to withdraw this ${leaveToDelete?.status || ''} leave for ${leaveToDelete ? new Date(leaveToDelete.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : ''}? ${leaveToDelete?.status === 'approved' ? 'This will require manager approval.' : 'This will be sent to your manager for approval.'}`}
+        confirmText="Withdraw"
         onConfirm={confirmDelete}
         onCancel={() => setLeaveToDelete(null)}
       />

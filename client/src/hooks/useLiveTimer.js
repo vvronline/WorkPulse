@@ -22,6 +22,7 @@ export function useLiveTimer(status) {
     const [showConfetti, setShowConfetti] = useState(false);
 
     const intervalRef = useRef(null);
+    const confettiTimeoutRef = useRef(null);
     const notified8hr = useRef(false);
     const confettiTriggered = useRef(false);
     const floorAnchorRef = useRef({ base: 0, at: Date.now() });
@@ -52,7 +53,7 @@ export function useLiveTimer(status) {
                     if (!confettiTriggered.current) {
                         confettiTriggered.current = true;
                         setShowConfetti(true);
-                        setTimeout(() => setShowConfetti(false), 5000);
+                        confettiTimeoutRef.current = setTimeout(() => setShowConfetti(false), 5000);
                     }
                 }
             }, 1000);
@@ -63,7 +64,10 @@ export function useLiveTimer(status) {
             }, 1000);
         }
 
-        return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+        return () => {
+            if (intervalRef.current) clearInterval(intervalRef.current);
+            if (confettiTimeoutRef.current) clearTimeout(confettiTimeoutRef.current);
+        };
     }, [status?.state]);
 
     // Reset on clock-out
@@ -72,6 +76,10 @@ export function useLiveTimer(status) {
         setLiveBreakSec(0);
         notified8hr.current = false;
         confettiTriggered.current = false;
+        if (confettiTimeoutRef.current) {
+            clearTimeout(confettiTimeoutRef.current);
+            confettiTimeoutRef.current = null;
+        }
     };
 
     return { liveFloorSec, liveBreakSec, showConfetti, reset };

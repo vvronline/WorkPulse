@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
 const db = require('../db');
+const { validatePassword, validateUsername } = require('../utils/password');
 
 const router = express.Router();
 
@@ -76,11 +77,14 @@ router.post('/register', async (req, res) => {
         return res.status(400).json({ error: 'Invalid email address' });
     }
 
-    if (password.length < 8) {
-        return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    const pwError = validatePassword(password);
+    if (pwError) {
+        return res.status(400).json({ error: pwError });
     }
-    if (password.length > 72) {
-        return res.status(400).json({ error: 'Password must be 72 characters or less' });
+
+    const usernameError = validateUsername(username);
+    if (usernameError) {
+        return res.status(400).json({ error: usernameError });
     }
 
     const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
@@ -93,22 +97,32 @@ router.post('/register', async (req, res) => {
         return res.status(400).json({ error: 'Email already registered' });
     }
 
-    if (username.length < 3 || username.length > 50) {
-        return res.status(400).json({ error: 'Username must be 3-50 characters' });
-    }
-    if (full_name.length > 100) {
-        return res.status(400).json({ error: 'Full name must be 100 characters or less' });
-    }
-
     const hash = await bcrypt.hash(password, 10);
     // Determine org/role from invite code if applicable
     const assignedOrgId = inviteRow?.org_id || null;
     const assignedRole = inviteRow?.role || 'employee';
-    const result = db.prepare('INSERT INTO users (username, password, full_name, email, org_id, role) VALUES (?, ?, ?, ?, ?, ?)').run(username, hash, full_name, email, assignedOrgId, assignedRole);
 
-    // Bump invite code usage
-    if (inviteRow) {
-        db.prepare('UPDATE invite_codes SET used_count = used_count + 1 WHERE id = ?').run(inviteRow.id);
+    // Wrap user creation + invite bump in a transaction to prevent race conditions
+    const registerTx = db.transaction(() => {
+        // Re-validate invite code inside the transaction to prevent concurrent over-use
+        if (inviteRow) {
+            const fresh = db.prepare('SELECT used_count, max_uses FROM invite_codes WHERE id = ? AND is_active = 1').get(inviteRow.id);
+            if (!fresh || (fresh.max_uses > 0 && fresh.used_count >= fresh.max_uses)) {
+                throw new Error('INVITE_EXHAUSTED');
+            }
+            db.prepare('UPDATE invite_codes SET used_count = used_count + 1 WHERE id = ?').run(inviteRow.id);
+        }
+        return db.prepare('INSERT INTO users (username, password, full_name, email, org_id, role) VALUES (?, ?, ?, ?, ?, ?)').run(username, hash, full_name, email, assignedOrgId, assignedRole);
+    });
+
+    let result;
+    try {
+        result = registerTx();
+    } catch (err) {
+        if (err.message === 'INVITE_EXHAUSTED') {
+            return res.status(400).json({ error: 'This invite code has reached its usage limit.' });
+        }
+        throw err;
     }
 
     const token = jwt.sign({ id: result.lastInsertRowid, username, tv: 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
@@ -155,11 +169,13 @@ router.post('/forgot-password', (req, res) => {
     // Invalidate any existing tokens for this user
     db.prepare('UPDATE password_reset_tokens SET used = 1 WHERE user_id = ? AND used = 0').run(user.id);
 
-    // Generate a secure token (48 bytes → 64 chars hex)
+    // Generate a secure token (48 bytes → 96 chars hex)
     const resetToken = crypto.randomBytes(48).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour
 
-    db.prepare('INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (?, ?, ?)').run(user.id, resetToken, expiresAt);
+    // Store the hash — if the DB leaks, tokens are useless without the plaintext
+    db.prepare('INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (?, ?, ?)').run(user.id, tokenHash, expiresAt);
 
     const clientOrigin = process.env.CORS_ORIGIN || 'http://localhost:3000';
     const resetLink = `${clientOrigin}/reset-password/${resetToken}`;
@@ -200,13 +216,19 @@ router.post('/reset-password', async (req, res) => {
     if (password.length > 72) {
         return res.status(400).json({ error: 'Password must be 72 characters or less' });
     }
+    const pwError = validatePassword(password);
+    if (pwError) {
+        return res.status(400).json({ error: pwError });
+    }
 
+    // Hash the incoming token to compare against the stored hash
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const row = db.prepare(`
         SELECT prt.id, prt.user_id, prt.expires_at, prt.used, u.username
         FROM password_reset_tokens prt
         JOIN users u ON u.id = prt.user_id
         WHERE prt.token = ?
-    `).get(token);
+    `).get(tokenHash);
 
     if (!row) {
         return res.status(400).json({ error: 'Invalid or expired reset link' });

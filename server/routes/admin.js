@@ -8,6 +8,8 @@ const db = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole, requireSameOrg, canManageUser, VALID_ROLES } = require('../middleware/rbac');
 const { logAction, queryLogs } = require('../utils/audit');
+const { validatePassword, validateUsername } = require('../utils/password');
+const { getOffsetMin, getTzModifier } = require('../utils/timezone');
 
 const router = express.Router();
 
@@ -168,7 +170,9 @@ router.get('/users', (req, res) => {
 
     if (search) {
         where.push("(u.full_name LIKE ? OR u.username LIKE ? OR u.email LIKE ?)");
-        const s = `%${search}%`;
+        // Escape SQL LIKE wildcards to prevent injection of % and _
+        const escaped = search.replace(/[%_]/g, c => `\\${c}`);
+        const s = `%${escaped}%`;
         params.push(s, s, s);
     }
     if (role) { where.push('u.role = ?'); params.push(role); }
@@ -340,6 +344,10 @@ router.post('/users/:id/reset-password', async (req, res) => {
     if (new_password.length > 72) {
         return res.status(400).json({ error: 'Password must be 72 characters or less' });
     }
+    const pwError1 = validatePassword(new_password);
+    if (pwError1) {
+        return res.status(400).json({ error: pwError1 });
+    }
 
     const target = db.prepare('SELECT id, role, org_id, full_name FROM users WHERE id = ?').get(Number(id));
     if (!target) return res.status(404).json({ error: 'User not found' });
@@ -349,10 +357,10 @@ router.post('/users/:id/reset-password', async (req, res) => {
     }
 
     const hash = await bcrypt.hash(new_password, 10);
-    db.prepare('UPDATE users SET password = ?, token_version = COALESCE(token_version, 0) + 1 WHERE id = ?').run(hash, Number(id));
+    db.prepare('UPDATE users SET password = ?, token_version = COALESCE(token_version, 0) + 1, must_change_password = 1 WHERE id = ?').run(hash, Number(id));
 
     logAction(req, 'admin_reset_password', 'user', Number(id), { name: target.full_name });
-    res.json({ message: `Password reset for ${target.full_name}` });
+    res.json({ message: `Password reset for ${target.full_name}. User will be required to change password on next login.` });
 });
 
 // Permanently delete user (super_admin only)
@@ -402,8 +410,10 @@ router.post('/users', async (req, res) => {
     if (!username || !password || !full_name || !email) {
         return res.status(400).json({ error: 'Username, password, full name and email are required' });
     }
-    if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
-    if (password.length > 72) return res.status(400).json({ error: 'Password must be 72 characters or less' });
+    const pwError2 = validatePassword(password);
+    if (pwError2) return res.status(400).json({ error: pwError2 });
+    const usernameError = validateUsername(username);
+    if (usernameError) return res.status(400).json({ error: usernameError });
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email' });
 
     const existing = db.prepare('SELECT id FROM users WHERE username = ? OR email = ?').get(username, email);
@@ -473,11 +483,10 @@ router.get('/stats', requireSameOrg, (req, res) => {
     `).get(orgId, orgId, orgId, orgId, orgId);
 
     // Today's attendance (use client timezone)
-    const offsetMin = parseInt(req.headers['x-timezone-offset']) || 0;
+    const offsetMin = getOffsetMin(req);
     const localNow = new Date(Date.now() - offsetMin * 60000);
-    const today = localNow.toISOString().slice(0, 10);
-    const shift = -offsetMin;
-    const tzMod = `${shift >= 0 ? '+' : ''}${shift} minutes`;
+    const today = `${localNow.getUTCFullYear()}-${String(localNow.getUTCMonth() + 1).padStart(2, '0')}-${String(localNow.getUTCDate()).padStart(2, '0')}`;
+    const tzMod = getTzModifier(req);
     const clockedInToday = db.prepare(`
         SELECT COUNT(DISTINCT user_id) as c
         FROM time_entries
@@ -515,13 +524,24 @@ router.put('/registration-settings', (req, res) => {
 // List invite codes
 router.get('/invite-codes', (req, res) => {
     const orgId = req.userOrgId;
-    const codes = db.prepare(`
-        SELECT ic.*, u.full_name as created_by_name
-        FROM invite_codes ic
-        LEFT JOIN users u ON u.id = ic.created_by
-        WHERE ic.org_id = ? OR ic.org_id IS NULL
-        ORDER BY ic.id DESC
-    `).all(orgId || -1);
+    let codes;
+    if (orgId) {
+        codes = db.prepare(`
+            SELECT ic.*, u.full_name as created_by_name
+            FROM invite_codes ic
+            LEFT JOIN users u ON u.id = ic.created_by
+            WHERE ic.org_id = ? OR ic.org_id IS NULL
+            ORDER BY ic.id DESC
+        `).all(orgId);
+    } else {
+        // Super admin without an org — show all codes
+        codes = db.prepare(`
+            SELECT ic.*, u.full_name as created_by_name
+            FROM invite_codes ic
+            LEFT JOIN users u ON u.id = ic.created_by
+            ORDER BY ic.id DESC
+        `).all();
+    }
     res.json(codes);
 });
 

@@ -1,5 +1,5 @@
 import React, { Suspense, lazy } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext';
 import { ThemeProvider } from './ThemeContext';
 import { WorkStateProvider } from './WorkStateContext';
@@ -46,11 +46,12 @@ function PublicRoute({ children }) {
 
 function AppRoutes() {
   const { isAuthenticated } = useAuth();
+  const location = useLocation();
 
   return (
     <div className="app">
+      <ErrorBoundary resetKey={location.pathname}>
       {isAuthenticated && <Navbar />}
-      <ErrorBoundary>
       <Suspense fallback={<div style={{ maxWidth: '1400px', margin: '2rem auto', padding: '0 2.5rem' }}><div className="status-card"><div className="loading-spinner"><div className="spinner"></div></div></div></div>}>
         <Routes>
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />

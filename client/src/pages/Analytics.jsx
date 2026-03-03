@@ -36,8 +36,8 @@ export default function Analytics() {
   const [error, setError] = useAutoDismiss('');
 
   useEffect(() => {
-    const controller = new AbortController();
-    const fetch = async () => {
+    let cancelled = false;
+    const fetchData = async () => {
       setLoading(true);
       try {
         const [analyticsRes, historyRes] = await Promise.all([
@@ -47,20 +47,20 @@ export default function Analytics() {
             getLocalToday()
           )
         ]);
-        if (controller.signal.aborted) return;
+        if (cancelled) return;
         setData(analyticsRes.data);
         setHistory(historyRes.data);
         setError('');
       } catch (err) {
-        if (controller.signal.aborted) return;
+        if (cancelled) return;
         console.error('Failed to load analytics', err);
         setError('Failed to load analytics data. Please try again.');
       } finally {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
-    fetch();
-    return () => controller.abort();
+    fetchData();
+    return () => { cancelled = true; };
   }, [days]);
 
   const labels = useMemo(() => data.map(d => {

@@ -7,6 +7,9 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../db');
 const auth = require('../middleware/auth');
+const { loadUserContext } = require('../middleware/rbac');
+const { logAction } = require('../utils/audit');
+const { validatePassword } = require('../utils/password');
 
 const router = express.Router();
 
@@ -48,6 +51,16 @@ const upload = multer({
     }
 });
 
+const uploadsRoot = path.resolve(__dirname, '..', 'uploads');
+
+function safeAvatarPath(avatarRelative) {
+    const resolved = path.resolve(__dirname, '..', avatarRelative);
+    if (!resolved.startsWith(uploadsRoot)) {
+        throw new Error('Invalid avatar path');
+    }
+    return resolved;
+}
+
 // Upload avatar
 router.post('/avatar', auth, upload.single('avatar'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
@@ -55,8 +68,10 @@ router.post('/avatar', auth, upload.single('avatar'), async (req, res) => {
     // Delete old avatar file if exists
     const user = db.prepare('SELECT avatar FROM users WHERE id = ?').get(req.userId);
     if (user?.avatar) {
-        const oldPath = path.join(__dirname, '..', user.avatar);
-        try { await fsPromises.unlink(oldPath); } catch { }
+        try {
+            const oldPath = safeAvatarPath(user.avatar);
+            await fsPromises.unlink(oldPath);
+        } catch { }
     }
 
     const avatarPath = `/uploads/avatars/${req.file.filename}`;
@@ -69,8 +84,10 @@ router.post('/avatar', auth, upload.single('avatar'), async (req, res) => {
 router.delete('/avatar', auth, async (req, res) => {
     const user = db.prepare('SELECT avatar FROM users WHERE id = ?').get(req.userId);
     if (user?.avatar) {
-        const oldPath = path.join(__dirname, '..', user.avatar);
-        try { await fsPromises.unlink(oldPath); } catch { }
+        try {
+            const oldPath = safeAvatarPath(user.avatar);
+            await fsPromises.unlink(oldPath);
+        } catch { }
     }
     db.prepare('UPDATE users SET avatar = NULL WHERE id = ?').run(req.userId);
     res.json({ avatar: null });
@@ -79,7 +96,11 @@ router.delete('/avatar', auth, async (req, res) => {
 // Get profile
 router.get('/', auth, (req, res) => {
     const user = db.prepare('SELECT id, username, full_name, email, avatar, role, org_id, team_id, department_id, must_change_password FROM users WHERE id = ?').get(req.userId);
-    if (user) user.must_change_password = !!user.must_change_password;
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    user.must_change_password = !!user.must_change_password;
+    // Check if user has direct reports (for manager view)
+    const hasReports = db.prepare('SELECT 1 FROM users WHERE manager_id = ? AND is_active = 1 LIMIT 1').get(req.userId);
+    user.has_reports = !!hasReports;
     res.json(user);
 });
 
@@ -119,7 +140,7 @@ router.put('/email', auth, (req, res) => {
 });
 
 // Change password
-router.put('/password', auth, async (req, res) => {
+router.put('/password', auth, loadUserContext, async (req, res) => {
     const { current_password, new_password } = req.body;
     if (!current_password || !new_password) {
         return res.status(400).json({ error: 'Both current and new password are required' });
@@ -129,6 +150,10 @@ router.put('/password', auth, async (req, res) => {
     }
     if (new_password.length > 72) {
         return res.status(400).json({ error: 'New password must be 72 characters or less' });
+    }
+    const pwError = validatePassword(new_password);
+    if (pwError) {
+        return res.status(400).json({ error: pwError });
     }
     const user = db.prepare('SELECT password FROM users WHERE id = ?').get(req.userId);
     if (!(await bcrypt.compare(current_password, user.password))) {
@@ -140,6 +165,7 @@ router.put('/password', auth, async (req, res) => {
     const updated = db.prepare('SELECT token_version FROM users WHERE id = ?').get(req.userId);
     const token = jwt.sign({ id: req.userId, username: req.username, tv: updated.token_version || 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
     res.cookie('token', token, cookieOptions());
+    logAction(req, 'change_password', 'user', req.userId, {});
     res.json({ message: 'Password updated successfully' });
 });
 
@@ -155,8 +181,10 @@ router.delete('/', auth, async (req, res) => {
 
     // Delete avatar file if exists
     if (user.avatar) {
-        const avatarPath = path.join(__dirname, '..', user.avatar);
-        try { await fsPromises.unlink(avatarPath); } catch { }
+        try {
+            const avatarPath = safeAvatarPath(user.avatar);
+            await fsPromises.unlink(avatarPath);
+        } catch { }
     }
 
     // Delete all user data in a transaction

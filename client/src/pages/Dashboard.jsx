@@ -114,20 +114,20 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    const controller = new AbortController();
+    let cancelled = false;
     fetchStatus();
     requestNotificationPermission();
     clockRef.current = setInterval(() => setCurrentTime(new Date()), 60000);
 
     const handleVisibility = () => {
-      if (!document.hidden) {
-        getTaskSummary().then(r => setTaskSummary(r.data)).catch(e => console.error(e));
+      if (!document.hidden && !cancelled) {
+        fetchStatus();
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
-      controller.abort();
+      cancelled = true;
       if (clockRef.current) clearInterval(clockRef.current);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
@@ -474,7 +474,7 @@ export default function Dashboard() {
         isOpen={showClockOutConfirm}
         title="Clock Out"
         message={`You've worked ${formatTime(floorMinutes)} today${!completedMandatory ? ` (${formatTime(mandatoryRemaining)} short of 8hr minimum)` : ''}. Are you sure you want to clock out?`}
-        confirmLabel={actionLoading === 'clockOut' ? 'Clocking out...' : 'Clock Out'}
+        confirmText={actionLoading === 'clockOut' ? 'Clocking out...' : 'Clock Out'}
         onConfirm={() => { setShowClockOutConfirm(false); handleAction(clockOut, 'clockOut'); }}
         onCancel={() => setShowClockOutConfirm(false)}
       />
