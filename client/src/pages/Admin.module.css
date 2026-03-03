@@ -347,6 +347,15 @@
     display: flex;
     gap: 0.4rem;
     flex-wrap: wrap;
+    align-items: center;
+}
+
+.actions .btnSmall {
+    white-space: nowrap;
+    min-width: max-content;
+    justify-content: center;
+    padding: 0.35rem 0.6rem;
+    font-size: 0.78rem;
 }
 
 /* Modal */

@@ -355,6 +355,46 @@ router.post('/users/:id/reset-password', async (req, res) => {
     res.json({ message: `Password reset for ${target.full_name}` });
 });
 
+// Permanently delete user (super_admin only)
+router.delete('/users/:id', requireRole('super_admin'), (req, res) => {
+    const { id } = req.params;
+    const userId = Number(id);
+    const target = db.prepare('SELECT id, role, full_name, is_active FROM users WHERE id = ?').get(userId);
+    if (!target) return res.status(404).json({ error: 'User not found' });
+    if (userId === req.userId) return res.status(400).json({ error: 'Cannot delete yourself' });
+    if (target.role === 'super_admin') return res.status(400).json({ error: 'Cannot delete another super admin' });
+
+    const deleteTxn = db.transaction(() => {
+        // Remove related data
+        db.prepare('DELETE FROM time_entries WHERE user_id = ?').run(userId);
+        db.prepare('DELETE FROM leaves WHERE user_id = ?').run(userId);
+        db.prepare('DELETE FROM tasks WHERE user_id = ?').run(userId);
+        db.prepare('DELETE FROM leave_balances WHERE user_id = ?').run(userId);
+        db.prepare('DELETE FROM password_reset_tokens WHERE user_id = ?').run(userId);
+        db.prepare('DELETE FROM approval_requests WHERE requester_id = ?').run(userId);
+        // Nullify references in other tables
+        db.prepare('UPDATE approval_requests SET approver_id = NULL WHERE approver_id = ?').run(userId);
+        db.prepare('UPDATE departments SET head_id = NULL WHERE head_id = ?').run(userId);
+        db.prepare('UPDATE teams SET lead_id = NULL WHERE lead_id = ?').run(userId);
+        db.prepare('UPDATE users SET manager_id = NULL WHERE manager_id = ?').run(userId);
+        db.prepare('UPDATE leaves SET approved_by = NULL WHERE approved_by = ?').run(userId);
+        db.prepare('UPDATE time_entries SET approved_by = NULL WHERE approved_by = ?').run(userId);
+        db.prepare('UPDATE audit_logs SET actor_id = NULL WHERE actor_id = ?').run(userId);
+        // Delete the user
+        db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+    });
+
+    try {
+        deleteTxn();
+    } catch (e) {
+        console.error('Failed to delete user:', e.message);
+        return res.status(500).json({ error: 'Failed to delete user. Some data may still reference this account.' });
+    }
+
+    logAction(req, 'admin_delete', 'user', userId, { name: target.full_name });
+    res.json({ message: `User "${target.full_name}" has been permanently deleted` });
+});
+
 // Create user (admin-created account)
 router.post('/users', async (req, res) => {
     const { username, password, full_name, email, role, org_id, department_id, team_id, manager_id } = req.body;

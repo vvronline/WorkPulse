@@ -3,7 +3,7 @@ import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import { useAuth } from '../AuthContext';
 import {
     getAdminUsers, createAdminUser, updateUserRole, updateUserAssignment,
-    toggleUserActive, adminResetPassword, getAuditLogs, getAdminStats,
+    toggleUserActive, deleteAdminUser, adminResetPassword, getAuditLogs, getAdminStats,
     getOrgDepartments, getOrgTeams, getAdminOrganizations, getAdminOrganization,
     createAdminOrganization, updateAdminOrganization, deleteAdminOrganization,
     getCurrentOrg, updateOrgSettings, createDepartment, updateDepartment, deleteDepartment,
@@ -103,6 +103,7 @@ function UserManagement({ userRole }) {
     const [organizations, setOrganizations] = useState([]);
     const [editingUser, setEditingUser] = useState(null);
     const [resetPwUser, setResetPwUser] = useState(null);
+    const [deletingUser, setDeletingUser] = useState(null);
     const [msg, setMsg] = useAutoDismiss('');
 
     // Debounce search input by 300ms
@@ -217,6 +218,11 @@ function UserManagement({ userRole }) {
                                     <button className={`${s.btnSmall} ${s.btnWarning}`} onClick={() => setResetPwUser(u)} title="Reset user password">
                                         🔑 Reset
                                     </button>
+                                    {userRole === 'super_admin' && u.role !== 'super_admin' && (
+                                        <button className={`${s.btnSmall} ${s.btnDanger}`} onClick={() => setDeletingUser(u)} title="Permanently delete user">
+                                            🗑️ Delete
+                                        </button>
+                                    )}
                                 </div>
                             </td>
                         </tr>
@@ -232,6 +238,26 @@ function UserManagement({ userRole }) {
             )}
             {resetPwUser && (
                 <ResetPasswordModal user={resetPwUser} onClose={() => setResetPwUser(null)} onDone={(msg) => { setMsg(msg); setResetPwUser(null); }} />
+            )}
+            {deletingUser && (
+                <div className={s.modalOverlay} onClick={() => setDeletingUser(null)}>
+                    <div className={s.modal} onClick={e => e.stopPropagation()}>
+                        <h2>Delete User</h2>
+                        <p>Are you sure you want to permanently delete <strong>{deletingUser.full_name}</strong> (@{deletingUser.username})?</p>
+                        <p style={{ color: 'var(--danger)', fontSize: '0.85rem', marginTop: '0.5rem' }}>⚠️ This will remove all their time entries, leaves, tasks, and other data. This action cannot be undone.</p>
+                        <div className={s.formActions}>
+                            <button className={s.btnCancel} onClick={() => setDeletingUser(null)}>Cancel</button>
+                            <button className={`${s.btnPrimary} ${s.btnDanger}`} onClick={async () => {
+                                try {
+                                    const r = await deleteAdminUser(deletingUser.id);
+                                    setMsg(r.data.message);
+                                    setDeletingUser(null);
+                                    fetchUsers();
+                                } catch (e) { setMsg(e.response?.data?.error || 'Failed to delete user'); }
+                            }}>Delete Permanently</button>
+                        </div>
+                    </div>
+                </div>
             )}
         </>
     );

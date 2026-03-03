@@ -139,6 +139,7 @@ export const createAdminUser = (data) => API.post('/admin/users', data);
 export const updateUserRole = (id, role) => API.put(`/admin/users/${id}/role`, { role });
 export const updateUserAssignment = (id, data) => API.put(`/admin/users/${id}/assignment`, data);
 export const toggleUserActive = (id) => API.put(`/admin/users/${id}/deactivate`);
+export const deleteAdminUser = (id) => API.delete(`/admin/users/${id}`);
 export const adminResetPassword = (id, password) => API.post(`/admin/users/${id}/reset-password`, { new_password: password });
 export const getAuditLogs = (params) => API.get('/admin/audit-logs', { params });
 export const getAdminStats = () => API.get('/admin/stats');
