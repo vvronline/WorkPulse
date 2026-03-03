@@ -48,7 +48,7 @@ export default class ErrorBoundary extends React.Component {
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
                         An unexpected error occurred. You can try again or reload the page.
                     </p>
-                    {process.env.NODE_ENV !== 'production' && this.state.error && (
+                    {!import.meta.env.PROD && this.state.error && (
                         <pre style={{
                             background: 'var(--input-bg)',
                             padding: '0.75rem',

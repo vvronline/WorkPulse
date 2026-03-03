@@ -47,11 +47,23 @@ app.use(helmet({
 }));
 app.use(cors({
     origin: function (origin, callback) {
-        const allowed = process.env.CORS_ORIGIN
-            ? process.env.CORS_ORIGIN.split(',').map(s => s.trim())
-            : ['http://localhost:3000', 'http://localhost:3001'];
         // Allow requests with no origin (mobile apps, curl, etc.)
-        if (!origin || allowed.includes(origin)) return callback(null, true);
+        if (!origin) return callback(null, true);
+
+        // Check explicit allowlist from CORS_ORIGIN env var
+        if (process.env.CORS_ORIGIN) {
+            const allowed = process.env.CORS_ORIGIN.split(',').map(s => s.trim());
+            if (allowed.includes(origin)) return callback(null, true);
+        }
+
+        // In production the SPA is served from the same Express server,
+        // and CSRF is already guarded by the X-Requested-With header.
+        if (process.env.NODE_ENV === 'production') return callback(null, true);
+
+        // Development defaults
+        const devOrigins = ['http://localhost:3000', 'http://localhost:3001'];
+        if (devOrigins.includes(origin)) return callback(null, true);
+
         callback(new Error('Not allowed by CORS'));
     },
     credentials: true
