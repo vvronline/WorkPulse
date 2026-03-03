@@ -20,6 +20,9 @@ RUN npm ci --omit=dev
 RUN npm rebuild better-sqlite3 --build-from-source
 
 COPY server/ ./
+# Create data directory for SQLite
+RUN mkdir -p /app/server/data
+
 # Copy built React files from the builder stage
 COPY --from=frontend-builder /app/client/dist /app/client/dist
 

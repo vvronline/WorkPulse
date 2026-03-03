@@ -1,5 +1,14 @@
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '.env') });
+const fs = require('fs');
+
+// Load environment variables (.env file is optional in Docker)
+const envPath = path.join(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+    require('dotenv').config({ path: envPath });
+} else {
+    // Also try root directory (Docker compose style)
+    require('dotenv').config();
+}
 
 // Ensure JWT_SECRET is set — tokens are insecure without it
 if (!process.env.JWT_SECRET) {
