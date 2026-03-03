@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './AuthContext';
 import { ThemeProvider } from './ThemeContext';
 import { WorkStateProvider } from './WorkStateContext';
 import Login from './pages/Login';
+import Register from './pages/Register';
 import ChangePassword from './pages/ChangePassword';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
@@ -55,6 +56,7 @@ function AppRoutes() {
       <Suspense fallback={<div style={{ maxWidth: '1400px', margin: '2rem auto', padding: '0 2.5rem' }}><div className="status-card"><div className="loading-spinner"><div className="spinner"></div></div></div></div>}>
         <Routes>
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
+          <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
           <Route path="/change-password" element={isAuthenticated ? <ChangePassword /> : <Navigate to="/login" />} />
           <Route path="/forgot-password" element={<PublicRoute><ForgotPassword /></PublicRoute>} />
           <Route path="/reset-password/:token" element={<PublicRoute><ResetPassword /></PublicRoute>} />
