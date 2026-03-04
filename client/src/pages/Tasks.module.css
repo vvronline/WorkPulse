@@ -2236,7 +2236,26 @@
   }
   .detail-modal-header {
     padding: 0.8rem 0.85rem;
-    gap: 0.5rem;
+    gap: 0.35rem;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: nowrap;
+  }
+  .detail-badges {
+    order: 0;
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .detail-badges::-webkit-scrollbar {
+    display: none;
+  }
+  .detail-header-actions {
+    order: 0;
+    flex: 0 0 auto;
+    justify-content: flex-end;
   }
   .detail-header-actions .btn,
   .detail-header-actions .btn-secondary,
