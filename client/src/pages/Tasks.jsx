@@ -1463,20 +1463,20 @@ export default function Tasks() {
             </span>
           </div>
         </div>
-        <div className={s['task-title']}>{task.title}</div>
+        <div className={s['task-title-row']}>
+          <div className={s['task-title']}>{task.title}</div>
+          {task.labels && task.labels.length > 0 && (
+            <div className={s['task-labels']}>
+              {task.labels.map(l => (
+                <span key={l.id} className={s['label-pill']} style={{ '--label-color': l.color }}>
+                  {l.name}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
         {task.description && (
           <HighlightedHtml html={task.description} className={s['task-desc']} />
-        )}
-
-        {/* Labels */}
-        {task.labels && task.labels.length > 0 && (
-          <div className={s['task-labels']}>
-            {task.labels.map(l => (
-              <span key={l.id} className={s['label-pill']} style={{ '--label-color': l.color }}>
-                {l.name}
-              </span>
-            ))}
-          </div>
         )}
 
         <div className={s['task-card-footer']}>
@@ -1609,6 +1609,16 @@ export default function Tasks() {
                 <div className={s['detail-title-row']}>
                   <span className={s['backlog-ticket-id']}>#{detailTask.id}</span>
                   <h2 className={s['detail-title']}>{detailTask.title}</h2>
+                  {/* Labels */}
+                  {detailTask.labels && detailTask.labels.length > 0 && (
+                    <div className={s['detail-labels']}>
+                      {detailTask.labels.map(l => (
+                        <span key={l.id} className={s['label-pill']} style={{ '--label-color': l.color }}>
+                          {l.name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {detailTask.description && (
@@ -1668,17 +1678,6 @@ export default function Tasks() {
                     </div>
                   )}
                 </div>
-
-                {/* Labels */}
-                {detailTask.labels && detailTask.labels.length > 0 && (
-                  <div className={s['detail-labels']}>
-                    {detailTask.labels.map(l => (
-                      <span key={l.id} className={s['label-pill']} style={{ '--label-color': l.color }}>
-                        {l.name}
-                      </span>
-                    ))}
-                  </div>
-                )}
 
                 {/* Status change buttons */}
                 <div className={s['detail-status-bar']}>

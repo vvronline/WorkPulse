@@ -78,14 +78,14 @@ function enrichTasks(tasks) {
     }));
 }
 
-// Helper: check if user can access task (creator, assignee, or same org)
+// Helper: check if user can access task (creator, assignee, or same team)
 function canAccessTask(task, userId) {
     if (!task) return false;
     if (task.user_id === userId || task.assigned_to === userId) return true;
-    // Allow access if both users belong to the same organization
-    const user = db.prepare('SELECT org_id FROM users WHERE id = ?').get(userId);
-    const owner = db.prepare('SELECT org_id FROM users WHERE id = ?').get(task.user_id);
-    return user?.org_id && owner?.org_id && user.org_id === owner.org_id;
+    // Allow access if both users belong to the same team
+    const user = db.prepare('SELECT team_id FROM users WHERE id = ?').get(userId);
+    const owner = db.prepare('SELECT team_id FROM users WHERE id = ?').get(task.user_id);
+    return user?.team_id && owner?.team_id && user.team_id === owner.team_id;
 }
 
 // Helper: sync labels for a task
@@ -99,7 +99,7 @@ function syncLabels(taskId, labelIds) {
 }
 
 // ─── Get tasks for a specific date ──────────────────────────────────────
-router.get('/', auth, (req, res) => {
+router.get('/', auth, loadUserContext, (req, res) => {
     try {
         const { date, assignee, label, priority, status, search } = req.query;
         const targetDate = date || getLocalToday(req);
@@ -108,9 +108,14 @@ router.get('/', auth, (req, res) => {
         const conditions = ['t.date = ?'];
         const params = [targetDate];
 
-        // Show tasks created by OR assigned to the current user
-        conditions.push('(t.user_id = ? OR t.assigned_to = ?)');
-        params.push(req.userId, req.userId);
+        // Show tasks visible to user (created by, assigned to, or same team)
+        if (req.userTeamId) {
+            conditions.push('(t.user_id = ? OR t.assigned_to = ? OR t.user_id IN (SELECT id FROM users WHERE team_id = ?))');
+            params.push(req.userId, req.userId, req.userTeamId);
+        } else {
+            conditions.push('(t.user_id = ? OR t.assigned_to = ?)');
+            params.push(req.userId, req.userId);
+        }
 
         if (assignee) {
             if (assignee === 'me') {
@@ -586,10 +591,10 @@ router.get('/backlog', auth, loadUserContext, (req, res) => {
         const conditions = ['t.date IS NULL'];
         const params = [];
 
-        // Show backlog tasks visible to user (created by or assigned to, or same org)
-        if (req.userOrgId) {
-            conditions.push('(t.user_id = ? OR t.assigned_to = ? OR t.user_id IN (SELECT id FROM users WHERE org_id = ?))');
-            params.push(req.userId, req.userId, req.userOrgId);
+        // Show backlog tasks visible to user (created by or assigned to, or same team)
+        if (req.userTeamId) {
+            conditions.push('(t.user_id = ? OR t.assigned_to = ? OR t.user_id IN (SELECT id FROM users WHERE team_id = ?))');
+            params.push(req.userId, req.userId, req.userTeamId);
         } else {
             conditions.push('(t.user_id = ? OR t.assigned_to = ?)');
             params.push(req.userId, req.userId);
