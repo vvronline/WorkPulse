@@ -5,7 +5,7 @@ import {
     createOrg, getCurrentOrg, updateOrgSettings, getOrgDepartments,
     createDepartment, updateDepartment, deleteDepartment,
     getOrgTeams, createTeam, updateTeam, deleteTeam,
-    getOrgMembers, getOrgChart
+    getOrgMembers, getOrgChart, getTeamSprintConfig, updateTeamSprintConfig
 } from '../api';
 import s from './Admin.module.css';
 
@@ -260,7 +260,7 @@ function Teams({ orgId, userRole }) {
     const [showForm, setShowForm] = useState(false);
     const [form, setForm] = useState({ name: '', department_id: '', lead_id: '' });
     const [editId, setEditId] = useState(null);
-    const [editForm, setEditForm] = useState({ name: '', department_id: '', lead_id: '' });
+    const [editForm, setEditForm] = useState({ name: '', department_id: '', lead_id: '', sprint_duration_weeks: 2, sprint_start_date: '' });
     const [msg, setMsg] = useAutoDismiss('');
     const canManage = ['team_lead', 'manager', 'hr_admin', 'super_admin'].includes(userRole);
 
@@ -290,6 +290,13 @@ function Teams({ orgId, userRole }) {
     const handleUpdate = async (id) => {
         try {
             await updateTeam(id, { name: editForm.name, department_id: editForm.department_id || null, lead_id: editForm.lead_id || null });
+            // Update sprint config if changed
+            if (editForm.sprint_duration_weeks || editForm.sprint_start_date) {
+                await updateTeamSprintConfig(id, {
+                    sprint_duration_weeks: editForm.sprint_duration_weeks || 2,
+                    sprint_start_date: editForm.sprint_start_date || null
+                });
+            }
             setEditId(null);
             fetchTeams();
         } catch (e) { setMsg(e.response?.data?.error || 'Failed'); }
@@ -328,24 +335,29 @@ function Teams({ orgId, userRole }) {
                 </div>
             )}
             <table className={s.table}>
-                <thead><tr><th>Name</th><th>Department</th><th>Lead</th><th>Members</th>{canManage && <th>Actions</th>}</tr></thead>
+                <thead><tr><th>Name</th><th>Department</th><th>Lead</th><th>Members</th><th>Sprint Config</th>{canManage && <th>Actions</th>}</tr></thead>
                 <tbody>
                     {teams.map(t => (
-                        <tr key={t.id}>
-                            <td>{editId === t.id ? <input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} style={editInputStyle} /> : t.name}</td>
-                            <td>{editId === t.id ? (
-                                <select value={editForm.department_id} onChange={e => setEditForm({ ...editForm, department_id: e.target.value })} style={editInputStyle}>
-                                    <option value="">No department</option>
-                                    {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                                </select>
-                            ) : (t.department_name || '—')}</td>
-                            <td>{editId === t.id ? (
-                                <select value={editForm.lead_id} onChange={e => setEditForm({ ...editForm, lead_id: e.target.value })} style={editInputStyle}>
-                                    <option value="">No Lead</option>
-                                    {members.map(m => <option key={m.id} value={m.id}>{m.full_name || m.username}</option>)}
-                                </select>
-                            ) : (t.lead_name || '—')}</td>
-                            <td>{t.member_count}</td>
+                        <React.Fragment key={t.id}>
+                            <tr>
+                                <td>{editId === t.id ? <input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} style={editInputStyle} /> : t.name}</td>
+                                <td>{editId === t.id ? (
+                                    <select value={editForm.department_id} onChange={e => setEditForm({ ...editForm, department_id: e.target.value })} style={editInputStyle}>
+                                        <option value="">No department</option>
+                                        {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                                    </select>
+                                ) : (t.department_name || '—')}</td>
+                                <td>{editId === t.id ? (
+                                    <select value={editForm.lead_id} onChange={e => setEditForm({ ...editForm, lead_id: e.target.value })} style={editInputStyle}>
+                                        <option value="">No Lead</option>
+                                        {members.map(m => <option key={m.id} value={m.id}>{m.full_name || m.username}</option>)}
+                                    </select>
+                                ) : (t.lead_name || '—')}</td>
+                                <td>{t.member_count}</td>
+                                <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                    {t.sprint_duration_weeks ? `${t.sprint_duration_weeks} week${t.sprint_duration_weeks > 1 ? 's' : ''}` : 'Not configured'}
+                                    {t.sprint_start_date && ` (from ${t.sprint_start_date})`}
+                                </td>
                             {canManage && (
                                 <td>
                                     <div className={s.actions}>
@@ -356,7 +368,21 @@ function Teams({ orgId, userRole }) {
                                             </>
                                         ) : (
                                             <>
-                                                <button className={s.btnSmall} style={{ background: 'var(--accent)', color: '#fff' }} onClick={() => { setEditId(t.id); setEditForm({ name: t.name, department_id: t.department_id || '', lead_id: t.lead_id || '' }); }}>Edit</button>
+                                                <button className={s.btnSmall} style={{ background: 'var(--accent)', color: '#fff' }} onClick={async () => {
+                                                    setEditId(t.id);
+                                                    setEditForm({ name: t.name, department_id: t.department_id || '', lead_id: t.lead_id || '', sprint_duration_weeks: 2, sprint_start_date: '' });
+                                                    // Load sprint config
+                                                    try {
+                                                        const sprintRes = await getTeamSprintConfig(t.id);
+                                                        setEditForm(prev => ({
+                                                            ...prev,
+                                                            sprint_duration_weeks: sprintRes.data.sprintDurationWeeks || 2,
+                                                            sprint_start_date: sprintRes.data.sprintStartDate || ''
+                                                        }));
+                                                    } catch (err) {
+                                                        console.error('Failed to load sprint config:', err);
+                                                    }
+                                                }}>Edit</button>
                                                 <button className={s.btnSmall} style={{ background: 'var(--danger)', color: '#fff' }} onClick={() => handleDelete(t.id)}>Delete</button>
                                             </>
                                         )}
@@ -364,8 +390,40 @@ function Teams({ orgId, userRole }) {
                                 </td>
                             )}
                         </tr>
+                        {editId === t.id && (
+                            <tr style={{ background: 'var(--bg-secondary)' }}>
+                                <td colSpan={canManage ? 6 : 5} style={{ padding: '1rem' }}>
+                                    <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                        <div style={{ flex: '1 1 200px' }}>
+                                            <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.85rem', fontWeight: 600 }}>🏃 Sprint Duration (weeks)</label>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                max="8"
+                                                value={editForm.sprint_duration_weeks || 2}
+                                                onChange={e => setEditForm({ ...editForm, sprint_duration_weeks: parseInt(e.target.value) || 2 })}
+                                                style={editInputStyle}
+                                                placeholder="2"
+                                            />
+                                            <small style={{ display: 'block', marginTop: '0.25rem', color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Length of each sprint (1-8 weeks)</small>
+                                        </div>
+                                        <div style={{ flex: '1 1 200px' }}>
+                                            <label style={{ display: 'block', marginBottom: '0.25rem', fontSize: '0.85rem', fontWeight: 600 }}>📅 Sprint Start Date</label>
+                                            <input
+                                                type="date"
+                                                value={editForm.sprint_start_date || ''}
+                                                onChange={e => setEditForm({ ...editForm, sprint_start_date: e.target.value })}
+                                                style={editInputStyle}
+                                            />
+                                            <small style={{ display: 'block', marginTop: '0.25rem', color: 'var(--text-secondary)', fontSize: '0.75rem' }}>First sprint's start date (sprints auto-calculated from this)</small>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                        )}
+                    </React.Fragment>
                     ))}
-                    {teams.length === 0 && <tr><td colSpan={5} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>No teams yet</td></tr>}
+                    {teams.length === 0 && <tr><td colSpan={canManage ? 6 : 5} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>No teams yet</td></tr>}
                 </tbody>
             </table>
         </>

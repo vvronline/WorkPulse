@@ -87,7 +87,7 @@ export default function ResetPassword() {
           <div className={s['reset-sent']}>
             <div className={s['reset-sent-icon']}>✅</div>
             <p>{success}</p>
-            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Redirecting to login...</p>
+            <p className={s['redirect-text']}>Redirecting to login...</p>
           </div>
         )}
 

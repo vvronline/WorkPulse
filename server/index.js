@@ -31,6 +31,7 @@ const organizationRoutes = require('./routes/organization');
 const adminRoutes = require('./routes/admin');
 const managerRoutes = require('./routes/manager');
 const leavePolicyRoutes = require('./routes/leavePolicy');
+const sprintsRoutes = require('./routes/sprints');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -60,8 +61,12 @@ app.use(cors({
         // and CSRF is already guarded by the X-Requested-With header.
         if (process.env.NODE_ENV === 'production') return callback(null, true);
 
+        // Allow same-origin (SPA served by this Express server)
+        const serverOrigin = `http://localhost:${PORT}`;
+        if (origin === serverOrigin) return callback(null, true);
+
         // Development defaults
-        const devOrigins = ['http://localhost:3000', 'http://localhost:3001'];
+        const devOrigins = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002', 'http://localhost:5173'];
         if (devOrigins.includes(origin)) return callback(null, true);
 
         callback(new Error('Not allowed by CORS'));
@@ -134,6 +139,7 @@ app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/tracker', apiLimiter, trackerRoutes);
 app.use('/api/leaves', apiLimiter, leaveRoutes);
 app.use('/api/tasks', apiLimiter, taskRoutes);
+app.use('/api/sprints', apiLimiter, sprintsRoutes);
 // Apply higher body limit only for avatar upload
 app.use('/api/profile/avatar', express.json({ limit: '10mb' }));
 app.use('/api/profile/password', passwordLimiter);

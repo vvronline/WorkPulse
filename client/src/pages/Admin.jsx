@@ -8,7 +8,8 @@ import {
     createAdminOrganization, updateAdminOrganization, deleteAdminOrganization,
     getCurrentOrg, updateOrgSettings, createDepartment, updateDepartment, deleteDepartment,
     createTeam, updateTeam, deleteTeam, getOrgMembers, getOrgChart,
-    getAdminTaskLabels, createAdminTaskLabel, updateAdminTaskLabel, deleteAdminTaskLabel
+    getAdminTaskLabels, createAdminTaskLabel, updateAdminTaskLabel, deleteAdminTaskLabel,
+    getTeamSprintConfig, updateTeamSprintConfig
 } from '../api';
 import s from './Admin.module.css';
 
@@ -197,14 +198,14 @@ function UserManagement({ userRole }) {
                                 <div className={s.userCell}>
                                     {u.avatar ? <img src={u.avatar} className={s.miniAvatar} alt="" /> : <div className={s.initials}>{u.full_name?.charAt(0)}</div>}
                                     <div>
-                                        <div style={{ fontWeight: 600 }}>{u.full_name}</div>
-                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>@{u.username} • {u.email}</div>
+                                        <div className={s['font-bold']}>{u.full_name}</div>
+                                        <div className={s['text-muted-xs']}>@{u.username} • {u.email}</div>
                                     </div>
                                 </div>
                             </td>
                             <td style={{ fontSize: '0.85rem', color: u.org_name ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{u.org_name || '—'}</td>
                             <td>
-                                <select value={u.role} onChange={e => handleRoleChange(u.id, e.target.value)} style={{ padding: '0.3rem 1.8rem 0.3rem 0.5rem', borderRadius: 6, border: '1px solid var(--glass-border)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontSize: '0.8rem', fontFamily: 'inherit' }}>
+                                <select value={u.role} onChange={e => handleRoleChange(u.id, e.target.value)} className={s.inlineSelect}>
                                     {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
                                 </select>
                             </td>
@@ -235,7 +236,7 @@ function UserManagement({ userRole }) {
                         </tr>
                     ))}
                     {users.length === 0 && (
-                        <tr><td colSpan={8} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>No users found</td></tr>
+                        <tr><td colSpan={8} className={s.emptyRow}>No users found</td></tr>
                     )}
                 </tbody>
             </table>
@@ -251,7 +252,7 @@ function UserManagement({ userRole }) {
                     <div className={s.modal} onClick={e => e.stopPropagation()}>
                         <h2>Delete User</h2>
                         <p>Are you sure you want to permanently delete <strong>{deletingUser.full_name}</strong> (@{deletingUser.username})?</p>
-                        <p style={{ color: 'var(--danger)', fontSize: '0.85rem', marginTop: '0.5rem' }}>⚠️ This will remove all their time entries, leaves, planner items, and other data. This action cannot be undone.</p>
+                        <p className={s['delete-warning']}>⚠️ This will remove all their time entries, leaves, planner items, and other data. This action cannot be undone.</p>
                         <div className={s.formActions}>
                             <button className={s.btnCancel} onClick={() => setDeletingUser(null)}>Cancel</button>
                             <button className={`${s.btnPrimary} ${s.btnDanger}`} onClick={async () => {
@@ -393,9 +394,9 @@ function CreateUser({ userRole, onCreated }) {
     const managerOptions = users.filter(u => u.is_active);
 
     return (
-        <div style={{ maxWidth: 700 }}>
-            <h2 style={{ fontSize: '1.3rem', marginBottom: '0.5rem', fontWeight: 600 }}>➕ Create New User</h2>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
+        <div className={s['form-container']}>
+            <h2 className={s['section-heading']}>➕ Create New User</h2>
+            <p className={s['section-subtitle']}>
                 Create a new user account. The user will be required to change their password on first login.
             </p>
             <form onSubmit={handleSubmit} className={s.createUserForm}>
@@ -419,7 +420,7 @@ function CreateUser({ userRole, onCreated }) {
                     <div className={s.formGroup}>
                         <label>Initial Password</label>
                         <input type="password" required minLength={8} value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="Minimum 8 characters" />
-                        <small style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>💡 User will be required to change this on first login</small>
+                        <small className={s.hint}>💡 User will be required to change this on first login</small>
                     </div>
                 </div>
                 
@@ -467,8 +468,8 @@ function CreateUser({ userRole, onCreated }) {
                     </div>
                 </div>
             
-            <div style={{ marginTop: '1.5rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border)' }}>
-                <button type="submit" className={s.btnPrimary} style={{ padding: '0.65rem 1.5rem', fontSize: '0.95rem' }}>
+            <div className={s['form-footer']}>
+                <button type="submit" className={`${s.btnPrimary} ${s['btn-submit']}`}>
                     ✅ Create User Account
                 </button>
             </div>
@@ -497,8 +498,8 @@ function AuditLogs() {
 
     return (
         <>
-            <h2 style={{ fontSize: '1.3rem', marginBottom: '0.5rem', fontWeight: 600 }}>📋 Audit Logs</h2>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1rem' }}>
+            <h2 className={s['section-heading']}>📋 Audit Logs</h2>
+            <p className={s['section-desc']}>
                 Track all administrative actions and system events
             </p>
             <div className={s.toolbar}>
@@ -514,7 +515,7 @@ function AuditLogs() {
                         <option key={a} value={a}>{a}</option>
                     ))}
                 </select>
-                <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{total} log(s)</span>
+                <span className={s['text-muted-sm']}>{total} log(s)</span>
             </div>
 
             <table className={s.table}>
@@ -531,18 +532,18 @@ function AuditLogs() {
                 <tbody>
                     {logs.map(log => (
                         <tr key={log.id}>
-                            <td style={{ whiteSpace: 'nowrap', fontSize: '0.8rem' }}>{new Date(log.created_at + 'Z').toLocaleString()}</td>
+                            <td className={s['audit-time']}>{new Date(log.created_at + 'Z').toLocaleString()}</td>
                             <td>{log.actor_name || log.actor_username || `User #${log.actor_id}`}</td>
-                            <td><span className={s.badge} style={{ background: 'var(--accent-light)', color: 'var(--accent)' }}>{log.action}</span></td>
+                            <td><span className={`${s.badge} ${s['badge-accent']}`}>{log.action}</span></td>
                             <td>{log.entity_type}{log.entity_id ? ` #${log.entity_id}` : ''}</td>
-                            <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.8rem' }}>
+                            <td className={s['audit-details']}>
                                 {log.details ? JSON.stringify(JSON.parse(log.details)) : '—'}
                             </td>
-                            <td style={{ fontSize: '0.8rem' }}>{log.ip_address || '—'}</td>
+                            <td className={s['text-xs']}>{log.ip_address || '—'}</td>
                         </tr>
                     ))}
                     {logs.length === 0 && (
-                        <tr><td colSpan={6} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>No logs found</td></tr>
+                        <tr><td colSpan={6} className={s.emptyRow}>No logs found</td></tr>
                     )}
                 </tbody>
             </table>
@@ -550,7 +551,7 @@ function AuditLogs() {
             {totalPages > 1 && (
                 <div className={s.pagination}>
                     <button disabled={page === 0} onClick={() => setPage(p => p - 1)}>Previous</button>
-                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Page {page + 1} of {totalPages}</span>
+                    <span className={s['text-muted-sm']}>Page {page + 1} of {totalPages}</span>
                     <button disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}>Next</button>
                 </div>
             )}
@@ -566,13 +567,13 @@ function OrganizationsTab({ userRole, hasOrgId }) {
         <>
             {isSuperAdmin && (
                 <>
-                    <h2 style={{ marginBottom: '1rem' }}>All Organizations</h2>
+                    <h2 className={s['heading-mb']}>All Organizations</h2>
                     <OrganizationsManagement onOrgChange={() => setOrgRefreshKey(k => k + 1)} />
                 </>
             )}
             {hasOrgId && (
                 <>
-                    {isSuperAdmin && <hr style={{ margin: '2rem 0', border: 'none', borderTop: '1px solid var(--border)' }} />}
+                    {isSuperAdmin && <hr className={s['section-divider']} />}
                     <MyOrganization userRole={userRole} refreshKey={orgRefreshKey} />
                 </>
             )}
@@ -625,8 +626,8 @@ function OrganizationsManagement({ onOrgChange }) {
 
     return (
         <>
-            <h2 style={{ fontSize: '1.2rem', marginBottom: '0.5rem', fontWeight: 600 }}>🏢 All Organizations</h2>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1rem' }}>Manage all organizations in the system</p>
+            <h2 className={s.sectionHeading}>🏢 All Organizations</h2>
+            <p className={s.sectionDesc}>Manage all organizations in the system</p>
             {msg && <div className={s.success}>{msg}</div>}
             <div className={s.toolbar}>
                 <button className={s.btnPrimary} onClick={() => setCreating(true)}>➕ Create Organization</button>
@@ -647,11 +648,11 @@ function OrganizationsManagement({ onOrgChange }) {
                 <tbody>
                     {orgs.map(o => (
                         <tr key={o.id}>
-                            <td style={{ fontWeight: 600 }}>{o.name}</td>
-                            <td><code style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{o.slug}</code></td>
-                            <td style={{ fontSize: '0.85rem' }}>{o.timezone || 'UTC'}</td>
+                            <td className={s['font-bold']}>{o.name}</td>
+                            <td><code className={s['text-muted-xs']}>{o.slug}</code></td>
+                            <td className={s['text-sm']}>{o.timezone || 'UTC'}</td>
                             <td>{o.work_hours_per_day || 8}h</td>
-                            <td style={{ fontSize: '0.85rem' }}>{o.work_days || '1,2,3,4,5'}</td>
+                            <td className={s['text-sm']}>{o.work_days || '1,2,3,4,5'}</td>
                             <td>{o.member_count}</td>
                             <td>
                                 <div className={s.actions}>
@@ -662,7 +663,7 @@ function OrganizationsManagement({ onOrgChange }) {
                         </tr>
                     ))}
                     {orgs.length === 0 && (
-                        <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>No organizations found</td></tr>
+                        <tr><td colSpan={7} className={s.emptyRow}>No organizations found</td></tr>
                     )}
                 </tbody>
             </table>
@@ -674,11 +675,11 @@ function OrganizationsManagement({ onOrgChange }) {
                     <div className={s.modal} onClick={e => e.stopPropagation()}>
                         <h2>Delete Organization</h2>
                         <p>Are you sure you want to delete <strong>{deleting.name}</strong>?</p>
-                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '1rem' }}>
+                        <p className={s['org-delete-info']}>
                             This will remove all departments, teams, and clear org assignments for inactive users. 
                             Organizations with active users cannot be deleted.
                         </p>
-                        <div className={s.formActions} style={{ marginTop: '1.5rem' }}>
+                        <div className={s.formActions}>
                             <button className={s.btnCancel} onClick={() => setDeleting(null)}>Cancel</button>
                             <button className={`${s.btnPrimary} ${s.btnDanger}`} onClick={() => handleDelete(deleting.id)}>Delete Organization</button>
                         </div>
@@ -716,7 +717,7 @@ function OrgModal({ org, onClose, onSave }) {
                     <div className={s.formGroup}>
                         <label>Organization Name</label>
                         <input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Acme Corp" disabled={!!org} />
-                        {org && <small style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Name cannot be changed after creation</small>}
+                        {org && <small className={s.hint}>Name cannot be changed after creation</small>}
                     </div>
                     <div className={s.formGroup}>
                         <label>Work Hours Per Day</label>
@@ -725,7 +726,7 @@ function OrgModal({ org, onClose, onSave }) {
                     <div className={s.formGroup}>
                         <label>Work Days (comma-separated, 0=Sun, 6=Sat)</label>
                         <input value={form.work_days} onChange={e => setForm({ ...form, work_days: e.target.value })} placeholder="1,2,3,4,5" />
-                        <small style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Example: 1,2,3,4,5 for Mon-Fri</small>
+                        <small className={s.hint}>Example: 1,2,3,4,5 for Mon-Fri</small>
                     </div>
                     <div className={s.formGroup}>
                         <label>Timezone</label>
@@ -764,7 +765,7 @@ function MyOrganization({ userRole, refreshKey }) {
     if (!org) {
         return (
             <div>
-                <p style={{ color: 'var(--text-secondary)', marginTop: '1rem' }}>
+                <p className={s['no-org-msg']}>
                     You are not assigned to any organization yet. Please contact your administrator.
                 </p>
             </div>
@@ -773,10 +774,10 @@ function MyOrganization({ userRole, refreshKey }) {
 
     return (
         <>
-            <h2 style={{ marginBottom: '0.5rem', fontSize: '1.2rem', fontWeight: 600 }}>🏛️ My Organization</h2>
-            <h3 style={{ marginTop: '0', marginBottom: '1rem', color: 'var(--text-secondary)', fontWeight: 500 }}>{org.name}</h3>
+            <h2 className={s.sectionHeading}>🏛️ My Organization</h2>
+            <h3 className={s['org-subtitle']}>{org.name}</h3>
 
-            <div className={s.statsGrid} style={{ marginBottom: '1.5rem' }}>
+            <div className={`${s.statsGrid} ${s['stats-compact']}`}>
                 <div className={s.statCard}>
                     <div className={s.statIcon}>👥</div>
                     <div className={s.value}>{org.memberCount}</div>
@@ -814,7 +815,7 @@ function MyOrganization({ userRole, refreshKey }) {
                 </button>
             </div>
 
-            <div style={{ marginTop: '1.5rem' }}>
+            <div className={s['tab-content']}>
                 {tab === 'overview' && <OrgSettings org={org} onUpdate={fetchOrg} userRole={userRole} />}
                 {tab === 'departments' && <Departments orgId={org.id} userRole={userRole} />}
                 {tab === 'teams' && <Teams orgId={org.id} userRole={userRole} />}
@@ -845,7 +846,7 @@ function OrgSettings({ org, onUpdate, userRole }) {
     };
 
     return (
-        <form onSubmit={handleSave} style={{ maxWidth: 500 }}>
+        <form onSubmit={handleSave} className={s['form-container-sm']}>
             {msg && <div className={s.success}>{msg}</div>}
             <div className={s.formGroup}>
                 <label>Organization Name</label>
@@ -927,11 +928,11 @@ function Departments({ orgId, userRole }) {
         <>
             {msg && <div className={s.success}>{msg}</div>}
             {canManage && (
-                <div style={{ marginBottom: '1rem' }}>
+                <div className={s['form-toolbar']}>
                     {showForm ? (
-                        <form onSubmit={handleCreate} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                            <input value={name} onChange={e => setName(e.target.value)} placeholder="Department name" required style={{ padding: '0.5rem', borderRadius: 8, border: '1px solid var(--glass-border)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontFamily: 'inherit' }} />
-                            <select value={headId} onChange={e => setHeadId(e.target.value)} style={{ padding: '0.5rem', borderRadius: 8, border: '1px solid var(--glass-border)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontFamily: 'inherit' }}>
+                        <form onSubmit={handleCreate} className={s['inline-form']}>
+                            <input value={name} onChange={e => setName(e.target.value)} placeholder="Department name" required className={s['form-inline-input']} />
+                            <select value={headId} onChange={e => setHeadId(e.target.value)} className={s['form-inline-input']}>
                                 <option value="">No Head</option>
                                 {members.map(m => <option key={m.id} value={m.id}>{m.full_name || m.username}</option>)}
                             </select>
@@ -948,9 +949,9 @@ function Departments({ orgId, userRole }) {
                 <tbody>
                     {departments.map(d => (
                         <tr key={d.id}>
-                            <td>{editId === d.id ? <input value={editName} onChange={e => setEditName(e.target.value)} style={{ padding: '0.3rem', borderRadius: 6, border: '1px solid var(--glass-border)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontFamily: 'inherit' }} /> : d.name}</td>
+                            <td>{editId === d.id ? <input value={editName} onChange={e => setEditName(e.target.value)} className={s['edit-inline-input']} /> : d.name}</td>
                             <td>{editId === d.id ? (
-                                <select value={editHeadId} onChange={e => setEditHeadId(e.target.value)} style={{ padding: '0.3rem', borderRadius: 6, border: '1px solid var(--glass-border)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontFamily: 'inherit' }}>
+                                <select value={editHeadId} onChange={e => setEditHeadId(e.target.value)} className={s['edit-inline-input']}>
                                     <option value="">No Head</option>
                                     {members.map(m => <option key={m.id} value={m.id}>{m.full_name || m.username}</option>)}
                                 </select>
@@ -975,7 +976,7 @@ function Departments({ orgId, userRole }) {
                             )}
                         </tr>
                     ))}
-                    {departments.length === 0 && <tr><td colSpan={4} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>No departments yet</td></tr>}
+                    {departments.length === 0 && <tr><td colSpan={4} className={s.emptyRow}>No departments yet</td></tr>}
                 </tbody>
             </table>
         </>
@@ -989,7 +990,7 @@ function Teams({ orgId, userRole }) {
     const [showForm, setShowForm] = useState(false);
     const [form, setForm] = useState({ name: '', department_id: '', lead_id: '' });
     const [editId, setEditId] = useState(null);
-    const [editForm, setEditForm] = useState({ name: '', department_id: '', lead_id: '' });
+    const [editForm, setEditForm] = useState({ name: '', department_id: '', lead_id: '', sprint_duration_weeks: 2, sprint_start_date: '' });
     const [msg, setMsg] = useAutoDismiss('');
     const canManage = ['team_lead', 'manager', 'hr_admin', 'super_admin'].includes(userRole);
 
@@ -1019,6 +1020,12 @@ function Teams({ orgId, userRole }) {
     const handleUpdate = async (id) => {
         try {
             await updateTeam(id, { name: editForm.name, department_id: editForm.department_id || null, lead_id: editForm.lead_id || null });
+            if (editForm.sprint_duration_weeks || editForm.sprint_start_date) {
+                await updateTeamSprintConfig(id, {
+                    sprint_duration_weeks: editForm.sprint_duration_weeks || 2,
+                    sprint_start_date: editForm.sprint_start_date || null
+                });
+            }
             setEditId(null);
             fetchTeams();
         } catch (e) { setMsg(e.response?.data?.error || 'Failed'); }
@@ -1029,22 +1036,19 @@ function Teams({ orgId, userRole }) {
         try { await deleteTeam(id); fetchTeams(); } catch (e) { setMsg(e.response?.data?.error || 'Failed'); }
     };
 
-    const inputStyle = { padding: '0.5rem', borderRadius: 8, border: '1px solid var(--glass-border)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontFamily: 'inherit' };
-    const editInputStyle = { padding: '0.3rem', borderRadius: 6, border: '1px solid var(--glass-border)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontFamily: 'inherit' };
-
     return (
         <>
             {msg && <div className={s.success}>{msg}</div>}
             {canManage && (
-                <div style={{ marginBottom: '1rem' }}>
+                <div className={s['form-toolbar']}>
                     {showForm ? (
-                        <form onSubmit={handleCreate} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                            <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Team name" required style={inputStyle} />
-                            <select value={form.department_id} onChange={e => setForm({ ...form, department_id: e.target.value })} style={inputStyle}>
+                        <form onSubmit={handleCreate} className={s['inline-form']}>
+                            <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Team name" required className={s['form-inline-input']} />
+                            <select value={form.department_id} onChange={e => setForm({ ...form, department_id: e.target.value })} className={s['form-inline-input']}>
                                 <option value="">No department</option>
                                 {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                             </select>
-                            <select value={form.lead_id} onChange={e => setForm({ ...form, lead_id: e.target.value })} style={inputStyle}>
+                            <select value={form.lead_id} onChange={e => setForm({ ...form, lead_id: e.target.value })} className={s['form-inline-input']}>
                                 <option value="">No Lead</option>
                                 {members.map(m => <option key={m.id} value={m.id}>{m.full_name || m.username}</option>)}
                             </select>
@@ -1057,24 +1061,29 @@ function Teams({ orgId, userRole }) {
                 </div>
             )}
             <table className={s.table}>
-                <thead><tr><th>Name</th><th>Department</th><th>Lead</th><th>Members</th>{canManage && <th>Actions</th>}</tr></thead>
+                <thead><tr><th>Name</th><th>Department</th><th>Lead</th><th>Members</th><th>Sprint Config</th>{canManage && <th>Actions</th>}</tr></thead>
                 <tbody>
                     {teams.map(t => (
-                        <tr key={t.id}>
-                            <td>{editId === t.id ? <input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} style={editInputStyle} /> : t.name}</td>
+                        <React.Fragment key={t.id}>
+                        <tr>
+                            <td>{editId === t.id ? <input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} className={s['edit-inline-input']} /> : t.name}</td>
                             <td>{editId === t.id ? (
-                                <select value={editForm.department_id} onChange={e => setEditForm({ ...editForm, department_id: e.target.value })} style={editInputStyle}>
+                                <select value={editForm.department_id} onChange={e => setEditForm({ ...editForm, department_id: e.target.value })} className={s['edit-inline-input']}>
                                     <option value="">No department</option>
                                     {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                                 </select>
                             ) : (t.department_name || '—')}</td>
                             <td>{editId === t.id ? (
-                                <select value={editForm.lead_id} onChange={e => setEditForm({ ...editForm, lead_id: e.target.value })} style={editInputStyle}>
+                                <select value={editForm.lead_id} onChange={e => setEditForm({ ...editForm, lead_id: e.target.value })} className={s['edit-inline-input']}>
                                     <option value="">No Lead</option>
                                     {members.map(m => <option key={m.id} value={m.id}>{m.full_name || m.username}</option>)}
                                 </select>
                             ) : (t.lead_name || '—')}</td>
                             <td>{t.member_count}</td>
+                            <td className={s['text-muted-sm']}>
+                                {t.sprint_duration_weeks ? `${t.sprint_duration_weeks} week${t.sprint_duration_weeks > 1 ? 's' : ''}` : 'Not set'}
+                                {t.sprint_start_date && ` (from ${t.sprint_start_date})`}
+                            </td>
                             {canManage && (
                                 <td>
                                     <div className={s.actions}>
@@ -1085,7 +1094,18 @@ function Teams({ orgId, userRole }) {
                                             </>
                                         ) : (
                                             <>
-                                                <button className={`${s.btnSmall} ${s.btnAccent}`} onClick={() => { setEditId(t.id); setEditForm({ name: t.name, department_id: t.department_id || '', lead_id: t.lead_id || '' }); }}>Edit</button>
+                                                <button className={`${s.btnSmall} ${s.btnAccent}`} onClick={async () => {
+                                                    setEditId(t.id);
+                                                    setEditForm({ name: t.name, department_id: t.department_id || '', lead_id: t.lead_id || '', sprint_duration_weeks: 2, sprint_start_date: '' });
+                                                    try {
+                                                        const sprintRes = await getTeamSprintConfig(t.id);
+                                                        setEditForm(prev => ({
+                                                            ...prev,
+                                                            sprint_duration_weeks: sprintRes.data.sprintDurationWeeks || 2,
+                                                            sprint_start_date: sprintRes.data.sprintStartDate || ''
+                                                        }));
+                                                    } catch (err) { console.error('Failed to load sprint config:', err); }
+                                                }}>Edit</button>
                                                 <button className={`${s.btnSmall} ${s.btnDanger}`} onClick={() => handleDelete(t.id)}>Delete</button>
                                             </>
                                         )}
@@ -1093,8 +1113,40 @@ function Teams({ orgId, userRole }) {
                                 </td>
                             )}
                         </tr>
+                        {editId === t.id && (
+                            <tr className={s['sprint-edit-row']}>
+                                <td colSpan={canManage ? 7 : 6} className={s['sprint-edit-cell']}>
+                                    <div className={s['sprint-config-form']}>
+                                        <div className={s['sprint-field']}>
+                                            <label className={s['field-label']}>🏃 Sprint Duration (weeks)</label>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                max="8"
+                                                value={editForm.sprint_duration_weeks || 2}
+                                                onChange={e => setEditForm({ ...editForm, sprint_duration_weeks: parseInt(e.target.value) || 2 })}
+                                                className={s['edit-inline-input']}
+                                                placeholder="2"
+                                            />
+                                            <small className={s['field-hint']}>Length of each sprint (1-8 weeks)</small>
+                                        </div>
+                                        <div className={s['sprint-field']}>
+                                            <label className={s['field-label']}>📅 Sprint Start Date</label>
+                                            <input
+                                                type="date"
+                                                value={editForm.sprint_start_date || ''}
+                                                onChange={e => setEditForm({ ...editForm, sprint_start_date: e.target.value })}
+                                                className={s['edit-inline-input']}
+                                            />
+                                            <small className={s['field-hint']}>First sprint's start date (sprints auto-calculated from this)</small>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                        )}
+                        </React.Fragment>
                     ))}
-                    {teams.length === 0 && <tr><td colSpan={5} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>No teams yet</td></tr>}
+                    {teams.length === 0 && <tr><td colSpan={canManage ? 7 : 6} className={s.emptyRow}>No teams yet</td></tr>}
                 </tbody>
             </table>
         </>
@@ -1118,38 +1170,38 @@ function OrgChartView() {
                 const deptTeams = chart.teams.filter(t => t.department_id === dept.id);
                 const deptMembers = chart.members.filter(m => m.department_id === dept.id && !m.team_id);
                 return (
-                    <div key={dept.id} style={{ background: 'var(--card-bg)', borderRadius: 12, padding: '1.25rem', marginBottom: '1rem', border: '1px solid var(--border)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                            <span style={{ fontSize: '1.3rem' }}>🏢</span>
+                    <div key={dept.id} className={s['card-panel']}>
+                        <div className={s['dept-header']}>
+                            <span className={s['dept-icon']}>🏢</span>
                             <div>
-                                <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>{dept.name}</div>
-                                {dept.head_name && <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Head: {dept.head_name}</div>}
+                                <div className={s['dept-name']}>{dept.name}</div>
+                                {dept.head_name && <div className={s['text-muted-xs']}>Head: {dept.head_name}</div>}
                             </div>
                         </div>
                         {deptTeams.map(team => {
                             const tMembers = chart.members.filter(m => m.team_id === team.id);
                             return (
-                                <div key={team.id} style={{ marginLeft: '1.5rem', marginBottom: '0.75rem', padding: '0.75rem', background: 'var(--bg-secondary)', borderRadius: 8 }}>
-                                    <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>👥 {team.name} {team.lead_name && <span style={{ fontWeight: 400, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>• Lead: {team.lead_name}</span>}</div>
-                                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                <div key={team.id} className={s['team-card']}>
+                                    <div className={s['team-title']}>👥 {team.name} {team.lead_name && <span className={s['team-lead-label']}>• Lead: {team.lead_name}</span>}</div>
+                                    <div className={s['flex-wrap']}>
                                         {tMembers.map(m => (
-                                            <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', background: 'var(--card-bg)', padding: '0.3rem 0.6rem', borderRadius: 6 }}>
-                                                {m.avatar ? <img src={m.avatar} className={s.miniAvatar} style={{ width: 20, height: 20 }} alt="" /> : <span className={s.initials} style={{ width: 20, height: 20, fontSize: '0.5rem' }}>{m.full_name?.charAt(0)}</span>}
+                                            <div key={m.id} className={s['member-chip']}>
+                                                {m.avatar ? <img src={m.avatar} className={`${s.miniAvatar} ${s['mini-avatar-sm']}`} alt="" /> : <span className={`${s.initials} ${s['mini-initials-sm']}`}>{m.full_name?.charAt(0)}</span>}
                                                 {m.full_name}
-                                                <span className={s.badgeRole} data-role={m.role} style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem' }}>{ROLE_LABELS[m.role]}</span>
+                                                <span className={`${s.badgeRole} ${s['badge-sm']}`} data-role={m.role}>{ROLE_LABELS[m.role]}</span>
                                             </div>
                                         ))}
-                                        {tMembers.length === 0 && <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>No members</span>}
+                                        {tMembers.length === 0 && <span className={s['text-muted-xs']}>No members</span>}
                                     </div>
                                 </div>
                             );
                         })}
                         {deptMembers.length > 0 && (
-                            <div style={{ marginLeft: '1.5rem' }}>
-                                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>Unassigned to team:</div>
-                                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            <div className={s['unassigned-section']}>
+                                <div className={s['unassigned-label']}>Unassigned to team:</div>
+                                <div className={s['flex-wrap']}>
                                     {deptMembers.map(m => (
-                                        <div key={m.id} style={{ fontSize: '0.85rem', background: 'var(--bg-secondary)', padding: '0.3rem 0.6rem', borderRadius: 6 }}>{m.full_name}</div>
+                                        <div key={m.id} className={s['member-chip-simple']}>{m.full_name}</div>
                                     ))}
                                 </div>
                             </div>
@@ -1158,12 +1210,12 @@ function OrgChartView() {
                 );
             })}
             {unassigned.length > 0 && (
-                <div style={{ background: 'var(--card-bg)', borderRadius: 12, padding: '1.25rem', border: '1px solid var(--border)' }}>
-                    <div style={{ fontWeight: 700, marginBottom: '0.75rem' }}>Unassigned Members</div>
-                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <div className={s['card-panel']}>
+                    <div className={s['bold-heading']}>Unassigned Members</div>
+                    <div className={s['flex-wrap']}>
                         {unassigned.map(m => (
-                            <div key={m.id} style={{ fontSize: '0.85rem', background: 'var(--bg-secondary)', padding: '0.3rem 0.6rem', borderRadius: 6 }}>
-                                {m.full_name} <span className={s.badgeRole} data-role={m.role} style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem' }}>{ROLE_LABELS[m.role]}</span>
+                            <div key={m.id} className={s['member-chip-simple']}>
+                                {m.full_name} <span className={`${s.badgeRole} ${s['badge-sm']}`} data-role={m.role}>{ROLE_LABELS[m.role]}</span>
                             </div>
                         ))}
                     </div>
@@ -1245,16 +1297,16 @@ function TaskLabelsTab() {
     return (
         <div className={s.section}>
             <h3 className={s.sectionTitle}>🏷️ Task Labels</h3>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1rem' }}>
+            <p className={s['section-desc-muted']}>
                 Create labels that members of your organization can use to categorize tasks.
             </p>
 
             {error && <div className="error-msg error-msg-mb">{error}</div>}
-            {success && <div className="success-msg" style={{ marginBottom: '1rem' }}>{success}</div>}
+            {success && <div className={`success-msg ${s['mb-1']}`}>{success}</div>}
 
             {/* Create Label Form */}
-            <form onSubmit={handleCreate} style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
-                <div className="form-group" style={{ flex: 1, minWidth: 180, marginBottom: 0 }}>
+            <form onSubmit={handleCreate} className={s['label-form']}>
+                <div className={`form-group ${s['label-form-group']}`}>
                     <label>Label Name</label>
                     <input
                         type="text"
@@ -1265,39 +1317,40 @@ function TaskLabelsTab() {
                         required
                     />
                 </div>
-                <div className="form-group" style={{ marginBottom: 0 }}>
+                <div className={`form-group ${s['form-group-compact']}`}>
                     <label>Color</label>
-                    <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                    <div className={s['color-picker-row']}>
                         {PRESET_COLORS.map(c => (
                             <button
                                 key={c}
                                 type="button"
                                 onClick={() => setColor(c)}
+                                className={s['color-swatch']}
                                 style={{
-                                    width: 24, height: 24, borderRadius: '50%', border: color === c ? '2px solid var(--text)' : '2px solid transparent',
-                                    background: c, cursor: 'pointer', padding: 0
+                                    border: color === c ? '2px solid var(--text)' : '2px solid transparent',
+                                    background: c
                                 }}
                             />
                         ))}
-                        <input type="color" value={color} onChange={e => setColor(e.target.value)} style={{ width: 28, height: 28, border: 'none', cursor: 'pointer' }} />
+                        <input type="color" value={color} onChange={e => setColor(e.target.value)} className={s['color-input']} />
                     </div>
                 </div>
-                <button type="submit" className="btn btn-primary" style={{ height: 38 }}>
+                <button type="submit" className={`btn btn-primary ${s['btn-add-label']}`}>
                     Add Label
                 </button>
             </form>
 
             {/* Labels Table */}
             {labels.length === 0 ? (
-                <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '2rem' }}>No labels yet. Create one above!</p>
+                <p className={s['empty-message']}>No labels yet. Create one above!</p>
             ) : (
-                <div style={{ overflowX: 'auto' }}>
+                <div className={s['overflow-auto']}>
                     <table className={s.table}>
                         <thead>
                             <tr>
                                 <th>Label</th>
                                 <th>Created By</th>
-                                <th style={{ width: 120 }}>Actions</th>
+                                <th className={s['col-actions']}>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1305,36 +1358,33 @@ function TaskLabelsTab() {
                                 <tr key={label.id}>
                                     <td>
                                         {editId === label.id ? (
-                                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                            <div className={s['edit-label-row']}>
                                                 <input
                                                     type="text"
                                                     value={editName}
                                                     onChange={e => setEditName(e.target.value)}
                                                     maxLength={30}
-                                                    style={{ width: 160, padding: '0.3rem 0.5rem', fontSize: '0.85rem' }}
+                                                    className={s['edit-label-input']}
                                                 />
-                                                <input type="color" value={editColor} onChange={e => setEditColor(e.target.value)} style={{ width: 28, height: 28, border: 'none', cursor: 'pointer' }} />
+                                                <input type="color" value={editColor} onChange={e => setEditColor(e.target.value)} className={s['color-input']} />
                                             </div>
                                         ) : (
-                                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                <span style={{
-                                                    display: 'inline-block', padding: '0.2rem 0.6rem', borderRadius: 99,
-                                                    background: label.color, color: '#fff', fontSize: '0.8rem', fontWeight: 600
-                                                }}>{label.name}</span>
+                                            <span className={s['label-display']}>
+                                                <span className={s['label-badge']} style={{ background: label.color }}>{label.name}</span>
                                             </span>
                                         )}
                                     </td>
-                                    <td style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                                    <td className={s['text-sm-muted']}>
                                         {label.created_by_username || '—'}
                                     </td>
                                     <td>
                                         {editId === label.id ? (
-                                            <div style={{ display: 'flex', gap: '0.4rem' }}>
+                                            <div className={s['actions-row']}>
                                                 <button className="btn btn-primary btn-sm" onClick={saveEdit}>Save</button>
                                                 <button className="btn btn-secondary btn-sm" onClick={() => setEditId(null)}>Cancel</button>
                                             </div>
                                         ) : (
-                                            <div style={{ display: 'flex', gap: '0.4rem' }}>
+                                            <div className={s['actions-row']}>
                                                 <button className="btn btn-secondary btn-sm" onClick={() => startEdit(label)}>Edit</button>
                                                 <button className="btn btn-danger btn-sm" onClick={() => handleDelete(label.id)}>Delete</button>
                                             </div>

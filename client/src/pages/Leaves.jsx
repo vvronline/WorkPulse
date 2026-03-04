@@ -346,7 +346,7 @@ export default function Leaves() {
                     <div className={s['leave-breakdown-item']}>
                       <span>🏖</span>
                       <span>Weekend Holidays</span>
-                      <span className={s['leave-breakdown-count']} style={{ '--type-color': '#22d3ee' }}>{summary.weekendDays}</span>
+                      <span className={`${s['leave-breakdown-count']} ${s['type-comp-off']}`}>{summary.weekendDays}</span>
                     </div>
                   )}
                   {summary.breakdown.map(b => {
@@ -400,7 +400,7 @@ export default function Leaves() {
                           {new Date(leave.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
                         </div>
                         {leave.reason && <div className={s['leave-item-reason']}>{leave.reason}</div>}
-                        {leave.reject_reason && <div className={s['leave-item-reason']} style={{ color: 'var(--danger)' }}>Rejected: {leave.reject_reason}</div>}
+                        {leave.reject_reason && <div className={`${s['leave-item-reason']} ${s['text-danger']}`}>Rejected: {leave.reject_reason}</div>}
                         {leave.approved_by_name && leave.status === 'approved' && (
                           <div className={s['leave-item-reason']}>Approved by {leave.approved_by_name}</div>
                         )}

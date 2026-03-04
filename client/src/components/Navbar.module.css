@@ -537,6 +537,18 @@
   margin: 0.25rem 0;
 }
 
+.profile-dropdown-body .profile-dropdown-item:nth-child(1) {
+  animation-delay: 0.02s;
+}
+
+.profile-dropdown-body .profile-dropdown-item:nth-child(2) {
+  animation-delay: 0.04s;
+}
+
+.profile-dropdown-body .profile-dropdown-item:nth-child(3) {
+  animation-delay: 0.08s;
+}
+
 .profile-dropdown-signout {
   width: 100%;
   display: flex;
@@ -553,6 +565,7 @@
   text-align: left;
   transition: all 0.2s ease;
   animation: ddItemSlideIn 0.2s ease both;
+  animation-delay: 0.12s;
 }
 
 .profile-dropdown-signout:hover {

@@ -479,3 +479,11 @@
   font-size: 0.7rem;
   color: var(--text-muted);
 }
+
+.type-comp-off {
+  --type-color: #22d3ee;
+}
+
+.text-danger {
+  color: var(--danger);
+}

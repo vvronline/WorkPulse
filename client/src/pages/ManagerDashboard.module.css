@@ -674,3 +674,78 @@
         font-size: 1rem;
     }
 }
+
+/* ==================== EXTRACTED INLINE STYLES ==================== */
+
+.text-muted-sm {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.cell-details {
+    max-width: 300px;
+}
+
+.cell-sm {
+    font-size: 0.85rem;
+}
+
+.section-heading-mb {
+    margin-bottom: 0.75rem;
+}
+
+.empty-cell {
+    text-align: center;
+    padding: 2rem;
+    color: var(--text-secondary);
+}
+
+.initials-md {
+    width: 36px;
+    height: 36px;
+    font-size: 0.75rem;
+}
+
+.initials-lg {
+    width: 42px;
+    height: 42px;
+    font-size: 0.9rem;
+}
+
+.flex-grow {
+    flex: 1;
+}
+
+.btn-back-sm {
+    padding: 0.4rem 0.8rem;
+}
+
+.inline-input {
+    padding: 0.5rem 1.8rem 0.5rem 0.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--glass-border);
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-family: inherit;
+}
+
+.btn-row {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.avatar-sm-round {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+}
+
+.textarea-input {
+    width: 100%;
+    padding: 0.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--input-bg);
+    color: var(--text-primary);
+    resize: vertical;
+}

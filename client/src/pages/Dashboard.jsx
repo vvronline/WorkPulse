@@ -207,9 +207,9 @@ export default function Dashboard() {
         <div className={s['dashboard-row-1']}>
           <div className={s['skeleton-timer-card']}>
             <div className={s['skeleton-circle']} />
-            <div className={s['skeleton-line']} style={{ width: '60%', marginTop: '1rem' }} />
-            <div className={s['skeleton-line']} style={{ width: '80%' }} />
-            <div className={s['skeleton-line']} style={{ width: '40%' }} />
+            <div className={`${s['skeleton-line']} ${s['skeleton-bar-60']}`} />
+            <div className={`${s['skeleton-line']} ${s['skeleton-bar-80']}`} />
+            <div className={`${s['skeleton-line']} ${s['skeleton-bar-40']}`} />
           </div>
           <div className={s['skeleton-right']}>
             <div className={s['skeleton-card']} />

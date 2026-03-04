@@ -69,12 +69,22 @@ function enrichTasks(tasks) {
         for (const u of users) creatorMap[u.id] = { username: u.username, full_name: u.full_name };
     }
 
+    // Get sprint information
+    const sprintIds = [...new Set(tasks.map(t => t.sprint_id).filter(Boolean))];
+    const sprintMap = {};
+    if (sprintIds.length) {
+        const ph = sprintIds.map(() => '?').join(',');
+        const sprints = db.prepare(`SELECT id, name, status, start_date, end_date FROM sprints WHERE id IN (${ph})`).all(...sprintIds);
+        for (const s of sprints) sprintMap[s.id] = s;
+    }
+
     return tasks.map(t => ({
         ...t,
         labels: labelsMap[t.id] || [],
         comment_count: commentMap[t.id] || 0,
         assignee: t.assigned_to ? (assigneeMap[t.assigned_to] || null) : null,
         creator: creatorMap[t.user_id] || null,
+        sprint: t.sprint_id ? (sprintMap[t.sprint_id] || null) : null,
     }));
 }
 
@@ -98,15 +108,30 @@ function syncLabels(taskId, labelIds) {
     }
 }
 
-// ─── Get tasks for a specific date ──────────────────────────────────────
+// ─── Get tasks for a specific date or date range ────────────────────────
 router.get('/', auth, loadUserContext, (req, res) => {
     try {
-        const { date, assignee, label, priority, status, search } = req.query;
-        const targetDate = date || getLocalToday(req);
+        const { date, start_date, end_date, assignee, label, priority, status, search } = req.query;
 
         // Build dynamic WHERE
-        const conditions = ['t.date = ?'];
-        const params = [targetDate];
+        const conditions = [];
+        const params = [];
+
+        // Date filtering: support single date OR date range
+        if (start_date && end_date) {
+            // Date range mode (for sprint view)
+            conditions.push('t.date >= ? AND t.date <= ?');
+            params.push(start_date, end_date);
+        } else if (date) {
+            // Single date mode (for daily planner)
+            conditions.push('t.date = ?');
+            params.push(date);
+        } else {
+            // Default to today
+            const targetDate = getLocalToday(req);
+            conditions.push('t.date = ?');
+            params.push(targetDate);
+        }
 
         // Show tasks visible to user (created by, assigned to, or same team)
         if (req.userTeamId) {
@@ -267,7 +292,7 @@ router.patch('/:id/status', auth, (req, res) => {
 router.put('/:id', auth, loadUserContext, (req, res) => {
     try {
         const { id } = req.params;
-        const { title, description, priority, assigned_to, due_date, label_ids } = req.body;
+        const { title, description, priority, assigned_to, due_date, label_ids, sprint_id } = req.body;
 
         const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
         if (!canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
@@ -299,8 +324,23 @@ router.put('/:id', auth, loadUserContext, (req, res) => {
             newDueDate = (due_date && /^\d{4}-\d{2}-\d{2}$/.test(due_date)) ? due_date : null;
         }
 
-        db.prepare('UPDATE tasks SET title = ?, description = ?, priority = ?, assigned_to = ?, due_date = ? WHERE id = ?')
-            .run(newTitle, newDesc, newPriority, newAssignedTo, newDueDate, id);
+        // Handle sprint_id update
+        let newSprintId = task.sprint_id;
+        if (sprint_id !== undefined) {
+            if (sprint_id === null || sprint_id === '') {
+                newSprintId = null;
+            } else {
+                const sprint = db.prepare('SELECT id, team_id FROM sprints WHERE id = ?').get(sprint_id);
+                if (sprint && sprint.team_id === req.userTeamId) {
+                    newSprintId = sprint_id;
+                } else {
+                    return res.status(400).json({ error: 'Invalid sprint or sprint does not belong to your team' });
+                }
+            }
+        }
+
+        db.prepare('UPDATE tasks SET title = ?, description = ?, priority = ?, assigned_to = ?, due_date = ?, sprint_id = ? WHERE id = ?')
+            .run(newTitle, newDesc, newPriority, newAssignedTo, newDueDate, newSprintId, id);
 
         // Log changes to history
         if (newTitle !== task.title) logHistory(id, req.userId, 'updated', 'title', task.title, newTitle);
@@ -312,6 +352,11 @@ router.put('/:id', auth, loadUserContext, (req, res) => {
             logHistory(id, req.userId, 'updated', 'assigned_to', oldName, newName);
         }
         if (newDueDate !== task.due_date) logHistory(id, req.userId, 'updated', 'due_date', task.due_date, newDueDate);
+        if (String(newSprintId || '') !== String(task.sprint_id || '')) {
+            const oldSprint = task.sprint_id ? (db.prepare('SELECT name FROM sprints WHERE id = ?').get(task.sprint_id)?.name || 'unknown') : 'none';
+            const newSprint = newSprintId ? (db.prepare('SELECT name FROM sprints WHERE id = ?').get(newSprintId)?.name || 'unknown') : 'none';
+            logHistory(id, req.userId, 'updated', 'sprint', oldSprint, newSprint);
+        }
 
         // Sync labels if provided and log changes
         if (label_ids !== undefined) {

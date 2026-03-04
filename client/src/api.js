@@ -89,7 +89,13 @@ export const withdrawLeave = (id) => API.post(`/leaves/${id}/withdraw`);
 export const getLeaveSummary = (month, year) => API.get('/leaves/summary', { params: { month, year } });
 
 // Tasks
-export const getTasks = (date, filters) => API.get('/tasks', { params: { date, ...filters } });
+export const getTasks = (date, filters) => {
+    const params = { ...filters };
+    if (date !== undefined) {
+        params.date = date;
+    }
+    return API.get('/tasks', { params });
+};
 export const addTask = (data) => API.post('/tasks', data);
 export const updateTaskStatus = (id, status) => API.patch(`/tasks/${id}/status`, { status });
 export const updateTask = (id, data) => API.put(`/tasks/${id}`, data);
@@ -110,6 +116,14 @@ export const unscheduleTask = (id) => API.patch(`/tasks/${id}/unschedule`);
 export const getTaskDetail = (id) => API.get(`/tasks/${id}/detail`);
 export const getTaskHistory = (id) => API.get(`/tasks/${id}/history`);
 export const searchTasks = (q) => API.get('/tasks/search', { params: { q } });
+
+// Sprints
+export const getSprints = () => API.get('/sprints');
+export const getActiveSprint = () => API.get('/sprints/active');
+export const createSprint = (data) => API.post('/sprints', data);
+export const updateSprint = (id, data) => API.put(`/sprints/${id}`, data);
+export const deleteSprint = (id) => API.delete(`/sprints/${id}`);
+export const getSprintTasks = (id) => API.get(`/sprints/${id}/tasks`);
 
 // Profile
 export const getProfile = () => API.get('/profile');
@@ -141,6 +155,8 @@ export const getOrgTeams = (params) => API.get('/org/teams', { params });
 export const createTeam = (data) => API.post('/org/teams', data);
 export const updateTeam = (id, data) => API.put(`/org/teams/${id}`, data);
 export const deleteTeam = (id) => API.delete(`/org/teams/${id}`);
+export const getTeamSprintConfig = (teamId) => API.get(`/org/teams/${teamId}/sprint-config`);
+export const updateTeamSprintConfig = (teamId, data) => API.put(`/org/teams/${teamId}/sprint-config`, data);
 export const getOrgChart = () => API.get('/org/chart');
 
 // Admin

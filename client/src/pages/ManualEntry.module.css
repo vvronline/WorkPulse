@@ -524,3 +524,17 @@
   border-color: var(--primary);
   box-shadow: 0 0 0 3px var(--primary-glow);
 }
+
+.empty-state {
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 2rem 0;
+}
+
+.textarea-resize {
+  resize: vertical;
+}
+
+.text-danger {
+  color: var(--danger);
+}

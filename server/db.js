@@ -240,6 +240,21 @@ db.exec(`
   );
 `);
 
+// Sprints (for team-based agile workflow)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sprints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'planned' CHECK(status IN ('planned', 'active', 'completed')),
+    goal TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(team_id, name)
+  );
+`);
+
 // Leave policies (per org, per leave type)
 db.exec(`
   CREATE TABLE IF NOT EXISTS leave_policies (
@@ -400,6 +415,13 @@ runMigration('tasks_assigned_to', () => db.exec('ALTER TABLE tasks ADD COLUMN as
 
 // Task due dates
 runMigration('tasks_due_date', () => db.exec('ALTER TABLE tasks ADD COLUMN due_date TEXT'));
+
+// Task sprint assignment
+runMigration('tasks_sprint_id', () => db.exec('ALTER TABLE tasks ADD COLUMN sprint_id INTEGER REFERENCES sprints(id) ON DELETE SET NULL'));
+
+// Team sprint configuration
+runMigration('teams_sprint_duration', () => db.exec('ALTER TABLE teams ADD COLUMN sprint_duration_weeks INTEGER NOT NULL DEFAULT 2'));
+runMigration('teams_sprint_start_date', () => db.exec('ALTER TABLE teams ADD COLUMN sprint_start_date TEXT'));
 
 // Task labels (org-scoped, admin-defined)
 db.exec(`

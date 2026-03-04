@@ -89,8 +89,8 @@ function MemberCard({ member, onSelect }) {
             onClick={() => onSelect(member)}
         >
             <div className={m.memberCardHeader}>
-                {member.avatar ? <img src={member.avatar} className={m.memberAvatar} alt="" /> : <span className={s.initials} style={{ width: 36, height: 36, fontSize: '0.75rem' }}>{member.full_name?.charAt(0)}</span>}
-                <div style={{ flex: 1 }}>
+                {member.avatar ? <img src={member.avatar} className={m.memberAvatar} alt="" /> : <span className={`${s.initials} ${m['initials-md']}`}>{member.full_name?.charAt(0)}</span>}
+                <div className={m['flex-grow']}>
                     <div className={m.memberName}>{member.full_name}</div>
                     <div className={m.memberRole}>{ROLE_LABELS[member.role] || member.role}</div>
                 </div>
@@ -124,9 +124,9 @@ function EmployeeDashboard({ member, onBack }) {
     return (
         <div className={s.adminPage}>
             <div className={m.employeeHeader}>
-                <button onClick={onBack} className={s.btnCancel} style={{ padding: '0.4rem 0.8rem' }}>← Back</button>
+                <button onClick={onBack} className={`${s.btnCancel} ${m['btn-back-sm']}`}>← Back</button>
                 <div className={m.employeeProfile}>
-                    {user.avatar ? <img src={user.avatar} className={m.memberAvatarLg} alt="" /> : <span className={s.initials} style={{ width: 42, height: 42, fontSize: '0.9rem' }}>{user.full_name?.charAt(0)}</span>}
+                    {user.avatar ? <img src={user.avatar} className={m.memberAvatarLg} alt="" /> : <span className={`${s.initials} ${m['initials-lg']}`}>{user.full_name?.charAt(0)}</span>}
                     <div>
                         <h2 className={m.employeeName}>{user.full_name}</h2>
                         <div className={m.employeeMeta}>
@@ -319,7 +319,7 @@ function MemberOverview({ data }) {
                                     <td>{new Date(l.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</td>
                                     <td>{LEAVE_ICONS[l.leave_type] || ''} {l.leave_type}</td>
                                     <td><ApprovalBadge status={l.status} /></td>
-                                    <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{l.reason || '—'}</td>
+                                    <td className={m['text-muted-sm']}>{l.reason || '—'}</td>
                                 </tr>
                             ))}
                         </tbody>
@@ -337,9 +337,9 @@ function MemberOverview({ data }) {
                             {data.recentRequests.map(r => (
                                 <tr key={r.id}>
                                     <td><span className={s.badgeRole}>{r.type?.replace('_', ' ')}</span></td>
-                                    <td style={{ maxWidth: 300 }}><RequestDetails request={r} /></td>
+                                    <td className={m['cell-details']}><RequestDetails request={r} /></td>
                                     <td><ApprovalBadge status={r.status} /></td>
-                                    <td style={{ fontSize: '0.85rem' }}>{new Date(r.created_at).toLocaleDateString()}</td>
+                                    <td className={m['cell-sm']}>{new Date(r.created_at).toLocaleDateString()}</td>
                                 </tr>
                             ))}
                         </tbody>
@@ -366,7 +366,7 @@ function MemberLeavesTab({ userId }) {
 
     return (
         <>
-            <h3 style={{ marginBottom: '0.75rem' }}>Leave History</h3>
+            <h3 className={m['section-heading-mb']}>Leave History</h3>
             <table className={s.table}>
                 <thead><tr><th>Date</th><th>Type</th><th>Duration</th><th>Status</th><th>Reason</th></tr></thead>
                 <tbody>
@@ -376,10 +376,10 @@ function MemberLeavesTab({ userId }) {
                             <td>{LEAVE_ICONS[l.leave_type] || ''} {l.leave_type}</td>
                             <td>{l.duration || 'full'}</td>
                             <td><ApprovalBadge status={l.status} /></td>
-                            <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{l.reason || '—'}</td>
+                            <td className={m['text-muted-sm']}>{l.reason || '—'}</td>
                         </tr>
                     ))}
-                    {leaves.length === 0 && <tr><td colSpan={5} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>No leaves found</td></tr>}
+                    {leaves.length === 0 && <tr><td colSpan={5} className={m['empty-cell']}>No leaves found</td></tr>}
                 </tbody>
             </table>
         </>
@@ -400,20 +400,20 @@ function MemberRequestsTab({ userId }) {
 
     return (
         <>
-            <h3 style={{ marginBottom: '0.75rem' }}>Approval Requests</h3>
+            <h3 className={m['section-heading-mb']}>Approval Requests</h3>
             <table className={s.table}>
                 <thead><tr><th>Type</th><th>Details</th><th>Status</th><th>Submitted</th><th>Reviewed By</th></tr></thead>
                 <tbody>
                     {requests.map(r => (
                         <tr key={r.id}>
                             <td><span className={s.badgeRole}>{r.type?.replace('_', ' ')}</span></td>
-                            <td style={{ maxWidth: 300 }}><RequestDetails request={r} /></td>
+                            <td className={m['cell-details']}><RequestDetails request={r} /></td>
                             <td><ApprovalBadge status={r.status} /></td>
-                            <td style={{ fontSize: '0.85rem' }}>{new Date(r.created_at).toLocaleDateString()}</td>
+                            <td className={m['cell-sm']}>{new Date(r.created_at).toLocaleDateString()}</td>
                             <td>{r.approver_name || '—'}</td>
                         </tr>
                     ))}
-                    {requests.length === 0 && <tr><td colSpan={5} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>No requests found</td></tr>}
+                    {requests.length === 0 && <tr><td colSpan={5} className={m['empty-cell']}>No requests found</td></tr>}
                 </tbody>
             </table>
         </>
@@ -439,7 +439,7 @@ function MemberHoursTab({ userId }) {
 
     return (
         <>
-            <h3 style={{ marginBottom: '0.75rem' }}>Hours (Last 30 Days) — Total: {totalHours.toFixed(1)}h</h3>
+            <h3 className={m['section-heading-mb']}>Hours (Last 30 Days) — Total: {totalHours.toFixed(1)}h</h3>
             <table className={s.table}>
                 <thead><tr><th>Date</th><th>Floor Time</th><th>Break Time</th><th>Work Mode</th></tr></thead>
                 <tbody>
@@ -451,7 +451,7 @@ function MemberHoursTab({ userId }) {
                             <td>{d.workMode === 'remote' ? '🏠 Remote' : '🏢 Office'}</td>
                         </tr>
                     ))}
-                    {hours.length === 0 && <tr><td colSpan={4} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>No data found</td></tr>}
+                    {hours.length === 0 && <tr><td colSpan={4} className={m['empty-cell']}>No data found</td></tr>}
                 </tbody>
             </table>
         </>
@@ -510,14 +510,14 @@ function ApprovalsTab() {
     return (
         <>
             <div className={s.toolbar}>
-                <select value={filter} onChange={e => setFilter(e.target.value)} style={{ padding: '0.5rem 1.8rem 0.5rem 0.5rem', borderRadius: 8, border: '1px solid var(--glass-border)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontFamily: 'inherit' }}>
+                <select value={filter} onChange={e => setFilter(e.target.value)} className={m['inline-input']}>
                     <option value="pending">Pending</option>
                     <option value="approved">Approved</option>
                     <option value="rejected">Rejected</option>
                     <option value="">All</option>
                 </select>
                 {filter === 'pending' && selected.size > 0 && (
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <div className={m['btn-row']}>
                         <button className={s.btnPrimary} onClick={() => handleBulk('approve')} disabled={!!processing}>Approve ({selected.size})</button>
                         <button className={s.btnDanger} onClick={() => handleBulk('reject')} disabled={!!processing}>Reject ({selected.size})</button>
                     </div>
@@ -544,12 +544,12 @@ function ApprovalsTab() {
                                 <td><span className={s.badgeRole}>{a.type?.replace('_', ' ')}</span></td>
                                 <td>
                                     <div className={s.userCell}>
-                                        {a.requester_avatar ? <img src={a.requester_avatar} style={{ width: 28, height: 28, borderRadius: '50%' }} alt="" /> : <span className={s.initials}>{a.requester_name?.charAt(0)}</span>}
+                                        {a.requester_avatar ? <img src={a.requester_avatar} className={m['avatar-sm-round']} alt="" /> : <span className={s.initials}>{a.requester_name?.charAt(0)}</span>}
                                         <div><div className={s.userName}>{a.requester_name}</div></div>
                                     </div>
                                 </td>
-                                <td style={{ maxWidth: 300 }}><RequestDetails request={a} /></td>
-                                <td style={{ fontSize: '0.85rem' }}>{new Date(a.created_at).toLocaleDateString()}</td>
+                                <td className={m['cell-details']}><RequestDetails request={a} /></td>
+                                <td className={m['cell-sm']}>{new Date(a.created_at).toLocaleDateString()}</td>
                                 <td><ApprovalBadge status={a.status} /></td>
                                 {filter === 'pending' && (
                                     <td>
@@ -561,7 +561,7 @@ function ApprovalsTab() {
                                 )}
                             </tr>
                         ))}
-                        {approvals.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>No {filter || ''} requests</td></tr>}
+                        {approvals.length === 0 && <tr><td colSpan={7} className={m['empty-cell']}>No {filter || ''} requests</td></tr>}
                     </tbody>
                 </table>
             )}
@@ -572,7 +572,7 @@ function ApprovalsTab() {
                         <h3>Reject Request</h3>
                         <div className={s.formGroup}>
                             <label>Reason (optional)</label>
-                            <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)} rows={3} style={{ width: '100%', padding: '0.5rem', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--input-bg)', color: 'var(--text-primary)', resize: 'vertical' }} placeholder="Provide a reason..." />
+                            <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)} rows={3} className={m['textarea-input']} placeholder="Provide a reason..." />
                         </div>
                         <div className={s.formActions}>
                             <button className={s.btnCancel} onClick={() => setRejectId(null)} disabled={!!processing}>Cancel</button>
@@ -906,20 +906,20 @@ function MyRequests() {
 
     return (
         <>
-            <h3 style={{ marginBottom: '0.75rem' }}>Your Submitted Requests</h3>
+            <h3 className={m['section-heading-mb']}>Your Submitted Requests</h3>
             <table className={s.table}>
                 <thead><tr><th>Type</th><th>Details</th><th>Status</th><th>Submitted</th><th>Reviewed By</th></tr></thead>
                 <tbody>
                     {requests.map(r => (
                         <tr key={r.id}>
                             <td><span className={s.badgeRole}>{r.type?.replace('_', ' ')}</span></td>
-                            <td style={{ maxWidth: 300 }}><RequestDetails request={r} /></td>
+                            <td className={m['cell-details']}><RequestDetails request={r} /></td>
                             <td><ApprovalBadge status={r.status} /></td>
-                            <td style={{ fontSize: '0.85rem' }}>{new Date(r.created_at).toLocaleDateString()}</td>
+                            <td className={m['cell-sm']}>{new Date(r.created_at).toLocaleDateString()}</td>
                             <td>{r.approver_name || '—'}</td>
                         </tr>
                     ))}
-                    {requests.length === 0 && <tr><td colSpan={5} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>No requests submitted</td></tr>}
+                    {requests.length === 0 && <tr><td colSpan={5} className={m['empty-cell']}>No requests submitted</td></tr>}
                 </tbody>
             </table>
         </>

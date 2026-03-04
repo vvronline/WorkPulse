@@ -3,7 +3,7 @@ import {
   getTasks, updateTaskStatus, updateTask, deleteTask, carryForwardTasks,
   getAssignableUsers, getTaskLabels, getTaskComments, addTaskComment, updateTaskComment, deleteTaskComment,
   getLocalToday, getBacklog, addBacklogTask, scheduleTask, unscheduleTask, getTaskDetail, getTaskHistory,
-  searchTasks
+  searchTasks, getTeamSprintConfig, updateTeamSprintConfig
 } from '../api';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { useAuth } from '../AuthContext';
@@ -67,6 +67,10 @@ export default function Tasks() {
   const [stats, setStats] = useState({ total: 0, done: 0, inProgress: 0, percent: 0 });
   const [loading, setLoading] = useState(true);
   const [date, setDate] = useState(() => getLocalToday());
+  
+  // Sprint config state
+  const [sprintConfig, setSprintConfig] = useState(null); // Current sprint config from team
+  const [sprintConfigLoading, setSprintConfigLoading] = useState(false);
 
   const [error, setError] = useAutoDismiss('');
   const [taskToDelete, setTaskToDelete] = useState(null);
@@ -138,6 +142,7 @@ export default function Tasks() {
   const [detailEditPriority, setDetailEditPriority] = useState('medium');
   const [detailEditAssignedTo, setDetailEditAssignedTo] = useState('');
   const [detailEditDueDate, setDetailEditDueDate] = useState('');
+  const [detailEditSprintId, setDetailEditSprintId] = useState('');
   const [detailEditLabels, setDetailEditLabels] = useState([]);
   const [detailEditLabelDropdownOpen, setDetailEditLabelDropdownOpen] = useState(false);
   const [detailTab, setDetailTab] = useState('comments'); // 'comments' | 'history'
@@ -160,8 +165,9 @@ export default function Tasks() {
   const [backlogSummary, setBacklogSummary] = useState({ total: 0, byStatus: {}, byPriority: {} });
   const [backlogSort, setBacklogSort] = useState('priority');
 
-  // Active tab (planner vs backlog)
+  // Active tab (planner, sprint, or backlog)
   const [activeTab, setActiveTab] = useState('planner');
+  const sprintMode = activeTab === 'sprint';
 
   // ─── Data fetching ────────────────────────────────────────────────────
   useEffect(() => {
@@ -190,7 +196,7 @@ export default function Tasks() {
 
   const filterCount = useMemo(() => {
     const base = [filterAssignee, filterLabel, filterPriority, filterSearch.trim()];
-    if (activeTab === 'planner') base.push(filterStatus);
+    if (activeTab === 'planner' || activeTab === 'sprint') base.push(filterStatus);
     return base.filter(Boolean).length;
   }, [filterAssignee, filterLabel, filterPriority, filterStatus, filterSearch, activeTab]);
 
@@ -207,25 +213,61 @@ export default function Tasks() {
 
   const fetchTasks = useCallback(async () => {
     try {
-      const res = await getTasks(date, plannerFilters);
-      setTasks(res.data.tasks);
-      setStats(res.data.stats);
+      // In sprint mode, fetch tasks for sprint date range; otherwise single date
+      const params = { ...plannerFilters };
+      if (activeTab === 'sprint' && sprintConfig?.currentSprint) {
+        params.start_date = sprintConfig.currentSprint.startDate;
+        params.end_date = sprintConfig.currentSprint.endDate;
+        // Don't pass date parameter when using date range
+        const res = await getTasks(undefined, params);
+        setTasks(res.data.tasks);
+        setStats(res.data.stats);
+      } else if (activeTab === 'planner') {
+        const res = await getTasks(date, params);
+        setTasks(res.data.tasks);
+        setStats(res.data.stats);
+      }
       setError('');
     } catch {
       setError('Failed to load planner');
     } finally {
       setLoading(false);
     }
-  }, [date, plannerFilters]);
+  }, [date, activeTab, sprintConfig, plannerFilters]);
 
   useEffect(() => {
+    if (activeTab === 'backlog') return; // Don't fetch planner tasks when on backlog tab
     const controller = new AbortController();
     setLoading(true);
     fetchTasks().finally(() => {
       if (!controller.signal.aborted) setLoading(false);
     });
     return () => controller.abort();
-  }, [fetchTasks]);
+  }, [fetchTasks, activeTab]);
+
+  // Fetch sprint config if user has a team
+  useEffect(() => {
+    if (!currentUser?.team_id) {
+      setSprintConfig(null);
+      if (activeTab === 'sprint') setActiveTab('planner');
+      return;
+    }
+
+    const fetchSprintConfig = async () => {
+      try {
+        setSprintConfigLoading(true);
+        const res = await getTeamSprintConfig(currentUser.team_id);
+        setSprintConfig(res.data);
+      } catch (err) {
+        console.error('Failed to load sprint config:', err);
+        if (activeTab === 'sprint') setActiveTab('planner');
+      } finally {
+        setSprintConfigLoading(false);
+      }
+    };
+
+    fetchSprintConfig();
+  }, [currentUser?.team_id]);
 
   // Auto carry-forward: runs once when viewing today's date
   useEffect(() => {
@@ -771,6 +813,11 @@ export default function Tasks() {
     return parseLocalDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   };
 
+  const formatDate = (d) => {
+    if (!d) return '';
+    return parseLocalDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
   const isDueOverdue = (d) => d && d < getLocalToday();
 
   // ─── Label Selector Component ─────────────────────────────────────────
@@ -872,8 +919,27 @@ export default function Tasks() {
       {/* Header */}
       <div className={s['tasks-header']}>
         <div>
-          <h2><span className="page-icon">📋</span> Daily Planner</h2>
-          <p>Plan and track your daily work</p>
+          {activeTab === 'sprint' && sprintConfig?.currentSprint ? (
+            <>
+              <h2>
+                <span className="page-icon">🏃</span> {currentUser?.team_name || 'Team'} - Sprint #{sprintConfig.currentSprint.number}
+              </h2>
+              <p>
+                Ends in {sprintConfig.currentSprint.daysRemaining} day{sprintConfig.currentSprint.daysRemaining !== 1 ? 's' : ''} • 
+                {' '}{sprintConfig.currentSprint.startDate} → {sprintConfig.currentSprint.endDate}
+              </p>
+            </>
+          ) : activeTab === 'backlog' ? (
+            <>
+              <h2><span className="page-icon">📦</span> Backlog</h2>
+              <p>Unscheduled items waiting to be planned</p>
+            </>
+          ) : (
+            <>
+              <h2><span className="page-icon">📋</span> Daily Planner</h2>
+              <p>Plan and track your daily work</p>
+            </>
+          )}
         </div>
         <div className={s['tasks-header-actions']}>
           <div className={s['tab-switcher']}>
@@ -883,6 +949,14 @@ export default function Tasks() {
             >
               📅 Planner
             </button>
+            {currentUser?.team_id && sprintConfig?.currentSprint && (
+              <button
+                className={`${s['tab-btn']} ${activeTab === 'sprint' ? s['tab-active'] : ''}`}
+                onClick={() => setActiveTab('sprint')}
+              >
+                🏃 Sprint
+              </button>
+            )}
             <button
               className={`${s['tab-btn']} ${activeTab === 'backlog' ? s['tab-active'] : ''}`}
               onClick={() => setActiveTab('backlog')}
@@ -1013,7 +1087,7 @@ export default function Tasks() {
                 ))}
               </select>
             </div>
-            {activeTab === 'planner' && (
+            {(activeTab === 'planner' || activeTab === 'sprint') && (
               <div className={s['filter-group']}>
                 <label>Status</label>
                 <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className={s['filter-select']}>
@@ -1033,8 +1107,8 @@ export default function Tasks() {
         </div>
       )}
 
-      {/* ─── PLANNER TAB ─────────────────────────────────────────── */}
-      {activeTab === 'planner' && (
+      {/* ─── PLANNER / SPRINT TAB ────────────────────────────────── */}
+      {(activeTab === 'planner' || activeTab === 'sprint') && (
         <>
           {/* Progress Bar */}
           <div className={s['tasks-progress-card']}>
@@ -1123,10 +1197,9 @@ export default function Tasks() {
             <div className={s['backlog-summary']}>
               <button
                 type="button"
-                className={`${s['backlog-summary-chip']} ${summaryAllActive ? s['backlog-summary-chip-active'] : ''}`}
+                className={`${s['backlog-summary-chip']} ${s['chip-all']} ${summaryAllActive ? s['backlog-summary-chip-active'] : ''}`}
                 onClick={handleSummaryTotal}
                 aria-pressed={summaryAllActive}
-                style={{ '--chip-accent': 'var(--primary)' }}
               >
                 <span className={s['backlog-summary-value']}>{backlogSummary.total || backlogTasks.length}</span>
                 <span className={s['backlog-summary-text']}>Total</span>
@@ -1268,12 +1341,11 @@ export default function Tasks() {
                 return (
                   <div
                     key={task.id}
-                    className={`${s['backlog-card']} ${task.status === 'done' ? s['backlog-card-done'] : ''}`}
+                    className={`${s['backlog-card']} ${s.clickable} ${task.status === 'done' ? s['backlog-card-done'] : ''}`}
                     onClick={(e) => {
                       if (e.target.closest(`.${s['backlog-actions']}`)) return;
                       openTaskDetail(task);
                     }}
-                    style={{ cursor: 'pointer' }}
                   >
                     <div className={s['backlog-priority-bar']} style={{ '--pri-color': pri.color }} />
                     <div className={s['backlog-card-body']}>
@@ -1439,7 +1511,7 @@ export default function Tasks() {
       <div
         key={task.id}
         id={`task-${task.id}`}
-        className={`${s['task-card']} ${task.status === 'done' ? s['task-done'] : ''}`}
+        className={`${s['task-card']} ${s.clickable} ${task.status === 'done' ? s['task-done'] : ''}`}
         draggable
         onDragStart={(e) => onDragStart(e, task.id)}
         onDragEnd={(e) => onDragEnd(e, task.id)}
@@ -1448,7 +1520,6 @@ export default function Tasks() {
           if (e.target.closest(`.${s['task-actions']}`) || e.target.closest(`.${s['task-action-btn']}`) || e.target.closest(`.${s['comment-icon']}`)) return;
           openTaskDetail(task);
         }}
-        style={{ cursor: 'pointer' }}
       >
         <div className={s['task-card-top']}>
           <span

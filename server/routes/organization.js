@@ -310,6 +310,97 @@ router.delete('/teams/:id', requireRole('manager'), requireSameOrg, (req, res) =
     res.json({ message: 'Team deleted' });
 });
 
+// Get team sprint configuration and current sprint info
+router.get('/teams/:id/sprint-config', requireSameOrg, (req, res) => {
+    const { id } = req.params;
+    const team = db.prepare('SELECT * FROM teams WHERE id = ? AND org_id = ?').get(id, req.userOrgId);
+    if (!team) return res.status(404).json({ error: 'Team not found' });
+
+    // Calculate current sprint if sprint_start_date is set
+    let currentSprint = null;
+    if (team.sprint_start_date) {
+        // Use timezone-aware "today" based on client offset, or fallback to local server date
+        const tzOffset = req.headers['x-timezone-offset'];
+        let todayStr;
+        if (tzOffset !== undefined) {
+            const now = new Date();
+            const localNow = new Date(now.getTime() - Number(tzOffset) * 60000);
+            todayStr = localNow.toISOString().split('T')[0];
+        } else {
+            const now = new Date();
+            todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        }
+
+        // Parse dates as plain date strings (no timezone shifts)
+        const [sy, sm, sd] = team.sprint_start_date.split('-').map(Number);
+        const [ty, tm, td] = todayStr.split('-').map(Number);
+        const startMs = Date.UTC(sy, sm - 1, sd);
+        const todayMs = Date.UTC(ty, tm - 1, td);
+
+        // Calculate which sprint we're in
+        const daysSinceStart = Math.floor((todayMs - startMs) / (1000 * 60 * 60 * 24));
+        const sprintDurationDays = team.sprint_duration_weeks * 7;
+        const sprintNumber = daysSinceStart < 0 ? 1 : Math.floor(daysSinceStart / sprintDurationDays) + 1;
+
+        // Calculate current sprint's start and end dates
+        const currentSprintStartDays = (sprintNumber - 1) * sprintDurationDays;
+        const sprintStartMs = startMs + currentSprintStartDays * 86400000;
+        const sprintEndMs = sprintStartMs + (sprintDurationDays - 1) * 86400000;
+
+        const fmt = (ms) => { const d = new Date(ms); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`; };
+        const daysRemaining = Math.max(0, Math.ceil((sprintEndMs - todayMs) / 86400000));
+
+        currentSprint = {
+            number: sprintNumber,
+            startDate: fmt(sprintStartMs),
+            endDate: fmt(sprintEndMs),
+            daysRemaining,
+            durationWeeks: team.sprint_duration_weeks
+        };
+    }
+
+    res.json({
+        teamId: team.id,
+        teamName: team.name,
+        sprintDurationWeeks: team.sprint_duration_weeks,
+        sprintStartDate: team.sprint_start_date,
+        currentSprint
+    });
+});
+
+// Update team sprint configuration
+router.put('/teams/:id/sprint-config', requireRole('team_lead'), requireSameOrg, (req, res) => {
+    const { id } = req.params;
+    const { sprint_duration_weeks, sprint_start_date } = req.body;
+
+    const team = db.prepare('SELECT * FROM teams WHERE id = ? AND org_id = ?').get(id, req.userOrgId);
+    if (!team) return res.status(404).json({ error: 'Team not found' });
+
+    if (sprint_duration_weeks !== undefined) {
+        const weeks = Number(sprint_duration_weeks);
+        if (!Number.isInteger(weeks) || weeks < 1 || weeks > 8) {
+            return res.status(400).json({ error: 'Sprint duration must be between 1-8 weeks' });
+        }
+    }
+
+    if (sprint_start_date !== undefined && sprint_start_date !== null) {
+        // Validate date format (YYYY-MM-DD)
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(sprint_start_date)) {
+            return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
+        }
+    }
+
+    db.prepare('UPDATE teams SET sprint_duration_weeks = ?, sprint_start_date = ? WHERE id = ?')
+        .run(
+            sprint_duration_weeks !== undefined ? sprint_duration_weeks : team.sprint_duration_weeks,
+            sprint_start_date !== undefined ? sprint_start_date : team.sprint_start_date,
+            id
+        );
+
+    logAction(req, 'update', 'team', Number(id), { sprint_duration_weeks, sprint_start_date });
+    res.json({ message: 'Sprint configuration updated' });
+});
+
 // ==================== ORG CHART ====================
 
 router.get('/chart', requireSameOrg, (req, res) => {

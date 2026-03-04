@@ -95,7 +95,9 @@ router.delete('/avatar', auth, async (req, res) => {
 
 // Get profile
 router.get('/', auth, (req, res) => {
-    const user = db.prepare('SELECT id, username, full_name, email, avatar, role, org_id, team_id, department_id, must_change_password FROM users WHERE id = ?').get(req.userId);
+    const user = db.prepare(`SELECT u.id, u.username, u.full_name, u.email, u.avatar, u.role, u.org_id, u.team_id, u.department_id, u.must_change_password,
+               t.name as team_name
+        FROM users u LEFT JOIN teams t ON u.team_id = t.id WHERE u.id = ?`).get(req.userId);
     if (!user) return res.status(404).json({ error: 'User not found' });
     user.must_change_password = !!user.must_change_password;
     // Check if user has direct reports (for manager view)

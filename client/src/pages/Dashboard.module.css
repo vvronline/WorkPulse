@@ -1093,3 +1093,16 @@
   flex: 1;
   min-height: 160px;
 }
+
+.skeleton-bar-60 {
+  width: 60%;
+  margin-top: 1rem;
+}
+
+.skeleton-bar-80 {
+  width: 80%;
+}
+
+.skeleton-bar-40 {
+  width: 40%;
+}

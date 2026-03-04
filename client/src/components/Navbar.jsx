@@ -252,7 +252,6 @@ export default function Navbar() {
                   <button
                     className={s['profile-dropdown-item']}
                     onClick={() => { setProfileOpen(false); setEditModalOpen(true); }}
-                    style={{ animationDelay: '0.02s' }}
                   >
                     <span className={s['dd-item-icon']}>
                       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -263,7 +262,7 @@ export default function Navbar() {
                   </button>
 
                   {avatarUrl && (
-                    <button className={s['profile-dropdown-item']} onClick={handleRemoveAvatarClick} style={{ animationDelay: '0.04s' }}>
+                    <button className={s['profile-dropdown-item']} onClick={handleRemoveAvatarClick}>
                       <span className={s['dd-item-icon']}>
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 6h8l-.7 7.3a1 1 0 01-1 .7H5.7a1 1 0 01-1-.7L4 6zM6 6V4a1 1 0 011-1h2a1 1 0 011 1v2M3 6h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
                       </span>
@@ -271,7 +270,7 @@ export default function Navbar() {
                     </button>
                   )}
 
-                  <button className={s['profile-dropdown-item']} onClick={toggleTheme} style={{ animationDelay: '0.08s' }}>
+                  <button className={s['profile-dropdown-item']} onClick={toggleTheme}>
                     <span className={s['dd-item-icon']}>
                       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                         {theme === 'dark'
@@ -286,7 +285,7 @@ export default function Navbar() {
 
                 <div className={s['profile-dropdown-divider']} />
 
-                <button className={s['profile-dropdown-signout']} onClick={handleSignOutClick} style={{ animationDelay: '0.12s' }}>
+                <button className={s['profile-dropdown-signout']} onClick={handleSignOutClick}>
                   <span className={`${s['dd-item-icon']} ${s['dd-signout-icon']}`}>
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 14H3.33A1.33 1.33 0 012 12.67V3.33A1.33 1.33 0 013.33 2H6M10.67 11.33L14 8l-3.33-3.33M14 8H6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
                   </span>

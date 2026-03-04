@@ -478,7 +478,7 @@ export default function ManualEntry() {
               })}
             </div>
           ) : (
-            <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '2rem 0' }}>No requests yet.</p>
+            <p className={s['empty-state']}>No requests yet.</p>
           )}
         </div>
       </div>
@@ -502,7 +502,7 @@ export default function ManualEntry() {
               </div>
               <div className="form-group">
                 <label>Reason</label>
-                <textarea value={otReason} onChange={e => setOtReason(e.target.value)} placeholder="Why do you need overtime?" rows={3} required style={{ resize: 'vertical' }} />
+                <textarea value={otReason} onChange={e => setOtReason(e.target.value)} placeholder="Why do you need overtime?" rows={3} required className={s['textarea-resize']} />
               </div>
               <button type="submit" className="btn btn-primary" disabled={otLoading}>
                 {otLoading ? 'Submitting...' : '✓ Submit Overtime Request'}
@@ -535,13 +535,13 @@ export default function ManualEntry() {
                         {r.status}
                       </span>
                       {r.reason && <div className={s['pending-item-reason']}>{r.reason}</div>}
-                      {r.reject_reason && <div className={s['pending-item-reason']} style={{ color: 'var(--danger)' }}>Rejected: {r.reject_reason}</div>}
+                      {r.reject_reason && <div className={`${s['pending-item-reason']} ${s['text-danger']}`}>Rejected: {r.reject_reason}</div>}
                     </div>
                   );
                 })}
               </div>
             ) : (
-              <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '2rem 0' }}>No overtime requests yet.</p>
+              <p className={s['empty-state']}>No overtime requests yet.</p>
             )}
           </div>
         </div>

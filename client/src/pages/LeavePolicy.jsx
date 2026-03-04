@@ -6,7 +6,7 @@ import {
     getLeaveBalances, getUserLeaveBalances, updateLeaveBalance,
     getHolidays, addHoliday, deleteHoliday
 } from '../api';
-import s from './Admin.module.css';
+import s from './LeavePolicy.module.css';
 
 export default function LeavePolicy() {
     const { user } = useAuth();
@@ -50,32 +50,32 @@ function PoliciesTab() {
 
     return (
         <>
-            <button className={s.btnPrimary} style={{ marginBottom: '1rem' }} onClick={() => { setEditing(empty); setShowForm(true); }}>+ Add Policy</button>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
+            <button className={`${s.btnPrimary} ${s['mb-1']}`} onClick={() => { setEditing(empty); setShowForm(true); }}>+ Add Policy</button>
+            <div className={s['card-grid']}>
                 {policies.map(p => (
-                    <div key={p.id} style={{ background: 'var(--card-bg)', borderRadius: 12, padding: '1.25rem', border: '1px solid var(--border)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '0.75rem' }}>
+                    <div key={p.id} className={s['card-panel']}>
+                        <div className={s['card-header']}>
                             <div>
-                                <div style={{ fontWeight: 700, fontSize: '1.05rem' }}>{p.name}</div>
-                                <span className={s.badgeRole} style={{ fontSize: '0.7rem', marginTop: '0.3rem', display: 'inline-block' }}>{p.leave_type}</span>
+                                <div className={s['card-title']}>{p.name}</div>
+                                <span className={`${s.badgeRole} ${s['badge-type']}`}>{p.leave_type}</span>
                             </div>
-                            <div style={{ display: 'flex', gap: '0.3rem' }}>
-                                <button className={s.btnSmall} style={{ background: 'var(--accent)', color: '#fff' }} onClick={() => { setEditing(p); setShowForm(true); }}>Edit</button>
-                                <button className={s.btnSmall} style={{ background: 'var(--danger)', color: '#fff' }} onClick={() => handleDelete(p.id)}>Delete</button>
+                            <div className={s['btn-group']}>
+                                <button className={`${s.btnSmall} ${s['btn-accent']}`} onClick={() => { setEditing(p); setShowForm(true); }}>Edit</button>
+                                <button className={`${s.btnSmall} ${s['btn-danger']}`} onClick={() => handleDelete(p.id)}>Delete</button>
                             </div>
                         </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem', fontSize: '0.85rem' }}>
-                            <div><span style={{ color: 'var(--text-secondary)' }}>Days:</span> <strong>{p.days_allowed}</strong></div>
-                            <div><span style={{ color: 'var(--text-secondary)' }}>Accrual:</span> <strong>{p.accrual_type}</strong></div>
-                            <div><span style={{ color: 'var(--text-secondary)' }}>Carry-forward:</span> <strong>{p.carry_forward_limit}</strong></div>
-                            <div><span style={{ color: 'var(--text-secondary)' }}>Min service:</span> <strong>{p.min_service_days}d</strong></div>
+                        <div className={s['grid-2col']}>
+                            <div><span className={s['text-muted']}>Days:</span> <strong>{p.days_allowed}</strong></div>
+                            <div><span className={s['text-muted']}>Accrual:</span> <strong>{p.accrual_type}</strong></div>
+                            <div><span className={s['text-muted']}>Carry-forward:</span> <strong>{p.carry_forward_limit}</strong></div>
+                            <div><span className={s['text-muted']}>Min service:</span> <strong>{p.min_service_days}d</strong></div>
                             <div>{p.half_day_allowed ? '✓ Half-day' : '✗ Half-day'}</div>
                             <div>{p.quarter_day_allowed ? '✓ Quarter-day' : '✗ Quarter-day'}</div>
                         </div>
-                        {p.description && <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>{p.description}</div>}
+                        {p.description && <div className={s['description-text']}>{p.description}</div>}
                     </div>
                 ))}
-                {policies.length === 0 && <div style={{ padding: '2rem', color: 'var(--text-secondary)' }}>No leave policies defined yet.</div>}
+                {policies.length === 0 && <div className={s['empty-state']}>No leave policies defined yet.</div>}
             </div>
             {showForm && <PolicyForm initial={editing} onClose={() => setShowForm(false)} onSaved={fetch} />}
         </>
@@ -100,7 +100,7 @@ function PolicyForm({ initial, onClose, onSaved }) {
 
     return (
         <div className={s.modalOverlay} onClick={onClose}>
-            <div className={s.modal} onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
+            <div className={`${s.modal} ${s['modal-narrow']}`} onClick={e => e.stopPropagation()}>
                 <h3>{form.id ? 'Edit Policy' : 'Create Policy'}</h3>
                 {error && <div className={s.error}>{error}</div>}
                 <form onSubmit={handleSave}>
@@ -108,7 +108,7 @@ function PolicyForm({ initial, onClose, onSaved }) {
                         <label>Policy Name</label>
                         <input value={form.name} onChange={e => set('name', e.target.value)} required placeholder="e.g. Annual Leave" />
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                    <div className={s['grid-2col-form']}>
                         <div className={s.formGroup}>
                             <label>Leave Type</label>
                             <select value={form.leave_type} onChange={e => set('leave_type', e.target.value)}>
@@ -143,20 +143,20 @@ function PolicyForm({ initial, onClose, onSaved }) {
                             <input type="number" min="0" value={form.min_service_days} onChange={e => set('min_service_days', +e.target.value)} />
                         </div>
                     </div>
-                    <div style={{ display: 'flex', gap: '1.5rem', margin: '0.75rem 0' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
+                    <div className={s['checkbox-row']}>
+                        <label className={s['checkbox-label']}>
                             <input type="checkbox" checked={!!form.requires_approval} onChange={e => set('requires_approval', e.target.checked ? 1 : 0)} /> Requires Approval
                         </label>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
+                        <label className={s['checkbox-label']}>
                             <input type="checkbox" checked={!!form.half_day_allowed} onChange={e => set('half_day_allowed', e.target.checked ? 1 : 0)} /> Half-day
                         </label>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
+                        <label className={s['checkbox-label']}>
                             <input type="checkbox" checked={!!form.quarter_day_allowed} onChange={e => set('quarter_day_allowed', e.target.checked ? 1 : 0)} /> Quarter-day
                         </label>
                     </div>
                     <div className={s.formGroup}>
                         <label>Description</label>
-                        <textarea value={form.description || ''} onChange={e => set('description', e.target.value)} rows={2} style={{ width: '100%', padding: '0.5rem', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--input-bg)', color: 'var(--text-primary)', resize: 'vertical' }} />
+                        <textarea value={form.description || ''} onChange={e => set('description', e.target.value)} rows={2} className={s['textarea-input']} />
                     </div>
                     <div className={s.formActions}>
                         <button type="button" className={s.btnCancel} onClick={onClose}>Cancel</button>
@@ -180,32 +180,32 @@ function MyBalances() {
 
     return (
         <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '1rem' }}>
+            <div className={s['grid-balances']}>
                 {balances.map(b => {
                     const used = b.used || 0;
                     const pct = b.total_days > 0 ? Math.round((used / b.total_days) * 100) : 0;
                     return (
-                        <div key={b.id} style={{ background: 'var(--card-bg)', borderRadius: 12, padding: '1.25rem', border: '1px solid var(--border)' }}>
-                            <div style={{ fontWeight: 700, marginBottom: '0.5rem' }}>{b.policy_name}</div>
-                            <span className={s.badgeRole} style={{ fontSize: '0.7rem' }}>{b.leave_type}</span>
-                            <div style={{ margin: '0.75rem 0' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '0.25rem' }}>
+                        <div key={b.id} className={s['card-panel']}>
+                            <div className={s['card-title-sm']}>{b.policy_name}</div>
+                            <span className={`${s.badgeRole} ${s['badge-small']}`}>{b.leave_type}</span>
+                            <div className={s['progress-section']}>
+                                <div className={s['flex-between-sm']}>
                                     <span>Used: {used}</span>
                                     <span>Balance: {b.balance}</span>
                                 </div>
-                                <div style={{ height: 8, background: 'var(--border)', borderRadius: 4 }}>
-                                    <div style={{ height: '100%', borderRadius: 4, width: `${Math.min(pct, 100)}%`, background: pct >= 80 ? 'var(--danger)' : pct >= 50 ? 'var(--warning)' : 'var(--success)', transition: 'width 0.3s' }} />
+                                <div className={s['progress-track']}>
+                                    <div className={s['progress-fill']} style={{ width: `${Math.min(pct, 100)}%`, background: pct >= 80 ? 'var(--danger)' : pct >= 50 ? 'var(--warning)' : 'var(--success)' }} />
                                 </div>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                                <div className={s['flex-between-muted']}>
                                     <span>Total: {b.total_days}</span>
                                     <span>Carried: {b.carried_forward}</span>
                                 </div>
                             </div>
-                            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Year: {b.year}</div>
+                            <div className={s['text-muted-sm']}>Year: {b.year}</div>
                         </div>
                     );
                 })}
-                {balances.length === 0 && <div style={{ padding: '2rem', color: 'var(--text-secondary)' }}>No leave balances found. Contact HR to set up leave policies.</div>}
+                {balances.length === 0 && <div className={s['empty-state']}>No leave balances found. Contact HR to set up leave policies.</div>}
             </div>
         </>
     );
@@ -244,7 +244,7 @@ function HolidaysTab({ isHR }) {
     return (
         <>
             <div className={s.toolbar}>
-                <select value={year} onChange={e => setYear(+e.target.value)} style={{ padding: '0.5rem 1.8rem 0.5rem 0.5rem', borderRadius: 8, border: '1px solid var(--glass-border)', background: 'var(--input-bg)', color: 'var(--text-primary)', fontFamily: 'inherit' }}>
+                <select value={year} onChange={e => setYear(+e.target.value)} className={s['select-input']}>
                     {[year - 1, year, year + 1].map(y => <option key={y} value={y}>{y}</option>)}
                 </select>
                 {isHR && <button className={s.btnPrimary} onClick={() => setShowForm(true)}>+ Add Holiday</button>}
@@ -252,8 +252,8 @@ function HolidaysTab({ isHR }) {
 
             {upcoming.length > 0 && (
                 <>
-                    <h3 style={{ marginBottom: '0.5rem', fontSize: '1rem' }}>📅 Upcoming</h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
+                    <h3 className={s['section-heading']}>📅 Upcoming</h3>
+                    <div className={s['grid-holidays']}>
                         {upcoming.map(h => (
                             <HolidayCard key={h.id} holiday={h} isHR={isHR} onDelete={handleDelete} />
                         ))}
@@ -263,8 +263,8 @@ function HolidaysTab({ isHR }) {
 
             {past.length > 0 && (
                 <>
-                    <h3 style={{ marginBottom: '0.5rem', fontSize: '1rem', color: 'var(--text-secondary)' }}>Past</h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '0.75rem', opacity: 0.7 }}>
+                    <h3 className={s['section-heading-muted']}>Past</h3>
+                    <div className={s['grid-holidays-past']}>
                         {past.map(h => (
                             <HolidayCard key={h.id} holiday={h} isHR={isHR} onDelete={handleDelete} />
                         ))}
@@ -272,7 +272,7 @@ function HolidaysTab({ isHR }) {
                 </>
             )}
 
-            {holidays.length === 0 && <div style={{ padding: '2rem', color: 'var(--text-secondary)' }}>No holidays defined for {year}.</div>}
+            {holidays.length === 0 && <div className={s['empty-state']}>No holidays defined for {year}.</div>}
 
             {showForm && (
                 <div className={s.modalOverlay} onClick={() => setShowForm(false)}>
@@ -287,7 +287,7 @@ function HolidaysTab({ isHR }) {
                                 <label>Date</label>
                                 <input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} required />
                             </div>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', margin: '0.75rem 0', cursor: 'pointer' }}>
+                            <label className={s['checkbox-label-block']}>
                                 <input type="checkbox" checked={!!form.is_optional} onChange={e => setForm({ ...form, is_optional: e.target.checked ? 1 : 0 })} /> Optional holiday
                             </label>
                             <div className={s.formActions}>
@@ -308,20 +308,20 @@ function HolidayCard({ holiday: h, isHR, onDelete }) {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
     return (
-        <div style={{ background: 'var(--card-bg)', borderRadius: 10, padding: '0.8rem 1rem', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <div style={{ textAlign: 'center', minWidth: 45 }}>
-                    <div style={{ fontSize: '1.25rem', fontWeight: 700, lineHeight: 1 }}>{dt.getDate()}</div>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{months[dt.getMonth()]}</div>
+        <div className={s['holiday-card']}>
+            <div className={s['holiday-info']}>
+                <div className={s['holiday-date-box']}>
+                    <div className={s['date-day']}>{dt.getDate()}</div>
+                    <div className={s['date-month']}>{months[dt.getMonth()]}</div>
                 </div>
                 <div>
-                    <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{h.name}</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                    <div className={s['holiday-name']}>{h.name}</div>
+                    <div className={s['holiday-detail']}>
                         {days[dt.getDay()]} {h.is_optional ? '• Optional' : ''}
                     </div>
                 </div>
             </div>
-            {isHR && <button className={s.btnSmall} style={{ background: 'var(--danger)', color: '#fff' }} onClick={() => onDelete(h.id)}>✗</button>}
+            {isHR && <button className={`${s.btnSmall} ${s['btn-danger']}`} onClick={() => onDelete(h.id)}>✗</button>}
         </div>
     );
 }
@@ -364,12 +364,12 @@ function AllBalances() {
                             <td>{b.policy_name}</td>
                             <td>{b.total_days}</td>
                             <td>{b.used}</td>
-                            <td style={{ fontWeight: 600 }}>{b.balance}</td>
+                            <td className={s['font-bold']}>{b.balance}</td>
                             <td>{b.year}</td>
-                            <td><button className={s.btnSmall} style={{ background: 'var(--accent)', color: '#fff' }} onClick={() => setEditItem({ ...b })}>Edit</button></td>
+                            <td><button className={`${s.btnSmall} ${s['btn-accent']}`} onClick={() => setEditItem({ ...b })}>Edit</button></td>
                         </tr>
                     ))}
-                    {filtered.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>No balances found</td></tr>}
+                    {filtered.length === 0 && <tr><td colSpan={7} className={s['empty-cell']}>No balances found</td></tr>}
                 </tbody>
             </table>
             {editItem && (

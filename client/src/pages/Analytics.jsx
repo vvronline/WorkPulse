@@ -253,7 +253,7 @@ export default function Analytics() {
       {loading ? (
         <div className="loading-spinner"><div className="spinner"></div></div>
       ) : error ? (
-        <div className="error-msg" style={{ margin: '2rem 0' }}>{error}</div>
+        <div className={`error-msg ${s['section-divider']}`}>{error}</div>
       ) : (
         <>
           {/* Summary Stats */}
@@ -276,11 +276,11 @@ export default function Analytics() {
             </div>
             <div className="stat-card">
               <div className="stat-label">Office Days</div>
-              <div className="stat-value" style={{ color: 'var(--primary)', WebkitTextFillColor: 'var(--primary)' }}>🏢 {officeDays}</div>
+              <div className={`stat-value ${s['text-primary-fill']}`}>🏢 {officeDays}</div>
             </div>
             <div className="stat-card">
               <div className="stat-label">Remote Days</div>
-              <div className="stat-value" style={{ color: 'var(--success)', WebkitTextFillColor: 'var(--success)' }}>🏠 {remoteDays}</div>
+              <div className={`stat-value ${s['text-success-fill']}`}>🏠 {remoteDays}</div>
             </div>
           </div>
 

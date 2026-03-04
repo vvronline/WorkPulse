@@ -1,0 +1,576 @@
+/* ============================================================
+   LeavePolicy.module.css
+   Extracted from inline styles + copied Admin.module.css deps
+   ============================================================ */
+
+/* ─── Page Layout (from Admin.module.css) ─── */
+.adminPage {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 1.5rem 2.5rem 6rem;
+}
+
+.adminPage h1 {
+    font-size: 1.75rem;
+    margin-bottom: 1.5rem;
+}
+
+/* ─── Tabs (from Admin.module.css) ─── */
+.tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 0;
+    overflow-x: auto;
+}
+
+.tab {
+    padding: 0.6rem 1.2rem;
+    border: none;
+    background: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.95rem;
+    font-weight: 500;
+    font-family: inherit;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    white-space: nowrap;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.tab span {
+    font-size: 1rem;
+}
+
+.tab:hover {
+    color: var(--text-primary);
+}
+
+.tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+/* ─── Toolbar (from Admin.module.css) ─── */
+.toolbar {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.toolbar input,
+.toolbar select {
+    padding: 0.5rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    font-family: inherit;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.toolbar input:focus,
+.toolbar select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+.toolbar select {
+    min-width: 140px;
+}
+
+.toolbar input {
+    flex: 1;
+    min-width: 200px;
+}
+
+.searchInput {}
+
+/* ─── Buttons (from Admin.module.css) ─── */
+.btnPrimary {
+    padding: 0.5rem 1.2rem;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all var(--transition-fast);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.btnPrimary:hover {
+    opacity: 0.9;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.btnPrimary:active {
+    transform: translateY(0);
+    box-shadow: none;
+}
+
+.btnSmall {
+    padding: 0.35rem 0.75rem;
+    font-size: 0.8rem;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 500;
+    transition: opacity 0.2s, transform 0.1s;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.btnSmall:hover {
+    opacity: 0.9;
+    transform: translateY(-1px);
+}
+
+.btnSmall:active {
+    transform: translateY(0);
+}
+
+.btnCancel {
+    padding: 0.5rem 1.2rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.9rem;
+}
+
+/* ─── Table (from Admin.module.css) ─── */
+.table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    background: var(--card-bg);
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+}
+
+.table th,
+.table td {
+    padding: 0.75rem 1rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.9rem;
+}
+
+.table th {
+    background: var(--bg-secondary);
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.table tr:last-child td {
+    border-bottom: none;
+}
+
+.table tbody tr {
+    transition: background 0.15s;
+}
+
+.table tr:hover td {
+    background: var(--bg-secondary);
+}
+
+/* ─── Badges (from Admin.module.css) ─── */
+.badgeRole {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+/* ─── Modal (from Admin.module.css) ─── */
+.modalOverlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 1rem;
+}
+
+.modal {
+    background: var(--bg-secondary);
+    border-radius: 16px;
+    padding: 2rem;
+    width: 100%;
+    max-width: 500px;
+    max-height: 90vh;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+}
+
+.modal h2 {
+    margin-bottom: 1.5rem;
+    font-size: 1.3rem;
+}
+
+/* ─── Form elements (from Admin.module.css) ─── */
+.formGroup {
+    margin-bottom: 1rem;
+}
+
+.formGroup label {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 0.3rem;
+    color: var(--text-secondary);
+}
+
+.formGroup input,
+.formGroup select,
+.formGroup textarea {
+    width: 100%;
+    padding: 0.6rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    font-family: inherit;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.formGroup input:focus,
+.formGroup select:focus,
+.formGroup textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+.formGroup textarea {
+    min-height: 80px;
+    resize: vertical;
+}
+
+.formActions {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+    justify-content: flex-end;
+}
+
+/* ─── Error message (from Admin.module.css) ─── */
+.error {
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    background: color-mix(in srgb, var(--danger) 13%, transparent);
+    color: var(--danger);
+    border: 1px solid color-mix(in srgb, var(--danger) 27%, transparent);
+}
+
+/* =============================================
+   EXTRACTED INLINE STYLES
+   ============================================= */
+
+/* ─── Spacing utilities ─── */
+.mb-1 { margin-bottom: 1rem; }
+
+/* ─── Text utilities ─── */
+.text-muted { color: var(--text-secondary); }
+.text-muted-sm { font-size: 0.8rem; color: var(--text-secondary); }
+.font-bold { font-weight: 600; }
+
+/* ─── Card grid layouts ─── */
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1rem;
+}
+
+.grid-balances {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 1rem;
+}
+
+.grid-holidays {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+}
+
+.grid-holidays-past {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 0.75rem;
+    opacity: 0.7;
+}
+
+/* ─── Card panel ─── */
+.card-panel {
+    background: var(--card-bg);
+    border-radius: 12px;
+    padding: 1.25rem;
+    border: 1px solid var(--border);
+}
+
+/* ─── Card header / title ─── */
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    margin-bottom: 0.75rem;
+}
+
+.card-title {
+    font-weight: 700;
+    font-size: 1.05rem;
+}
+
+.card-title-sm {
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+}
+
+/* ─── Badge variants ─── */
+.badge-type {
+    font-size: 0.7rem;
+    margin-top: 0.3rem;
+    display: inline-block;
+}
+
+.badge-small {
+    font-size: 0.7rem;
+}
+
+/* ─── Button group & variants ─── */
+.btn-group {
+    display: flex;
+    gap: 0.3rem;
+}
+
+.btn-accent {
+    background: var(--accent);
+    color: #fff;
+}
+
+.btn-danger {
+    background: var(--danger);
+    color: #fff;
+}
+
+/* ─── Grid layouts ─── */
+.grid-2col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+}
+
+.grid-2col-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+}
+
+/* ─── Description text ─── */
+.description-text {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-top: 0.5rem;
+}
+
+/* ─── Empty state ─── */
+.empty-state {
+    padding: 2rem;
+    color: var(--text-secondary);
+}
+
+.empty-cell {
+    text-align: center;
+    padding: 2rem;
+    color: var(--text-secondary);
+}
+
+/* ─── Modal narrow variant ─── */
+.modal-narrow {
+    max-width: 520px;
+}
+
+/* ─── Checkbox rows ─── */
+.checkbox-row {
+    display: flex;
+    gap: 1.5rem;
+    margin: 0.75rem 0;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+}
+
+.checkbox-label-block {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 0.75rem 0;
+    cursor: pointer;
+}
+
+/* ─── Textarea input ─── */
+.textarea-input {
+    width: 100%;
+    padding: 0.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--input-bg);
+    color: var(--text-primary);
+    resize: vertical;
+}
+
+/* ─── Progress bar ─── */
+.progress-section {
+    margin: 0.75rem 0;
+}
+
+.flex-between-sm {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    margin-bottom: 0.25rem;
+}
+
+.progress-track {
+    height: 8px;
+    background: var(--border);
+    border-radius: 4px;
+}
+
+.progress-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s;
+}
+
+.flex-between-muted {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-top: 0.25rem;
+}
+
+/* ─── Select input ─── */
+.select-input {
+    padding: 0.5rem 1.8rem 0.5rem 0.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--glass-border);
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-family: inherit;
+}
+
+/* ─── Section headings ─── */
+.section-heading {
+    margin-bottom: 0.5rem;
+    font-size: 1rem;
+}
+
+.section-heading-muted {
+    margin-bottom: 0.5rem;
+    font-size: 1rem;
+    color: var(--text-secondary);
+}
+
+/* ─── Holiday card ─── */
+.holiday-card {
+    background: var(--card-bg);
+    border-radius: 10px;
+    padding: 0.8rem 1rem;
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.holiday-info {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.holiday-date-box {
+    text-align: center;
+    min-width: 45px;
+}
+
+.date-day {
+    font-size: 1.25rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.date-month {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+}
+
+.holiday-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.holiday-detail {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+/* ─── Responsive ─── */
+@media (max-width: 768px) {
+    .adminPage {
+        padding: 1rem 1rem 6rem;
+    }
+
+    .table {
+        display: block;
+        overflow-x: auto;
+    }
+
+    .toolbar {
+        flex-direction: column;
+    }
+
+    .toolbar input {
+        min-width: 100%;
+    }
+}

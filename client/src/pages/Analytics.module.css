@@ -272,3 +272,17 @@
     min-width: 80px;
   }
 }
+
+.section-divider {
+  margin: 2rem 0;
+}
+
+.text-primary-fill {
+  color: var(--primary);
+  -webkit-text-fill-color: var(--primary);
+}
+
+.text-success-fill {
+  color: var(--success);
+  -webkit-text-fill-color: var(--success);
+}
