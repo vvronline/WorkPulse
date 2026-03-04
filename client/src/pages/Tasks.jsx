@@ -645,6 +645,11 @@ export default function Tasks() {
 
   const parseLocalDate = (value) => new Date(`${value}T00:00:00`);
 
+  const getAvatarUrl = (avatar) => {
+    if (!avatar) return '';
+    return avatar.startsWith('/') ? avatar : `/uploads/avatars/${avatar}`;
+  };
+
   const formatDueDate = (d) => {
     if (!d) return null;
     const today = getLocalToday();
@@ -710,7 +715,7 @@ export default function Tasks() {
               <div key={c.id} className={s['comment-item']}>
                 <div className={s['comment-meta']}>
                   {c.avatar ? (
-                    <img src={`/api/profile/avatar/${c.avatar}`} alt="" className={s['comment-avatar']} />
+                    <img src={getAvatarUrl(c.avatar)} alt="" className={s['comment-avatar']} />
                   ) : (
                     <span className={s['comment-avatar-placeholder']}>{(c.full_name || c.username || '?')[0].toUpperCase()}</span>
                   )}
@@ -1131,7 +1136,7 @@ export default function Tasks() {
                           {task.assignee && (
                             <span className={s['backlog-meta-chip']}>
                               {task.assignee.avatar ? (
-                                <img src={`/api/profile/avatar/${task.assignee.avatar}`} alt="" className={s['backlog-meta-avatar']} />
+                                <img src={getAvatarUrl(task.assignee.avatar)} alt="" className={s['backlog-meta-avatar']} />
                               ) : (
                                 <span className={s['backlog-meta-avatar-placeholder']}>
                                   {(task.assignee.full_name || task.assignee.username || '?')[0].toUpperCase()}
@@ -1444,7 +1449,7 @@ export default function Tasks() {
                       <span className={s['detail-meta-label']}>Assigned to</span>
                       <span className={s['detail-meta-value']}>
                         {detailTask.assignee.avatar ? (
-                          <img src={`/api/profile/avatar/${detailTask.assignee.avatar}`} alt="" className={s['detail-avatar']} />
+                          <img src={getAvatarUrl(detailTask.assignee.avatar)} alt="" className={s['detail-avatar']} />
                         ) : (
                           <span className={s['detail-avatar-placeholder']}>
                             {(detailTask.assignee.full_name || detailTask.assignee.username || '?')[0].toUpperCase()}
@@ -1459,7 +1464,7 @@ export default function Tasks() {
                       <span className={s['detail-meta-label']}>Created by</span>
                       <span className={s['detail-meta-value']}>
                         {detailTask.creator.avatar ? (
-                          <img src={`/api/profile/avatar/${detailTask.creator.avatar}`} alt="" className={s['detail-avatar']} />
+                          <img src={getAvatarUrl(detailTask.creator.avatar)} alt="" className={s['detail-avatar']} />
                         ) : (
                           <span className={s['detail-avatar-placeholder']}>
                             {(detailTask.creator.full_name || detailTask.creator.username || '?')[0].toUpperCase()}
@@ -1592,7 +1597,7 @@ export default function Tasks() {
                       <div key={c.id} className={s['comment-item']}>
                         <div className={s['comment-meta']}>
                           {c.avatar ? (
-                            <img src={`/api/profile/avatar/${c.avatar}`} alt="" className={s['comment-avatar']} />
+                            <img src={getAvatarUrl(c.avatar)} alt="" className={s['comment-avatar']} />
                           ) : (
                             <span className={s['comment-avatar-placeholder']}>{(c.full_name || c.username || '?')[0].toUpperCase()}</span>
                           )}
