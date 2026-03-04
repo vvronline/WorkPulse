@@ -109,6 +109,7 @@ export const scheduleTask = (id, date) => API.patch(`/tasks/${id}/schedule`, { d
 export const unscheduleTask = (id) => API.patch(`/tasks/${id}/unschedule`);
 export const getTaskDetail = (id) => API.get(`/tasks/${id}/detail`);
 export const getTaskHistory = (id) => API.get(`/tasks/${id}/history`);
+export const searchTasks = (q) => API.get('/tasks/search', { params: { q } });
 
 // Profile
 export const getProfile = () => API.get('/profile');

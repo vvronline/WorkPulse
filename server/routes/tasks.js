@@ -78,9 +78,14 @@ function enrichTasks(tasks) {
     }));
 }
 
-// Helper: check if user can access task (creator or assignee)
+// Helper: check if user can access task (creator, assignee, or same org)
 function canAccessTask(task, userId) {
-    return task && (task.user_id === userId || task.assigned_to === userId);
+    if (!task) return false;
+    if (task.user_id === userId || task.assigned_to === userId) return true;
+    // Allow access if both users belong to the same organization
+    const user = db.prepare('SELECT org_id FROM users WHERE id = ?').get(userId);
+    const owner = db.prepare('SELECT org_id FROM users WHERE id = ?').get(task.user_id);
+    return user?.org_id && owner?.org_id && user.org_id === owner.org_id;
 }
 
 // Helper: sync labels for a task
@@ -213,6 +218,8 @@ router.post('/', auth, loadUserContext, (req, res) => {
             syncLabels(taskId, label_ids);
         }
 
+        logHistory(taskId, req.userId, 'created', null, null, null);
+
         const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
         const enriched = enrichTasks([task]);
         res.json(enriched[0]);
@@ -256,6 +263,9 @@ router.put('/:id', auth, loadUserContext, (req, res) => {
     try {
         const { id } = req.params;
         const { title, description, priority, assigned_to, due_date, label_ids } = req.body;
+        console.log('======================================');
+        console.log(`PUT /tasks/${id} - label_ids: ${JSON.stringify(label_ids)}`);
+        console.log('======================================');
 
         const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
         if (!canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
@@ -301,9 +311,26 @@ router.put('/:id', auth, loadUserContext, (req, res) => {
         }
         if (newDueDate !== task.due_date) logHistory(id, req.userId, 'updated', 'due_date', task.due_date, newDueDate);
 
-        // Sync labels if provided
+        // Sync labels if provided and log changes
         if (label_ids !== undefined) {
+            console.log('>>> LABEL CHANGE DETECTION START <<<');
+            const oldLabelRows = db.prepare('SELECT tl.name FROM task_label_map tlm JOIN task_labels tl ON tl.id = tlm.label_id WHERE tlm.task_id = ? ORDER BY tl.name').all(id);
+            const oldLabelNames = oldLabelRows.map(r => r.name);
+            console.log(`OLD labels: ${JSON.stringify(oldLabelNames)}`);
+            console.log(`Syncing with label_ids: ${JSON.stringify(label_ids)}`);
             syncLabels(id, label_ids || []);
+            const newLabelRows = db.prepare('SELECT tl.name FROM task_label_map tlm JOIN task_labels tl ON tl.id = tlm.label_id WHERE tlm.task_id = ? ORDER BY tl.name').all(id);
+            const newLabelNames = newLabelRows.map(r => r.name);
+            console.log(`NEW labels: ${JSON.stringify(newLabelNames)}`);
+            const changed = JSON.stringify(oldLabelNames) !== JSON.stringify(newLabelNames);
+            console.log(`Labels changed? ${changed}`);
+            if (changed) {
+                const oldStr = oldLabelNames.join(', ') || 'none';
+                const newStr = newLabelNames.join(', ') || 'none';
+                console.log(`CREATING HISTORY ENTRY: ${oldStr} -> ${newStr}`);
+                logHistory(id, req.userId, 'updated', 'labels', oldStr, newStr);
+            }
+            console.log('>>> LABEL CHANGE DETECTION END <<<');
         }
 
         const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
@@ -322,6 +349,7 @@ router.delete('/:id', auth, (req, res) => {
         const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, req.userId);
         if (!task) return res.status(404).json({ error: 'Task not found' });
 
+        logHistory(id, req.userId, 'deleted', null, task.title, null);
         db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
         res.json({ message: 'Task deleted' });
     } catch (err) {
@@ -371,15 +399,17 @@ router.post('/carry-forward', auth, (req, res) => {
                     // Bump overdue due_date to today
                     const dueDate = t.due_date && t.due_date < today ? today : t.due_date;
                     const result = insert.run(req.userId, today, t.title, t.description, t.priority, t.assigned_to, dueDate);
+                    const newTaskId = result.lastInsertRowid;
                     // Carry forward labels from original task
                     const origTask = db.prepare('SELECT id FROM tasks WHERE user_id = ? AND date = ? AND title = ?')
                         .get(req.userId, lastTaskDay.date, t.title);
                     if (origTask) {
                         const origLabels = getLabelIds.all(origTask.id);
                         for (const lbl of origLabels) {
-                            insertLabelMap.run(result.lastInsertRowid, lbl.label_id);
+                            insertLabelMap.run(newTaskId, lbl.label_id);
                         }
                     }
+                    logHistory(newTaskId, req.userId, 'created', 'date', lastTaskDay.date, today);
                     carried++;
                 }
             }
@@ -391,6 +421,42 @@ router.post('/carry-forward', auth, (req, res) => {
     } catch (err) {
         console.error('Error carrying forward tasks:', err.message);
         res.status(500).json({ error: 'Failed to carry forward tasks' });
+    }
+});
+
+// ─── Global search across all dates + backlog ──────────────────────────
+router.get('/search', auth, loadUserContext, (req, res) => {
+    try {
+        const { q } = req.query;
+        if (!q || !q.trim() || q.trim().length < 2) {
+            return res.json([]);
+        }
+
+        const term = `%${q.trim()}%`;
+        const conditions = ['(t.title LIKE ? OR t.description LIKE ?)'];
+        const params = [term, term];
+
+        // Restrict to tasks the user can see
+        if (req.userOrgId) {
+            conditions.push('(t.user_id = ? OR t.assigned_to = ? OR t.user_id IN (SELECT id FROM users WHERE org_id = ?))');
+            params.push(req.userId, req.userId, req.userOrgId);
+        } else {
+            conditions.push('(t.user_id = ? OR t.assigned_to = ?)');
+            params.push(req.userId, req.userId);
+        }
+
+        const tasks = db.prepare(`
+            SELECT t.* FROM tasks t
+            WHERE ${conditions.join(' AND ')}
+            ORDER BY t.created_at DESC
+            LIMIT 20
+        `).all(...params);
+
+        const enriched = enrichTasks(tasks);
+        res.json(enriched);
+    } catch (err) {
+        console.error('Error in global search:', err.message);
+        res.status(500).json({ error: 'Search failed' });
     }
 });
 
@@ -463,6 +529,8 @@ router.post('/:id/comments', auth, (req, res) => {
         const result = db.prepare(
             'INSERT INTO task_comments (task_id, user_id, content) VALUES (?, ?, ?)'
         ).run(req.params.id, req.userId, content.trim());
+
+        logHistory(req.params.id, req.userId, 'comment_added', null, null, null);
 
         const comment = db.prepare(`
             SELECT tc.*, u.username, u.full_name, u.avatar
@@ -711,16 +779,7 @@ router.patch('/:id/unschedule', auth, (req, res) => {
 router.get('/:id/detail', auth, (req, res) => {
     try {
         const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
-        if (!task) return res.status(404).json({ error: 'Task not found' });
-
-        // Allow access if user created it, is assigned, or same org
-        const user = db.prepare('SELECT org_id FROM users WHERE id = ?').get(req.userId);
-        const taskOwner = db.prepare('SELECT org_id FROM users WHERE id = ?').get(task.user_id);
-        const sameOrg = user?.org_id && taskOwner?.org_id && user.org_id === taskOwner.org_id;
-
-        if (!canAccessTask(task, req.userId) && !sameOrg) {
-            return res.status(404).json({ error: 'Task not found' });
-        }
+        if (!canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
 
         const enriched = enrichTasks([task]);
 

@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   getTasks, updateTaskStatus, updateTask, deleteTask, carryForwardTasks,
   getAssignableUsers, getTaskLabels, getTaskComments, addTaskComment, updateTaskComment, deleteTaskComment,
-  getLocalToday, getBacklog, addBacklogTask, scheduleTask, unscheduleTask, getTaskDetail, getTaskHistory
+  getLocalToday, getBacklog, addBacklogTask, scheduleTask, unscheduleTask, getTaskDetail, getTaskHistory,
+  searchTasks
 } from '../api';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { useAuth } from '../AuthContext';
@@ -71,6 +72,13 @@ export default function Tasks() {
   const [taskToDelete, setTaskToDelete] = useState(null);
   const [carriedCount, setCarriedCount] = useState(0);
 
+  // Generic confirmation dialog
+  const [confirmDialog, setConfirmDialog] = useState({ open: false, title: '', message: '', confirmText: 'Confirm', isDanger: false, onConfirm: null });
+  const showConfirm = (title, message, onConfirm, { confirmText = 'Confirm', isDanger = false } = {}) => {
+    setConfirmDialog({ open: true, title, message, confirmText, isDanger, onConfirm });
+  };
+  const closeConfirm = () => setConfirmDialog(prev => ({ ...prev, open: false, onConfirm: null }));
+
   // Editing
   const [editingId, setEditingId] = useState(null);
   const [editTitle, setEditTitle] = useState('');
@@ -92,6 +100,14 @@ export default function Tasks() {
   const [filterStatus, setFilterStatus] = useState('');
   const [filterSearch, setFilterSearch] = useState('');
   const [filtersOpen, setFiltersOpen] = useState(false);
+
+  // Global search
+  const [globalSearch, setGlobalSearch] = useState('');
+  const [globalResults, setGlobalResults] = useState([]);
+  const [globalSearching, setGlobalSearching] = useState(false);
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const globalSearchRef = useRef(null);
+  const globalSearchTimer = useRef(null);
 
   // Shared data
   const [assignableUsers, setAssignableUsers] = useState([]);
@@ -280,14 +296,22 @@ export default function Tasks() {
     }
   };
 
-  const handleDeleteComment = async (commentId) => {
-    try {
-      await deleteTaskComment(commentTaskId, commentId);
-      setComments(prev => prev.filter(c => c.id !== commentId));
-      setTasks(prev => prev.map(t => t.id === commentTaskId ? { ...t, comment_count: Math.max(0, (t.comment_count || 1) - 1) } : t));
-    } catch {
-      setError('Failed to delete comment');
-    }
+  const handleDeleteComment = (commentId) => {
+    showConfirm(
+      'Delete Comment',
+      'Are you sure you want to delete this comment? This cannot be undone.',
+      async () => {
+        closeConfirm();
+        try {
+          await deleteTaskComment(commentTaskId, commentId);
+          setComments(prev => prev.filter(c => c.id !== commentId));
+          setTasks(prev => prev.map(t => t.id === commentTaskId ? { ...t, comment_count: Math.max(0, (t.comment_count || 1) - 1) } : t));
+        } catch {
+          setError('Failed to delete comment');
+        }
+      },
+      { confirmText: 'Delete', isDanger: true }
+    );
   };
 
   // ─── Task Detail Modal ────────────────────────────────────────────────
@@ -346,28 +370,36 @@ export default function Tasks() {
     setDetailEditLabels(task.labels?.map(l => l.id) || []);
   };
 
-  const saveDetailEdit = async () => {
+  const saveDetailEdit = () => {
     if (!detailTask) return;
-    try {
-      await updateTask(detailTask.id, {
-        title: detailEditTitle,
-        description: detailEditDesc,
-        priority: detailEditPriority,
-        assigned_to: detailEditAssignedTo || null,
-        due_date: detailEditDueDate || null,
-        label_ids: detailEditLabels,
-      });
-      setDetailEditing(false);
-      // Re-fetch detail
-      const res = await getTaskDetail(detailTask.id);
-      setDetailTask(res.data);
-      setDetailComments(res.data.comments || []);
-      refreshDetailHistory(detailTask.id);
-      fetchTasks();
-      if (backlogOpen || activeTab === 'backlog') fetchBacklog();
-    } catch {
-      setError('Failed to update item');
-    }
+    showConfirm(
+      'Save Changes',
+      `Save changes to "${detailEditTitle || detailTask.title}"?`,
+      async () => {
+        closeConfirm();
+        try {
+          await updateTask(detailTask.id, {
+            title: detailEditTitle,
+            description: detailEditDesc,
+            priority: detailEditPriority,
+            assigned_to: detailEditAssignedTo || null,
+            due_date: detailEditDueDate || null,
+            label_ids: detailEditLabels,
+          });
+          setDetailEditing(false);
+          // Re-fetch detail
+          const res = await getTaskDetail(detailTask.id);
+          setDetailTask(res.data);
+          setDetailComments(res.data.comments || []);
+          refreshDetailHistory(detailTask.id);
+          fetchTasks();
+          if (backlogOpen || activeTab === 'backlog') fetchBacklog();
+        } catch {
+          setError('Failed to update item');
+        }
+      },
+      { confirmText: 'Save' }
+    );
   };
 
   const handleDetailAddComment = async () => {
@@ -395,15 +427,23 @@ export default function Tasks() {
     }
   };
 
-  const handleDetailDeleteComment = async (commentId) => {
-    try {
-      await deleteTaskComment(detailTask.id, commentId);
-      setDetailComments(prev => prev.filter(c => c.id !== commentId));
-      setTasks(prev => prev.map(t => t.id === detailTask.id ? { ...t, comment_count: Math.max(0, (t.comment_count || 1) - 1) } : t));
-      setBacklogTasks(prev => prev.map(t => t.id === detailTask.id ? { ...t, comment_count: Math.max(0, (t.comment_count || 1) - 1) } : t));
-    } catch {
-      setError('Failed to delete comment');
-    }
+  const handleDetailDeleteComment = (commentId) => {
+    showConfirm(
+      'Delete Comment',
+      'Are you sure you want to delete this comment? This cannot be undone.',
+      async () => {
+        closeConfirm();
+        try {
+          await deleteTaskComment(detailTask.id, commentId);
+          setDetailComments(prev => prev.filter(c => c.id !== commentId));
+          setTasks(prev => prev.map(t => t.id === detailTask.id ? { ...t, comment_count: Math.max(0, (t.comment_count || 1) - 1) } : t));
+          setBacklogTasks(prev => prev.map(t => t.id === detailTask.id ? { ...t, comment_count: Math.max(0, (t.comment_count || 1) - 1) } : t));
+        } catch {
+          setError('Failed to delete comment');
+        }
+      },
+      { confirmText: 'Delete', isDanger: true }
+    );
   };
 
   // ─── Backlog ──────────────────────────────────────────────────────────
@@ -451,27 +491,44 @@ export default function Tasks() {
     }
   };
 
-  const handleScheduleTask = async (taskId) => {
+  const handleScheduleTask = (taskId, taskTitle, closeAfter) => {
     if (!scheduleDate) return;
-    try {
-      await scheduleTask(taskId, scheduleDate);
-      setScheduleTaskId(null);
-      fetchBacklog();
-      // Re-fetch daily tasks if scheduled to current day
-      if (scheduleDate === date) fetchTasks();
-    } catch {
-      setError('Failed to schedule task');
-    }
+    showConfirm(
+      'Schedule Task',
+      `Schedule "${taskTitle || 'this task'}" to ${scheduleDate}?`,
+      async () => {
+        closeConfirm();
+        try {
+          await scheduleTask(taskId, scheduleDate);
+          setScheduleTaskId(null);
+          fetchBacklog();
+          if (scheduleDate === date) fetchTasks();
+          if (closeAfter) closeAfter();
+        } catch {
+          setError('Failed to schedule task');
+        }
+      },
+      { confirmText: 'Schedule' }
+    );
   };
 
-  const handleUnscheduleTask = async (taskId) => {
-    try {
-      await unscheduleTask(taskId);
-      fetchTasks();
-      if (backlogOpen || activeTab === 'backlog') fetchBacklog();
-    } catch {
-      setError('Failed to move task to backlog');
-    }
+  const handleUnscheduleTask = (taskId, taskTitle, closeAfter) => {
+    showConfirm(
+      'Move to Backlog',
+      `Move "${taskTitle || 'this task'}" to backlog? It will be removed from the planner.`,
+      async () => {
+        closeConfirm();
+        try {
+          await unscheduleTask(taskId);
+          fetchTasks();
+          if (backlogOpen || activeTab === 'backlog') fetchBacklog();
+          if (closeAfter) closeAfter();
+        } catch {
+          setError('Failed to move task to backlog');
+        }
+      },
+      { confirmText: 'Move to Backlog' }
+    );
   };
 
   const sortedBacklogTasks = useMemo(() => {
@@ -553,22 +610,30 @@ export default function Tasks() {
     setEditLabels(task.labels?.map(l => l.id) || []);
   };
 
-  const saveEdit = async (id) => {
-    try {
-      await updateTask(id, {
-        title: editTitle,
-        description: editDesc,
-        priority: editPriority,
-        assigned_to: editAssignedTo || null,
-        due_date: editDueDate || null,
-        label_ids: editLabels,
-      });
-      setEditingId(null);
-      fetchTasks();
-      if (backlogOpen || activeTab === 'backlog') fetchBacklog();
-    } catch {
-      setError('Failed to update item');
-    }
+  const saveEdit = (id) => {
+    showConfirm(
+      'Save Changes',
+      `Save changes to "${editTitle}"?`,
+      async () => {
+        closeConfirm();
+        try {
+          await updateTask(id, {
+            title: editTitle,
+            description: editDesc,
+            priority: editPriority,
+            assigned_to: editAssignedTo || null,
+            due_date: editDueDate || null,
+            label_ids: editLabels,
+          });
+          setEditingId(null);
+          fetchTasks();
+          if (backlogOpen || activeTab === 'backlog') fetchBacklog();
+        } catch {
+          setError('Failed to update item');
+        }
+      },
+      { confirmText: 'Save' }
+    );
   };
 
   const cancelEdit = () => {
@@ -588,6 +653,41 @@ export default function Tasks() {
     setFilterStatus('');
     setFilterSearch('');
   };
+
+  // ─── Global search ───────────────────────────────────────────────────
+  const handleGlobalSearch = (value) => {
+    setGlobalSearch(value);
+    if (globalSearchTimer.current) clearTimeout(globalSearchTimer.current);
+    if (!value.trim() || value.trim().length < 2) {
+      setGlobalResults([]);
+      setGlobalSearchOpen(false);
+      setGlobalSearching(false);
+      return;
+    }
+    setGlobalSearching(true);
+    setGlobalSearchOpen(true);
+    globalSearchTimer.current = setTimeout(async () => {
+      try {
+        const res = await searchTasks(value.trim());
+        setGlobalResults(res.data);
+      } catch {
+        setGlobalResults([]);
+      } finally {
+        setGlobalSearching(false);
+      }
+    }, 300);
+  };
+
+  // Close search results on outside click
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (globalSearchRef.current && !globalSearchRef.current.contains(e.target)) {
+        setGlobalSearchOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // ─── Drag & Drop handlers ────────────────────────────────────────────
   const onDragStart = (e, taskId) => {
@@ -624,14 +724,23 @@ export default function Tasks() {
     if (!taskId) return;
     const task = tasks.find(t => t.id === taskId);
     if (!task || task.status === colId) return;
-    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: colId } : t));
-    try {
-      await updateTaskStatus(taskId, colId);
-      fetchTasks();
-    } catch {
-      setError('Failed to move item');
-      fetchTasks();
-    }
+    const colLabel = COLUMNS.find(c => c.id === colId)?.label || colId;
+    showConfirm(
+      'Change Status',
+      `Move "${task.title}" to ${colLabel}?`,
+      async () => {
+        closeConfirm();
+        setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: colId } : t));
+        try {
+          await updateTaskStatus(taskId, colId);
+          fetchTasks();
+        } catch {
+          setError('Failed to move item');
+          fetchTasks();
+        }
+      },
+      { confirmText: 'Move' }
+    );
   };
 
   // ─── Helpers ──────────────────────────────────────────────────────────
@@ -806,20 +915,76 @@ export default function Tasks() {
         </div>
       </div>
 
+      {/* Global Search */}
+      <div className={s['global-search-wrapper']} ref={globalSearchRef}>
+        <div className={s['global-search-input-row']}>
+          <span className={s['global-search-icon']}>🔍</span>
+          <input
+            type="text"
+            value={globalSearch}
+            onChange={e => handleGlobalSearch(e.target.value)}
+            onFocus={() => { if (globalResults.length > 0 || globalSearch.trim().length >= 2) setGlobalSearchOpen(true); }}
+            placeholder="Search all tasks..."
+            className={s['global-search-input']}
+          />
+          {globalSearch && (
+            <button className={s['global-search-clear']} onClick={() => { setGlobalSearch(''); setGlobalResults([]); setGlobalSearchOpen(false); }}>✕</button>
+          )}
+        </div>
+        {globalSearchOpen && (
+          <div className={s['global-search-results']}>
+            {globalSearching ? (
+              <div className={s['global-search-status']}>Searching...</div>
+            ) : globalResults.length === 0 ? (
+              <div className={s['global-search-status']}>No results found</div>
+            ) : (
+              globalResults.map(task => {
+                const pri = getPriority(task.priority);
+                const colInfo = COLUMNS.find(c => c.id === task.status) || COLUMNS[0];
+                return (
+                  <div
+                    key={task.id}
+                    className={s['global-search-item']}
+                    onClick={() => { openTaskDetail(task); setGlobalSearchOpen(false); }}
+                  >
+                    <div className={s['global-search-item-top']}>
+                      <span className={s['backlog-ticket-id']}>#{task.id}</span>
+                      <span className={s['global-search-item-title']}>{task.title}</span>
+                    </div>
+                    <div className={s['global-search-item-meta']}>
+                      <span
+                        className={s['backlog-status-badge']}
+                        style={{ '--badge-bg': colInfo.color + '20', '--badge-color': colInfo.color }}
+                      >
+                        {colInfo.icon} {colInfo.label}
+                      </span>
+                      <span
+                        className={s['task-priority-badge']}
+                        style={{ '--badge-bg': pri.color + '20', '--badge-color': pri.color }}
+                      >
+                        {pri.icon} {pri.label}
+                      </span>
+                      {task.date ? (
+                        <span className={s['global-search-date']}>📅 {task.date}</span>
+                      ) : (
+                        <span className={s['global-search-date']}>📦 Backlog</span>
+                      )}
+                      {task.labels && task.labels.map(l => (
+                        <span key={l.id} className={s['label-pill']} style={{ '--label-color': l.color }}>{l.name}</span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Filter Bar */}
       {filtersOpen && (
         <div className={s['filter-bar']}>
           <div className={s['filter-row']}>
-            <div className={s['filter-group']}>
-              <label>Search</label>
-              <input
-                type="text"
-                value={filterSearch}
-                onChange={e => setFilterSearch(e.target.value)}
-                placeholder="Search tasks..."
-                className={s['filter-input']}
-              />
-            </div>
             <div className={s['filter-group']}>
               <label>Assignee</label>
               <select value={filterAssignee} onChange={e => setFilterAssignee(e.target.value)} className={s['filter-select']}>
@@ -1110,83 +1275,81 @@ export default function Tasks() {
                     }}
                     style={{ cursor: 'pointer' }}
                   >
-                    <div className={s['backlog-card-left']}>
-                      <div className={s['backlog-priority-bar']} style={{ '--pri-color': pri.color }} />
-                      <div className={s['backlog-card-info']}>
-                        <div className={s['backlog-card-title-row']}>
-                          <span className={s['backlog-ticket-id']}>#{task.id}</span>
-                          <span className={s['task-title']}>{task.title}</span>
-                        </div>
-                        {descPreview && (
-                          <div className={s['backlog-desc-preview']}>{descPreview}</div>
+                    <div className={s['backlog-priority-bar']} style={{ '--pri-color': pri.color }} />
+                    <div className={s['backlog-card-body']}>
+                      <div className={s['backlog-card-header']}>
+                        <span className={s['backlog-ticket-id']}>#{task.id}</span>
+                        <span
+                          className={s['backlog-status-badge']}
+                          style={{ '--badge-bg': colInfo.color + '20', '--badge-color': colInfo.color }}
+                        >
+                          {colInfo.icon} {colInfo.label}
+                        </span>
+                        <span
+                          className={s['task-priority-badge']}
+                          style={{ '--badge-bg': pri.color + '20', '--badge-color': pri.color }}
+                        >
+                          {pri.icon} {pri.label}
+                        </span>
+                        {task.labels && task.labels.length > 0 && task.labels.map(l => (
+                          <span key={l.id} className={s['label-pill']} style={{ '--label-color': l.color }}>
+                            {l.name}
+                          </span>
+                        ))}
+                      </div>
+                      <span className={s['backlog-card-title']}>{task.title}</span>
+                      {descPreview && (
+                        <div className={s['backlog-desc-preview']}>{descPreview}</div>
+                      )}
+                      <div className={s['backlog-card-footer']}>
+                        {task.assignee && (
+                          <span className={s['backlog-meta-chip']}>
+                            {task.assignee.avatar ? (
+                              <img src={getAvatarUrl(task.assignee.avatar)} alt="" className={s['backlog-meta-avatar']} />
+                            ) : (
+                              <span className={s['backlog-meta-avatar-placeholder']}>
+                                {(task.assignee.full_name || task.assignee.username || '?')[0].toUpperCase()}
+                              </span>
+                            )}
+                            {task.assignee.full_name || task.assignee.username}
+                          </span>
                         )}
-                        <div className={s['backlog-card-meta']}>
-                          <span
-                            className={s['backlog-status-badge']}
-                            style={{ '--badge-bg': colInfo.color + '20', '--badge-color': colInfo.color }}
-                          >
-                            {colInfo.icon} {colInfo.label}
+                        {dueFmt && (
+                          <span className={`${s['backlog-meta-chip']} ${overdue ? s['overdue'] : ''}`}>
+                            📅 {dueFmt}
                           </span>
-                          <span
-                            className={s['task-priority-badge']}
-                            style={{ '--badge-bg': pri.color + '20', '--badge-color': pri.color }}
-                          >
-                            {pri.icon} {pri.label}
-                          </span>
-                          {task.assignee && (
-                            <span className={s['backlog-meta-chip']}>
-                              {task.assignee.avatar ? (
-                                <img src={getAvatarUrl(task.assignee.avatar)} alt="" className={s['backlog-meta-avatar']} />
-                              ) : (
-                                <span className={s['backlog-meta-avatar-placeholder']}>
-                                  {(task.assignee.full_name || task.assignee.username || '?')[0].toUpperCase()}
-                                </span>
-                              )}
-                              {task.assignee.full_name || task.assignee.username}
-                            </span>
+                        )}
+                        {task.comment_count > 0 && (
+                          <span className={s['backlog-meta-chip']}>💬 {task.comment_count}</span>
+                        )}
+                        <span className={s['backlog-meta-time']}>{formatRelativeTime(task.created_at)}</span>
+                        <div className={s['backlog-actions']}>
+                          {scheduleTaskId === task.id ? (
+                            <div className={s['schedule-popover']}>
+                              <input
+                                type="date"
+                                value={scheduleDate}
+                                onChange={e => setScheduleDate(e.target.value)}
+                                className={s['date-input']}
+                              />
+                              <button className="btn btn-primary btn-sm" onClick={() => handleScheduleTask(task.id, task.title)}>
+                                Go
+                              </button>
+                              <button className="btn btn-secondary btn-sm" onClick={() => setScheduleTaskId(null)}>
+                                ✕
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              className={s['backlog-action-btn']}
+                              onClick={() => { setScheduleTaskId(task.id); setScheduleDate(getLocalToday()); }}
+                              title="Schedule to a day"
+                            >
+                              📅 Schedule
+                            </button>
                           )}
-                          {dueFmt && (
-                            <span className={`${s['backlog-meta-chip']} ${overdue ? s['overdue'] : ''}`}>
-                              📅 {dueFmt}
-                            </span>
-                          )}
-                          {task.labels && task.labels.length > 0 && task.labels.map(l => (
-                            <span key={l.id} className={s['label-pill']} style={{ '--label-color': l.color }}>
-                              {l.name}
-                            </span>
-                          ))}
-                          {task.comment_count > 0 && (
-                            <span className={s['backlog-meta-chip']}>💬 {task.comment_count}</span>
-                          )}
-                          <span className={s['backlog-meta-time']}>{formatRelativeTime(task.created_at)}</span>
                         </div>
                       </div>
-                    </div>
-                    <div className={s['backlog-actions']}>
-                      {scheduleTaskId === task.id ? (
-                        <div className={s['schedule-popover']}>
-                          <input
-                            type="date"
-                            value={scheduleDate}
-                            onChange={e => setScheduleDate(e.target.value)}
-                            className={s['date-input']}
-                          />
-                          <button className="btn btn-primary btn-sm" onClick={() => handleScheduleTask(task.id)}>
-                            Go
-                          </button>
-                          <button className="btn btn-secondary btn-sm" onClick={() => setScheduleTaskId(null)}>
-                            ✕
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          className={s['backlog-action-btn']}
-                          onClick={() => { setScheduleTaskId(task.id); setScheduleDate(getLocalToday()); }}
-                          title="Schedule to a day"
-                        >
-                          📅 Schedule
-                        </button>
-                      )}
                     </div>
                   </div>
                 );
@@ -1202,10 +1365,20 @@ export default function Tasks() {
       <ConfirmDialog
         isOpen={!!taskToDelete}
         title="Delete Item"
-        message={`Are you sure you want to delete "${taskToDelete?.title}"?`}
+        message={`Are you sure you want to delete "${taskToDelete?.title}"? This cannot be undone.`}
         confirmText="Delete"
         onConfirm={confirmDelete}
         onCancel={() => setTaskToDelete(null)}
+      />
+
+      <ConfirmDialog
+        isOpen={confirmDialog.open}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        confirmText={confirmDialog.confirmText}
+        isDanger={confirmDialog.isDanger}
+        onConfirm={() => { if (confirmDialog.onConfirm) confirmDialog.onConfirm(); }}
+        onCancel={closeConfirm}
       />
     </div>
   );
@@ -1516,16 +1689,24 @@ export default function Tasks() {
                       className={`${s['detail-status-btn']} ${detailTask.status === col.id ? s['detail-status-active'] : ''}`}
                       style={{ '--col-color': col.color }}
                       disabled={detailTask.status === col.id}
-                      onClick={async () => {
-                        try {
-                          await updateTaskStatus(detailTask.id, col.id);
-                          setDetailTask(prev => ({ ...prev, status: col.id }));
-                          refreshDetailHistory(detailTask.id);
-                          fetchTasks();
-                          if (backlogOpen || activeTab === 'backlog') fetchBacklog();
-                        } catch {
-                          setError('Failed to update status');
-                        }
+                      onClick={() => {
+                        showConfirm(
+                          'Change Status',
+                          `Change status of "${detailTask.title}" to ${col.label}?`,
+                          async () => {
+                            closeConfirm();
+                            try {
+                              await updateTaskStatus(detailTask.id, col.id);
+                              setDetailTask(prev => ({ ...prev, status: col.id }));
+                              refreshDetailHistory(detailTask.id);
+                              fetchTasks();
+                              if (backlogOpen || activeTab === 'backlog') fetchBacklog();
+                            } catch {
+                              setError('Failed to update status');
+                            }
+                          },
+                          { confirmText: 'Move' }
+                        );
                       }}
                     >
                       {col.icon} {col.label}
@@ -1545,10 +1726,7 @@ export default function Tasks() {
                       />
                       <button
                         className="btn btn-primary btn-sm"
-                        onClick={async () => {
-                          await handleScheduleTask(detailTask.id);
-                          closeTaskDetail();
-                        }}
+                        onClick={() => handleScheduleTask(detailTask.id, detailTask.title, closeTaskDetail)}
                       >
                         📅 Schedule to Day
                       </button>
@@ -1556,10 +1734,7 @@ export default function Tasks() {
                   ) : (
                     <button
                       className="btn btn-secondary btn-sm"
-                      onClick={async () => {
-                        await handleUnscheduleTask(detailTask.id);
-                        closeTaskDetail();
-                      }}
+                      onClick={() => handleUnscheduleTask(detailTask.id, detailTask.title, closeTaskDetail)}
                     >
                       📦 Move to Backlog
                     </button>
@@ -1647,13 +1822,19 @@ export default function Tasks() {
                     const actionIcons = {
                       created: '✨', status_change: '🔄', updated: '✏️',
                       scheduled: '📅', unscheduled: '📦', comment_added: '💬',
+                      deleted: '🗑️',
                     };
                     const fieldLabels = {
                       status: 'status', title: 'title', description: 'description',
-                      priority: 'priority', assigned_to: 'assignee', due_date: 'due date', date: 'schedule',
+                      priority: 'priority', assigned_to: 'assignee', due_date: 'due date',
+                      date: 'schedule', labels: 'labels',
                     };
                     const actionText = () => {
-                      if (h.action === 'created') return 'created this task';
+                      if (h.action === 'created') {
+                        if (h.field === 'date' && h.old_value) return <>carried forward from <span className={s['history-old']}>{h.old_value}</span></>;
+                        return 'created this task';
+                      }
+                      if (h.action === 'comment_added') return 'added a comment';
                       if (h.action === 'status_change') return <>changed status from <span className={s['history-old']}>{h.old_value}</span> → <span className={s['history-new']}>{h.new_value}</span></>;
                       if (h.action === 'scheduled') return <>scheduled to <span className={s['history-new']}>{h.new_value}</span></>;
                       if (h.action === 'unscheduled') return 'moved to backlog';

@@ -73,12 +73,13 @@ app.use(express.json({ limit: '100kb' }));
 app.use(express.urlencoded({ limit: '100kb', extended: true }));
 
 // --- DEBUG LOGGING (dev only) ---
-if (process.env.NODE_ENV !== 'production') {
-    app.use('/api', (req, res, next) => {
-        console.log(`[DEBUG] ${req.method} ${req.url}`);
-        next();
-    });
-}
+app.use('/api', (req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    if (req.method === 'PUT' && req.url.includes('/tasks/')) {
+        console.log('PUT BODY:', JSON.stringify(req.body));
+    }
+    next();
+});
 
 // Serve uploaded avatars behind authentication
 const authMiddleware = require('./middleware/auth');

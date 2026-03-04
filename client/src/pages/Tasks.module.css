@@ -714,6 +714,133 @@
   border-color: var(--primary);
 }
 
+/* ─── Global Search ────────────────────────────────── */
+.global-search-wrapper {
+  position: relative;
+  margin-bottom: 1rem;
+}
+
+.global-search-input-row {
+  display: flex;
+  align-items: center;
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  padding: 0 0.85rem;
+  transition: var(--transition-fast);
+}
+
+.global-search-input-row:focus-within {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+.global-search-icon {
+  font-size: 0.9rem;
+  flex-shrink: 0;
+  margin-right: 0.5rem;
+  opacity: 0.6;
+}
+
+.global-search-input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 0.88rem;
+  padding: 0.65rem 0;
+  font-family: inherit;
+}
+
+.global-search-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.global-search-clear {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.25rem;
+  font-size: 0.85rem;
+  line-height: 1;
+  opacity: 0.6;
+  transition: var(--transition-fast);
+}
+
+.global-search-clear:hover {
+  opacity: 1;
+  color: var(--text);
+}
+
+.global-search-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 500;
+  background: var(--bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  margin-top: 0.35rem;
+  box-shadow: var(--shadow-lg);
+  max-height: 380px;
+  overflow-y: auto;
+  animation: slideDown 0.15s ease;
+}
+
+.global-search-status {
+  padding: 1rem;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.global-search-item {
+  padding: 0.65rem 0.85rem;
+  cursor: pointer;
+  border-bottom: 1px solid var(--glass-border);
+  transition: var(--transition-fast);
+}
+
+.global-search-item:last-child {
+  border-bottom: none;
+}
+
+.global-search-item:hover {
+  background: var(--surface-hover);
+}
+
+.global-search-item-top {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.global-search-item-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.global-search-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.global-search-date {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
+
 .filter-bar {
   background: var(--glass);
   border: 1px solid var(--glass-border);
@@ -1837,20 +1964,17 @@
 .backlog-list {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.5rem;
 }
 
 .backlog-card {
   display: flex;
-  justify-content: space-between;
   align-items: stretch;
   background: var(--glass);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
   transition: var(--transition-fast);
-  gap: 0.5rem;
   overflow: hidden;
-  min-height: 0;
 }
 
 .backlog-card:hover {
@@ -1863,7 +1987,7 @@
   opacity: 0.55;
 }
 
-.backlog-card-done .task-title {
+.backlog-card-done .backlog-card-title {
   text-decoration: line-through;
 }
 
@@ -1874,42 +1998,41 @@
   border-radius: 4px 0 0 4px;
 }
 
-.backlog-card-left {
-  display: flex;
-  align-items: stretch;
+.backlog-card-body {
   flex: 1;
   min-width: 0;
-}
-
-.backlog-card-info {
-  flex: 1;
-  min-width: 0;
-  padding: 0.5rem 0.65rem;
+  padding: 0.65rem 0.85rem;
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.3rem;
 }
 
-.backlog-card-title-row {
+.backlog-card-header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
+  flex-wrap: wrap;
 }
 
-.backlog-ticket-id {
-  font-size: 0.72rem;
-  font-weight: 700;
-  color: var(--text-muted);
-  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-  flex-shrink: 0;
-}
-
-.backlog-card-title-row .task-title {
-  font-size: 0.92rem;
+.backlog-card-title {
+  font-size: 0.95rem;
   font-weight: 600;
-  white-space: nowrap;
+  line-height: 1.35;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.backlog-card-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  margin-top: 0.15rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--glass-border);
 }
 
 .backlog-desc-preview {
@@ -1932,14 +2055,6 @@
   background: var(--badge-bg);
   color: var(--badge-color);
   white-space: nowrap;
-}
-
-.backlog-card-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-  align-items: center;
-  margin-top: 0.1rem;
 }
 
 .backlog-meta-chip {
@@ -1974,15 +2089,14 @@
   font-size: 0.68rem;
   color: var(--text-muted);
   opacity: 0.7;
-  margin-left: auto;
 }
 
 .backlog-actions {
+  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 0.3rem;
   flex-shrink: 0;
-  padding: 0.5rem 0.65rem;
 }
 
 .backlog-action-btn {
@@ -2171,41 +2285,33 @@
     flex-direction: column;
     align-items: stretch;
   }
-  .backlog-card-left {
-    width: 100%;
+  .backlog-card {
+    flex-direction: column;
   }
   .backlog-priority-bar {
     width: 100%;
     height: 3px;
     border-radius: 4px 4px 0 0;
   }
-  .backlog-card-left {
-    flex-direction: column;
-  }
-  .backlog-card-info {
+  .backlog-card-body {
     padding: 0.55rem 0.75rem;
   }
-  .backlog-card-title-row {
-    flex-wrap: wrap;
-  }
-  .backlog-card-title-row .task-title {
-    white-space: normal;
-    overflow: visible;
-    text-overflow: unset;
-    font-size: 0.88rem;
+  .backlog-card-title {
+    font-size: 0.9rem;
   }
   .backlog-desc-preview {
     max-width: 100%;
   }
-  .backlog-card-meta {
+  .backlog-card-footer {
     gap: 0.4rem;
   }
   .backlog-actions {
     width: 100%;
-    justify-content: flex-end;
+    margin-left: 0;
+    margin-top: 0.25rem;
+    padding-top: 0.3rem;
     border-top: 1px solid var(--glass-border);
-    padding: 0.4rem 0.75rem;
-    gap: 0.4rem;
+    justify-content: flex-end;
   }
   .backlog-action-btn {
     padding: 0.3rem 0.6rem;
@@ -2237,25 +2343,20 @@
   }
   .detail-modal-header {
     padding: 0.8rem 0.85rem;
-    gap: 0.35rem;
-    flex-direction: row;
-    align-items: center;
-    flex-wrap: nowrap;
+    gap: 0.4rem;
+    flex-direction: column;
+    align-items: stretch;
   }
   .detail-badges {
-    order: 0;
-    flex: 1 1 auto;
-    min-width: 0;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .detail-badges::-webkit-scrollbar {
-    display: none;
+    order: 1;
+    width: 100%;
+    flex-wrap: wrap;
+    overflow: visible;
+    gap: 0.35rem;
   }
   .detail-header-actions {
-    order: 0;
-    flex: 0 0 auto;
+    order: 2;
+    width: 100%;
     justify-content: flex-end;
   }
   .detail-header-actions .btn,
@@ -2268,8 +2369,8 @@
   .detail-badges .backlog-status-badge,
   .detail-badges .backlog-badge,
   .detail-badges .detail-date-badge {
-    font-size: 0.62rem;
-    padding: 0.15rem 0.45rem;
+    font-size: 0.65rem;
+    padding: 0.18rem 0.5rem;
   }
   .backlog-summary {
     padding: 0.5rem 0.65rem;
@@ -2284,11 +2385,14 @@
   .backlog-summary-text {
     font-size: 0.6rem;
   }
-  .backlog-card-info {
+  .backlog-card-body {
     padding: 0.45rem 0.6rem;
   }
-  .backlog-card-title-row .task-title {
+  .backlog-card-title {
     font-size: 0.84rem;
+  }
+  .backlog-card-header {
+    gap: 0.3rem;
   }
   .backlog-desc-preview {
     font-size: 0.72rem;
