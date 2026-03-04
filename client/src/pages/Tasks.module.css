@@ -2048,15 +2048,20 @@
     align-items: stretch;
     gap: 0.6rem;
     padding: 0.9rem 1rem;
+    overflow: visible;
   }
   .detail-badges {
     width: 100%;
     gap: 0.4rem;
+    flex-wrap: wrap;
+    align-items: center;
+    order: 1;
   }
   .detail-header-actions {
     width: 100%;
     justify-content: flex-end;
     gap: 0.4rem;
+    order: 2;
   }
   .detail-modal-body {
     padding: 1rem;
@@ -2072,6 +2077,14 @@
   }
   .detail-title-row .backlog-ticket-id {
     font-size: 0.78rem;
+  }
+  .detail-badges .task-priority-badge,
+  .detail-badges .backlog-status-badge,
+  .detail-badges .backlog-badge,
+  .detail-badges .detail-date-badge {
+    font-size: 0.68rem;
+    padding: 0.2rem 0.5rem;
+    white-space: nowrap;
   }
   .detail-meta-grid {
     grid-template-columns: 1fr;
@@ -2220,6 +2233,23 @@
   .tab-badge {
     font-size: 0.62rem;
     padding: 0.05rem 0.35rem;
+  }
+  .detail-modal-header {
+    padding: 0.8rem 0.85rem;
+    gap: 0.5rem;
+  }
+  .detail-header-actions .btn,
+  .detail-header-actions .btn-secondary,
+  .detail-header-actions .btn-danger {
+    padding: 0.3rem 0.6rem;
+    font-size: 0.72rem;
+  }
+  .detail-badges .task-priority-badge,
+  .detail-badges .backlog-status-badge,
+  .detail-badges .backlog-badge,
+  .detail-badges .detail-date-badge {
+    font-size: 0.62rem;
+    padding: 0.15rem 0.45rem;
   }
   .backlog-summary {
     padding: 0.5rem 0.65rem;
