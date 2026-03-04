@@ -2036,11 +2036,12 @@
 /* ============= RESPONSIVE (detail modal) ============= */
 @media (max-width: 768px) {
   .detail-overlay {
-    padding: 0;
+    padding: calc(56px + env(safe-area-inset-top, 0px)) 0 0 0;
+    align-items: flex-start;
   }
   .detail-modal {
     max-width: 100%;
-    max-height: 100vh;
+    max-height: calc(100vh - 56px - env(safe-area-inset-top, 0px));
     border-radius: 0;
   }
   .detail-modal-header {
