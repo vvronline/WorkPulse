@@ -573,4 +573,99 @@ router.delete('/invite-codes/:id', (req, res) => {
     res.json({ message: 'Invite code deactivated' });
 });
 
+// ─── Task Label Management ──────────────────────────────────────────────
+
+// Get all task labels for current org
+router.get('/task-labels', (req, res) => {
+    try {
+        if (!req.userOrgId) return res.json([]);
+        const labels = db.prepare(
+            'SELECT tl.*, u.username as created_by_username FROM task_labels tl LEFT JOIN users u ON u.id = tl.created_by WHERE tl.org_id = ? ORDER BY tl.name ASC'
+        ).all(req.userOrgId);
+        res.json(labels);
+    } catch (err) {
+        console.error('Error fetching task labels:', err.message);
+        res.status(500).json({ error: 'Failed to fetch labels' });
+    }
+});
+
+// Create task label
+router.post('/task-labels', (req, res) => {
+    try {
+        if (!req.userOrgId) return res.status(400).json({ error: 'Organization required' });
+        const { name, color } = req.body;
+        if (!name || !name.trim()) return res.status(400).json({ error: 'Label name is required' });
+        if (name.trim().length > 30) return res.status(400).json({ error: 'Label name must be 30 characters or less' });
+
+        // Check no duplicate name in org
+        const existing = db.prepare('SELECT id FROM task_labels WHERE org_id = ? AND LOWER(name) = LOWER(?)').get(req.userOrgId, name.trim());
+        if (existing) return res.status(409).json({ error: 'A label with this name already exists' });
+
+        const validColor = /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#6366f1';
+        const result = db.prepare(
+            'INSERT INTO task_labels (org_id, name, color, created_by) VALUES (?, ?, ?, ?)'
+        ).run(req.userOrgId, name.trim(), validColor, req.userId);
+
+        const label = db.prepare('SELECT * FROM task_labels WHERE id = ?').get(result.lastInsertRowid);
+        logAction(req.userId, 'task_label_created', { label_id: label.id, name: label.name });
+        res.json(label);
+    } catch (err) {
+        console.error('Error creating task label:', err.message);
+        res.status(500).json({ error: 'Failed to create label' });
+    }
+});
+
+// Update task label
+router.put('/task-labels/:id', (req, res) => {
+    try {
+        const label = db.prepare('SELECT * FROM task_labels WHERE id = ?').get(Number(req.params.id));
+        if (!label) return res.status(404).json({ error: 'Label not found' });
+        if (req.userRole !== 'super_admin' && label.org_id !== req.userOrgId) {
+            return res.status(403).json({ error: 'Cannot edit labels from another organization' });
+        }
+
+        const { name, color } = req.body;
+        const newName = name?.trim() || label.name;
+        if (newName.length > 30) return res.status(400).json({ error: 'Label name must be 30 characters or less' });
+
+        // Check no duplicate name if changed
+        if (newName.toLowerCase() !== label.name.toLowerCase()) {
+            const existing = db.prepare('SELECT id FROM task_labels WHERE org_id = ? AND LOWER(name) = LOWER(?) AND id != ?')
+                .get(label.org_id, newName, label.id);
+            if (existing) return res.status(409).json({ error: 'A label with this name already exists' });
+        }
+
+        const newColor = /^#[0-9a-fA-F]{6}$/.test(color) ? color : label.color;
+        db.prepare('UPDATE task_labels SET name = ?, color = ? WHERE id = ?').run(newName, newColor, label.id);
+
+        const updated = db.prepare('SELECT * FROM task_labels WHERE id = ?').get(label.id);
+        logAction(req.userId, 'task_label_updated', { label_id: label.id, name: newName });
+        res.json(updated);
+    } catch (err) {
+        console.error('Error updating task label:', err.message);
+        res.status(500).json({ error: 'Failed to update label' });
+    }
+});
+
+// Delete task label
+router.delete('/task-labels/:id', (req, res) => {
+    try {
+        const label = db.prepare('SELECT * FROM task_labels WHERE id = ?').get(Number(req.params.id));
+        if (!label) return res.status(404).json({ error: 'Label not found' });
+        if (req.userRole !== 'super_admin' && label.org_id !== req.userOrgId) {
+            return res.status(403).json({ error: 'Cannot delete labels from another organization' });
+        }
+
+        // Remove label mappings first, then label
+        db.prepare('DELETE FROM task_label_map WHERE label_id = ?').run(label.id);
+        db.prepare('DELETE FROM task_labels WHERE id = ?').run(label.id);
+
+        logAction(req.userId, 'task_label_deleted', { label_id: label.id, name: label.name });
+        res.json({ message: 'Label deleted' });
+    } catch (err) {
+        console.error('Error deleting task label:', err.message);
+        res.status(500).json({ error: 'Failed to delete label' });
+    }
+});
+
 module.exports = router;

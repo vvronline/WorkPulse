@@ -701,8 +701,8 @@ router.get('/task-summary', auth, (req, res) => {
 
     let tasks = [];
     try {
-        tasks = db.prepare('SELECT * FROM tasks WHERE user_id = ? AND date = ? ORDER BY priority DESC, created_at ASC')
-            .all(req.userId, today);
+        tasks = db.prepare('SELECT * FROM tasks WHERE (user_id = ? OR assigned_to = ?) AND date = ? ORDER BY priority DESC, created_at ASC')
+            .all(req.userId, req.userId, today);
     } catch (e) { /* tasks table might not exist */ }
 
     const total = tasks.length;

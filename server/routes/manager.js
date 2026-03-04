@@ -699,8 +699,8 @@ router.get('/member/:userId/tasks', (req, res) => {
     const { date } = req.query;
     const targetDate = date || getLocalToday(req);
 
-    const tasks = db.prepare('SELECT * FROM tasks WHERE user_id = ? AND date = ? ORDER BY priority DESC, created_at ASC')
-        .all(targetUserId, targetDate);
+    const tasks = db.prepare('SELECT * FROM tasks WHERE (user_id = ? OR assigned_to = ?) AND date = ? ORDER BY priority DESC, created_at ASC')
+        .all(targetUserId, targetUserId, targetDate);
 
     res.json(tasks);
 });
@@ -800,8 +800,8 @@ router.get('/member/:userId/overview', (req, res) => {
 
     // Today's tasks
     const todayTasks = db.prepare(`
-        SELECT * FROM tasks WHERE user_id = ? AND date = ? ORDER BY priority DESC, created_at ASC
-    `).all(targetUserId, today);
+        SELECT * FROM tasks WHERE (user_id = ? OR assigned_to = ?) AND date = ? ORDER BY priority DESC, created_at ASC
+    `).all(targetUserId, targetUserId, today);
 
     // Recent leaves
     const recentLeaves = db.prepare(`
@@ -888,8 +888,8 @@ router.get('/member/:userId/overview', (req, res) => {
             COUNT(*) as total,
             SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done,
             SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress
-        FROM tasks WHERE user_id = ? AND date >= ? AND date <= ?
-    `).get(targetUserId, monthStart, today);
+        FROM tasks WHERE (user_id = ? OR assigned_to = ?) AND date >= ? AND date <= ?
+    `).get(targetUserId, targetUserId, monthStart, today);
 
     // Leave balances (current year)
     const year = parseInt(today.slice(0, 4));

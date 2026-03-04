@@ -393,7 +393,109 @@ runMigration('registration_mode_closed_default', () => {
   db.exec("UPDATE app_settings SET value = 'closed' WHERE key = 'registration_mode' AND value = 'open'");
 });
 
+// ============= TASK ENHANCEMENT MIGRATIONS =============
+
+// Task assignment: allow assigning tasks to other users
+runMigration('tasks_assigned_to', () => db.exec('ALTER TABLE tasks ADD COLUMN assigned_to INTEGER REFERENCES users(id)'));
+
+// Task due dates
+runMigration('tasks_due_date', () => db.exec('ALTER TABLE tasks ADD COLUMN due_date TEXT'));
+
+// Task labels (org-scoped, admin-defined)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS task_labels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT '#6366f1',
+    created_by INTEGER REFERENCES users(id),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(org_id, name)
+  );
+`);
+
+// Many-to-many: tasks <-> labels
+db.exec(`
+  CREATE TABLE IF NOT EXISTS task_label_map (
+    task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    label_id INTEGER NOT NULL REFERENCES task_labels(id) ON DELETE CASCADE,
+    PRIMARY KEY (task_id, label_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_task_label_map_task ON task_label_map(task_id);
+  CREATE INDEX IF NOT EXISTS idx_task_label_map_label ON task_label_map(label_id);
+`);
+
+// Task comments
+db.exec(`
+  CREATE TABLE IF NOT EXISTS task_comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    content TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME
+  );
+  CREATE INDEX IF NOT EXISTS idx_task_comments_task ON task_comments(task_id, created_at);
+`);
+
+// Index for assigned-to queries
+runMigration('tasks_assigned_to_index', () => {
+  db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON tasks(assigned_to, date)');
+});
+
+// Allow tasks without a date (backlog items)
+runMigration('tasks_nullable_date', () => {
+  // SQLite doesn't support ALTER COLUMN, so we recreate
+  const hasBacklog = db.prepare("SELECT COUNT(*) as c FROM tasks WHERE date IS NULL").get();
+  // Just test an insert with NULL date to see if it works
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS tasks_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        date TEXT,
+        title TEXT NOT NULL,
+        description TEXT,
+        priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('low', 'medium', 'high')),
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'in_review', 'done')),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        completed_at DATETIME,
+        assigned_to INTEGER REFERENCES users(id),
+        due_date TEXT,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      );
+      INSERT INTO tasks_new SELECT id, user_id, date, title, description, priority, status, created_at, completed_at, assigned_to, due_date FROM tasks;
+      DROP TABLE tasks;
+      ALTER TABLE tasks_new RENAME TO tasks;
+      CREATE INDEX IF NOT EXISTS idx_tasks_user_date ON tasks(user_id, date);
+      CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON tasks(assigned_to, date);
+    `);
+    console.log('✓ Tasks table migrated to allow nullable date (backlog)');
+  } catch (e) {
+    // Already migrated or table structure differs
+  }
+});
+
 // ============= SEED: First user as super_admin =============
+
+// Task history table (activity log per task)
+runMigration('task_history_table', () => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS task_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      action TEXT NOT NULL,
+      field TEXT,
+      old_value TEXT,
+      new_value TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_task_history_task ON task_history(task_id, created_at);
+  `);
+  console.log('✓ task_history table created');
+});
+
 try {
   const firstUser = db.prepare('SELECT id, role FROM users ORDER BY id ASC LIMIT 1').get();
   if (firstUser && firstUser.role === 'employee') {

@@ -41,7 +41,7 @@
   font-size: 1.15rem;
   font-weight: 700;
   letter-spacing: -0.03em;
-  background: linear-gradient(135deg, #fff 0%, var(--primary-light) 100%);
+  background: linear-gradient(135deg, #534242 0%, var(--primary-light) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -75,7 +75,7 @@
 
 .nav-links a:hover {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-hover);
 }
 
 .nav-links a.active {
@@ -96,15 +96,16 @@
   color: var(--text-secondary);
   background: none;
   border: none;
+  font-family: inherit;
   padding: 0.45rem 0.6rem;
   border-radius: 8px;
   cursor: pointer;
-  transition: all 0.25s ease;
+  transition: all var(--transition);
 }
 
 .more-btn:hover {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-hover);
 }
 
 .more-btn.active {
@@ -138,7 +139,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow);
   animation: moreDropIn 0.15s ease;
 }
 
@@ -160,7 +161,7 @@
 
 .more-dropdown a:hover {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-hover);
 }
 
 .more-dropdown a.active {
@@ -241,13 +242,13 @@
 }
 
 .dot-online {
-  background: #22c55e;
-  box-shadow: 0 0 6px rgba(34, 197, 94, 0.55);
+  background: var(--success);
+  box-shadow: 0 0 6px var(--success-glow);
 }
 
 .dot-away {
-  background: #f59e0b;
-  box-shadow: 0 0 6px rgba(245, 158, 11, 0.55);
+  background: var(--warning);
+  box-shadow: 0 0 6px var(--warning-glow);
 }
 
 .dot-offline {
@@ -715,7 +716,7 @@
 
 .mobile-more-popup a:hover {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-hover);
 }
 
 /* ---- Responsive ---- */

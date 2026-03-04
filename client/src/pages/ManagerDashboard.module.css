@@ -62,20 +62,20 @@
 }
 
 /* Approval status badges */
-.badgePending { background: #f59e0b22; color: #f59e0b; }
-.badgeApproved { background: #22c55e22; color: #22c55e; }
-.badgeRejected { background: #ef444422; color: #ef4444; }
+.badgePending { background: color-mix(in srgb, var(--warning) 13%, transparent); color: var(--warning); }
+.badgeApproved { background: color-mix(in srgb, var(--success) 13%, transparent); color: var(--success); }
+.badgeRejected { background: color-mix(in srgb, var(--danger) 13%, transparent); color: var(--danger); }
 
 /* Priority badges */
-.badgeHigh { background: #ef444422; color: #ef4444; }
-.badgeMedium { background: #f59e0b22; color: #f59e0b; }
-.badgeLow { background: #22c55e22; color: #22c55e; }
+.badgeHigh { background: color-mix(in srgb, var(--danger) 13%, transparent); color: var(--danger); }
+.badgeMedium { background: color-mix(in srgb, var(--warning) 13%, transparent); color: var(--warning); }
+.badgeLow { background: color-mix(in srgb, var(--success) 13%, transparent); color: var(--success); }
 
 /* Task status badges */
-.badgeInProgress { background: #3b82f622; color: #3b82f6; }
-.badgeInReview { background: #f59e0b22; color: #f59e0b; }
-.badgeDone { background: #22c55e22; color: #22c55e; }
-.badgeDefault { background: #6b728022; color: #6b7280; }
+.badgeInProgress { background: color-mix(in srgb, var(--primary) 13%, transparent); color: var(--primary); }
+.badgeInReview { background: color-mix(in srgb, var(--warning) 13%, transparent); color: var(--warning); }
+.badgeDone { background: color-mix(in srgb, var(--success) 13%, transparent); color: var(--success); }
+.badgeDefault { background: color-mix(in srgb, var(--text-muted) 13%, transparent); color: var(--text-muted); }
 
 /* Layout helpers */
 .sectionHeader {
@@ -129,7 +129,7 @@
 .inputField {
     padding: 0.5rem;
     border-radius: 8px;
-    border: 1px solid var(--glass-border);
+    border: 1px solid var(--border);
     background: var(--input-bg);
     color: var(--text-primary);
     font-family: inherit;
@@ -137,7 +137,7 @@
 .selectField {
     padding: 0.5rem 1.8rem 0.5rem 0.5rem;
     border-radius: 8px;
-    border: 1px solid var(--glass-border);
+    border: 1px solid var(--border);
     background: var(--input-bg);
     color: var(--text-primary);
     font-family: inherit;
@@ -178,11 +178,11 @@
 
 /* Action buttons in approval table */
 .btnApprove {
-    background: #22c55e;
+    background: var(--success);
     color: #fff;
 }
 .btnReject {
-    background: #ef4444;
+    background: var(--danger);
     color: #fff;
 }
 
@@ -430,6 +430,7 @@
     height: 28px;
     border-radius: 50%;
     cursor: pointer;
+    font-family: inherit;
     font-size: 0.85rem;
     display: flex;
     align-items: center;

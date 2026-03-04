@@ -43,7 +43,7 @@
   background: var(--glass);
   backdrop-filter: blur(16px);
   border: 1px solid var(--glass-border);
-  border-radius: 20px;
+  border-radius: var(--radius);
   padding: 2rem;
   box-shadow: var(--shadow);
   position: relative;
@@ -70,14 +70,14 @@
 .leaves-card textarea {
   width: 100%;
   padding: 0.85rem 1rem;
-  border: 1.5px solid var(--glass-border);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: 0.95rem;
   font-family: inherit;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface);
   color: var(--text);
   resize: vertical;
-  transition: all 0.3s ease;
+  transition: all var(--transition);
 }
 
 .leaves-card textarea:focus {
@@ -95,7 +95,7 @@
   display: flex;
   gap: 0.5rem;
   margin-bottom: 1.25rem;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface);
   border-radius: var(--radius-sm);
   padding: 0.25rem;
   border: 1px solid var(--glass-border);
@@ -110,18 +110,19 @@
   color: var(--text-secondary);
   font-size: 0.82rem;
   font-weight: 600;
+  font-family: inherit;
   cursor: pointer;
-  transition: all 0.25s ease;
+  transition: all var(--transition);
 }
 
 .leave-mode-toggle .mode-btn.active {
   background: var(--primary);
   color: #fff;
-  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+  box-shadow: 0 2px 8px var(--primary-glow);
 }
 
 .leave-mode-toggle .mode-btn:not(.active):hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-hover);
   color: var(--text);
 }
 
@@ -179,13 +180,13 @@
   gap: 0.3rem;
   padding: 0.75rem 0.5rem;
   background: var(--surface);
-  border: 1.5px solid var(--glass-border);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-family: inherit;
   color: var(--text-secondary);
   font-size: 0.78rem;
-  transition: all 0.2s ease;
+  transition: all var(--transition-fast);
 }
 
 .leave-type-btn:hover {
@@ -217,7 +218,7 @@
 
 .month-picker {
   padding: 0.4rem 0.6rem;
-  border: 1.5px solid var(--glass-border);
+  border: 1px solid var(--border);
   border-radius: 8px;
   font-size: 0.85rem;
   font-family: inherit;

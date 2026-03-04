@@ -595,7 +595,7 @@
   font-size: 0.82rem;
   font-weight: 600;
   color: var(--text);
-  transition: all 0.2s ease;
+  transition: all var(--transition-fast);
   font-family: inherit;
 }
 
@@ -603,7 +603,7 @@
   background: var(--surface-hover);
   border-color: var(--accent);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow);
 }
 
 /* ============= BANNERS ============= */
@@ -717,20 +717,21 @@
   border: none;
   background: transparent;
   color: var(--text-muted);
+  font-family: inherit;
   cursor: pointer;
-  transition: all 0.25s ease;
+  transition: all var(--transition);
   white-space: nowrap;
 }
 
 .mode-btn:hover {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-hover);
 }
 
 .mode-btn.active {
   background: var(--primary);
   color: #fff;
-  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+  box-shadow: 0 2px 8px var(--primary-glow);
 }
 
 .work-mode-badge {

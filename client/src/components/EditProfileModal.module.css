@@ -71,10 +71,11 @@
     width: 32px;
     height: 32px;
     border-radius: 8px;
-    border: 1px solid var(--glass-border);
+    border: 1px solid var(--border);
     background: var(--surface);
     color: var(--text-secondary);
     cursor: pointer;
+    font-family: inherit;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -140,13 +141,13 @@
 
 .field input {
     padding: 0.6rem 0.85rem;
-    border: 1.5px solid var(--glass-border);
+    border: 1px solid var(--border);
     border-radius: 10px;
     background: var(--surface);
     color: var(--text);
     font-family: inherit;
     font-size: 0.88rem;
-    transition: border-color 0.2s, box-shadow 0.2s;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
     width: 100%;
     box-sizing: border-box;
 }
@@ -161,11 +162,11 @@
 .inputPrefix {
     display: flex;
     align-items: center;
-    border: 1.5px solid var(--glass-border);
+    border: 1px solid var(--border);
     border-radius: 10px;
     background: var(--surface);
     overflow: hidden;
-    transition: border-color 0.2s, box-shadow 0.2s;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .inputPrefix:focus-within {
@@ -178,7 +179,7 @@
     color: var(--text-muted);
     font-size: 0.88rem;
     font-weight: 600;
-    border-right: 1.5px solid var(--glass-border);
+    border-right: 1px solid var(--border);
     align-self: stretch;
     display: flex;
     align-items: center;
@@ -224,28 +225,28 @@
 /* ============= MESSAGES ============= */
 .success {
     font-size: 0.8rem;
-    color: #4ade80;
+    color: var(--success);
     font-weight: 600;
     margin: 0;
 }
 
 .error {
     font-size: 0.8rem;
-    color: #f87171;
+    color: var(--danger);
     font-weight: 600;
     margin: 0;
 }
 
 /* ============= DANGER ZONE ============= */
 .dangerSection {
-    background: color-mix(in srgb, #ef4444 5%, transparent);
-    border: 1px solid color-mix(in srgb, #ef4444 20%, transparent);
+    background: color-mix(in srgb, var(--danger) 5%, transparent);
+    border: 1px solid color-mix(in srgb, var(--danger) 20%, transparent);
     border-radius: 14px;
     padding: 1rem 1.1rem;
 }
 
 .dangerTitle {
-    color: #f87171 !important;
+    color: var(--danger) !important;
 }
 
 .dangerDesc {
@@ -258,18 +259,18 @@
 .dangerBtn {
     padding: 0.55rem 1.2rem;
     background: transparent;
-    border: 1.5px solid #ef4444;
+    border: 1px solid var(--danger);
     border-radius: 10px;
-    color: #f87171;
+    color: var(--danger);
     font-family: inherit;
     font-size: 0.85rem;
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all var(--transition-fast);
 }
 
 .dangerBtn:hover {
-    background: rgba(239, 68, 68, 0.12);
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
     color: #fca5a5;
 }
 
@@ -287,7 +288,7 @@
 
 .deleteInput {
     padding: 0.6rem 0.85rem;
-    border: 1.5px solid #ef4444;
+    border: 1px solid var(--danger);
     border-radius: 10px;
     background: var(--surface);
     color: var(--text);
@@ -295,12 +296,12 @@
     font-size: 0.88rem;
     width: 100%;
     box-sizing: border-box;
-    transition: box-shadow 0.2s;
+    transition: box-shadow var(--transition-fast);
 }
 
 .deleteInput:focus {
     outline: none;
-    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+    box-shadow: 0 0 0 3px var(--danger-glow);
 }
 
 .deleteActions {
@@ -311,7 +312,7 @@
 
 .dangerBtnConfirm {
     padding: 0.55rem 1.1rem;
-    background: #ef4444;
+    background: var(--danger);
     color: #fff;
     border: none;
     border-radius: 10px;
@@ -319,11 +320,11 @@
     font-size: 0.85rem;
     font-weight: 600;
     cursor: pointer;
-    transition: background 0.2s, transform 0.15s;
+    transition: background var(--transition-fast), transform var(--transition-fast);
 }
 
 .dangerBtnConfirm:hover:not(:disabled) {
-    background: #dc2626;
+    background: color-mix(in srgb, var(--danger) 85%, #000);
     transform: translateY(-1px);
 }
 
@@ -335,14 +336,14 @@
 .cancelBtn {
     padding: 0.55rem 1rem;
     background: transparent;
-    border: 1.5px solid var(--glass-border);
+    border: 1px solid var(--border);
     border-radius: 10px;
     color: var(--text-secondary);
     font-family: inherit;
     font-size: 0.85rem;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all var(--transition-fast);
 }
 
 .cancelBtn:hover {

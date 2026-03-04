@@ -7,7 +7,8 @@ import {
     getOrgDepartments, getOrgTeams, getAdminOrganizations, getAdminOrganization,
     createAdminOrganization, updateAdminOrganization, deleteAdminOrganization,
     getCurrentOrg, updateOrgSettings, createDepartment, updateDepartment, deleteDepartment,
-    createTeam, updateTeam, deleteTeam, getOrgMembers, getOrgChart
+    createTeam, updateTeam, deleteTeam, getOrgMembers, getOrgChart,
+    getAdminTaskLabels, createAdminTaskLabel, updateAdminTaskLabel, deleteAdminTaskLabel
 } from '../api';
 import s from './Admin.module.css';
 
@@ -78,6 +79,11 @@ export default function AdminPanel() {
                         <span>🏢</span> Organizations
                     </button>
                 )}
+                {(user.role === 'super_admin' || user.org_id) && (
+                    <button className={`${s.tab} ${tab === 'labels' ? s.active : ''}`} onClick={() => setTab('labels')}>
+                        <span>🏷️</span> Task Labels
+                    </button>
+                )}
                 <button className={`${s.tab} ${tab === 'audit' ? s.active : ''}`} onClick={() => setTab('audit')}>
                     <span>📋</span> Audit Logs
                 </button>
@@ -86,6 +92,7 @@ export default function AdminPanel() {
             {tab === 'users' && <UserManagement userRole={user.role} />}
             {tab === 'create' && <CreateUser userRole={user.role} onCreated={() => setTab('users')} />}
             {tab === 'organizations' && (user.role === 'super_admin' || user.org_id) && <OrganizationsTab userRole={user.role} hasOrgId={!!user.org_id} />}
+            {tab === 'labels' && (user.role === 'super_admin' || user.org_id) && <TaskLabelsTab />}
             {tab === 'audit' && <AuditLogs />}
         </div>
     );
@@ -1160,6 +1167,183 @@ function OrgChartView() {
                             </div>
                         ))}
                     </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ─── Task Labels Management ─────────────────────────────────────────────
+function TaskLabelsTab() {
+    const [labels, setLabels] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [name, setName] = useState('');
+    const [color, setColor] = useState('#6366f1');
+    const [editId, setEditId] = useState(null);
+    const [editName, setEditName] = useState('');
+    const [editColor, setEditColor] = useState('#6366f1');
+    const [error, setError] = useAutoDismiss('');
+    const [success, setSuccess] = useAutoDismiss('');
+
+    const PRESET_COLORS = ['#6366f1', '#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#64748b'];
+
+    const fetchLabels = useCallback(async () => {
+        try {
+            const res = await getAdminTaskLabels();
+            setLabels(res.data);
+        } catch { setError('Failed to load labels'); }
+        finally { setLoading(false); }
+    }, []);
+
+    useEffect(() => { fetchLabels(); }, [fetchLabels]);
+
+    const handleCreate = async (e) => {
+        e.preventDefault();
+        if (!name.trim()) return;
+        try {
+            await createAdminTaskLabel({ name, color });
+            setName('');
+            setColor('#6366f1');
+            setSuccess('Label created');
+            fetchLabels();
+        } catch (err) {
+            setError(err.response?.data?.error || 'Failed to create label');
+        }
+    };
+
+    const startEdit = (label) => {
+        setEditId(label.id);
+        setEditName(label.name);
+        setEditColor(label.color);
+    };
+
+    const saveEdit = async () => {
+        if (!editName.trim()) return;
+        try {
+            await updateAdminTaskLabel(editId, { name: editName, color: editColor });
+            setEditId(null);
+            setSuccess('Label updated');
+            fetchLabels();
+        } catch (err) {
+            setError(err.response?.data?.error || 'Failed to update label');
+        }
+    };
+
+    const handleDelete = async (id) => {
+        if (!confirm('Delete this label? It will be removed from all tasks.')) return;
+        try {
+            await deleteAdminTaskLabel(id);
+            setSuccess('Label deleted');
+            fetchLabels();
+        } catch {
+            setError('Failed to delete label');
+        }
+    };
+
+    if (loading) return <div className="loading-spinner"><div className="spinner" /></div>;
+
+    return (
+        <div className={s.section}>
+            <h3 className={s.sectionTitle}>🏷️ Task Labels</h3>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1rem' }}>
+                Create labels that members of your organization can use to categorize tasks.
+            </p>
+
+            {error && <div className="error-msg error-msg-mb">{error}</div>}
+            {success && <div className="success-msg" style={{ marginBottom: '1rem' }}>{success}</div>}
+
+            {/* Create Label Form */}
+            <form onSubmit={handleCreate} style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+                <div className="form-group" style={{ flex: 1, minWidth: 180, marginBottom: 0 }}>
+                    <label>Label Name</label>
+                    <input
+                        type="text"
+                        value={name}
+                        onChange={e => setName(e.target.value)}
+                        placeholder="e.g. Bug, Feature, Urgent"
+                        maxLength={30}
+                        required
+                    />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Color</label>
+                    <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                        {PRESET_COLORS.map(c => (
+                            <button
+                                key={c}
+                                type="button"
+                                onClick={() => setColor(c)}
+                                style={{
+                                    width: 24, height: 24, borderRadius: '50%', border: color === c ? '2px solid var(--text)' : '2px solid transparent',
+                                    background: c, cursor: 'pointer', padding: 0
+                                }}
+                            />
+                        ))}
+                        <input type="color" value={color} onChange={e => setColor(e.target.value)} style={{ width: 28, height: 28, border: 'none', cursor: 'pointer' }} />
+                    </div>
+                </div>
+                <button type="submit" className="btn btn-primary" style={{ height: 38 }}>
+                    Add Label
+                </button>
+            </form>
+
+            {/* Labels Table */}
+            {labels.length === 0 ? (
+                <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '2rem' }}>No labels yet. Create one above!</p>
+            ) : (
+                <div style={{ overflowX: 'auto' }}>
+                    <table className={s.table}>
+                        <thead>
+                            <tr>
+                                <th>Label</th>
+                                <th>Created By</th>
+                                <th style={{ width: 120 }}>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {labels.map(label => (
+                                <tr key={label.id}>
+                                    <td>
+                                        {editId === label.id ? (
+                                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                                <input
+                                                    type="text"
+                                                    value={editName}
+                                                    onChange={e => setEditName(e.target.value)}
+                                                    maxLength={30}
+                                                    style={{ width: 160, padding: '0.3rem 0.5rem', fontSize: '0.85rem' }}
+                                                />
+                                                <input type="color" value={editColor} onChange={e => setEditColor(e.target.value)} style={{ width: 28, height: 28, border: 'none', cursor: 'pointer' }} />
+                                            </div>
+                                        ) : (
+                                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <span style={{
+                                                    display: 'inline-block', padding: '0.2rem 0.6rem', borderRadius: 99,
+                                                    background: label.color, color: '#fff', fontSize: '0.8rem', fontWeight: 600
+                                                }}>{label.name}</span>
+                                            </span>
+                                        )}
+                                    </td>
+                                    <td style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                                        {label.created_by_username || '—'}
+                                    </td>
+                                    <td>
+                                        {editId === label.id ? (
+                                            <div style={{ display: 'flex', gap: '0.4rem' }}>
+                                                <button className="btn btn-primary btn-sm" onClick={saveEdit}>Save</button>
+                                                <button className="btn btn-secondary btn-sm" onClick={() => setEditId(null)}>Cancel</button>
+                                            </div>
+                                        ) : (
+                                            <div style={{ display: 'flex', gap: '0.4rem' }}>
+                                                <button className="btn btn-secondary btn-sm" onClick={() => startEdit(label)}>Edit</button>
+                                                <button className="btn btn-danger btn-sm" onClick={() => handleDelete(label.id)}>Delete</button>
+                                            </div>
+                                        )}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
                 </div>
             )}
         </div>

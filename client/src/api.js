@@ -89,12 +89,26 @@ export const withdrawLeave = (id) => API.post(`/leaves/${id}/withdraw`);
 export const getLeaveSummary = (month, year) => API.get('/leaves/summary', { params: { month, year } });
 
 // Tasks
-export const getTasks = (date) => API.get('/tasks', { params: { date } });
+export const getTasks = (date, filters) => API.get('/tasks', { params: { date, ...filters } });
 export const addTask = (data) => API.post('/tasks', data);
 export const updateTaskStatus = (id, status) => API.patch(`/tasks/${id}/status`, { status });
 export const updateTask = (id, data) => API.put(`/tasks/${id}`, data);
 export const deleteTask = (id) => API.delete(`/tasks/${id}`);
 export const carryForwardTasks = () => API.post('/tasks/carry-forward');
+export const getAssignableUsers = () => API.get('/tasks/assignable-users');
+export const getTaskLabels = () => API.get('/tasks/labels');
+export const getTaskComments = (taskId) => API.get(`/tasks/${taskId}/comments`);
+export const addTaskComment = (taskId, content) => API.post(`/tasks/${taskId}/comments`, { content });
+export const updateTaskComment = (taskId, commentId, content) => API.put(`/tasks/${taskId}/comments/${commentId}`, { content });
+export const deleteTaskComment = (taskId, commentId) => API.delete(`/tasks/${taskId}/comments/${commentId}`);
+
+// Backlog
+export const getBacklog = (filters) => API.get('/tasks/backlog', { params: filters });
+export const addBacklogTask = (data) => API.post('/tasks/backlog', data);
+export const scheduleTask = (id, date) => API.patch(`/tasks/${id}/schedule`, { date });
+export const unscheduleTask = (id) => API.patch(`/tasks/${id}/unschedule`);
+export const getTaskDetail = (id) => API.get(`/tasks/${id}/detail`);
+export const getTaskHistory = (id) => API.get(`/tasks/${id}/history`);
 
 // Profile
 export const getProfile = () => API.get('/profile');
@@ -150,6 +164,10 @@ export const getInviteCodes = () => API.get('/admin/invite-codes');
 export const createInviteCode = (data) => API.post('/admin/invite-codes', data);
 export const deactivateInviteCode = (id) => API.delete(`/admin/invite-codes/${id}`);
 export const getRegistrationMode = () => API.get('/auth/registration-mode');
+export const getAdminTaskLabels = () => API.get('/admin/task-labels');
+export const createAdminTaskLabel = (data) => API.post('/admin/task-labels', data);
+export const updateAdminTaskLabel = (id, data) => API.put(`/admin/task-labels/${id}`, data);
+export const deleteAdminTaskLabel = (id) => API.delete(`/admin/task-labels/${id}`);
 
 // Manager Dashboard
 export const getTeamAttendance = (date) => API.get('/manager/team-attendance', { params: { date } });

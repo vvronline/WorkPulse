@@ -28,7 +28,7 @@
 
 .statCard:hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--shadow);
     border-color: var(--accent);
 }
 
@@ -68,6 +68,7 @@
     cursor: pointer;
     font-size: 0.95rem;
     font-weight: 500;
+    font-family: inherit;
     border-bottom: 2px solid transparent;
     margin-bottom: -2px;
     white-space: nowrap;
@@ -103,19 +104,19 @@
 .toolbar select {
     padding: 0.5rem 0.75rem;
     border-radius: 8px;
-    border: 1px solid var(--glass-border);
+    border: 1px solid var(--border);
     background: var(--input-bg);
     color: var(--text-primary);
     font-size: 0.9rem;
     font-family: inherit;
-    transition: border-color 0.2s, box-shadow 0.2s;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .toolbar input:focus,
 .toolbar select:focus {
     outline: none;
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(var(--accent-rgb, 99, 102, 241), 0.1);
+    box-shadow: 0 0 0 3px var(--primary-glow);
 }
 
 .toolbar select {
@@ -134,9 +135,10 @@
     background: var(--accent);
     color: #fff;
     font-weight: 600;
+    font-family: inherit;
     cursor: pointer;
     font-size: 0.9rem;
-    transition: all 0.2s;
+    transition: all var(--transition-fast);
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
@@ -157,12 +159,13 @@
     padding: 0.5rem 1.2rem;
     border: none;
     border-radius: 8px;
-    background: #ef4444;
+    background: var(--danger);
     color: #fff;
     font-weight: 600;
+    font-family: inherit;
     cursor: pointer;
     font-size: 0.9rem;
-    transition: all 0.2s;
+    transition: all var(--transition-fast);
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
@@ -185,6 +188,7 @@
     border-radius: 6px;
     border: none;
     cursor: pointer;
+    font-family: inherit;
     font-weight: 500;
     transition: opacity 0.2s, transform 0.1s;
     display: inline-flex;
@@ -270,8 +274,8 @@
     border-radius: 20px;
     font-size: 0.75rem;
     font-weight: 600;
-    background: #10b98122;
-    color: #10b981;
+    background: color-mix(in srgb, var(--success) 13%, transparent);
+    color: var(--success);
 }
 
 .badgeInactive {
@@ -280,8 +284,8 @@
     border-radius: 20px;
     font-size: 0.75rem;
     font-weight: 600;
-    background: #ef444422;
-    color: #ef4444;
+    background: color-mix(in srgb, var(--danger) 13%, transparent);
+    color: var(--danger);
 }
 
 .badgePending {
@@ -290,8 +294,8 @@
     border-radius: 20px;
     font-size: 0.75rem;
     font-weight: 600;
-    background: #f59e0b22;
-    color: #f59e0b;
+    background: color-mix(in srgb, var(--warning) 13%, transparent);
+    color: var(--warning);
 }
 
 .badgeApproved {
@@ -300,8 +304,8 @@
     border-radius: 20px;
     font-size: 0.75rem;
     font-weight: 600;
-    background: #10b98122;
-    color: #10b981;
+    background: color-mix(in srgb, var(--success) 13%, transparent);
+    color: var(--success);
 }
 
 .badgeRejected {
@@ -310,8 +314,8 @@
     border-radius: 20px;
     font-size: 0.75rem;
     font-weight: 600;
-    background: #ef444422;
-    color: #ef4444;
+    background: color-mix(in srgb, var(--danger) 13%, transparent);
+    color: var(--danger);
 }
 
 /* Avatar in table */
@@ -407,12 +411,12 @@
     width: 100%;
     padding: 0.6rem 0.75rem;
     border-radius: 8px;
-    border: 1px solid var(--glass-border);
+    border: 1px solid var(--border);
     background: var(--input-bg);
     color: var(--text-primary);
     font-size: 0.9rem;
     font-family: inherit;
-    transition: border-color 0.2s, box-shadow 0.2s;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .formGroup input:focus,
@@ -420,7 +424,7 @@
 .formGroup textarea:focus {
     outline: none;
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(var(--accent-rgb, 99, 102, 241), 0.1);
+    box-shadow: 0 0 0 3px var(--primary-glow);
 }
 
 .formGroup textarea {
@@ -470,6 +474,7 @@
     background: transparent;
     color: var(--text-primary);
     cursor: pointer;
+    font-family: inherit;
     font-size: 0.9rem;
 }
 
@@ -486,9 +491,9 @@
     border-radius: 8px;
     margin-bottom: 1rem;
     font-size: 0.9rem;
-    background: #ef444422;
-    color: #ef4444;
-    border: 1px solid #ef444444;
+    background: color-mix(in srgb, var(--danger) 13%, transparent);
+    color: var(--danger);
+    border: 1px solid color-mix(in srgb, var(--danger) 27%, transparent);
 }
 
 .success {
@@ -496,9 +501,9 @@
     border-radius: 8px;
     margin-bottom: 1rem;
     font-size: 0.9rem;
-    background: #10b98122;
-    color: #10b981;
-    border: 1px solid #10b98144;
+    background: color-mix(in srgb, var(--success) 13%, transparent);
+    color: var(--success);
+    border: 1px solid color-mix(in srgb, var(--success) 27%, transparent);
 }
 
 /* Pagination */
@@ -517,6 +522,7 @@
     background: var(--card-bg);
     color: var(--text-primary);
     cursor: pointer;
+    font-family: inherit;
     font-size: 0.85rem;
 }
 
@@ -579,7 +585,7 @@
 .inlineInput {
     padding: 0.3rem 0.5rem;
     border-radius: 6px;
-    border: 1px solid var(--glass-border);
+    border: 1px solid var(--border);
     background: var(--input-bg);
     color: var(--text-primary);
     font-family: inherit;
@@ -589,7 +595,7 @@
 .inlineSelect {
     padding: 0.3rem 1.8rem 0.3rem 0.5rem;
     border-radius: 6px;
-    border: 1px solid var(--glass-border);
+    border: 1px solid var(--border);
     background: var(--input-bg);
     color: var(--text-primary);
     font-family: inherit;
