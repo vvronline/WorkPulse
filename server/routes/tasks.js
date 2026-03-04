@@ -263,9 +263,6 @@ router.put('/:id', auth, loadUserContext, (req, res) => {
     try {
         const { id } = req.params;
         const { title, description, priority, assigned_to, due_date, label_ids } = req.body;
-        console.log('======================================');
-        console.log(`PUT /tasks/${id} - label_ids: ${JSON.stringify(label_ids)}`);
-        console.log('======================================');
 
         const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
         if (!canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
@@ -313,24 +310,14 @@ router.put('/:id', auth, loadUserContext, (req, res) => {
 
         // Sync labels if provided and log changes
         if (label_ids !== undefined) {
-            console.log('>>> LABEL CHANGE DETECTION START <<<');
             const oldLabelRows = db.prepare('SELECT tl.name FROM task_label_map tlm JOIN task_labels tl ON tl.id = tlm.label_id WHERE tlm.task_id = ? ORDER BY tl.name').all(id);
             const oldLabelNames = oldLabelRows.map(r => r.name);
-            console.log(`OLD labels: ${JSON.stringify(oldLabelNames)}`);
-            console.log(`Syncing with label_ids: ${JSON.stringify(label_ids)}`);
             syncLabels(id, label_ids || []);
             const newLabelRows = db.prepare('SELECT tl.name FROM task_label_map tlm JOIN task_labels tl ON tl.id = tlm.label_id WHERE tlm.task_id = ? ORDER BY tl.name').all(id);
             const newLabelNames = newLabelRows.map(r => r.name);
-            console.log(`NEW labels: ${JSON.stringify(newLabelNames)}`);
-            const changed = JSON.stringify(oldLabelNames) !== JSON.stringify(newLabelNames);
-            console.log(`Labels changed? ${changed}`);
-            if (changed) {
-                const oldStr = oldLabelNames.join(', ') || 'none';
-                const newStr = newLabelNames.join(', ') || 'none';
-                console.log(`CREATING HISTORY ENTRY: ${oldStr} -> ${newStr}`);
-                logHistory(id, req.userId, 'updated', 'labels', oldStr, newStr);
+            if (JSON.stringify(oldLabelNames) !== JSON.stringify(newLabelNames)) {
+                logHistory(id, req.userId, 'updated', 'labels', oldLabelNames.join(', ') || 'none', newLabelNames.join(', ') || 'none');
             }
-            console.log('>>> LABEL CHANGE DETECTION END <<<');
         }
 
         const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
