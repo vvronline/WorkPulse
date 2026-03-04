@@ -2043,6 +2043,36 @@
     max-height: 100vh;
     border-radius: 0;
   }
+  .detail-modal-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.6rem;
+    padding: 0.9rem 1rem;
+  }
+  .detail-badges {
+    width: 100%;
+    gap: 0.4rem;
+  }
+  .detail-header-actions {
+    width: 100%;
+    justify-content: flex-end;
+    gap: 0.4rem;
+  }
+  .detail-modal-body {
+    padding: 1rem;
+  }
+  .detail-title-row {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0.4rem 0.6rem;
+  }
+  .detail-title {
+    font-size: 1.1rem;
+    margin-bottom: 0.6rem;
+  }
+  .detail-title-row .backlog-ticket-id {
+    font-size: 0.78rem;
+  }
   .detail-meta-grid {
     grid-template-columns: 1fr;
   }
