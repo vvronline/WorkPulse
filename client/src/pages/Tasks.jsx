@@ -153,7 +153,7 @@ export default function Tasks() {
     getTaskLabels().then(r => setOrgLabels(r.data)).catch(() => {});
   }, []);
 
-  const activeFilters = useMemo(() => {
+  const plannerFilters = useMemo(() => {
     const f = {};
     if (filterAssignee) f.assignee = filterAssignee;
     if (filterLabel) f.label = filterLabel;
@@ -163,13 +163,35 @@ export default function Tasks() {
     return Object.keys(f).length ? f : undefined;
   }, [filterAssignee, filterLabel, filterPriority, filterStatus, filterSearch]);
 
-  const filterCount = useMemo(() =>
-    [filterAssignee, filterLabel, filterPriority, filterStatus, filterSearch.trim()].filter(Boolean).length,
-  [filterAssignee, filterLabel, filterPriority, filterStatus, filterSearch]);
+  const backlogFilters = useMemo(() => {
+    const f = {};
+    if (filterAssignee) f.assignee = filterAssignee;
+    if (filterLabel) f.label = filterLabel;
+    if (filterPriority) f.priority = filterPriority;
+    if (filterSearch.trim()) f.search = filterSearch.trim();
+    return Object.keys(f).length ? f : undefined;
+  }, [filterAssignee, filterLabel, filterPriority, filterSearch]);
+
+  const filterCount = useMemo(() => {
+    const base = [filterAssignee, filterLabel, filterPriority, filterSearch.trim()];
+    if (activeTab === 'planner') base.push(filterStatus);
+    return base.filter(Boolean).length;
+  }, [filterAssignee, filterLabel, filterPriority, filterStatus, filterSearch, activeTab]);
+
+  const summaryAllActive = !filterPriority;
+  const handleSummaryTotal = () => {
+    setFiltersOpen(true);
+    setFilterPriority('');
+    setFilterStatus('');
+  };
+  const handleSummaryPriority = (value) => {
+    setFiltersOpen(true);
+    setFilterPriority(prev => (prev === value ? '' : value));
+  };
 
   const fetchTasks = useCallback(async () => {
     try {
-      const res = await getTasks(date, activeFilters);
+      const res = await getTasks(date, plannerFilters);
       setTasks(res.data.tasks);
       setStats(res.data.stats);
       setError('');
@@ -178,7 +200,7 @@ export default function Tasks() {
     } finally {
       setLoading(false);
     }
-  }, [date, activeFilters]);
+  }, [date, plannerFilters]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -388,7 +410,7 @@ export default function Tasks() {
   const fetchBacklog = useCallback(async () => {
     setBacklogLoading(true);
     try {
-      const res = await getBacklog(activeFilters);
+      const res = await getBacklog(backlogFilters);
       setBacklogTasks(res.data.tasks);
       if (res.data.summary) setBacklogSummary(res.data.summary);
     } catch {
@@ -396,7 +418,7 @@ export default function Tasks() {
     } finally {
       setBacklogLoading(false);
     }
-  }, [activeFilters]);
+  }, [backlogFilters]);
 
   useEffect(() => {
     if (activeTab === 'backlog' || backlogOpen) {
@@ -621,16 +643,18 @@ export default function Tasks() {
     setter(prev => prev.includes(labelId) ? prev.filter(id => id !== labelId) : [...prev, labelId]);
   };
 
+  const parseLocalDate = (value) => new Date(`${value}T00:00:00`);
+
   const formatDueDate = (d) => {
     if (!d) return null;
     const today = getLocalToday();
     if (d === today) return 'Today';
-    const diff = Math.ceil((new Date(d) - new Date(today)) / 86400000);
+    const diff = Math.ceil((parseLocalDate(d) - parseLocalDate(today)) / 86400000);
     if (diff === 1) return 'Tomorrow';
     if (diff === -1) return 'Yesterday';
     if (diff < 0) return `${Math.abs(diff)}d overdue`;
     if (diff <= 7) return `${diff}d left`;
-    return new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return parseLocalDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   };
 
   const isDueOverdue = (d) => d && d < getLocalToday();
@@ -819,15 +843,17 @@ export default function Tasks() {
                 ))}
               </select>
             </div>
-            <div className={s['filter-group']}>
-              <label>Status</label>
-              <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className={s['filter-select']}>
-                <option value="">All</option>
-                {COLUMNS.map(c => (
-                  <option key={c.id} value={c.id}>{c.icon} {c.label}</option>
-                ))}
-              </select>
-            </div>
+            {activeTab === 'planner' && (
+              <div className={s['filter-group']}>
+                <label>Status</label>
+                <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className={s['filter-select']}>
+                  <option value="">All</option>
+                  {COLUMNS.map(c => (
+                    <option key={c.id} value={c.id}>{c.icon} {c.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             {filterCount > 0 && (
               <button className={`btn btn-secondary btn-sm ${s['clear-filters-btn']}`} onClick={clearFilters}>
                 ✕ Clear
@@ -925,27 +951,35 @@ export default function Tasks() {
           {/* Backlog Summary Bar */}
           {!backlogLoading && backlogTasks.length > 0 && (
             <div className={s['backlog-summary']}>
-              <div className={s['backlog-summary-stat']}>
-                <span className={s['backlog-summary-number']}>{backlogSummary.total || backlogTasks.length}</span>
-                <span className={s['backlog-summary-label']}>Total</span>
+              <button
+                type="button"
+                className={`${s['backlog-summary-chip']} ${summaryAllActive ? s['backlog-summary-chip-active'] : ''}`}
+                onClick={handleSummaryTotal}
+                aria-pressed={summaryAllActive}
+                style={{ '--chip-accent': 'var(--primary)' }}
+              >
+                <span className={s['backlog-summary-value']}>{backlogSummary.total || backlogTasks.length}</span>
+                <span className={s['backlog-summary-text']}>Total</span>
+              </button>
+
+              <div className={s['backlog-summary-group']}>
+                {PRIORITIES.map(p => (
+                  <button
+                    key={p.value}
+                    type="button"
+                    className={`${s['backlog-summary-chip']} ${filterPriority === p.value ? s['backlog-summary-chip-active'] : ''}`}
+                    onClick={() => handleSummaryPriority(p.value)}
+                    aria-pressed={filterPriority === p.value}
+                    style={{ '--chip-accent': p.color }}
+                  >
+                    <span className={s['backlog-summary-value']}>
+                      {backlogSummary.byPriority?.[p.value] || 0}
+                    </span>
+                    <span className={s['backlog-summary-text']}>{p.icon} {p.label}</span>
+                  </button>
+                ))}
               </div>
-              {PRIORITIES.map(p => (
-                <div key={p.value} className={s['backlog-summary-stat']}>
-                  <span className={s['backlog-summary-number']} style={{ color: p.color }}>
-                    {backlogSummary.byPriority?.[p.value] || 0}
-                  </span>
-                  <span className={s['backlog-summary-label']}>{p.icon} {p.label}</span>
-                </div>
-              ))}
-              <div className={s['backlog-summary-divider']} />
-              {COLUMNS.map(col => (
-                <div key={col.id} className={s['backlog-summary-stat']}>
-                  <span className={s['backlog-summary-number']} style={{ color: col.color }}>
-                    {backlogSummary.byStatus?.[col.id] || 0}
-                  </span>
-                  <span className={s['backlog-summary-label']}>{col.icon} {col.label}</span>
-                </div>
-              ))}
+
             </div>
           )}
 

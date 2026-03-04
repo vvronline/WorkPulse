@@ -298,14 +298,25 @@ body {
 }
 
 /* Explicit native element coloring hack for Chrome */
+input[type="date"],
+input[type="time"] {
+  color-scheme: dark;
+}
+
+
 input[type="date"]::-webkit-calendar-picker-indicator {
-  filter: invert(1) hue-rotate(180deg);
-  opacity: 0.6;
+  opacity: 1;
   cursor: pointer;
 }
 
 [data-theme="light"] input[type="date"]::-webkit-calendar-picker-indicator {
   filter: none;
+}
+
+
+[data-theme="light"] input[type="date"],
+[data-theme="light"] input[type="time"] {
+  color-scheme: light;
 }
 
 /* ============= MESSAGES ============= */

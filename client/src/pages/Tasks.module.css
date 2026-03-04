@@ -43,7 +43,7 @@
   border-radius: 8px;
   font-size: 0.9rem;
   font-family: inherit;
-  background: var(--bg);
+  background: var(--input-bg);
   color: var(--text);
   color-scheme: dark;
 }
@@ -559,7 +559,7 @@
   padding: 0.6rem 0.8rem;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg);
+  background: var(--input-bg);
   color: var(--text);
   font-family: inherit;
   font-size: 0.9rem;
@@ -576,7 +576,7 @@
   padding: 0.5rem 0.8rem;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg);
+  background: var(--input-bg);
   color: var(--text);
   font-family: inherit;
   font-size: 0.85rem;
@@ -666,8 +666,29 @@
     padding: 0.4rem;
   }
 
+  .filter-bar {
+    padding: 0.75rem;
+  }
   .filter-row {
     flex-direction: column;
+    gap: 0.6rem;
+  }
+  .filter-group {
+    min-width: 0;
+    width: 100%;
+    flex: unset;
+  }
+  .filter-input,
+  .filter-select {
+    width: 100%;
+    padding: 0.5rem 0.65rem;
+    font-size: 0.85rem;
+  }
+  .clear-filters-btn {
+    width: 100%;
+    align-self: stretch;
+    text-align: center;
+    margin-top: 0.15rem;
   }
 
   .form-extras {
@@ -735,7 +756,7 @@
   padding: 0.45rem 0.6rem;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg);
+  background: var(--input-bg);
   color: var(--text);
   font-size: 0.85rem;
   font-family: inherit;
@@ -781,7 +802,7 @@
   padding: 0.45rem 0.6rem;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg);
+  background: var(--input-bg);
   color: var(--text);
   font-size: 0.85rem;
   font-family: inherit;
@@ -813,7 +834,7 @@
   padding: 0.45rem 0.6rem;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg);
+  background: var(--input-bg);
   color: var(--text);
   font-size: 0.85rem;
   font-family: inherit;
@@ -843,8 +864,8 @@
   top: calc(100% + 4px);
   left: 0;
   z-index: 50;
-  background: var(--bg);
-  border: 1px solid var(--border);
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
   padding: 0.5rem;
   min-width: 180px;
@@ -1711,8 +1732,8 @@
 .backlog-summary {
   display: flex;
   align-items: center;
-  gap: 1.25rem;
-  padding: 0.85rem 1.25rem;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
   background: var(--glass);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius);
@@ -1720,22 +1741,52 @@
   flex-wrap: wrap;
 }
 
-.backlog-summary-stat {
+.backlog-summary-group {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 0.1rem;
-  min-width: 48px;
+  gap: 0.45rem;
+  flex-wrap: wrap;
 }
 
-.backlog-summary-number {
-  font-size: 1.15rem;
+.backlog-summary-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.backlog-summary-chip:hover {
+  background: var(--surface-hover);
+  border-color: var(--border);
+  transform: translateY(-1px);
+}
+
+.backlog-summary-chip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--primary-glow);
+}
+
+.backlog-summary-chip-active {
+  border-color: var(--chip-accent, var(--primary));
+  box-shadow: 0 0 0 2px var(--primary-glow);
+}
+
+.backlog-summary-value {
+  font-size: 0.86rem;
   font-weight: 800;
   line-height: 1;
+  color: var(--chip-accent, var(--text));
 }
 
-.backlog-summary-label {
-  font-size: 0.68rem;
+.backlog-summary-text {
+  font-size: 0.66rem;
   color: var(--text-muted);
   white-space: nowrap;
 }
@@ -2002,32 +2053,188 @@
   .detail-schedule-row {
     flex-wrap: wrap;
   }
+
+  /* ─── Tab Switcher (Planner|Backlog) ─── */
+  .tab-switcher {
+    order: -1;
+    width: 100%;
+    border-radius: var(--radius-sm);
+  }
+  .tab-btn {
+    flex: 1;
+    justify-content: center;
+    padding: 0.6rem 0.5rem;
+    font-size: 0.82rem;
+  }
+
+  /* ─── Header actions row ─── */
+  .tasks-header-actions {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    width: 100%;
+  }
+  .date-input {
+    flex: 1;
+    min-width: 0;
+  }
+  .filter-toggle-btn {
+    flex: 1;
+    min-width: 0;
+    text-align: center;
+  }
+
+  /* ─── Backlog Summary ─── */
+  .backlog-summary {
+    gap: 0.6rem;
+    padding: 0.65rem 0.8rem;
+    justify-content: flex-start;
+  }
+  .backlog-summary-group {
+    gap: 0.4rem;
+  }
+  .backlog-summary-chip {
+    padding: 0.3rem 0.55rem;
+    font-size: 0.76rem;
+  }
+  .backlog-summary-value {
+    font-size: 0.82rem;
+  }
+  .backlog-summary-divider {
+    height: 22px;
+  }
+
+  /* ─── Backlog Toolbar ─── */
+  .backlog-toolbar {
+    flex-direction: column;
+    gap: 0.5rem;
+    align-items: stretch;
+  }
+  .backlog-toolbar-left {
+    justify-content: space-between;
+    width: 100%;
+  }
+  .backlog-sort-select {
+    flex: 1;
+    padding: 0.45rem 0.6rem;
+    font-size: 0.82rem;
+  }
+  .backlog-toolbar-count {
+    text-align: right;
+  }
+
+  /* ─── Backlog Cards ─── */
   .backlog-card {
     flex-direction: column;
-    align-items: flex-start;
+    align-items: stretch;
   }
   .backlog-card-left {
     width: 100%;
+  }
+  .backlog-priority-bar {
+    width: 100%;
+    height: 3px;
+    border-radius: 4px 4px 0 0;
+  }
+  .backlog-card-left {
+    flex-direction: column;
+  }
+  .backlog-card-info {
+    padding: 0.55rem 0.75rem;
+  }
+  .backlog-card-title-row {
+    flex-wrap: wrap;
+  }
+  .backlog-card-title-row .task-title {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+    font-size: 0.88rem;
+  }
+  .backlog-desc-preview {
+    max-width: 100%;
+  }
+  .backlog-card-meta {
+    gap: 0.4rem;
   }
   .backlog-actions {
     width: 100%;
     justify-content: flex-end;
     border-top: 1px solid var(--glass-border);
+    padding: 0.4rem 0.75rem;
+    gap: 0.4rem;
+  }
+  .backlog-action-btn {
+    padding: 0.3rem 0.6rem;
+    font-size: 0.75rem;
+  }
+  .schedule-popover {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 480px) {
+  .tasks-page {
+    padding: 0 0.65rem;
+  }
+  .tasks-header h2 {
+    font-size: 1.25rem;
+  }
+  .tasks-header p {
+    font-size: 0.8rem;
+  }
+  .tab-btn {
+    font-size: 0.78rem;
+    padding: 0.5rem 0.35rem;
+    gap: 0.25rem;
+  }
+  .tab-badge {
+    font-size: 0.62rem;
+    padding: 0.05rem 0.35rem;
   }
   .backlog-summary {
-    gap: 0.75rem;
-    justify-content: center;
-  }
-  .backlog-toolbar {
-    flex-direction: column;
+    padding: 0.5rem 0.65rem;
     gap: 0.5rem;
-    align-items: flex-start;
+  }
+  .backlog-summary-chip {
+    padding: 0.25rem 0.5rem;
+  }
+  .backlog-summary-value {
+    font-size: 0.78rem;
+  }
+  .backlog-summary-text {
+    font-size: 0.6rem;
+  }
+  .backlog-card-info {
+    padding: 0.45rem 0.6rem;
+  }
+  .backlog-card-title-row .task-title {
+    font-size: 0.84rem;
   }
   .backlog-desc-preview {
-    max-width: 100%;
+    font-size: 0.72rem;
   }
-  .tab-switcher {
-    order: -1;
-    width: 100%;
+  .backlog-meta-chip {
+    font-size: 0.68rem;
+  }
+  .filter-bar {
+    padding: 0.6rem;
+  }
+  .filter-row {
+    gap: 0.45rem;
+  }
+  .filter-group label {
+    font-size: 0.62rem;
+  }
+  .filter-input,
+  .filter-select {
+    padding: 0.4rem 0.55rem;
+    font-size: 0.8rem;
+  }
+  .backlog-sort-select {
+    font-size: 0.78rem;
+    padding: 0.35rem 0.5rem;
+  }
+  .backlog-toolbar-label {
+    font-size: 0.72rem;
   }
 }
