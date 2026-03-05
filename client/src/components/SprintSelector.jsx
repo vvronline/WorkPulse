@@ -21,7 +21,7 @@ export default function SprintSelector({ sprints, selected, onChange, disabled =
         onChange={e => onChange(e.target.value ? parseInt(e.target.value, 10) : '')}
         disabled={disabled}
       >
-        <option value="">No Sprint</option>
+        <option value="">📦 Backlog (no sprint)</option>
         {sprints.map(sp => (
           <option key={sp.id} value={sp.id}>
             {sp.name} ({sp.start_date} → {sp.end_date})

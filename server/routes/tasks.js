@@ -790,7 +790,7 @@ router.get('/backlog', auth, loadUserContext, (req, res) => {
     try {
         const { assignee, label, priority, status, search } = req.query;
 
-        const conditions = ['t.date IS NULL'];
+        const conditions = ['t.sprint_id IS NULL'];
         const params = [];
 
         // Show backlog tasks visible to user (created by or assigned to, or same team)

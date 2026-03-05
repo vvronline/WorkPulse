@@ -86,16 +86,6 @@ export default function Tasks() {
   };
   const closeConfirm = () => setConfirmDialog(prev => ({ ...prev, open: false, onConfirm: null }));
 
-  // Editing
-  const [editingId, setEditingId] = useState(null);
-  const [editTitle, setEditTitle] = useState('');
-  const [editDesc, setEditDesc] = useState('');
-  const [editPriority, setEditPriority] = useState('medium');
-  const [editAssignedTo, setEditAssignedTo] = useState('');
-  const [editDueDate, setEditDueDate] = useState('');
-  const [editLabels, setEditLabels] = useState([]);
-  const [editSprintId, setEditSprintId] = useState('');
-
   // Drag
   const [dragOverCol, setDragOverCol] = useState(null);
   const dragTaskId = useRef(null);
@@ -128,10 +118,6 @@ export default function Tasks() {
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [editingCommentId, setEditingCommentId] = useState(null);
   const [editCommentText, setEditCommentText] = useState('');
-
-  // Label dropdown
-
-  const [editLabelDropdownOpen, setEditLabelDropdownOpen] = useState(false);
 
   // Task Detail Modal
   const [detailTask, setDetailTask] = useState(null);
@@ -168,9 +154,6 @@ export default function Tasks() {
   const [backlogSummary, setBacklogSummary] = useState({ total: 0, byStatus: {}, byPriority: {} });
   const [backlogSort, setBacklogSort] = useState('priority');
 
-  // My Day extras
-  const [quickAddTitle, setQuickAddTitle] = useState('');
-  const [pickBacklogOpen, setPickBacklogOpen] = useState(false);
 
   // Active tab (myday, sprint, or backlog)
   const [activeTab, setActiveTab] = useState('myday');
@@ -179,6 +162,12 @@ export default function Tasks() {
   // Available sprints for sprint selector
   const [availableSprints, setAvailableSprints] = useState([]);
   const [selectedSprintId, setSelectedSprintId] = useState(null); // sprint_id for sprint tab
+
+  // Sprint import from backlog
+  const [sprintImportOpen, setSprintImportOpen] = useState(false);
+  const [importConfigTask, setImportConfigTask] = useState(null);
+  const [importAssignedTo, setImportAssignedTo] = useState('');
+  const [importDueDate, setImportDueDate] = useState('');
 
   // ─── Data fetching ────────────────────────────────────────────────────
   useEffect(() => {
@@ -534,36 +523,23 @@ export default function Tasks() {
     }
   };
 
-  const handleQuickAdd = async (e) => {
-    e.preventDefault();
-    if (!quickAddTitle.trim()) return;
-    try {
-      await addTask({ title: quickAddTitle.trim(), date, priority: 'medium' });
-      setQuickAddTitle('');
-      fetchTasks();
-    } catch {
-      setError('Failed to add task');
-    }
-  };
-
-  const handlePickFromBacklog = async (task) => {
-    try {
-      await scheduleTask(task.id, date);
-      setPickBacklogOpen(false);
-      fetchTasks();
-      fetchBacklog();
-    } catch {
-      setError('Failed to schedule task');
-    }
-  };
-
-  const handleToggleDone = async (task) => {
-    try {
-      await updateTaskStatus(task.id, task.status === 'done' ? 'pending' : 'done');
-      fetchTasks();
-    } catch {
-      setError('Failed to update task');
-    }
+  const handleToggleDone = (task) => {
+    const newStatus = task.status === 'done' ? 'pending' : 'done';
+    const label = newStatus === 'done' ? 'Mark as done' : 'Mark as incomplete';
+    showConfirm(
+      label,
+      `${label}: "${task.title}"?`,
+      async () => {
+        closeConfirm();
+        try {
+          await updateTaskStatus(task.id, newStatus);
+          fetchTasks();
+        } catch {
+          setError('Failed to update task');
+        }
+      },
+      { confirmText: label }
+    );
   };
 
   const handleScheduleTask = (taskId, taskTitle, closeAfter) => {
@@ -595,6 +571,29 @@ export default function Tasks() {
       fetchTasks();
     } catch {
       setError('Failed to assign sprint');
+    }
+  };
+
+  const handleImportToSprint = async () => {
+    if (!importConfigTask || !selectedSprintId) return;
+    const importedId = importConfigTask.id;
+    try {
+      await assignTaskToSprint(importedId, selectedSprintId);
+      if (importAssignedTo || importDueDate) {
+        await updateTask(importedId, {
+          assigned_to: importAssignedTo || null,
+          due_date: importDueDate || null,
+        });
+      }
+      // Optimistically remove from backlog immediately
+      setBacklogTasks(prev => prev.filter(t => t.id !== importedId));
+      setImportConfigTask(null);
+      setImportAssignedTo('');
+      setImportDueDate('');
+      fetchTasks();
+      fetchBacklog();
+    } catch {
+      setError('Failed to import task to sprint');
     }
   };
 
@@ -684,55 +683,6 @@ export default function Tasks() {
 
   const confirmDelete = async () => {
     await confirmDeleteWithRefresh();
-  };
-
-  const startEdit = (task) => {
-    setEditingId(task.id);
-    setEditTitle(task.title);
-    setEditDesc(task.description || '');
-    setEditPriority(task.priority || 'medium');
-    setEditAssignedTo(task.assigned_to || '');
-    setEditDueDate(task.due_date || '');
-    setEditLabels(task.labels?.map(l => l.id) || []);
-    setEditSprintId(task.sprint_id || '');
-  };
-
-  const saveEdit = (id) => {
-    showConfirm(
-      'Save Changes',
-      `Save changes to "${editTitle}"?`,
-      async () => {
-        closeConfirm();
-        try {
-          await updateTask(id, {
-            title: editTitle,
-            description: editDesc,
-            priority: editPriority,
-            assigned_to: editAssignedTo || null,
-            due_date: editDueDate || null,
-            label_ids: editLabels,
-            sprint_id: editSprintId || null,
-          });
-          setEditingId(null);
-          fetchTasks();
-          if (backlogOpen || activeTab === 'backlog') fetchBacklog();
-        } catch {
-          setError('Failed to update item');
-        }
-      },
-      { confirmText: 'Save' }
-    );
-  };
-
-  const cancelEdit = () => {
-    setEditingId(null);
-    setEditTitle('');
-    setEditDesc('');
-    setEditPriority('medium');
-    setEditAssignedTo('');
-    setEditDueDate('');
-    setEditLabels([]);
-    setEditSprintId('');
   };
 
   const clearFilters = () => {
@@ -1061,6 +1011,14 @@ export default function Tasks() {
               ➕ New Ticket
             </button>
           )}
+          {activeTab === 'sprint' && selectedSprintId && (
+            <button
+              className={`btn btn-secondary ${s['add-task-toggle']} ${sprintImportOpen ? s['tab-active'] : ''}`}
+              onClick={() => { setSprintImportOpen(o => !o); if (!backlogTasks.length) fetchBacklog(); }}
+            >
+              📦 Import from Backlog
+            </button>
+          )}
         </div>
       </div>
 
@@ -1210,6 +1168,87 @@ export default function Tasks() {
           )}
           {error && <div className="error-msg error-msg-mb">{error}</div>}
 
+          {/* Import from Backlog panel */}
+          {sprintImportOpen && (
+            <div className={s['sprint-import-panel']}>
+              <div className={s['sprint-import-header']}>
+                <span>📦 Import tickets from Backlog into this sprint</span>
+                <button className={s['close-form-btn']} onClick={() => { setSprintImportOpen(false); setImportConfigTask(null); }}>✕</button>
+              </div>
+              {backlogLoading ? (
+                <div className="loading-spinner"><div className="spinner" /></div>
+              ) : (() => {
+                const importable = backlogTasks.filter(t => t.sprint_id !== selectedSprintId && t.status !== 'done');
+                if (importable.length === 0) {
+                  return <p className={s['sprint-import-empty']}>No backlog tickets available to import.</p>;
+                }
+                return (
+                  <div className={s['sprint-import-list']}>
+                    {importable.map(task => {
+                      const pri = getPriority(task.priority);
+                      const configuring = importConfigTask?.id === task.id;
+                      return (
+                        <div key={task.id} className={`${s['sprint-import-item']} ${configuring ? s['sprint-import-item-active'] : ''}`}>
+                          <div className={s['sprint-import-item-top']}>
+                            <span className={s['backlog-ticket-id']}>#{task.id}</span>
+                            <span
+                              className={s['task-priority-badge']}
+                              style={{ '--badge-bg': pri.color + '20', '--badge-color': pri.color }}
+                            >{pri.icon} {pri.label}</span>
+                            <span className={s['sprint-import-title']}>{task.title}</span>
+                            {!configuring && (
+                              <button
+                                className="btn btn-primary btn-sm"
+                                onClick={() => {
+                                  setImportConfigTask(task);
+                                  setImportAssignedTo(task.assigned_to ? String(task.assigned_to) : '');
+                                  const sprint = availableSprints.find(sp => sp.id === selectedSprintId);
+                                  setImportDueDate(sprint?.end_date || task.due_date || '');
+                                }}
+                              >Import</button>
+                            )}
+                          </div>
+                          {configuring && (
+                            <div className={s['sprint-import-config']}>
+                              <div className={s['sprint-import-config-row']}>
+                                <label>👤 Assign to</label>
+                                <select
+                                  value={importAssignedTo}
+                                  onChange={e => setImportAssignedTo(e.target.value)}
+                                  className={s['sprint-import-select']}
+                                >
+                                  <option value="">Unassigned</option>
+                                  {assignableUsers.map(u => (
+                                    <option key={u.id} value={u.id}>{u.full_name || u.username}</option>
+                                  ))}
+                                </select>
+                                <label>📅 Due date</label>
+                                <input
+                                  type="date"
+                                  value={importDueDate}
+                                  onChange={e => setImportDueDate(e.target.value)}
+                                  className={s['date-input']}
+                                />
+                              </div>
+                              <div className={s['sprint-import-config-actions']}>
+                                <button className="btn btn-primary btn-sm" onClick={handleImportToSprint}>
+                                  ✓ Confirm Import
+                                </button>
+                                <button className="btn btn-secondary btn-sm" onClick={() => { setImportConfigTask(null); setImportAssignedTo(''); setImportDueDate(''); }}>
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
           {/* Kanban Board */}
           {loading ? (
             <div className="loading-spinner"><div className="spinner" /></div>
@@ -1270,48 +1309,6 @@ export default function Tasks() {
 
             {/* ─── Left: task list panel ─── */}
             <div className={s['myday-tasks-panel']}>
-
-              {/* Quick-add */}
-              <form onSubmit={handleQuickAdd} className={s['myday-quick-add']}>
-                <input
-                  type="text"
-                  value={quickAddTitle}
-                  onChange={e => setQuickAddTitle(e.target.value)}
-                  placeholder="Add a task for today..."
-                  className={s['myday-quick-input']}
-                  autoComplete="off"
-                />
-                <button type="submit" className="btn btn-primary btn-sm">＋ Add</button>
-                <button
-                  type="button"
-                  className={`btn btn-secondary btn-sm ${pickBacklogOpen ? s['tab-active'] : ''}`}
-                  onClick={() => { setPickBacklogOpen(o => !o); if (!backlogTasks.length) fetchBacklog(); }}
-                >📦 Backlog</button>
-              </form>
-
-              {/* From-backlog picker */}
-              {pickBacklogOpen && (
-                <div className={s['myday-backlog-picker']}>
-                  <div className={s['myday-picker-header']}>
-                    <span>📦 Pick from Backlog</span>
-                    <button className={s['close-form-btn']} onClick={() => setPickBacklogOpen(false)}>✕</button>
-                  </div>
-                  {backlogTasks.filter(t => !t.date && t.status !== 'done').length === 0 ? (
-                    <p className={s['myday-picker-empty']}>No unscheduled backlog items</p>
-                  ) : (
-                    backlogTasks.filter(t => !t.date && t.status !== 'done').map(task => {
-                      const pri = getPriority(task.priority);
-                      return (
-                        <div key={task.id} className={s['myday-picker-item']}>
-                          <span style={{ color: pri.color }}>{pri.icon}</span>
-                          <span className={s['myday-picker-title']}>{task.title}</span>
-                          <button className="btn btn-primary btn-sm" onClick={() => handlePickFromBacklog(task)}>+ Today</button>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              )}
 
               {/* Progress row */}
               {tasks.length > 0 && !loading && (
@@ -1646,60 +1643,6 @@ export default function Tasks() {
     const dueFmt = formatDueDate(task.due_date);
     const overdue = isDueOverdue(task.due_date) && task.status !== 'done';
 
-    if (editingId === task.id) {
-      return (
-        <div key={task.id} className={`${s['task-card']} ${s.editing}`}>
-          <input
-            type="text"
-            value={editTitle}
-            onChange={(e) => setEditTitle(e.target.value)}
-            className={s['task-edit-input']}
-            autoFocus
-          />
-          <div className={`form-group ${s['quill-wrapper']}`}>
-            <ReactQuill theme="snow" value={editDesc} onChange={setEditDesc} placeholder="Description" />
-          </div>
-          <div className={s['form-extras']}>
-            <div className={s['form-extra-group']}>
-              <label>Priority</label>
-              <select value={editPriority} onChange={e => setEditPriority(e.target.value)}>
-                {PRIORITIES.map(p => <option key={p.value} value={p.value}>{p.icon} {p.label}</option>)}
-              </select>
-            </div>
-            <div className={s['form-extra-group']}>
-              <label>Assign to</label>
-              <select value={editAssignedTo} onChange={e => setEditAssignedTo(e.target.value)}>
-                <option value="">Unassigned</option>
-                {assignableUsers.map(u => <option key={u.id} value={u.id}>{u.full_name || u.username}</option>)}
-              </select>
-            </div>
-            <div className={s['form-extra-group']}>
-              <label>Due date</label>
-              <input type="date" value={editDueDate} onChange={e => setEditDueDate(e.target.value)} />
-            </div>
-            {availableSprints.length > 0 && (
-              <SprintSelector
-                sprints={availableSprints}
-                selected={editSprintId}
-                onChange={id => { setEditSprintId(id); if (!id) { setEditDueDate(''); } else { const sp = availableSprints.find(s => s.id === id); if (sp) setEditDueDate(sp.end_date); } }}
-              />
-            )}
-            <LabelSelector
-              labels={orgLabels}
-              selected={editLabels}
-              onToggle={(id) => toggleLabel(id, editLabels, setEditLabels)}
-              open={editLabelDropdownOpen}
-              setOpen={setEditLabelDropdownOpen}
-            />
-          </div>
-          <div className={s['task-edit-actions']}>
-            <button className="btn btn-primary btn-sm" onClick={() => saveEdit(task.id)}>Save</button>
-            <button className="btn btn-secondary btn-sm" onClick={cancelEdit}>Cancel</button>
-          </div>
-        </div>
-      );
-    }
-
     return (
       <div
         key={task.id}
@@ -1867,6 +1810,29 @@ export default function Tasks() {
                     />
                   </div>
                   <div className={s['detail-edit-buttons']}>
+                    {isBacklogItem ? (
+                      <div className={s['detail-schedule-row']}>
+                        <input
+                          type="date"
+                          value={scheduleDate}
+                          onChange={e => setScheduleDate(e.target.value)}
+                          className={s['date-input']}
+                        />
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => handleScheduleTask(detailTask.id, detailTask.title, closeTaskDetail)}
+                        >
+                          📅 Schedule to Day
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => handleUnscheduleTask(detailTask.id, detailTask.title, closeTaskDetail)}
+                      >
+                        📦 Move to Backlog
+                      </button>
+                    )}
                     <button className="btn btn-primary btn-sm" onClick={saveDetailEdit}>💾 Save Changes</button>
                     <button className="btn btn-secondary btn-sm" onClick={() => setDetailEditing(false)}>Cancel</button>
                   </div>
@@ -1992,33 +1958,6 @@ export default function Tasks() {
                 </div>
                 )}
 
-                {/* Backlog / Schedule actions */}
-                <div className={s['detail-actions-bar']}>
-                  {isBacklogItem ? (
-                    <div className={s['detail-schedule-row']}>
-                      <input
-                        type="date"
-                        value={scheduleDate}
-                        onChange={e => setScheduleDate(e.target.value)}
-                        className={s['date-input']}
-                      />
-                      <button
-                        className="btn btn-primary btn-sm"
-                        onClick={() => handleScheduleTask(detailTask.id, detailTask.title, closeTaskDetail)}
-                      >
-                        📅 Schedule to Day
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => handleUnscheduleTask(detailTask.id, detailTask.title, closeTaskDetail)}
-                    >
-                      📦 Move to Backlog
-                    </button>
-                  )}
-
-                </div>
               </>
             )}
 
