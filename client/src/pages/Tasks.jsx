@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   getTasks, updateTaskStatus, updateTask, addTask, deleteTask, carryForwardTasks,
   getAssignableUsers, getTaskLabels, getTaskComments, addTaskComment, updateTaskComment, deleteTaskComment,
@@ -66,6 +67,7 @@ function HighlightedHtml({ html, className, ...rest }) {
 
 export default function Tasks() {
   const { user: currentUser } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [tasks, setTasks] = useState([]);
   const [stats, setStats] = useState({ total: 0, done: 0, inProgress: 0, percent: 0 });
   const [loading, setLoading] = useState(true);
@@ -182,6 +184,18 @@ export default function Tasks() {
       }).catch(() => {});
     }
   }, [currentUser?.team_id]);
+
+  // Auto-open task detail when navigated here with ?task=ID (e.g. from notification bell)
+  useEffect(() => {
+    const taskId = searchParams.get('task');
+    if (!taskId) return;
+    // Clear param immediately so browser back works cleanly
+    setSearchParams({}, { replace: true });
+    getTaskDetail(taskId).then(res => {
+      openTaskDetail(res.data);
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   const plannerFilters = useMemo(() => {
     const f = {};
@@ -873,7 +887,7 @@ export default function Tasks() {
                     <span className={s['comment-avatar-placeholder']}>{(c.full_name || c.username || '?')[0].toUpperCase()}</span>
                   )}
                   <strong>{c.full_name || c.username}</strong>
-                  <span className={s['comment-time']}>{new Date(c.created_at).toLocaleString()}</span>
+                  <span className={s['comment-time']}>{new Date(c.created_at + 'Z').toLocaleString()}</span>
                   {c.updated_at && c.updated_at !== c.created_at && <span className={s['comment-edited']}>(edited)</span>}
                 </div>
                 {editingCommentId === c.id ? (
@@ -1903,13 +1917,13 @@ export default function Tasks() {
                   {detailTask.created_at && (
                     <div className={s['detail-meta-item']}>
                       <span className={s['detail-meta-label']}>Created</span>
-                      <span className={s['detail-meta-value']}>{new Date(detailTask.created_at).toLocaleString()}</span>
+                      <span className={s['detail-meta-value']}>{new Date(detailTask.created_at + 'Z').toLocaleString()}</span>
                     </div>
                   )}
                   {detailTask.completed_at && (
                     <div className={s['detail-meta-item']}>
                       <span className={s['detail-meta-label']}>Completed</span>
-                      <span className={s['detail-meta-value']}>{new Date(detailTask.completed_at).toLocaleString()}</span>
+                      <span className={s['detail-meta-value']}>{new Date(detailTask.completed_at + 'Z').toLocaleString()}</span>
                     </div>
                   )}
                   {detailTask.sprint_id && (
@@ -1983,6 +1997,7 @@ export default function Tasks() {
                   comments={detailComments}
                   loading={detailLoading}
                   currentUserId={currentUser?.id}
+                  users={assignableUsers}
                   onAdd={async (content) => {
                     try {
                       const res = await addTaskComment(detailTask.id, content);
@@ -2040,7 +2055,7 @@ export default function Tasks() {
                           <span className={s['history-actor']}>{h.full_name || h.username}</span>{' '}
                           <span className={s['history-action']}>{actionText()}</span>
                         </div>
-                        <span className={s['history-time']}>{new Date(h.created_at).toLocaleString()}</span>
+                        <span className={s['history-time']}>{new Date(h.created_at + 'Z').toLocaleString()}</span>
                       </div>
                     );
                   })}

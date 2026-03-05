@@ -547,6 +547,25 @@ runMigration('notebook_history_table', () => {
   console.log('✓ notebook_history table created');
 });
 
+// In-app notifications
+runMigration('notifications_table', () => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      type       TEXT    NOT NULL,
+      title      TEXT    NOT NULL,
+      body       TEXT,
+      link_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+      is_read    INTEGER NOT NULL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_notifications_user
+      ON notifications(user_id, is_read, created_at DESC);
+  `);
+  console.log('✓ notifications table created');
+});
+
 try {
   const firstUser = db.prepare('SELECT id, role FROM users ORDER BY id ASC LIMIT 1').get();
   if (firstUser && firstUser.role === 'employee') {

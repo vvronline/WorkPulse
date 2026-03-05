@@ -6,6 +6,7 @@ import { useWorkState } from '../WorkStateContext';
 import { clockOut as apiClockOut, uploadAvatar, removeAvatar, baseURL } from '../api';
 import EditProfileModal from './EditProfileModal';
 import ConfirmDialog from './ConfirmDialog';
+import NotificationBell from './NotificationBell';
 import s from './Navbar.module.css';
 
 export default function Navbar() {
@@ -181,6 +182,8 @@ export default function Navbar() {
               </div>
             )}
           </div>
+
+          <NotificationBell />
 
           <div className={s['profile-section']} ref={profileRef}>
             <button

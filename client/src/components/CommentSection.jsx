@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import ReactQuill from 'react-quill-new';
 import DOMPurify from 'dompurify';
 import hljs from '../hljs-setup';
+import MentionInput from './MentionInput';
 import s from '../pages/Tasks.module.css';
 
 const COMMENT_QUILL_MODULES = {
@@ -47,16 +48,17 @@ function getAvatarUrl(avatar) {
 }
 
 /**
- * Reusable comment section with inline editing.
+ * Reusable comment section with inline editing and @mention support.
  * Props:
  * - comments: Array of comment objects
  * - loading: boolean
  * - currentUserId: number
+ * - users: Array of { id, username, full_name } for @mention autocomplete
  * - onAdd: (content: string) => Promise<void>
  * - onEdit: (commentId: number, content: string) => Promise<void>
  * - onDelete: (commentId: number) => void
  */
-export default function CommentSection({ comments, loading, currentUserId, onAdd, onEdit, onDelete }) {
+export default function CommentSection({ comments, loading, currentUserId, users = [], onAdd, onEdit, onDelete }) {
   const [commentText, setCommentText] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState('');
@@ -90,7 +92,7 @@ export default function CommentSection({ comments, loading, currentUserId, onAdd
                 <span className={s['comment-avatar-placeholder']}>{(c.full_name || c.username || '?')[0].toUpperCase()}</span>
               )}
               <strong>{c.full_name || c.username}</strong>
-              <span className={s['comment-time']}>{new Date(c.created_at).toLocaleString()}</span>
+              <span className={s['comment-time']}>{new Date(c.created_at + 'Z').toLocaleString()}</span>
               {c.updated_at && c.updated_at !== c.created_at && <span className={s['comment-edited']}>(edited)</span>}
             </div>
             {editingId === c.id ? (
@@ -118,9 +120,13 @@ export default function CommentSection({ comments, loading, currentUserId, onAdd
         ))}
       </div>
       <div className={s['comment-input']}>
-        <div className={s['comment-quill-wrapper']}>
-          <ReactQuill theme="snow" value={commentText} onChange={setCommentText} modules={COMMENT_QUILL_MODULES} placeholder="Write a comment..." />
-        </div>
+        <MentionInput
+          value={commentText}
+          onChange={setCommentText}
+          users={users}
+          placeholder="Write a comment… (type @ to mention someone)"
+          onSubmit={handleAdd}
+        />
         <button className="btn btn-primary btn-sm" onClick={handleAdd} disabled={!stripHtml(commentText).trim()}>Send</button>
       </div>
     </>

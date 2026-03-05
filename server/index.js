@@ -33,6 +33,7 @@ const managerRoutes = require('./routes/manager');
 const leavePolicyRoutes = require('./routes/leavePolicy');
 const sprintsRoutes = require('./routes/sprints');
 const notesRoutes = require('./routes/notes');
+const notificationsRoutes = require('./routes/notifications');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -152,6 +153,7 @@ app.use('/api/admin', apiLimiter, adminRoutes);
 app.use('/api/manager', apiLimiter, managerRoutes);
 app.use('/api/leave-policy', apiLimiter, leavePolicyRoutes);
 app.use('/api/notes', apiLimiter, notesRoutes);
+app.use('/api/notifications', apiLimiter, notificationsRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

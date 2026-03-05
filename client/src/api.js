@@ -220,4 +220,10 @@ export const saveNotes = (data) => API.put('/notes', { data });
 export const getPageHistory = (pageId) => API.get(`/notes/history/${encodeURIComponent(pageId)}`);
 export const getHistorySnapshot = (snapshotId) => API.get(`/notes/history/snapshot/${snapshotId}`);
 
+// Notifications
+export const getNotifications = () => API.get('/notifications');
+export const markNotificationRead = (id) => API.post(`/notifications/${id}/read`);
+export const markAllNotificationsRead = () => API.post('/notifications/read-all');
+export const deleteNotification = (id) => API.delete(`/notifications/${id}`);
+
 export default API;

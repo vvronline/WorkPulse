@@ -733,6 +733,29 @@ router.post('/:id/comments', auth, (req, res) => {
             WHERE tc.id = ?
         `).get(result.lastInsertRowid);
 
+        // Notify mentioned users (@mention via data-user-id attribute in HTML)
+        try {
+            const mentionRegex = /data-user-id="(\d+)"/g;
+            const mentionedIds = new Set();
+            let m;
+            while ((m = mentionRegex.exec(content)) !== null) {
+                const uid = parseInt(m[1]);
+                if (uid !== req.userId) mentionedIds.add(uid);
+            }
+            if (mentionedIds.size > 0) {
+                const commenter = db.prepare('SELECT username, full_name FROM users WHERE id = ?').get(req.userId);
+                const commenterName = commenter?.full_name || commenter?.username || 'Someone';
+                const insertNotif = db.prepare(
+                    'INSERT INTO notifications (user_id, type, title, body, link_task_id) VALUES (?, ?, ?, ?, ?)'
+                );
+                for (const uid of mentionedIds) {
+                    insertNotif.run(uid, 'mention', `${commenterName} mentioned you`, `In task: ${task.title}`, task.id);
+                }
+            }
+        } catch (mentionErr) {
+            console.error('Mention notification error:', mentionErr.message);
+        }
+
         res.json(comment);
     } catch (err) {
         console.error('Error adding comment:', err.message);
