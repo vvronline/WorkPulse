@@ -3,6 +3,18 @@
    No React imports – fully tree‑shakeable.
    ───────────────────────────────────────────────────────── */
 
+// crypto.randomUUID() requires a secure context (HTTPS / localhost).
+// Fall back to a Math.random-based UUID v4 when unavailable.
+function generateId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
 export const TAG_COLORS = [
   '#6366f1', '#ec4899', '#f59e0b', '#10b981',
   '#3b82f6', '#8b5cf6', '#ef4444', '#14b8a6',
@@ -12,7 +24,7 @@ export const TAG_COLORS = [
 
 export function newPage(title = 'Untitled', folderId = null) {
   return {
-    id: crypto.randomUUID(),
+    id: generateId(),
     title,
     content: '',
     createdAt: new Date().toISOString(),
@@ -26,7 +38,7 @@ export function newPage(title = 'Untitled', folderId = null) {
 }
 
 export function newFolder(name) {
-  return { id: crypto.randomUUID(), name, sortOrder: Date.now() };
+  return { id: generateId(), name, sortOrder: Date.now() };
 }
 
 // ── Data migration ───────────────────────────────────────
