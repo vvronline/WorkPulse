@@ -1,0 +1,56 @@
+/* ── ImageResizer ── */
+.overlay {
+  position: fixed;
+  pointer-events: none;
+  z-index: 9999;
+  box-sizing: border-box;
+}
+
+.border {
+  position: absolute;
+  inset: 0;
+  border: 2px solid #6366f1;
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+.sizeBadge {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #6366f1;
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  line-height: 1.5;
+}
+
+/* ── Handles ── */
+.handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: #fff;
+  border: 2px solid #6366f1;
+  border-radius: 2px;
+  box-sizing: border-box;
+  pointer-events: all;
+  z-index: 10000;
+}
+
+/* Corners */
+.nw { top: -5px;    left: -5px;    cursor: nw-resize; }
+.ne { top: -5px;    right: -5px;   cursor: ne-resize; }
+.se { bottom: -5px; right: -5px;   cursor: se-resize; }
+.sw { bottom: -5px; left: -5px;    cursor: sw-resize; }
+
+/* Edges */
+.n  { top: -5px;    left: 50%; transform: translateX(-50%); cursor: n-resize; }
+.s  { bottom: -5px; left: 50%; transform: translateX(-50%); cursor: s-resize; }
+.e  { right: -5px;  top: 50%;  transform: translateY(-50%); cursor: e-resize; }
+.w  { left: -5px;   top: 50%;  transform: translateY(-50%); cursor: w-resize; }

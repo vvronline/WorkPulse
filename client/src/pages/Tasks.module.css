@@ -2907,3 +2907,294 @@
 .clickable {
   cursor: pointer;
 }
+
+/* ============= MY DAY ============= */
+
+.myday-layout {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.myday-tasks-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+/* Quick-add form */
+.myday-quick-add {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.myday-quick-input {
+  flex: 1;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem 0.85rem;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+  transition: border-color 0.2s;
+}
+.myday-quick-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+/* Backlog picker */
+.myday-backlog-picker {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.myday-picker-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.65rem 1rem;
+  background: var(--bg-elevated, var(--bg-card));
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 0.9rem;
+  position: sticky;
+  top: 0;
+}
+
+.myday-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.15s;
+}
+.myday-picker-item:last-child { border-bottom: none; }
+.myday-picker-item:hover { background: var(--bg-hover, rgba(255,255,255,0.04)); }
+
+.myday-picker-title {
+  flex: 1;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.myday-picker-empty {
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+/* Progress row */
+.myday-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.myday-progress-track {
+  flex: 1;
+  height: 6px;
+  background: var(--border);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.myday-progress-fill {
+  height: 100%;
+  background: var(--success);
+  border-radius: 99px;
+  transition: width 0.4s ease;
+}
+
+.myday-progress-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* Task list */
+.myday-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.myday-task-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.85rem;
+  transition: background 0.15s, opacity 0.2s;
+}
+.myday-task-item:hover { background: var(--bg-hover, rgba(255,255,255,0.04)); }
+
+.myday-task-done {
+  opacity: 0.55;
+}
+
+.myday-check-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.1rem;
+  padding: 0;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+.myday-check-btn:hover { transform: scale(1.2); }
+
+.myday-task-body {
+  flex: 1;
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.myday-task-title {
+  font-size: 0.92rem;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.myday-task-done .myday-task-title {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.myday-task-due {
+  font-size: 0.73rem;
+  color: var(--text-muted);
+  background: var(--bg-elevated, rgba(255,255,255,0.06));
+  padding: 0.1rem 0.45rem;
+  border-radius: 99px;
+}
+
+.myday-task-del {
+  background: none;
+  border: none;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+  padding: 0;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+.myday-task-item:hover .myday-task-del { opacity: 0.6; }
+.myday-task-del:hover { opacity: 1 !important; }
+
+/* Empty state */
+.myday-empty {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--text-muted);
+}
+.myday-empty-icon {
+  font-size: 2.5rem;
+  margin-bottom: 0.75rem;
+}
+.myday-empty p {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0 0 0.3rem;
+}
+.myday-empty span {
+  font-size: 0.85rem;
+}
+
+/* Notes panel */
+.myday-note-panel {
+  position: sticky;
+  top: 1rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.myday-note-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.myday-note-saved {
+  font-size: 0.75rem;
+  color: var(--success);
+  animation: fadeIn 0.3s ease;
+}
+
+.myday-note-editor :global(.ql-container) {
+  border: none;
+  font-size: 0.9rem;
+}
+.myday-note-editor :global(.ql-toolbar) {
+  border: none;
+  border-bottom: 1px solid var(--border);
+}
+.myday-note-editor :global(.ql-editor) {
+  min-height: 400px;
+  max-height: 65vh;
+  overflow-y: auto;
+  color: var(--text-primary);
+}
+.myday-note-editor :global(.ql-editor.ql-blank::before) {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Light theme overrides */
+[data-theme="light"] .myday-task-item,
+[data-theme="light"] .myday-backlog-picker,
+[data-theme="light"] .myday-note-panel {
+  background: #ffffff;
+}
+[data-theme="light"] .myday-quick-input {
+  background: #ffffff;
+}
+
+/* Responsive */
+@media (max-width: 1100px) {
+  .myday-layout {
+    grid-template-columns: 1fr;
+  }
+  .myday-note-panel {
+    position: static;
+  }
+  .myday-note-editor :global(.ql-editor) {
+    min-height: 200px;
+  }
+}
+
+@media (max-width: 600px) {
+  .myday-quick-add {
+    flex-wrap: wrap;
+  }
+  .myday-quick-input {
+    width: 100%;
+  }
+}

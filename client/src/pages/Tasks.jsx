@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
-  getTasks, updateTaskStatus, updateTask, deleteTask, carryForwardTasks,
+  getTasks, updateTaskStatus, updateTask, addTask, deleteTask, carryForwardTasks,
   getAssignableUsers, getTaskLabels, getTaskComments, addTaskComment, updateTaskComment, deleteTaskComment,
   getLocalToday, getBacklog, addBacklogTask, scheduleTask, unscheduleTask, getTaskDetail, getTaskHistory,
   searchTasks, getTeamSprintConfig, updateTeamSprintConfig, getAvailableSprints, assignTaskToSprint
@@ -8,6 +8,7 @@ import {
 import ConfirmDialog from '../components/ConfirmDialog';
 import CommentSection from '../components/CommentSection';
 import SprintSelector from '../components/SprintSelector';
+import DailyNotes from '../components/DailyNotes';
 import { useAuth } from '../AuthContext';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import DOMPurify from 'dompurify';
@@ -166,6 +167,10 @@ export default function Tasks() {
   const [sprintAssignTaskId, setSprintAssignTaskId] = useState(null);
   const [backlogSummary, setBacklogSummary] = useState({ total: 0, byStatus: {}, byPriority: {} });
   const [backlogSort, setBacklogSort] = useState('priority');
+
+  // My Day extras
+  const [quickAddTitle, setQuickAddTitle] = useState('');
+  const [pickBacklogOpen, setPickBacklogOpen] = useState(false);
 
   // Active tab (myday, sprint, or backlog)
   const [activeTab, setActiveTab] = useState('myday');
@@ -526,6 +531,38 @@ export default function Tasks() {
       if (backlogSprintId && activeTab === 'sprint') fetchTasks();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to create backlog item');
+    }
+  };
+
+  const handleQuickAdd = async (e) => {
+    e.preventDefault();
+    if (!quickAddTitle.trim()) return;
+    try {
+      await addTask({ title: quickAddTitle.trim(), date, priority: 'medium' });
+      setQuickAddTitle('');
+      fetchTasks();
+    } catch {
+      setError('Failed to add task');
+    }
+  };
+
+  const handlePickFromBacklog = async (task) => {
+    try {
+      await scheduleTask(task.id, date);
+      setPickBacklogOpen(false);
+      fetchTasks();
+      fetchBacklog();
+    } catch {
+      setError('Failed to schedule task');
+    }
+  };
+
+  const handleToggleDone = async (task) => {
+    try {
+      await updateTaskStatus(task.id, task.status === 'done' ? 'pending' : 'done');
+      fetchTasks();
+    } catch {
+      setError('Failed to update task');
     }
   };
 
@@ -1145,8 +1182,8 @@ export default function Tasks() {
         </div>
       )}
 
-      {/* ─── MY DAY / SPRINT TAB ────────────────────────────────── */}
-      {(activeTab === 'myday' || activeTab === 'sprint') && (
+      {/* ─── SPRINT TAB ────────────────────────────────────── */}
+      {activeTab === 'sprint' && (
         <>
           {/* Progress Bar */}
           <div className={s['tasks-progress-card']}>
@@ -1194,7 +1231,7 @@ export default function Tasks() {
                     <div className={s['column-header']}>
                       <div className={s['column-header-left']}>
                         <span className={s['column-dot']} style={{ background: col.color }} />
-                        <span className={s['column-label']}>{col.label}</span>
+                        <span className={s['column-label']}>{sprintMode && col.id === 'pending' ? 'New' : col.label}</span>
                       </div>
                       <span className={s['column-count']}>{colTasks.length}</span>
                     </div>
@@ -1218,12 +1255,118 @@ export default function Tasks() {
           {tasks.length === 0 && !loading && (
             <div className={s['tasks-empty']}>
               <div className={s['tasks-empty-icon']}>📋</div>
-              <p>No items for this day</p>
-              <span>Add an item above to get started!</span>
+              <p>No items in this sprint</p>
+              <span>Assign tickets from the Backlog to this sprint.</span>
             </div>
           )}
         </>
       )}
+
+      {/* ─── MY DAY TAB ─────────────────────────────────────── */}
+      {activeTab === 'myday' && (
+        <>
+          {error && <div className="error-msg error-msg-mb">{error}</div>}
+          <div className={s['myday-layout']}>
+
+            {/* ─── Left: task list panel ─── */}
+            <div className={s['myday-tasks-panel']}>
+
+              {/* Quick-add */}
+              <form onSubmit={handleQuickAdd} className={s['myday-quick-add']}>
+                <input
+                  type="text"
+                  value={quickAddTitle}
+                  onChange={e => setQuickAddTitle(e.target.value)}
+                  placeholder="Add a task for today..."
+                  className={s['myday-quick-input']}
+                  autoComplete="off"
+                />
+                <button type="submit" className="btn btn-primary btn-sm">＋ Add</button>
+                <button
+                  type="button"
+                  className={`btn btn-secondary btn-sm ${pickBacklogOpen ? s['tab-active'] : ''}`}
+                  onClick={() => { setPickBacklogOpen(o => !o); if (!backlogTasks.length) fetchBacklog(); }}
+                >📦 Backlog</button>
+              </form>
+
+              {/* From-backlog picker */}
+              {pickBacklogOpen && (
+                <div className={s['myday-backlog-picker']}>
+                  <div className={s['myday-picker-header']}>
+                    <span>📦 Pick from Backlog</span>
+                    <button className={s['close-form-btn']} onClick={() => setPickBacklogOpen(false)}>✕</button>
+                  </div>
+                  {backlogTasks.filter(t => !t.date && t.status !== 'done').length === 0 ? (
+                    <p className={s['myday-picker-empty']}>No unscheduled backlog items</p>
+                  ) : (
+                    backlogTasks.filter(t => !t.date && t.status !== 'done').map(task => {
+                      const pri = getPriority(task.priority);
+                      return (
+                        <div key={task.id} className={s['myday-picker-item']}>
+                          <span style={{ color: pri.color }}>{pri.icon}</span>
+                          <span className={s['myday-picker-title']}>{task.title}</span>
+                          <button className="btn btn-primary btn-sm" onClick={() => handlePickFromBacklog(task)}>+ Today</button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+
+              {/* Progress row */}
+              {tasks.length > 0 && !loading && (
+                <div className={s['myday-progress-row']}>
+                  <div className={s['myday-progress-track']}>
+                    <div className={s['myday-progress-fill']} style={{ width: `${stats.percent}%` }} />
+                  </div>
+                  <span className={s['myday-progress-label']}>{stats.done}/{stats.total} done · {stats.percent}%</span>
+                </div>
+              )}
+
+              {/* Task list */}
+              {loading ? (
+                <div className="loading-spinner"><div className="spinner" /></div>
+              ) : tasks.length === 0 ? (
+                <div className={s['myday-empty']}>
+                  <div className={s['myday-empty-icon']}>☀️</div>
+                  <p>Nothing planned for today yet</p>
+                  <span>Add a task above or pull from your backlog</span>
+                </div>
+              ) : (
+                <div className={s['myday-task-list']}>
+                  {[...tasks].sort((a, b) => ({ high: 0, medium: 1, low: 2 }[a.priority] ?? 1) - ({ high: 0, medium: 1, low: 2 }[b.priority] ?? 1)).map(task => {
+                    const pri = getPriority(task.priority);
+                    const done = task.status === 'done';
+                    return (
+                      <div key={task.id} className={`${s['myday-task-item']} ${done ? s['myday-task-done'] : ''}`}>
+                        <button
+                          className={s['myday-check-btn']}
+                          onClick={() => handleToggleDone(task)}
+                          title={done ? 'Mark incomplete' : 'Mark done'}
+                          style={{ color: done ? 'var(--success)' : 'var(--text-muted)' }}
+                        >{done ? '●' : '○'}</button>
+                        <div className={s['myday-task-body']} onClick={() => openTaskDetail(task)}>
+                          <span className={s['myday-task-title']}>{task.title}</span>
+                          {task.due_date && <span className={s['myday-task-due']}>📅 {task.due_date}</span>}
+                          {task.labels && task.labels.length > 0 && task.labels.map(l => (
+                            <span key={l.id} className={s['label-pill']} style={{ '--label-color': l.color }}>{l.name}</span>
+                          ))}
+                        </div>
+                        <span style={{ color: pri.color, fontSize: '0.85rem' }} title={pri.label}>{pri.icon}</span>
+                        <button className={s['myday-task-del']} onClick={() => handleDelete(task)} title="Delete">🗑</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* ─── Right: Daily notes ─── */}
+            <DailyNotes userId={currentUser?.id} />
+          </div>
+        </>
+      )}
+
 
       {/* ─── BACKLOG TAB ──────────────────────────────────────────── */}
       {activeTab === 'backlog' && (

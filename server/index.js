@@ -32,6 +32,7 @@ const adminRoutes = require('./routes/admin');
 const managerRoutes = require('./routes/manager');
 const leavePolicyRoutes = require('./routes/leavePolicy');
 const sprintsRoutes = require('./routes/sprints');
+const notesRoutes = require('./routes/notes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -74,6 +75,8 @@ app.use(cors({
     credentials: true
 }));
 app.use(cookieParser());
+// Higher body limits for specific routes (must be before global parser)
+app.use('/api/notes', express.json({ limit: '5mb' }));
 app.use(express.json({ limit: '100kb' }));
 app.use(express.urlencoded({ limit: '100kb', extended: true }));
 
@@ -148,6 +151,7 @@ app.use('/api/org', apiLimiter, organizationRoutes);
 app.use('/api/admin', apiLimiter, adminRoutes);
 app.use('/api/manager', apiLimiter, managerRoutes);
 app.use('/api/leave-policy', apiLimiter, leavePolicyRoutes);
+app.use('/api/notes', apiLimiter, notesRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -214,4 +214,8 @@ export const addHoliday = (data) => API.post('/leave-policy/holidays', data);
 export const addHolidaysBatch = (holidays) => API.post('/leave-policy/holidays/batch', { holidays });
 export const deleteHoliday = (id) => API.delete(`/leave-policy/holidays/${id}`);
 
+// Notes
+export const getNotes = () => API.get('/notes');
+export const saveNotes = (data) => API.put('/notes', { data });
+
 export default API;

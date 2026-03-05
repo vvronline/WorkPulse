@@ -518,6 +518,18 @@ runMigration('task_history_table', () => {
   console.log('✓ task_history table created');
 });
 
+// Notes/Notebooks table (one JSON doc per user)
+runMigration('notebooks_table', () => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS notebooks (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      data TEXT NOT NULL DEFAULT '{}',
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  console.log('✓ notebooks table created');
+});
+
 try {
   const firstUser = db.prepare('SELECT id, role FROM users ORDER BY id ASC LIMIT 1').get();
   if (firstUser && firstUser.role === 'employee') {
