@@ -68,3 +68,65 @@
 
 [data-theme="light"] .modal  { background: #ffffff; }
 [data-theme="light"] .header { background: #f8f9fc; }
+
+/* ── Mobile Pages toggle button (hidden on desktop) ── */
+.mobileToggleBtn {
+  display: none;
+}
+
+/* ── Mobile responsive ── */
+@media (max-width: 640px) {
+  .overlay {
+    padding: 0;
+    align-items: stretch;
+  }
+  .modal {
+    border-radius: 0;
+    height: 100dvh;
+    max-height: none;
+    max-width: none;
+    width: 100%;
+  }
+  .shortcutHint {
+    display: none;
+  }
+  .newBtn span {
+    display: none;
+  }
+  .newBtn {
+    padding: 0.35rem 0.5rem;
+  }
+  .header {
+    padding: 0.5rem 0.75rem;
+    gap: 0.5rem;
+  }
+  .mobileToggleBtn {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 0.32rem 0.55rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .mobileToggleBtn svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+  }
+  .mobileToggleBtn:hover,
+  .mobileToggleBtnActive {
+    background: var(--primary-dim, rgba(99,102,241,0.12));
+    border-color: rgba(99,102,241,0.35);
+    color: var(--primary);
+  }
+  .body {
+    flex-direction: column;
+    overflow: hidden;
+  }
+}

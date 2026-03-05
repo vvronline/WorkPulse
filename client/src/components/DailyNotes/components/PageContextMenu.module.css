@@ -28,3 +28,18 @@
   display: block;
 }
 [data-theme="light"] .ctxMenu { background: #ffffff; box-shadow: 0 6px 20px rgba(0,0,0,0.12); }
+
+/* ── Mobile: bigger tap targets ── */
+@media (hover: none) {
+  .ctxItem {
+    padding: 0.65rem 0.85rem;
+    font-size: 0.85rem;
+  }
+  .ctxSmall {
+    padding-left: 1.6rem;
+    font-size: 0.8rem;
+  }
+  .ctxMenu {
+    min-width: 190px;
+  }
+}

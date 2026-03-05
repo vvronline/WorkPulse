@@ -46,3 +46,29 @@
 }
 
 [data-theme="light"] .folderSelect { background: #fff; }
+
+/* ── Mobile adjustments ── */
+@media (max-width: 640px) {
+  .titleRow {
+    padding: 0.6rem 0.85rem 0.15rem;
+  }
+  .titleInput {
+    font-size: 1.15rem;
+  }
+  .metaRow {
+    padding: 0.1rem 0.85rem 0.4rem;
+    gap: 0.5rem;
+  }
+  .actions {
+    gap: 0.15rem;
+  }
+  .actBtn {
+    padding: 0.3rem 0.4rem;
+    font-size: 0.85rem;
+    opacity: 1; /* always visible on touch */
+  }
+  .wordCount {
+    padding: 0.3rem 0.85rem;
+    font-size: 0.72rem;
+  }
+}

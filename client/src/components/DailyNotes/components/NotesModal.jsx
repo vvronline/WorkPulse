@@ -1,11 +1,12 @@
 /* NotesModal — full-screen portal overlay with sidebar + editor */
-import React from 'react';
+import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import ModalSidebar from './ModalSidebar';
 import ModalEditor from './ModalEditor';
 import s from './NotesModal.module.css';
 
 export default function NotesModal({ store }) {
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const {
     activePage, activePageId, processedPages, folders, wc,
     savedFlash,
@@ -52,6 +53,20 @@ export default function NotesModal({ store }) {
             <span className={s.shortcutHint}>
               Ctrl+N new · Ctrl+S save · Ctrl+Shift+F search · Ctrl+D duplicate · Ctrl+P pin
             </span>
+            <button
+              className={`${s.mobileToggleBtn} ${mobileSidebarOpen ? s.mobileToggleBtnActive : ''}`}
+              onClick={() => setMobileSidebarOpen(p => !p)}
+              title="Pages"
+              aria-label="Toggle page list"
+              aria-expanded={mobileSidebarOpen}
+            >
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 2h7l3 3v9a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1z"/>
+                <path d="M10 2v3h3"/>
+                <path d="M5 7h6M5 10h4"/>
+              </svg>
+              <span>Pages</span>
+            </button>
             <button className={s.newBtn} onClick={handleNewPage}>
               <svg viewBox="0 0 14 14" fill="currentColor">
                 <path d="M7 1a1 1 0 011 1v4h4a1 1 0 010 2H8v4a1 1 0 01-2 0V8H2a1 1 0 010-2h4V2a1 1 0 011-1z"/>
@@ -69,6 +84,8 @@ export default function NotesModal({ store }) {
         {/* Body */}
         <div className={s.body}>
           <ModalSidebar
+            mobileOpen={mobileSidebarOpen}
+            onMobileClose={() => setMobileSidebarOpen(false)}
             searchRef={searchRef}
             searchQuery={searchQuery} setSearchQuery={setSearchQuery}
             sortBy={sortBy} onSortChange={handleSortChange}

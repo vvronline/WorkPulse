@@ -34,9 +34,16 @@ export default function ModalSidebar({
   onDeleteFolder,
   onNewPageInFolder,
   folderName,
+  mobileOpen,
+  onMobileClose,
 }) {
+  const handleSelectPage = (page) => {
+    onSelectPage(page);
+    if (onMobileClose) onMobileClose();
+  };
+
   return (
-    <div className={s.sidebar}>
+    <div className={`${s.sidebar} ${mobileOpen ? s.sidebarMobileOpen : ''}`}>
       {/* Search */}
       <div className={s.searchWrap}>
         <input
@@ -90,7 +97,7 @@ export default function ModalSidebar({
             pageMenu={pageMenu}
             setPageMenu={setPageMenu}
             pageMenuRef={pageMenuRef}
-            onSelect={onSelectPage}
+            onSelect={handleSelectPage}
             onDragStart={onDragStart}
             onDragOver={onDragOver}
             onDrop={onDrop}

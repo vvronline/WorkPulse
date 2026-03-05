@@ -21,6 +21,22 @@
 }
 .folderItem:hover .folderItemActions { opacity: 1; }
 
+/* ── Touch: always show folder actions ── */
+@media (hover: none) {
+  .folderItemActions {
+    opacity: 1;
+  }
+  .folderItem {
+    padding: 0.3rem 0.25rem;
+  }
+  .folderDeleteBtn,
+  .folderAddBtn {
+    padding: 0.2rem 0.35rem;
+    min-width: 28px;
+    min-height: 28px;
+  }
+}
+
 .folderAddBtn {
   background: none; border: none; cursor: pointer; color: var(--primary);
   font-size: 1rem; padding: 0 0.2rem; border-radius: 3px;
