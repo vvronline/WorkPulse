@@ -111,21 +111,30 @@ function syncLabels(taskId, labelIds) {
 // ─── Get tasks for a specific date or date range ────────────────────────
 router.get('/', auth, loadUserContext, (req, res) => {
     try {
-        const { date, start_date, end_date, assignee, label, priority, status, search } = req.query;
+        const { date, start_date, end_date, sprint_id, scope, include_due, assignee, label, priority, status, search } = req.query;
 
         // Build dynamic WHERE
         const conditions = [];
         const params = [];
 
-        // Date filtering: support single date OR date range
-        if (start_date && end_date) {
-            // Date range mode (for sprint view)
+        // Sprint mode: filter by sprint_id only — no date overlap
+        if (sprint_id) {
+            conditions.push('t.sprint_id = ?');
+            params.push(parseInt(sprint_id, 10));
+        } else if (start_date && end_date) {
+            // Date range mode
             conditions.push('t.date >= ? AND t.date <= ?');
             params.push(start_date, end_date);
         } else if (date) {
-            // Single date mode (for daily planner)
-            conditions.push('t.date = ?');
-            params.push(date);
+            if (include_due === '1') {
+                // My Day: only no-sprint tasks — dated today OR due today
+                conditions.push('(t.sprint_id IS NULL AND (t.date = ? OR t.due_date = ?))');
+                params.push(date, date);
+            } else {
+                // Single date mode
+                conditions.push('t.date = ?');
+                params.push(date);
+            }
         } else {
             // Default to today
             const targetDate = getLocalToday(req);
@@ -133,13 +142,19 @@ router.get('/', auth, loadUserContext, (req, res) => {
             params.push(targetDate);
         }
 
-        // Show tasks visible to user (created by, assigned to, or same team)
-        if (req.userTeamId) {
-            conditions.push('(t.user_id = ? OR t.assigned_to = ? OR t.user_id IN (SELECT id FROM users WHERE team_id = ?))');
-            params.push(req.userId, req.userId, req.userTeamId);
-        } else {
+        // Scope filtering: 'personal' shows only user's own tasks
+        if (scope === 'personal') {
             conditions.push('(t.user_id = ? OR t.assigned_to = ?)');
             params.push(req.userId, req.userId);
+        } else {
+            // Show tasks visible to user (created by, assigned to, or same team)
+            if (req.userTeamId) {
+                conditions.push('(t.user_id = ? OR t.assigned_to = ? OR t.user_id IN (SELECT id FROM users WHERE team_id = ?))');
+                params.push(req.userId, req.userId, req.userTeamId);
+            } else {
+                conditions.push('(t.user_id = ? OR t.assigned_to = ?)');
+                params.push(req.userId, req.userId);
+            }
         }
 
         if (assignee) {
@@ -202,7 +217,7 @@ router.get('/', auth, loadUserContext, (req, res) => {
 // ─── Add a task ─────────────────────────────────────────────────────────
 router.post('/', auth, loadUserContext, (req, res) => {
     try {
-        const { title, description, priority, date, assigned_to, due_date, label_ids } = req.body;
+        const { title, description, priority, date, assigned_to, due_date, label_ids, sprint_id } = req.body;
 
         if (!title || !title.trim()) {
             return res.status(400).json({ error: 'Task title is required' });
@@ -237,9 +252,24 @@ router.post('/', auth, loadUserContext, (req, res) => {
             validDueDate = due_date;
         }
 
+        // Handle sprint_id assignment with auto due-date
+        let validSprintId = null;
+        if (sprint_id) {
+            const sprint = db.prepare('SELECT id, team_id, end_date FROM sprints WHERE id = ?').get(sprint_id);
+            if (sprint && sprint.team_id === req.userTeamId) {
+                validSprintId = sprint.id;
+                // Auto-set due date to sprint end date if not explicitly provided
+                if (!validDueDate) {
+                    validDueDate = sprint.end_date;
+                }
+            } else {
+                return res.status(400).json({ error: 'Invalid sprint or sprint does not belong to your team' });
+            }
+        }
+
         const result = db.prepare(
-            'INSERT INTO tasks (user_id, date, title, description, priority, assigned_to, due_date) VALUES (?, ?, ?, ?, ?, ?, ?)'
-        ).run(req.userId, targetDate, title.trim(), description?.trim() || null, validPriority, assignedTo, validDueDate);
+            'INSERT INTO tasks (user_id, date, title, description, priority, assigned_to, due_date, sprint_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        ).run(req.userId, targetDate, title.trim(), description?.trim() || null, validPriority, assignedTo, validDueDate, validSprintId);
 
         const taskId = result.lastInsertRowid;
 
@@ -330,9 +360,11 @@ router.put('/:id', auth, loadUserContext, (req, res) => {
             if (sprint_id === null || sprint_id === '') {
                 newSprintId = null;
             } else {
-                const sprint = db.prepare('SELECT id, team_id FROM sprints WHERE id = ?').get(sprint_id);
+                const sprint = db.prepare('SELECT id, team_id, end_date FROM sprints WHERE id = ?').get(sprint_id);
                 if (sprint && sprint.team_id === req.userTeamId) {
                     newSprintId = sprint_id;
+                    // Always override due date with sprint end date
+                    newDueDate = sprint.end_date;
                 } else {
                     return res.status(400).json({ error: 'Invalid sprint or sprint does not belong to your team' });
                 }
@@ -530,6 +562,131 @@ router.get('/labels', auth, loadUserContext, (req, res) => {
     }
 });
 
+// ─── Get available sprints for user's team (current + future) ───────────
+router.get('/available-sprints', auth, loadUserContext, (req, res) => {
+    try {
+        if (!req.userTeamId) {
+            return res.json([]);
+        }
+
+        // Get sprints that are active or planned (not completed) for user's team
+        const sprints = db.prepare(`
+            SELECT id, name, start_date, end_date, status, goal
+            FROM sprints
+            WHERE team_id = ? AND status IN ('active', 'planned')
+            ORDER BY start_date ASC
+        `).all(req.userTeamId);
+
+        // Also include auto-calculated sprint from team config if no explicit sprints exist
+        if (sprints.length === 0) {
+            const team = db.prepare('SELECT sprint_start_date, sprint_duration_weeks FROM teams WHERE id = ?').get(req.userTeamId);
+            if (team?.sprint_start_date) {
+                // Calculate current and next sprint from team config
+                const tzOffset = req.headers['x-timezone-offset'];
+                let todayStr;
+                if (tzOffset !== undefined) {
+                    const now = new Date();
+                    const localNow = new Date(now.getTime() - Number(tzOffset) * 60000);
+                    todayStr = localNow.toISOString().split('T')[0];
+                } else {
+                    const now = new Date();
+                    todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+                }
+
+                const [sy, sm, sd] = team.sprint_start_date.split('-').map(Number);
+                const [ty, tm, td] = todayStr.split('-').map(Number);
+                const startMs = Date.UTC(sy, sm - 1, sd);
+                const todayMs = Date.UTC(ty, tm - 1, td);
+                const daysSinceStart = Math.floor((todayMs - startMs) / 86400000);
+                const sprintDurationDays = team.sprint_duration_weeks * 7;
+                const sprintNumber = daysSinceStart < 0 ? 1 : Math.floor(daysSinceStart / sprintDurationDays) + 1;
+
+                const fmt = (ms) => {
+                    const d = new Date(ms);
+                    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+                };
+
+                // Auto-create current sprint if it doesn't exist
+                const autoSprints = [];
+                for (let i = 0; i < 2; i++) {
+                    const num = sprintNumber + i;
+                    const sprintStartDays = (num - 1) * sprintDurationDays;
+                    const sMs = startMs + sprintStartDays * 86400000;
+                    const eMs = sMs + (sprintDurationDays - 1) * 86400000;
+                    const name = `Sprint #${num}`;
+
+                    // Check if this sprint already exists in DB
+                    let existing = db.prepare('SELECT id FROM sprints WHERE team_id = ? AND name = ?').get(req.userTeamId, name);
+                    if (!existing) {
+                        const result = db.prepare(
+                            'INSERT INTO sprints (team_id, name, start_date, end_date, status) VALUES (?, ?, ?, ?, ?)'
+                        ).run(req.userTeamId, name, fmt(sMs), fmt(eMs), i === 0 ? 'active' : 'planned');
+                        autoSprints.push({
+                            id: result.lastInsertRowid,
+                            name,
+                            start_date: fmt(sMs),
+                            end_date: fmt(eMs),
+                            status: i === 0 ? 'active' : 'planned',
+                            goal: null
+                        });
+                    } else {
+                        const sprint = db.prepare('SELECT id, name, start_date, end_date, status, goal FROM sprints WHERE id = ?').get(existing.id);
+                        autoSprints.push(sprint);
+                    }
+                }
+                return res.json(autoSprints);
+            }
+        }
+
+        res.json(sprints);
+    } catch (err) {
+        console.error('Error fetching available sprints:', err.message);
+        res.status(500).json({ error: 'Failed to fetch sprints' });
+    }
+});
+
+// ─── Assign task to sprint ──────────────────────────────────────────────
+router.patch('/:id/assign-sprint', auth, loadUserContext, (req, res) => {
+    try {
+        const { id } = req.params;
+        const { sprint_id } = req.body;
+
+        const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+        if (!canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
+
+        if (sprint_id === null || sprint_id === undefined || sprint_id === '') {
+            // Remove from sprint
+            const oldSprint = task.sprint_id ? (db.prepare('SELECT name FROM sprints WHERE id = ?').get(task.sprint_id)?.name || 'unknown') : 'none';
+            db.prepare('UPDATE tasks SET sprint_id = NULL WHERE id = ?').run(id);
+            logHistory(id, req.userId, 'updated', 'sprint', oldSprint, 'none');
+        } else {
+            const sprint = db.prepare('SELECT id, team_id, name, end_date FROM sprints WHERE id = ?').get(sprint_id);
+            if (!sprint || sprint.team_id !== req.userTeamId) {
+                return res.status(400).json({ error: 'Invalid sprint or sprint does not belong to your team' });
+            }
+
+            const oldSprint = task.sprint_id ? (db.prepare('SELECT name FROM sprints WHERE id = ?').get(task.sprint_id)?.name || 'unknown') : 'none';
+
+            // Always set due date to sprint end date when assigning a sprint
+            const updates = ['sprint_id = ?', 'due_date = ?'];
+            const updateParams = [sprint.id, sprint.end_date];
+            if (task.due_date !== sprint.end_date) {
+                logHistory(id, req.userId, 'updated', 'due_date', task.due_date, sprint.end_date);
+            }
+            updateParams.push(id);
+            db.prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).run(...updateParams);
+            logHistory(id, req.userId, 'updated', 'sprint', oldSprint, sprint.name);
+        }
+
+        const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+        const enriched = enrichTasks([updated]);
+        res.json(enriched[0]);
+    } catch (err) {
+        console.error('Error assigning sprint:', err.message);
+        res.status(500).json({ error: 'Failed to assign sprint' });
+    }
+});
+
 // ─── Comments ───────────────────────────────────────────────────────────
 
 // Get comments for a task
@@ -715,7 +872,7 @@ router.get('/backlog', auth, loadUserContext, (req, res) => {
 // ─── Backlog: Create a backlog item (no date) ───────────────────────────
 router.post('/backlog', auth, loadUserContext, (req, res) => {
     try {
-        const { title, description, priority, assigned_to, due_date, label_ids } = req.body;
+        const { title, description, priority, assigned_to, due_date, label_ids, sprint_id } = req.body;
 
         if (!title || !title.trim()) {
             return res.status(400).json({ error: 'Task title is required' });
@@ -746,9 +903,23 @@ router.post('/backlog', auth, loadUserContext, (req, res) => {
             validDueDate = due_date;
         }
 
+        // Handle sprint_id assignment with auto due-date
+        let validSprintId = null;
+        if (sprint_id) {
+            const sprint = db.prepare('SELECT id, team_id, end_date FROM sprints WHERE id = ?').get(sprint_id);
+            if (sprint && sprint.team_id === req.userTeamId) {
+                validSprintId = sprint.id;
+                if (!validDueDate) {
+                    validDueDate = sprint.end_date;
+                }
+            } else {
+                return res.status(400).json({ error: 'Invalid sprint or sprint does not belong to your team' });
+            }
+        }
+
         const result = db.prepare(
-            'INSERT INTO tasks (user_id, date, title, description, priority, assigned_to, due_date) VALUES (?, NULL, ?, ?, ?, ?, ?)'
-        ).run(req.userId, title.trim(), description?.trim() || null, validPriority, assignedTo, validDueDate);
+            'INSERT INTO tasks (user_id, date, title, description, priority, assigned_to, due_date, sprint_id) VALUES (?, NULL, ?, ?, ?, ?, ?, ?)'
+        ).run(req.userId, title.trim(), description?.trim() || null, validPriority, assignedTo, validDueDate, validSprintId);
 
         const taskId = result.lastInsertRowid;
 

@@ -3,9 +3,11 @@ import {
   getTasks, updateTaskStatus, updateTask, deleteTask, carryForwardTasks,
   getAssignableUsers, getTaskLabels, getTaskComments, addTaskComment, updateTaskComment, deleteTaskComment,
   getLocalToday, getBacklog, addBacklogTask, scheduleTask, unscheduleTask, getTaskDetail, getTaskHistory,
-  searchTasks, getTeamSprintConfig, updateTeamSprintConfig
+  searchTasks, getTeamSprintConfig, updateTeamSprintConfig, getAvailableSprints, assignTaskToSprint
 } from '../api';
 import ConfirmDialog from '../components/ConfirmDialog';
+import CommentSection from '../components/CommentSection';
+import SprintSelector from '../components/SprintSelector';
 import { useAuth } from '../AuthContext';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import DOMPurify from 'dompurify';
@@ -91,6 +93,7 @@ export default function Tasks() {
   const [editAssignedTo, setEditAssignedTo] = useState('');
   const [editDueDate, setEditDueDate] = useState('');
   const [editLabels, setEditLabels] = useState([]);
+  const [editSprintId, setEditSprintId] = useState('');
 
   // Drag
   const [dragOverCol, setDragOverCol] = useState(null);
@@ -132,10 +135,7 @@ export default function Tasks() {
   // Task Detail Modal
   const [detailTask, setDetailTask] = useState(null);
   const [detailComments, setDetailComments] = useState([]);
-  const [detailCommentText, setDetailCommentText] = useState('');
   const [detailLoading, setDetailLoading] = useState(false);
-  const [detailEditingCommentId, setDetailEditingCommentId] = useState(null);
-  const [detailEditCommentText, setDetailEditCommentText] = useState('');
   const [detailEditing, setDetailEditing] = useState(false);
   const [detailEditTitle, setDetailEditTitle] = useState('');
   const [detailEditDesc, setDetailEditDesc] = useState('');
@@ -160,20 +160,34 @@ export default function Tasks() {
   const [backlogDueDate, setBacklogDueDate] = useState('');
   const [backlogLabels, setBacklogLabels] = useState([]);
   const [backlogLabelDropdownOpen, setBacklogLabelDropdownOpen] = useState(false);
+  const [backlogSprintId, setBacklogSprintId] = useState('');
   const [scheduleTaskId, setScheduleTaskId] = useState(null);
   const [scheduleDate, setScheduleDate] = useState(() => getLocalToday());
+  const [sprintAssignTaskId, setSprintAssignTaskId] = useState(null);
   const [backlogSummary, setBacklogSummary] = useState({ total: 0, byStatus: {}, byPriority: {} });
   const [backlogSort, setBacklogSort] = useState('priority');
 
-  // Active tab (planner, sprint, or backlog)
-  const [activeTab, setActiveTab] = useState('planner');
+  // Active tab (myday, sprint, or backlog)
+  const [activeTab, setActiveTab] = useState('myday');
   const sprintMode = activeTab === 'sprint';
+
+  // Available sprints for sprint selector
+  const [availableSprints, setAvailableSprints] = useState([]);
+  const [selectedSprintId, setSelectedSprintId] = useState(null); // sprint_id for sprint tab
 
   // ─── Data fetching ────────────────────────────────────────────────────
   useEffect(() => {
     getAssignableUsers().then(r => setAssignableUsers(r.data)).catch(() => {});
     getTaskLabels().then(r => setOrgLabels(r.data)).catch(() => {});
-  }, []);
+    if (currentUser?.team_id) {
+      getAvailableSprints().then(r => {
+        setAvailableSprints(r.data);
+        // Auto-select active sprint
+        const active = r.data.find(sp => sp.status === 'active');
+        if (active) setSelectedSprintId(active.id);
+      }).catch(() => {});
+    }
+  }, [currentUser?.team_id]);
 
   const plannerFilters = useMemo(() => {
     const f = {};
@@ -196,7 +210,7 @@ export default function Tasks() {
 
   const filterCount = useMemo(() => {
     const base = [filterAssignee, filterLabel, filterPriority, filterSearch.trim()];
-    if (activeTab === 'planner' || activeTab === 'sprint') base.push(filterStatus);
+    if (activeTab === 'myday' || activeTab === 'sprint') base.push(filterStatus);
     return base.filter(Boolean).length;
   }, [filterAssignee, filterLabel, filterPriority, filterStatus, filterSearch, activeTab]);
 
@@ -213,27 +227,32 @@ export default function Tasks() {
 
   const fetchTasks = useCallback(async () => {
     try {
-      // In sprint mode, fetch tasks for sprint date range; otherwise single date
       const params = { ...plannerFilters };
-      if (activeTab === 'sprint' && sprintConfig?.currentSprint) {
-        params.start_date = sprintConfig.currentSprint.startDate;
-        params.end_date = sprintConfig.currentSprint.endDate;
-        // Don't pass date parameter when using date range
+      if (activeTab === 'sprint' && selectedSprintId) {
+        // Sprint mode: fetch by sprint_id — only sprint-assigned tasks
+        params.sprint_id = selectedSprintId;
         const res = await getTasks(undefined, params);
         setTasks(res.data.tasks);
         setStats(res.data.stats);
-      } else if (activeTab === 'planner') {
+      } else if (activeTab === 'sprint' && !selectedSprintId) {
+        // Sprint tab with no sprint selected: clear stale tasks
+        setTasks([]);
+        setStats({ total: 0, done: 0, inProgress: 0, percent: 0 });
+      } else if (activeTab === 'myday') {
+        // My Day: personal scope + include no-sprint tasks due today
+        params.scope = 'personal';
+        params.include_due = '1';
         const res = await getTasks(date, params);
         setTasks(res.data.tasks);
         setStats(res.data.stats);
       }
       setError('');
     } catch {
-      setError('Failed to load planner');
+      setError('Failed to load tasks');
     } finally {
       setLoading(false);
     }
-  }, [date, activeTab, sprintConfig, plannerFilters]);
+  }, [date, activeTab, selectedSprintId, plannerFilters]);
 
   useEffect(() => {
     if (activeTab === 'backlog') return; // Don't fetch planner tasks when on backlog tab
@@ -249,7 +268,7 @@ export default function Tasks() {
   useEffect(() => {
     if (!currentUser?.team_id) {
       setSprintConfig(null);
-      if (activeTab === 'sprint') setActiveTab('planner');
+      if (activeTab === 'sprint') setActiveTab('myday');
       return;
     }
 
@@ -260,7 +279,7 @@ export default function Tasks() {
         setSprintConfig(res.data);
       } catch (err) {
         console.error('Failed to load sprint config:', err);
-        if (activeTab === 'sprint') setActiveTab('planner');
+        if (activeTab === 'sprint') setActiveTab('myday');
       } finally {
         setSprintConfigLoading(false);
       }
@@ -361,8 +380,6 @@ export default function Tasks() {
     setDetailTask(task);
     setDetailLoading(true);
     setDetailComments([]);
-    setDetailCommentText('');
-    setDetailEditingCommentId(null);
     setDetailTab('comments');
     setDetailHistory([]);
     try {
@@ -395,8 +412,6 @@ export default function Tasks() {
   const closeTaskDetail = () => {
     setDetailTask(null);
     setDetailComments([]);
-    setDetailCommentText('');
-    setDetailEditingCommentId(null);
     setDetailEditing(false);
     setDetailHistory([]);
     setDetailTab('comments');
@@ -409,6 +424,7 @@ export default function Tasks() {
     setDetailEditPriority(task.priority || 'medium');
     setDetailEditAssignedTo(task.assigned_to || '');
     setDetailEditDueDate(task.due_date || '');
+    setDetailEditSprintId(task.sprint_id || '');
     setDetailEditLabels(task.labels?.map(l => l.id) || []);
   };
 
@@ -426,6 +442,7 @@ export default function Tasks() {
             priority: detailEditPriority,
             assigned_to: detailEditAssignedTo || null,
             due_date: detailEditDueDate || null,
+            sprint_id: detailEditSprintId || null,
             label_ids: detailEditLabels,
           });
           setDetailEditing(false);
@@ -442,31 +459,6 @@ export default function Tasks() {
       },
       { confirmText: 'Save' }
     );
-  };
-
-  const handleDetailAddComment = async () => {
-    if (!stripHtml(detailCommentText).trim() || !detailTask) return;
-    try {
-      const res = await addTaskComment(detailTask.id, detailCommentText);
-      setDetailComments(prev => [...prev, res.data]);
-      setDetailCommentText('');
-      setTasks(prev => prev.map(t => t.id === detailTask.id ? { ...t, comment_count: (t.comment_count || 0) + 1 } : t));
-      setBacklogTasks(prev => prev.map(t => t.id === detailTask.id ? { ...t, comment_count: (t.comment_count || 0) + 1 } : t));
-    } catch {
-      setError('Failed to add comment');
-    }
-  };
-
-  const handleDetailEditComment = async (commentId) => {
-    if (!stripHtml(detailEditCommentText).trim()) return;
-    try {
-      const res = await updateTaskComment(detailTask.id, commentId, detailEditCommentText);
-      setDetailComments(prev => prev.map(c => c.id === commentId ? res.data : c));
-      setDetailEditingCommentId(null);
-      setDetailEditCommentText('');
-    } catch {
-      setError('Failed to update comment');
-    }
   };
 
   const handleDetailDeleteComment = (commentId) => {
@@ -519,6 +511,7 @@ export default function Tasks() {
         assigned_to: backlogAssignedTo || null,
         due_date: backlogDueDate || null,
         label_ids: backlogLabels.length > 0 ? backlogLabels : undefined,
+        sprint_id: backlogSprintId || null,
       });
       setBacklogTitle('');
       setBacklogDesc('');
@@ -526,8 +519,11 @@ export default function Tasks() {
       setBacklogAssignedTo('');
       setBacklogDueDate('');
       setBacklogLabels([]);
+      setBacklogSprintId('');
       setBacklogFormOpen(false);
       fetchBacklog();
+      // If sprint was selected, also refresh sprint tasks
+      if (backlogSprintId && activeTab === 'sprint') fetchTasks();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to create backlog item');
     }
@@ -552,6 +548,17 @@ export default function Tasks() {
       },
       { confirmText: 'Schedule' }
     );
+  };
+
+  const handleBacklogAssignSprint = async (taskId, sprintId) => {
+    try {
+      await assignTaskToSprint(taskId, sprintId);
+      setSprintAssignTaskId(null);
+      fetchBacklog();
+      fetchTasks();
+    } catch {
+      setError('Failed to assign sprint');
+    }
   };
 
   const handleUnscheduleTask = (taskId, taskTitle, closeAfter) => {
@@ -650,6 +657,7 @@ export default function Tasks() {
     setEditAssignedTo(task.assigned_to || '');
     setEditDueDate(task.due_date || '');
     setEditLabels(task.labels?.map(l => l.id) || []);
+    setEditSprintId(task.sprint_id || '');
   };
 
   const saveEdit = (id) => {
@@ -666,6 +674,7 @@ export default function Tasks() {
             assigned_to: editAssignedTo || null,
             due_date: editDueDate || null,
             label_ids: editLabels,
+            sprint_id: editSprintId || null,
           });
           setEditingId(null);
           fetchTasks();
@@ -686,6 +695,7 @@ export default function Tasks() {
     setEditAssignedTo('');
     setEditDueDate('');
     setEditLabels([]);
+    setEditSprintId('');
   };
 
   const clearFilters = () => {
@@ -919,16 +929,25 @@ export default function Tasks() {
       {/* Header */}
       <div className={s['tasks-header']}>
         <div>
-          {activeTab === 'sprint' && sprintConfig?.currentSprint ? (
-            <>
-              <h2>
-                <span className="page-icon">🏃</span> {currentUser?.team_name || 'Team'} - Sprint #{sprintConfig.currentSprint.number}
-              </h2>
-              <p>
-                Ends in {sprintConfig.currentSprint.daysRemaining} day{sprintConfig.currentSprint.daysRemaining !== 1 ? 's' : ''} • 
-                {' '}{sprintConfig.currentSprint.startDate} → {sprintConfig.currentSprint.endDate}
-              </p>
-            </>
+          {activeTab === 'sprint' ? (
+            (() => {
+              const sp = availableSprints.find(s => s.id === selectedSprintId);
+              const teamName = currentUser?.team_name || 'Team';
+              const daysLeft = sp ? Math.max(0, Math.ceil(
+                (Date.UTC(...sp.end_date.split('-').map((v,i) => i===1?v-1:+v))
+                - Date.UTC(...getLocalToday().split('-').map((v,i) => i===1?v-1:+v))) / 86400000
+              )) : 0;
+              return (
+                <>
+                  <h2>
+                    <span className="page-icon">🏃</span> {teamName} — {sp ? sp.name : 'Sprint'}
+                  </h2>
+                  <p>
+                    {sp ? `${sp.start_date} → ${sp.end_date} • ${daysLeft}d remaining` : 'Loading sprint…'}
+                  </p>
+                </>
+              );
+            })()
           ) : activeTab === 'backlog' ? (
             <>
               <h2><span className="page-icon">📦</span> Backlog</h2>
@@ -936,23 +955,29 @@ export default function Tasks() {
             </>
           ) : (
             <>
-              <h2><span className="page-icon">📋</span> Daily Planner</h2>
-              <p>Plan and track your daily work</p>
+              <h2><span className="page-icon">☀️</span> My Day</h2>
+              <p>{isToday ? 'Your personal tasks for today' : `Tasks for ${formatDate(date)}`}</p>
             </>
           )}
         </div>
         <div className={s['tasks-header-actions']}>
           <div className={s['tab-switcher']}>
             <button
-              className={`${s['tab-btn']} ${activeTab === 'planner' ? s['tab-active'] : ''}`}
-              onClick={() => setActiveTab('planner')}
+              className={`${s['tab-btn']} ${activeTab === 'myday' ? s['tab-active'] : ''}`}
+              onClick={() => setActiveTab('myday')}
             >
-              📅 Planner
+              ☀️ My Day
             </button>
-            {currentUser?.team_id && sprintConfig?.currentSprint && (
+            {currentUser?.team_id && availableSprints.length > 0 && (
               <button
                 className={`${s['tab-btn']} ${activeTab === 'sprint' ? s['tab-active'] : ''}`}
-                onClick={() => setActiveTab('sprint')}
+                onClick={() => {
+                  setActiveTab('sprint');
+                  if (!selectedSprintId) {
+                    const active = availableSprints.find(sp => sp.status === 'active');
+                    setSelectedSprintId(active ? active.id : (availableSprints[0]?.id ?? null));
+                  }
+                }}
               >
                 🏃 Sprint
               </button>
@@ -964,7 +989,20 @@ export default function Tasks() {
               📦 Backlog {backlogTasks.length > 0 && <span className={s['tab-badge']}>{backlogTasks.length}</span>}
             </button>
           </div>
-          {activeTab === 'planner' && (
+          {activeTab === 'sprint' && availableSprints.length > 1 && (
+            <select
+              value={selectedSprintId || ''}
+              onChange={e => setSelectedSprintId(Number(e.target.value))}
+              className={s['date-input']}
+            >
+              {availableSprints.map(sp => (
+                <option key={sp.id} value={sp.id}>
+                  {sp.name} {sp.status === 'active' ? '(Active)' : ''}
+                </option>
+              ))}
+            </select>
+          )}
+          {activeTab === 'myday' && (
             <input
               type="date"
               value={date}
@@ -1087,7 +1125,7 @@ export default function Tasks() {
                 ))}
               </select>
             </div>
-            {(activeTab === 'planner' || activeTab === 'sprint') && (
+            {(activeTab === 'myday' || activeTab === 'sprint') && (
               <div className={s['filter-group']}>
                 <label>Status</label>
                 <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className={s['filter-select']}>
@@ -1107,8 +1145,8 @@ export default function Tasks() {
         </div>
       )}
 
-      {/* ─── PLANNER / SPRINT TAB ────────────────────────────────── */}
-      {(activeTab === 'planner' || activeTab === 'sprint') && (
+      {/* ─── MY DAY / SPRINT TAB ────────────────────────────────── */}
+      {(activeTab === 'myday' || activeTab === 'sprint') && (
         <>
           {/* Progress Bar */}
           <div className={s['tasks-progress-card']}>
@@ -1289,6 +1327,11 @@ export default function Tasks() {
                     <label>📅 Due date</label>
                     <input type="date" value={backlogDueDate} onChange={e => setBacklogDueDate(e.target.value)} />
                   </div>
+                  <SprintSelector
+                    sprints={availableSprints}
+                    selected={backlogSprintId}
+                    onChange={id => { setBacklogSprintId(id); if (!id) { setBacklogDueDate(''); } else { const sp = availableSprints.find(s => s.id === id); if (sp) setBacklogDueDate(sp.end_date); } }}
+                  />
                   <LabelSelector
                     labels={orgLabels}
                     selected={backlogLabels}
@@ -1491,6 +1534,13 @@ export default function Tasks() {
               <label>Due date</label>
               <input type="date" value={editDueDate} onChange={e => setEditDueDate(e.target.value)} />
             </div>
+            {availableSprints.length > 0 && (
+              <SprintSelector
+                sprints={availableSprints}
+                selected={editSprintId}
+                onChange={id => { setEditSprintId(id); if (!id) { setEditDueDate(''); } else { const sp = availableSprints.find(s => s.id === id); if (sp) setEditDueDate(sp.end_date); } }}
+              />
+            )}
             <LabelSelector
               labels={orgLabels}
               selected={editLabels}
@@ -1660,6 +1710,11 @@ export default function Tasks() {
                       <label>Due date</label>
                       <input type="date" value={detailEditDueDate} onChange={e => setDetailEditDueDate(e.target.value)} />
                     </div>
+                    <SprintSelector
+                      sprints={availableSprints}
+                      selected={detailEditSprintId}
+                      onChange={id => { setDetailEditSprintId(id); if (!id) { setDetailEditDueDate(''); } else { const sp = availableSprints.find(s => s.id === id); if (sp) setDetailEditDueDate(sp.end_date); } }}
+                    />
                     <LabelSelector
                       labels={orgLabels}
                       selected={detailEditLabels}
@@ -1748,9 +1803,18 @@ export default function Tasks() {
                       <span className={s['detail-meta-value']}>{new Date(detailTask.completed_at).toLocaleString()}</span>
                     </div>
                   )}
+                  {detailTask.sprint_id && (
+                    <div className={s['detail-meta-item']}>
+                      <span className={s['detail-meta-label']}>Sprint</span>
+                      <span className={s['detail-meta-value']}>
+                        🏃 {availableSprints.find(sp => sp.id === detailTask.sprint_id)?.name || `Sprint #${detailTask.sprint_id}`}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
-                {/* Status change buttons */}
+                {/* Status change buttons — only for sprint tickets */}
+                {detailTask.sprint_id && (
                 <div className={s['detail-status-bar']}>
                   <span className={s['detail-status-label']}>Move to:</span>
                   {COLUMNS.map(col => (
@@ -1783,6 +1847,7 @@ export default function Tasks() {
                     </button>
                   ))}
                 </div>
+                )}
 
                 {/* Backlog / Schedule actions */}
                 <div className={s['detail-actions-bar']}>
@@ -1832,55 +1897,26 @@ export default function Tasks() {
               </div>
 
               {detailTab === 'comments' && (
-                <>
-                  {detailLoading && <div className="loading-spinner"><div className="spinner" /></div>}
-                  <div className={s['detail-comment-list']}>
-                    {detailComments.length === 0 && !detailLoading && (
-                      <div className={s['comment-empty']}>No comments yet. Start the conversation!</div>
-                    )}
-                    {detailComments.map(c => (
-                      <div key={c.id} className={s['comment-item']}>
-                        <div className={s['comment-meta']}>
-                          {c.avatar ? (
-                            <img src={getAvatarUrl(c.avatar)} alt="" className={s['comment-avatar']} />
-                          ) : (
-                            <span className={s['comment-avatar-placeholder']}>{(c.full_name || c.username || '?')[0].toUpperCase()}</span>
-                          )}
-                          <strong>{c.full_name || c.username}</strong>
-                          <span className={s['comment-time']}>{new Date(c.created_at).toLocaleString()}</span>
-                          {c.updated_at && c.updated_at !== c.created_at && <span className={s['comment-edited']}>(edited)</span>}
-                        </div>
-                        {detailEditingCommentId === c.id ? (
-                          <div className={s['comment-edit']}>
-                            <div className={s['comment-quill-wrapper']}>
-                              <ReactQuill theme="snow" value={detailEditCommentText} onChange={setDetailEditCommentText} modules={COMMENT_QUILL_MODULES} placeholder="Edit comment..." />
-                            </div>
-                            <div className={s['comment-edit-actions']}>
-                              <button className="btn btn-primary btn-sm" onClick={() => handleDetailEditComment(c.id)}>Save</button>
-                              <button className="btn btn-secondary btn-sm" onClick={() => setDetailEditingCommentId(null)}>Cancel</button>
-                            </div>
-                          </div>
-                        ) : (
-                          <>
-                            <HighlightedHtml html={c.content} className={s['comment-body']} />
-                            <div className={s['comment-actions']}>
-                              {c.user_id === currentUser?.id && (
-                                <button onClick={() => { setDetailEditingCommentId(c.id); setDetailEditCommentText(c.content); }}>Edit</button>
-                              )}
-                              <button onClick={() => handleDetailDeleteComment(c.id)}>Delete</button>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  <div className={s['comment-input']}>
-                    <div className={s['comment-quill-wrapper']}>
-                      <ReactQuill theme="snow" value={detailCommentText} onChange={setDetailCommentText} modules={COMMENT_QUILL_MODULES} placeholder="Write a comment..." />
-                    </div>
-                    <button className="btn btn-primary btn-sm" onClick={handleDetailAddComment} disabled={!stripHtml(detailCommentText).trim()}>Send</button>
-                  </div>
-                </>
+                <CommentSection
+                  comments={detailComments}
+                  loading={detailLoading}
+                  currentUserId={currentUser?.id}
+                  onAdd={async (content) => {
+                    try {
+                      const res = await addTaskComment(detailTask.id, content);
+                      setDetailComments(prev => [...prev, res.data]);
+                      setTasks(prev => prev.map(t => t.id === detailTask.id ? { ...t, comment_count: (t.comment_count || 0) + 1 } : t));
+                      setBacklogTasks(prev => prev.map(t => t.id === detailTask.id ? { ...t, comment_count: (t.comment_count || 0) + 1 } : t));
+                    } catch { setError('Failed to add comment'); }
+                  }}
+                  onEdit={async (commentId, content) => {
+                    try {
+                      const res = await updateTaskComment(detailTask.id, commentId, content);
+                      setDetailComments(prev => prev.map(c => c.id === commentId ? res.data : c));
+                    } catch { setError('Failed to update comment'); }
+                  }}
+                  onDelete={(commentId) => handleDetailDeleteComment(commentId)}
+                />
               )}
 
               {detailTab === 'history' && (
