@@ -1,0 +1,30 @@
+.ctxMenu {
+  position: absolute; right: 0.4rem; top: calc(100% - 4px);
+  background: var(--bg-secondary); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,0.3);
+  z-index: 300; min-width: 160px; overflow: hidden;
+  animation: fadeSlideIn 0.12s ease;
+}
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateX(4px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.ctxItem {
+  display: flex; align-items: center; gap: 0.45rem; width: 100%;
+  padding: 0.45rem 0.75rem; border: none; background: none;
+  font-size: 0.78rem; color: var(--text-primary); cursor: pointer;
+  text-align: left; transition: background 0.1s;
+}
+.ctxItem:hover    { background: var(--bg-hover, rgba(255,255,255,0.06)); }
+.ctxSmall         { padding-left: 1.5rem; font-size: 0.73rem; }
+.ctxActive        { color: var(--primary) !important; font-weight: 600; }
+.ctxDanger        { color: var(--danger, #f87171) !important; }
+.ctxDanger:hover  { background: rgba(248,113,113,0.08) !important; }
+.ctxDivider       { height: 1px; background: var(--border); margin: 0.2rem 0; }
+.ctxFolder        { padding: 0.15rem 0; border-top: 1px solid var(--border); }
+.ctxFolderLabel {
+  padding: 0.25rem 0.75rem 0.15rem; font-size: 0.66rem; font-weight: 700;
+  color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em;
+  display: block;
+}
+[data-theme="light"] .ctxMenu { background: #ffffff; box-shadow: 0 6px 20px rgba(0,0,0,0.12); }

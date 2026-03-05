@@ -1,0 +1,39 @@
+.editor {
+  flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+}
+
+.titleInput {
+  background: var(--bg-secondary); border: none; border-bottom: 1px solid var(--border);
+  outline: none; font-size: 1rem; font-weight: 700; color: var(--text-primary);
+  padding: 0.7rem 1rem 0.6rem; flex-shrink: 0; width: 100%; box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+.titleInput:focus        { border-bottom-color: var(--primary); }
+.titleInput::placeholder { color: var(--text-muted); font-weight: 400; }
+
+.metaRow {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.25rem 1rem 0.2rem; flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+.folderSelect {
+  font-size: 0.72rem; padding: 0.18rem 0.35rem;
+  border: 1px solid var(--border); border-radius: 5px;
+  background: var(--bg-secondary); color: var(--text-muted);
+  cursor: pointer; outline: none;
+}
+.folderSelect:focus { border-color: var(--primary); color: var(--text-primary); }
+
+.wordCount {
+  padding: 0.3rem 1rem; font-size: 0.7rem; color: var(--text-muted);
+  border-top: 1px solid var(--border); background: var(--bg-secondary);
+  flex-shrink: 0; display: flex; align-items: center;
+}
+
+.empty {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 0.75rem; color: var(--text-muted); font-size: 0.88rem;
+}
+
+[data-theme="light"] .folderSelect { background: #fff; color: var(--text-muted); }

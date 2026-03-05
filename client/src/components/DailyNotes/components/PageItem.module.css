@@ -1,0 +1,53 @@
+.pageItem {
+  position: relative; padding: 0.5rem 0.6rem; cursor: pointer;
+  transition: background 0.12s; border-left: 3px solid transparent;
+}
+.pageItem[draggable="true"]         { cursor: grab; }
+.pageItem[draggable="true"]:active  { cursor: grabbing; }
+.pageItem:hover      { background: var(--bg-hover, rgba(255,255,255,0.05)); }
+.pageItemActive {
+  background: var(--primary-dim, rgba(99,102,241,0.1)) !important;
+  border-left-color: var(--primary);
+}
+.pageItemArchived { opacity: 0.55; }
+.dragOver  { border-top: 2px solid var(--primary) !important; background: var(--primary-dim, rgba(99,102,241,0.08)) !important; }
+.dragging  { opacity: 0.4; }
+
+.pageRow {
+  display: flex; align-items: flex-start; gap: 0.4rem; min-width: 0;
+}
+.pinIcon  { font-size: 0.65rem; flex-shrink: 0; line-height: 1.4; }
+.pageIcon {
+  width: 14px; height: 14px; color: var(--text-muted);
+  flex-shrink: 0; opacity: 0.6; margin-top: 1px;
+}
+.pageItemActive .pageIcon { opacity: 1; color: var(--primary); }
+
+.pageInfo { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.pageName {
+  font-size: 0.8rem; font-weight: 500; color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pageMeta  { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.pageDate  { font-size: 0.68rem; color: var(--text-muted); }
+.pageFolder {
+  font-size: 0.63rem; color: var(--text-muted);
+  background: var(--bg-hover, rgba(255,255,255,0.06));
+  padding: 0.05rem 0.35rem; border-radius: 3px;
+}
+.renameInput {
+  flex: 1; font-size: 0.8rem; font-weight: 500; color: var(--text-primary);
+  background: var(--bg-elevated, rgba(255,255,255,0.05));
+  border: 1px solid var(--primary); border-radius: 5px;
+  padding: 0.25rem 0.5rem; outline: none; width: 100%; margin: 0.2rem 0;
+}
+[data-theme="light"] .renameInput { background: #fff; }
+
+.menuBtn {
+  background: none; border: none; cursor: pointer; color: var(--text-muted);
+  font-size: 1rem; padding: 0 0.25rem; border-radius: 4px;
+  opacity: 0; transition: opacity 0.12s, color 0.12s; flex-shrink: 0; line-height: 1;
+}
+.pageItem:hover .menuBtn,
+.pageItemActive .menuBtn { opacity: 1; }
+.menuBtn:hover { color: var(--primary); background: var(--primary-dim, rgba(99,102,241,0.1)); }

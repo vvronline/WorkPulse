@@ -1,0 +1,2 @@
+.tagDots { display: inline-flex; gap: 3px; align-items: center; margin-left: 0.25rem; flex-shrink: 0; }
+.tagDot  { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }

@@ -1,0 +1,55 @@
+.sidebarFooter {
+  border-top: 1px solid var(--border); padding: 0.4rem 0.5rem; flex-shrink: 0;
+}
+.folderList    { margin-bottom: 0.35rem; }
+.folderListLabel {
+  font-size: 0.65rem; font-weight: 700; text-transform: uppercase;
+  color: var(--text-muted); letter-spacing: 0.04em; padding: 0 0.15rem 0.2rem;
+  display: block;
+}
+.folderItem {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.15rem 0.25rem; font-size: 0.75rem; color: var(--text-primary);
+  border-radius: 4px;
+}
+.folderItem:hover { background: var(--bg-hover, rgba(255,255,255,0.05)); }
+.folderItemName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+
+.folderItemActions {
+  display: flex; align-items: center; gap: 0.1rem;
+  flex-shrink: 0; opacity: 0; transition: opacity 0.12s;
+}
+.folderItem:hover .folderItemActions { opacity: 1; }
+
+.folderAddBtn {
+  background: none; border: none; cursor: pointer; color: var(--primary);
+  font-size: 1rem; padding: 0 0.2rem; border-radius: 3px;
+  transition: background 0.12s; line-height: 1; font-weight: 600;
+}
+.folderAddBtn:hover { background: var(--primary-dim, rgba(99,102,241,0.12)); }
+
+.folderDeleteBtn {
+  background: none; border: none; cursor: pointer; color: var(--text-muted);
+  font-size: 0.85rem; padding: 0 0.2rem; border-radius: 3px;
+  transition: color 0.12s; line-height: 1;
+}
+.folderDeleteBtn:hover { color: var(--danger, #f87171); background: rgba(248,113,113,0.1); }
+
+.newFolderRow { display: flex; gap: 0.3rem; align-items: center; }
+.newFolderInput {
+  flex: 1; font-size: 0.75rem; padding: 0.25rem 0.4rem;
+  border: 1px solid var(--primary); border-radius: 5px;
+  background: var(--bg-secondary); color: var(--text-primary); outline: none;
+}
+.newFolderOk {
+  background: var(--primary); color: #fff; border: none; border-radius: 5px;
+  padding: 0.2rem 0.45rem; cursor: pointer; font-size: 0.75rem;
+}
+.newFolderBtn {
+  width: 100%; background: none; border: 1px dashed var(--border);
+  border-radius: 6px; padding: 0.3rem; font-size: 0.73rem;
+  color: var(--text-muted); cursor: pointer; transition: color 0.12s, border-color 0.12s;
+}
+.newFolderBtn:hover { color: var(--primary); border-color: var(--primary); }
+
+[data-theme="light"] .newFolderInput { background: #fff; }

@@ -1,0 +1,126 @@
+/* Shared Quill wrapper styles for both inline and modal variants */
+
+/* ── Shared base ────────────────────────────────────────── */
+.inlineWrap,
+.modalWrap {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0;
+}
+.inlineWrap :global(.quill),
+.modalWrap  :global(.quill) {
+  flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+}
+.inlineWrap :global(.ql-toolbar.ql-snow),
+.modalWrap  :global(.ql-toolbar.ql-snow) {
+  border: none; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.inlineWrap :global(.ql-container.ql-snow),
+.modalWrap  :global(.ql-container.ql-snow) {
+  border: none; flex: 1; overflow-y: auto; min-height: 0;
+  display: flex; flex-direction: column;
+}
+.inlineWrap :global(.ql-editor),
+.modalWrap  :global(.ql-editor) {
+  flex: 1; line-height: 1.75; color: var(--text-primary);
+  box-sizing: border-box;
+}
+.inlineWrap :global(.ql-editor.ql-blank::before),
+.modalWrap  :global(.ql-editor.ql-blank::before) {
+  color: var(--text-muted); font-style: italic;
+}
+
+/* ── Inline-specific ────────────────────────────────────── */
+.inlineWrap :global(.ql-toolbar.ql-snow) {
+  background: var(--bg-secondary); padding: 5px 8px;
+}
+.inlineWrap :global(.ql-editor) { font-size: 0.88rem; padding: 0.85rem 1rem; min-height: 180px; }
+
+/* ── Modal-specific ─────────────────────────────────────── */
+.modalWrap :global(.ql-toolbar.ql-snow) {
+  background: var(--bg-elevated, rgba(255,255,255,0.02)); padding: 6px 12px;
+}
+.modalWrap :global(.ql-editor) { font-size: 0.95rem; padding: 1.25rem 1.5rem; min-height: 300px; }
+
+/* ── Content styles (shared) ────────────────────────────── */
+.inlineWrap :global(.ql-editor p),
+.modalWrap  :global(.ql-editor p) { margin-bottom: 0.3em; }
+
+.inlineWrap :global(.ql-editor blockquote),
+.modalWrap  :global(.ql-editor blockquote) {
+  border-left: 3px solid var(--primary); padding-left: 0.85rem;
+  color: var(--text-secondary, var(--text-muted)); margin: 0.4em 0;
+}
+.inlineWrap :global(.ql-editor ul),
+.inlineWrap :global(.ql-editor ol),
+.modalWrap  :global(.ql-editor ul),
+.modalWrap  :global(.ql-editor ol) { padding-left: 1.4em; }
+
+.inlineWrap :global(.ql-editor hr),
+.modalWrap  :global(.ql-editor hr) {
+  border: none; border-top: 2px solid var(--border); margin: 1em 0;
+}
+.inlineWrap :global(.ql-editor h1),
+.modalWrap  :global(.ql-editor h1) { font-size: 1.6em; font-weight: 700; margin: 0.5em 0 0.3em; }
+.inlineWrap :global(.ql-editor h2),
+.modalWrap  :global(.ql-editor h2) { font-size: 1.3em; font-weight: 700; margin: 0.45em 0 0.25em; }
+.inlineWrap :global(.ql-editor h3),
+.modalWrap  :global(.ql-editor h3) { font-size: 1.1em; font-weight: 600; margin: 0.4em 0 0.2em; }
+
+.inlineWrap :global(.ql-editor img),
+.modalWrap  :global(.ql-editor img) {
+  max-width: 100%; height: auto; display: block; cursor: pointer;
+  border-radius: 4px; transition: box-shadow 0.15s;
+}
+.inlineWrap :global(.ql-editor img:hover),
+.modalWrap  :global(.ql-editor img:hover) {
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.5);
+}
+
+/* ── Toolbar icon colours ───────────────────────────────── */
+.inlineWrap :global(.ql-toolbar .ql-stroke),
+.modalWrap  :global(.ql-toolbar .ql-stroke) { stroke: var(--text-secondary, #9ca3af); }
+.inlineWrap :global(.ql-toolbar .ql-fill),
+.modalWrap  :global(.ql-toolbar .ql-fill)   { fill:   var(--text-secondary, #9ca3af); }
+
+.inlineWrap :global(.ql-toolbar button:hover .ql-stroke),
+.inlineWrap :global(.ql-toolbar button.ql-active .ql-stroke),
+.modalWrap  :global(.ql-toolbar button:hover .ql-stroke),
+.modalWrap  :global(.ql-toolbar button.ql-active .ql-stroke) { stroke: var(--primary); }
+
+.inlineWrap :global(.ql-toolbar button:hover .ql-fill),
+.inlineWrap :global(.ql-toolbar button.ql-active .ql-fill),
+.modalWrap  :global(.ql-toolbar button:hover .ql-fill),
+.modalWrap  :global(.ql-toolbar button.ql-active .ql-fill) { fill: var(--primary); }
+
+.inlineWrap :global(.ql-picker-label),
+.modalWrap  :global(.ql-picker-label) { color: var(--text-secondary, #9ca3af); }
+
+.inlineWrap :global(.ql-picker-options),
+.modalWrap  :global(.ql-picker-options) {
+  background: var(--bg-secondary); border-color: var(--border);
+  color: var(--text-primary); border-radius: 6px;
+}
+
+/* ── Custom toolbar buttons: divider + timestamp ─────────── */
+.inlineWrap :global(button.ql-divider),
+.modalWrap  :global(button.ql-divider) { width: 28px !important; position: relative; font-size: 0; }
+.inlineWrap :global(button.ql-divider)::after,
+.modalWrap  :global(button.ql-divider)::after {
+  content: '—'; font-size: 16px; color: var(--text-secondary, #9ca3af); line-height: 1;
+}
+.inlineWrap :global(button.ql-divider:hover)::after,
+.modalWrap  :global(button.ql-divider:hover)::after { color: var(--primary); }
+
+.inlineWrap :global(button.ql-timestamp),
+.modalWrap  :global(button.ql-timestamp) { width: 28px !important; position: relative; font-size: 0; }
+.inlineWrap :global(button.ql-timestamp)::after,
+.modalWrap  :global(button.ql-timestamp)::after { content: '🕐'; font-size: 13px; line-height: 1; }
+
+/* ── Light theme overrides ──────────────────────────────── */
+[data-theme="light"] .inlineWrap :global(.ql-toolbar.ql-snow) { background: #f8f9fc; }
+[data-theme="light"] .inlineWrap :global(.ql-toolbar .ql-stroke),
+[data-theme="light"] .modalWrap  :global(.ql-toolbar .ql-stroke) { stroke: #555; }
+[data-theme="light"] .inlineWrap :global(.ql-toolbar .ql-fill),
+[data-theme="light"] .modalWrap  :global(.ql-toolbar .ql-fill)   { fill:  #555; }
+[data-theme="light"] .inlineWrap :global(.ql-editor),
+[data-theme="light"] .modalWrap  :global(.ql-editor) { color: #1a1a2e; }
+[data-theme="light"] .modalWrap  :global(.ql-toolbar.ql-snow) { background: #f8f9fc; }
