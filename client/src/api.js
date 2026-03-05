@@ -217,5 +217,7 @@ export const deleteHoliday = (id) => API.delete(`/leave-policy/holidays/${id}`);
 // Notes
 export const getNotes = () => API.get('/notes');
 export const saveNotes = (data) => API.put('/notes', { data });
+export const getPageHistory = (pageId) => API.get(`/notes/history/${encodeURIComponent(pageId)}`);
+export const getHistorySnapshot = (snapshotId) => API.get(`/notes/history/snapshot/${snapshotId}`);
 
 export default API;

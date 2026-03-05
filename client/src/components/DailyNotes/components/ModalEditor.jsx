@@ -1,8 +1,9 @@
 /* ModalEditor — right panel of the maximized modal */
-import React from 'react';
+import React, { useState } from 'react';
 import { formatDate } from '../notesUtils';
 import QuillEditor from './QuillEditor';
 import TagEditor from './TagEditor';
+import VersionHistory from './VersionHistory';
 import s from './ModalEditor.module.css';
 
 export default function ModalEditor({
@@ -23,7 +24,10 @@ export default function ModalEditor({
   onAddTag,
   onRemoveTag,
   onNewPage,
+  onRestoreSnapshot,
 }) {
+  const [showHistory, setShowHistory] = useState(false);
+  const [editorResetKey, setEditorResetKey] = useState(0);
   if (!activePage) {
     return (
       <div className={s.editorArea}>
@@ -59,6 +63,15 @@ export default function ModalEditor({
           >
             {activePage.archived ? '📤' : '📦'}
           </button>
+          <button
+            className={`${s.actBtn} ${showHistory ? s.actBtnActive : ''}`}
+            onClick={() => setShowHistory(h => !h)}
+            title="Version history"
+          >
+            <svg viewBox="0 0 16 16" fill="currentColor" style={{width:13,height:13}}>
+              <path d="M8 1a7 7 0 100 14A7 7 0 008 1zM0 8a8 8 0 1116 0A8 8 0 010 8zm8-4a.75.75 0 01.75.75v3.69l2.28 1.32a.75.75 0 01-.75 1.3l-2.5-1.44A.75.75 0 017.25 9V4.75A.75.75 0 018 4z"/>
+            </svg>
+          </button>
           <button className={`${s.actBtn} ${s.actBtnDanger}`} onClick={onDeletePage} title="Delete">🗑️</button>
         </div>
       </div>
@@ -86,14 +99,28 @@ export default function ModalEditor({
         />
       </div>
 
-      {/* Quill */}
-      <QuillEditor
-        pageId={activePage.id}
-        defaultContent={activePage.content}
-        quillRef={modalQuillRef}
-        onChange={onContentChange}
-        variant="modal"
-      />
+      {/* Version history panel (replaces editor when open) */}
+      {showHistory ? (
+        <VersionHistory
+          pageId={activePage.id}
+          pageTitle={activePage.title}
+          onRestore={(content, title) => {
+            onRestoreSnapshot(content, title);
+            setEditorResetKey(k => k + 1);
+            setShowHistory(false);
+          }}
+          onClose={() => setShowHistory(false)}
+        />
+      ) : (
+        <QuillEditor
+          pageId={activePage.id}
+          defaultContent={activePage.content}
+          quillRef={modalQuillRef}
+          onChange={onContentChange}
+          variant="modal"
+          resetKey={editorResetKey}
+        />
+      )}
 
       {/* Word count */}
       <div className={s.wordCount}>

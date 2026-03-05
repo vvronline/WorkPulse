@@ -530,6 +530,23 @@ runMigration('notebooks_table', () => {
   console.log('✓ notebooks table created');
 });
 
+// Notebook page version history
+runMigration('notebook_history_table', () => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS notebook_history (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      page_id    TEXT    NOT NULL,
+      page_title TEXT,
+      content    TEXT,
+      saved_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_nb_history_page
+      ON notebook_history(user_id, page_id, saved_at DESC);
+  `);
+  console.log('✓ notebook_history table created');
+});
+
 try {
   const firstUser = db.prepare('SELECT id, role FROM users ORDER BY id ASC LIMIT 1').get();
   if (firstUser && firstUser.role === 'employee') {

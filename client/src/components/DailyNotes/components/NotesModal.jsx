@@ -30,6 +30,7 @@ export default function NotesModal({ store }) {
     handleNewFolder, handleDeleteFolder,
     handleDragStart, handleDragOver, handleDrop, handleDragEnd,
     handleContentChange, handleTitleChange,
+    handleRestoreSnapshot,
     persist, pages,
   } = store;
 
@@ -117,6 +118,7 @@ export default function NotesModal({ store }) {
             onAddTag={handleAddTag}
             onRemoveTag={handleRemoveTag}
             onNewPage={handleNewPage}
+            onRestoreSnapshot={handleRestoreSnapshot}
           />
         </div>
       </div>

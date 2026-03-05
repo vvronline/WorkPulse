@@ -12,13 +12,14 @@ export default function QuillEditor({
   quillRef,
   onChange,
   variant = 'inline', // 'inline' | 'modal'
+  resetKey = 0,        // increment to force re-init (e.g. after snapshot restore)
 }) {
   const wrapClass = variant === 'modal' ? s.modalWrap : s.inlineWrap;
 
   return (
     <div className={wrapClass}>
       <ReactQuill
-        key={pageId}
+        key={`${pageId}-${resetKey}`}
         ref={quillRef}
         theme="snow"
         defaultValue={defaultContent}
