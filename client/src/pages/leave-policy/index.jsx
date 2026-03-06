@@ -6,24 +6,47 @@ import HolidaysTab from './HolidaysTab';
 import AllBalances from './AllBalances';
 import s from '../LeavePolicy.module.css';
 
+const TABS = [
+    { id: 'balances',   label: 'My Balances', icon: '📊', hrOnly: false },
+    { id: 'holidays',   label: 'Holidays',    icon: '🏖️', hrOnly: false },
+    { id: 'policies',   label: 'Policies',    icon: '📋', hrOnly: true  },
+    { id: 'allBalances',label: 'All Balances',icon: '👥', hrOnly: true  },
+];
+
 export default function LeavePolicy() {
     const { user } = useAuth();
-    const [tab, setTab] = useState('policies');
     const isHR = ['hr_admin', 'super_admin'].includes(user?.role);
+    const visibleTabs = TABS.filter(t => !t.hrOnly || isHR);
+    const [tab, setTab] = useState(visibleTabs[0]?.id || 'balances');
 
     return (
-        <div className={s.adminPage}>
-            <h1>Leave Management</h1>
-            <div className={s.tabs}>
-                {isHR && <button className={`${s.tab} ${tab === 'policies' ? s.active : ''}`} onClick={() => setTab('policies')}>Policies</button>}
-                <button className={`${s.tab} ${tab === 'balances' ? s.active : ''}`} onClick={() => setTab('balances')}>My Balances</button>
-                <button className={`${s.tab} ${tab === 'holidays' ? s.active : ''}`} onClick={() => setTab('holidays')}>Holidays</button>
-                {isHR && <button className={`${s.tab} ${tab === 'allBalances' ? s.active : ''}`} onClick={() => setTab('allBalances')}>All Balances</button>}
+        <div className={s.page}>
+            <div className={s.pageHeader}>
+                <div>
+                    <h1 className={s.pageTitle}>Leave &amp; Holidays</h1>
+                    <p className={s.pageSubtitle}>Manage leave policies, balances, and public holidays</p>
+                </div>
             </div>
-            {tab === 'policies' && isHR && <PoliciesTab />}
-            {tab === 'balances' && <MyBalances />}
-            {tab === 'holidays' && <HolidaysTab isHR={isHR} />}
-            {tab === 'allBalances' && isHR && <AllBalances />}
+
+            <div className={s.tabBar}>
+                {visibleTabs.map(t => (
+                    <button
+                        key={t.id}
+                        className={`${s.tabBtn} ${tab === t.id ? s.tabBtnActive : ''}`}
+                        onClick={() => setTab(t.id)}
+                    >
+                        <span className={s.tabIcon}>{t.icon}</span>
+                        {t.label}
+                    </button>
+                ))}
+            </div>
+
+            <div className={s.tabContent}>
+                {tab === 'balances'    && <MyBalances />}
+                {tab === 'holidays'    && <HolidaysTab isHR={isHR} />}
+                {tab === 'policies'    && isHR && <PoliciesTab />}
+                {tab === 'allBalances' && isHR && <AllBalances />}
+            </div>
         </div>
     );
 }

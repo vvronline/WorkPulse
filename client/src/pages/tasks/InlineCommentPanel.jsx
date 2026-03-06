@@ -60,7 +60,7 @@ export default function InlineCommentPanel({
                 )}
                 <strong>{c.full_name || c.username}</strong>
                 <span className={s['comment-time']}>
-                  {new Date(c.created_at + 'Z').toLocaleString()}
+                  {new Date(c.created_at).toLocaleString()}
                 </span>
                 {c.updated_at && c.updated_at !== c.created_at && (
                   <span className={s['comment-edited']}>(edited)</span>

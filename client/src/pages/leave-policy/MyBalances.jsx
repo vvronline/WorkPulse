@@ -2,45 +2,99 @@ import React, { useState, useEffect } from 'react';
 import { getLeaveBalances } from '../../api';
 import s from '../LeavePolicy.module.css';
 
+const TYPE_META = {
+    sick:     { icon: '🤒', color: '#ef4444', bg: 'rgba(239,68,68,0.10)',    label: 'Sick Leave'    },
+    holiday:  { icon: '🏖️', color: '#f59e0b', bg: 'rgba(245,158,11,0.10)',   label: 'Holiday'       },
+    planned:  { icon: '📅', color: '#6366f1', bg: 'rgba(99,102,241,0.10)',   label: 'Planned Leave' },
+    personal: { icon: '👤', color: '#10b981', bg: 'rgba(16,185,129,0.10)',   label: 'Personal'      },
+    other:    { icon: '📝', color: '#64748b', bg: 'rgba(100,116,139,0.10)',  label: 'Other'         },
+};
+
 export default function MyBalances() {
     const [balances, setBalances] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [year, setYear] = useState(new Date().getFullYear());
 
     useEffect(() => {
-        getLeaveBalances()
-            .then(r => { setBalances(r.data); setLoading(false); })
+        setLoading(true);
+        getLeaveBalances(year)
+            .then(r => { setBalances(r.data || []); setLoading(false); })
             .catch(() => setLoading(false));
-    }, []);
+    }, [year]);
 
-    if (loading) return <p>Loading...</p>;
+    const years = [year - 1, year, year + 1];
 
     return (
-        <div className={s['grid-balances']}>
-            {balances.map(b => {
-                const used = b.used || 0;
-                const pct = b.total_days > 0 ? Math.round((used / b.total_days) * 100) : 0;
-                return (
-                    <div key={b.id} className={s['card-panel']}>
-                        <div className={s['card-title-sm']}>{b.policy_name}</div>
-                        <span className={`${s.badgeRole} ${s['badge-small']}`}>{b.leave_type}</span>
-                        <div className={s['progress-section']}>
-                            <div className={s['flex-between-sm']}>
-                                <span>Used: {used}</span>
-                                <span>Balance: {b.balance}</span>
+        <div className={s.tabPanel}>
+            <div className={s.panelHeader}>
+                <div>
+                    <h2 className={s.panelTitle}>My Leave Balances</h2>
+                    <p className={s.panelSubtitle}>Your available leave days for the selected year</p>
+                </div>
+                <select
+                    className={s.yearSelect}
+                    value={year}
+                    onChange={e => setYear(+e.target.value)}
+                >
+                    {years.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+            </div>
+
+            {loading ? (
+                <div className={s.loadingWrap}><div className="spinner" /></div>
+            ) : balances.length === 0 ? (
+                <div className={s.emptyState}>
+                    <div className={s.emptyIcon}>📊</div>
+                    <p className={s.emptyTitle}>No balances found</p>
+                    <p className={s.emptyText}>Contact HR to set up leave policies for your account</p>
+                </div>
+            ) : (
+                <div className={s.balanceCardGrid}>
+                    {balances.map(b => {
+                        const meta = TYPE_META[b.leave_type] || TYPE_META.other;
+                        const total = (b.quota || b.total_days || 0) + (b.carried_forward || 0);
+                        const used = b.used || 0;
+                        const available = total - used;
+                        const pct = total > 0 ? Math.min(Math.round((used / total) * 100), 100) : 0;
+                        const barColor = pct >= 80 ? '#ef4444' : pct >= 50 ? '#f59e0b' : meta.color;
+                        return (
+                            <div key={b.id || b.leave_type} className={s.balanceDetailCard} style={{ '--bc': meta.color, '--bb': meta.bg }}>
+                                <div className={s.balanceDetailTop}>
+                                    <div className={s.balanceDetailIcon} style={{ background: meta.bg, color: meta.color }}>
+                                        {meta.icon}
+                                    </div>
+                                    <div>
+                                        <div className={s.balanceDetailType}>{meta.label}</div>
+                                        <div className={s.balanceDetailYear}>Year {b.year || year}</div>
+                                    </div>
+                                </div>
+                                <div className={s.balanceDetailNums}>
+                                    <div className={s.balanceDetailNum}>
+                                        <span className={s.balanceDetailBig} style={{ color: meta.color }}>{available}</span>
+                                        <span className={s.balanceDetailSmall}>available</span>
+                                    </div>
+                                    <div className={s.balanceDetailDivider} />
+                                    <div className={s.balanceDetailNum}>
+                                        <span className={s.balanceDetailBig}>{used}</span>
+                                        <span className={s.balanceDetailSmall}>used</span>
+                                    </div>
+                                    <div className={s.balanceDetailDivider} />
+                                    <div className={s.balanceDetailNum}>
+                                        <span className={s.balanceDetailBig}>{total}</span>
+                                        <span className={s.balanceDetailSmall}>total</span>
+                                    </div>
+                                </div>
+                                <div className={s.balanceDetailBar}>
+                                    <div className={s.balanceDetailFill} style={{ width: `${pct}%`, background: barColor }} />
+                                </div>
+                                <div className={s.balanceDetailMeta}>
+                                    {b.carried_forward > 0 && `${b.carried_forward} carried forward`}
+                                </div>
                             </div>
-                            <div className={s['progress-track']}>
-                                <div className={s['progress-fill']} style={{ width: `${Math.min(pct, 100)}%`, background: pct >= 80 ? 'var(--danger)' : pct >= 50 ? 'var(--warning)' : 'var(--success)' }} />
-                            </div>
-                            <div className={s['flex-between-muted']}>
-                                <span>Total: {b.total_days}</span>
-                                <span>Carried: {b.carried_forward}</span>
-                            </div>
-                        </div>
-                        <div className={s['text-muted-sm']}>Year: {b.year}</div>
-                    </div>
-                );
-            })}
-            {balances.length === 0 && <div className={s['empty-state']}>No leave balances found. Contact HR to set up leave policies.</div>}
+                        );
+                    })}
+                </div>
+            )}
         </div>
     );
 }

@@ -123,9 +123,15 @@ export default function Dashboard() {
     };
     document.addEventListener('visibilitychange', handleVisibility);
 
+    // Poll every 2 minutes so multi-tab / multi-device state stays in sync
+    const pollInterval = setInterval(() => {
+      if (!document.hidden && !cancelled) fetchStatus();
+    }, 120000);
+
     return () => {
       cancelled = true;
       document.removeEventListener('visibilitychange', handleVisibility);
+      clearInterval(pollInterval);
     };
   }, [fetchStatus]);
 
@@ -138,6 +144,7 @@ export default function Dashboard() {
       if (actionName === 'clockOut') resetTimer();
     } catch (err) {
       setError(err.response?.data?.error || 'Action failed');
+      await fetchStatus();
     } finally {
       setActionLoading('');
     }
@@ -161,7 +168,7 @@ export default function Dashboard() {
 
   const clockInEntry = status?.entries?.find(e => e.entry_type === 'clock_in');
   const clockInTime = useMemo(() => clockInEntry
-    ? new Date(clockInEntry.timestamp.replace(' ', 'T') + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    ? new Date(clockInEntry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : null, [clockInEntry?.timestamp]);
 
   const progressColor = useMemo(() => {

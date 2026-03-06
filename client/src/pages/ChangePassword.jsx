@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import { useAuth } from '../AuthContext';
 import { updatePassword as changePasswordApi } from '../api';
@@ -6,7 +7,8 @@ import PasswordInput from '../components/PasswordInput';
 import s from './Auth.module.css';
 
 export default function ChangePassword() {
-  const { user, updateUser, logout } = useAuth();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [form, setForm] = useState({ current_password: '', new_password: '', confirm_password: '' });
   const [error, setError] = useAutoDismiss('');
   const [loading, setLoading] = useState(false);
@@ -26,7 +28,8 @@ export default function ChangePassword() {
     setLoading(true);
     try {
       await changePasswordApi({ current_password: form.current_password, new_password: form.new_password });
-      updateUser({ must_change_password: false });
+      await logout();
+      navigate('/login', { state: { message: 'Password changed successfully. Please log in with your new password.' } });
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to change password');
     } finally {

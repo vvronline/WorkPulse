@@ -1,27 +1,27 @@
 import React from 'react';
 import s from '../LeavePolicy.module.css';
 
-const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const DAYS   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 
 export default function HolidayCard({ holiday: h, isHR, onDelete }) {
-    const dt = new Date(h.date);
+    const dt = new Date(h.date + 'T00:00:00');
+    const isPast = dt < new Date();
     return (
-        <div className={s['holiday-card']}>
-            <div className={s['holiday-info']}>
-                <div className={s['holiday-date-box']}>
-                    <div className={s['date-day']}>{dt.getDate()}</div>
-                    <div className={s['date-month']}>{MONTHS[dt.getMonth()]}</div>
-                </div>
-                <div>
-                    <div className={s['holiday-name']}>{h.name}</div>
-                    <div className={s['holiday-detail']}>
-                        {DAYS[dt.getDay()]}{h.is_optional ? ' • Optional' : ''}
-                    </div>
+        <div className={`${s.holidayCard} ${isPast ? s.holidayCardPast : ''} ${h.is_optional ? s.holidayCardOptional : ''}`}>
+            <div className={s.holidayDateBox}>
+                <span className={s.holidayDay}>{dt.getDate()}</span>
+                <span className={s.holidayMonth}>{MONTHS[dt.getMonth()]}</span>
+            </div>
+            <div className={s.holidayInfo}>
+                <div className={s.holidayName}>{h.name}</div>
+                <div className={s.holidayMeta}>
+                    <span>{DAYS[dt.getDay()]}</span>
+                    {h.is_optional && <span className={s.optionalBadge}>Optional</span>}
                 </div>
             </div>
             {isHR && (
-                <button className={`${s.btnSmall} ${s['btn-danger']}`} onClick={() => onDelete(h.id)}>✗</button>
+                <button className={s.deleteHolidayBtn} onClick={() => onDelete(h.id)} title="Delete holiday">×</button>
             )}
         </div>
     );

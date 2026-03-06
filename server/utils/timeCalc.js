@@ -4,10 +4,11 @@
  */
 
 /**
- * Parse a timestamp string into epoch milliseconds.
+ * Parse a timestamp (string or Date) into epoch milliseconds.
  */
 function tsToMs(timestamp) {
-    return new Date(timestamp.replace(' ', 'T') + 'Z').getTime();
+    if (timestamp instanceof Date) return timestamp.getTime();
+    return new Date(timestamp.replace(' ', 'T') + (timestamp.endsWith('Z') ? '' : 'Z')).getTime();
 }
 
 /**

@@ -1,10 +1,6 @@
-/**
- * Admin routes — user management, role assignment, audit logs, org-wide stats.
- * All routes require hr_admin+ role.
- */
-const express = require('express');
+﻿const express = require('express');
 const bcrypt = require('bcryptjs');
-const db = require('../db');
+const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole, requireSameOrg, canManageUser, VALID_ROLES } = require('../middleware/rbac');
 const { logAction, queryLogs } = require('../utils/audit');
@@ -12,665 +8,629 @@ const { validatePassword, validateUsername } = require('../utils/password');
 const { getOffsetMin, getTzModifier } = require('../utils/timezone');
 
 const router = express.Router();
-
 router.use(auth, loadUserContext, requireRole('hr_admin'));
 
 // ==================== ORGANIZATIONS ====================
 
-// List all organizations (super_admin only)
-router.get('/organizations', requireRole('super_admin'), (req, res) => {
-    const page = Math.max(parseInt(req.query.page) || 1, 1);
-    const perPage = Math.min(Math.max(parseInt(req.query.per_page) || 50, 1), 100);
-    const offset = (page - 1) * perPage;
-
-    const total = db.prepare('SELECT COUNT(*) as count FROM organizations').get().count;
-    const orgs = db.prepare(`
-        SELECT o.id, o.name, o.slug, o.timezone, o.work_hours_per_day, o.work_days, o.fiscal_year_start,
-               (SELECT COUNT(*) FROM users WHERE org_id = o.id AND is_active = 1) as member_count
-        FROM organizations o
-        ORDER BY o.name
-        LIMIT ? OFFSET ?
-    `).all(perPage, offset);
-    res.json({ data: orgs, total, page, perPage });
-});
-
-// Get organization details (super_admin only)
-router.get('/organizations/:id', requireRole('super_admin'), (req, res) => {
-    const { id } = req.params;
-    const org = db.prepare('SELECT * FROM organizations WHERE id = ?').get(id);
-    if (!org) return res.status(404).json({ error: 'Organization not found' });
-
-    const memberCount = db.prepare('SELECT COUNT(*) as count FROM users WHERE org_id = ? AND is_active = 1').get(id).count;
-    const deptCount = db.prepare('SELECT COUNT(*) as count FROM departments WHERE org_id = ?').get(id).count;
-    const teamCount = db.prepare('SELECT COUNT(*) as count FROM teams WHERE org_id = ?').get(id).count;
-
-    res.json({ ...org, memberCount, deptCount, teamCount });
-});
-
-// Create organization (super_admin only)
-router.post('/organizations', requireRole('super_admin'), (req, res) => {
-    const { name, work_hours_per_day, work_days, timezone } = req.body;
-    const trimmedName = name?.trim();
-    if (!trimmedName) return res.status(400).json({ error: 'Organization name is required' });
-    if (trimmedName.length > 100) return res.status(400).json({ error: 'Name must be 100 characters or less' });
-
-    const slug = trimmedName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-    const existing = db.prepare('SELECT id FROM organizations WHERE slug = ?').get(slug);
-    if (existing) return res.status(400).json({ error: 'An organization with a similar name already exists' });
-
-    const whpd = Number(work_hours_per_day) || 8;
-    if (whpd < 1 || whpd > 24) return res.status(400).json({ error: 'Work hours per day must be between 1 and 24' });
-
-    const result = db.prepare(
-        'INSERT INTO organizations (name, slug, created_by, work_hours_per_day, work_days, timezone) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(trimmedName, slug, req.userId, whpd, work_days || '1,2,3,4,5', timezone || 'UTC');
-
-    logAction(req, 'admin_create', 'organization', result.lastInsertRowid, { name: trimmedName });
-
-    res.json({ id: result.lastInsertRowid, name: trimmedName, slug, message: 'Organization created successfully' });
-});
-
-// Update organization (super_admin only)
-router.put('/organizations/:id', requireRole('super_admin'), (req, res) => {
-    const { id } = req.params;
-    const { name, work_hours_per_day, work_days, timezone, fiscal_year_start } = req.body;
-
-    const org = db.prepare('SELECT id FROM organizations WHERE id = ?').get(id);
-    if (!org) return res.status(404).json({ error: 'Organization not found' });
-
-    const updates = [];
-    const params = [];
-
-    if (name) {
-        if (name.trim().length > 100) return res.status(400).json({ error: 'Name must be 100 characters or less' });
-        updates.push('name = ?');
-        params.push(name.trim());
-    }
-    if (work_hours_per_day !== undefined) {
-        const whpd = Number(work_hours_per_day);
-        if (isNaN(whpd) || whpd < 1 || whpd > 24) return res.status(400).json({ error: 'Work hours per day must be between 1 and 24' });
-        updates.push('work_hours_per_day = ?'); params.push(whpd);
-    }
-    if (work_days) { updates.push('work_days = ?'); params.push(work_days); }
-    if (timezone) { updates.push('timezone = ?'); params.push(timezone); }
-    if (fiscal_year_start !== undefined) { updates.push('fiscal_year_start = ?'); params.push(Number(fiscal_year_start)); }
-    updates.push('updated_at = CURRENT_TIMESTAMP');
-
-    if (updates.length <= 1) return res.status(400).json({ error: 'No fields to update' });
-
-    params.push(id);
-    db.prepare(`UPDATE organizations SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-
-    logAction(req, 'admin_update', 'organization', id, req.body);
-
-    const updated = db.prepare('SELECT * FROM organizations WHERE id = ?').get(id);
-    res.json(updated);
-});
-
-// Delete organization (super_admin only)
-router.delete('/organizations/:id', requireRole('super_admin'), (req, res) => {
-    const { id } = req.params;
-    const org = db.prepare('SELECT id, name FROM organizations WHERE id = ?').get(id);
-    if (!org) return res.status(404).json({ error: 'Organization not found' });
-
-    // Check if org has active users
-    const activeUsers = db.prepare('SELECT COUNT(*) as count FROM users WHERE org_id = ? AND is_active = 1').get(id).count;
-    if (activeUsers > 0) {
-        return res.status(400).json({ error: `Cannot delete organization with ${activeUsers} active user(s). Deactivate or reassign users first.` });
-    }
-
-    // Delete/nullify all FK references before deleting the organization
-    const deleteTxn = db.transaction(() => {
-        // Nullify org_id in tables that should keep their records
-        db.prepare('UPDATE approval_requests SET org_id = NULL WHERE org_id = ?').run(id);
-        db.prepare('UPDATE audit_logs SET org_id = NULL WHERE org_id = ?').run(id);
-        // Remove invite codes for this org
-        db.prepare('DELETE FROM invite_codes WHERE org_id = ?').run(id);
-        // Cascade-handled tables (departments, teams, leave_policies, holidays) are auto-deleted,
-        // but explicitly clean up teams/departments first to avoid ordering issues
-        db.prepare('DELETE FROM teams WHERE org_id = ?').run(id);
-        db.prepare('DELETE FROM departments WHERE org_id = ?').run(id);
-        db.prepare('DELETE FROM leave_policies WHERE org_id = ?').run(id);
-        db.prepare('DELETE FROM holidays WHERE org_id = ?').run(id);
-        // Detach users from the org
-        db.prepare('UPDATE users SET org_id = NULL, department_id = NULL, team_id = NULL WHERE org_id = ?').run(id);
-        // Finally delete the organization
-        db.prepare('DELETE FROM organizations WHERE id = ?').run(id);
-    });
-
+router.get('/organizations', requireRole('super_admin'), async (req, res) => {
     try {
-        deleteTxn();
-    } catch (e) {
-        console.error('Failed to delete organization:', e.message);
-        return res.status(500).json({ error: 'Failed to delete organization. Some data may still reference it.' });
+        const page = Math.max(parseInt(req.query.page) || 1, 1);
+        const perPage = Math.min(Math.max(parseInt(req.query.per_page) || 50, 1), 100);
+        const offset = (page - 1) * perPage;
+        const totalRes = await query('SELECT COUNT(*) as count FROM organizations');
+        const total = parseInt(totalRes.rows[0].count, 10);
+        const orgsRes = await query(`
+            SELECT o.id, o.name, o.slug, o.timezone, o.work_hours_per_day, o.work_days, o.fiscal_year_start,
+                   (SELECT COUNT(*) FROM users WHERE org_id = o.id AND is_active = TRUE) as member_count
+            FROM organizations o ORDER BY o.name LIMIT $1 OFFSET $2
+        `, [perPage, offset]);
+        res.json({ data: orgsRes.rows, total, page, perPage });
+    } catch (err) {
+        console.error('List orgs error:', err.message);
+        res.status(500).json({ error: 'Failed to list organizations' });
     }
+});
 
-    logAction(req, 'admin_delete', 'organization', id, { name: org.name });
+router.get('/organizations/:id', requireRole('super_admin'), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const orgRes = await query('SELECT * FROM organizations WHERE id = $1', [id]);
+        const org = orgRes.rows[0];
+        if (!org) return res.status(404).json({ error: 'Organization not found' });
+        const memberRes = await query('SELECT COUNT(*) as count FROM users WHERE org_id = $1 AND is_active = TRUE', [id]);
+        const deptRes   = await query('SELECT COUNT(*) as count FROM departments WHERE org_id = $1', [id]);
+        const teamRes   = await query('SELECT COUNT(*) as count FROM teams WHERE org_id = $1', [id]);
+        res.json({
+            ...org,
+            memberCount: parseInt(memberRes.rows[0].count, 10),
+            deptCount:   parseInt(deptRes.rows[0].count, 10),
+            teamCount:   parseInt(teamRes.rows[0].count, 10),
+        });
+    } catch (err) {
+        console.error('Get org error:', err.message);
+        res.status(500).json({ error: 'Failed to get organization' });
+    }
+});
 
-    res.json({ message: `Organization "${org.name}" deleted successfully` });
+router.post('/organizations', requireRole('super_admin'), async (req, res) => {
+    try {
+        const { name, work_hours_per_day, work_days, timezone } = req.body;
+        const trimmedName = name?.trim();
+        if (!trimmedName) return res.status(400).json({ error: 'Organization name is required' });
+        if (trimmedName.length > 100) return res.status(400).json({ error: 'Name must be 100 characters or less' });
+        const slug = trimmedName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+        const existingRes = await query('SELECT id FROM organizations WHERE slug = $1', [slug]);
+        if (existingRes.rows[0]) return res.status(400).json({ error: 'An organization with a similar name already exists' });
+        const whpd = Number(work_hours_per_day) || 8;
+        if (whpd < 1 || whpd > 24) return res.status(400).json({ error: 'Work hours per day must be between 1 and 24' });
+        const result = await query(
+            'INSERT INTO organizations (name, slug, created_by, work_hours_per_day, work_days, timezone) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
+            [trimmedName, slug, req.userId, whpd, work_days || '1,2,3,4,5', timezone || 'UTC']
+        );
+        const newId = result.rows[0].id;
+        logAction(req, 'admin_create', 'organization', newId, { name: trimmedName });
+        res.json({ id: newId, name: trimmedName, slug, message: 'Organization created successfully' });
+    } catch (err) {
+        console.error('Create org error:', err.message);
+        res.status(500).json({ error: 'Failed to create organization' });
+    }
+});
+
+router.put('/organizations/:id', requireRole('super_admin'), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { name, work_hours_per_day, work_days, timezone, fiscal_year_start } = req.body;
+        const orgRes = await query('SELECT id FROM organizations WHERE id = $1', [id]);
+        if (!orgRes.rows[0]) return res.status(404).json({ error: 'Organization not found' });
+        let pi = 1;
+        const updates = [];
+        const params = [];
+        if (name) {
+            if (name.trim().length > 100) return res.status(400).json({ error: 'Name must be 100 characters or less' });
+            updates.push(`name = $${pi++}`); params.push(name.trim());
+        }
+        if (work_hours_per_day !== undefined) {
+            const whpd = Number(work_hours_per_day);
+            if (isNaN(whpd) || whpd < 1 || whpd > 24) return res.status(400).json({ error: 'Work hours per day must be between 1 and 24' });
+            updates.push(`work_hours_per_day = $${pi++}`); params.push(whpd);
+        }
+        if (work_days) { updates.push(`work_days = $${pi++}`); params.push(work_days); }
+        if (timezone) { updates.push(`timezone = $${pi++}`); params.push(timezone); }
+        if (fiscal_year_start !== undefined) { updates.push(`fiscal_year_start = $${pi++}`); params.push(Number(fiscal_year_start)); }
+        updates.push('updated_at = CURRENT_TIMESTAMP');
+        if (updates.length <= 1) return res.status(400).json({ error: 'No fields to update' });
+        params.push(id);
+        await query(`UPDATE organizations SET ${updates.join(', ')} WHERE id = $${pi}`, params);
+        logAction(req, 'admin_update', 'organization', id, req.body);
+        const updated = await query('SELECT * FROM organizations WHERE id = $1', [id]);
+        res.json(updated.rows[0]);
+    } catch (err) {
+        console.error('Update org error:', err.message);
+        res.status(500).json({ error: 'Failed to update organization' });
+    }
+});
+
+router.delete('/organizations/:id', requireRole('super_admin'), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const orgRes = await query('SELECT id, name FROM organizations WHERE id = $1', [id]);
+        const org = orgRes.rows[0];
+        if (!org) return res.status(404).json({ error: 'Organization not found' });
+        const activeRes = await query('SELECT COUNT(*) as count FROM users WHERE org_id = $1 AND is_active = TRUE', [id]);
+        const activeUsers = parseInt(activeRes.rows[0].count, 10);
+        if (activeUsers > 0) return res.status(400).json({ error: `Cannot delete organization with ${activeUsers} active user(s). Deactivate or reassign users first.` });
+        await transaction(async (client) => {
+            await client.query('UPDATE approval_requests SET org_id = NULL WHERE org_id = $1', [id]);
+            await client.query('UPDATE audit_logs SET org_id = NULL WHERE org_id = $1', [id]);
+            await client.query('DELETE FROM invite_codes WHERE org_id = $1', [id]);
+            await client.query('DELETE FROM teams WHERE org_id = $1', [id]);
+            await client.query('DELETE FROM departments WHERE org_id = $1', [id]);
+            await client.query('DELETE FROM leave_policies WHERE org_id = $1', [id]);
+            await client.query('DELETE FROM holidays WHERE org_id = $1', [id]);
+            await client.query('UPDATE users SET org_id = NULL, department_id = NULL, team_id = NULL WHERE org_id = $1', [id]);
+            await client.query('DELETE FROM organizations WHERE id = $1', [id]);
+        });
+        logAction(req, 'admin_delete', 'organization', id, { name: org.name });
+        res.json({ message: `Organization "${org.name}" deleted successfully` });
+    } catch (err) {
+        console.error('Delete org error:', err.message);
+        res.status(500).json({ error: 'Failed to delete organization.' });
+    }
 });
 
 // ==================== USER MANAGEMENT ====================
 
-// List all users (optionally across all orgs for super_admin)
-router.get('/users', (req, res) => {
-    const { search, role, is_active, org_id } = req.query;
-    const page = Math.max(parseInt(req.query.page) || 1, 1);
-    const perPage = Math.min(Math.max(parseInt(req.query.per_page) || 50, 1), 100);
-
-    let where = [];
-    let params = [];
-
-    // Super admin can see all users; others only see their org
-    if (req.userRole === 'super_admin' && org_id) {
-        where.push('u.org_id = ?');
-        params.push(Number(org_id));
-    } else if (req.userRole !== 'super_admin') {
-        if (req.userOrgId) {
-            where.push('u.org_id = ?');
-            params.push(req.userOrgId);
-        } else {
-            where.push('u.id = ?');
-            params.push(req.userId);
-        }
-    }
-
-    if (search) {
-        where.push("(u.full_name LIKE ? OR u.username LIKE ? OR u.email LIKE ?)");
-        // Escape SQL LIKE wildcards to prevent injection of % and _
-        const escaped = search.replace(/[%_]/g, c => `\\${c}`);
-        const s = `%${escaped}%`;
-        params.push(s, s, s);
-    }
-    if (role) { where.push('u.role = ?'); params.push(role); }
-    if (is_active !== undefined) { where.push('u.is_active = ?'); params.push(is_active === 'true' ? 1 : 0); }
-
-    const whereClause = where.length > 0 ? 'WHERE ' + where.join(' AND ') : '';
-
-    const total = db.prepare(`SELECT COUNT(*) as count FROM users u ${whereClause}`).get(...params).count;
-
-    const users = db.prepare(`
-        SELECT u.id, u.username, u.full_name, u.email, u.avatar, u.role,
-               u.is_active, u.org_id, u.department_id, u.team_id, u.manager_id, u.created_at,
-               o.name as org_name, d.name as department_name, t.name as team_name,
-               m.full_name as manager_name
-        FROM users u
-        LEFT JOIN organizations o ON o.id = u.org_id
-        LEFT JOIN departments d ON d.id = u.department_id
-        LEFT JOIN teams t ON t.id = u.team_id
-        LEFT JOIN users m ON m.id = u.manager_id
-        ${whereClause}
-        ORDER BY u.created_at DESC
-        LIMIT ? OFFSET ?
-    `).all(...params, perPage, (page - 1) * perPage);
-
-    res.json({ data: users, total, page, perPage });
-});
-
-// Get single user details
-router.get('/users/:id', (req, res) => {
-    const { id } = req.params;
-    const user = db.prepare(`
-        SELECT u.id, u.username, u.full_name, u.email, u.avatar, u.role,
-               u.is_active, u.org_id, u.department_id, u.team_id, u.manager_id, u.created_at, u.timezone_offset,
-               o.name as org_name, d.name as department_name, t.name as team_name,
-               m.full_name as manager_name
-        FROM users u
-        LEFT JOIN organizations o ON o.id = u.org_id
-        LEFT JOIN departments d ON d.id = u.department_id
-        LEFT JOIN teams t ON t.id = u.team_id
-        LEFT JOIN users m ON m.id = u.manager_id
-        WHERE u.id = ?
-    `).get(Number(id));
-
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    // Non-super admins can only view users in their org
-    if (req.userRole !== 'super_admin' && user.org_id !== req.userOrgId) {
-        return res.status(403).json({ error: 'Cannot view users outside your organization' });
-    }
-
-    res.json(user);
-});
-
-// Update user role
-router.put('/users/:id/role', (req, res) => {
-    const { id } = req.params;
-    const { role } = req.body;
-
-    if (!VALID_ROLES.includes(role)) {
-        return res.status(400).json({ error: `Invalid role. Valid roles: ${VALID_ROLES.join(', ')}` });
-    }
-
-    const target = db.prepare('SELECT id, role, org_id, full_name FROM users WHERE id = ?').get(Number(id));
-    if (!target) return res.status(404).json({ error: 'User not found' });
-
-    // Cannot modify a user whose current role is >= your own (except super_admin)
-    if (req.userRole !== 'super_admin' && !canManageUser(req.userRole, target.role)) {
-        return res.status(403).json({ error: 'Cannot modify a user with a role equal to or higher than your own' });
-    }
-    // Cannot promote to same or higher level than self (except super_admin)
-    if (req.userRole !== 'super_admin' && !canManageUser(req.userRole, role)) {
-        return res.status(403).json({ error: 'Cannot assign a role equal to or higher than your own' });
-    }
-
-    // Cannot modify own role (except super_admin)
-    if (Number(id) === req.userId && req.userRole !== 'super_admin') {
-        return res.status(400).json({ error: 'Cannot change your own role' });
-    }
-
-    db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, Number(id));
-    logAction(req, 'update_role', 'user', Number(id), { old_role: target.role, new_role: role });
-
-    res.json({ message: `${target.full_name}'s role updated to ${role}` });
-});
-
-// Assign user to org/department/team
-router.put('/users/:id/assignment', (req, res) => {
-    const { id } = req.params;
-    const { org_id, department_id, team_id, manager_id } = req.body;
-
-    const target = db.prepare('SELECT id, org_id, full_name FROM users WHERE id = ?').get(Number(id));
-    if (!target) return res.status(404).json({ error: 'User not found' });
-
-    if (req.userRole !== 'super_admin' && target.org_id !== req.userOrgId) {
-        return res.status(403).json({ error: 'User is not in your organization' });
-    }
-
-    // Only super_admin can change org assignment
-    if (org_id !== undefined && req.userRole !== 'super_admin') {
-        return res.status(403).json({ error: 'Only super admin can change organization assignment' });
-    }
-
-    // Validate org exists if provided
-    if (org_id) {
-        const org = db.prepare('SELECT id FROM organizations WHERE id = ?').get(Number(org_id));
-        if (!org) return res.status(400).json({ error: 'Organization not found' });
-    }
-
-    // Validate manager_id exists if provided
-    if (manager_id) {
-        const mgr = db.prepare('SELECT id FROM users WHERE id = ? AND is_active = 1').get(Number(manager_id));
-        if (!mgr) return res.status(400).json({ error: 'Manager not found' });
-        if (Number(manager_id) === Number(id)) return res.status(400).json({ error: 'Cannot assign user as their own manager' });
-    }
-
-    // Determine the target org (must be computed before dept/team validation)
-    const newOrgId = org_id !== undefined ? (org_id || null) : target.org_id;
-
-    // Validate department belongs to the target org
-    if (department_id) {
-        const dept = db.prepare('SELECT id FROM departments WHERE id = ? AND org_id = ?').get(Number(department_id), Number(newOrgId || 0));
-        if (!dept) return res.status(400).json({ error: 'Department not found in the target organization' });
-    }
-    // Validate team belongs to the target org
-    if (team_id) {
-        const team = db.prepare('SELECT id FROM teams WHERE id = ? AND org_id = ?').get(Number(team_id), Number(newOrgId || 0));
-        if (!team) return res.status(400).json({ error: 'Team not found in the target organization' });
-    }
-
-    // If org changes, clear dept/team since they belong to the old org
-    const orgChanged = org_id !== undefined && Number(org_id || 0) !== Number(target.org_id || 0);
-    const finalDeptId = orgChanged ? null : (department_id || null);
-    const finalTeamId = orgChanged ? null : (team_id || null);
-    const finalManagerId = orgChanged ? null : (manager_id || null);
-
-    db.prepare('UPDATE users SET org_id = ?, department_id = ?, team_id = ?, manager_id = ? WHERE id = ?')
-        .run(newOrgId, finalDeptId, finalTeamId, finalManagerId, Number(id));
-
-    logAction(req, 'update_assignment', 'user', Number(id), { org_id: newOrgId, department_id: finalDeptId, team_id: finalTeamId, manager_id: finalManagerId });
-    res.json({ message: `${target.full_name}'s assignment updated` });
-});
-
-// Deactivate user
-router.put('/users/:id/deactivate', (req, res) => {
-    const { id } = req.params;
-    const target = db.prepare('SELECT id, role, org_id, full_name, is_active FROM users WHERE id = ?').get(Number(id));
-    if (!target) return res.status(404).json({ error: 'User not found' });
-    if (Number(id) === req.userId) return res.status(400).json({ error: 'Cannot deactivate yourself' });
-
-    if (req.userRole !== 'super_admin' && !canManageUser(req.userRole, target.role)) {
-        return res.status(403).json({ error: 'Cannot deactivate a user with equal or higher role' });
-    }
-
-    db.prepare('UPDATE users SET is_active = ? WHERE id = ?').run(target.is_active ? 0 : 1, Number(id));
-    const action = target.is_active ? 'deactivate' : 'reactivate';
-    logAction(req, action, 'user', Number(id), { name: target.full_name });
-
-    res.json({ message: `${target.full_name} has been ${action}d`, is_active: !target.is_active });
-});
-
-// Reset user's password (admin-initiated)
-router.post('/users/:id/reset-password', async (req, res) => {
-    const { id } = req.params;
-    const { new_password } = req.body;
-
-    if (!new_password || new_password.length < 8) {
-        return res.status(400).json({ error: 'Password must be at least 8 characters' });
-    }
-    if (new_password.length > 72) {
-        return res.status(400).json({ error: 'Password must be 72 characters or less' });
-    }
-    const pwError1 = validatePassword(new_password);
-    if (pwError1) {
-        return res.status(400).json({ error: pwError1 });
-    }
-
-    const target = db.prepare('SELECT id, role, org_id, full_name FROM users WHERE id = ?').get(Number(id));
-    if (!target) return res.status(404).json({ error: 'User not found' });
-
-    if (req.userRole !== 'super_admin' && !canManageUser(req.userRole, target.role)) {
-        return res.status(403).json({ error: 'Cannot reset password for a user with equal or higher role' });
-    }
-
-    const hash = await bcrypt.hash(new_password, 10);
-    db.prepare('UPDATE users SET password = ?, token_version = COALESCE(token_version, 0) + 1, must_change_password = 1 WHERE id = ?').run(hash, Number(id));
-
-    logAction(req, 'admin_reset_password', 'user', Number(id), { name: target.full_name });
-    res.json({ message: `Password reset for ${target.full_name}. User will be required to change password on next login.` });
-});
-
-// Permanently delete user (super_admin only)
-router.delete('/users/:id', requireRole('super_admin'), (req, res) => {
-    const { id } = req.params;
-    const userId = Number(id);
-    const target = db.prepare('SELECT id, role, full_name, is_active FROM users WHERE id = ?').get(userId);
-    if (!target) return res.status(404).json({ error: 'User not found' });
-    if (userId === req.userId) return res.status(400).json({ error: 'Cannot delete yourself' });
-    if (target.role === 'super_admin') return res.status(400).json({ error: 'Cannot delete another super admin' });
-
-    const deleteTxn = db.transaction(() => {
-        // Remove related data
-        db.prepare('DELETE FROM time_entries WHERE user_id = ?').run(userId);
-        db.prepare('DELETE FROM leaves WHERE user_id = ?').run(userId);
-        db.prepare('DELETE FROM tasks WHERE user_id = ?').run(userId);
-        db.prepare('DELETE FROM leave_balances WHERE user_id = ?').run(userId);
-        db.prepare('DELETE FROM password_reset_tokens WHERE user_id = ?').run(userId);
-        db.prepare('DELETE FROM approval_requests WHERE requester_id = ?').run(userId);
-        // Nullify references in other tables
-        db.prepare('UPDATE approval_requests SET approver_id = NULL WHERE approver_id = ?').run(userId);
-        db.prepare('UPDATE departments SET head_id = NULL WHERE head_id = ?').run(userId);
-        db.prepare('UPDATE teams SET lead_id = NULL WHERE lead_id = ?').run(userId);
-        db.prepare('UPDATE users SET manager_id = NULL WHERE manager_id = ?').run(userId);
-        db.prepare('UPDATE leaves SET approved_by = NULL WHERE approved_by = ?').run(userId);
-        db.prepare('UPDATE time_entries SET approved_by = NULL WHERE approved_by = ?').run(userId);
-        db.prepare('UPDATE audit_logs SET actor_id = NULL WHERE actor_id = ?').run(userId);
-        // Delete the user
-        db.prepare('DELETE FROM users WHERE id = ?').run(userId);
-    });
-
+router.get('/users', async (req, res) => {
     try {
-        deleteTxn();
-    } catch (e) {
-        console.error('Failed to delete user:', e.message);
-        return res.status(500).json({ error: 'Failed to delete user. Some data may still reference this account.' });
-    }
+        const { search, role, is_active, org_id } = req.query;
+        const page = Math.max(parseInt(req.query.page) || 1, 1);
+        const perPage = Math.min(Math.max(parseInt(req.query.per_page) || 50, 1), 100);
+        let pi = 1;
+        const where = [];
+        const params = [];
 
-    logAction(req, 'admin_delete', 'user', userId, { name: target.full_name });
-    res.json({ message: `User "${target.full_name}" has been permanently deleted` });
+        if (req.userRole === 'super_admin' && org_id) {
+            where.push(`u.org_id = $${pi++}`); params.push(Number(org_id));
+        } else if (req.userRole !== 'super_admin') {
+            if (req.userOrgId) { where.push(`u.org_id = $${pi++}`); params.push(req.userOrgId); }
+            else { where.push(`u.id = $${pi++}`); params.push(req.userId); }
+        }
+
+        if (search) {
+            const escaped = search.replace(/[%_]/g, c => `\\${c}`);
+            const s = `%${escaped}%`;
+            where.push(`(u.full_name ILIKE $${pi} OR u.username ILIKE $${pi} OR u.email ILIKE $${pi})`);
+            params.push(s); pi++;
+        }
+        if (role) { where.push(`u.role = $${pi++}`); params.push(role); }
+        if (is_active !== undefined) { where.push(`u.is_active = $${pi++}`); params.push(is_active === 'true'); }
+
+        const whereClause = where.length > 0 ? 'WHERE ' + where.join(' AND ') : '';
+        const countRes = await query(`SELECT COUNT(*) as count FROM users u ${whereClause}`, params);
+        const total = parseInt(countRes.rows[0].count, 10);
+
+        const usersRes = await query(`
+            SELECT u.id, u.username, u.full_name, u.email, u.avatar, u.role,
+                   u.is_active, u.org_id, u.department_id, u.team_id, u.manager_id, u.created_at,
+                   o.name as org_name, d.name as department_name, t.name as team_name,
+                   m.full_name as manager_name
+            FROM users u
+            LEFT JOIN organizations o ON o.id = u.org_id
+            LEFT JOIN departments d ON d.id = u.department_id
+            LEFT JOIN teams t ON t.id = u.team_id
+            LEFT JOIN users m ON m.id = u.manager_id
+            ${whereClause}
+            ORDER BY u.created_at DESC
+            LIMIT $${pi++} OFFSET $${pi++}
+        `, [...params, perPage, (page - 1) * perPage]);
+        res.json({ data: usersRes.rows, total, page, perPage });
+    } catch (err) {
+        console.error('List users error:', err.message);
+        res.status(500).json({ error: 'Failed to list users' });
+    }
 });
 
-// Create user (admin-created account)
-router.post('/users', async (req, res) => {
-    const { username, password, full_name, email, role, org_id, department_id, team_id, manager_id } = req.body;
-
-    if (!username || !password || !full_name || !email) {
-        return res.status(400).json({ error: 'Username, password, full name and email are required' });
-    }
-    const pwError2 = validatePassword(password);
-    if (pwError2) return res.status(400).json({ error: pwError2 });
-    const usernameError = validateUsername(username);
-    if (usernameError) return res.status(400).json({ error: usernameError });
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email' });
-
-    const existing = db.prepare('SELECT id FROM users WHERE username = ? OR email = ?').get(username, email);
-    if (existing) return res.status(400).json({ error: 'Username or email already taken' });
-
-    const assignRole = VALID_ROLES.includes(role) ? role : 'employee';
-    const hash = await bcrypt.hash(password, 10);
-
-    // super_admin can assign any org; hr_admin assigns to own org
-    let assignOrgId = req.userOrgId;
-    if (req.userRole === 'super_admin' && org_id !== undefined) {
-        if (org_id) {
-            const orgExists = db.prepare('SELECT id FROM organizations WHERE id = ?').get(org_id);
-            if (!orgExists) return res.status(400).json({ error: 'Organization not found' });
+router.get('/users/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userRes = await query(`
+            SELECT u.id, u.username, u.full_name, u.email, u.avatar, u.role,
+                   u.is_active, u.org_id, u.department_id, u.team_id, u.manager_id, u.created_at, u.timezone_offset,
+                   o.name as org_name, d.name as department_name, t.name as team_name,
+                   m.full_name as manager_name
+            FROM users u
+            LEFT JOIN organizations o ON o.id = u.org_id
+            LEFT JOIN departments d ON d.id = u.department_id
+            LEFT JOIN teams t ON t.id = u.team_id
+            LEFT JOIN users m ON m.id = u.manager_id
+            WHERE u.id = $1
+        `, [Number(id)]);
+        const user = userRes.rows[0];
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        if (req.userRole !== 'super_admin' && user.org_id !== req.userOrgId) {
+            return res.status(403).json({ error: 'Cannot view users outside your organization' });
         }
-        assignOrgId = org_id || null;
+        res.json(user);
+    } catch (err) {
+        console.error('Get user error:', err.message);
+        res.status(500).json({ error: 'Failed to get user' });
     }
+});
 
-    const result = db.prepare(
-        'INSERT INTO users (username, password, full_name, email, role, org_id, department_id, team_id, manager_id, must_change_password) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)'
-    ).run(username, hash, full_name, email, assignRole, assignOrgId, department_id || null, team_id || null, manager_id || null);
+router.put('/users/:id/role', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { role } = req.body;
+        if (!VALID_ROLES.includes(role)) return res.status(400).json({ error: `Invalid role. Valid roles: ${VALID_ROLES.join(', ')}` });
+        const targetRes = await query('SELECT id, role, org_id, full_name FROM users WHERE id = $1', [Number(id)]);
+        const target = targetRes.rows[0];
+        if (!target) return res.status(404).json({ error: 'User not found' });
+        if (req.userRole !== 'super_admin' && !canManageUser(req.userRole, target.role)) {
+            return res.status(403).json({ error: 'Cannot modify a user with a role equal to or higher than your own' });
+        }
+        if (req.userRole !== 'super_admin' && !canManageUser(req.userRole, role)) {
+            return res.status(403).json({ error: 'Cannot assign a role equal to or higher than your own' });
+        }
+        if (Number(id) === req.userId && req.userRole !== 'super_admin') {
+            return res.status(400).json({ error: 'Cannot change your own role' });
+        }
+        await query('UPDATE users SET role = $1 WHERE id = $2', [role, Number(id)]);
+        logAction(req, 'update_role', 'user', Number(id), { old_role: target.role, new_role: role });
+        res.json({ message: `${target.full_name}'s role updated to ${role}` });
+    } catch (err) {
+        console.error('Update role error:', err.message);
+        res.status(500).json({ error: 'Failed to update role' });
+    }
+});
 
-    logAction(req, 'admin_create', 'user', result.lastInsertRowid, { username, role: assignRole });
+router.put('/users/:id/assignment', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { org_id, department_id, team_id, manager_id } = req.body;
+        const targetRes = await query('SELECT id, org_id, full_name FROM users WHERE id = $1', [Number(id)]);
+        const target = targetRes.rows[0];
+        if (!target) return res.status(404).json({ error: 'User not found' });
+        if (req.userRole !== 'super_admin' && target.org_id !== req.userOrgId) {
+            return res.status(403).json({ error: 'User is not in your organization' });
+        }
+        if (org_id !== undefined && req.userRole !== 'super_admin') {
+            return res.status(403).json({ error: 'Only super admin can change organization assignment' });
+        }
+        if (org_id) {
+            const orgRes = await query('SELECT id FROM organizations WHERE id = $1', [Number(org_id)]);
+            if (!orgRes.rows[0]) return res.status(400).json({ error: 'Organization not found' });
+        }
+        if (manager_id) {
+            const mgrRes = await query('SELECT id FROM users WHERE id = $1 AND is_active = TRUE', [Number(manager_id)]);
+            if (!mgrRes.rows[0]) return res.status(400).json({ error: 'Manager not found' });
+            if (Number(manager_id) === Number(id)) return res.status(400).json({ error: 'Cannot assign user as their own manager' });
+        }
+        const newOrgId = org_id !== undefined ? (org_id || null) : target.org_id;
+        if (department_id) {
+            const deptRes = await query('SELECT id FROM departments WHERE id = $1 AND org_id = $2', [Number(department_id), Number(newOrgId || 0)]);
+            if (!deptRes.rows[0]) return res.status(400).json({ error: 'Department not found in the target organization' });
+        }
+        if (team_id) {
+            const teamRes = await query('SELECT id FROM teams WHERE id = $1 AND org_id = $2', [Number(team_id), Number(newOrgId || 0)]);
+            if (!teamRes.rows[0]) return res.status(400).json({ error: 'Team not found in the target organization' });
+        }
+        const orgChanged = org_id !== undefined && Number(org_id || 0) !== Number(target.org_id || 0);
+        const finalDeptId = orgChanged ? null : (department_id || null);
+        const finalTeamId = orgChanged ? null : (team_id || null);
+        const finalManagerId = orgChanged ? null : (manager_id || null);
+        await query('UPDATE users SET org_id = $1, department_id = $2, team_id = $3, manager_id = $4 WHERE id = $5',
+            [newOrgId, finalDeptId, finalTeamId, finalManagerId, Number(id)]);
+        logAction(req, 'update_assignment', 'user', Number(id), { org_id: newOrgId, department_id: finalDeptId, team_id: finalTeamId, manager_id: finalManagerId });
+        res.json({ message: `${target.full_name}'s assignment updated` });
+    } catch (err) {
+        console.error('Update assignment error:', err.message);
+        res.status(500).json({ error: 'Failed to update assignment' });
+    }
+});
 
-    res.json({ id: result.lastInsertRowid, message: `User ${username} created successfully` });
+router.put('/users/:id/deactivate', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const targetRes = await query('SELECT id, role, org_id, full_name, is_active FROM users WHERE id = $1', [Number(id)]);
+        const target = targetRes.rows[0];
+        if (!target) return res.status(404).json({ error: 'User not found' });
+        if (Number(id) === req.userId) return res.status(400).json({ error: 'Cannot deactivate yourself' });
+        if (req.userRole !== 'super_admin' && !canManageUser(req.userRole, target.role)) {
+            return res.status(403).json({ error: 'Cannot deactivate a user with equal or higher role' });
+        }
+        const newActive = !target.is_active;
+        await query('UPDATE users SET is_active = $1 WHERE id = $2', [newActive, Number(id)]);
+        const action = target.is_active ? 'deactivate' : 'reactivate';
+        logAction(req, action, 'user', Number(id), { name: target.full_name });
+        res.json({ message: `${target.full_name} has been ${action}d`, is_active: newActive });
+    } catch (err) {
+        console.error('Deactivate error:', err.message);
+        res.status(500).json({ error: 'Failed to update user' });
+    }
+});
+
+router.post('/users/:id/reset-password', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { new_password } = req.body;
+        if (!new_password || new_password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+        if (new_password.length > 72) return res.status(400).json({ error: 'Password must be 72 characters or less' });
+        const pwErr = validatePassword(new_password);
+        if (pwErr) return res.status(400).json({ error: pwErr });
+        const targetRes = await query('SELECT id, role, org_id, full_name FROM users WHERE id = $1', [Number(id)]);
+        const target = targetRes.rows[0];
+        if (!target) return res.status(404).json({ error: 'User not found' });
+        if (req.userRole !== 'super_admin' && !canManageUser(req.userRole, target.role)) {
+            return res.status(403).json({ error: 'Cannot reset password for a user with equal or higher role' });
+        }
+        const hash = await bcrypt.hash(new_password, 10);
+        await query('UPDATE users SET password = $1, token_version = COALESCE(token_version, 0) + 1, must_change_password = TRUE WHERE id = $2', [hash, Number(id)]);
+        logAction(req, 'admin_reset_password', 'user', Number(id), { name: target.full_name });
+        res.json({ message: `Password reset for ${target.full_name}. User will be required to change password on next login.` });
+    } catch (err) {
+        console.error('Reset password error:', err.message);
+        res.status(500).json({ error: 'Failed to reset password' });
+    }
+});
+
+router.delete('/users/:id', requireRole('super_admin'), async (req, res) => {
+    try {
+        const userId = Number(req.params.id);
+        const targetRes = await query('SELECT id, role, full_name, is_active FROM users WHERE id = $1', [userId]);
+        const target = targetRes.rows[0];
+        if (!target) return res.status(404).json({ error: 'User not found' });
+        if (userId === req.userId) return res.status(400).json({ error: 'Cannot delete yourself' });
+        if (target.role === 'super_admin') return res.status(400).json({ error: 'Cannot delete another super admin' });
+        await transaction(async (client) => {
+            await client.query('DELETE FROM time_entries WHERE user_id = $1', [userId]);
+            await client.query('DELETE FROM leaves WHERE user_id = $1', [userId]);
+            await client.query('DELETE FROM tasks WHERE user_id = $1', [userId]);
+            await client.query('DELETE FROM leave_balances WHERE user_id = $1', [userId]);
+            await client.query('DELETE FROM password_reset_tokens WHERE user_id = $1', [userId]);
+            await client.query('DELETE FROM approval_requests WHERE requester_id = $1', [userId]);
+            await client.query('UPDATE approval_requests SET approver_id = NULL WHERE approver_id = $1', [userId]);
+            await client.query('UPDATE departments SET head_id = NULL WHERE head_id = $1', [userId]);
+            await client.query('UPDATE teams SET lead_id = NULL WHERE lead_id = $1', [userId]);
+            await client.query('UPDATE users SET manager_id = NULL WHERE manager_id = $1', [userId]);
+            await client.query('UPDATE leaves SET approved_by = NULL WHERE approved_by = $1', [userId]);
+            await client.query('UPDATE time_entries SET approved_by = NULL WHERE approved_by = $1', [userId]);
+            await client.query('UPDATE audit_logs SET actor_id = NULL WHERE actor_id = $1', [userId]);
+            await client.query('DELETE FROM users WHERE id = $1', [userId]);
+        });
+        logAction(req, 'admin_delete', 'user', userId, { name: target.full_name });
+        res.json({ message: `User "${target.full_name}" has been permanently deleted` });
+    } catch (err) {
+        console.error('Delete user error:', err.message);
+        res.status(500).json({ error: 'Failed to delete user.' });
+    }
+});
+
+router.post('/users', async (req, res) => {
+    try {
+        const { username, password, full_name, email, role, org_id, department_id, team_id, manager_id } = req.body;
+        if (!username || !password || !full_name || !email) {
+            return res.status(400).json({ error: 'Username, password, full name and email are required' });
+        }
+        const pwErr = validatePassword(password);
+        if (pwErr) return res.status(400).json({ error: pwErr });
+        const usernameErr = validateUsername(username);
+        if (usernameErr) return res.status(400).json({ error: usernameErr });
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email' });
+        const existingRes = await query('SELECT id FROM users WHERE username = $1 OR email = $2', [username, email]);
+        if (existingRes.rows[0]) return res.status(400).json({ error: 'Username or email already taken' });
+        const assignRole = VALID_ROLES.includes(role) ? role : 'employee';
+        const hash = await bcrypt.hash(password, 10);
+        let assignOrgId = req.userOrgId;
+        if (req.userRole === 'super_admin' && org_id !== undefined) {
+            if (org_id) {
+                const orgRes = await query('SELECT id FROM organizations WHERE id = $1', [org_id]);
+                if (!orgRes.rows[0]) return res.status(400).json({ error: 'Organization not found' });
+            }
+            assignOrgId = org_id || null;
+        }
+        const result = await query(
+            'INSERT INTO users (username, password, full_name, email, role, org_id, department_id, team_id, manager_id, must_change_password) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE) RETURNING id',
+            [username, hash, full_name, email, assignRole, assignOrgId, department_id || null, team_id || null, manager_id || null]
+        );
+        logAction(req, 'admin_create', 'user', result.rows[0].id, { username, role: assignRole });
+        res.json({ id: result.rows[0].id, message: `User ${username} created successfully` });
+    } catch (err) {
+        console.error('Create user error:', err.message);
+        res.status(500).json({ error: 'Failed to create user' });
+    }
 });
 
 // ==================== AUDIT LOGS ====================
 
-router.get('/audit-logs', (req, res) => {
-    const { actor_id, entity_type, entity_id, action, from, to, limit, offset } = req.query;
-
-    const orgId = req.userRole === 'super_admin' ? (req.query.org_id || null) : req.userOrgId;
-
-    const result = queryLogs({
-        orgId,
-        actorId: actor_id ? Number(actor_id) : null,
-        entityType: entity_type || null,
-        entityId: entity_id ? Number(entity_id) : null,
-        action: action || null,
-        from: from || null,
-        to: to || null,
-        limit: Math.min(Number(limit) || 100, 500),
-        offset: Number(offset) || 0,
-    });
-
-    res.json(result);
+router.get('/audit-logs', async (req, res) => {
+    try {
+        const { actor_id, entity_type, entity_id, action, from, to, limit, offset } = req.query;
+        const orgId = req.userRole === 'super_admin' ? (req.query.org_id || null) : req.userOrgId;
+        const result = await queryLogs({
+            orgId,
+            actorId: actor_id ? Number(actor_id) : null,
+            entityType: entity_type || null,
+            entityId: entity_id ? Number(entity_id) : null,
+            action: action || null,
+            from: from || null,
+            to: to || null,
+            limit: Math.min(Number(limit) || 100, 500),
+            offset: Number(offset) || 0,
+        });
+        res.json(result);
+    } catch (err) {
+        console.error('Audit logs error:', err.message);
+        res.status(500).json({ error: 'Failed to fetch audit logs' });
+    }
 });
 
 // ==================== ORG DASHBOARD STATS ====================
 
-router.get('/stats', requireSameOrg, (req, res) => {
-    const orgId = req.userOrgId;
-
-    // If user has no org (e.g. super_admin not assigned), return zeroed stats
-    if (!orgId) {
-        return res.json({ totalUsers: 0, activeUsers: 0, departments: 0, teams: 0, pendingApprovals: 0, clockedInToday: 0 });
+router.get('/stats', requireSameOrg, async (req, res) => {
+    try {
+        const orgId = req.userOrgId;
+        if (!orgId) {
+            return res.json({ totalUsers: 0, activeUsers: 0, departments: 0, teams: 0, pendingApprovals: 0, clockedInToday: 0 });
+        }
+        const countsRes = await query(`
+            SELECT
+                (SELECT COUNT(*) FROM users WHERE org_id = $1) AS "totalUsers",
+                (SELECT COUNT(*) FROM users WHERE org_id = $1 AND is_active = TRUE) AS "activeUsers",
+                (SELECT COUNT(*) FROM departments WHERE org_id = $1) AS departments,
+                (SELECT COUNT(*) FROM teams WHERE org_id = $1) AS teams,
+                (SELECT COUNT(*) FROM approval_requests WHERE org_id = $1 AND status = 'pending') AS "pendingApprovals"
+        `, [orgId]);
+        const counts = countsRes.rows[0];
+        const today  = (() => {
+            const offsetMin = getOffsetMin(req);
+            const localNow  = new Date(Date.now() - offsetMin * 60000);
+            return `${localNow.getUTCFullYear()}-${String(localNow.getUTCMonth() + 1).padStart(2, '0')}-${String(localNow.getUTCDate()).padStart(2, '0')}`;
+        })();
+        const tzMod  = getTzModifier(req);
+        const clockedRes = await query(`
+            SELECT COUNT(DISTINCT user_id) as c
+            FROM time_entries
+            WHERE user_id IN (SELECT id FROM users WHERE org_id = $1)
+              AND (timestamp + $2::interval)::date = $3::date
+              AND entry_type = 'clock_in'
+        `, [orgId, tzMod, today]);
+        res.json({
+            totalUsers:       parseInt(counts.totalUsers,       10),
+            activeUsers:      parseInt(counts.activeUsers,      10),
+            departments:      parseInt(counts.departments,      10),
+            teams:            parseInt(counts.teams,            10),
+            pendingApprovals: parseInt(counts.pendingApprovals, 10),
+            clockedInToday:   parseInt(clockedRes.rows[0].c,   10),
+        });
+    } catch (err) {
+        console.error('Stats error:', err.message);
+        res.status(500).json({ error: 'Failed to fetch stats' });
     }
-
-    const counts = db.prepare(`
-        SELECT
-            (SELECT COUNT(*) FROM users WHERE org_id = ?) AS totalUsers,
-            (SELECT COUNT(*) FROM users WHERE org_id = ? AND is_active = 1) AS activeUsers,
-            (SELECT COUNT(*) FROM departments WHERE org_id = ?) AS departments,
-            (SELECT COUNT(*) FROM teams WHERE org_id = ?) AS teams,
-            (SELECT COUNT(*) FROM approval_requests WHERE org_id = ? AND status = 'pending') AS pendingApprovals
-    `).get(orgId, orgId, orgId, orgId, orgId);
-
-    // Today's attendance (use client timezone)
-    const offsetMin = getOffsetMin(req);
-    const localNow = new Date(Date.now() - offsetMin * 60000);
-    const today = `${localNow.getUTCFullYear()}-${String(localNow.getUTCMonth() + 1).padStart(2, '0')}-${String(localNow.getUTCDate()).padStart(2, '0')}`;
-    const tzMod = getTzModifier(req);
-    const clockedInToday = db.prepare(`
-        SELECT COUNT(DISTINCT user_id) as c
-        FROM time_entries
-        WHERE user_id IN (SELECT id FROM users WHERE org_id = ?)
-          AND date(timestamp, ?) = date(?)
-          AND entry_type = 'clock_in'
-    `).get(orgId, tzMod, today).c;
-
-    res.json({ ...counts, clockedInToday });
 });
 
 // ============= REGISTRATION SETTINGS =============
 
-// Get current registration mode
-router.get('/registration-settings', (req, res) => {
-    const row = db.prepare("SELECT value FROM app_settings WHERE key = 'registration_mode'").get();
-    res.json({ mode: row?.value || 'open' });
+router.get('/registration-settings', async (req, res) => {
+    try {
+        const res2 = await query("SELECT value FROM app_settings WHERE key = 'registration_mode'");
+        res.json({ mode: res2.rows[0]?.value || 'open' });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to get registration settings' });
+    }
 });
 
-// Update registration mode
-router.put('/registration-settings', (req, res) => {
-    const { mode } = req.body;
-    if (!['open', 'invite_only', 'closed'].includes(mode)) {
-        return res.status(400).json({ error: 'Mode must be open, invite_only, or closed' });
+router.put('/registration-settings', async (req, res) => {
+    try {
+        const { mode } = req.body;
+        if (!['open', 'invite_only', 'closed'].includes(mode)) {
+            return res.status(400).json({ error: 'Mode must be open, invite_only, or closed' });
+        }
+        await query(
+            "INSERT INTO app_settings (key, value) VALUES ('registration_mode', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
+            [mode]
+        );
+        res.json({ mode, message: 'Registration mode updated' });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update registration settings' });
     }
-    const existing = db.prepare("SELECT 1 FROM app_settings WHERE key = 'registration_mode'").get();
-    if (existing) {
-        db.prepare("UPDATE app_settings SET value = ? WHERE key = 'registration_mode'").run(mode);
-    } else {
-        db.prepare("INSERT INTO app_settings (key, value) VALUES ('registration_mode', ?)").run(mode);
-    }
-    res.json({ mode, message: 'Registration mode updated' });
 });
 
-// List invite codes
-router.get('/invite-codes', (req, res) => {
-    const orgId = req.userOrgId;
-    let codes;
-    if (orgId) {
-        codes = db.prepare(`
-            SELECT ic.*, u.full_name as created_by_name
-            FROM invite_codes ic
-            LEFT JOIN users u ON u.id = ic.created_by
-            WHERE ic.org_id = ? OR ic.org_id IS NULL
-            ORDER BY ic.id DESC
-        `).all(orgId);
-    } else {
-        // Super admin without an org — show all codes
-        codes = db.prepare(`
-            SELECT ic.*, u.full_name as created_by_name
-            FROM invite_codes ic
-            LEFT JOIN users u ON u.id = ic.created_by
-            ORDER BY ic.id DESC
-        `).all();
+// LIST INVITE CODES
+router.get('/invite-codes', async (req, res) => {
+    try {
+        const orgId = req.userOrgId;
+        let codesRes;
+        if (orgId) {
+            codesRes = await query(`
+                SELECT ic.*, u.full_name as created_by_name
+                FROM invite_codes ic LEFT JOIN users u ON u.id = ic.created_by
+                WHERE ic.org_id = $1 OR ic.org_id IS NULL ORDER BY ic.id DESC
+            `, [orgId]);
+        } else {
+            codesRes = await query(`
+                SELECT ic.*, u.full_name as created_by_name
+                FROM invite_codes ic LEFT JOIN users u ON u.id = ic.created_by
+                ORDER BY ic.id DESC
+            `);
+        }
+        res.json(codesRes.rows);
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to list invite codes' });
     }
-    res.json(codes);
 });
 
-// Create invite code
-router.post('/invite-codes', (req, res) => {
-    const { role, max_uses, expires_days } = req.body;
-    const validRoles = ['employee', 'team_lead', 'manager', 'hr_admin'];
-    if (role && !validRoles.includes(role)) {
-        return res.status(400).json({ error: 'Invalid role for invite' });
+router.post('/invite-codes', async (req, res) => {
+    try {
+        const { role, max_uses, expires_days } = req.body;
+        const validRoles = ['employee', 'team_lead', 'manager', 'hr_admin'];
+        if (role && !validRoles.includes(role)) {
+            return res.status(400).json({ error: 'Invalid role for invite' });
+        }
+        const code = require('crypto').randomBytes(6).toString('hex').toUpperCase();
+        const expiresAt = expires_days ? new Date(Date.now() + expires_days * 86400000).toISOString() : null;
+        await query(
+            'INSERT INTO invite_codes (code, created_by, org_id, role, max_uses, expires_at) VALUES ($1,$2,$3,$4,$5,$6)',
+            [code, req.userId, req.userOrgId || null, role || 'employee', max_uses || 0, expiresAt]
+        );
+        res.json({ code, message: 'Invite code created' });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to create invite code' });
     }
-    const code = require('crypto').randomBytes(6).toString('hex').toUpperCase();
-    const expiresAt = expires_days ? new Date(Date.now() + expires_days * 86400000).toISOString() : null;
-    db.prepare(`
-        INSERT INTO invite_codes (code, created_by, org_id, role, max_uses, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-    `).run(code, req.userId, req.userOrgId || null, role || 'employee', max_uses || 0, expiresAt);
-    res.json({ code, message: 'Invite code created' });
 });
 
-// Deactivate invite code
-router.delete('/invite-codes/:id', (req, res) => {
-    // Scope to own org (or org-less codes for super_admin)
-    const code = db.prepare('SELECT id, org_id FROM invite_codes WHERE id = ?').get(Number(req.params.id));
-    if (!code) return res.status(404).json({ error: 'Invite code not found' });
-    if (req.userRole !== 'super_admin' && code.org_id !== req.userOrgId) {
-        return res.status(403).json({ error: 'Cannot deactivate invite codes from another organization' });
+router.delete('/invite-codes/:id', async (req, res) => {
+    try {
+        const codeRes = await query('SELECT id, org_id FROM invite_codes WHERE id = $1', [Number(req.params.id)]);
+        const code = codeRes.rows[0];
+        if (!code) return res.status(404).json({ error: 'Invite code not found' });
+        if (req.userRole !== 'super_admin' && code.org_id !== req.userOrgId) {
+            return res.status(403).json({ error: 'Cannot deactivate invite codes from another organization' });
+        }
+        await query('UPDATE invite_codes SET is_active = FALSE WHERE id = $1', [Number(req.params.id)]);
+        res.json({ message: 'Invite code deactivated' });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to deactivate invite code' });
     }
-    db.prepare('UPDATE invite_codes SET is_active = 0 WHERE id = ?').run(Number(req.params.id));
-    res.json({ message: 'Invite code deactivated' });
 });
 
-// ─── Task Label Management ──────────────────────────────────────────────
+// ─── Task Label Management ───────────────────────────────────────────────
 
-// Get all task labels for current org
-router.get('/task-labels', (req, res) => {
+router.get('/task-labels', async (req, res) => {
     try {
         if (!req.userOrgId) return res.json([]);
-        const labels = db.prepare(
-            'SELECT tl.*, u.username as created_by_username FROM task_labels tl LEFT JOIN users u ON u.id = tl.created_by WHERE tl.org_id = ? ORDER BY tl.name ASC'
-        ).all(req.userOrgId);
-        res.json(labels);
+        const result = await query(
+            'SELECT tl.*, u.username as created_by_username FROM task_labels tl LEFT JOIN users u ON u.id = tl.created_by WHERE tl.org_id = $1 ORDER BY tl.name ASC',
+            [req.userOrgId]
+        );
+        res.json(result.rows);
     } catch (err) {
-        console.error('Error fetching task labels:', err.message);
+        console.error('Fetch labels error:', err.message);
         res.status(500).json({ error: 'Failed to fetch labels' });
     }
 });
 
-// Create task label
-router.post('/task-labels', (req, res) => {
+router.post('/task-labels', async (req, res) => {
     try {
         if (!req.userOrgId) return res.status(400).json({ error: 'Organization required' });
         const { name, color } = req.body;
         if (!name || !name.trim()) return res.status(400).json({ error: 'Label name is required' });
         if (name.trim().length > 30) return res.status(400).json({ error: 'Label name must be 30 characters or less' });
-
-        // Check no duplicate name in org
-        const existing = db.prepare('SELECT id FROM task_labels WHERE org_id = ? AND LOWER(name) = LOWER(?)').get(req.userOrgId, name.trim());
-        if (existing) return res.status(409).json({ error: 'A label with this name already exists' });
-
+        const existingRes = await query('SELECT id FROM task_labels WHERE org_id = $1 AND LOWER(name) = LOWER($2)', [req.userOrgId, name.trim()]);
+        if (existingRes.rows[0]) return res.status(409).json({ error: 'A label with this name already exists' });
         const validColor = /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#6366f1';
-        const result = db.prepare(
-            'INSERT INTO task_labels (org_id, name, color, created_by) VALUES (?, ?, ?, ?)'
-        ).run(req.userOrgId, name.trim(), validColor, req.userId);
-
-        const label = db.prepare('SELECT * FROM task_labels WHERE id = ?').get(result.lastInsertRowid);
-        logAction(req.userId, 'task_label_created', { label_id: label.id, name: label.name });
+        const result = await query(
+            'INSERT INTO task_labels (org_id, name, color, created_by) VALUES ($1,$2,$3,$4) RETURNING *',
+            [req.userOrgId, name.trim(), validColor, req.userId]
+        );
+        const label = result.rows[0];
+        logAction(req, 'create', 'task_label', label.id, { name: label.name });
         res.json(label);
     } catch (err) {
-        console.error('Error creating task label:', err.message);
+        console.error('Create label error:', err.message);
         res.status(500).json({ error: 'Failed to create label' });
     }
 });
 
-// Update task label
-router.put('/task-labels/:id', (req, res) => {
+router.put('/task-labels/:id', async (req, res) => {
     try {
-        const label = db.prepare('SELECT * FROM task_labels WHERE id = ?').get(Number(req.params.id));
+        const labelRes = await query('SELECT * FROM task_labels WHERE id = $1', [Number(req.params.id)]);
+        const label = labelRes.rows[0];
         if (!label) return res.status(404).json({ error: 'Label not found' });
         if (req.userRole !== 'super_admin' && label.org_id !== req.userOrgId) {
             return res.status(403).json({ error: 'Cannot edit labels from another organization' });
         }
-
         const { name, color } = req.body;
         const newName = name?.trim() || label.name;
         if (newName.length > 30) return res.status(400).json({ error: 'Label name must be 30 characters or less' });
-
-        // Check no duplicate name if changed
         if (newName.toLowerCase() !== label.name.toLowerCase()) {
-            const existing = db.prepare('SELECT id FROM task_labels WHERE org_id = ? AND LOWER(name) = LOWER(?) AND id != ?')
-                .get(label.org_id, newName, label.id);
-            if (existing) return res.status(409).json({ error: 'A label with this name already exists' });
+            const existingRes = await query('SELECT id FROM task_labels WHERE org_id = $1 AND LOWER(name) = LOWER($2) AND id != $3', [label.org_id, newName, label.id]);
+            if (existingRes.rows[0]) return res.status(409).json({ error: 'A label with this name already exists' });
         }
-
         const newColor = /^#[0-9a-fA-F]{6}$/.test(color) ? color : label.color;
-        db.prepare('UPDATE task_labels SET name = ?, color = ? WHERE id = ?').run(newName, newColor, label.id);
-
-        const updated = db.prepare('SELECT * FROM task_labels WHERE id = ?').get(label.id);
-        logAction(req.userId, 'task_label_updated', { label_id: label.id, name: newName });
-        res.json(updated);
+        await query('UPDATE task_labels SET name = $1, color = $2 WHERE id = $3', [newName, newColor, label.id]);
+        const updated = await query('SELECT * FROM task_labels WHERE id = $1', [label.id]);
+        logAction(req, 'update', 'task_label', label.id, { name: newName });
+        res.json(updated.rows[0]);
     } catch (err) {
-        console.error('Error updating task label:', err.message);
+        console.error('Update label error:', err.message);
         res.status(500).json({ error: 'Failed to update label' });
     }
 });
 
-// Delete task label
-router.delete('/task-labels/:id', (req, res) => {
+router.delete('/task-labels/:id', async (req, res) => {
     try {
-        const label = db.prepare('SELECT * FROM task_labels WHERE id = ?').get(Number(req.params.id));
+        const labelRes = await query('SELECT * FROM task_labels WHERE id = $1', [Number(req.params.id)]);
+        const label = labelRes.rows[0];
         if (!label) return res.status(404).json({ error: 'Label not found' });
         if (req.userRole !== 'super_admin' && label.org_id !== req.userOrgId) {
             return res.status(403).json({ error: 'Cannot delete labels from another organization' });
         }
-
-        // Remove label mappings first, then label
-        db.prepare('DELETE FROM task_label_map WHERE label_id = ?').run(label.id);
-        db.prepare('DELETE FROM task_labels WHERE id = ?').run(label.id);
-
-        logAction(req.userId, 'task_label_deleted', { label_id: label.id, name: label.name });
+        await query('DELETE FROM task_label_map WHERE label_id = $1', [label.id]);
+        await query('DELETE FROM task_labels WHERE id = $1', [label.id]);
+        logAction(req, 'delete', 'task_label', label.id, { name: label.name });
         res.json({ message: 'Label deleted' });
     } catch (err) {
-        console.error('Error deleting task label:', err.message);
+        console.error('Delete label error:', err.message);
         res.status(500).json({ error: 'Failed to delete label' });
     }
 });

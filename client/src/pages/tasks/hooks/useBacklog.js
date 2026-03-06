@@ -79,17 +79,18 @@ export function useBacklog({ activeTab, backlogOpen, date, backlogFilters, selec
     }
   };
 
-  const handleScheduleTask = (taskId, taskTitle, closeAfter) => {
-    if (!scheduleDate) return;
+  const handleScheduleTask = (taskId, taskTitle, closeAfter, overrideDate) => {
+    const dateToUse = overrideDate || scheduleDate;
+    if (!dateToUse) return;
     showConfirm(
-      'Schedule Task', `Schedule "${taskTitle || 'this task'}" to ${scheduleDate}?`,
+      'Schedule Task', `Schedule "${taskTitle || 'this task'}" to ${dateToUse}?`,
       async () => {
         closeConfirm();
         try {
-          await scheduleTask(taskId, scheduleDate);
+          await scheduleTask(taskId, dateToUse);
           setScheduleTaskId(null);
           fetchBacklog();
-          if (scheduleDate === date) fetchTasks();
+          if (dateToUse === date) fetchTasks();
           if (closeAfter) closeAfter();
         } catch { setError('Failed to schedule task'); }
       },

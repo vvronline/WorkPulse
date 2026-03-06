@@ -1,5 +1,5 @@
-const express = require('express');
-const db = require('../db');
+﻿const express = require('express');
+const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext } = require('../middleware/rbac');
 const { getLocalToday } = require('../utils/timezone');
@@ -7,22 +7,24 @@ const { getLocalToday } = require('../utils/timezone');
 const router = express.Router();
 
 // Helper: record task history
-function logHistory(taskId, userId, action, field, oldValue, newValue) {
-    db.prepare(
-        'INSERT INTO task_history (task_id, user_id, action, field, old_value, new_value) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(taskId, userId, action, field || null, oldValue != null ? String(oldValue) : null, newValue != null ? String(newValue) : null);
+async function logHistory(taskId, userId, action, field, oldValue, newValue, client) {
+    const q = client ? client.query.bind(client) : query;
+    await q(
+        'INSERT INTO task_history (task_id, user_id, action, field, old_value, new_value) VALUES ($1, $2, $3, $4, $5, $6)',
+        [taskId, userId, action, field || null, oldValue != null ? String(oldValue) : null, newValue != null ? String(newValue) : null]
+    );
 }
 
 // Helper: get labels for a set of task IDs
-function getLabelsForTasks(taskIds) {
+async function getLabelsForTasks(taskIds) {
     if (!taskIds.length) return {};
-    const placeholders = taskIds.map(() => '?').join(',');
-    const rows = db.prepare(`
-        SELECT tlm.task_id, tl.id, tl.name, tl.color
-        FROM task_label_map tlm
-        JOIN task_labels tl ON tl.id = tlm.label_id
-        WHERE tlm.task_id IN (${placeholders})
-    `).all(...taskIds);
+    const rows = (await query(
+        `SELECT tlm.task_id, tl.id, tl.name, tl.color
+         FROM task_label_map tlm
+         JOIN task_labels tl ON tl.id = tlm.label_id
+         WHERE tlm.task_id = ANY($1)`,
+        [taskIds]
+    )).rows;
     const map = {};
     for (const r of rows) {
         if (!map[r.task_id]) map[r.task_id] = [];
@@ -32,49 +34,44 @@ function getLabelsForTasks(taskIds) {
 }
 
 // Helper: get comment counts for a set of task IDs
-function getCommentCounts(taskIds) {
+async function getCommentCounts(taskIds) {
     if (!taskIds.length) return {};
-    const placeholders = taskIds.map(() => '?').join(',');
-    const rows = db.prepare(`
-        SELECT task_id, COUNT(*) as count FROM task_comments
-        WHERE task_id IN (${placeholders})
-        GROUP BY task_id
-    `).all(...taskIds);
+    const rows = (await query(
+        `SELECT task_id, COUNT(*) as count FROM task_comments
+         WHERE task_id = ANY($1)
+         GROUP BY task_id`,
+        [taskIds]
+    )).rows;
     const map = {};
-    for (const r of rows) map[r.task_id] = r.count;
+    for (const r of rows) map[r.task_id] = parseInt(r.count, 10);
     return map;
 }
 
 // Helper: enrich tasks with assignee info, labels, comment counts
-function enrichTasks(tasks) {
+async function enrichTasks(tasks) {
+    if (!tasks.length) return [];
     const taskIds = tasks.map(t => t.id);
-    const labelsMap = getLabelsForTasks(taskIds);
-    const commentMap = getCommentCounts(taskIds);
+    const labelsMap = await getLabelsForTasks(taskIds);
+    const commentMap = await getCommentCounts(taskIds);
 
-    // Get assignee names
     const assigneeIds = [...new Set(tasks.map(t => t.assigned_to).filter(Boolean))];
     const assigneeMap = {};
     if (assigneeIds.length) {
-        const ph = assigneeIds.map(() => '?').join(',');
-        const users = db.prepare(`SELECT id, username, full_name, avatar FROM users WHERE id IN (${ph})`).all(...assigneeIds);
+        const users = (await query('SELECT id, username, full_name, avatar FROM users WHERE id = ANY($1)', [assigneeIds])).rows;
         for (const u of users) assigneeMap[u.id] = { username: u.username, full_name: u.full_name, avatar: u.avatar };
     }
 
-    // Get creator names (for tasks assigned to others)
     const creatorIds = [...new Set(tasks.map(t => t.user_id))];
     const creatorMap = {};
     if (creatorIds.length) {
-        const ph = creatorIds.map(() => '?').join(',');
-        const users = db.prepare(`SELECT id, username, full_name FROM users WHERE id IN (${ph})`).all(...creatorIds);
+        const users = (await query('SELECT id, username, full_name FROM users WHERE id = ANY($1)', [creatorIds])).rows;
         for (const u of users) creatorMap[u.id] = { username: u.username, full_name: u.full_name };
     }
 
-    // Get sprint information
     const sprintIds = [...new Set(tasks.map(t => t.sprint_id).filter(Boolean))];
     const sprintMap = {};
     if (sprintIds.length) {
-        const ph = sprintIds.map(() => '?').join(',');
-        const sprints = db.prepare(`SELECT id, name, status, start_date, end_date FROM sprints WHERE id IN (${ph})`).all(...sprintIds);
+        const sprints = (await query('SELECT id, name, status, start_date, end_date FROM sprints WHERE id = ANY($1)', [sprintIds])).rows;
         for (const s of sprints) sprintMap[s.id] = s;
     }
 
@@ -89,120 +86,118 @@ function enrichTasks(tasks) {
 }
 
 // Helper: check if user can access task (creator, assignee, or same team)
-function canAccessTask(task, userId) {
+async function canAccessTask(task, userId) {
     if (!task) return false;
     if (task.user_id === userId || task.assigned_to === userId) return true;
-    // Allow access if both users belong to the same team
-    const user = db.prepare('SELECT team_id FROM users WHERE id = ?').get(userId);
-    const owner = db.prepare('SELECT team_id FROM users WHERE id = ?').get(task.user_id);
+    const userRes = await query('SELECT team_id FROM users WHERE id = $1', [userId]);
+    const ownerRes = await query('SELECT team_id FROM users WHERE id = $1', [task.user_id]);
+    const user = userRes.rows[0];
+    const owner = ownerRes.rows[0];
     return user?.team_id && owner?.team_id && user.team_id === owner.team_id;
 }
 
 // Helper: sync labels for a task
-function syncLabels(taskId, labelIds) {
+async function syncLabels(taskId, labelIds) {
     if (!labelIds || !Array.isArray(labelIds)) return;
-    db.prepare('DELETE FROM task_label_map WHERE task_id = ?').run(taskId);
-    const insert = db.prepare('INSERT OR IGNORE INTO task_label_map (task_id, label_id) VALUES (?, ?)');
+    await query('DELETE FROM task_label_map WHERE task_id = $1', [taskId]);
     for (const lid of labelIds) {
-        insert.run(taskId, lid);
+        await query('INSERT INTO task_label_map (task_id, label_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [taskId, lid]);
     }
 }
 
-// ─── Get tasks for a specific date or date range ────────────────────────
-router.get('/', auth, loadUserContext, (req, res) => {
+// ─── Get tasks for a specific date or date range ─────────────────────────
+router.get('/', auth, loadUserContext, async (req, res) => {
     try {
         const { date, start_date, end_date, sprint_id, scope, include_due, assignee, label, priority, status, search } = req.query;
 
-        // Build dynamic WHERE
         const conditions = [];
         const params = [];
+        let pi = 1;
 
-        // Sprint mode: filter by sprint_id only — no date overlap
         if (sprint_id) {
-            conditions.push('t.sprint_id = ?');
+            conditions.push(`t.sprint_id = $${pi++}`);
             params.push(parseInt(sprint_id, 10));
         } else if (start_date && end_date) {
-            // Date range mode
-            conditions.push('t.date >= ? AND t.date <= ?');
+            conditions.push(`t.date >= $${pi++} AND t.date <= $${pi++}`);
             params.push(start_date, end_date);
         } else if (date) {
             if (include_due === '1') {
-                // My Day: only no-sprint tasks — dated today OR due today
-                conditions.push('(t.sprint_id IS NULL AND (t.date = ? OR t.due_date = ?))');
-                params.push(date, date);
+                conditions.push(`(t.sprint_id IS NULL AND t.date IS NOT NULL AND (t.date = $${pi} OR t.due_date = $${pi}))`);
+                params.push(date);
+                pi++;
             } else {
-                // Single date mode
-                conditions.push('t.date = ?');
+                conditions.push(`t.date = $${pi++}`);
                 params.push(date);
             }
         } else {
-            // Default to today
             const targetDate = getLocalToday(req);
-            conditions.push('t.date = ?');
+            conditions.push(`t.date = $${pi++}`);
             params.push(targetDate);
         }
 
-        // Scope filtering: 'personal' shows only user's own tasks
         if (scope === 'personal') {
-            conditions.push('(t.user_id = ? OR t.assigned_to = ?)');
-            params.push(req.userId, req.userId);
+            conditions.push(`(t.user_id = $${pi} OR t.assigned_to = $${pi})`);
+            params.push(req.userId);
+            pi++;
         } else {
-            // Show tasks visible to user (created by, assigned to, or same team)
             if (req.userTeamId) {
-                conditions.push('(t.user_id = ? OR t.assigned_to = ? OR t.user_id IN (SELECT id FROM users WHERE team_id = ?))');
-                params.push(req.userId, req.userId, req.userTeamId);
+                conditions.push(`(t.user_id = $${pi} OR t.assigned_to = $${pi} OR t.user_id IN (SELECT id FROM users WHERE team_id = $${pi + 1}))`);
+                params.push(req.userId, req.userTeamId);
+                pi += 2;
             } else {
-                conditions.push('(t.user_id = ? OR t.assigned_to = ?)');
-                params.push(req.userId, req.userId);
+                conditions.push(`(t.user_id = $${pi} OR t.assigned_to = $${pi})`);
+                params.push(req.userId);
+                pi++;
             }
         }
 
         if (assignee) {
             if (assignee === 'me') {
-                conditions.push('(t.user_id = ? OR t.assigned_to = ?)');
-                params.push(req.userId, req.userId);
+                conditions.push(`(t.user_id = $${pi} OR t.assigned_to = $${pi})`);
+                params.push(req.userId);
+                pi++;
             } else {
                 const assigneeId = parseInt(assignee, 10);
-                conditions.push('(t.assigned_to = ? OR (t.user_id = ? AND t.assigned_to IS NULL))');
-                params.push(assigneeId, assigneeId);
+                conditions.push(`(t.assigned_to = $${pi} OR (t.user_id = $${pi} AND t.assigned_to IS NULL))`);
+                params.push(assigneeId);
+                pi++;
             }
         }
 
         if (priority && ['low', 'medium', 'high'].includes(priority)) {
-            conditions.push('t.priority = ?');
+            conditions.push(`t.priority = $${pi++}`);
             params.push(priority);
         }
 
         if (status && ['pending', 'in_progress', 'in_review', 'done'].includes(status)) {
-            conditions.push('t.status = ?');
+            conditions.push(`t.status = $${pi++}`);
             params.push(status);
         }
 
         if (search && search.trim()) {
-            conditions.push('(t.title LIKE ? OR t.description LIKE ?)');
-            const term = `%${search.trim()}%`;
-            params.push(term, term);
+            conditions.push(`(t.title ILIKE $${pi} OR t.description ILIKE $${pi})`);
+            params.push(`%${search.trim()}%`);
+            pi++;
         }
 
-        let tasks = db.prepare(`
+        let tasks = (await query(`
             SELECT t.* FROM tasks t
             WHERE ${conditions.join(' AND ')}
             ORDER BY
                 CASE t.priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END,
                 CASE t.status WHEN 'in_progress' THEN 1 WHEN 'in_review' THEN 2 WHEN 'pending' THEN 3 WHEN 'done' THEN 4 END,
                 t.created_at ASC
-        `).all(...params);
+        `, params)).rows;
 
-        // Filter by label if requested (post-query since it's a join table)
         if (label) {
             const labelId = parseInt(label, 10);
             const taskIdsWithLabel = new Set(
-                db.prepare('SELECT task_id FROM task_label_map WHERE label_id = ?').all(labelId).map(r => r.task_id)
+                (await query('SELECT task_id FROM task_label_map WHERE label_id = $1', [labelId])).rows.map(r => r.task_id)
             );
             tasks = tasks.filter(t => taskIdsWithLabel.has(t.id));
         }
 
-        const enriched = enrichTasks(tasks);
+        const enriched = await enrichTasks(tasks);
         const total = enriched.length;
         const done = enriched.filter(t => t.status === 'done').length;
         const inProgress = enriched.filter(t => t.status === 'in_progress').length;
@@ -214,74 +209,53 @@ router.get('/', auth, loadUserContext, (req, res) => {
     }
 });
 
-// ─── Add a task ─────────────────────────────────────────────────────────
-router.post('/', auth, loadUserContext, (req, res) => {
+// ─── Add a task ──────────────────────────────────────────────────────────
+router.post('/', auth, loadUserContext, async (req, res) => {
     try {
         const { title, description, priority, date, assigned_to, due_date, label_ids, sprint_id } = req.body;
 
-        if (!title || !title.trim()) {
-            return res.status(400).json({ error: 'Task title is required' });
-        }
-        if (title.trim().length > 200) {
-            return res.status(400).json({ error: 'Task title must be 200 characters or less' });
-        }
-        if (description && description.length > 5000) {
-            return res.status(400).json({ error: 'Task description must be 5000 characters or less' });
-        }
+        if (!title || !title.trim()) return res.status(400).json({ error: 'Task title is required' });
+        if (title.trim().length > 200) return res.status(400).json({ error: 'Task title must be 200 characters or less' });
+        if (description && description.length > 5000) return res.status(400).json({ error: 'Task description must be 5000 characters or less' });
 
         const targetDate = date || getLocalToday(req);
         const validPriority = ['low', 'medium', 'high'].includes(priority) ? priority : 'medium';
 
-        // Validate assigned_to user exists and is in same org
         let assignedTo = null;
         if (assigned_to) {
-            const targetUser = db.prepare('SELECT id, org_id, is_active FROM users WHERE id = ?').get(assigned_to);
-            if (!targetUser || !targetUser.is_active) {
-                return res.status(400).json({ error: 'Assigned user not found or inactive' });
-            }
-            // Check same org (if both have orgs)
+            const targetUser = (await query('SELECT id, org_id, is_active FROM users WHERE id = $1', [assigned_to])).rows[0];
+            if (!targetUser || !targetUser.is_active) return res.status(400).json({ error: 'Assigned user not found or inactive' });
             if (req.userOrgId && targetUser.org_id && req.userOrgId !== targetUser.org_id) {
                 return res.status(400).json({ error: 'Cannot assign tasks to users in a different organization' });
             }
             assignedTo = assigned_to;
         }
 
-        // Validate due_date format
         let validDueDate = null;
-        if (due_date && /^\d{4}-\d{2}-\d{2}$/.test(due_date)) {
-            validDueDate = due_date;
-        }
+        if (due_date && /^\d{4}-\d{2}-\d{2}$/.test(due_date)) validDueDate = due_date;
 
-        // Handle sprint_id assignment with auto due-date
         let validSprintId = null;
         if (sprint_id) {
-            const sprint = db.prepare('SELECT id, team_id, end_date FROM sprints WHERE id = ?').get(sprint_id);
+            const sprint = (await query('SELECT id, team_id, end_date FROM sprints WHERE id = $1', [sprint_id])).rows[0];
             if (sprint && sprint.team_id === req.userTeamId) {
                 validSprintId = sprint.id;
-                // Auto-set due date to sprint end date if not explicitly provided
-                if (!validDueDate) {
-                    validDueDate = sprint.end_date;
-                }
+                if (!validDueDate) validDueDate = sprint.end_date;
             } else {
                 return res.status(400).json({ error: 'Invalid sprint or sprint does not belong to your team' });
             }
         }
 
-        const result = db.prepare(
-            'INSERT INTO tasks (user_id, date, title, description, priority, assigned_to, due_date, sprint_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-        ).run(req.userId, targetDate, title.trim(), description?.trim() || null, validPriority, assignedTo, validDueDate, validSprintId);
+        const result = await query(
+            'INSERT INTO tasks (user_id, date, title, description, priority, assigned_to, due_date, sprint_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
+            [req.userId, targetDate, title.trim(), description?.trim() || null, validPriority, assignedTo, validDueDate, validSprintId]
+        );
+        const taskId = result.rows[0].id;
 
-        const taskId = result.lastInsertRowid;
+        if (label_ids && Array.isArray(label_ids) && label_ids.length > 0) await syncLabels(taskId, label_ids);
+        await logHistory(taskId, req.userId, 'created', null, null, null);
 
-        // Sync labels
-        if (label_ids && Array.isArray(label_ids) && label_ids.length > 0) {
-            syncLabels(taskId, label_ids);
-        }
-
-        logHistory(taskId, req.userId, 'created', null, null, null);
-
-        const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
-        const enriched = enrichTasks([task]);
+        const task = (await query('SELECT * FROM tasks WHERE id = $1', [taskId])).rows[0];
+        const enriched = await enrichTasks([task]);
         res.json(enriched[0]);
     } catch (err) {
         console.error('Error creating task:', err.message);
@@ -289,8 +263,8 @@ router.post('/', auth, loadUserContext, (req, res) => {
     }
 });
 
-// ─── Update task status ─────────────────────────────────────────────────
-router.patch('/:id/status', auth, (req, res) => {
+// ─── Update task status ──────────────────────────────────────────────────
+router.patch('/:id/status', auth, async (req, res) => {
     try {
         const { id } = req.params;
         const { status } = req.body;
@@ -299,18 +273,16 @@ router.patch('/:id/status', auth, (req, res) => {
             return res.status(400).json({ error: 'Invalid status' });
         }
 
-        const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-        if (!canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
+        const task = (await query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
+        if (!await canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
 
         const completedAt = status === 'done' ? new Date().toISOString() : null;
-        db.prepare('UPDATE tasks SET status = ?, completed_at = ? WHERE id = ?').run(status, completedAt, id);
+        await query('UPDATE tasks SET status = $1, completed_at = $2 WHERE id = $3', [status, completedAt, id]);
 
-        if (task.status !== status) {
-            logHistory(id, req.userId, 'status_change', 'status', task.status, status);
-        }
+        if (task.status !== status) await logHistory(id, req.userId, 'status_change', 'status', task.status, status);
 
-        const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-        const enriched = enrichTasks([updated]);
+        const updated = (await query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
+        const enriched = await enrichTasks([updated]);
         res.json(enriched[0]);
     } catch (err) {
         console.error('Error updating task status:', err.message);
@@ -318,29 +290,26 @@ router.patch('/:id/status', auth, (req, res) => {
     }
 });
 
-// ─── Update task details ────────────────────────────────────────────────
-router.put('/:id', auth, loadUserContext, (req, res) => {
+// ─── Update task details ─────────────────────────────────────────────────
+router.put('/:id', auth, loadUserContext, async (req, res) => {
     try {
         const { id } = req.params;
         const { title, description, priority, assigned_to, due_date, label_ids, sprint_id } = req.body;
 
-        const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-        if (!canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
+        const task = (await query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
+        if (!await canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
 
         const newTitle = title?.trim() || task.title;
         const newDesc = description !== undefined ? (description?.trim() || null) : task.description;
         const newPriority = ['low', 'medium', 'high'].includes(priority) ? priority : task.priority;
 
-        // Handle assigned_to update
         let newAssignedTo = task.assigned_to;
         if (assigned_to !== undefined) {
             if (assigned_to === null || assigned_to === '') {
                 newAssignedTo = null;
             } else {
-                const targetUser = db.prepare('SELECT id, org_id, is_active FROM users WHERE id = ?').get(assigned_to);
-                if (!targetUser || !targetUser.is_active) {
-                    return res.status(400).json({ error: 'Assigned user not found or inactive' });
-                }
+                const targetUser = (await query('SELECT id, org_id, is_active FROM users WHERE id = $1', [assigned_to])).rows[0];
+                if (!targetUser || !targetUser.is_active) return res.status(400).json({ error: 'Assigned user not found or inactive' });
                 if (req.userOrgId && targetUser.org_id && req.userOrgId !== targetUser.org_id) {
                     return res.status(400).json({ error: 'Cannot assign tasks to users in a different organization' });
                 }
@@ -348,22 +317,19 @@ router.put('/:id', auth, loadUserContext, (req, res) => {
             }
         }
 
-        // Handle due_date update
         let newDueDate = task.due_date;
         if (due_date !== undefined) {
             newDueDate = (due_date && /^\d{4}-\d{2}-\d{2}$/.test(due_date)) ? due_date : null;
         }
 
-        // Handle sprint_id update
         let newSprintId = task.sprint_id;
         if (sprint_id !== undefined) {
             if (sprint_id === null || sprint_id === '') {
                 newSprintId = null;
             } else {
-                const sprint = db.prepare('SELECT id, team_id, end_date FROM sprints WHERE id = ?').get(sprint_id);
+                const sprint = (await query('SELECT id, team_id, end_date FROM sprints WHERE id = $1', [sprint_id])).rows[0];
                 if (sprint && sprint.team_id === req.userTeamId) {
                     newSprintId = sprint_id;
-                    // Always override due date with sprint end date
                     newDueDate = sprint.end_date;
                 } else {
                     return res.status(400).json({ error: 'Invalid sprint or sprint does not belong to your team' });
@@ -371,39 +337,37 @@ router.put('/:id', auth, loadUserContext, (req, res) => {
             }
         }
 
-        db.prepare('UPDATE tasks SET title = ?, description = ?, priority = ?, assigned_to = ?, due_date = ?, sprint_id = ? WHERE id = ?')
-            .run(newTitle, newDesc, newPriority, newAssignedTo, newDueDate, newSprintId, id);
+        await query(
+            'UPDATE tasks SET title = $1, description = $2, priority = $3, assigned_to = $4, due_date = $5, sprint_id = $6 WHERE id = $7',
+            [newTitle, newDesc, newPriority, newAssignedTo, newDueDate, newSprintId, id]
+        );
 
-        // Log changes to history
-        if (newTitle !== task.title) logHistory(id, req.userId, 'updated', 'title', task.title, newTitle);
-        if (newDesc !== task.description) logHistory(id, req.userId, 'updated', 'description', task.description ? 'changed' : null, newDesc ? 'changed' : null);
-        if (newPriority !== task.priority) logHistory(id, req.userId, 'updated', 'priority', task.priority, newPriority);
+        if (newTitle !== task.title) await logHistory(id, req.userId, 'updated', 'title', task.title, newTitle);
+        if (newDesc !== task.description) await logHistory(id, req.userId, 'updated', 'description', task.description ? 'changed' : null, newDesc ? 'changed' : null);
+        if (newPriority !== task.priority) await logHistory(id, req.userId, 'updated', 'priority', task.priority, newPriority);
         if (String(newAssignedTo || '') !== String(task.assigned_to || '')) {
-            const oldName = task.assigned_to ? (db.prepare('SELECT full_name, username FROM users WHERE id = ?').get(task.assigned_to)?.full_name || 'someone') : 'unassigned';
-            const newName = newAssignedTo ? (db.prepare('SELECT full_name, username FROM users WHERE id = ?').get(newAssignedTo)?.full_name || 'someone') : 'unassigned';
-            logHistory(id, req.userId, 'updated', 'assigned_to', oldName, newName);
+            const oldUser = task.assigned_to ? (await query('SELECT full_name FROM users WHERE id = $1', [task.assigned_to])).rows[0] : null;
+            const newUser = newAssignedTo ? (await query('SELECT full_name FROM users WHERE id = $1', [newAssignedTo])).rows[0] : null;
+            await logHistory(id, req.userId, 'updated', 'assigned_to', oldUser?.full_name || 'unassigned', newUser?.full_name || 'unassigned');
         }
-        if (newDueDate !== task.due_date) logHistory(id, req.userId, 'updated', 'due_date', task.due_date, newDueDate);
+        if (newDueDate !== task.due_date) await logHistory(id, req.userId, 'updated', 'due_date', task.due_date, newDueDate);
         if (String(newSprintId || '') !== String(task.sprint_id || '')) {
-            const oldSprint = task.sprint_id ? (db.prepare('SELECT name FROM sprints WHERE id = ?').get(task.sprint_id)?.name || 'unknown') : 'none';
-            const newSprint = newSprintId ? (db.prepare('SELECT name FROM sprints WHERE id = ?').get(newSprintId)?.name || 'unknown') : 'none';
-            logHistory(id, req.userId, 'updated', 'sprint', oldSprint, newSprint);
+            const oldSprint = task.sprint_id ? (await query('SELECT name FROM sprints WHERE id = $1', [task.sprint_id])).rows[0] : null;
+            const newSprint = newSprintId ? (await query('SELECT name FROM sprints WHERE id = $1', [newSprintId])).rows[0] : null;
+            await logHistory(id, req.userId, 'updated', 'sprint', oldSprint?.name || 'none', newSprint?.name || 'none');
         }
 
-        // Sync labels if provided and log changes
         if (label_ids !== undefined) {
-            const oldLabelRows = db.prepare('SELECT tl.name FROM task_label_map tlm JOIN task_labels tl ON tl.id = tlm.label_id WHERE tlm.task_id = ? ORDER BY tl.name').all(id);
-            const oldLabelNames = oldLabelRows.map(r => r.name);
-            syncLabels(id, label_ids || []);
-            const newLabelRows = db.prepare('SELECT tl.name FROM task_label_map tlm JOIN task_labels tl ON tl.id = tlm.label_id WHERE tlm.task_id = ? ORDER BY tl.name').all(id);
-            const newLabelNames = newLabelRows.map(r => r.name);
-            if (JSON.stringify(oldLabelNames) !== JSON.stringify(newLabelNames)) {
-                logHistory(id, req.userId, 'updated', 'labels', oldLabelNames.join(', ') || 'none', newLabelNames.join(', ') || 'none');
+            const oldLabels = (await query('SELECT tl.name FROM task_label_map tlm JOIN task_labels tl ON tl.id = tlm.label_id WHERE tlm.task_id = $1 ORDER BY tl.name', [id])).rows.map(r => r.name);
+            await syncLabels(id, label_ids || []);
+            const newLabels = (await query('SELECT tl.name FROM task_label_map tlm JOIN task_labels tl ON tl.id = tlm.label_id WHERE tlm.task_id = $1 ORDER BY tl.name', [id])).rows.map(r => r.name);
+            if (JSON.stringify(oldLabels) !== JSON.stringify(newLabels)) {
+                await logHistory(id, req.userId, 'updated', 'labels', oldLabels.join(', ') || 'none', newLabels.join(', ') || 'none');
             }
         }
 
-        const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-        const enriched = enrichTasks([updated]);
+        const updated = (await query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
+        const enriched = await enrichTasks([updated]);
         res.json(enriched[0]);
     } catch (err) {
         console.error('Error updating task:', err.message);
@@ -411,15 +375,15 @@ router.put('/:id', auth, loadUserContext, (req, res) => {
     }
 });
 
-// ─── Delete a task (only creator can delete) ────────────────────────────
-router.delete('/:id', auth, (req, res) => {
+// ─── Delete a task (only creator can delete) ─────────────────────────────
+router.delete('/:id', auth, async (req, res) => {
     try {
         const { id } = req.params;
-        const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(id, req.userId);
+        const task = (await query('SELECT * FROM tasks WHERE id = $1 AND user_id = $2', [id, req.userId])).rows[0];
         if (!task) return res.status(404).json({ error: 'Task not found' });
 
-        logHistory(id, req.userId, 'deleted', null, task.title, null);
-        db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+        await logHistory(id, req.userId, 'deleted', null, task.title, null);
+        await query('DELETE FROM tasks WHERE id = $1', [id]);
         res.json({ message: 'Task deleted' });
     } catch (err) {
         console.error('Error deleting task:', err.message);
@@ -427,65 +391,60 @@ router.delete('/:id', auth, (req, res) => {
     }
 });
 
-// ─── Carry-forward incomplete tasks ─────────────────────────────────────
-router.post('/carry-forward', auth, (req, res) => {
+// ─── Carry-forward incomplete tasks ──────────────────────────────────────
+router.post('/carry-forward', auth, async (req, res) => {
     try {
         const today = getLocalToday(req);
 
-        // Find the most recent previous day that has tasks (up to 7 days back)
-        const lastTaskDay = db.prepare(`
+        const lastTaskDay = (await query(`
             SELECT date FROM tasks
-            WHERE (user_id = ? OR assigned_to = ?) AND date < ? AND date >= date(?, '-7 days')
+            WHERE (user_id = $1 OR assigned_to = $1) AND date::date < $2::date AND date::date >= $2::date - INTERVAL '7 days'
             ORDER BY date DESC LIMIT 1
-        `).get(req.userId, req.userId, today, today);
+        `, [req.userId, today])).rows[0];
 
-        if (!lastTaskDay) {
-            return res.json({ message: 'No tasks to carry forward', carried: 0 });
-        }
+        if (!lastTaskDay) return res.json({ message: 'No tasks to carry forward', carried: 0 });
 
-        const incomplete = db.prepare(`
+        const incomplete = (await query(`
             SELECT title, description, priority, assigned_to, due_date FROM tasks
-            WHERE (user_id = ? OR assigned_to = ?) AND date = ? AND status != 'done'
-        `).all(req.userId, req.userId, lastTaskDay.date);
+            WHERE (user_id = $1 OR assigned_to = $1) AND date = $2 AND status != 'done'
+        `, [req.userId, lastTaskDay.date])).rows;
 
-        if (incomplete.length === 0) {
-            return res.json({ message: 'No tasks to carry forward', carried: 0 });
-        }
+        if (incomplete.length === 0) return res.json({ message: 'No tasks to carry forward', carried: 0 });
 
-        const insert = db.prepare(
-            'INSERT INTO tasks (user_id, date, title, description, priority, assigned_to, due_date) VALUES (?, ?, ?, ?, ?, ?, ?)'
-        );
-        const getLabelIds = db.prepare('SELECT label_id FROM task_label_map WHERE task_id = ?');
-        const insertLabelMap = db.prepare('INSERT OR IGNORE INTO task_label_map (task_id, label_id) VALUES (?, ?)');
-
-        const tx = db.transaction(() => {
-            let carried = 0;
+        const carried = await transaction(async (client) => {
+            let count = 0;
             for (const t of incomplete) {
-                // Skip if a task with same title already exists today for this user
-                const exists = db.prepare('SELECT id FROM tasks WHERE (user_id = ? OR assigned_to = ?) AND date = ? AND title = ?')
-                    .get(req.userId, req.userId, today, t.title);
+                const exists = (await client.query(
+                    'SELECT id FROM tasks WHERE (user_id = $1 OR assigned_to = $1) AND date = $2 AND title = $3',
+                    [req.userId, today, t.title]
+                )).rows[0];
                 if (!exists) {
-                    // Bump overdue due_date to today
                     const dueDate = t.due_date && t.due_date < today ? today : t.due_date;
-                    const result = insert.run(req.userId, today, t.title, t.description, t.priority, t.assigned_to, dueDate);
-                    const newTaskId = result.lastInsertRowid;
-                    // Carry forward labels from original task
-                    const origTask = db.prepare('SELECT id FROM tasks WHERE user_id = ? AND date = ? AND title = ?')
-                        .get(req.userId, lastTaskDay.date, t.title);
+                    const insertRes = await client.query(
+                        'INSERT INTO tasks (user_id, date, title, description, priority, assigned_to, due_date) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+                        [req.userId, today, t.title, t.description, t.priority, t.assigned_to, dueDate]
+                    );
+                    const newTaskId = insertRes.rows[0].id;
+                    const origTask = (await client.query(
+                        'SELECT id FROM tasks WHERE user_id = $1 AND date = $2 AND title = $3',
+                        [req.userId, lastTaskDay.date, t.title]
+                    )).rows[0];
                     if (origTask) {
-                        const origLabels = getLabelIds.all(origTask.id);
+                        const origLabels = (await client.query('SELECT label_id FROM task_label_map WHERE task_id = $1', [origTask.id])).rows;
                         for (const lbl of origLabels) {
-                            insertLabelMap.run(newTaskId, lbl.label_id);
+                            await client.query(
+                                'INSERT INTO task_label_map (task_id, label_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+                                [newTaskId, lbl.label_id]
+                            );
                         }
                     }
-                    logHistory(newTaskId, req.userId, 'created', 'date', lastTaskDay.date, today);
-                    carried++;
+                    await logHistory(newTaskId, req.userId, 'created', 'date', lastTaskDay.date, today, client);
+                    count++;
                 }
             }
-            return carried;
+            return count;
         });
 
-        const carried = tx();
         res.json({ message: `${carried} task(s) carried forward`, carried });
     } catch (err) {
         console.error('Error carrying forward tasks:', err.message);
@@ -493,35 +452,34 @@ router.post('/carry-forward', auth, (req, res) => {
     }
 });
 
-// ─── Global search across all dates + backlog ──────────────────────────
-router.get('/search', auth, loadUserContext, (req, res) => {
+// ─── Global search across all dates + backlog ────────────────────────────
+router.get('/search', auth, loadUserContext, async (req, res) => {
     try {
         const { q } = req.query;
-        if (!q || !q.trim() || q.trim().length < 2) {
-            return res.json([]);
-        }
+        if (!q || !q.trim() || q.trim().length < 2) return res.json([]);
 
-        const term = `%${q.trim()}%`;
-        const conditions = ['(t.title LIKE ? OR t.description LIKE ?)'];
-        const params = [term, term];
+        const conditions = ['(t.title ILIKE $1 OR t.description ILIKE $1)'];
+        const params = [`%${q.trim()}%`];
+        let pi = 2;
 
-        // Restrict to tasks the user can see
         if (req.userOrgId) {
-            conditions.push('(t.user_id = ? OR t.assigned_to = ? OR t.user_id IN (SELECT id FROM users WHERE org_id = ?))');
-            params.push(req.userId, req.userId, req.userOrgId);
+            conditions.push(`(t.user_id = $${pi} OR t.assigned_to = $${pi} OR t.user_id IN (SELECT id FROM users WHERE org_id = $${pi + 1}))`);
+            params.push(req.userId, req.userOrgId);
+            pi += 2;
         } else {
-            conditions.push('(t.user_id = ? OR t.assigned_to = ?)');
-            params.push(req.userId, req.userId);
+            conditions.push(`(t.user_id = $${pi} OR t.assigned_to = $${pi})`);
+            params.push(req.userId);
+            pi++;
         }
 
-        const tasks = db.prepare(`
+        const tasks = (await query(`
             SELECT t.* FROM tasks t
             WHERE ${conditions.join(' AND ')}
             ORDER BY t.created_at DESC
             LIMIT 20
-        `).all(...params);
+        `, params)).rows;
 
-        const enriched = enrichTasks(tasks);
+        const enriched = await enrichTasks(tasks);
         res.json(enriched);
     } catch (err) {
         console.error('Error in global search:', err.message);
@@ -529,17 +487,17 @@ router.get('/search', auth, loadUserContext, (req, res) => {
     }
 });
 
-// ─── Get assignable users (same org) ────────────────────────────────────
-router.get('/assignable-users', auth, loadUserContext, (req, res) => {
+// ─── Get assignable users (same org) ─────────────────────────────────────
+router.get('/assignable-users', auth, loadUserContext, async (req, res) => {
     try {
         let users;
         if (req.userOrgId) {
-            users = db.prepare(
-                'SELECT id, username, full_name, avatar FROM users WHERE org_id = ? AND is_active = 1 ORDER BY full_name ASC'
-            ).all(req.userOrgId);
+            users = (await query(
+                'SELECT id, username, full_name, avatar FROM users WHERE org_id = $1 AND is_active = TRUE ORDER BY full_name ASC',
+                [req.userOrgId]
+            )).rows;
         } else {
-            // No org — only return self
-            users = db.prepare('SELECT id, username, full_name, avatar FROM users WHERE id = ?').all(req.userId);
+            users = (await query('SELECT id, username, full_name, avatar FROM users WHERE id = $1', [req.userId])).rows;
         }
         res.json(users);
     } catch (err) {
@@ -548,12 +506,12 @@ router.get('/assignable-users', auth, loadUserContext, (req, res) => {
     }
 });
 
-// ─── Get labels for current user's org ──────────────────────────────────
-router.get('/labels', auth, loadUserContext, (req, res) => {
+// ─── Get labels for current user's org ───────────────────────────────────
+router.get('/labels', auth, loadUserContext, async (req, res) => {
     try {
         let labels = [];
         if (req.userOrgId) {
-            labels = db.prepare('SELECT id, name, color FROM task_labels WHERE org_id = ? ORDER BY name ASC').all(req.userOrgId);
+            labels = (await query('SELECT id, name, color FROM task_labels WHERE org_id = $1 ORDER BY name ASC', [req.userOrgId])).rows;
         }
         res.json(labels);
     } catch (err) {
@@ -562,26 +520,21 @@ router.get('/labels', auth, loadUserContext, (req, res) => {
     }
 });
 
-// ─── Get available sprints for user's team (current + future) ───────────
-router.get('/available-sprints', auth, loadUserContext, (req, res) => {
+// ─── Get available sprints for user's team (current + future) ────────────
+router.get('/available-sprints', auth, loadUserContext, async (req, res) => {
     try {
-        if (!req.userTeamId) {
-            return res.json([]);
-        }
+        if (!req.userTeamId) return res.json([]);
 
-        // Get sprints that are active or planned (not completed) for user's team
-        const sprints = db.prepare(`
+        const sprints = (await query(`
             SELECT id, name, start_date, end_date, status, goal
             FROM sprints
-            WHERE team_id = ? AND status IN ('active', 'planned')
+            WHERE team_id = $1 AND status IN ('active', 'planned')
             ORDER BY start_date ASC
-        `).all(req.userTeamId);
+        `, [req.userTeamId])).rows;
 
-        // Also include auto-calculated sprint from team config if no explicit sprints exist
         if (sprints.length === 0) {
-            const team = db.prepare('SELECT sprint_start_date, sprint_duration_weeks FROM teams WHERE id = ?').get(req.userTeamId);
+            const team = (await query('SELECT sprint_start_date, sprint_duration_weeks FROM teams WHERE id = $1', [req.userTeamId])).rows[0];
             if (team?.sprint_start_date) {
-                // Calculate current and next sprint from team config
                 const tzOffset = req.headers['x-timezone-offset'];
                 let todayStr;
                 if (tzOffset !== undefined) {
@@ -606,7 +559,6 @@ router.get('/available-sprints', auth, loadUserContext, (req, res) => {
                     return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
                 };
 
-                // Auto-create current sprint if it doesn't exist
                 const autoSprints = [];
                 for (let i = 0; i < 2; i++) {
                     const num = sprintNumber + i;
@@ -615,22 +567,15 @@ router.get('/available-sprints', auth, loadUserContext, (req, res) => {
                     const eMs = sMs + (sprintDurationDays - 1) * 86400000;
                     const name = `Sprint #${num}`;
 
-                    // Check if this sprint already exists in DB
-                    let existing = db.prepare('SELECT id FROM sprints WHERE team_id = ? AND name = ?').get(req.userTeamId, name);
+                    const existing = (await query('SELECT id FROM sprints WHERE team_id = $1 AND name = $2', [req.userTeamId, name])).rows[0];
                     if (!existing) {
-                        const result = db.prepare(
-                            'INSERT INTO sprints (team_id, name, start_date, end_date, status) VALUES (?, ?, ?, ?, ?)'
-                        ).run(req.userTeamId, name, fmt(sMs), fmt(eMs), i === 0 ? 'active' : 'planned');
-                        autoSprints.push({
-                            id: result.lastInsertRowid,
-                            name,
-                            start_date: fmt(sMs),
-                            end_date: fmt(eMs),
-                            status: i === 0 ? 'active' : 'planned',
-                            goal: null
-                        });
+                        const result = await query(
+                            'INSERT INTO sprints (team_id, name, start_date, end_date, status) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+                            [req.userTeamId, name, fmt(sMs), fmt(eMs), i === 0 ? 'active' : 'planned']
+                        );
+                        autoSprints.push({ id: result.rows[0].id, name, start_date: fmt(sMs), end_date: fmt(eMs), status: i === 0 ? 'active' : 'planned', goal: null });
                     } else {
-                        const sprint = db.prepare('SELECT id, name, start_date, end_date, status, goal FROM sprints WHERE id = ?').get(existing.id);
+                        const sprint = (await query('SELECT id, name, start_date, end_date, status, goal FROM sprints WHERE id = $1', [existing.id])).rows[0];
                         autoSprints.push(sprint);
                     }
                 }
@@ -645,41 +590,34 @@ router.get('/available-sprints', auth, loadUserContext, (req, res) => {
     }
 });
 
-// ─── Assign task to sprint ──────────────────────────────────────────────
-router.patch('/:id/assign-sprint', auth, loadUserContext, (req, res) => {
+// ─── Assign task to sprint ────────────────────────────────────────────────
+router.patch('/:id/assign-sprint', auth, loadUserContext, async (req, res) => {
     try {
         const { id } = req.params;
         const { sprint_id } = req.body;
 
-        const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-        if (!canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
+        const task = (await query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
+        if (!await canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
 
         if (sprint_id === null || sprint_id === undefined || sprint_id === '') {
-            // Remove from sprint
-            const oldSprint = task.sprint_id ? (db.prepare('SELECT name FROM sprints WHERE id = ?').get(task.sprint_id)?.name || 'unknown') : 'none';
-            db.prepare('UPDATE tasks SET sprint_id = NULL WHERE id = ?').run(id);
-            logHistory(id, req.userId, 'updated', 'sprint', oldSprint, 'none');
+            const oldSprint = task.sprint_id ? (await query('SELECT name FROM sprints WHERE id = $1', [task.sprint_id])).rows[0] : null;
+            await query('UPDATE tasks SET sprint_id = NULL WHERE id = $1', [id]);
+            await logHistory(id, req.userId, 'updated', 'sprint', oldSprint?.name || 'none', 'none');
         } else {
-            const sprint = db.prepare('SELECT id, team_id, name, end_date FROM sprints WHERE id = ?').get(sprint_id);
+            const sprint = (await query('SELECT id, team_id, name, end_date FROM sprints WHERE id = $1', [sprint_id])).rows[0];
             if (!sprint || sprint.team_id !== req.userTeamId) {
                 return res.status(400).json({ error: 'Invalid sprint or sprint does not belong to your team' });
             }
-
-            const oldSprint = task.sprint_id ? (db.prepare('SELECT name FROM sprints WHERE id = ?').get(task.sprint_id)?.name || 'unknown') : 'none';
-
-            // Always set due date to sprint end date when assigning a sprint
-            const updates = ['sprint_id = ?', 'due_date = ?'];
-            const updateParams = [sprint.id, sprint.end_date];
+            const oldSprint = task.sprint_id ? (await query('SELECT name FROM sprints WHERE id = $1', [task.sprint_id])).rows[0] : null;
             if (task.due_date !== sprint.end_date) {
-                logHistory(id, req.userId, 'updated', 'due_date', task.due_date, sprint.end_date);
+                await logHistory(id, req.userId, 'updated', 'due_date', task.due_date, sprint.end_date);
             }
-            updateParams.push(id);
-            db.prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).run(...updateParams);
-            logHistory(id, req.userId, 'updated', 'sprint', oldSprint, sprint.name);
+            await query('UPDATE tasks SET sprint_id = $1, due_date = $2 WHERE id = $3', [sprint.id, sprint.end_date, id]);
+            await logHistory(id, req.userId, 'updated', 'sprint', oldSprint?.name || 'none', sprint.name);
         }
 
-        const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-        const enriched = enrichTasks([updated]);
+        const updated = (await query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
+        const enriched = await enrichTasks([updated]);
         res.json(enriched[0]);
     } catch (err) {
         console.error('Error assigning sprint:', err.message);
@@ -687,21 +625,19 @@ router.patch('/:id/assign-sprint', auth, loadUserContext, (req, res) => {
     }
 });
 
-// ─── Comments ───────────────────────────────────────────────────────────
-
-// Get comments for a task
-router.get('/:id/comments', auth, (req, res) => {
+// ─── Get comments for a task ──────────────────────────────────────────────
+router.get('/:id/comments', auth, async (req, res) => {
     try {
-        const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
-        if (!canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
+        const task = (await query('SELECT * FROM tasks WHERE id = $1', [req.params.id])).rows[0];
+        if (!await canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
 
-        const comments = db.prepare(`
+        const comments = (await query(`
             SELECT tc.*, u.username, u.full_name, u.avatar
             FROM task_comments tc
             JOIN users u ON u.id = tc.user_id
-            WHERE tc.task_id = ?
+            WHERE tc.task_id = $1
             ORDER BY tc.created_at ASC
-        `).all(req.params.id);
+        `, [req.params.id])).rows;
 
         res.json(comments);
     } catch (err) {
@@ -710,30 +646,29 @@ router.get('/:id/comments', auth, (req, res) => {
     }
 });
 
-// Add comment
-router.post('/:id/comments', auth, (req, res) => {
+// ─── Add comment ──────────────────────────────────────────────────────────
+router.post('/:id/comments', auth, async (req, res) => {
     try {
-        const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
-        if (!canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
+        const task = (await query('SELECT * FROM tasks WHERE id = $1', [req.params.id])).rows[0];
+        if (!await canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
 
         const { content } = req.body;
         if (!content || !content.trim()) return res.status(400).json({ error: 'Comment cannot be empty' });
         if (content.length > 2000) return res.status(400).json({ error: 'Comment must be 2000 characters or less' });
 
-        const result = db.prepare(
-            'INSERT INTO task_comments (task_id, user_id, content) VALUES (?, ?, ?)'
-        ).run(req.params.id, req.userId, content.trim());
+        const result = await query(
+            'INSERT INTO task_comments (task_id, user_id, content) VALUES ($1, $2, $3) RETURNING id',
+            [req.params.id, req.userId, content.trim()]
+        );
+        await logHistory(req.params.id, req.userId, 'comment_added', null, null, null);
 
-        logHistory(req.params.id, req.userId, 'comment_added', null, null, null);
-
-        const comment = db.prepare(`
+        const comment = (await query(`
             SELECT tc.*, u.username, u.full_name, u.avatar
             FROM task_comments tc
             JOIN users u ON u.id = tc.user_id
-            WHERE tc.id = ?
-        `).get(result.lastInsertRowid);
+            WHERE tc.id = $1
+        `, [result.rows[0].id])).rows[0];
 
-        // Notify mentioned users (@mention via data-user-id attribute in HTML)
         try {
             const mentionRegex = /data-user-id="(\d+)"/g;
             const mentionedIds = new Set();
@@ -743,13 +678,13 @@ router.post('/:id/comments', auth, (req, res) => {
                 if (uid !== req.userId) mentionedIds.add(uid);
             }
             if (mentionedIds.size > 0) {
-                const commenter = db.prepare('SELECT username, full_name FROM users WHERE id = ?').get(req.userId);
+                const commenter = (await query('SELECT username, full_name FROM users WHERE id = $1', [req.userId])).rows[0];
                 const commenterName = commenter?.full_name || commenter?.username || 'Someone';
-                const insertNotif = db.prepare(
-                    'INSERT INTO notifications (user_id, type, title, body, link_task_id) VALUES (?, ?, ?, ?, ?)'
-                );
                 for (const uid of mentionedIds) {
-                    insertNotif.run(uid, 'mention', `${commenterName} mentioned you`, `In task: ${task.title}`, task.id);
+                    await query(
+                        'INSERT INTO notifications (user_id, type, title, body, link_task_id) VALUES ($1, $2, $3, $4, $5)',
+                        [uid, 'mention', `${commenterName} mentioned you`, `In task: ${task.title}`, task.id]
+                    );
                 }
             }
         } catch (mentionErr) {
@@ -763,25 +698,25 @@ router.post('/:id/comments', auth, (req, res) => {
     }
 });
 
-// Edit comment (author only)
-router.put('/:id/comments/:commentId', auth, (req, res) => {
+// ─── Edit comment (author only) ───────────────────────────────────────────
+router.put('/:id/comments/:commentId', auth, async (req, res) => {
     try {
-        const comment = db.prepare('SELECT * FROM task_comments WHERE id = ? AND task_id = ?').get(req.params.commentId, req.params.id);
+        const comment = (await query('SELECT * FROM task_comments WHERE id = $1 AND task_id = $2', [req.params.commentId, req.params.id])).rows[0];
         if (!comment || comment.user_id !== req.userId) return res.status(404).json({ error: 'Comment not found' });
 
         const { content } = req.body;
         if (!content || !content.trim()) return res.status(400).json({ error: 'Comment cannot be empty' });
         if (content.length > 2000) return res.status(400).json({ error: 'Comment must be 2000 characters or less' });
 
-        db.prepare('UPDATE task_comments SET content = ?, updated_at = ? WHERE id = ?')
-            .run(content.trim(), new Date().toISOString(), req.params.commentId);
+        await query('UPDATE task_comments SET content = $1, updated_at = $2 WHERE id = $3',
+            [content.trim(), new Date().toISOString(), req.params.commentId]);
 
-        const updated = db.prepare(`
+        const updated = (await query(`
             SELECT tc.*, u.username, u.full_name, u.avatar
             FROM task_comments tc
             JOIN users u ON u.id = tc.user_id
-            WHERE tc.id = ?
-        `).get(req.params.commentId);
+            WHERE tc.id = $1
+        `, [req.params.commentId])).rows[0];
 
         res.json(updated);
     } catch (err) {
@@ -790,17 +725,17 @@ router.put('/:id/comments/:commentId', auth, (req, res) => {
     }
 });
 
-// Delete comment (author or task creator)
-router.delete('/:id/comments/:commentId', auth, (req, res) => {
+// ─── Delete comment (author or task creator) ──────────────────────────────
+router.delete('/:id/comments/:commentId', auth, async (req, res) => {
     try {
-        const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
-        const comment = db.prepare('SELECT * FROM task_comments WHERE id = ? AND task_id = ?').get(req.params.commentId, req.params.id);
+        const task = (await query('SELECT * FROM tasks WHERE id = $1', [req.params.id])).rows[0];
+        const comment = (await query('SELECT * FROM task_comments WHERE id = $1 AND task_id = $2', [req.params.commentId, req.params.id])).rows[0];
         if (!comment) return res.status(404).json({ error: 'Comment not found' });
         if (comment.user_id !== req.userId && (!task || task.user_id !== req.userId)) {
             return res.status(403).json({ error: 'Cannot delete this comment' });
         }
 
-        db.prepare('DELETE FROM task_comments WHERE id = ?').run(req.params.commentId);
+        await query('DELETE FROM task_comments WHERE id = $1', [req.params.commentId]);
         res.json({ message: 'Comment deleted' });
     } catch (err) {
         console.error('Error deleting comment:', err.message);
@@ -808,78 +743,73 @@ router.delete('/:id/comments/:commentId', auth, (req, res) => {
     }
 });
 
-// ─── Backlog: Get all backlog items (date IS NULL) ──────────────────────
-router.get('/backlog', auth, loadUserContext, (req, res) => {
+// ─── Backlog: Get all backlog items ───────────────────────────────────────
+router.get('/backlog', auth, loadUserContext, async (req, res) => {
     try {
         const { assignee, label, priority, status, search } = req.query;
 
-        const conditions = ['t.sprint_id IS NULL'];
+        const conditions = ['t.date IS NULL', 't.sprint_id IS NULL'];
         const params = [];
+        let pi = 1;
 
-        // Show backlog tasks visible to user (created by or assigned to, or same team)
         if (req.userTeamId) {
-            conditions.push('(t.user_id = ? OR t.assigned_to = ? OR t.user_id IN (SELECT id FROM users WHERE team_id = ?))');
-            params.push(req.userId, req.userId, req.userTeamId);
+            conditions.push(`(t.user_id = $${pi} OR t.assigned_to = $${pi} OR t.user_id IN (SELECT id FROM users WHERE team_id = $${pi + 1}))`);
+            params.push(req.userId, req.userTeamId);
+            pi += 2;
         } else {
-            conditions.push('(t.user_id = ? OR t.assigned_to = ?)');
-            params.push(req.userId, req.userId);
+            conditions.push(`(t.user_id = $${pi} OR t.assigned_to = $${pi})`);
+            params.push(req.userId);
+            pi++;
         }
 
         if (assignee) {
             if (assignee === 'me') {
-                conditions.push('(t.user_id = ? OR t.assigned_to = ?)');
-                params.push(req.userId, req.userId);
+                conditions.push(`(t.user_id = $${pi} OR t.assigned_to = $${pi})`);
+                params.push(req.userId);
+                pi++;
             } else {
                 const assigneeId = parseInt(assignee, 10);
-                conditions.push('(t.assigned_to = ? OR (t.user_id = ? AND t.assigned_to IS NULL))');
-                params.push(assigneeId, assigneeId);
+                conditions.push(`(t.assigned_to = $${pi} OR (t.user_id = $${pi} AND t.assigned_to IS NULL))`);
+                params.push(assigneeId);
+                pi++;
             }
         }
 
         if (priority && ['low', 'medium', 'high'].includes(priority)) {
-            conditions.push('t.priority = ?');
+            conditions.push(`t.priority = $${pi++}`);
             params.push(priority);
         }
 
         if (status && ['pending', 'in_progress', 'in_review', 'done'].includes(status)) {
-            conditions.push('t.status = ?');
+            conditions.push(`t.status = $${pi++}`);
             params.push(status);
         }
 
         if (search && search.trim()) {
-            conditions.push('(t.title LIKE ? OR t.description LIKE ?)');
-            const term = `%${search.trim()}%`;
-            params.push(term, term);
+            conditions.push(`(t.title ILIKE $${pi} OR t.description ILIKE $${pi})`);
+            params.push(`%${search.trim()}%`);
+            pi++;
         }
 
-        let tasks = db.prepare(`
+        let tasks = (await query(`
             SELECT t.* FROM tasks t
             WHERE ${conditions.join(' AND ')}
             ORDER BY
                 CASE t.priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END,
                 t.created_at DESC
-        `).all(...params);
+        `, params)).rows;
 
-        // Filter by label if requested
         if (label) {
             const labelId = parseInt(label, 10);
             const taskIdsWithLabel = new Set(
-                db.prepare('SELECT task_id FROM task_label_map WHERE label_id = ?').all(labelId).map(r => r.task_id)
+                (await query('SELECT task_id FROM task_label_map WHERE label_id = $1', [labelId])).rows.map(r => r.task_id)
             );
             tasks = tasks.filter(t => taskIdsWithLabel.has(t.id));
         }
 
-        const enriched = enrichTasks(tasks);
-
-        // Compute backlog summary stats
-        const summary = {
-            total: enriched.length,
-            byStatus: {},
-            byPriority: { high: 0, medium: 0, low: 0 },
-        };
-        for (const col of ['pending', 'in_progress', 'in_review', 'done']) {
-            summary.byStatus[col] = 0;
-        }
+        const enriched = await enrichTasks(tasks);
+        const summary = { total: enriched.length, byStatus: {}, byPriority: { high: 0, medium: 0, low: 0 } };
+        for (const col of ['pending', 'in_progress', 'in_review', 'done']) summary.byStatus[col] = 0;
         for (const t of enriched) {
             if (summary.byStatus[t.status] !== undefined) summary.byStatus[t.status]++;
             if (summary.byPriority[t.priority] !== undefined) summary.byPriority[t.priority]++;
@@ -892,29 +822,21 @@ router.get('/backlog', auth, loadUserContext, (req, res) => {
     }
 });
 
-// ─── Backlog: Create a backlog item (no date) ───────────────────────────
-router.post('/backlog', auth, loadUserContext, (req, res) => {
+// ─── Backlog: Create a backlog item (no date) ─────────────────────────────
+router.post('/backlog', auth, loadUserContext, async (req, res) => {
     try {
         const { title, description, priority, assigned_to, due_date, label_ids, sprint_id } = req.body;
 
-        if (!title || !title.trim()) {
-            return res.status(400).json({ error: 'Task title is required' });
-        }
-        if (title.trim().length > 200) {
-            return res.status(400).json({ error: 'Task title must be 200 characters or less' });
-        }
-        if (description && description.length > 5000) {
-            return res.status(400).json({ error: 'Task description must be 5000 characters or less' });
-        }
+        if (!title || !title.trim()) return res.status(400).json({ error: 'Task title is required' });
+        if (title.trim().length > 200) return res.status(400).json({ error: 'Task title must be 200 characters or less' });
+        if (description && description.length > 5000) return res.status(400).json({ error: 'Task description must be 5000 characters or less' });
 
         const validPriority = ['low', 'medium', 'high'].includes(priority) ? priority : 'medium';
 
         let assignedTo = null;
         if (assigned_to) {
-            const targetUser = db.prepare('SELECT id, org_id, is_active FROM users WHERE id = ?').get(assigned_to);
-            if (!targetUser || !targetUser.is_active) {
-                return res.status(400).json({ error: 'Assigned user not found or inactive' });
-            }
+            const targetUser = (await query('SELECT id, org_id, is_active FROM users WHERE id = $1', [assigned_to])).rows[0];
+            if (!targetUser || !targetUser.is_active) return res.status(400).json({ error: 'Assigned user not found or inactive' });
             if (req.userOrgId && targetUser.org_id && req.userOrgId !== targetUser.org_id) {
                 return res.status(400).json({ error: 'Cannot assign tasks to users in a different organization' });
             }
@@ -922,38 +844,30 @@ router.post('/backlog', auth, loadUserContext, (req, res) => {
         }
 
         let validDueDate = null;
-        if (due_date && /^\d{4}-\d{2}-\d{2}$/.test(due_date)) {
-            validDueDate = due_date;
-        }
+        if (due_date && /^\d{4}-\d{2}-\d{2}$/.test(due_date)) validDueDate = due_date;
 
-        // Handle sprint_id assignment with auto due-date
         let validSprintId = null;
         if (sprint_id) {
-            const sprint = db.prepare('SELECT id, team_id, end_date FROM sprints WHERE id = ?').get(sprint_id);
+            const sprint = (await query('SELECT id, team_id, end_date FROM sprints WHERE id = $1', [sprint_id])).rows[0];
             if (sprint && sprint.team_id === req.userTeamId) {
                 validSprintId = sprint.id;
-                if (!validDueDate) {
-                    validDueDate = sprint.end_date;
-                }
+                if (!validDueDate) validDueDate = sprint.end_date;
             } else {
                 return res.status(400).json({ error: 'Invalid sprint or sprint does not belong to your team' });
             }
         }
 
-        const result = db.prepare(
-            'INSERT INTO tasks (user_id, date, title, description, priority, assigned_to, due_date, sprint_id) VALUES (?, NULL, ?, ?, ?, ?, ?, ?)'
-        ).run(req.userId, title.trim(), description?.trim() || null, validPriority, assignedTo, validDueDate, validSprintId);
+        const result = await query(
+            'INSERT INTO tasks (user_id, date, title, description, priority, assigned_to, due_date, sprint_id) VALUES ($1, NULL, $2, $3, $4, $5, $6, $7) RETURNING id',
+            [req.userId, title.trim(), description?.trim() || null, validPriority, assignedTo, validDueDate, validSprintId]
+        );
+        const taskId = result.rows[0].id;
 
-        const taskId = result.lastInsertRowid;
+        if (label_ids && Array.isArray(label_ids) && label_ids.length > 0) await syncLabels(taskId, label_ids);
+        await logHistory(taskId, req.userId, 'created', null, null, null);
 
-        if (label_ids && Array.isArray(label_ids) && label_ids.length > 0) {
-            syncLabels(taskId, label_ids);
-        }
-
-        logHistory(taskId, req.userId, 'created', null, null, null);
-
-        const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
-        const enriched = enrichTasks([task]);
+        const task = (await query('SELECT * FROM tasks WHERE id = $1', [taskId])).rows[0];
+        const enriched = await enrichTasks([task]);
         res.json(enriched[0]);
     } catch (err) {
         console.error('Error creating backlog item:', err.message);
@@ -961,8 +875,8 @@ router.post('/backlog', auth, loadUserContext, (req, res) => {
     }
 });
 
-// ─── Move backlog item to a specific date (schedule it) ─────────────────
-router.patch('/:id/schedule', auth, (req, res) => {
+// ─── Move backlog item to a specific date (schedule it) ───────────────────
+router.patch('/:id/schedule', auth, async (req, res) => {
     try {
         const { id } = req.params;
         const { date } = req.body;
@@ -971,14 +885,14 @@ router.patch('/:id/schedule', auth, (req, res) => {
             return res.status(400).json({ error: 'Valid date is required' });
         }
 
-        const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-        if (!canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
+        const task = (await query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
+        if (!await canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
 
-        db.prepare('UPDATE tasks SET date = ? WHERE id = ?').run(date, id);
-        logHistory(id, req.userId, 'scheduled', 'date', task.date || 'backlog', date);
+        await query('UPDATE tasks SET date = $1 WHERE id = $2', [date, id]);
+        await logHistory(id, req.userId, 'scheduled', 'date', task.date || 'backlog', date);
 
-        const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-        const enriched = enrichTasks([updated]);
+        const updated = (await query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
+        const enriched = await enrichTasks([updated]);
         res.json(enriched[0]);
     } catch (err) {
         console.error('Error scheduling task:', err.message);
@@ -986,19 +900,19 @@ router.patch('/:id/schedule', auth, (req, res) => {
     }
 });
 
-// ─── Move a dated task back to backlog ──────────────────────────────────
-router.patch('/:id/unschedule', auth, (req, res) => {
+// ─── Move a dated task back to backlog ────────────────────────────────────
+router.patch('/:id/unschedule', auth, async (req, res) => {
     try {
         const { id } = req.params;
 
-        const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-        if (!canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
+        const task = (await query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
+        if (!await canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
 
-        db.prepare('UPDATE tasks SET date = NULL WHERE id = ?').run(id);
-        logHistory(id, req.userId, 'unscheduled', 'date', task.date, 'backlog');
+        await query('UPDATE tasks SET date = NULL WHERE id = $1', [id]);
+        await logHistory(id, req.userId, 'unscheduled', 'date', task.date, 'backlog');
 
-        const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-        const enriched = enrichTasks([updated]);
+        const updated = (await query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
+        const enriched = await enrichTasks([updated]);
         res.json(enriched[0]);
     } catch (err) {
         console.error('Error unscheduling task:', err.message);
@@ -1006,22 +920,21 @@ router.patch('/:id/unschedule', auth, (req, res) => {
     }
 });
 
-// ─── Get single task detail ─────────────────────────────────────────────
-router.get('/:id/detail', auth, (req, res) => {
+// ─── Get single task detail ───────────────────────────────────────────────
+router.get('/:id/detail', auth, async (req, res) => {
     try {
-        const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
-        if (!canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
+        const task = (await query('SELECT * FROM tasks WHERE id = $1', [req.params.id])).rows[0];
+        if (!await canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
 
-        const enriched = enrichTasks([task]);
+        const enriched = await enrichTasks([task]);
 
-        // Also fetch comments
-        const comments = db.prepare(`
+        const comments = (await query(`
             SELECT tc.*, u.username, u.full_name, u.avatar
             FROM task_comments tc
             JOIN users u ON u.id = tc.user_id
-            WHERE tc.task_id = ?
+            WHERE tc.task_id = $1
             ORDER BY tc.created_at ASC
-        `).all(task.id);
+        `, [task.id])).rows;
 
         res.json({ ...enriched[0], comments });
     } catch (err) {
@@ -1030,20 +943,20 @@ router.get('/:id/detail', auth, (req, res) => {
     }
 });
 
-// ─── Get task history ───────────────────────────────────────────────────
-router.get('/:id/history', auth, (req, res) => {
+// ─── Get task history ─────────────────────────────────────────────────────
+router.get('/:id/history', auth, async (req, res) => {
     try {
-        const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+        const task = (await query('SELECT * FROM tasks WHERE id = $1', [req.params.id])).rows[0];
         if (!task) return res.status(404).json({ error: 'Task not found' });
-        if (!canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
 
-        const history = db.prepare(`
+        const history = (await query(`
             SELECT th.*, u.username, u.full_name, u.avatar
             FROM task_history th
             JOIN users u ON u.id = th.user_id
-            WHERE th.task_id = ?
+            WHERE th.task_id = $1
             ORDER BY th.created_at DESC
-        `).all(req.params.id);
+        `, [req.params.id])).rows;
 
         res.json(history);
     } catch (err) {

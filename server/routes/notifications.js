@@ -1,20 +1,19 @@
-const express = require('express');
-const db = require('../db');
+﻿const express = require('express');
+const { query } = require('../db');
 const auth = require('../middleware/auth');
 
 const router = express.Router();
 
-// GET /api/notifications — fetch recent notifications for current user
-router.get('/', auth, (req, res) => {
+router.get('/', auth, async (req, res) => {
     try {
-        const rows = db.prepare(`
+        const rows = (await query(`
             SELECT n.*, t.title AS task_title
             FROM notifications n
             LEFT JOIN tasks t ON t.id = n.link_task_id
-            WHERE n.user_id = ?
+            WHERE n.user_id = $1
             ORDER BY n.created_at DESC
             LIMIT 50
-        `).all(req.userId);
+        `, [req.userId])).rows;
         const unread = rows.filter(r => !r.is_read).length;
         res.json({ notifications: rows, unread });
     } catch (err) {
@@ -23,32 +22,29 @@ router.get('/', auth, (req, res) => {
     }
 });
 
-// POST /api/notifications/read-all — mark all as read
-router.post('/read-all', auth, (req, res) => {
+router.post('/read-all', auth, async (req, res) => {
     try {
-        db.prepare('UPDATE notifications SET is_read = 1 WHERE user_id = ?').run(req.userId);
+        await query('UPDATE notifications SET is_read = TRUE WHERE user_id = $1', [req.userId]);
         res.json({ ok: true });
     } catch (err) {
         res.status(500).json({ error: 'Failed to mark notifications read' });
     }
 });
 
-// POST /api/notifications/:id/read — mark one as read
-router.post('/:id/read', auth, (req, res) => {
+router.post('/:id/read', auth, async (req, res) => {
     try {
-        db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?')
-            .run(req.params.id, req.userId);
+        await query('UPDATE notifications SET is_read = TRUE WHERE id = $1 AND user_id = $2',
+            [req.params.id, req.userId]);
         res.json({ ok: true });
     } catch (err) {
         res.status(500).json({ error: 'Failed to mark notification read' });
     }
 });
 
-// DELETE /api/notifications/:id — delete one notification
-router.delete('/:id', auth, (req, res) => {
+router.delete('/:id', auth, async (req, res) => {
     try {
-        db.prepare('DELETE FROM notifications WHERE id = ? AND user_id = ?')
-            .run(req.params.id, req.userId);
+        await query('DELETE FROM notifications WHERE id = $1 AND user_id = $2',
+            [req.params.id, req.userId]);
         res.json({ ok: true });
     } catch (err) {
         res.status(500).json({ error: 'Failed to delete notification' });

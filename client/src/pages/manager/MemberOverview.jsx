@@ -170,7 +170,7 @@ export default function MemberOverview({ data }) {
                                     <td><span className={s.badgeRole}>{r.type?.replace('_', ' ')}</span></td>
                                     <td className={m['cell-details']}><RequestDetails request={r} /></td>
                                     <td><ApprovalBadge status={r.status} /></td>
-                                    <td className={m['cell-sm']}>{new Date(r.created_at + 'Z').toLocaleDateString()}</td>
+                                    <td className={m['cell-sm']}>{new Date(r.created_at).toLocaleDateString()}</td>
                                 </tr>
                             ))}
                         </tbody>

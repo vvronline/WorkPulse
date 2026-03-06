@@ -402,8 +402,6 @@ export default function Tasks() {
         setDetailEditLabels={detail.setDetailEditLabels}
         detailEditLabelDropdownOpen={detail.detailEditLabelDropdownOpen}
         setDetailEditLabelDropdownOpen={detail.setDetailEditLabelDropdownOpen}
-        scheduleDate={backlog.scheduleDate}
-        setScheduleDate={backlog.setScheduleDate}
         assignableUsers={assignableUsers}
         orgLabels={orgLabels}
         availableSprints={availableSprints}

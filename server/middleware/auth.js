@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
-const db = require('../db');
+const { query } = require('../db');
 
-function authMiddleware(req, res, next) {
+async function authMiddleware(req, res, next) {
     const token = req.cookies.token;
     if (!token) {
         return res.status(401).json({ error: 'No token provided' });
@@ -10,7 +10,8 @@ function authMiddleware(req, res, next) {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
         // Verify token hasn't been invalidated by a password change/reset
-        const user = db.prepare('SELECT token_version FROM users WHERE id = ?').get(decoded.id);
+        const result = await query('SELECT token_version FROM users WHERE id = $1', [decoded.id]);
+        const user = result.rows[0];
         if (!user) {
             return res.status(401).json({ error: 'User no longer exists' });
         }

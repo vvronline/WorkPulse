@@ -37,8 +37,6 @@ export default function TaskDetailModal({
   setDetailEditLabels,
   detailEditLabelDropdownOpen,
   setDetailEditLabelDropdownOpen,
-  scheduleDate,
-  setScheduleDate,
   // Shared data
   assignableUsers,
   orgLabels,
@@ -174,7 +172,7 @@ export default function TaskDetailModal({
                   </select>
                 </div>
                 <div className={s['form-extra-group']}>
-                  <label>Due date</label>
+                  <label>{(isBacklogItem || activeTab === 'backlog') ? 'Due date / Schedule to' : 'Due date'}</label>
                   <input
                     type="date"
                     value={detailEditDueDate}
@@ -201,23 +199,16 @@ export default function TaskDetailModal({
                   open={detailEditLabelDropdownOpen}
                   setOpen={setDetailEditLabelDropdownOpen}
                 />
+
               </div>
               <div className={s['detail-edit-buttons']}>
                 {isBacklogItem || activeTab === 'backlog' ? (
-                  <div className={s['detail-schedule-row']}>
-                    <input
-                      type="date"
-                      value={scheduleDate}
-                      onChange={(e) => setScheduleDate(e.target.value)}
-                      className={s['date-input']}
-                    />
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => onSchedule(detailTask.id, detailTask.title, onClose)}
-                    >
-                      📅 Schedule to Day
-                    </button>
-                  </div>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => onSchedule(detailTask.id, detailTask.title, onClose, detailEditDueDate)}
+                  >
+                    📅 Schedule to Day
+                  </button>
                 ) : (
                   <button
                     className="btn btn-secondary btn-sm"
@@ -326,7 +317,7 @@ export default function TaskDetailModal({
                   <div className={s['detail-meta-item']}>
                     <span className={s['detail-meta-label']}>Created</span>
                     <span className={s['detail-meta-value']}>
-                      {new Date(detailTask.created_at + 'Z').toLocaleString()}
+                      {new Date(detailTask.created_at).toLocaleString()}
                     </span>
                   </div>
                 )}
@@ -334,7 +325,7 @@ export default function TaskDetailModal({
                   <div className={s['detail-meta-item']}>
                     <span className={s['detail-meta-label']}>Completed</span>
                     <span className={s['detail-meta-value']}>
-                      {new Date(detailTask.completed_at + 'Z').toLocaleString()}
+                      {new Date(detailTask.completed_at).toLocaleString()}
                     </span>
                   </div>
                 )}
@@ -481,7 +472,7 @@ export default function TaskDetailModal({
                         <span className={s['history-action']}>{actionText()}</span>
                       </div>
                       <span className={s['history-time']}>
-                        {new Date(h.created_at + 'Z').toLocaleString()}
+                        {new Date(h.created_at).toLocaleString()}
                       </span>
                     </div>
                   );

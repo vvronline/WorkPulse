@@ -5,12 +5,20 @@ import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import s from './Leaves.module.css';
 
 const LEAVE_TYPES = [
-  { value: 'sick', label: 'Sick Leave', icon: '🤒', color: 'var(--danger)' },
-  { value: 'holiday', label: 'Holiday', icon: '🎉', color: 'var(--warning)' },
-  { value: 'planned', label: 'Planned Leave', icon: '📅', color: 'var(--primary-light)' },
-  { value: 'personal', label: 'Personal', icon: '👤', color: 'var(--primary-light)' },
-  { value: 'other', label: 'Other', icon: '📝', color: 'var(--text-muted)' },
+  { value: 'sick', label: 'Sick Leave', icon: '🤒', color: '#ef4444', bg: 'rgba(239,68,68,0.1)' },
+  { value: 'holiday', label: 'Holiday', icon: '🎉', color: '#f59e0b', bg: 'rgba(245,158,11,0.1)' },
+  { value: 'planned', label: 'Planned Leave', icon: '📅', color: '#6366f1', bg: 'rgba(99,102,241,0.1)' },
+  { value: 'personal', label: 'Personal', icon: '👤', color: '#10b981', bg: 'rgba(16,185,129,0.1)' },
+  { value: 'other', label: 'Other', icon: '📝', color: '#8b5cf6', bg: 'rgba(139,92,246,0.1)' },
 ];
+
+const STATUS_CONFIG = {
+  pending:          { label: 'Pending',            color: '#f59e0b', bg: 'rgba(245,158,11,0.12)'    },
+  approved:         { label: 'Approved',           color: '#10b981', bg: 'rgba(16,185,129,0.12)'   },
+  rejected:         { label: 'Rejected',           color: '#ef4444', bg: 'rgba(239,68,68,0.12)'    },
+  withdraw_pending: { label: 'Withdrawal Pending', color: '#6366f1', bg: 'rgba(99,102,241,0.12)'   },
+  withdrawn:        { label: 'Withdrawn',          color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)'   },
+};
 
 // Generate all dates between from and to (inclusive), skipping weekends
 function getDateRange(from, to, skipWeekends = true) {
@@ -20,7 +28,6 @@ function getDateRange(from, to, skipWeekends = true) {
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const dow = d.getDay();
     if (skipWeekends && (dow === 0 || dow === 6)) continue;
-    // Use local date parts to avoid UTC timezone shift
     const yyyy = d.getFullYear();
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
@@ -29,9 +36,12 @@ function getDateRange(from, to, skipWeekends = true) {
   return dates;
 }
 
+function fmtDate(str) {
+  return new Date(str + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
 export default function Leaves() {
   const [leaves, setLeaves] = useState([]);
-  const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isRange, setIsRange] = useState(false);
   const [date, setDate] = useState('');
@@ -46,12 +56,13 @@ export default function Leaves() {
   const [success, setSuccess] = useAutoDismiss('');
   const [submitting, setSubmitting] = useState(false);
   const [leaveToDelete, setLeaveToDelete] = useState(null);
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterType, setFilterType] = useState('all');
   const [filterMonth, setFilterMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
 
-  // Preview how many days are in the selected range
   const rangeDays = useMemo(() => {
     if (!isRange || !dateFrom || !dateTo || dateTo < dateFrom) return [];
     return getDateRange(dateFrom, dateTo, skipWeekends);
@@ -63,14 +74,11 @@ export default function Leaves() {
       const from = `${filterMonth}-01`;
       const lastDay = new Date(parseInt(y), parseInt(m), 0).getDate();
       const to = `${filterMonth}-${lastDay}`;
-
-      const [leavesRes, summaryRes, balancesRes] = await Promise.all([
+      const [leavesRes, balancesRes] = await Promise.all([
         getLeaves(from, to),
-        getLeaveSummary(parseInt(m), parseInt(y)),
         getLeaveBalances(parseInt(y)).catch(() => ({ data: [] })),
       ]);
       setLeaves(leavesRes.data);
-      setSummary(summaryRes.data);
       setBalances(balancesRes.data || []);
     } catch {
       setError('Failed to load leave data');
@@ -79,74 +87,37 @@ export default function Leaves() {
     }
   }, [filterMonth]);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchData().catch(() => setError('Failed to load leave data'));
-    return () => controller.abort();
-  }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setSuccess('');
-
-    if (!leaveType) {
-      setError('Leave type is required');
-      return;
-    }
-
     if (isRange) {
-      if (!dateFrom || !dateTo) {
-        setError('Both start and end dates are required');
-        return;
-      }
-      if (dateTo < dateFrom) {
-        setError('End date must be after start date');
-        return;
-      }
-      if (rangeDays.length === 0) {
-        setError('No valid days in the selected range (all weekends?)');
-        return;
-      }
-
+      if (!dateFrom || !dateTo) return setError('Both start and end dates are required');
+      if (dateTo < dateFrom) return setError('End date must be after start date');
+      if (rangeDays.length === 0) return setError('No valid days in the selected range');
       setSubmitting(true);
       try {
         const res = await addLeavesBatch({ dates: rangeDays, leave_type: leaveType, reason: reason.trim() || undefined, duration });
-        setSuccess(res.data?.message || `${rangeDays.length} leave(s) added!`);
-        setDateFrom('');
-        setDateTo('');
-        setReason('');
-        setDuration('full');
+        setSuccess(res.data?.message || `${rangeDays.length} leave(s) submitted`);
+        setDateFrom(''); setDateTo(''); setReason(''); setDuration('full');
         fetchData();
       } catch (err) {
         setError(err.response?.data?.error || 'Failed to add leaves');
-      } finally {
-        setSubmitting(false);
-      }
+      } finally { setSubmitting(false); }
     } else {
-      if (!date) {
-        setError('Date is required');
-        return;
-      }
-
+      if (!date) return setError('Date is required');
       setSubmitting(true);
       try {
         const res = await addLeave({ date, leave_type: leaveType, reason: reason.trim() || undefined, duration });
-        setSuccess(res.data?.message || 'Leave added successfully!');
-        setDate('');
-        setReason('');
-        setDuration('full');
+        setSuccess(res.data?.message || 'Leave request submitted');
+        setDate(''); setReason(''); setDuration('full');
         fetchData();
       } catch (err) {
         setError(err.response?.data?.error || 'Failed to add leave');
-      } finally {
-        setSubmitting(false);
-      }
+      } finally { setSubmitting(false); }
     }
-  };
-
-  const handleDeleteClick = (leave) => {
-    setLeaveToDelete(leave);
   };
 
   const confirmDelete = async () => {
@@ -164,250 +135,258 @@ export default function Leaves() {
 
   const getType = (val) => LEAVE_TYPES.find(t => t.value === val) || LEAVE_TYPES[4];
 
+  // Stats from filtered month leaves
+  const totalDays = useMemo(() => {
+    return leaves.reduce((acc, l) => acc + (l.duration === 'half_day' ? 0.5 : l.duration === 'quarter_day' ? 0.25 : 1), 0);
+  }, [leaves]);
+
+  const filteredLeaves = useMemo(() => {
+    return leaves.filter(l =>
+      (filterStatus === 'all' || l.status === filterStatus) &&
+      (filterType === 'all' || l.leave_type === filterType)
+    );
+  }, [leaves, filterStatus, filterType]);
+
   return (
-    <div className={s['leaves-page']}>
-      <div className={s['leaves-header']}>
-        <h2><span className="page-icon">🗓</span> Leave Management</h2>
-        <p>Track sick days, holidays, and planned leaves</p>
+    <div className={s.page}>
+      {/* ── Header ── */}
+      <div className={s.header}>
+        <div>
+          <h1 className={s.title}>Leave Management</h1>
+          <p className={s.subtitle}>Request time off, track approvals, and view your leave history</p>
+        </div>
+        <div className={s.headerRight}>
+          <input
+            type="month"
+            value={filterMonth}
+            onChange={(e) => setFilterMonth(e.target.value)}
+            className={s.monthPicker}
+          />
+        </div>
       </div>
 
-      <div className={s['leaves-grid']}>
-        {/* Add Leave Form */}
-        <div className={s['leaves-card']}>
-          <h3>➕ Add Leave</h3>
-
-          {error && <div className="error-msg">{error}</div>}
-          {success && <div className="success-msg">{success}</div>}
-
-          <form onSubmit={handleSubmit}>
-            {/* Single / Range Toggle */}
-            <div className={s['leave-mode-toggle']}>
-              <button
-                type="button"
-                className={`${s['mode-btn']} ${!isRange ? s.active : ''}`}
-                onClick={() => setIsRange(false)}
-              >
-                📅 Single Day
-              </button>
-              <button
-                type="button"
-                className={`${s['mode-btn']} ${isRange ? s.active : ''}`}
-                onClick={() => setIsRange(true)}
-              >
-                📆 Date Range
-              </button>
-            </div>
-
-            {/* Date Inputs */}
-            {!isRange ? (
-              <div className="form-group">
-                <label htmlFor="leave-date">Date</label>
-                <input
-                  id="leave-date"
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  required
-                />
-              </div>
-            ) : (
-              <>
-                <div className={s['leave-date-range-row']}>
-                  <div className="form-group">
-                    <label>From</label>
-                    <input
-                      type="date"
-                      value={dateFrom}
-                      onChange={(e) => {
-                        setDateFrom(e.target.value);
-                        if (dateTo && e.target.value > dateTo) setDateTo(e.target.value);
+      {/* ── Balance Cards ── */}
+      {balances.length > 0 && (
+        <div className={s.balanceRow}>
+          {balances.map(b => {
+            const type = getType(b.leave_type);
+            const total = (b.quota || 0) + (b.carried_forward || 0);
+            const used = b.used || 0;
+            const available = total - used;
+            const pct = total > 0 ? Math.min(Math.round((used / total) * 100), 100) : 0;
+            return (
+              <div key={`${b.leave_type}-${b.year}`} className={s.balanceCard} style={{ '--lc': type.color, '--lb': type.bg }}>
+                <div className={s.balanceIcon}>{type.icon}</div>
+                <div className={s.balanceInfo}>
+                  <div className={s.balanceType}>{type.label}</div>
+                  <div className={s.balanceNumbers}>
+                    <span className={s.balanceAvail}>{available}</span>
+                    <span className={s.balanceOf}>of {total} available</span>
+                  </div>
+                  <div className={s.progressBar}>
+                    <div
+                      className={s.progressFill}
+                      style={{
+                        width: `${pct}%`,
+                        background: pct >= 80 ? '#ef4444' : pct >= 50 ? '#f59e0b' : type.color,
                       }}
-                      required
                     />
                   </div>
-                  <span className={s['leave-range-arrow']}>→</span>
-                  <div className="form-group">
-                    <label>To</label>
-                    <input
-                      type="date"
-                      value={dateTo}
-                      min={dateFrom || undefined}
-                      onChange={(e) => setDateTo(e.target.value)}
-                      required
-                    />
-                  </div>
-                </div>
-                <div className="checkbox-label checkbox-label-mb">
-                  <input
-                    id="skipWeekends"
-                    type="checkbox"
-                    checked={skipWeekends}
-                    onChange={(e) => setSkipWeekends(e.target.checked)}
-                  />
-                  <label htmlFor="skipWeekends">Skip weekends (Sat & Sun)</label>
-                </div>
-                {rangeDays.length > 0 && (
-                  <div className={s['leave-range-preview']}>
-                    <span className={s['leave-range-count']}>{rangeDays.length}</span>
-                    <span>day{rangeDays.length !== 1 ? 's' : ''} will be added</span>
-                  </div>
-                )}
-              </>
-            )}
-
-            <div className="form-group">
-              <label>Leave Type</label>
-              <div className={s['leave-type-grid']}>
-                {LEAVE_TYPES.map(t => (
-                  <button
-                    key={t.value}
-                    type="button"
-                    className={`${s['leave-type-btn']} ${leaveType === t.value ? s.active : ''}`}
-                    onClick={() => setLeaveType(t.value)}
-                    style={{ '--type-color': t.color }}
-                  >
-                    <span className={s['leave-type-icon']}>{t.icon}</span>
-                    <span>{t.label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="leave-reason">Reason (optional)</label>
-              <textarea
-                id="leave-reason"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="Why are you taking leave?"
-                rows={2}
-              />
-            </div>
-
-            {/* Duration Selector */}
-            <div className="form-group">
-              <label>Duration</label>
-              <div className={s['leave-mode-toggle']}>
-                <button type="button" className={`${s['mode-btn']} ${duration === 'full' ? s.active : ''}`} onClick={() => setDuration('full')}>Full Day</button>
-                <button type="button" className={`${s['mode-btn']} ${duration === 'half' ? s.active : ''}`} onClick={() => setDuration('half')}>Half Day</button>
-                <button type="button" className={`${s['mode-btn']} ${duration === 'quarter' ? s.active : ''}`} onClick={() => setDuration('quarter')}>Quarter Day</button>
-              </div>
-            </div>
-
-            {/* Leave Balance */}
-            {balances.length > 0 && (
-              <div className={s['leave-balance-panel']}>
-                <h4>📊 Your Leave Balances</h4>
-                <div className={s['leave-balance-grid']}>
-                  {balances.map(b => {
-                    const available = (b.quota + (b.carried_forward || 0)) - b.used;
-                    const type = getType(b.leave_type);
-                    return (
-                      <div key={`${b.leave_type}-${b.year}`} className={s['leave-balance-item']} style={{ '--type-color': type.color }}>
-                        <span className={s['leave-balance-icon']}>{type.icon}</span>
-                        <span className={s['leave-balance-type']}>{type.label}</span>
-                        <span className={s['leave-balance-available']}>{available} available</span>
-                        <span className={s['leave-balance-detail']}>{b.used}/{b.quota + (b.carried_forward || 0)} used</span>
-                      </div>
-                    );
-                  })}
+                  <div className={s.balanceMeta}>{used} used · {b.carried_forward || 0} carried forward</div>
                 </div>
               </div>
-            )}
-
-            <button type="submit" className="btn btn-primary" disabled={submitting}>
-              {submitting ? 'Saving...' : isRange ? `✓ Add ${rangeDays.length} Leave${rangeDays.length !== 1 ? 's' : ''}` : '✓ Add Leave'}
-            </button>
-          </form>
+            );
+          })}
         </div>
+      )}
 
-        {/* Stats + History */}
-        <div className={s['leaves-right']}>
-          {/* Monthly Summary */}
-          <div className={s['leaves-card']}>
-            <div className={s['leaves-summary-header']}>
-              <h3>📊 Monthly Summary</h3>
-              <input
-                type="month"
-                value={filterMonth}
-                onChange={(e) => setFilterMonth(e.target.value)}
-                className={s['month-picker']}
-              />
+      <div className={s.layout}>
+        {/* ── Request Form ── */}
+        <aside className={s.sidebar}>
+          <div className={s.card}>
+            <div className={s.cardHeader}>
+              <h2 className={s.cardTitle}>New Leave Request</h2>
             </div>
 
-            {summary && (
-              <div className={s['leave-stats']}>
-                <div className={s['leave-stat-total']}>
-                  <span className={s['leave-stat-num']}>{summary.total}</span>
-                  <span className={s['leave-stat-label']}>Total Leaves</span>
+            {error && <div className={s.alertError}>{error}</div>}
+            {success && <div className={s.alertSuccess}>{success}</div>}
+
+            <form onSubmit={handleSubmit} className={s.form}>
+              {/* Mode Toggle */}
+              <div className={s.segmented}>
+                <button type="button" className={`${s.segBtn} ${!isRange ? s.segActive : ''}`} onClick={() => setIsRange(false)}>Single Day</button>
+                <button type="button" className={`${s.segBtn} ${isRange ? s.segActive : ''}`} onClick={() => setIsRange(true)}>Date Range</button>
+              </div>
+
+              {/* Date */}
+              {!isRange ? (
+                <div className={s.field}>
+                  <label className={s.label}>Date</label>
+                  <input type="date" className={s.input} value={date} onChange={e => setDate(e.target.value)} required />
                 </div>
-                <div className={s['leave-breakdown']}>
-                  {summary.weekendDays > 0 && (
-                    <div className={s['leave-breakdown-item']}>
-                      <span>🏖</span>
-                      <span>Weekend Holidays</span>
-                      <span className={`${s['leave-breakdown-count']} ${s['type-comp-off']}`}>{summary.weekendDays}</span>
+              ) : (
+                <div className={s.dateRangeGroup}>
+                  <div className={s.field}>
+                    <label className={s.label}>From</label>
+                    <input type="date" className={s.input} value={dateFrom} onChange={e => { setDateFrom(e.target.value); if (dateTo && e.target.value > dateTo) setDateTo(e.target.value); }} required />
+                  </div>
+                  <div className={s.rangeSep}>→</div>
+                  <div className={s.field}>
+                    <label className={s.label}>To</label>
+                    <input type="date" className={s.input} value={dateTo} min={dateFrom || undefined} onChange={e => setDateTo(e.target.value)} required />
+                  </div>
+                  <label className={s.checkRow}>
+                    <input type="checkbox" checked={skipWeekends} onChange={e => setSkipWeekends(e.target.checked)} />
+                    <span>Skip weekends</span>
+                  </label>
+                  {rangeDays.length > 0 && (
+                    <div className={s.rangePreview}>
+                      <span className={s.rangeCount}>{rangeDays.length}</span>
+                      <span> working day{rangeDays.length !== 1 ? 's' : ''} selected</span>
                     </div>
                   )}
-                  {summary.breakdown.map(b => {
-                    const type = getType(b.leave_type);
-                    return (
-                      <div key={b.leave_type} className={s['leave-breakdown-item']}>
-                        <span>{type.icon}</span>
-                        <span>{type.label}</span>
-                        <span className={s['leave-breakdown-count']} style={{ '--type-color': type.color }}>{b.count}</span>
-                      </div>
-                    );
-                  })}
-                  {summary.breakdown.length === 0 && summary.weekendDays === 0 && (
-                    <p className={s['leave-empty']}>No leaves this month 🎯</p>
-                  )}
+                </div>
+              )}
+
+              {/* Leave Type */}
+              <div className={s.field}>
+                <label className={s.label}>Leave Type</label>
+                <div className={s.typeGrid}>
+                  {LEAVE_TYPES.map(t => (
+                    <button
+                      key={t.value}
+                      type="button"
+                      className={`${s.typeChip} ${leaveType === t.value ? s.typeChipActive : ''}`}
+                      style={{ '--lc': t.color, '--lb': t.bg }}
+                      onClick={() => setLeaveType(t.value)}
+                    >
+                      <span className={s.typeEmoji}>{t.icon}</span>
+                      <span className={s.typeLabel}>{t.label}</span>
+                    </button>
+                  ))}
                 </div>
               </div>
-            )}
+
+              {/* Duration */}
+              <div className={s.field}>
+                <label className={s.label}>Duration</label>
+                <div className={s.segmented}>
+                  <button type="button" className={`${s.segBtn} ${duration === 'full' ? s.segActive : ''}`} onClick={() => setDuration('full')}>Full Day</button>
+                  <button type="button" className={`${s.segBtn} ${duration === 'half' ? s.segActive : ''}`} onClick={() => setDuration('half')}>Half Day</button>
+                  <button type="button" className={`${s.segBtn} ${duration === 'quarter' ? s.segActive : ''}`} onClick={() => setDuration('quarter')}>Quarter</button>
+                </div>
+              </div>
+
+              {/* Reason */}
+              <div className={s.field}>
+                <label className={s.label}>Reason <span className={s.optional}>(optional)</span></label>
+                <textarea
+                  className={s.textarea}
+                  value={reason}
+                  onChange={e => setReason(e.target.value)}
+                  placeholder="Briefly describe your reason…"
+                  rows={3}
+                />
+              </div>
+
+              <button type="submit" className={s.submitBtn} disabled={submitting}>
+                {submitting ? 'Submitting…' : isRange ? `Submit ${rangeDays.length || ''} Request${rangeDays.length !== 1 ? 's' : ''}` : 'Submit Request'}
+              </button>
+            </form>
+          </div>
+        </aside>
+
+        {/* ── History Panel ── */}
+        <main className={s.main}>
+          {/* Month Stats */}
+          <div className={s.statsStrip}>
+            <div className={s.statItem}>
+              <span className={s.statNum}>{leaves.length}</span>
+              <span className={s.statLabel}>Requests</span>
+            </div>
+            <div className={s.statDivider} />
+            <div className={s.statItem}>
+              <span className={s.statNum}>{totalDays}</span>
+              <span className={s.statLabel}>Total Days</span>
+            </div>
+            <div className={s.statDivider} />
+            <div className={s.statItem}>
+              <span className={s.statNum} style={{ color: '#10b981' }}>{leaves.filter(l => l.status === 'approved').length}</span>
+              <span className={s.statLabel}>Approved</span>
+            </div>
+            <div className={s.statDivider} />
+            <div className={s.statItem}>
+              <span className={s.statNum} style={{ color: '#f59e0b' }}>{leaves.filter(l => l.status === 'pending').length}</span>
+              <span className={s.statLabel}>Pending</span>
+            </div>
+            <div className={s.statDivider} />
+            <div className={s.statItem}>
+              <span className={s.statNum} style={{ color: '#ef4444' }}>{leaves.filter(l => l.status === 'rejected').length}</span>
+              <span className={s.statLabel}>Rejected</span>
+            </div>
           </div>
 
-          {/* Leave History */}
-          <div className={s['leaves-card']}>
-            <h3>📋 Leave History</h3>
+          {/* Filters */}
+          <div className={s.filters}>
+            <div className={s.filterGroup}>
+              <label className={s.filterLabel}>Status</label>
+              <select className={s.filterSelect} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+                <option value="all">All</option>
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+                <option value="withdraw_pending">Withdrawal Pending</option>
+              </select>
+            </div>
+            <div className={s.filterGroup}>
+              <label className={s.filterLabel}>Type</label>
+              <select className={s.filterSelect} value={filterType} onChange={e => setFilterType(e.target.value)}>
+                <option value="all">All Types</option>
+                {LEAVE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* Leave List */}
+          <div className={s.card}>
+            <div className={s.cardHeader}>
+              <h2 className={s.cardTitle}>Leave History</h2>
+              <span className={s.cardCount}>{filteredLeaves.length} record{filteredLeaves.length !== 1 ? 's' : ''}</span>
+            </div>
             {loading ? (
-              <div className="loading-spinner"><div className="spinner"></div></div>
-            ) : leaves.length === 0 ? (
-              <p className={s['leave-empty']}>No leaves recorded for this month</p>
+              <div className={s.loadingWrap}><div className="spinner" /></div>
+            ) : filteredLeaves.length === 0 ? (
+              <div className={s.emptyState}>
+                <div className={s.emptyIcon}>📭</div>
+                <p className={s.emptyText}>No leave requests found for this period</p>
+              </div>
             ) : (
-              <div className={s['leave-list']}>
-                {leaves.map(leave => {
+              <div className={s.leaveList}>
+                {filteredLeaves.map(leave => {
                   const type = getType(leave.leave_type);
-                  const statusColors = { pending: 'var(--warning)', approved: 'var(--success)', rejected: 'var(--danger)', withdraw_pending: 'var(--primary-light)' };
-                  const statusLabels = { pending: 'pending', approved: 'approved', rejected: 'rejected', withdraw_pending: 'withdrawal pending' };
-                  const statusColor = statusColors[leave.status] || 'var(--text-muted)';
+                  const status = STATUS_CONFIG[leave.status] || STATUS_CONFIG.pending;
+                  const durLabel = leave.duration === 'half_day' ? 'Half Day' : leave.duration === 'quarter_day' ? 'Quarter Day' : 'Full Day';
                   return (
-                    <div key={leave.id} className={s['leave-item']}>
-                      <div className={s['leave-item-icon']} style={{ '--type-bg': type.color + '20', '--type-color': type.color }}>
-                        {type.icon}
-                      </div>
-                      <div className={s['leave-item-info']}>
-                        <div className={s['leave-item-type']}>
-                          {type.label}
-                          <span
-                            className={s['leave-status-badge']}
-                            style={{ background: `${statusColor}22`, color: statusColor }}
-                          >
-                            {statusLabels[leave.status] || leave.status || 'approved'}
-                          </span>
+                    <div key={leave.id} className={s.leaveItem}>
+                      <div className={s.leaveItemLeft}>
+                        <div className={s.leaveTypeIcon} style={{ background: type.bg, color: type.color }}>{type.icon}</div>
+                        <div className={s.leaveItemBody}>
+                          <div className={s.leaveItemRow}>
+                            <span className={s.leaveTypeName}>{type.label}</span>
+                            <span className={s.leaveDurBadge}>{durLabel}</span>
+                            <span className={s.leaveStatusBadge} style={{ background: status.bg, color: status.color }}>{status.label}</span>
+                          </div>
+                          <div className={s.leaveDate}>{fmtDate(leave.date)}</div>
+                          {leave.reason && <div className={s.leaveReason}>"{leave.reason}"</div>}
+                          {leave.reject_reason && <div className={s.leaveRejectReason}>Rejection reason: {leave.reject_reason}</div>}
+                          {leave.approved_by_name && leave.status === 'approved' && (
+                            <div className={s.leaveApprover}>Approved by {leave.approved_by_name}</div>
+                          )}
                         </div>
-                        <div className={s['leave-item-date']}>
-                          {new Date(leave.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                        </div>
-                        {leave.reason && <div className={s['leave-item-reason']}>{leave.reason}</div>}
-                        {leave.reject_reason && <div className={`${s['leave-item-reason']} ${s['text-danger']}`}>Rejected: {leave.reject_reason}</div>}
-                        {leave.approved_by_name && leave.status === 'approved' && (
-                          <div className={s['leave-item-reason']}>Approved by {leave.approved_by_name}</div>
-                        )}
                       </div>
                       {(leave.status === 'pending' || leave.status === 'approved') && (
-                        <button className="btn-remove-break" onClick={() => handleDeleteClick(leave)} title="Withdraw request">
-                          ✕
+                        <button className={s.withdrawBtn} onClick={() => setLeaveToDelete(leave)} title="Withdraw this leave">
+                          Withdraw
                         </button>
                       )}
                     </div>
@@ -416,13 +395,13 @@ export default function Leaves() {
               </div>
             )}
           </div>
-        </div>
+        </main>
       </div>
 
       <ConfirmDialog
         isOpen={!!leaveToDelete}
         title="Withdraw Leave Request"
-        message={`Are you sure you want to withdraw this ${leaveToDelete?.status || ''} leave for ${leaveToDelete ? new Date(leaveToDelete.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : ''}? ${leaveToDelete?.status === 'approved' ? 'This will require manager approval.' : 'This will be sent to your manager for approval.'}`}
+        message={`Withdraw your ${leaveToDelete?.leave_type || ''} leave for ${leaveToDelete ? fmtDate(leaveToDelete.date) : ''}?${leaveToDelete?.status === 'approved' ? ' This requires manager approval.' : ''}`}
         confirmText="Withdraw"
         onConfirm={confirmDelete}
         onCancel={() => setLeaveToDelete(null)}

@@ -1,257 +1,262 @@
-/**
- * Leave Policy routes — leave quotas, balances, holidays, accrual.
- */
-const express = require('express');
-const db = require('../db');
+﻿const express = require('express');
+const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole, requireSameOrg } = require('../middleware/rbac');
 const { logAction } = require('../utils/audit');
 
 const router = express.Router();
-
 router.use(auth, loadUserContext);
 
 // ==================== LEAVE POLICIES (HR Admin+) ====================
 
-// Get all leave policies for the org
-router.get('/policies', requireSameOrg, (req, res) => {
-    const policies = db.prepare('SELECT * FROM leave_policies WHERE org_id = ? ORDER BY leave_type')
-        .all(req.userOrgId);
-    res.json(policies);
-});
-
-// Create/update a leave policy
-router.post('/policies', requireRole('hr_admin'), requireSameOrg, (req, res) => {
-    const { leave_type, annual_quota, accrual_type, carry_forward_limit, half_day_allowed, quarter_day_allowed } = req.body;
-
-    if (!leave_type) return res.status(400).json({ error: 'Leave type is required' });
-
-    // Validate numeric fields
-    const quota = Number(annual_quota) || 0;
-    const cfLimit = Number(carry_forward_limit) || 0;
-    if (quota < 0 || quota > 365) return res.status(400).json({ error: 'Annual quota must be between 0 and 365' });
-    if (cfLimit < 0 || cfLimit > 365) return res.status(400).json({ error: 'Carry forward limit must be between 0 and 365' });
-
-    const existing = db.prepare('SELECT id FROM leave_policies WHERE org_id = ? AND leave_type = ?')
-        .get(req.userOrgId, leave_type);
-
-    if (existing) {
-        db.prepare(`
-            UPDATE leave_policies SET
-                annual_quota = ?, accrual_type = ?, carry_forward_limit = ?,
-                half_day_allowed = ?, quarter_day_allowed = ?
-            WHERE id = ?
-        `).run(
-            quota, accrual_type || 'annual', cfLimit,
-            half_day_allowed ? 1 : 0, quarter_day_allowed ? 1 : 0,
-            existing.id
-        );
-        logAction(req, 'update', 'leave_policy', existing.id, { leave_type });
-        res.json({ message: `Leave policy for ${leave_type} updated` });
-    } else {
-        const result = db.prepare(`
-            INSERT INTO leave_policies (org_id, leave_type, annual_quota, accrual_type, carry_forward_limit, half_day_allowed, quarter_day_allowed)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(req.userOrgId, leave_type, quota, accrual_type || 'annual', cfLimit, half_day_allowed ? 1 : 0, quarter_day_allowed ? 1 : 0);
-        logAction(req, 'create', 'leave_policy', result.lastInsertRowid, { leave_type, annual_quota: quota });
-        res.json({ id: result.lastInsertRowid, message: `Leave policy for ${leave_type} created` });
+router.get('/policies', requireSameOrg, async (req, res) => {
+    try {
+        const policies = (await query('SELECT * FROM leave_policies WHERE org_id = $1 ORDER BY leave_type', [req.userOrgId])).rows;
+        res.json(policies);
+    } catch (err) {
+        console.error('GET /policies error:', err.message);
+        res.status(500).json({ error: 'Failed to fetch policies' });
     }
 });
 
-// Delete a leave policy
-router.delete('/policies/:id', requireRole('hr_admin'), requireSameOrg, (req, res) => {
-    const { id } = req.params;
-    const policy = db.prepare('SELECT * FROM leave_policies WHERE id = ? AND org_id = ?').get(Number(id), req.userOrgId);
-    if (!policy) return res.status(404).json({ error: 'Policy not found' });
+router.post('/policies', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
+    try {
+        const { leave_type, annual_quota, accrual_type, carry_forward_limit, half_day_allowed, quarter_day_allowed } = req.body;
+        if (!leave_type) return res.status(400).json({ error: 'Leave type is required' });
 
-    db.prepare('DELETE FROM leave_policies WHERE id = ?').run(Number(id));
-    logAction(req, 'delete', 'leave_policy', Number(id), { leave_type: policy.leave_type });
-    res.json({ message: 'Policy deleted' });
+        const quota = Number(annual_quota) || 0;
+        const cfLimit = Number(carry_forward_limit) || 0;
+        if (quota < 0 || quota > 365) return res.status(400).json({ error: 'Annual quota must be between 0 and 365' });
+        if (cfLimit < 0 || cfLimit > 365) return res.status(400).json({ error: 'Carry forward limit must be between 0 and 365' });
+
+        const existing = (await query('SELECT id FROM leave_policies WHERE org_id = $1 AND leave_type = $2', [req.userOrgId, leave_type])).rows[0];
+
+        if (existing) {
+            await query(
+                `UPDATE leave_policies SET annual_quota = $1, accrual_type = $2, carry_forward_limit = $3,
+                 half_day_allowed = $4, quarter_day_allowed = $5 WHERE id = $6`,
+                [quota, accrual_type || 'annual', cfLimit, !!half_day_allowed, !!quarter_day_allowed, existing.id]
+            );
+            logAction(req, 'update', 'leave_policy', existing.id, { leave_type });
+            res.json({ message: `Leave policy for ${leave_type} updated` });
+        } else {
+            const result = await query(
+                `INSERT INTO leave_policies (org_id, leave_type, annual_quota, accrual_type, carry_forward_limit, half_day_allowed, quarter_day_allowed)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+                [req.userOrgId, leave_type, quota, accrual_type || 'annual', cfLimit, !!half_day_allowed, !!quarter_day_allowed]
+            );
+            logAction(req, 'create', 'leave_policy', result.rows[0].id, { leave_type, annual_quota: quota });
+            res.json({ id: result.rows[0].id, message: `Leave policy for ${leave_type} created` });
+        }
+    } catch (err) {
+        console.error('POST /policies error:', err.message);
+        res.status(500).json({ error: 'Failed to save policy' });
+    }
+});
+
+router.delete('/policies/:id', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const policy = (await query('SELECT * FROM leave_policies WHERE id = $1 AND org_id = $2', [Number(id), req.userOrgId])).rows[0];
+        if (!policy) return res.status(404).json({ error: 'Policy not found' });
+
+        await query('DELETE FROM leave_policies WHERE id = $1', [Number(id)]);
+        logAction(req, 'delete', 'leave_policy', Number(id), { leave_type: policy.leave_type });
+        res.json({ message: 'Policy deleted' });
+    } catch (err) {
+        console.error('DELETE /policies/:id error:', err.message);
+        res.status(500).json({ error: 'Failed to delete policy' });
+    }
 });
 
 // ==================== LEAVE BALANCES ====================
 
-// Get current user's balances
-router.get('/balances', (req, res) => {
-    const year = parseInt(req.query.year) || new Date().getFullYear();
+router.get('/balances', async (req, res) => {
+    try {
+        const year = parseInt(req.query.year) || new Date().getFullYear();
+        if (req.userOrgId) await initializeBalances(req.userId, req.userOrgId, year);
 
-    // If org has policies, check for initialized balances
-    if (req.userOrgId) {
-        initializeBalances(req.userId, req.userOrgId, year);
+        const balances = (await query(
+            'SELECT * FROM leave_balances WHERE user_id = $1 AND year = $2',
+            [req.userId, year]
+        )).rows;
+        res.json(balances);
+    } catch (err) {
+        console.error('GET /balances error:', err.message);
+        res.status(500).json({ error: 'Failed to fetch balances' });
     }
-
-    const balances = db.prepare(
-        'SELECT * FROM leave_balances WHERE user_id = ? AND year = ?'
-    ).all(req.userId, year);
-
-    res.json(balances);
 });
 
-// Get a specific user's balances (team_lead+)
-router.get('/balances/:userId', requireRole('team_lead'), requireSameOrg, (req, res) => {
-    const targetUserId = Number(req.params.userId);
-    const year = parseInt(req.query.year) || new Date().getFullYear();
+router.get('/balances/:userId', requireRole('team_lead'), requireSameOrg, async (req, res) => {
+    try {
+        const targetUserId = Number(req.params.userId);
+        const year = parseInt(req.query.year) || new Date().getFullYear();
 
-    // Verify the target user is in the same org
-    const targetUser = db.prepare('SELECT org_id FROM users WHERE id = ?').get(targetUserId);
-    if (!targetUser || targetUser.org_id !== req.userOrgId) {
-        return res.status(403).json({ error: 'Cannot view balances for users outside your organization' });
-    }
-
-    initializeBalances(targetUserId, req.userOrgId, year);
-
-    const balances = db.prepare(
-        'SELECT * FROM leave_balances WHERE user_id = ? AND year = ?'
-    ).all(targetUserId, year);
-
-    res.json(balances);
-});
-
-// Adjust a user's balance (hr_admin+)
-router.put('/balances/:userId', requireRole('hr_admin'), requireSameOrg, (req, res) => {
-    const targetUserId = Number(req.params.userId);
-    const { leave_type, year, quota, carried_forward } = req.body;
-
-    if (!leave_type || !year) return res.status(400).json({ error: 'Leave type and year are required' });
-
-    // Verify the target user is in the same org
-    const targetUser = db.prepare('SELECT org_id FROM users WHERE id = ?').get(targetUserId);
-    if (!targetUser || targetUser.org_id !== req.userOrgId) {
-        return res.status(403).json({ error: 'Cannot modify balances for users outside your organization' });
-    }
-
-    const existing = db.prepare(
-        'SELECT id FROM leave_balances WHERE user_id = ? AND leave_type = ? AND year = ?'
-    ).get(targetUserId, leave_type, year);
-
-    if (existing) {
-        const updates = [];
-        const params = [];
-        if (quota !== undefined) { updates.push('quota = ?'); params.push(quota); }
-        if (carried_forward !== undefined) { updates.push('carried_forward = ?'); params.push(carried_forward); }
-        if (updates.length === 0) {
-            return res.status(400).json({ error: 'No fields to update. Provide quota or carried_forward.' });
+        const targetUser = (await query('SELECT org_id FROM users WHERE id = $1', [targetUserId])).rows[0];
+        if (!targetUser || targetUser.org_id !== req.userOrgId) {
+            return res.status(403).json({ error: 'Cannot view balances for users outside your organization' });
         }
-        params.push(existing.id);
-        db.prepare(`UPDATE leave_balances SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-    } else {
-        db.prepare(
-            'INSERT INTO leave_balances (user_id, leave_type, year, quota, carried_forward) VALUES (?, ?, ?, ?, ?)'
-        ).run(targetUserId, leave_type, year, quota || 0, carried_forward || 0);
-    }
 
-    logAction(req, 'update_balance', 'leave_balance', targetUserId, { leave_type, year, quota, carried_forward });
-    res.json({ message: 'Balance updated' });
+        await initializeBalances(targetUserId, req.userOrgId, year);
+
+        const balances = (await query(
+            'SELECT * FROM leave_balances WHERE user_id = $1 AND year = $2',
+            [targetUserId, year]
+        )).rows;
+        res.json(balances);
+    } catch (err) {
+        console.error('GET /balances/:userId error:', err.message);
+        res.status(500).json({ error: 'Failed to fetch balances' });
+    }
+});
+
+router.put('/balances/:userId', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
+    try {
+        const targetUserId = Number(req.params.userId);
+        const { leave_type, year, quota, carried_forward } = req.body;
+
+        if (!leave_type || !year) return res.status(400).json({ error: 'Leave type and year are required' });
+
+        const targetUser = (await query('SELECT org_id FROM users WHERE id = $1', [targetUserId])).rows[0];
+        if (!targetUser || targetUser.org_id !== req.userOrgId) {
+            return res.status(403).json({ error: 'Cannot modify balances for users outside your organization' });
+        }
+
+        const existing = (await query(
+            'SELECT id FROM leave_balances WHERE user_id = $1 AND leave_type = $2 AND year = $3',
+            [targetUserId, leave_type, year]
+        )).rows[0];
+
+        if (existing) {
+            const updates = [];
+            const params = [];
+            let pi = 1;
+            if (quota !== undefined) { updates.push(`quota = $${pi++}`); params.push(quota); }
+            if (carried_forward !== undefined) { updates.push(`carried_forward = $${pi++}`); params.push(carried_forward); }
+            if (updates.length === 0) return res.status(400).json({ error: 'No fields to update. Provide quota or carried_forward.' });
+            params.push(existing.id);
+            await query(`UPDATE leave_balances SET ${updates.join(', ')} WHERE id = $${pi}`, params);
+        } else {
+            await query(
+                'INSERT INTO leave_balances (user_id, leave_type, year, quota, carried_forward) VALUES ($1, $2, $3, $4, $5)',
+                [targetUserId, leave_type, year, quota || 0, carried_forward || 0]
+            );
+        }
+
+        logAction(req, 'update_balance', 'leave_balance', targetUserId, { leave_type, year, quota, carried_forward });
+        res.json({ message: 'Balance updated' });
+    } catch (err) {
+        console.error('PUT /balances/:userId error:', err.message);
+        res.status(500).json({ error: 'Failed to update balance' });
+    }
 });
 
 // ==================== COMPANY HOLIDAYS ====================
 
-// Get holidays for the org
-router.get('/holidays', requireSameOrg, (req, res) => {
-    const { year } = req.query;
-    const y = parseInt(year) || new Date().getFullYear();
-
-    const holidays = db.prepare(`
-        SELECT * FROM holidays
-        WHERE org_id = ? AND date LIKE ?
-        ORDER BY date ASC
-    `).all(req.userOrgId, `${y}-%`);
-
-    res.json(holidays);
-});
-
-// Add a holiday (hr_admin+)
-router.post('/holidays', requireRole('hr_admin'), requireSameOrg, (req, res) => {
-    const { date, name, is_optional } = req.body;
-    if (!date || !name) return res.status(400).json({ error: 'Date and name are required' });
-
+router.get('/holidays', requireSameOrg, async (req, res) => {
     try {
-        const result = db.prepare(
-            'INSERT INTO holidays (org_id, date, name, is_optional) VALUES (?, ?, ?, ?)'
-        ).run(req.userOrgId, date, name.trim(), is_optional ? 1 : 0);
-
-        logAction(req, 'create', 'holiday', result.lastInsertRowid, { date, name: name.trim() });
-        res.json({ id: result.lastInsertRowid, message: 'Holiday added' });
-    } catch (e) {
-        if (e.message.includes('UNIQUE')) return res.status(400).json({ error: 'Holiday already exists on this date' });
-        throw e;
+        const y = parseInt(req.query.year) || new Date().getFullYear();
+        const holidays = (await query(
+            `SELECT * FROM holidays WHERE org_id = $1 AND date LIKE $2 ORDER BY date ASC`,
+            [req.userOrgId, `${y}-%`]
+        )).rows;
+        res.json(holidays);
+    } catch (err) {
+        console.error('GET /holidays error:', err.message);
+        res.status(500).json({ error: 'Failed to fetch holidays' });
     }
 });
 
-// Add multiple holidays (batch)
-router.post('/holidays/batch', requireRole('hr_admin'), requireSameOrg, (req, res) => {
-    const { holidays } = req.body;
-    if (!holidays || !Array.isArray(holidays)) return res.status(400).json({ error: 'Holidays array is required' });
+router.post('/holidays', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
+    try {
+        const { date, name, is_optional } = req.body;
+        if (!date || !name) return res.status(400).json({ error: 'Date and name are required' });
 
-    const insert = db.prepare('INSERT OR IGNORE INTO holidays (org_id, date, name, is_optional) VALUES (?, ?, ?, ?)');
-    const tx = db.transaction(() => {
-        let added = 0;
-        for (const h of holidays) {
-            if (h.date && h.name) {
-                const r = insert.run(req.userOrgId, h.date, h.name.trim(), h.is_optional ? 1 : 0);
-                if (r.changes > 0) added++;
-            }
-        }
-        return added;
-    });
-
-    const added = tx();
-    logAction(req, 'batch_create', 'holiday', null, { count: added });
-    res.json({ message: `${added} holiday(s) added` });
+        const result = await query(
+            'INSERT INTO holidays (org_id, date, name, is_optional) VALUES ($1, $2, $3, $4) RETURNING id',
+            [req.userOrgId, date, name.trim(), !!is_optional]
+        );
+        logAction(req, 'create', 'holiday', result.rows[0].id, { date, name: name.trim() });
+        res.json({ id: result.rows[0].id, message: 'Holiday added' });
+    } catch (err) {
+        if (err.code === '23505') return res.status(400).json({ error: 'Holiday already exists on this date' });
+        console.error('POST /holidays error:', err.message);
+        res.status(500).json({ error: 'Failed to add holiday' });
+    }
 });
 
-// Delete a holiday
-router.delete('/holidays/:id', requireRole('hr_admin'), requireSameOrg, (req, res) => {
-    const { id } = req.params;
-    const holiday = db.prepare('SELECT * FROM holidays WHERE id = ? AND org_id = ?').get(Number(id), req.userOrgId);
-    if (!holiday) return res.status(404).json({ error: 'Holiday not found' });
+router.post('/holidays/batch', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
+    try {
+        const { holidays } = req.body;
+        if (!holidays || !Array.isArray(holidays)) return res.status(400).json({ error: 'Holidays array is required' });
 
-    db.prepare('DELETE FROM holidays WHERE id = ?').run(Number(id));
-    logAction(req, 'delete', 'holiday', Number(id), { name: holiday.name, date: holiday.date });
-    res.json({ message: 'Holiday deleted' });
+        const added = await transaction(async (client) => {
+            let count = 0;
+            for (const h of holidays) {
+                if (h.date && h.name) {
+                    const r = await client.query(
+                        'INSERT INTO holidays (org_id, date, name, is_optional) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
+                        [req.userOrgId, h.date, h.name.trim(), !!h.is_optional]
+                    );
+                    if (r.rowCount > 0) count++;
+                }
+            }
+            return count;
+        });
+
+        logAction(req, 'batch_create', 'holiday', null, { count: added });
+        res.json({ message: `${added} holiday(s) added` });
+    } catch (err) {
+        console.error('POST /holidays/batch error:', err.message);
+        res.status(500).json({ error: 'Failed to add holidays' });
+    }
+});
+
+router.delete('/holidays/:id', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const holiday = (await query('SELECT * FROM holidays WHERE id = $1 AND org_id = $2', [Number(id), req.userOrgId])).rows[0];
+        if (!holiday) return res.status(404).json({ error: 'Holiday not found' });
+
+        await query('DELETE FROM holidays WHERE id = $1', [Number(id)]);
+        logAction(req, 'delete', 'holiday', Number(id), { name: holiday.name, date: holiday.date });
+        res.json({ message: 'Holiday deleted' });
+    } catch (err) {
+        console.error('DELETE /holidays/:id error:', err.message);
+        res.status(500).json({ error: 'Failed to delete holiday' });
+    }
 });
 
 // ==================== HELPERS ====================
 
-/**
- * Initialize leave balances for a user for a given year based on org policies.
- */
-function initializeBalances(userId, orgId, year) {
+async function initializeBalances(userId, orgId, year) {
     if (!orgId) return;
-
-    const policies = db.prepare('SELECT * FROM leave_policies WHERE org_id = ?').all(orgId);
-
-    const insertOrIgnore = db.prepare(`
-        INSERT OR IGNORE INTO leave_balances (user_id, leave_type, year, quota, carried_forward)
-        VALUES (?, ?, ?, ?, ?)
-    `);
+    const policies = (await query('SELECT * FROM leave_policies WHERE org_id = $1', [orgId])).rows;
 
     for (const policy of policies) {
-        // Check carry-forward from previous year
         let carryForward = 0;
         if (policy.carry_forward_limit > 0) {
-            const prevBalance = db.prepare(
-                'SELECT quota, used, carried_forward FROM leave_balances WHERE user_id = ? AND leave_type = ? AND year = ?'
-            ).get(userId, policy.leave_type, year - 1);
-
+            const prevBalance = (await query(
+                'SELECT quota, used, carried_forward FROM leave_balances WHERE user_id = $1 AND leave_type = $2 AND year = $3',
+                [userId, policy.leave_type, year - 1]
+            )).rows[0];
             if (prevBalance) {
                 const remaining = (prevBalance.quota + prevBalance.carried_forward) - prevBalance.used;
                 carryForward = Math.min(Math.max(remaining, 0), policy.carry_forward_limit);
             }
         }
-
-        insertOrIgnore.run(userId, policy.leave_type, year, policy.annual_quota, carryForward);
+        await query(
+            `INSERT INTO leave_balances (user_id, leave_type, year, quota, carried_forward)
+             VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, leave_type, year) DO NOTHING`,
+            [userId, policy.leave_type, year, policy.annual_quota, carryForward]
+        );
     }
 }
 
-/**
- * Get accrued quota for current period.
- */
 function getAccruedQuota(policy, year) {
     const now = new Date();
     const currentYear = now.getFullYear();
-    if (year !== currentYear) return policy.annual_quota; // full quota for past/future years
-
+    if (year !== currentYear) return policy.annual_quota;
     switch (policy.accrual_type) {
         case 'monthly': {
             const month = now.getMonth() + 1;
@@ -261,9 +266,11 @@ function getAccruedQuota(policy, year) {
             const quarter = Math.ceil((now.getMonth() + 1) / 3);
             return Math.round((policy.annual_quota / 4) * quarter * 100) / 100;
         }
-        default: // annual
+        default:
             return policy.annual_quota;
     }
 }
 
 module.exports = router;
+module.exports.initializeBalances = initializeBalances;
+module.exports.getAccruedQuota = getAccruedQuota;

@@ -40,10 +40,12 @@ function getTzModifier(req) {
     return `${shift >= 0 ? '+' : ''}${shift} minutes`;
 }
 
-// Convert a UTC timestamp string to local date string using client offset
+// Convert a UTC timestamp (string or Date) to local date string using client offset
 function getLocalDateFromTs(timestamp, req) {
     const offsetMin = clampOffset(req.headers['x-timezone-offset']);
-    const utcMs = new Date(timestamp.replace(' ', 'T') + 'Z').getTime();
+    const utcMs = timestamp instanceof Date
+        ? timestamp.getTime()
+        : new Date(timestamp.replace(' ', 'T') + (timestamp.endsWith('Z') ? '' : 'Z')).getTime();
     return new Date(utcMs - offsetMin * 60000).toISOString().slice(0, 10);
 }
 

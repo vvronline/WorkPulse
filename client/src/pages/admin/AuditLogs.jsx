@@ -51,7 +51,7 @@ export default function AuditLogs() {
                 <tbody>
                     {logs.map(log => (
                         <tr key={log.id}>
-                            <td className={al['audit-time']}>{new Date(log.created_at + 'Z').toLocaleString()}</td>
+                            <td className={al['audit-time']}>{new Date(log.created_at).toLocaleString()}</td>
                             <td>{log.actor_name || log.actor_username || `User #${log.actor_id}`}</td>
                             <td><span className={`${s.badge} ${al['badge-accent']}`}>{log.action}</span></td>
                             <td>{log.entity_type}{log.entity_id ? ` #${log.entity_id}` : ''}</td>

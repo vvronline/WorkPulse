@@ -10,8 +10,9 @@ export default defineConfig({
             '/uploads': 'http://localhost:5000'
         },
         hmr: {
-            // Let HMR auto-detect the actual port when 3000 is occupied
-            clientPort: undefined
+            port: 3000,
+            host: 'localhost',
+            protocol: 'ws'
         }
     }
 });

@@ -1,219 +1,299 @@
-/* ============================================================
-   LeavePolicy.module.css
-   Extracted from inline styles + copied Admin.module.css deps
-   ============================================================ */
+/* =========================================================
+   LeavePolicy.module.css - Industry-standard HR design
+   ========================================================= */
 
-/* ─── Page Layout (from Admin.module.css) ─── */
-.adminPage {
+/* -- Page -- */
+.page {
     max-width: 1400px;
     margin: 0 auto;
-    padding: 1.5rem 2.5rem 6rem;
+    padding: 2rem 2rem 5rem;
+    animation: fadeInUp 0.35s ease;
 }
 
-.adminPage h1 {
-    font-size: 1.75rem;
-    margin-bottom: 1.5rem;
+@keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ─── Tabs (from Admin.module.css) ─── */
-.tabs {
+.pageHeader {
     display: flex;
-    gap: 0.5rem;
-    margin-bottom: 1.5rem;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+}
+
+.pageTitle {
+    font-size: 1.65rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    color: var(--text);
+    margin: 0 0 0.3rem;
+}
+
+.pageSubtitle {
+    font-size: 0.88rem;
+    color: var(--text-muted);
+    margin: 0;
+}
+
+/* -- Tab Bar -- */
+.tabBar {
+    display: flex;
+    gap: 0.25rem;
+    margin-bottom: 1.75rem;
     border-bottom: 2px solid var(--border);
     padding-bottom: 0;
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
-.tab {
-    padding: 0.6rem 1.2rem;
+.tabBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.65rem 1.25rem;
     border: none;
     background: none;
-    color: var(--text-secondary);
-    cursor: pointer;
-    font-size: 0.95rem;
-    font-weight: 500;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    font-weight: 600;
     font-family: inherit;
+    cursor: pointer;
     border-bottom: 2px solid transparent;
     margin-bottom: -2px;
     white-space: nowrap;
     transition: all 0.2s;
+    border-radius: 8px 8px 0 0;
+}
+
+.tabBtn:hover { color: var(--text); background: var(--surface); }
+
+.tabBtnActive {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    background: transparent;
+}
+
+.tabIcon { font-size: 1rem; }
+
+/* -- Tab Content Panel -- */
+.tabContent {
+    animation: fadeInUp 0.25s ease;
+}
+
+.tabPanel {}
+
+/* -- Panel Header -- */
+.panelHeader {
     display: flex;
-    align-items: center;
-    gap: 0.4rem;
-}
-
-.tab span {
-    font-size: 1rem;
-}
-
-.tab:hover {
-    color: var(--text-primary);
-}
-
-.tab.active {
-    color: var(--accent);
-    border-bottom-color: var(--accent);
-}
-
-/* ─── Toolbar (from Admin.module.css) ─── */
-.toolbar {
-    display: flex;
-    gap: 0.75rem;
-    margin-bottom: 1.25rem;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.75rem;
     flex-wrap: wrap;
+}
+
+.panelTitle {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--text);
+    margin: 0 0 0.25rem;
+}
+
+.panelSubtitle {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin: 0;
+}
+
+.panelHeaderRight {
+    display: flex;
     align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
 }
 
-.toolbar input,
-.toolbar select {
-    padding: 0.5rem 0.75rem;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--input-bg);
-    color: var(--text-primary);
-    font-size: 0.9rem;
-    font-family: inherit;
-    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-}
-
-.toolbar input:focus,
-.toolbar select:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--primary-glow);
-}
-
-.toolbar select {
-    min-width: 140px;
-}
-
-.toolbar input {
-    flex: 1;
-    min-width: 200px;
-}
-
-.searchInput {}
-
-/* ─── Buttons (from Admin.module.css) ─── */
-.btnPrimary {
-    padding: 0.5rem 1.2rem;
+/* -- Buttons -- */
+.primaryBtn {
+    padding: 0.55rem 1.2rem;
     border: none;
     border-radius: 8px;
-    background: var(--accent);
+    background: var(--primary);
     color: #fff;
     font-weight: 600;
+    font-size: 0.88rem;
     font-family: inherit;
     cursor: pointer;
-    font-size: 0.9rem;
-    transition: all var(--transition-fast);
+    transition: all 0.18s;
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
+    white-space: nowrap;
 }
+.primaryBtn:hover { background: var(--primary-dark); transform: translateY(-1px); box-shadow: 0 4px 12px var(--primary-glow); }
+.primaryBtn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
 
-.btnPrimary:hover {
-    opacity: 0.9;
-    transform: translateY(-1px);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-}
-
-.btnPrimary:active {
-    transform: translateY(0);
-    box-shadow: none;
-}
-
-.btnSmall {
-    padding: 0.35rem 0.75rem;
-    font-size: 0.8rem;
-    border-radius: 6px;
-    border: none;
-    cursor: pointer;
-    font-family: inherit;
-    font-weight: 500;
-    transition: opacity 0.2s, transform 0.1s;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-}
-
-.btnSmall:hover {
-    opacity: 0.9;
-    transform: translateY(-1px);
-}
-
-.btnSmall:active {
-    transform: translateY(0);
-}
-
-.btnCancel {
-    padding: 0.5rem 1.2rem;
-    border: 1px solid var(--border);
+.cancelBtn {
+    padding: 0.55rem 1.2rem;
+    border: 1.5px solid var(--border);
     border-radius: 8px;
     background: transparent;
-    color: var(--text-primary);
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 0.9rem;
-}
-
-/* ─── Table (from Admin.module.css) ─── */
-.table {
-    width: 100%;
-    border-collapse: separate;
-    border-spacing: 0;
-    background: var(--card-bg);
-    border-radius: 12px;
-    overflow: hidden;
-    border: 1px solid var(--border);
-}
-
-.table th,
-.table td {
-    padding: 0.75rem 1rem;
-    text-align: left;
-    border-bottom: 1px solid var(--border);
-    font-size: 0.9rem;
-}
-
-.table th {
-    background: var(--bg-secondary);
-    font-weight: 600;
     color: var(--text-secondary);
-    font-size: 0.8rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    font-size: 0.88rem;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.18s;
 }
+.cancelBtn:hover { background: var(--surface-hover); color: var(--text); }
 
-.table tr:last-child td {
-    border-bottom: none;
+.iconBtn {
+    width: 32px; height: 32px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.18s;
 }
+.iconBtn:hover { background: var(--surface-hover); color: var(--text); }
+.iconBtnDanger:hover { background: rgba(239,68,68,0.1); color: #ef4444; border-color: #ef4444; }
 
-.table tbody tr {
-    transition: background 0.15s;
-}
-
-.table tr:hover td {
-    background: var(--bg-secondary);
-}
-
-/* ─── Badges (from Admin.module.css) ─── */
-.badgeRole {
-    display: inline-block;
-    padding: 0.2rem 0.6rem;
-    border-radius: 20px;
-    font-size: 0.75rem;
+.editBtn {
+    padding: 0.3rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-size: 0.78rem;
     font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.18s;
+    white-space: nowrap;
+}
+.editBtn:hover { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+/* -- Year Select -- */
+.yearSelect {
+    padding: 0.45rem 0.75rem;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.88rem;
+    font-family: inherit;
+    cursor: pointer;
+    transition: border-color 0.18s;
+}
+.yearSelect:focus { outline: none; border-color: var(--primary); }
+
+/* -- Empty State -- */
+.emptyState {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 4rem 1rem;
+    gap: 0.75rem;
+    text-align: center;
+}
+.emptyIcon { font-size: 3rem; }
+.emptyTitle { font-size: 1.1rem; font-weight: 700; color: var(--text); margin: 0; }
+.emptyText { font-size: 0.88rem; color: var(--text-muted); margin: 0; max-width: 320px; }
+
+/* -- Loading -- */
+.loadingWrap { display: flex; justify-content: center; padding: 4rem; }
+
+/* ============================================================
+   POLICIES TAB
+   ============================================================ */
+
+.policyGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 1rem;
 }
 
-/* ─── Modal (from Admin.module.css) ─── */
-.modalOverlay {
+.policyCard {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    padding: 1.5rem;
+    transition: transform 0.2s, box-shadow 0.2s;
+    border-top: 3px solid var(--pc, var(--primary));
+}
+.policyCard:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,0.12); }
+
+[data-theme="light"] .policyCard { background: rgba(255,255,255,0.85); }
+
+.policyCardTop {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+}
+
+.policyTypeIcon {
+    width: 46px; height: 46px;
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.4rem;
+}
+
+.policyCardActions { display: flex; gap: 0.4rem; }
+
+.policyTypeName {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 0.75rem;
+}
+
+.policyQuota {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    margin-bottom: 1rem;
+}
+.policyQuotaNum { font-size: 2rem; font-weight: 800; color: var(--pc, var(--primary-light)); line-height: 1; }
+.policyQuotaLabel { font-size: 0.78rem; color: var(--text-muted); }
+
+.policyMeta { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 1rem; }
+.policyMetaItem { display: flex; justify-content: space-between; align-items: center; font-size: 0.82rem; }
+.policyMetaKey { color: var(--text-muted); }
+.policyMetaVal { font-weight: 600; color: var(--text-secondary); text-transform: capitalize; }
+
+.policyPerms { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.permChip {
+    font-size: 0.73rem;
+    font-weight: 600;
+    padding: 0.2rem 0.55rem;
+    border-radius: 99px;
+    border: 1px solid transparent;
+}
+.permOn {
+    background: rgba(16,185,129,0.12);
+    color: #10b981;
+    border-color: rgba(16,185,129,0.3);
+}
+.permOff {
+    background: var(--surface);
+    color: var(--text-muted);
+    border-color: var(--border);
+}
+
+/* ============================================================
+   MODAL
+   ============================================================ */
+
+.modalBackdrop {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    backdrop-filter: blur(4px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -221,356 +301,427 @@
     padding: 1rem;
 }
 
-.modal {
-    background: var(--bg-secondary);
-    border-radius: 16px;
-    padding: 2rem;
+.modalBox {
+    background: var(--bg-secondary, #1a1a2e);
+    border: 1px solid var(--border);
+    border-radius: 18px;
     width: 100%;
-    max-width: 500px;
+    max-width: 520px;
     max-height: 90vh;
     overflow-y: auto;
-    border: 1px solid var(--border);
+    box-shadow: 0 24px 64px rgba(0,0,0,0.35);
 }
 
-.modal h2 {
-    margin-bottom: 1.5rem;
-    font-size: 1.3rem;
+[data-theme="light"] .modalBox { background: #fff; }
+
+.modalHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.5rem 1.75rem 0;
+    margin-bottom: 1.25rem;
 }
 
-/* ─── Form elements (from Admin.module.css) ─── */
-.formGroup {
-    margin-bottom: 1rem;
+.modalTitle { font-size: 1.1rem; font-weight: 700; color: var(--text); margin: 0; }
+
+.modalClose {
+    width: 32px; height: 32px;
+    border: none;
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-size: 1.2rem;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.18s;
+    line-height: 1;
+}
+.modalClose:hover { background: var(--surface-hover); color: var(--text); }
+
+/* -- Modal Form -- */
+.modalForm {
+    padding: 0 1.75rem 1.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
 }
 
-.formGroup label {
-    display: block;
-    font-size: 0.85rem;
+.formField { display: flex; flex-direction: column; gap: 0.35rem; }
+
+.formRow {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.85rem;
+}
+
+.formLabel {
+    font-size: 0.8rem;
     font-weight: 600;
-    margin-bottom: 0.3rem;
     color: var(--text-secondary);
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
 }
 
-.formGroup input,
-.formGroup select,
-.formGroup textarea {
-    width: 100%;
-    padding: 0.6rem 0.75rem;
+.formInput {
+    padding: 0.65rem 0.875rem;
+    border: 1.5px solid var(--border);
     border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--input-bg);
-    color: var(--text-primary);
     font-size: 0.9rem;
     font-family: inherit;
-    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+    background: var(--surface);
+    color: var(--text);
+    width: 100%;
+    box-sizing: border-box;
+    transition: border-color 0.2s, box-shadow 0.2s;
 }
+.formInput:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-glow); }
 
-.formGroup input:focus,
-.formGroup select:focus,
-.formGroup textarea:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--primary-glow);
-}
-
-.formGroup textarea {
-    min-height: 80px;
-    resize: vertical;
-}
-
-.formActions {
-    display: flex;
-    gap: 0.75rem;
-    margin-top: 1.5rem;
-    justify-content: flex-end;
-}
-
-/* ─── Error message (from Admin.module.css) ─── */
-.error {
-    padding: 0.75rem 1rem;
+.formError {
+    margin: 0 1.75rem 0.5rem;
+    padding: 0.65rem 1rem;
     border-radius: 8px;
-    margin-bottom: 1rem;
-    font-size: 0.9rem;
-    background: color-mix(in srgb, var(--danger) 13%, transparent);
-    color: var(--danger);
-    border: 1px solid color-mix(in srgb, var(--danger) 27%, transparent);
+    font-size: 0.875rem;
+    background: rgba(239,68,68,0.1);
+    color: #ef4444;
+    border: 1px solid rgba(239,68,68,0.25);
 }
 
-/* =============================================
-   EXTRACTED INLINE STYLES
-   ============================================= */
+.checkGroup { display: flex; flex-direction: column; gap: 0.6rem; }
 
-/* ─── Spacing utilities ─── */
-.mb-1 { margin-bottom: 1rem; }
-
-/* ─── Text utilities ─── */
-.text-muted { color: var(--text-secondary); }
-.text-muted-sm { font-size: 0.8rem; color: var(--text-secondary); }
-.font-bold { font-weight: 600; }
-
-/* ─── Card grid layouts ─── */
-.card-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 1rem;
-}
-
-.grid-balances {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-    gap: 1rem;
-}
-
-.grid-holidays {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-    gap: 0.75rem;
-    margin-bottom: 1.5rem;
-}
-
-.grid-holidays-past {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-    gap: 0.75rem;
-    opacity: 0.7;
-}
-
-/* ─── Card panel ─── */
-.card-panel {
-    background: var(--card-bg);
-    border-radius: 12px;
-    padding: 1.25rem;
-    border: 1px solid var(--border);
-}
-
-/* ─── Card header / title ─── */
-.card-header {
+.checkItem {
     display: flex;
-    justify-content: space-between;
-    align-items: start;
-    margin-bottom: 0.75rem;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.checkItem input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary); }
+
+/* -- Type Chip Grid (in PolicyForm) -- */
+.typeChipGrid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
 }
 
-.card-title {
-    font-weight: 700;
-    font-size: 1.05rem;
-}
-
-.card-title-sm {
-    font-weight: 700;
-    margin-bottom: 0.5rem;
-}
-
-/* ─── Badge variants ─── */
-.badge-type {
-    font-size: 0.7rem;
-    margin-top: 0.3rem;
-    display: inline-block;
-}
-
-.badge-small {
-    font-size: 0.7rem;
-}
-
-/* ─── Button group & variants ─── */
-.btn-group {
+.typeChipOption {
     display: flex;
+    flex-direction: column;
+    align-items: center;
     gap: 0.3rem;
-}
-
-.btn-accent {
-    background: var(--accent);
-    color: #fff;
-}
-
-.btn-danger {
-    background: var(--danger);
-    color: #fff;
-}
-
-/* ─── Grid layouts ─── */
-.grid-2col {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.4rem;
-    font-size: 0.85rem;
-}
-
-.grid-2col-form {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
-}
-
-/* ─── Description text ─── */
-.description-text {
-    font-size: 0.8rem;
-    color: var(--text-secondary);
-    margin-top: 0.5rem;
-}
-
-/* ─── Empty state ─── */
-.empty-state {
-    padding: 2rem;
-    color: var(--text-secondary);
-}
-
-.empty-cell {
-    text-align: center;
-    padding: 2rem;
-    color: var(--text-secondary);
-}
-
-/* ─── Modal narrow variant ─── */
-.modal-narrow {
-    max-width: 520px;
-}
-
-/* ─── Checkbox rows ─── */
-.checkbox-row {
-    display: flex;
-    gap: 1.5rem;
-    margin: 0.75rem 0;
-}
-
-.checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    cursor: pointer;
-}
-
-.checkbox-label-block {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    margin: 0.75rem 0;
-    cursor: pointer;
-}
-
-/* ─── Textarea input ─── */
-.textarea-input {
-    width: 100%;
-    padding: 0.5rem;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--input-bg);
-    color: var(--text-primary);
-    resize: vertical;
-}
-
-/* ─── Progress bar ─── */
-.progress-section {
-    margin: 0.75rem 0;
-}
-
-.flex-between-sm {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.8rem;
-    margin-bottom: 0.25rem;
-}
-
-.progress-track {
-    height: 8px;
-    background: var(--border);
-    border-radius: 4px;
-}
-
-.progress-fill {
-    height: 100%;
-    border-radius: 4px;
-    transition: width 0.3s;
-}
-
-.flex-between-muted {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-    margin-top: 0.25rem;
-}
-
-/* ─── Select input ─── */
-.select-input {
-    padding: 0.5rem 1.8rem 0.5rem 0.5rem;
-    border-radius: 8px;
-    border: 1px solid var(--glass-border);
-    background: var(--input-bg);
-    color: var(--text-primary);
-    font-family: inherit;
-}
-
-/* ─── Section headings ─── */
-.section-heading {
-    margin-bottom: 0.5rem;
-    font-size: 1rem;
-}
-
-.section-heading-muted {
-    margin-bottom: 0.5rem;
-    font-size: 1rem;
-    color: var(--text-secondary);
-}
-
-/* ─── Holiday card ─── */
-.holiday-card {
-    background: var(--card-bg);
+    padding: 0.7rem 0.5rem;
+    border: 1.5px solid var(--border);
     border-radius: 10px;
-    padding: 0.8rem 1rem;
-    border: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.18s;
+}
+.typeChipOption:hover { border-color: var(--primary); color: var(--text); background: var(--surface-hover); }
+.typeChipOptionActive {
+    border-color: var(--primary);
+    background: color-mix(in srgb, var(--primary) 12%, transparent);
+    color: var(--text);
 }
 
-.holiday-info {
+.modalFooter {
     display: flex;
-    align-items: center;
     gap: 0.75rem;
+    justify-content: flex-end;
+    margin-top: 0.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
 }
 
-.holiday-date-box {
-    text-align: center;
-    min-width: 45px;
+/* ============================================================
+   MY BALANCES TAB
+   ============================================================ */
+
+.balanceCardGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 1rem;
 }
 
-.date-day {
-    font-size: 1.25rem;
-    font-weight: 700;
+.balanceDetailCard {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    padding: 1.5rem;
+    border-top: 3px solid var(--bc, var(--primary));
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.balanceDetailCard:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.12); }
+[data-theme="light"] .balanceDetailCard { background: rgba(255,255,255,0.85); }
+
+.balanceDetailTop {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    margin-bottom: 1.25rem;
+}
+
+.balanceDetailIcon {
+    width: 44px; height: 44px;
+    border-radius: 11px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.3rem;
+    flex-shrink: 0;
+}
+
+.balanceDetailType { font-size: 1rem; font-weight: 700; color: var(--text); }
+.balanceDetailYear { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.1rem; }
+
+.balanceDetailNums {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin-bottom: 1rem;
+}
+
+.balanceDetailNum {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.15rem;
+}
+
+.balanceDetailBig {
+    font-size: 1.65rem;
+    font-weight: 800;
+    color: var(--text);
     line-height: 1;
 }
 
-.date-month {
+.balanceDetailSmall {
     font-size: 0.7rem;
-    color: var(--text-secondary);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
 }
 
-.holiday-name {
-    font-weight: 600;
-    font-size: 0.9rem;
+.balanceDetailDivider { width: 1px; height: 36px; background: var(--border); flex-shrink: 0; }
+
+.balanceDetailBar { height: 6px; background: var(--surface); border-radius: 9999px; overflow: hidden; margin-bottom: 0.4rem; }
+.balanceDetailFill { height: 100%; border-radius: 9999px; transition: width 0.6s ease; }
+.balanceDetailMeta { font-size: 0.73rem; color: var(--text-muted); min-height: 1em; }
+
+/* ============================================================
+   ALL BALANCES TAB
+   ============================================================ */
+
+.tableToolbar {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+    flex-wrap: wrap;
+    align-items: center;
 }
 
-.holiday-detail {
+.searchBox {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem 0.875rem;
+    flex: 1;
+    min-width: 200px;
+    max-width: 360px;
+}
+.searchBox:focus-within { border-color: var(--primary); }
+
+.searchIcon { font-size: 0.9rem; color: var(--text-muted); flex-shrink: 0; }
+
+.searchInput {
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font-size: 0.88rem;
+    font-family: inherit;
+    flex: 1;
+    min-width: 0;
+}
+.searchInput:focus { outline: none; }
+.searchInput::placeholder { color: var(--text-muted); }
+
+.tableWrap {
+    overflow-x: auto;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+}
+
+.dataTable {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.dataTable thead tr {
+    background: var(--surface);
+}
+
+.dataTable th {
+    padding: 0.75rem 1rem;
+    text-align: left;
     font-size: 0.75rem;
-    color: var(--text-secondary);
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
 }
 
-/* ─── Responsive ─── */
+.dataTable td {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-secondary);
+    vertical-align: middle;
+}
+
+.dataTable tbody tr:last-child td { border-bottom: none; }
+
+.dataTable tbody tr:hover td { background: var(--surface); }
+
+.tdName { color: var(--text); font-weight: 600; white-space: nowrap; }
+.tdNum { font-variant-numeric: tabular-nums; text-align: right; }
+.tdBold { font-weight: 700; }
+.tdUsage { min-width: 100px; }
+
+.typeTag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: 99px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.miniBar {
+    height: 5px;
+    background: var(--surface);
+    border-radius: 99px;
+    overflow: hidden;
+    margin-bottom: 0.2rem;
+}
+.miniBarFill { height: 100%; border-radius: 99px; transition: width 0.4s ease; }
+.miniBarPct { font-size: 0.7rem; color: var(--text-muted); }
+
+/* ============================================================
+   HOLIDAYS TAB
+   ============================================================ */
+
+.holidaySection { margin-bottom: 2rem; }
+
+.holidaySectionTitle {
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    margin: 0 0 0.85rem;
+}
+
+.holidaySectionMuted { opacity: 0.65; }
+
+.holidayGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 0.75rem;
+}
+
+.holidayGridPast { opacity: 0.65; }
+
+.holidayCard {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    border-radius: 14px;
+    padding: 1.1rem 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    transition: transform 0.18s, box-shadow 0.18s;
+}
+.holidayCard:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,0.1); }
+[data-theme="light"] .holidayCard { background: rgba(255,255,255,0.85); }
+.holidayCardPast { filter: grayscale(0.25); }
+.holidayCardOptional { border-style: dashed; }
+
+.holidayDateBox {
+    width: 52px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: color-mix(in srgb, var(--primary) 10%, transparent);
+    border-radius: 10px;
+    padding: 0.5rem;
+}
+
+.holidayDay { font-size: 1.4rem; font-weight: 800; color: var(--primary-light); line-height: 1; }
+.holidayMonth { font-size: 0.65rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+
+.holidayInfo { flex: 1; min-width: 0; }
+.holidayName { font-weight: 700; font-size: 0.95rem; color: var(--text); margin-bottom: 0.25rem; }
+.holidayMeta {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+.optionalBadge {
+    display: inline-block;
+    padding: 0.1rem 0.45rem;
+    border-radius: 99px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    background: rgba(245,158,11,0.12);
+    color: #f59e0b;
+    border: 1px solid rgba(245,158,11,0.25);
+}
+
+.deleteHolidayBtn {
+    width: 28px; height: 28px;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.18s;
+    flex-shrink: 0;
+}
+.deleteHolidayBtn:hover { background: rgba(239,68,68,0.1); color: #ef4444; border-color: #ef4444; }
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+
 @media (max-width: 768px) {
-    .adminPage {
-        padding: 1rem 1rem 6rem;
-    }
+    .page { padding: 1.25rem 1rem 4rem; }
+    .policyGrid { grid-template-columns: 1fr 1fr; }
+    .balanceCardGrid { grid-template-columns: 1fr 1fr; }
+    .holidayGrid { grid-template-columns: 1fr; }
+    .typeChipGrid { grid-template-columns: repeat(3, 1fr); }
+    .formRow { grid-template-columns: 1fr; }
+}
 
-    .table {
-        display: block;
-        overflow-x: auto;
-    }
-
-    .toolbar {
-        flex-direction: column;
-    }
-
-    .toolbar input {
-        min-width: 100%;
-    }
+@media (max-width: 480px) {
+    .policyGrid { grid-template-columns: 1fr; }
+    .balanceCardGrid { grid-template-columns: 1fr; }
+    .typeChipGrid { grid-template-columns: repeat(2, 1fr); }
+    .tabBar { gap: 0; }
+    .tabBtn { padding: 0.55rem 0.85rem; font-size: 0.82rem; }
 }

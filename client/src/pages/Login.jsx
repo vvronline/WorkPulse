@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { login as loginApi } from '../api';
 import PasswordInput from '../components/PasswordInput';
@@ -8,6 +8,7 @@ import s from './Auth.module.css';
 
 export default function Login() {
   const { saveAuth } = useAuth();
+  const location = useLocation();
   const [form, setForm] = useState({ username: '', password: '' });
   const [error, setError] = useAutoDismiss('');
   const [loading, setLoading] = useState(false);
@@ -33,6 +34,7 @@ export default function Login() {
         <div className={s['auth-icon']}>🔐</div>
         <h2>Welcome Back</h2>
         <p>Sign in to WorkPulse</p>
+        {location.state?.message && <div className="success-msg">{location.state.message}</div>}
         {error && <div className="error-msg">{error}</div>}
         <form onSubmit={handleSubmit}>
           <div className="form-group">

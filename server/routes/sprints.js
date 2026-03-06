@@ -1,24 +1,21 @@
-const express = require('express');
-const db = require('../db');
+﻿const express = require('express');
+const { query } = require('../db');
 const auth = require('../middleware/auth');
-const { loadUserContext, requireRole } = require('../middleware/rbac');
+const { loadUserContext } = require('../middleware/rbac');
 
 const router = express.Router();
 
-// ─── Get sprints for user's team ───────────────────────────────────────
-router.get('/', auth, loadUserContext, (req, res) => {
+router.get('/', auth, loadUserContext, async (req, res) => {
     try {
-        if (!req.userTeamId) {
-            return res.json({ sprints: [] });
-        }
+        if (!req.userTeamId) return res.json({ sprints: [] });
 
-        const sprints = db.prepare(`
+        const sprints = (await query(`
             SELECT * FROM sprints
-            WHERE team_id = ?
-            ORDER BY 
+            WHERE team_id = $1
+            ORDER BY
                 CASE status WHEN 'active' THEN 1 WHEN 'planned' THEN 2 WHEN 'completed' THEN 3 END,
                 start_date DESC
-        `).all(req.userTeamId);
+        `, [req.userTeamId])).rows;
 
         res.json({ sprints });
     } catch (err) {
@@ -27,19 +24,15 @@ router.get('/', auth, loadUserContext, (req, res) => {
     }
 });
 
-// ─── Get active sprint for team ────────────────────────────────────────
-router.get('/active', auth, loadUserContext, (req, res) => {
+router.get('/active', auth, loadUserContext, async (req, res) => {
     try {
-        if (!req.userTeamId) {
-            return res.json({ sprint: null });
-        }
+        if (!req.userTeamId) return res.json({ sprint: null });
 
-        const sprint = db.prepare(`
+        const sprint = (await query(`
             SELECT * FROM sprints
-            WHERE team_id = ? AND status = 'active'
-            ORDER BY start_date DESC
-            LIMIT 1
-        `).get(req.userTeamId);
+            WHERE team_id = $1 AND status = 'active'
+            ORDER BY start_date DESC LIMIT 1
+        `, [req.userTeamId])).rows[0];
 
         res.json({ sprint: sprint || null });
     } catch (err) {
@@ -48,31 +41,21 @@ router.get('/active', auth, loadUserContext, (req, res) => {
     }
 });
 
-// ─── Create a new sprint ───────────────────────────────────────────────
-router.post('/', auth, loadUserContext, (req, res) => {
+router.post('/', auth, loadUserContext, async (req, res) => {
     try {
-        if (!req.userTeamId) {
-            return res.status(403).json({ error: 'You must be assigned to a team to create sprints' });
-        }
+        if (!req.userTeamId) return res.status(403).json({ error: 'You must be assigned to a team to create sprints' });
 
         const { name, start_date, end_date, goal } = req.body;
+        if (!name || !start_date || !end_date) return res.status(400).json({ error: 'Sprint name, start_date, and end_date are required' });
 
-        if (!name || !start_date || !end_date) {
-            return res.status(400).json({ error: 'Sprint name, start_date, and end_date are required' });
-        }
+        const existing = (await query('SELECT id FROM sprints WHERE team_id = $1 AND name = $2', [req.userTeamId, name])).rows[0];
+        if (existing) return res.status(400).json({ error: 'A sprint with this name already exists for your team' });
 
-        // Check for duplicate sprint name in team
-        const existing = db.prepare('SELECT id FROM sprints WHERE team_id = ? AND name = ?').get(req.userTeamId, name);
-        if (existing) {
-            return res.status(400).json({ error: 'A sprint with this name already exists for your team' });
-        }
-
-        const result = db.prepare(`
-            INSERT INTO sprints (team_id, name, start_date, end_date, goal, status)
-            VALUES (?, ?, ?, ?, ?, 'planned')
-        `).run(req.userTeamId, name, start_date, end_date, goal || null);
-
-        const newSprint = db.prepare('SELECT * FROM sprints WHERE id = ?').get(result.lastInsertRowid);
+        const result = await query(
+            "INSERT INTO sprints (team_id, name, start_date, end_date, goal, status) VALUES ($1, $2, $3, $4, $5, 'planned') RETURNING id",
+            [req.userTeamId, name, start_date, end_date, goal || null]
+        );
+        const newSprint = (await query('SELECT * FROM sprints WHERE id = $1', [result.rows[0].id])).rows[0];
         res.json({ sprint: newSprint });
     } catch (err) {
         console.error('Error creating sprint:', err.message);
@@ -80,53 +63,33 @@ router.post('/', auth, loadUserContext, (req, res) => {
     }
 });
 
-// ─── Update sprint ─────────────────────────────────────────────────────
-router.put('/:id', auth, loadUserContext, (req, res) => {
+router.put('/:id', auth, loadUserContext, async (req, res) => {
     try {
         const { id } = req.params;
         const { name, start_date, end_date, goal, status } = req.body;
 
-        const sprint = db.prepare('SELECT * FROM sprints WHERE id = ?').get(id);
-        if (!sprint) {
-            return res.status(404).json({ error: 'Sprint not found' });
-        }
-
-        if (sprint.team_id !== req.userTeamId) {
-            return res.status(403).json({ error: 'Access denied' });
-        }
+        const sprint = (await query('SELECT * FROM sprints WHERE id = $1', [id])).rows[0];
+        if (!sprint) return res.status(404).json({ error: 'Sprint not found' });
+        if (sprint.team_id !== req.userTeamId) return res.status(403).json({ error: 'Access denied' });
 
         const updates = [];
         const params = [];
+        let pi = 1;
 
-        if (name !== undefined) {
-            updates.push('name = ?');
-            params.push(name);
-        }
-        if (start_date !== undefined) {
-            updates.push('start_date = ?');
-            params.push(start_date);
-        }
-        if (end_date !== undefined) {
-            updates.push('end_date = ?');
-            params.push(end_date);
-        }
-        if (goal !== undefined) {
-            updates.push('goal = ?');
-            params.push(goal);
-        }
+        if (name !== undefined) { updates.push(`name = $${pi++}`); params.push(name); }
+        if (start_date !== undefined) { updates.push(`start_date = $${pi++}`); params.push(start_date); }
+        if (end_date !== undefined) { updates.push(`end_date = $${pi++}`); params.push(end_date); }
+        if (goal !== undefined) { updates.push(`goal = $${pi++}`); params.push(goal); }
         if (status !== undefined && ['planned', 'active', 'completed'].includes(status)) {
-            updates.push('status = ?');
-            params.push(status);
+            updates.push(`status = $${pi++}`); params.push(status);
         }
 
-        if (updates.length === 0) {
-            return res.status(400).json({ error: 'No valid fields to update' });
-        }
+        if (updates.length === 0) return res.status(400).json({ error: 'No valid fields to update' });
 
         params.push(id);
-        db.prepare(`UPDATE sprints SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+        await query(`UPDATE sprints SET ${updates.join(', ')} WHERE id = $${pi}`, params);
 
-        const updated = db.prepare('SELECT * FROM sprints WHERE id = ?').get(id);
+        const updated = (await query('SELECT * FROM sprints WHERE id = $1', [id])).rows[0];
         res.json({ sprint: updated });
     } catch (err) {
         console.error('Error updating sprint:', err.message);
@@ -134,24 +97,16 @@ router.put('/:id', auth, loadUserContext, (req, res) => {
     }
 });
 
-// ─── Delete sprint ─────────────────────────────────────────────────────
-router.delete('/:id', auth, loadUserContext, (req, res) => {
+router.delete('/:id', auth, loadUserContext, async (req, res) => {
     try {
         const { id } = req.params;
 
-        const sprint = db.prepare('SELECT * FROM sprints WHERE id = ?').get(id);
-        if (!sprint) {
-            return res.status(404).json({ error: 'Sprint not found' });
-        }
+        const sprint = (await query('SELECT * FROM sprints WHERE id = $1', [id])).rows[0];
+        if (!sprint) return res.status(404).json({ error: 'Sprint not found' });
+        if (sprint.team_id !== req.userTeamId) return res.status(403).json({ error: 'Access denied' });
 
-        if (sprint.team_id !== req.userTeamId) {
-            return res.status(403).json({ error: 'Access denied' });
-        }
-
-        // Remove sprint from tasks first
-        db.prepare('UPDATE tasks SET sprint_id = NULL WHERE sprint_id = ?').run(id);
-
-        db.prepare('DELETE FROM sprints WHERE id = ?').run(id);
+        await query('UPDATE tasks SET sprint_id = NULL WHERE sprint_id = $1', [id]);
+        await query('DELETE FROM sprints WHERE id = $1', [id]);
         res.json({ message: 'Sprint deleted successfully' });
     } catch (err) {
         console.error('Error deleting sprint:', err.message);
@@ -159,21 +114,15 @@ router.delete('/:id', auth, loadUserContext, (req, res) => {
     }
 });
 
-// ─── Get tasks in sprint ───────────────────────────────────────────────
-router.get('/:id/tasks', auth, loadUserContext, (req, res) => {
+router.get('/:id/tasks', auth, loadUserContext, async (req, res) => {
     try {
         const { id } = req.params;
 
-        const sprint = db.prepare('SELECT * FROM sprints WHERE id = ?').get(id);
-        if (!sprint) {
-            return res.status(404).json({ error: 'Sprint not found' });
-        }
+        const sprint = (await query('SELECT * FROM sprints WHERE id = $1', [id])).rows[0];
+        if (!sprint) return res.status(404).json({ error: 'Sprint not found' });
+        if (sprint.team_id !== req.userTeamId) return res.status(403).json({ error: 'Access denied' });
 
-        if (sprint.team_id !== req.userTeamId) {
-            return res.status(403).json({ error: 'Access denied' });
-        }
-
-        const tasks = db.prepare('SELECT * FROM tasks WHERE sprint_id = ? ORDER BY created_at ASC').all(id);
+        const tasks = (await query('SELECT * FROM tasks WHERE sprint_id = $1 ORDER BY created_at ASC', [id])).rows;
         res.json({ tasks });
     } catch (err) {
         console.error('Error fetching sprint tasks:', err.message);

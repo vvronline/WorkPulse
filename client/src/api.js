@@ -83,7 +83,7 @@ export const updateTheme = (theme) => API.put('/tracker/theme', { theme });
 // Leaves
 export const getLeaves = (from, to) => API.get('/leaves', { params: { from, to } });
 export const addLeave = (data) => API.post('/leaves', data);
-export const addLeavesBatch = (data) => API.post('/leaves/batch', data);
+export const addLeavesBatch = (data) => API.post('/leaves', data);
 export const deleteLeave = (id) => API.delete(`/leaves/${id}`);
 export const withdrawLeave = (id) => API.post(`/leaves/${id}/withdraw`);
 export const getLeaveSummary = (month, year) => API.get('/leaves/summary', { params: { month, year } });

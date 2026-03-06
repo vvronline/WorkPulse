@@ -100,7 +100,7 @@ export default function ApprovalsTab() {
                                     </div>
                                 </td>
                                 <td className={m['cell-details']}><RequestDetails request={a} /></td>
-                                <td className={m['cell-sm']}>{new Date(a.created_at + 'Z').toLocaleDateString()}</td>
+                                <td className={m['cell-sm']}>{new Date(a.created_at).toLocaleDateString()}</td>
                                 <td><ApprovalBadge status={a.status} /></td>
                                 {filter === 'pending' && (
                                     <td>

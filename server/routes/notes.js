@@ -1,43 +1,36 @@
-const express = require('express');
-const db = require('../db');
+﻿const express = require('express');
+const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
 
 const router = express.Router();
 router.use(auth);
 
-const MAX_HISTORY = 50; // max versions kept per page
+const MAX_HISTORY = 50;
 
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-function getNotebook(userId) {
-    const row = db.prepare('SELECT data FROM notebooks WHERE user_id = ?').get(userId);
+async function getNotebook(userId) {
+    const row = (await query('SELECT data FROM notebooks WHERE user_id = $1', [userId])).rows[0];
     return row ? JSON.parse(row.data) : null;
 }
 
-function writeHistory(userId, page) {
-    db.prepare(`
-    INSERT INTO notebook_history (user_id, page_id, page_title, content)
-    VALUES (?, ?, ?, ?)
-  `).run(userId, page.id, page.title || 'Untitled', page.content || '');
-
-    // Prune to MAX_HISTORY versions
-    const oldest = db.prepare(`
-    SELECT id FROM notebook_history
-    WHERE user_id = ? AND page_id = ?
-    ORDER BY saved_at DESC
-    LIMIT -1 OFFSET ?
-  `).all(userId, page.id, MAX_HISTORY);
-
+async function writeHistory(userId, page, client) {
+    const q = client ? client.query.bind(client) : query;
+    await q(
+        'INSERT INTO notebook_history (user_id, page_id, page_title, content) VALUES ($1, $2, $3, $4)',
+        [userId, page.id, page.title || 'Untitled', page.content || '']
+    );
+    const oldest = (await q(
+        'SELECT id FROM notebook_history WHERE user_id = $1 AND page_id = $2 ORDER BY saved_at DESC LIMIT ALL OFFSET $3',
+        [userId, page.id, MAX_HISTORY]
+    )).rows;
     if (oldest.length > 0) {
-        const ids = oldest.map(r => r.id).join(',');
-        db.exec(`DELETE FROM notebook_history WHERE id IN (${ids})`);
+        const ids = oldest.map(r => r.id);
+        await q('DELETE FROM notebook_history WHERE id = ANY($1)', [ids]);
     }
 }
 
-// ── GET /api/notes ────────────────────────────────────────────────────────────
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
     try {
-        const row = db.prepare('SELECT data, updated_at FROM notebooks WHERE user_id = ?').get(req.userId);
+        const row = (await query('SELECT data, updated_at FROM notebooks WHERE user_id = $1', [req.userId])).rows[0];
         if (!row) return res.json({ data: null });
         res.json({ data: JSON.parse(row.data), updatedAt: row.updated_at });
     } catch (e) {
@@ -46,34 +39,30 @@ router.get('/', (req, res) => {
     }
 });
 
-// ── PUT /api/notes ────────────────────────────────────────────────────────────
-router.put('/', (req, res) => {
+router.put('/', async (req, res) => {
     try {
         const { data } = req.body;
         if (!data) return res.status(400).json({ error: 'No data provided' });
 
-        // Detect changed pages and snapshot them before overwriting
-        const old = getNotebook(req.userId);
+        const old = await getNotebook(req.userId);
         const oldMap = {};
         if (old?.pages) old.pages.forEach(p => { oldMap[p.id] = p; });
 
         const newPages = data.pages || [];
-        db.transaction(() => {
+        await transaction(async (client) => {
             for (const page of newPages) {
                 const prev = oldMap[page.id];
-                if (!prev) continue; // brand-new page — no history yet
-                const contentChanged = prev.content !== page.content;
-                const titleChanged = prev.title !== page.title;
-                if (contentChanged || titleChanged) {
-                    // Snapshot the OLD version before it's overwritten
-                    writeHistory(req.userId, prev);
+                if (!prev) continue;
+                if (prev.content !== page.content || prev.title !== page.title) {
+                    await writeHistory(req.userId, prev, client);
                 }
             }
-            db.prepare(`
-        INSERT INTO notebooks (user_id, data, updated_at) VALUES (?, ?, datetime('now'))
-        ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, updated_at = datetime('now')
-      `).run(req.userId, JSON.stringify(data));
-        })();
+            await client.query(
+                `INSERT INTO notebooks (user_id, data, updated_at) VALUES ($1, $2, NOW())
+                 ON CONFLICT(user_id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+                [req.userId, JSON.stringify(data)]
+            );
+        });
 
         res.json({ ok: true });
     } catch (e) {
@@ -82,16 +71,12 @@ router.put('/', (req, res) => {
     }
 });
 
-// ── GET /api/notes/history/:pageId  — list versions for a page ────────────────
-router.get('/history/:pageId', (req, res) => {
+router.get('/history/:pageId', async (req, res) => {
     try {
-        const rows = db.prepare(`
-      SELECT id, page_title, saved_at
-      FROM notebook_history
-      WHERE user_id = ? AND page_id = ?
-      ORDER BY saved_at DESC
-      LIMIT 50
-    `).all(req.userId, req.params.pageId);
+        const rows = (await query(
+            'SELECT id, page_title, saved_at FROM notebook_history WHERE user_id = $1 AND page_id = $2 ORDER BY saved_at DESC LIMIT 50',
+            [req.userId, req.params.pageId]
+        )).rows;
         res.json({ history: rows });
     } catch (e) {
         console.error('GET /notes/history error:', e.message);
@@ -99,14 +84,12 @@ router.get('/history/:pageId', (req, res) => {
     }
 });
 
-// ── GET /api/notes/history/snapshot/:id  — get full snapshot content ──────────
-router.get('/history/snapshot/:id', (req, res) => {
+router.get('/history/snapshot/:id', async (req, res) => {
     try {
-        const row = db.prepare(`
-      SELECT id, page_id, page_title, content, saved_at
-      FROM notebook_history
-      WHERE id = ? AND user_id = ?
-    `).get(req.params.id, req.userId);
+        const row = (await query(
+            'SELECT id, page_id, page_title, content, saved_at FROM notebook_history WHERE id = $1 AND user_id = $2',
+            [req.params.id, req.userId]
+        )).rows[0];
         if (!row) return res.status(404).json({ error: 'Snapshot not found' });
         res.json({ snapshot: row });
     } catch (e) {
@@ -116,4 +99,3 @@ router.get('/history/snapshot/:id', (req, res) => {
 });
 
 module.exports = router;
-

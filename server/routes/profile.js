@@ -1,11 +1,11 @@
-const express = require('express');
+﻿const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const fsPromises = require('fs').promises;
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const db = require('../db');
+const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext } = require('../middleware/rbac');
 const { logAction } = require('../utils/audit');
@@ -15,17 +15,15 @@ const router = express.Router();
 
 const isProduction = process.env.NODE_ENV === 'production';
 
-// Cookie options helper
 function cookieOptions() {
     return {
         httpOnly: true,
         secure: isProduction,
         sameSite: 'lax',
-        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+        maxAge: 24 * 60 * 60 * 1000
     };
 }
 
-// Ensure uploads directory exists
 const uploadDir = path.join(__dirname, '..', 'uploads', 'avatars');
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
@@ -41,7 +39,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
     storage,
-    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+    limits: { fileSize: 10 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
         const allowedExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
         const allowedMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -61,154 +59,142 @@ function safeAvatarPath(avatarRelative) {
     return resolved;
 }
 
-// Upload avatar
 router.post('/avatar', auth, upload.single('avatar'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
     const avatarPath = `/uploads/avatars/${req.file.filename}`;
 
-    // Atomically swap the avatar path and capture the old one in one transaction
-    const oldAvatarPath = db.transaction(() => {
-        const user = db.prepare('SELECT avatar FROM users WHERE id = ?').get(req.userId);
-        db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(avatarPath, req.userId);
-        return user?.avatar || null;
-    })();
+    let oldAvatarPath = null;
+    await transaction(async (client) => {
+        const user = (await client.query('SELECT avatar FROM users WHERE id = $1', [req.userId])).rows[0];
+        await client.query('UPDATE users SET avatar = $1 WHERE id = $2', [avatarPath, req.userId]);
+        oldAvatarPath = user?.avatar || null;
+    });
 
-    // Delete old file outside the transaction — safe because DB is already updated
     if (oldAvatarPath) {
-        try {
-            await fsPromises.unlink(safeAvatarPath(oldAvatarPath));
-        } catch { }
+        try { await fsPromises.unlink(safeAvatarPath(oldAvatarPath)); } catch { }
     }
 
     res.json({ avatar: avatarPath });
 });
 
-// Remove avatar
 router.delete('/avatar', auth, async (req, res) => {
-    const user = db.prepare('SELECT avatar FROM users WHERE id = ?').get(req.userId);
+    const user = (await query('SELECT avatar FROM users WHERE id = $1', [req.userId])).rows[0];
     if (user?.avatar) {
-        try {
-            const oldPath = safeAvatarPath(user.avatar);
-            await fsPromises.unlink(oldPath);
-        } catch { }
+        try { await fsPromises.unlink(safeAvatarPath(user.avatar)); } catch { }
     }
-    db.prepare('UPDATE users SET avatar = NULL WHERE id = ?').run(req.userId);
+    await query('UPDATE users SET avatar = NULL WHERE id = $1', [req.userId]);
     res.json({ avatar: null });
 });
 
-// Get profile
-router.get('/', auth, (req, res) => {
-    const user = db.prepare(`SELECT u.id, u.username, u.full_name, u.email, u.avatar, u.role, u.org_id, u.team_id, u.department_id, u.must_change_password,
-               t.name as team_name
-        FROM users u LEFT JOIN teams t ON u.team_id = t.id WHERE u.id = ?`).get(req.userId);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    user.must_change_password = !!user.must_change_password;
-    // Check if user has direct reports (for manager view)
-    const hasReports = db.prepare('SELECT 1 FROM users WHERE manager_id = ? AND is_active = 1 LIMIT 1').get(req.userId);
-    user.has_reports = !!hasReports;
-    res.json(user);
+router.get('/', auth, async (req, res) => {
+    try {
+        const user = (await query(`
+            SELECT u.id, u.username, u.full_name, u.email, u.avatar, u.role, u.org_id, u.team_id, u.department_id, u.must_change_password,
+                   t.name as team_name
+            FROM users u LEFT JOIN teams t ON u.team_id = t.id WHERE u.id = $1
+        `, [req.userId])).rows[0];
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        user.must_change_password = !!user.must_change_password;
+        const hasReports = (await query('SELECT 1 FROM users WHERE manager_id = $1 AND is_active = TRUE LIMIT 1', [req.userId])).rows[0];
+        user.has_reports = !!hasReports;
+        res.json(user);
+    } catch (err) {
+        console.error('GET /profile error:', err.message);
+        res.status(500).json({ error: 'Failed to fetch profile' });
+    }
 });
 
-// Update name & username
-router.put('/', auth, (req, res) => {
-    const { full_name, username } = req.body;
-    if (!full_name || !username) {
-        return res.status(400).json({ error: 'Name and username are required' });
+router.put('/', auth, async (req, res) => {
+    try {
+        const { full_name, username } = req.body;
+        if (!full_name || !username) return res.status(400).json({ error: 'Name and username are required' });
+        if (username.length < 3 || username.length > 50) return res.status(400).json({ error: 'Username must be 3-50 characters' });
+        if (full_name.length > 100) return res.status(400).json({ error: 'Full name must be 100 characters or less' });
+
+        const existing = (await query('SELECT id FROM users WHERE username = $1 AND id != $2', [username, req.userId])).rows[0];
+        if (existing) return res.status(400).json({ error: 'Username already taken' });
+
+        await query('UPDATE users SET full_name = $1, username = $2 WHERE id = $3', [full_name.trim(), username.trim(), req.userId]);
+        const updated = (await query('SELECT id, username, full_name, email, avatar FROM users WHERE id = $1', [req.userId])).rows[0];
+        res.json(updated);
+    } catch (err) {
+        console.error('PUT /profile error:', err.message);
+        res.status(500).json({ error: 'Failed to update profile' });
     }
-    if (username.length < 3 || username.length > 50) {
-        return res.status(400).json({ error: 'Username must be 3-50 characters' });
-    }
-    if (full_name.length > 100) {
-        return res.status(400).json({ error: 'Full name must be 100 characters or less' });
-    }
-    const existing = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(username, req.userId);
-    if (existing) {
-        return res.status(400).json({ error: 'Username already taken' });
-    }
-    db.prepare('UPDATE users SET full_name = ?, username = ? WHERE id = ?').run(full_name.trim(), username.trim(), req.userId);
-    const updated = db.prepare('SELECT id, username, full_name, email, avatar FROM users WHERE id = ?').get(req.userId);
-    res.json(updated);
 });
 
-// Update email
-router.put('/email', auth, (req, res) => {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: 'Email is required' });
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        return res.status(400).json({ error: 'Invalid email address' });
-    }
-    const existing = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(email, req.userId);
-    if (existing) return res.status(400).json({ error: 'Email already in use' });
+router.put('/email', auth, async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) return res.status(400).json({ error: 'Email is required' });
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email address' });
 
-    db.prepare('UPDATE users SET email = ? WHERE id = ?').run(email, req.userId);
-    res.json({ email });
+        const existing = (await query('SELECT id FROM users WHERE email = $1 AND id != $2', [email, req.userId])).rows[0];
+        if (existing) return res.status(400).json({ error: 'Email already in use' });
+
+        await query('UPDATE users SET email = $1 WHERE id = $2', [email, req.userId]);
+        res.json({ email });
+    } catch (err) {
+        console.error('PUT /profile/email error:', err.message);
+        res.status(500).json({ error: 'Failed to update email' });
+    }
 });
 
-// Change password
 router.put('/password', auth, loadUserContext, async (req, res) => {
-    const { current_password, new_password } = req.body;
-    if (!current_password || !new_password) {
-        return res.status(400).json({ error: 'Both current and new password are required' });
+    try {
+        const { current_password, new_password } = req.body;
+        if (!current_password || !new_password) return res.status(400).json({ error: 'Both current and new password are required' });
+        if (new_password.length < 8) return res.status(400).json({ error: 'New password must be at least 8 characters' });
+        if (new_password.length > 72) return res.status(400).json({ error: 'New password must be 72 characters or less' });
+        const pwError = validatePassword(new_password);
+        if (pwError) return res.status(400).json({ error: pwError });
+
+        const user = (await query('SELECT password FROM users WHERE id = $1', [req.userId])).rows[0];
+        if (!(await bcrypt.compare(current_password, user.password))) return res.status(400).json({ error: 'Current password is incorrect' });
+
+        const hash = await bcrypt.hash(new_password, 10);
+        await query('UPDATE users SET password = $1, token_version = COALESCE(token_version, 0) + 1, must_change_password = FALSE WHERE id = $2', [hash, req.userId]);
+        const updated = (await query('SELECT token_version FROM users WHERE id = $1', [req.userId])).rows[0];
+        const token = jwt.sign({ id: req.userId, username: req.username, tv: updated.token_version || 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
+        res.cookie('token', token, cookieOptions());
+        logAction(req, 'change_password', 'user', req.userId, {});
+        res.json({ message: 'Password updated successfully' });
+    } catch (err) {
+        console.error('PUT /profile/password error:', err.message);
+        res.status(500).json({ error: 'Failed to change password' });
     }
-    if (new_password.length < 8) {
-        return res.status(400).json({ error: 'New password must be at least 8 characters' });
-    }
-    if (new_password.length > 72) {
-        return res.status(400).json({ error: 'New password must be 72 characters or less' });
-    }
-    const pwError = validatePassword(new_password);
-    if (pwError) {
-        return res.status(400).json({ error: pwError });
-    }
-    const user = db.prepare('SELECT password FROM users WHERE id = ?').get(req.userId);
-    if (!(await bcrypt.compare(current_password, user.password))) {
-        return res.status(400).json({ error: 'Current password is incorrect' });
-    }
-    const hash = await bcrypt.hash(new_password, 10);
-    db.prepare('UPDATE users SET password = ?, token_version = COALESCE(token_version, 0) + 1, must_change_password = 0 WHERE id = ?').run(hash, req.userId);
-    // Return a fresh token so the current session stays valid after invalidation
-    const updated = db.prepare('SELECT token_version FROM users WHERE id = ?').get(req.userId);
-    const token = jwt.sign({ id: req.userId, username: req.username, tv: updated.token_version || 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
-    res.cookie('token', token, cookieOptions());
-    logAction(req, 'change_password', 'user', req.userId, {});
-    res.json({ message: 'Password updated successfully' });
 });
 
-// Delete account
 router.delete('/', auth, async (req, res) => {
-    const { password } = req.body;
-    if (!password) return res.status(400).json({ error: 'Password is required to delete your account' });
+    try {
+        const { password } = req.body;
+        if (!password) return res.status(400).json({ error: 'Password is required to delete your account' });
 
-    const user = db.prepare('SELECT password, avatar FROM users WHERE id = ?').get(req.userId);
-    if (!(await bcrypt.compare(password, user.password))) {
-        return res.status(400).json({ error: 'Incorrect password' });
+        const user = (await query('SELECT password, avatar FROM users WHERE id = $1', [req.userId])).rows[0];
+        if (!(await bcrypt.compare(password, user.password))) return res.status(400).json({ error: 'Incorrect password' });
+
+        if (user.avatar) {
+            try { await fsPromises.unlink(safeAvatarPath(user.avatar)); } catch { }
+        }
+
+        await transaction(async (client) => {
+            await client.query('DELETE FROM time_entries WHERE user_id = $1', [req.userId]);
+            await client.query('DELETE FROM leaves WHERE user_id = $1', [req.userId]);
+            await client.query('DELETE FROM tasks WHERE user_id = $1', [req.userId]);
+            await client.query('DELETE FROM password_reset_tokens WHERE user_id = $1', [req.userId]);
+            await client.query('DELETE FROM approval_requests WHERE requester_id = $1', [req.userId]);
+            await client.query('DELETE FROM leave_balances WHERE user_id = $1', [req.userId]);
+            try { await client.query('DELETE FROM audit_logs WHERE actor_id = $1', [req.userId]); } catch { }
+            await client.query('UPDATE users SET manager_id = NULL WHERE manager_id = $1', [req.userId]);
+            await client.query('DELETE FROM users WHERE id = $1', [req.userId]);
+        });
+
+        res.json({ message: 'Account deleted successfully' });
+    } catch (err) {
+        console.error('DELETE /profile error:', err.message);
+        res.status(500).json({ error: 'Failed to delete account' });
     }
-
-    // Delete avatar file if exists
-    if (user.avatar) {
-        try {
-            const avatarPath = safeAvatarPath(user.avatar);
-            await fsPromises.unlink(avatarPath);
-        } catch { }
-    }
-
-    // Delete all user data in a transaction
-    const deleteAll = db.transaction(() => {
-        db.prepare('DELETE FROM time_entries WHERE user_id = ?').run(req.userId);
-        db.prepare('DELETE FROM leaves WHERE user_id = ?').run(req.userId);
-        db.prepare('DELETE FROM tasks WHERE user_id = ?').run(req.userId);
-        db.prepare('DELETE FROM password_reset_tokens WHERE user_id = ?').run(req.userId);
-        db.prepare('DELETE FROM approval_requests WHERE requester_id = ?').run(req.userId);
-        db.prepare('DELETE FROM leave_balances WHERE user_id = ?').run(req.userId);
-        try { db.prepare('DELETE FROM audit_logs WHERE actor_id = ?').run(req.userId); } catch { }
-        // Unset manager_id for any reports
-        db.prepare('UPDATE users SET manager_id = NULL WHERE manager_id = ?').run(req.userId);
-        db.prepare('DELETE FROM users WHERE id = ?').run(req.userId);
-    });
-    deleteAll();
-
-    res.json({ message: 'Account deleted successfully' });
 });
 
 module.exports = router;
