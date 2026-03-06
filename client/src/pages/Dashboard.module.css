@@ -981,7 +981,11 @@
 
   .timer-and-progress {
     flex-direction: column;
-    align-items: stretch;
+    align-items: center;
+  }
+
+  .timer-info-side {
+    width: 100%;
   }
 
   .circular-progress-wrapper {
