@@ -65,17 +65,21 @@ function safeAvatarPath(avatarRelative) {
 router.post('/avatar', auth, upload.single('avatar'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    // Delete old avatar file if exists
-    const user = db.prepare('SELECT avatar FROM users WHERE id = ?').get(req.userId);
-    if (user?.avatar) {
+    const avatarPath = `/uploads/avatars/${req.file.filename}`;
+
+    // Atomically swap the avatar path and capture the old one in one transaction
+    const oldAvatarPath = db.transaction(() => {
+        const user = db.prepare('SELECT avatar FROM users WHERE id = ?').get(req.userId);
+        db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(avatarPath, req.userId);
+        return user?.avatar || null;
+    })();
+
+    // Delete old file outside the transaction — safe because DB is already updated
+    if (oldAvatarPath) {
         try {
-            const oldPath = safeAvatarPath(user.avatar);
-            await fsPromises.unlink(oldPath);
+            await fsPromises.unlink(safeAvatarPath(oldAvatarPath));
         } catch { }
     }
-
-    const avatarPath = `/uploads/avatars/${req.file.filename}`;
-    db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(avatarPath, req.userId);
 
     res.json({ avatar: avatarPath });
 });

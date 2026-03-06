@@ -18,7 +18,7 @@ const COMMENT_QUILL_MODULES = {
 
 function highlightHtml(raw) {
   if (!raw) return '';
-  const clean = DOMPurify.sanitize(raw);
+  const clean = DOMPurify.sanitize(raw, DOMPURIFY_CONFIG);
   return clean.replace(/<pre\b[^>]*>([\s\S]*?)<\/pre>/gi, (match, code) => {
     const txt = code.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"');
     try {
@@ -35,10 +35,15 @@ function HighlightedHtml({ html, className, ...rest }) {
   return <div className={className} dangerouslySetInnerHTML={{ __html: highlighted }} {...rest} />;
 }
 
+const DOMPURIFY_CONFIG = {
+  ALLOWED_TAGS: ['b', 'i', 'em', 'strong', 'a', 'code', 'pre', 'ul', 'ol', 'li', 'p', 'br', 'span'],
+  ALLOWED_ATTR: ['href', 'title', 'target', 'rel', 'class'],
+};
+
 function stripHtml(html) {
   if (!html) return '';
   const tmp = document.createElement('div');
-  tmp.innerHTML = DOMPurify.sanitize(html);
+  tmp.innerHTML = DOMPurify.sanitize(html, DOMPURIFY_CONFIG);
   return tmp.textContent || tmp.innerText || '';
 }
 
@@ -60,11 +65,12 @@ function getAvatarUrl(avatar) {
  */
 export default function CommentSection({ comments, loading, currentUserId, users = [], onAdd, onEdit, onDelete }) {
   const [commentText, setCommentText] = useState('');
+  const strippedCommentText = useMemo(() => stripHtml(commentText), [commentText]);
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState('');
 
   const handleAdd = async () => {
-    if (!stripHtml(commentText).trim()) return;
+    if (!strippedCommentText.trim()) return;
     await onAdd(commentText);
     setCommentText('');
   };

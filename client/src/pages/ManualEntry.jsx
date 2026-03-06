@@ -57,15 +57,14 @@ export default function ManualEntry() {
   const [otError, setOtError] = useAutoDismiss('');
   const [otSuccess, setOtSuccess] = useAutoDismiss('');
   const checkDateReqId = useRef(0); // guard against race conditions
+  const checkDateAbortRef = useRef(null); // AbortController for date-check requests
 
   // Fetch pending manual entry requests + overtime requests
   useEffect(() => {
-    getManualEntryRequests()
-      .then(r => setPendingRequests(Array.isArray(r.data) ? r.data : []))
-      .catch(e => console.error(e));
-    getOvertimeRequests()
-      .then(r => setOvertimeRequests(Array.isArray(r.data) ? r.data : []))
-      .catch(e => console.error(e));
+    Promise.all([
+      getManualEntryRequests().then(r => setPendingRequests(Array.isArray(r.data) ? r.data : [])),
+      getOvertimeRequests().then(r => setOvertimeRequests(Array.isArray(r.data) ? r.data : [])),
+    ]).catch(() => setError('Failed to load pending requests'));
   }, []);
 
   const addBreak = () => setBreaks([...breaks, { start: '', end: '' }]);
@@ -95,6 +94,11 @@ export default function ManualEntry() {
     setError('');
     setSuccess('');
     if (!dateVal) return;
+
+    // Cancel any in-flight request for a previous date
+    if (checkDateAbortRef.current) checkDateAbortRef.current.abort();
+    const controller = new AbortController();
+    checkDateAbortRef.current = controller;
 
     const reqId = ++checkDateReqId.current;
     setCheckingDate(true);

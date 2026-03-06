@@ -196,6 +196,13 @@ function autoClockOut() {
         `).get(user.id, tzMod, yesterdayStr);
 
         if (lastEntry && lastEntry.entry_type !== 'clock_out') {
+            // Idempotency: check that an auto clock_out for this day doesn't already exist
+            const alreadyDone = db.prepare(`
+                SELECT 1 FROM time_entries
+                WHERE user_id = ? AND entry_type = 'clock_out' AND date(timestamp, ?) = date(?)
+                LIMIT 1
+            `).get(user.id, tzMod, yesterdayStr);
+            if (alreadyDone) return;
             // Compute UTC timestamp for 23:59:59 in user's local timezone
             const [y, m, d] = yesterdayStr.split('-').map(Number);
             const utcMs = Date.UTC(y, m - 1, d, 23, 59, 59) + offsetMin * 60000;

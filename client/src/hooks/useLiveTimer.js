@@ -29,6 +29,8 @@ export function useLiveTimer(status) {
     const breakAnchorRef = useRef({ base: 0, at: Date.now() });
 
     // Anchor baseline whenever status changes (fetch after action)
+    // Also reset notification flags when state becomes logged_out (clock-out) or
+    // when the floor resets to near-zero (new day clock-in after previous completion).
     useEffect(() => {
         if (!status) return;
         const floorSec = (status.floorMinutes || 0) * 60;
@@ -37,6 +39,11 @@ export function useLiveTimer(status) {
         setLiveBreakSec(breakSec);
         floorAnchorRef.current = { base: floorSec, at: Date.now() };
         breakAnchorRef.current = { base: breakSec, at: Date.now() };
+        // Reset notification flags when clocking in fresh (floor < 1 min means new session)
+        if (status.state === 'logged_out' || floorSec < 60) {
+            notified8hr.current = false;
+            confettiTriggered.current = false;
+        }
     }, [status?.floorMinutes, status?.breakMinutes, status?.state]);
 
     // Live tick every second

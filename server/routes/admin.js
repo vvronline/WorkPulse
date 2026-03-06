@@ -19,13 +19,19 @@ router.use(auth, loadUserContext, requireRole('hr_admin'));
 
 // List all organizations (super_admin only)
 router.get('/organizations', requireRole('super_admin'), (req, res) => {
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const perPage = Math.min(Math.max(parseInt(req.query.per_page) || 50, 1), 100);
+    const offset = (page - 1) * perPage;
+
+    const total = db.prepare('SELECT COUNT(*) as count FROM organizations').get().count;
     const orgs = db.prepare(`
         SELECT o.id, o.name, o.slug, o.timezone, o.work_hours_per_day, o.work_days, o.fiscal_year_start,
                (SELECT COUNT(*) FROM users WHERE org_id = o.id AND is_active = 1) as member_count
         FROM organizations o
         ORDER BY o.name
-    `).all();
-    res.json(orgs);
+        LIMIT ? OFFSET ?
+    `).all(perPage, offset);
+    res.json({ data: orgs, total, page, perPage });
 });
 
 // Get organization details (super_admin only)
@@ -44,10 +50,11 @@ router.get('/organizations/:id', requireRole('super_admin'), (req, res) => {
 // Create organization (super_admin only)
 router.post('/organizations', requireRole('super_admin'), (req, res) => {
     const { name, work_hours_per_day, work_days, timezone } = req.body;
-    if (!name || !name.trim()) return res.status(400).json({ error: 'Organization name is required' });
-    if (name.trim().length > 100) return res.status(400).json({ error: 'Name must be 100 characters or less' });
+    const trimmedName = name?.trim();
+    if (!trimmedName) return res.status(400).json({ error: 'Organization name is required' });
+    if (trimmedName.length > 100) return res.status(400).json({ error: 'Name must be 100 characters or less' });
 
-    const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const slug = trimmedName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     const existing = db.prepare('SELECT id FROM organizations WHERE slug = ?').get(slug);
     if (existing) return res.status(400).json({ error: 'An organization with a similar name already exists' });
 
@@ -56,11 +63,11 @@ router.post('/organizations', requireRole('super_admin'), (req, res) => {
 
     const result = db.prepare(
         'INSERT INTO organizations (name, slug, created_by, work_hours_per_day, work_days, timezone) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(name.trim(), slug, req.userId, whpd, work_days || '1,2,3,4,5', timezone || 'UTC');
+    ).run(trimmedName, slug, req.userId, whpd, work_days || '1,2,3,4,5', timezone || 'UTC');
 
-    logAction(req, 'admin_create', 'organization', result.lastInsertRowid, { name: name.trim() });
+    logAction(req, 'admin_create', 'organization', result.lastInsertRowid, { name: trimmedName });
 
-    res.json({ id: result.lastInsertRowid, name: name.trim(), slug, message: 'Organization created successfully' });
+    res.json({ id: result.lastInsertRowid, name: trimmedName, slug, message: 'Organization created successfully' });
 });
 
 // Update organization (super_admin only)

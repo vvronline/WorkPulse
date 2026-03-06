@@ -16,7 +16,7 @@ export default function OrganizationsManagement({ onOrgChange }) {
     const [msg, setMsg] = useAutoDismiss('');
 
     const fetchOrgs = useCallback(() => {
-        getAdminOrganizations().then(r => setOrgs(r.data)).catch(e => console.error(e));
+        getAdminOrganizations().then(r => setOrgs(r.data.data || r.data)).catch(e => console.error(e));
     }, []);
 
     useEffect(() => { fetchOrgs(); }, [fetchOrgs]);

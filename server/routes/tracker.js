@@ -69,8 +69,11 @@ router.post('/clock-in', auth, loadUserContext, (req, res) => {
     if (txResult.error) {
         return res.status(400).json({ error: txResult.error });
     }
-    // Save user's timezone offset for autoClockOut (already clamped by getOffsetMin)
+    // Save user's timezone offset for autoClockOut — validate range first (-12h to +14h)
     const tzOffset = getOffsetMin(req);
+    if (tzOffset < -840 || tzOffset > 720) {
+        return res.status(400).json({ error: 'Invalid timezone offset' });
+    }
     db.prepare('UPDATE users SET timezone_offset = ? WHERE id = ?').run(tzOffset, req.userId);
     logAction(req, 'clock_in', 'time_entry', null, { work_mode: selectedWorkMode });
     res.json({ message: 'Logged in successfully' });

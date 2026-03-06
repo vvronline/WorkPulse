@@ -19,7 +19,7 @@ export default function CreateUser({ userRole, onCreated }) {
 
     useEffect(() => {
         if (userRole === 'super_admin') {
-            getAdminOrganizations().then(r => setOrganizations(r.data)).catch(e => console.error(e));
+            getAdminOrganizations().then(r => setOrganizations(r.data.data || r.data)).catch(e => console.error(e));
         }
         getOrgDepartments().then(r => setDepartments(r.data)).catch(e => console.error(e));
         getOrgTeams().then(r => setTeams(r.data)).catch(e => console.error(e));

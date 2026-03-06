@@ -81,7 +81,7 @@ export default function Leaves() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetchData();
+    fetchData().catch(() => setError('Failed to load leave data'));
     return () => controller.abort();
   }, [fetchData]);
 

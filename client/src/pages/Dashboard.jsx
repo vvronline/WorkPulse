@@ -69,12 +69,10 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState('');
   const [error, setError] = useAutoDismiss('');
-  const [currentTime, setCurrentTime] = useState(new Date());
   const [workMode, setWorkMode] = useState('office');
   const [showClockOutConfirm, setShowClockOutConfirm] = useState(false);
   const [quoteIndex, setQuoteIndex] = useState(() => Math.floor(Math.random() * QUOTES.length));
   const quoteTimerRef = useRef(null);
-  const clockRef = useRef(null);
 
   // Live timer hook
   const { liveFloorSec, liveBreakSec, showConfetti, reset: resetTimer } = useLiveTimer(status);
@@ -117,7 +115,6 @@ export default function Dashboard() {
     let cancelled = false;
     fetchStatus();
     requestNotificationPermission();
-    clockRef.current = setInterval(() => setCurrentTime(new Date()), 60000);
 
     const handleVisibility = () => {
       if (!document.hidden && !cancelled) {
@@ -128,12 +125,11 @@ export default function Dashboard() {
 
     return () => {
       cancelled = true;
-      if (clockRef.current) clearInterval(clockRef.current);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, [fetchStatus]);
 
-  const handleAction = async (actionFn, actionName) => {
+  const handleAction = useCallback(async (actionFn, actionName) => {
     setActionLoading(actionName);
     setError('');
     try {
@@ -145,7 +141,7 @@ export default function Dashboard() {
     } finally {
       setActionLoading('');
     }
-  };
+  }, [fetchStatus, resetTimer]);
 
   // All useMemo hooks must be called before any early return
   const state = status?.state || 'logged_out';
@@ -250,7 +246,7 @@ export default function Dashboard() {
         <div className={s['greeting-left']}>
           <h2 className={s['greeting-text']}>{getGreeting()}, {user?.full_name || 'there'}!</h2>
           <p className={s['greeting-date']}>
-            {currentTime.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+            {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
           </p>
           {clockInTime && state !== 'logged_out' && (
             <p className={s['greeting-clockin']}>Logged in at <strong>{clockInTime}</strong></p>
