@@ -110,9 +110,11 @@ export default function CommentSection({ comments, loading, currentUserId, users
                 <HighlightedHtml html={c.content} className={s['comment-body']} />
                 <div className={s['comment-actions']}>
                   {c.user_id === currentUserId && (
-                    <button onClick={() => { setEditingId(c.id); setEditText(c.content); }}>Edit</button>
+                    <>
+                      <button onClick={() => { setEditingId(c.id); setEditText(c.content); }}>Edit</button>
+                      <button onClick={() => onDelete(c.id)}>Delete</button>
+                    </>
                   )}
-                  <button onClick={() => onDelete(c.id)}>Delete</button>
                 </div>
               </>
             )}

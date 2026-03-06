@@ -1,0 +1,26 @@
+/* ─── Sprint Configuration (Teams) ─── */
+.sprint-edit-row { background: var(--bg-secondary); }
+.sprint-edit-cell { padding: 1rem; }
+
+.sprint-config-form {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.sprint-field { flex: 1 1 200px; }
+
+.field-label {
+    display: block;
+    margin-bottom: 0.25rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.field-hint {
+    display: block;
+    margin-top: 0.25rem;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+}

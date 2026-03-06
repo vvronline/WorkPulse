@@ -105,12 +105,14 @@ export default function TaskDetailModal({
                 >
                   ✏️ Edit
                 </button>
-                <button
-                  className="btn btn-danger btn-sm"
-                  onClick={() => onDelete(detailTask)}
-                >
-                  🗑 Delete
-                </button>
+                {currentUser?.id === detailTask?.user_id && (
+                  <button
+                    className="btn btn-danger btn-sm"
+                    onClick={() => onDelete(detailTask)}
+                  >
+                    🗑 Delete
+                  </button>
+                )}
               </>
             )}
             <button className={s['close-form-btn']} onClick={onClose}>

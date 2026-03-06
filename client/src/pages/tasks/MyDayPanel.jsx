@@ -97,13 +97,15 @@ export default function MyDayPanel({
                       >
                         {pri.icon}
                       </span>
-                      <button
-                        className={s['myday-task-del']}
-                        onClick={() => onDelete(task)}
-                        title="Delete"
-                      >
-                        🗑
-                      </button>
+                      {currentUser?.id === task.user_id && (
+                        <button
+                          className={s['myday-task-del']}
+                          onClick={() => onDelete(task)}
+                          title="Delete"
+                        >
+                          🗑
+                        </button>
+                      )}
                     </div>
                   );
                 })}
