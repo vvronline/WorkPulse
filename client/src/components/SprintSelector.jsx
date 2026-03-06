@@ -1,5 +1,5 @@
-import React, { useRef, useEffect } from 'react';
-import s from '../pages/Tasks.module.css';
+import React from 'react';
+import s from './SprintSelector.module.css';
 
 /**
  * Reusable sprint selector dropdown.

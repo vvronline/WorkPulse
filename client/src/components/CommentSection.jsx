@@ -3,7 +3,7 @@ import ReactQuill from 'react-quill-new';
 import DOMPurify from 'dompurify';
 import hljs from '../hljs-setup';
 import MentionInput from './MentionInput';
-import s from '../pages/Tasks.module.css';
+import s from './CommentSection.module.css';
 
 const COMMENT_QUILL_MODULES = {
   toolbar: [
@@ -120,14 +120,25 @@ export default function CommentSection({ comments, loading, currentUserId, users
         ))}
       </div>
       <div className={s['comment-input']}>
-        <MentionInput
-          value={commentText}
-          onChange={setCommentText}
-          users={users}
-          placeholder="Write a comment… (type @ to mention someone)"
-          onSubmit={handleAdd}
-        />
-        <button className="btn btn-primary btn-sm" onClick={handleAdd} disabled={!stripHtml(commentText).trim()}>Send</button>
+        <div className={s['comment-quill-wrapper']}>
+          <MentionInput
+            value={commentText}
+            onChange={setCommentText}
+            users={users}
+            placeholder="Write a comment… (type @ to mention someone)"
+            onSubmit={handleAdd}
+          />
+          <button
+            className={`${s['comment-send-fab']} btn btn-primary btn-sm`}
+            onClick={handleAdd}
+            disabled={!stripHtml(commentText).trim()}
+            title="Send comment"
+            aria-label="Send comment"
+          >
+            ➤
+          </button>
+        </div>
+        <button className={`btn btn-primary btn-sm ${s['comment-send-desktop']}`} onClick={handleAdd} disabled={!stripHtml(commentText).trim()}>Send</button>
       </div>
     </>
   );

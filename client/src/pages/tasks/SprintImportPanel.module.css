@@ -1,0 +1,28 @@
+/* ============= SPRINT IMPORT PANEL ============= */
+.sprint-import-panel { background: var(--bg-card, #1e1e2e); border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 12px; margin-bottom: 1rem; overflow: hidden; }
+.sprint-import-header { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; border-bottom: 1px solid var(--border, rgba(255,255,255,0.08)); font-weight: 600; font-size: 0.9rem; color: var(--text-primary); }
+.sprint-import-title { } /* used in JSX className */
+.sprint-import-empty { padding: 1.5rem 1rem; text-align: center; color: var(--text-muted); font-size: 0.875rem; }
+.sprint-import-list { display: flex; flex-direction: column; max-height: 320px; overflow-y: auto; }
+.sprint-import-item { padding: 0.6rem 1rem; border-bottom: 1px solid var(--border, rgba(255,255,255,0.06)); transition: background 0.15s; }
+.sprint-import-item:last-child { border-bottom: none; }
+.sprint-import-item:hover { background: var(--bg-hover, rgba(255,255,255,0.03)); }
+.sprint-import-item-active { background: var(--bg-hover, rgba(255,255,255,0.05)); }
+.sprint-import-item-top { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.sprint-import-title { flex: 1; min-width: 0; font-size: 0.875rem; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sprint-import-config { margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px dashed var(--border, rgba(255,255,255,0.08)); }
+.sprint-import-config-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+.sprint-import-config-row label { font-size: 0.8rem; color: var(--text-muted); white-space: nowrap; }
+.sprint-import-select { padding: 0.3rem 0.5rem; border-radius: 6px; border: 1px solid var(--border, rgba(255,255,255,0.12)); background: var(--bg-input, rgba(255,255,255,0.05)); color: var(--text-primary); font-size: 0.8rem; }
+.sprint-import-config-actions { display: flex; gap: 0.4rem; }
+
+/* Shared utility classes */
+.task-priority-badge { padding: 0.2rem 0.5rem; border-radius: 6px; font-size: 0.7rem; font-weight: 600; white-space: nowrap; flex-shrink: 0; background: var(--badge-bg); color: var(--badge-color); }
+.close-form-btn { background: transparent; border: none; color: var(--text-muted); font-size: 1.2rem; cursor: pointer; padding: 4px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease; }
+.close-form-btn:hover { background: var(--surface-hover); color: var(--text); transform: scale(1.1); }
+.date-input { padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 8px; font-size: 0.9rem; font-family: inherit; background: var(--input-bg); color: var(--text); color-scheme: dark; }
+[data-theme="light"] .date-input { color-scheme: light; }
+.backlog-ticket-id { font-family: monospace; font-size: 0.78rem; color: var(--text-muted); }
+
+[data-theme="light"] .sprint-import-panel { background: #ffffff; }
+[data-theme="light"] .sprint-import-select { background: #ffffff; }

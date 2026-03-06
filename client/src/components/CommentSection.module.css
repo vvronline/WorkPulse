@@ -1,0 +1,37 @@
+.detail-comment-list { max-height: 260px; overflow-y: auto; margin-bottom: 0.75rem; display: flex; flex-direction: column; gap: 0; }
+.comment-empty { text-align: center; color: var(--text-muted); padding: 1.5rem 0; font-size: 0.85rem; }
+.comment-item { padding: 0.6rem 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent); }
+.comment-item:last-child { border-bottom: none; }
+.comment-meta { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.3rem; font-size: 0.8rem; flex-wrap: wrap; }
+.comment-avatar { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; }
+.comment-avatar-placeholder { width: 22px; height: 22px; border-radius: 50%; background: var(--primary); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 0.65rem; font-weight: 700; }
+.comment-time { color: var(--text-muted); font-size: 0.72rem; margin-left: auto; }
+.comment-edited { color: var(--text-muted); font-size: 0.7rem; font-style: italic; }
+.comment-body { font-size: 0.85rem; color: var(--text); line-height: 1.6; }
+.comment-body :global(p) { margin: 0 0 0.3rem; }
+.comment-body :global(p:last-child) { margin-bottom: 0; }
+.comment-body :global(pre) { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 0.65rem; font-size: 0.8rem; overflow-x: auto; }
+.comment-actions { display: flex; gap: 0.4rem; margin-top: 0.2rem; }
+.comment-actions button { background: none; border: none; color: var(--text-muted); font-size: 0.72rem; cursor: pointer; padding: 0.1rem 0.3rem; border-radius: 4px; font-family: inherit; }
+.comment-actions button:hover { color: var(--text); background: var(--surface-hover); }
+.comment-edit { margin-top: 0.4rem; }
+.comment-edit-actions { display: flex; gap: 0.4rem; margin-top: 0.4rem; }
+
+.comment-quill-wrapper { position: relative; }
+.comment-quill-wrapper :global(.ql-toolbar) { border-top-left-radius: 8px; border-top-right-radius: 8px; background: var(--surface); border-color: var(--border) !important; padding: 4px 6px; }
+.comment-quill-wrapper :global(.ql-toolbar .ql-stroke) { stroke: var(--text-secondary); }
+.comment-quill-wrapper :global(.ql-toolbar .ql-fill) { fill: var(--text-secondary); }
+.comment-quill-wrapper :global(.ql-toolbar button) { width: 24px; height: 24px; }
+.comment-quill-wrapper :global(.ql-container) { border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; background: var(--surface); border-color: var(--border) !important; font-family: inherit; font-size: 0.85rem; color: var(--text); }
+.comment-quill-wrapper :global(.ql-editor) { min-height: 50px; max-height: 150px; overflow-y: auto; padding: 0.4rem 0.6rem; }
+.comment-quill-wrapper :global(.ql-editor.ql-blank::before) { color: var(--text-muted); font-style: italic; font-size: 0.85rem; }
+.comment-quill-wrapper :global(.ql-toolbar .ql-picker-options) { background: var(--bg); backdrop-filter: blur(16px); border: 1px solid var(--border) !important; border-radius: 8px; box-shadow: var(--shadow); }
+.comment-quill-wrapper :global(.ql-toolbar .ql-picker-label) { color: var(--text-secondary); }
+.comment-quill-wrapper :global(.ql-editor pre.ql-syntax) { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 0.65rem; font-family: 'Fira Code', 'Consolas', 'Monaco', monospace; font-size: 0.8rem; overflow-x: auto; }
+
+.comment-input { display: flex; gap: 0.5rem; align-items: flex-end; margin-top: 0.75rem; }
+.comment-input > :first-child { flex: 1; min-width: 0; }
+
+.comment-send-fab { display: inline-flex; align-items: center; justify-content: center; position: absolute; bottom: 8px; right: 8px; padding: 0.25rem 0.6rem; font-size: 0.9rem; line-height: 1; min-width: 0; z-index: 2; border-radius: 6px; }
+.comment-send-desktop { display: none; }
+.comment-quill-wrapper :global(.mention-input-editor) { padding-right: 2.75rem; }
