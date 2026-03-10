@@ -22,10 +22,6 @@ npm-debug.log*
 .env
 .env.local
 
-# Databases (SQLite file shouldn't be copied in during build, it should be volume mounted)
-server/attendance.db
-server/attendance.db-journal
-server/attendance.db-wal
 
 # Uploads (Volume mounted, do not bake into image)
 server/uploads/

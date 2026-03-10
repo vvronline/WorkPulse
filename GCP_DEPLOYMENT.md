@@ -102,7 +102,7 @@ Your app is now live at `http://YOUR_VM_IP`!
 3. Back in the VM terminal, promote yourself to Super Admin:
 
 ```bash
-docker compose exec workpulse sh -c "apk add --no-cache sqlite && sqlite3 /app/server/data/attendance.db \"UPDATE users SET role = 'super_admin' WHERE username = 'YOUR_USERNAME';\""
+docker compose exec postgres psql -U workpulse -d workpulse -c "UPDATE users SET role = 'super_admin' WHERE username = 'YOUR_USERNAME';"
 ```
 
 *(Replace `YOUR_USERNAME` with the username you just registered.)*
@@ -260,8 +260,8 @@ sudo systemctl restart nginx
 3. Promote yourself to Super Admin:
 
 ```bash
-cd ~/WorkPulse/server
-sqlite3 attendance.db "UPDATE users SET role = 'super_admin' WHERE username = 'YOUR_USERNAME';"
+cd ~/WorkPulse
+docker compose exec postgres psql -U workpulse -d workpulse -c "UPDATE users SET role = 'super_admin' WHERE username = 'YOUR_USERNAME';"
 ```
 
 4. Log out and log back in — the **Admin** tab is now visible
@@ -291,7 +291,6 @@ If `docker compose ps` shows `Restarting`, check logs:
 docker compose logs --tail=30
 ```
 Common causes:
-- **`ReferenceError: Database is not defined`** — Missing `better-sqlite3` require in `db.js`
 - **`JWT_SECRET is not set`** — Create a `.env` file with `JWT_SECRET=your_key`
 
 ### 401 Unauthorized After Login
@@ -302,11 +301,7 @@ If login appears to succeed but all API calls return 401, the JWT cookie isn't b
 ### Registration Shows "Closed"
 If you see "Registration Closed" on a fresh deployment with an existing database:
 ```bash
-# Docker method
-docker compose exec workpulse sh -c "apk add --no-cache sqlite && sqlite3 /app/server/data/attendance.db \"UPDATE app_settings SET value = 'open' WHERE key = 'registration_mode';\""
-
-# PM2 method
-sqlite3 ~/WorkPulse/server/attendance.db "UPDATE app_settings SET value = 'open' WHERE key = 'registration_mode';"
+docker compose exec postgres psql -U workpulse -d workpulse -c "UPDATE app_settings SET value = 'open' WHERE key = 'registration_mode';"
 ```
 
 ### 500 Internal Server Error on Login (PM2 method)

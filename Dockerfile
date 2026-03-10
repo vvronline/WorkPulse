@@ -10,18 +10,10 @@ RUN npm run build
 FROM node:20-alpine
 WORKDIR /app/server
 
-# Install Python & build tools for building SQLite3 bindings on Alpine
-RUN apk update && apk add --no-cache python3 make g++ 
-
 COPY server/package*.json ./
 RUN npm ci --omit=dev
 
-# Rebuild better-sqlite3 specifically for the Alpine architecture
-RUN npm rebuild better-sqlite3 --build-from-source
-
 COPY server/ ./
-# Create data directory for SQLite
-RUN mkdir -p /app/server/data
 
 # Copy built React files from the builder stage
 COPY --from=frontend-builder /app/client/dist /app/client/dist
