@@ -11,16 +11,14 @@ const TasksSummary = memo(function TasksSummary({ taskSummary }) {
     if (!taskSummary?.activeTasks || taskSummary.activeTasks.length <= 1) return;
 
     // reset slide index if data changes length
-    if (slideIndex >= taskSummary.activeTasks.length) {
-      setSlideIndex(0);
-    }
+    setSlideIndex(prev => prev >= taskSummary.activeTasks.length ? 0 : prev);
 
     const interval = setInterval(() => {
       setSlideIndex(prev => (prev + 1) % taskSummary.activeTasks.length);
     }, 4000); // Slide every 4 seconds
 
     return () => clearInterval(interval);
-  }, [taskSummary?.activeTasks, slideIndex]);
+  }, [taskSummary?.activeTasks?.length]);
 
   if (!taskSummary || taskSummary.total === 0) return null;
 

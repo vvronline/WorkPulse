@@ -253,17 +253,26 @@ async function initializeBalances(userId, orgId, year) {
     }
 }
 
-function getAccruedQuota(policy, year) {
+function getAccruedQuota(policy, year, fiscalYearStart) {
+    const fys = fiscalYearStart || 1; // default January
     const now = new Date();
     const currentYear = now.getFullYear();
     if (year !== currentYear) return policy.annual_quota;
     switch (policy.accrual_type) {
         case 'monthly': {
-            const month = now.getMonth() + 1;
-            return Math.round((policy.annual_quota / 12) * month * 100) / 100;
+            // Months elapsed since fiscal year start
+            const currentMonth = now.getMonth() + 1;
+            const monthsElapsed = currentMonth >= fys
+                ? currentMonth - fys + 1
+                : 12 - fys + currentMonth + 1;
+            return Math.round((policy.annual_quota / 12) * monthsElapsed * 100) / 100;
         }
         case 'quarterly': {
-            const quarter = Math.ceil((now.getMonth() + 1) / 3);
+            const currentMonth = now.getMonth() + 1;
+            const monthsElapsed = currentMonth >= fys
+                ? currentMonth - fys + 1
+                : 12 - fys + currentMonth + 1;
+            const quarter = Math.ceil(monthsElapsed / 3);
             return Math.round((policy.annual_quota / 4) * quarter * 100) / 100;
         }
         default:

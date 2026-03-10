@@ -36,6 +36,11 @@ router.get('/', async (req, res) => {
         let pi = 1;
 
         if (user_id && ['manager', 'hr_admin', 'super_admin'].includes(req.userRole)) {
+            // Validate target user is in the same organization to prevent cross-org data leakage
+            const targetUser = (await query('SELECT org_id FROM users WHERE id = $1', [parseInt(user_id, 10)])).rows[0];
+            if (targetUser && req.userOrgId && targetUser.org_id !== req.userOrgId && req.userRole !== 'super_admin') {
+                return res.status(403).json({ error: 'Cannot view leaves for users outside your organization' });
+            }
             conditions.push(`l.user_id = $${pi++}`);
             params.push(parseInt(user_id, 10));
         } else {
@@ -244,85 +249,107 @@ router.post('/', async (req, res) => {
                 if (leaveDuration === 'quarter' && !policy.quarter_day_allowed) {
                     return res.status(400).json({ error: 'Quarter-day leave is not allowed for this leave type' });
                 }
-
-                // Quota check grouped by year
-                const datesByYear = {};
-                for (const d of newDates) {
-                    const yr = parseInt(d.slice(0, 4));
-                    if (!datesByYear[yr]) datesByYear[yr] = [];
-                    datesByYear[yr].push(d);
-                }
-
-                for (const [yr, yearDates] of Object.entries(datesByYear)) {
-                    const year = parseInt(yr);
-                    await initializeBalances(req.userId, req.userOrgId, year);
-
-                    const balance = (await query(
-                        'SELECT quota, used, carried_forward FROM leave_balances WHERE user_id = $1 AND leave_type = $2 AND year = $3',
-                        [req.userId, leave_type, year]
-                    )).rows[0];
-
-                    // Full entitlement = accrued-so-far + carry-forward
-                    const accrued = getAccruedQuota(policy, year);
-                    const effectiveQuota = accrued + parseFloat(balance?.carried_forward ?? 0);
-                    const alreadyUsed = parseFloat(balance?.used ?? 0);
-
-                    // Count pending leaves for this type/year (not yet reflected in balance.used)
-                    const pendingRow = (await query(
-                        `SELECT COALESCE(SUM(
-                            CASE duration WHEN 'half' THEN 0.5 WHEN 'quarter' THEN 0.25 ELSE 1 END
-                         ), 0) AS pending_days
-                         FROM leaves
-                         WHERE user_id = $1 AND leave_type = $2 AND status = 'pending' AND date LIKE $3`,
-                        [req.userId, leave_type, `${year}-%`]
-                    )).rows[0];
-                    const pendingDays = parseFloat(pendingRow.pending_days);
-
-                    const requested = yearDates.length * durationValue;
-                    const available = effectiveQuota - alreadyUsed - pendingDays;
-
-                    if (requested > available) {
-                        return res.status(400).json({
-                            error: `Insufficient ${leave_type} leave balance for ${year}. ` +
-                                `Available: ${Math.max(0, available)} day(s), Requested: ${requested}`,
-                        });
-                    }
-                }
             }
         }
         // ─────────────────────────────────────────────────────────────────────
 
+        // Wrap quota check + insertion in a transaction to prevent race conditions
         const approver = req.userOrgId ? (await findApprover(req.userId, req.userOrgId)) : null;
-        const created = [];
+        const created = await transaction(async (client) => {
+            const q = client.query.bind(client);
 
-        for (const d of newDates) {
-            const leaveResult = await query(
-                `INSERT INTO leaves (user_id, leave_type, date, duration, reason, status, approved_by)
-                 VALUES ($1, $2, $3, $4, $5, 'pending', $6)
-                 RETURNING id`,
-                [req.userId, leave_type, d, leaveDuration, reason || null, approver?.id || null]
-            );
-            const newLeave = leaveResult.rows[0];
-            if (!newLeave) continue;
-            created.push(newLeave.id);
+            // Quota check inside transaction with row locks
+            if (req.userOrgId) {
+                const policy = (await q(
+                    'SELECT * FROM leave_policies WHERE org_id = $1 AND leave_type = $2',
+                    [req.userOrgId, leave_type]
+                )).rows[0];
 
-            // Notify manager via approval queue
-            await query(
-                `INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
-                 VALUES ($1, $2, $3, 'leave', $4, $5, $6)`,
-                [
-                    req.userOrgId || null,
-                    req.userId,
-                    approver?.id || null,
-                    newLeave.id,
-                    reason || null,
-                    JSON.stringify({ leave_type, date: d, duration: leaveDuration }),
-                ]
-            );
-        }
+                if (policy) {
+                    // Fetch org fiscal year start for accrual calculation
+                    const org = (await q(
+                        'SELECT fiscal_year_start FROM organizations WHERE id = $1',
+                        [req.userOrgId]
+                    )).rows[0];
+
+                    const datesByYear = {};
+                    for (const d of newDates) {
+                        const yr = parseInt(d.slice(0, 4));
+                        if (!datesByYear[yr]) datesByYear[yr] = [];
+                        datesByYear[yr].push(d);
+                    }
+
+                    for (const [yr, yearDates] of Object.entries(datesByYear)) {
+                        const year = parseInt(yr);
+                        await initializeBalances(req.userId, req.userOrgId, year);
+
+                        // Lock the balance row to prevent concurrent over-allocation
+                        const balance = (await q(
+                            'SELECT quota, used, carried_forward FROM leave_balances WHERE user_id = $1 AND leave_type = $2 AND year = $3 FOR UPDATE',
+                            [req.userId, leave_type, year]
+                        )).rows[0];
+
+                        const accrued = getAccruedQuota(policy, year, org?.fiscal_year_start);
+                        const effectiveQuota = accrued + parseFloat(balance?.carried_forward ?? 0);
+                        const alreadyUsed = parseFloat(balance?.used ?? 0);
+
+                        // Count pending+approved leaves (not yet reflected in balance.used for pending)
+                        const pendingRow = (await q(
+                            `SELECT COALESCE(SUM(
+                                CASE duration WHEN 'half' THEN 0.5 WHEN 'quarter' THEN 0.25 ELSE 1 END
+                             ), 0) AS pending_days
+                             FROM leaves
+                             WHERE user_id = $1 AND leave_type = $2 AND status = 'pending' AND date LIKE $3`,
+                            [req.userId, leave_type, `${year}-%`]
+                        )).rows[0];
+                        const pendingDays = parseFloat(pendingRow.pending_days);
+
+                        const requested = yearDates.length * durationValue;
+                        const available = effectiveQuota - alreadyUsed - pendingDays;
+
+                        if (requested > available) {
+                            throw Object.assign(
+                                new Error(`Insufficient ${leave_type} leave balance for ${year}. Available: ${Math.max(0, available)} day(s), Requested: ${requested}`),
+                                { isValidation: true }
+                            );
+                        }
+                    }
+                }
+            }
+
+            const ids = [];
+            for (const d of newDates) {
+                const leaveResult = await q(
+                    `INSERT INTO leaves (user_id, leave_type, date, duration, reason, status, approved_by)
+                     VALUES ($1, $2, $3, $4, $5, 'pending', $6)
+                     RETURNING id`,
+                    [req.userId, leave_type, d, leaveDuration, reason || null, approver?.id || null]
+                );
+                const newLeave = leaveResult.rows[0];
+                if (!newLeave) continue;
+                ids.push(newLeave.id);
+
+                await q(
+                    `INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
+                     VALUES ($1, $2, $3, 'leave', $4, $5, $6)`,
+                    [
+                        req.userOrgId || null,
+                        req.userId,
+                        approver?.id || null,
+                        newLeave.id,
+                        reason || null,
+                        JSON.stringify({ leave_type, date: d, duration: leaveDuration }),
+                    ]
+                );
+            }
+            return ids;
+        });
 
         res.json({ message: `${created.length} leave(s) submitted`, ids: created });
     } catch (err) {
+        if (err.isValidation) {
+            return res.status(400).json({ error: err.message });
+        }
         console.error('POST /leaves error:', err.message);
         res.status(500).json({ error: 'Failed to submit leave' });
     }

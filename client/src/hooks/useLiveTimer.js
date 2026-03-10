@@ -39,8 +39,11 @@ export function useLiveTimer(status) {
         setLiveBreakSec(breakSec);
         floorAnchorRef.current = { base: floorSec, at: Date.now() };
         breakAnchorRef.current = { base: breakSec, at: Date.now() };
-        // Reset notification flags when clocking in fresh (floor < 1 min means new session)
-        if (status.state === 'logged_out' || floorSec < 60) {
+        // Reset notification flags when clocking out or starting a new session
+        if (status.state === 'logged_out') {
+            notified8hr.current = false;
+            confettiTriggered.current = false;
+        } else if (floorSec < 60) {
             notified8hr.current = false;
             confettiTriggered.current = false;
         }

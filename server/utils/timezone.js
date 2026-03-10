@@ -4,11 +4,20 @@
  * (value of Date.getTimezoneOffset() in minutes, e.g. -330 for IST).
  */
 
-// Clamp offset to valid range: UTC-12 (-720) to UTC+14 (+840)
+// Clamp offset to valid range.
+// JS getTimezoneOffset() returns minutes: positive = west of UTC, negative = east.
+// Valid range: UTC-12 (720) to UTC+14 (-840).
 function clampOffset(raw) {
     const n = parseInt(raw);
-    if (isNaN(n)) return 0;
-    return Math.max(-720, Math.min(840, n));
+    if (isNaN(n)) {
+        console.warn('Invalid timezone offset received:', raw);
+        return 0;
+    }
+    if (n < -840 || n > 720) {
+        console.warn('Timezone offset out of valid range:', n);
+        return 0;
+    }
+    return n;
 }
 
 // Get "today" in the client's local timezone as YYYY-MM-DD

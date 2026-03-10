@@ -22,9 +22,9 @@ function pgDateInTz(col, tzMod) {
 // Get current status for today
 router.get('/status', auth, async (req, res) => {
     try {
-        const today  = getLocalToday(req);
-        const tzMod  = getTzModifier(req);
-        const dow    = getLocalDow(req);
+        const today = getLocalToday(req);
+        const tzMod = getTzModifier(req);
+        const dow = getLocalDow(req);
         const isWeekend = dow === 0 || dow === 6;
 
         const result = await query(
@@ -49,9 +49,9 @@ router.get('/status', auth, async (req, res) => {
 // Clock-in
 router.post('/clock-in', auth, loadUserContext, async (req, res) => {
     try {
-        const today  = getLocalToday(req);
-        const tzMod  = getTzModifier(req);
-        const dow    = getLocalDow(req);
+        const today = getLocalToday(req);
+        const tzMod = getTzModifier(req);
+        const dow = getLocalDow(req);
 
         let workDays = [1, 2, 3, 4, 5];
         if (req.userOrgId) {
@@ -178,10 +178,7 @@ router.post('/clock-out', auth, async (req, res) => {
             const lastEntry = lastRes.rows[0];
             if (!lastEntry || lastEntry.entry_type === 'clock_out') return { error: 'You are not logged in' };
             if (lastEntry.entry_type === 'break_start') {
-                await client.query(
-                    'INSERT INTO time_entries (user_id, entry_type) VALUES ($1, $2)',
-                    [req.userId, 'break_end'],
-                );
+                return { error: 'You are still on break. End your break before clocking out.' };
             }
             await client.query(
                 'INSERT INTO time_entries (user_id, entry_type) VALUES ($1, $2)',
@@ -205,8 +202,8 @@ router.get('/history', auth, async (req, res) => {
         const { from, to } = req.query;
         const offsetMin = getOffsetMin(req);
         const fromDate = from || new Date(Date.now() - offsetMin * 60000 - 30 * 86400000).toISOString().slice(0, 10);
-        const toDate   = to   || getLocalToday(req);
-        const tzMod    = getTzModifier(req);
+        const toDate = to || getLocalToday(req);
+        const tzMod = getTzModifier(req);
 
         const result = await query(
             `SELECT * FROM time_entries
@@ -240,11 +237,11 @@ router.get('/history', auth, async (req, res) => {
 router.get('/analytics', auth, async (req, res) => {
     try {
         const { days } = req.query;
-        const numDays   = Math.min(Math.max(parseInt(days) || 7, 1), 365);
+        const numDays = Math.min(Math.max(parseInt(days) || 7, 1), 365);
         const offsetMin = getOffsetMin(req);
-        const fromDate  = new Date(Date.now() - offsetMin * 60000 - numDays * 86400000).toISOString().slice(0, 10);
-        const toDate    = getLocalToday(req);
-        const tzMod     = getTzModifier(req);
+        const fromDate = new Date(Date.now() - offsetMin * 60000 - numDays * 86400000).toISOString().slice(0, 10);
+        const toDate = getLocalToday(req);
+        const tzMod = getTzModifier(req);
 
         const result = await query(
             `SELECT * FROM time_entries
@@ -261,10 +258,10 @@ router.get('/analytics', auth, async (req, res) => {
             grouped[date].push(e);
         });
 
-        const today     = getLocalToday(req);
+        const today = getLocalToday(req);
         const analytics = [];
         for (let i = 0; i < numDays; i++) {
-            const d       = new Date(Date.now() - offsetMin * 60000 - (numDays - 1 - i) * 86400000);
+            const d = new Date(Date.now() - offsetMin * 60000 - (numDays - 1 - i) * 86400000);
             const dateStr = d.toISOString().slice(0, 10);
             const summary = computeDaySummary(grouped[dateStr] || [], dateStr === today);
             analytics.push({ date: dateStr, ...summary });
@@ -316,7 +313,7 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
         const offsetMs = (typeof timezoneOffset === 'number') ? timezoneOffset * 60000 : 0;
         function toUTC(dateStr, timeStr) {
             const [year, month, day] = dateStr.split('-').map(Number);
-            const [hours, minutes]   = timeStr.split(':').map(Number);
+            const [hours, minutes] = timeStr.split(':').map(Number);
             return new Date(Date.UTC(year, month - 1, day, hours, minutes, 0) + offsetMs).toISOString();
         }
 
@@ -334,6 +331,21 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
                 }
                 if (i < sorted.length - 1 && brk.end > sorted[i + 1].start) {
                     return res.status(400).json({ error: 'Break times must not overlap' });
+                }
+            }
+            // Validate total break duration doesn't exceed work duration
+            if (clock_out) {
+                let totalBreakMin = 0;
+                for (const brk of sorted) {
+                    const [sh, sm] = brk.start.split(':').map(Number);
+                    const [eh, em] = brk.end.split(':').map(Number);
+                    totalBreakMin += (eh * 60 + em) - (sh * 60 + sm);
+                }
+                const [cih, cim] = clock_in.split(':').map(Number);
+                const [coh, com] = clock_out.split(':').map(Number);
+                const workMin = (coh * 60 + com) - (cih * 60 + cim);
+                if (totalBreakMin >= workMin) {
+                    return res.status(400).json({ error: 'Total break duration cannot exceed work duration' });
                 }
             }
         }
@@ -357,12 +369,12 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
         }
 
         let approvalStatus = 'approved';
-        let needsApproval  = false;
-        const hasManager        = req.userManagerId != null;
-        const isOrgSubordinate  = req.userOrgId && (ROLE_LEVEL[req.userRole] || 1) < ROLE_LEVEL.hr_admin;
+        let needsApproval = false;
+        const hasManager = req.userManagerId != null;
+        const isOrgSubordinate = req.userOrgId && (ROLE_LEVEL[req.userRole] || 1) < ROLE_LEVEL.hr_admin;
         if (hasManager || isOrgSubordinate) { approvalStatus = 'pending'; needsApproval = true; }
 
-        const clockInTs  = toUTC(date, clock_in);
+        const clockInTs = toUTC(date, clock_in);
         const clockOutTs = clock_out ? toUTC(date, clock_out) : null;
 
         await transaction(async (client) => {
@@ -375,7 +387,7 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
                 const sorted = [...breaks].sort((a, b) => a.start.localeCompare(b.start));
                 for (const brk of sorted) {
                     await ins(req.userId, 'break_start', toUTC(date, brk.start), null);
-                    await ins(req.userId, 'break_end',   toUTC(date, brk.end),   null);
+                    await ins(req.userId, 'break_end', toUTC(date, brk.end), null);
                 }
             }
             if (clockOutTs) await ins(req.userId, 'clock_out', clockOutTs, null);
@@ -386,7 +398,7 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
                     `INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
                      VALUES ($1,$2,$3,'manual_entry',NULL,$4,$5)`,
                     [req.userOrgId || null, req.userId, approver?.id || null, 'Manual time entry',
-                     JSON.stringify({ date, clock_in, clock_out: clock_out || null, work_mode: work_mode || 'office' })],
+                    JSON.stringify({ date, clock_in, clock_out: clock_out || null, work_mode: work_mode || 'office' })],
                 );
             }
         });
@@ -434,23 +446,38 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
                     return res.status(400).json({ error: 'Break times must not overlap' });
                 }
             }
+            // Validate total break duration doesn't exceed work duration
+            if (clock_out) {
+                let totalBreakMin = 0;
+                for (const brk of sorted) {
+                    const [sh, sm] = brk.start.split(':').map(Number);
+                    const [eh, em] = brk.end.split(':').map(Number);
+                    totalBreakMin += (eh * 60 + em) - (sh * 60 + sm);
+                }
+                const [cih, cim] = clock_in.split(':').map(Number);
+                const [coh, com] = clock_out.split(':').map(Number);
+                const workMin = (coh * 60 + com) - (cih * 60 + cim);
+                if (totalBreakMin >= workMin) {
+                    return res.status(400).json({ error: 'Total break duration cannot exceed work duration' });
+                }
+            }
         }
 
         const offsetMs = (typeof timezoneOffset === 'number') ? timezoneOffset * 60000 : 0;
         function toUTC(dateStr, timeStr) {
             const [year, month, day] = dateStr.split('-').map(Number);
-            const [hours, minutes]   = timeStr.split(':').map(Number);
+            const [hours, minutes] = timeStr.split(':').map(Number);
             return new Date(Date.UTC(year, month - 1, day, hours, minutes, 0) + offsetMs).toISOString();
         }
 
         let approvalStatus = 'approved';
-        let needsApproval  = false;
-        const hasManager       = req.userManagerId != null;
+        let needsApproval = false;
+        const hasManager = req.userManagerId != null;
         const isOrgSubordinate = req.userOrgId && (ROLE_LEVEL[req.userRole] || 1) < ROLE_LEVEL.hr_admin;
         if (hasManager || isOrgSubordinate) { approvalStatus = 'pending'; needsApproval = true; }
 
-        const tzMod     = getTzModifier(req);
-        const clockInTs  = toUTC(date, clock_in);
+        const tzMod = getTzModifier(req);
+        const clockInTs = toUTC(date, clock_in);
         const clockOutTs = clock_out ? toUTC(date, clock_out) : null;
 
         await transaction(async (client) => {
@@ -478,7 +505,7 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
                 const sorted = [...breaks].sort((a, b) => a.start.localeCompare(b.start));
                 for (const brk of sorted) {
                     await ins(req.userId, 'break_start', toUTC(date, brk.start), null);
-                    await ins(req.userId, 'break_end',   toUTC(date, brk.end),   null);
+                    await ins(req.userId, 'break_end', toUTC(date, brk.end), null);
                 }
             }
             if (clockOutTs) await ins(req.userId, 'clock_out', clockOutTs, null);
@@ -489,7 +516,7 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
                     `INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
                      VALUES ($1,$2,$3,'manual_entry',NULL,$4,$5)`,
                     [req.userOrgId || null, req.userId, approver?.id || null, 'Manual time entry (edited)',
-                     JSON.stringify({ date, clock_in, clock_out: clock_out || null, work_mode: work_mode || 'office' })],
+                    JSON.stringify({ date, clock_in, clock_out: clock_out || null, work_mode: work_mode || 'office' })],
                 );
             }
         });
@@ -556,8 +583,8 @@ router.get('/entries/:date', auth, async (req, res) => {
 // Dashboard widgets
 router.get('/widgets', auth, async (req, res) => {
     try {
-        const today  = getLocalToday(req);
-        const tzMod  = getTzModifier(req);
+        const today = getLocalToday(req);
+        const tzMod = getTzModifier(req);
         const offsetMin = getOffsetMin(req);
 
         const entriesRes = await query(
@@ -584,7 +611,7 @@ router.get('/widgets', auth, async (req, res) => {
             );
             leaveRes.rows.forEach(r => leaveDatesSet.add(r.date));
             leaveRes.rows.forEach(r => { if (r.date >= monthStart) leaveCount++; });
-        } catch (_) {}
+        } catch (_) { }
 
         let totalFloorMin = 0, workDays = 0, targetMetDays = 0, officeDays = 0, remoteDays = 0;
         let orgWhpd = 8;
@@ -627,13 +654,13 @@ router.get('/widgets', auth, async (req, res) => {
             }
         });
         const monthStartDate = new Date(monthStart + 'T00:00:00Z');
-        const todayDate      = new Date(today      + 'T00:00:00Z');
+        const todayDate = new Date(today + 'T00:00:00Z');
         let totalWeekdays = 0;
         for (let d = new Date(monthStartDate); d <= todayDate; d.setDate(d.getDate() + 1)) {
             const dow = d.getUTCDay();
             if (dow !== 0 && dow !== 6) totalWeekdays++;
         }
-        const presentDays      = monthWorkDays + leaveCount;
+        const presentDays = monthWorkDays + leaveCount;
         const attendancePercent = totalWeekdays > 0 ? Math.min(100, Math.round((presentDays / totalWeekdays) * 100)) : 0;
 
         res.json({ avgFloorMinutes, punctualityPercent, attendancePercent, targetMetDays, workDays, totalWeekdays, leaveCount, officeDays, remoteDays });
@@ -647,18 +674,18 @@ router.get('/widgets', auth, async (req, res) => {
 router.get('/weekly', auth, async (req, res) => {
     try {
         const offsetMin = getOffsetMin(req);
-        const now       = new Date(Date.now() - offsetMin * 60000);
-        const todayStr  = getLocalToday(req);
+        const now = new Date(Date.now() - offsetMin * 60000);
+        const todayStr = getLocalToday(req);
         const dayOfWeek = now.getUTCDay();
-        const monday    = new Date(now);
+        const monday = new Date(now);
         monday.setUTCDate(now.getUTCDate() - ((dayOfWeek + 6) % 7));
 
         const mondayStr = monday.toISOString().slice(0, 10);
-        const sunday    = new Date(monday);
+        const sunday = new Date(monday);
         sunday.setUTCDate(monday.getUTCDate() + 6);
         const sundayStr = sunday.toISOString().slice(0, 10);
 
-        const tzMod  = getTzModifier(req);
+        const tzMod = getTzModifier(req);
         const result = await query(
             `SELECT * FROM time_entries
              WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} BETWEEN $2::date AND $3::date
@@ -675,7 +702,7 @@ router.get('/weekly', auth, async (req, res) => {
 
         const days = [];
         for (let i = 0; i < 7; i++) {
-            const d       = new Date(monday);
+            const d = new Date(monday);
             d.setUTCDate(monday.getUTCDate() + i);
             const dateStr = d.toISOString().slice(0, 10);
             const dayName = d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
@@ -706,14 +733,14 @@ router.get('/task-summary', auth, async (req, res) => {
         );
         const tasks = result.rows;
 
-        const total      = tasks.length;
-        const done       = tasks.filter(t => t.status === 'done').length;
-        const pending    = tasks.filter(t => t.status === 'pending').length;
+        const total = tasks.length;
+        const done = tasks.filter(t => t.status === 'done').length;
+        const pending = tasks.filter(t => t.status === 'pending').length;
         const inProgress = tasks.filter(t => t.status === 'in_progress').length;
-        const inReview   = tasks.filter(t => t.status === 'in_review').length;
+        const inReview = tasks.filter(t => t.status === 'in_review').length;
 
         const activeTasks = tasks
-            .filter(t => ['in_progress','in_review','pending'].includes(t.status))
+            .filter(t => ['in_progress', 'in_review', 'pending'].includes(t.status))
             .map(t => ({ title: t.title, priority: t.priority, status: t.status }));
 
         res.json({ total, done, pending, inProgress, inReview, activeTasks });
@@ -747,7 +774,7 @@ router.post('/overtime-request', auth, loadUserContext, async (req, res) => {
             `INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
              VALUES ($1,$2,$3,'overtime',NULL,$4,$5)`,
             [req.userOrgId || null, req.userId, approver?.id || null, reason,
-             JSON.stringify({ date, hours: numHours })],
+            JSON.stringify({ date, hours: numHours })],
         );
         logAction(req, 'create', 'overtime_request', null, { date, hours: numHours });
         res.json({ message: 'Overtime request submitted for approval' });
@@ -772,7 +799,7 @@ router.get('/overtime-requests', auth, async (req, res) => {
         );
         const requests = result.rows.map(r => {
             let meta = {};
-            try { meta = JSON.parse(r.metadata); } catch (_) {}
+            try { meta = JSON.parse(r.metadata); } catch (_) { }
             return { ...r, metadata: meta };
         });
         res.json(requests);

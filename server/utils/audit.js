@@ -30,7 +30,7 @@ function logAction(req, action, entityType, entityId = null, details = null) {
             ip,
             ua,
         ],
-    ).catch(e => console.error('Audit log error:', e.message));
+    ).catch(e => console.error('CRITICAL: Audit log write failed:', action, entityType, entityId, e.message));
 }
 
 /**

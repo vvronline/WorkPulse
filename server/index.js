@@ -52,7 +52,7 @@ app.use(cors({
             const allowed = process.env.CORS_ORIGIN.split(',').map(s => s.trim());
             if (allowed.includes(origin)) return callback(null, true);
         }
-        if (process.env.NODE_ENV === 'production') return callback(null, true);
+        if (process.env.NODE_ENV === 'production') return callback(new Error('Not allowed by CORS'));
         const serverOrigin = `http://localhost:${PORT}`;
         if (origin === serverOrigin) return callback(null, true);
         const devOrigins = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002', 'http://localhost:5173'];

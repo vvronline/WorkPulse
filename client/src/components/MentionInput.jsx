@@ -24,9 +24,9 @@ export default function MentionInput({ value, onChange, users = [], placeholder,
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Clear editor imperatively (called from parent after submit)
+  // Clear editor imperatively when value is externally reset
   useEffect(() => {
-    if (value === '' && initialized.current && editorRef.current) {
+    if (initialized.current && value === '' && editorRef.current && editorRef.current.innerHTML !== '') {
       editorRef.current.innerHTML = '';
     }
   }, [value]);

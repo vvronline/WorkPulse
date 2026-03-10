@@ -40,7 +40,7 @@ export default function Analytics() {
     const fetchData = async () => {
       setLoading(true);
       try {
-        const [analyticsRes, historyRes] = await Promise.all([
+        const [analyticsRes, historyRes] = await Promise.allSettled([
           getAnalytics(days),
           getHistory(
             getLocalDate(days),
@@ -48,9 +48,10 @@ export default function Analytics() {
           )
         ]);
         if (cancelled) return;
-        setData(analyticsRes.data);
-        setHistory(historyRes.data);
-        setError('');
+        if (analyticsRes.status === 'fulfilled') setData(analyticsRes.value.data);
+        else setError('Failed to load analytics chart data.');
+        if (historyRes.status === 'fulfilled') setHistory(historyRes.value.data);
+        else if (analyticsRes.status === 'fulfilled') setError('Failed to load history data.');
       } catch (err) {
         if (cancelled) return;
         console.error('Failed to load analytics', err);

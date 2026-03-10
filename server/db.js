@@ -8,28 +8,32 @@
  */
 const { Pool } = require('pg');
 
+if (!process.env.DATABASE_URL) {
+    console.warn('WARNING: DATABASE_URL not set; falling back to local default.');
+}
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://workpulse:workpulse@localhost:5432/workpulse',
-  ssl: (process.env.DATABASE_URL && process.env.DATABASE_URL.includes('sslmode=require'))
-    ? { rejectUnauthorized: false }
-    : false,
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
+    connectionString: process.env.DATABASE_URL || 'postgresql://workpulse:workpulse@localhost:5432/workpulse',
+    ssl: (process.env.DATABASE_URL && process.env.DATABASE_URL.includes('sslmode=require'))
+        ? { rejectUnauthorized: false }
+        : false,
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000,
 });
 
 pool.on('error', (err) => {
-  console.error('Unexpected DB pool error:', err.message);
+    console.error('Unexpected DB pool error:', err.message);
 });
 
 /** Run a parameterised query. Returns a pg Result object ({ rows, rowCount }). */
 async function query(sql, params = []) {
-  const client = await pool.connect();
-  try {
-    return await client.query(sql, params);
-  } finally {
-    client.release();
-  }
+    const client = await pool.connect();
+    try {
+        return await client.query(sql, params);
+    } finally {
+        client.release();
+    }
 }
 
 /**
@@ -37,18 +41,18 @@ async function query(sql, params = []) {
  * asyncFn receives a pg Client. On success, commits. On exception, rolls back.
  */
 async function transaction(asyncFn) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const result = await asyncFn(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const result = await asyncFn(client);
+        await client.query('COMMIT');
+        return result;
+    } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+    } finally {
+        client.release();
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -56,15 +60,15 @@ async function transaction(asyncFn) {
 // ────────────────────────────────────────────────────────────────────────────
 
 async function initDB() {
-  // Migration tracking
-  await query(`
+    // Migration tracking
+    await query(`
         CREATE TABLE IF NOT EXISTS _migrations (
             name       TEXT PRIMARY KEY,
             applied_at TIMESTAMPTZ DEFAULT NOW()
         )
     `);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS organizations (
             id                  SERIAL PRIMARY KEY,
             name                TEXT NOT NULL,
@@ -80,7 +84,7 @@ async function initDB() {
         )
     `);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS users (
             id                   SERIAL PRIMARY KEY,
             username             TEXT UNIQUE NOT NULL,
@@ -102,9 +106,9 @@ async function initDB() {
             created_at           TIMESTAMPTZ DEFAULT NOW()
         )
     `);
-  await query(`CREATE INDEX IF NOT EXISTS idx_users_org ON users(org_id)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_users_org ON users(org_id)`);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS departments (
             id         SERIAL PRIMARY KEY,
             org_id     INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -115,7 +119,7 @@ async function initDB() {
         )
     `);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS teams (
             id                    SERIAL PRIMARY KEY,
             org_id                INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -129,8 +133,8 @@ async function initDB() {
         )
     `);
 
-  // Add deferred FK from users -> teams and users -> departments
-  await query(`
+    // Add deferred FK from users -> teams and users -> departments
+    await query(`
         DO $do$ BEGIN
             IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints
                            WHERE constraint_name = 'users_team_id_fkey') THEN
@@ -139,7 +143,7 @@ async function initDB() {
             END IF;
         END $do$
     `);
-  await query(`
+    await query(`
         DO $do$ BEGIN
             IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints
                            WHERE constraint_name = 'users_department_id_fkey') THEN
@@ -149,7 +153,7 @@ async function initDB() {
         END $do$
     `);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS time_entries (
             id              SERIAL PRIMARY KEY,
             user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -162,13 +166,13 @@ async function initDB() {
             approved_by     INTEGER REFERENCES users(id) ON DELETE SET NULL
         )
     `);
-  await query(`
+    await query(`
         CREATE INDEX IF NOT EXISTS idx_time_entries_user   ON time_entries(user_id);
         CREATE INDEX IF NOT EXISTS idx_time_entries_ts     ON time_entries(user_id, timestamp);
         CREATE INDEX IF NOT EXISTS idx_time_entries_manual ON time_entries(user_id, is_manual, approval_status);
     `);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS leaves (
             id            SERIAL PRIMARY KEY,
             user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -183,9 +187,9 @@ async function initDB() {
             reject_reason TEXT
         )
     `);
-  await query(`CREATE INDEX IF NOT EXISTS idx_leaves_status ON leaves(user_id, status, date)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_leaves_status ON leaves(user_id, status, date)`);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS tasks (
             id           SERIAL PRIMARY KEY,
             user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -202,12 +206,12 @@ async function initDB() {
             sprint_id    INTEGER
         )
     `);
-  await query(`
+    await query(`
         CREATE INDEX IF NOT EXISTS idx_tasks_user_date   ON tasks(user_id, date);
         CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON tasks(assigned_to, date);
     `);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS password_reset_tokens (
             id         SERIAL PRIMARY KEY,
             user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -217,7 +221,7 @@ async function initDB() {
         )
     `);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS sprints (
             id         SERIAL PRIMARY KEY,
             team_id    INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
@@ -231,8 +235,8 @@ async function initDB() {
         )
     `);
 
-  // Deferred FK from tasks -> sprints
-  await query(`
+    // Deferred FK from tasks -> sprints
+    await query(`
         DO $do$ BEGIN
             IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints
                            WHERE constraint_name = 'tasks_sprint_id_fkey') THEN
@@ -242,7 +246,7 @@ async function initDB() {
         END $do$
     `);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS leave_policies (
             id                   SERIAL PRIMARY KEY,
             org_id               INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -255,7 +259,7 @@ async function initDB() {
         )
     `);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS leave_balances (
             id              SERIAL PRIMARY KEY,
             user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -268,7 +272,7 @@ async function initDB() {
         )
     `);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS holidays (
             id          SERIAL PRIMARY KEY,
             org_id      INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -279,7 +283,7 @@ async function initDB() {
         )
     `);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS approval_requests (
             id            SERIAL PRIMARY KEY,
             org_id        INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
@@ -295,13 +299,13 @@ async function initDB() {
             reviewed_at   TIMESTAMPTZ
         )
     `);
-  await query(`
+    await query(`
         CREATE INDEX IF NOT EXISTS idx_approval_requester   ON approval_requests(requester_id, status);
         CREATE INDEX IF NOT EXISTS idx_approval_approver    ON approval_requests(approver_id, status);
         CREATE INDEX IF NOT EXISTS idx_approval_type_status ON approval_requests(type, status);
     `);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS audit_logs (
             id          SERIAL PRIMARY KEY,
             org_id      INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
@@ -315,13 +319,13 @@ async function initDB() {
             created_at  TIMESTAMPTZ DEFAULT NOW()
         )
     `);
-  await query(`
+    await query(`
         CREATE INDEX IF NOT EXISTS idx_audit_actor  ON audit_logs(actor_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_audit_org    ON audit_logs(org_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id);
     `);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS app_settings (
             key        TEXT PRIMARY KEY,
             value      TEXT NOT NULL,
@@ -329,7 +333,7 @@ async function initDB() {
         )
     `);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS invite_codes (
             id          SERIAL PRIMARY KEY,
             code        TEXT UNIQUE NOT NULL,
@@ -344,7 +348,7 @@ async function initDB() {
         )
     `);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS task_labels (
             id         SERIAL PRIMARY KEY,
             org_id     INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
@@ -356,19 +360,19 @@ async function initDB() {
         )
     `);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS task_label_map (
             task_id  INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
             label_id INTEGER NOT NULL REFERENCES task_labels(id) ON DELETE CASCADE,
             PRIMARY KEY (task_id, label_id)
         )
     `);
-  await query(`
+    await query(`
         CREATE INDEX IF NOT EXISTS idx_task_label_map_task  ON task_label_map(task_id);
         CREATE INDEX IF NOT EXISTS idx_task_label_map_label ON task_label_map(label_id);
     `);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS task_comments (
             id         SERIAL PRIMARY KEY,
             task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -378,9 +382,9 @@ async function initDB() {
             updated_at TIMESTAMPTZ
         )
     `);
-  await query(`CREATE INDEX IF NOT EXISTS idx_task_comments_task ON task_comments(task_id, created_at)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_task_comments_task ON task_comments(task_id, created_at)`);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS task_history (
             id         SERIAL PRIMARY KEY,
             task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -392,9 +396,9 @@ async function initDB() {
             created_at TIMESTAMPTZ DEFAULT NOW()
         )
     `);
-  await query(`CREATE INDEX IF NOT EXISTS idx_task_history_task ON task_history(task_id, created_at)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_task_history_task ON task_history(task_id, created_at)`);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS notebooks (
             user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
             data       TEXT NOT NULL DEFAULT '{}',
@@ -402,7 +406,7 @@ async function initDB() {
         )
     `);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS notebook_history (
             id         SERIAL PRIMARY KEY,
             user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -412,11 +416,11 @@ async function initDB() {
             saved_at   TIMESTAMPTZ DEFAULT NOW()
         )
     `);
-  await query(`
+    await query(`
         CREATE INDEX IF NOT EXISTS idx_nb_history_page ON notebook_history(user_id, page_id, saved_at DESC)
     `);
 
-  await query(`
+    await query(`
         CREATE TABLE IF NOT EXISTS notifications (
             id           SERIAL PRIMARY KEY,
             user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -428,26 +432,26 @@ async function initDB() {
             created_at   TIMESTAMPTZ DEFAULT NOW()
         )
     `);
-  await query(`
+    await query(`
         CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read, created_at DESC)
     `);
 
-  // Seed defaults
-  await query(`
+    // Seed defaults
+    await query(`
         INSERT INTO app_settings (key, value) VALUES ('registration_mode', 'open')
         ON CONFLICT (key) DO NOTHING
     `);
 
-  // Promote first registered user to super_admin if still employee
-  try {
-    await query(`
+    // Promote first registered user to super_admin if still employee
+    try {
+        await query(`
             UPDATE users SET role = 'super_admin'
             WHERE id = (SELECT id FROM users ORDER BY id ASC LIMIT 1)
               AND role = 'employee'
         `);
-  } catch (_) { /* no users yet */ }
+    } catch (_) { /* no users yet */ }
 
-  console.log('✓ Database schema initialised');
+    console.log('✓ Database schema initialised');
 }
 
 module.exports = { query, transaction, initDB, pool };

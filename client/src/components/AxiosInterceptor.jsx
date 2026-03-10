@@ -8,9 +8,11 @@ export default function AxiosInterceptor({ children }) {
     const navigate = useNavigate();
     const { logout } = useAuth();
     const toast = useToast();
-    // Use ref to avoid stale closures in the interceptor
+    // Use refs to avoid stale closures in the interceptor
     const toastRef = useRef(toast);
     toastRef.current = toast;
+    const logoutRef = useRef(logout);
+    logoutRef.current = logout;
 
     useEffect(() => {
         const interceptor = API.interceptors.response.use(
@@ -18,7 +20,7 @@ export default function AxiosInterceptor({ children }) {
             error => {
                 const status = error.response?.status;
                 if (status === 401) {
-                    logout();
+                    logoutRef.current();
                     navigate('/login', { replace: true });
                 } else if (status === 429) {
                     toastRef.current.warning('Too many requests. Please slow down.');
@@ -35,7 +37,7 @@ export default function AxiosInterceptor({ children }) {
         return () => {
             API.interceptors.response.eject(interceptor);
         };
-    }, [navigate, logout]);
+    }, [navigate]);
 
     return children;
 }

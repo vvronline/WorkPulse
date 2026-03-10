@@ -59,6 +59,13 @@ export default function ManualEntry() {
   const checkDateReqId = useRef(0); // guard against race conditions
   const checkDateAbortRef = useRef(null); // AbortController for date-check requests
 
+  // Cleanup abort controller on unmount
+  useEffect(() => {
+    return () => {
+      if (checkDateAbortRef.current) checkDateAbortRef.current.abort();
+    };
+  }, []);
+
   // Fetch pending manual entry requests + overtime requests
   useEffect(() => {
     Promise.all([

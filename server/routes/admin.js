@@ -38,13 +38,13 @@ router.get('/organizations/:id', requireRole('super_admin'), async (req, res) =>
         const org = orgRes.rows[0];
         if (!org) return res.status(404).json({ error: 'Organization not found' });
         const memberRes = await query('SELECT COUNT(*) as count FROM users WHERE org_id = $1 AND is_active = TRUE', [id]);
-        const deptRes   = await query('SELECT COUNT(*) as count FROM departments WHERE org_id = $1', [id]);
-        const teamRes   = await query('SELECT COUNT(*) as count FROM teams WHERE org_id = $1', [id]);
+        const deptRes = await query('SELECT COUNT(*) as count FROM departments WHERE org_id = $1', [id]);
+        const teamRes = await query('SELECT COUNT(*) as count FROM teams WHERE org_id = $1', [id]);
         res.json({
             ...org,
             memberCount: parseInt(memberRes.rows[0].count, 10),
-            deptCount:   parseInt(deptRes.rows[0].count, 10),
-            teamCount:   parseInt(teamRes.rows[0].count, 10),
+            deptCount: parseInt(deptRes.rows[0].count, 10),
+            teamCount: parseInt(teamRes.rows[0].count, 10),
         });
     } catch (err) {
         console.error('Get org error:', err.message);
@@ -309,7 +309,7 @@ router.put('/users/:id/deactivate', async (req, res) => {
     }
 });
 
-router.post('/users/:id/reset-password', async (req, res) => {
+router.post('/users/:id/reset-password', requireRole('hr_admin'), async (req, res) => {
     try {
         const { id } = req.params;
         const { new_password } = req.body;
@@ -365,7 +365,7 @@ router.delete('/users/:id', requireRole('super_admin'), async (req, res) => {
     }
 });
 
-router.post('/users', async (req, res) => {
+router.post('/users', requireRole('hr_admin'), async (req, res) => {
     try {
         const { username, password, full_name, email, role, org_id, department_id, team_id, manager_id } = req.body;
         if (!username || !password || !full_name || !email) {
@@ -441,12 +441,12 @@ router.get('/stats', requireSameOrg, async (req, res) => {
                 (SELECT COUNT(*) FROM approval_requests WHERE org_id = $1 AND status = 'pending') AS "pendingApprovals"
         `, [orgId]);
         const counts = countsRes.rows[0];
-        const today  = (() => {
+        const today = (() => {
             const offsetMin = getOffsetMin(req);
-            const localNow  = new Date(Date.now() - offsetMin * 60000);
+            const localNow = new Date(Date.now() - offsetMin * 60000);
             return `${localNow.getUTCFullYear()}-${String(localNow.getUTCMonth() + 1).padStart(2, '0')}-${String(localNow.getUTCDate()).padStart(2, '0')}`;
         })();
-        const tzMod  = getTzModifier(req);
+        const tzMod = getTzModifier(req);
         const clockedRes = await query(`
             SELECT COUNT(DISTINCT user_id) as c
             FROM time_entries
@@ -455,12 +455,12 @@ router.get('/stats', requireSameOrg, async (req, res) => {
               AND entry_type = 'clock_in'
         `, [orgId, tzMod, today]);
         res.json({
-            totalUsers:       parseInt(counts.totalUsers,       10),
-            activeUsers:      parseInt(counts.activeUsers,      10),
-            departments:      parseInt(counts.departments,      10),
-            teams:            parseInt(counts.teams,            10),
+            totalUsers: parseInt(counts.totalUsers, 10),
+            activeUsers: parseInt(counts.activeUsers, 10),
+            departments: parseInt(counts.departments, 10),
+            teams: parseInt(counts.teams, 10),
             pendingApprovals: parseInt(counts.pendingApprovals, 10),
-            clockedInToday:   parseInt(clockedRes.rows[0].c,   10),
+            clockedInToday: parseInt(clockedRes.rows[0].c, 10),
         });
     } catch (err) {
         console.error('Stats error:', err.message);
