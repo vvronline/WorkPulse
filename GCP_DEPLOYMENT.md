@@ -141,21 +141,30 @@ gcloud compute ssh workpulse --zone=us-central1-a
 
 ---
 
-## Step 4: Verify Docker & Clone
+## Step 4: Install Docker Compose, Verify & Clone
 
 ```bash
-# Re-login to pick up docker group (from startup script)
+# Add your user to the docker group
+sudo usermod -aG docker $USER
+
+# Log out and back in to apply the group change
 exit
 gcloud compute ssh workpulse --zone=us-central1-a
 
-# Verify Docker
+# Verify Docker works without sudo
 docker --version
-docker compose version
+docker ps
+
+# Install docker-compose (Ubuntu 24.04 ships docker.io but not the compose plugin)
+sudo apt install -y docker-compose
+docker-compose --version
 
 # Clone the repository
 git clone https://github.com/vvronline/WorkPulse.git
 cd WorkPulse
 ```
+
+> **Note:** On Ubuntu 24.04 with `docker.io`, use `docker-compose` (hyphenated) instead of `docker compose` (space). If `docker ps` gives a permission error, you haven't re-logged after the `usermod` — run `exit` and SSH back in.
 
 ---
 
@@ -184,6 +193,18 @@ cat .env
 
 > **Important:** Save these values somewhere secure (password manager). If you lose `JWT_SECRET`, all user sessions will be invalidated. If you lose `DB_PASSWORD`, you'll need to reset the PostgreSQL password manually.
 
+### Prepare directories
+
+Create the uploads directory and `.dockerignore` before building:
+
+```bash
+# Create uploads directory (needed because Docker volume mount overrides container permissions)
+mkdir -p ~/WorkPulse/server/uploads/avatars
+
+# Exclude postgres data from Docker build context
+echo "data/" >> .dockerignore
+```
+
 ---
 
 ## Step 6: Build & Deploy
@@ -192,20 +213,21 @@ cat .env
 cd ~/WorkPulse
 
 # Build (first build takes ~2-5 minutes)
-docker compose build
+docker-compose build
 
 # Start
-docker compose up -d
+docker-compose up -d
 
 # Verify both containers are healthy
-docker compose ps
+docker-compose ps
 ```
 
 Expected output:
 ```
-NAME                 STATUS                   PORTS
-workpulse-app        Up X seconds             0.0.0.0:80->5000/tcp
-workpulse-postgres   Up X seconds (healthy)   5432/tcp
+       Name                     Command                 State                      Ports
+--------------------------------------------------------------------------------------------------------
+workpulse-app        dumb-init -- node index.js      Up             0.0.0.0:80->5000/tcp,:::80->5000/tcp
+workpulse-postgres   docker-entrypoint.sh postgres   Up (healthy)   5432/tcp
 ```
 
 Note: PostgreSQL shows `5432/tcp` but **no** `0.0.0.0:5432->` — it's only accessible inside the Docker network.
@@ -228,7 +250,7 @@ Your app is live at `http://34.132.137.32`
 
 ```bash
 cd ~/WorkPulse
-docker compose exec postgres psql -U workpulse -d workpulse \
+docker-compose exec postgres psql -U workpulse -d workpulse \
   -c "UPDATE users SET role = 'super_admin' WHERE username = 'YOUR_USERNAME';"
 ```
 
@@ -274,7 +296,7 @@ BUCKET="gs://workpulse-backups-$(gcloud config get-value project 2>/dev/null)"
 echo "[$(date)] Starting backup..."
 
 # Dump database and compress
-docker compose -f ~/WorkPulse/docker-compose.yml exec -T postgres \
+docker-compose -f ~/WorkPulse/docker-compose.yml exec -T postgres \
   pg_dump -U workpulse --clean --if-exists workpulse | gzip > "${BACKUP_FILE}"
 
 # Upload to GCS
@@ -310,7 +332,7 @@ gcloud storage ls gs://workpulse-backups-$(gcloud config get-value project)/dail
 # Download and restore a specific backup
 gcloud storage cp gs://BUCKET/daily/2026-03-11_0200.sql.gz /tmp/restore.sql.gz
 gunzip /tmp/restore.sql.gz
-cat /tmp/restore.sql | docker compose exec -T postgres psql -U workpulse -d workpulse
+cat /tmp/restore.sql | docker-compose exec -T postgres psql -U workpulse -d workpulse
 ```
 
 ---
@@ -327,9 +349,12 @@ cd ~/WorkPulse
 git pull
 
 # Rebuild and restart (zero-downtime for the database)
-docker compose build --no-cache
-docker compose up -d
+docker-compose build --no-cache
+docker-compose down
+docker-compose up -d
 ```
+
+> **Note:** Use `docker-compose down` then `up -d` instead of `restart` when environment variables in `.env` have changed — `restart` does not reload env vars.
 
 ---
 
@@ -337,23 +362,24 @@ docker compose up -d
 
 ```bash
 # View live logs
-docker compose logs -f --tail=50
+docker-compose logs -f --tail=50
 
 # View only app logs
-docker compose logs -f workpulse --tail=30
+docker-compose logs -f workpulse --tail=30
 
 # Restart containers
-docker compose restart
+docker-compose restart
 
-# Stop containers (keeps database on disk)
-docker compose down
+# Stop and recreate containers (needed when .env changes)
+docker-compose down
+docker-compose up -d
 
 # Check database size
-docker compose exec postgres psql -U workpulse -d workpulse \
+docker-compose exec postgres psql -U workpulse -d workpulse \
   -c "SELECT pg_size_pretty(pg_database_size('workpulse'));"
 
 # Interactive database shell
-docker compose exec postgres psql -U workpulse -d workpulse
+docker-compose exec postgres psql -U workpulse -d workpulse
 ```
 
 > **⚠️ Data Safety:** Your PostgreSQL data is in `~/WorkPulse/data/postgres/`. Never delete this directory. Automated backups go to GCS daily with 90-day retention.
@@ -369,7 +395,7 @@ If you have a domain name pointing to your static IP:
 sudo apt install -y certbot
 
 # Get certificate (stop the app briefly)
-docker compose down
+docker-compose down
 sudo certbot certonly --standalone -d yourdomain.com
 
 # Copy certs to project
@@ -379,7 +405,7 @@ sudo cp /etc/letsencrypt/live/yourdomain.com/privkey.pem ~/WorkPulse/certs/
 sudo chown $USER:$USER ~/WorkPulse/certs/*
 
 # Start the app again
-docker compose up -d
+docker-compose up -d
 ```
 
 Then add an Nginx reverse proxy or update the Docker compose to mount certs and terminate TLS. Without a domain, use plain HTTP — browsers will show the COOP warning on raw IPs but it's non-breaking.
@@ -387,6 +413,37 @@ Then add an Nginx reverse proxy or update the Docker compose to mount certs and 
 ---
 
 ## Troubleshooting
+
+### `docker compose` — unknown command
+Ubuntu 24.04's `docker.io` package doesn't include the compose plugin. Use the hyphenated version:
+```bash
+sudo apt install -y docker-compose
+docker-compose up -d    # ← hyphenated
+```
+
+### Docker Permission Denied
+Your user isn't in the `docker` group:
+```bash
+sudo usermod -aG docker $USER
+exit
+# SSH back in
+gcloud compute ssh workpulse --zone=us-central1-a
+```
+
+### `EACCES: permission denied, mkdir '/app/server/uploads/avatars'`
+The Docker volume mount overrides directory ownership. Fix on host:
+```bash
+sudo mkdir -p ~/WorkPulse/server/uploads/avatars
+sudo chmod -R 777 ~/WorkPulse/server/uploads
+docker-compose restart workpulse
+```
+
+### Build fails: `can't stat 'data/postgres'`
+The PostgreSQL data directory has root-owned files. Exclude it from the build context:
+```bash
+echo "data/" >> .dockerignore
+docker-compose build --no-cache
+```
 
 ### `ERR_CONNECTION_TIMED_OUT`
 The GCP firewall is blocking port 80.
@@ -401,11 +458,11 @@ gcloud compute instances describe workpulse --zone=us-central1-a \
 
 ### Container Crash Loop
 ```bash
-docker compose logs --tail=30
+docker-compose logs --tail=30
 ```
 Common causes:
 - **`JWT_SECRET is not set`** — Check `.env` file exists with `JWT_SECRET=...`
-- **Database connection refused** — PostgreSQL isn't ready yet. The healthcheck should handle this, but check: `docker compose ps` (postgres should show `healthy`)
+- **Database connection refused** — PostgreSQL isn't ready yet. The healthcheck should handle this, but check: `docker-compose ps` (postgres should show `healthy`)
 
 ### 401 Unauthorized After Login
 The JWT cookie's `Secure` flag may be set but you're using HTTP.
@@ -413,7 +470,7 @@ The JWT cookie's `Secure` flag may be set but you're using HTTP.
 
 ### Registration Shows "Closed"
 ```bash
-docker compose exec postgres psql -U workpulse -d workpulse \
+docker-compose exec postgres psql -U workpulse -d workpulse \
   -c "UPDATE app_settings SET value = 'open' WHERE key = 'registration_mode';"
 ```
 
@@ -428,11 +485,9 @@ gcloud compute instances describe workpulse --zone=us-central1-a \
 gcloud compute addresses create workpulse-ip \
   --addresses=CURRENT_IP --region=us-central1
 ```
-If you see `docker` in the output, you can run Docker commands **without sudo**:
-```bash
-docker compose build
-docker compose up -d
-```
+
+### COOP Header Warning in Browser
+The `Cross-Origin-Opener-Policy header has been ignored` warning is expected when using plain HTTP on a raw IP. It is non-breaking — the app works fine. To eliminate it, set up HTTPS with a domain name.
 
 ### HTTPS Setup (Optional)
 To enable HTTPS, set up a reverse proxy (e.g., Nginx or Caddy) with SSL certificates, then add to your `.env`:
