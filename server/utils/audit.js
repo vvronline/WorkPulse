@@ -10,6 +10,7 @@
  * the main request flow).  queryLogs is async and must be awaited.
  */
 const { query } = require('../db');
+const { logger } = require('./logger');
 
 /**
  * Fire-and-forget audit log write.
@@ -30,7 +31,7 @@ function logAction(req, action, entityType, entityId = null, details = null) {
             ip,
             ua,
         ],
-    ).catch(e => console.error('CRITICAL: Audit log write failed:', action, entityType, entityId, e.message));
+    ).catch(e => logger.error({ err: e, action, entityType, entityId }, 'Audit log write failed'));
 }
 
 /**

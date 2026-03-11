@@ -1,7 +1,8 @@
-﻿const express = require('express');
+const express = require('express');
 const { query } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext } = require('../middleware/rbac');
+const { logger } = require('../utils/logger');
 
 const router = express.Router();
 
@@ -19,7 +20,7 @@ router.get('/', auth, loadUserContext, async (req, res) => {
 
         res.json({ sprints });
     } catch (err) {
-        console.error('Error fetching sprints:', err.message);
+        req.log.error({ err }, 'Error fetching sprints:');
         res.status(500).json({ error: 'Failed to fetch sprints' });
     }
 });
@@ -36,7 +37,7 @@ router.get('/active', auth, loadUserContext, async (req, res) => {
 
         res.json({ sprint: sprint || null });
     } catch (err) {
-        console.error('Error fetching active sprint:', err.message);
+        req.log.error({ err }, 'Error fetching active sprint:');
         res.status(500).json({ error: 'Failed to fetch active sprint' });
     }
 });
@@ -58,7 +59,7 @@ router.post('/', auth, loadUserContext, async (req, res) => {
         const newSprint = (await query('SELECT * FROM sprints WHERE id = $1', [result.rows[0].id])).rows[0];
         res.json({ sprint: newSprint });
     } catch (err) {
-        console.error('Error creating sprint:', err.message);
+        req.log.error({ err }, 'Error creating sprint:');
         res.status(500).json({ error: 'Failed to create sprint' });
     }
 });
@@ -92,7 +93,7 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
         const updated = (await query('SELECT * FROM sprints WHERE id = $1', [id])).rows[0];
         res.json({ sprint: updated });
     } catch (err) {
-        console.error('Error updating sprint:', err.message);
+        req.log.error({ err }, 'Error updating sprint:');
         res.status(500).json({ error: 'Failed to update sprint' });
     }
 });
@@ -109,7 +110,7 @@ router.delete('/:id', auth, loadUserContext, async (req, res) => {
         await query('DELETE FROM sprints WHERE id = $1', [id]);
         res.json({ message: 'Sprint deleted successfully' });
     } catch (err) {
-        console.error('Error deleting sprint:', err.message);
+        req.log.error({ err }, 'Error deleting sprint:');
         res.status(500).json({ error: 'Failed to delete sprint' });
     }
 });
@@ -125,7 +126,7 @@ router.get('/:id/tasks', auth, loadUserContext, async (req, res) => {
         const tasks = (await query('SELECT * FROM tasks WHERE sprint_id = $1 ORDER BY created_at ASC', [id])).rows;
         res.json({ tasks });
     } catch (err) {
-        console.error('Error fetching sprint tasks:', err.message);
+        req.log.error({ err }, 'Error fetching sprint tasks:');
         res.status(500).json({ error: 'Failed to fetch sprint tasks' });
     }
 });

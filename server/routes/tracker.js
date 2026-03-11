@@ -6,6 +6,7 @@ const { findApprover } = require('../utils/approver');
 const { logAction } = require('../utils/audit');
 const { getLocalToday, getLocalDow, getTzModifier, getLocalDateFromTs, getOffsetMin } = require('../utils/timezone');
 const { computeStatus, computeDaySummary } = require('../utils/timeCalc');
+const { logger } = require('../utils/logger');
 
 const router = express.Router();
 
@@ -39,7 +40,7 @@ router.get('/status', auth, async (req, res) => {
         status.workMode = clockInEntry?.work_mode || 'office';
         res.json(status);
     } catch (err) {
-        console.error('Status error:', err.message);
+        req.log.error({ err }, 'Status error');
         res.status(500).json({ error: 'Failed to get status' });
     }
 });
@@ -92,7 +93,7 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
         logAction(req, 'clock_in', 'time_entry', null, { work_mode: selectedWorkMode });
         res.json({ message: 'Logged in successfully' });
     } catch (err) {
-        console.error('Clock-in error:', err.message);
+        req.log.error({ err }, 'Clock-in error');
         res.status(500).json({ error: 'Clock-in failed' });
     }
 });
@@ -124,7 +125,7 @@ router.post('/break-start', auth, async (req, res) => {
         logAction(req, 'break_start', 'time_entry', null, {});
         res.json({ message: 'Break started' });
     } catch (err) {
-        console.error('Break-start error:', err.message);
+        req.log.error({ err }, 'Break-start error');
         res.status(500).json({ error: 'Failed to start break' });
     }
 });
@@ -155,7 +156,7 @@ router.post('/break-end', auth, async (req, res) => {
         logAction(req, 'break_end', 'time_entry', null, {});
         res.json({ message: 'Break ended, back to work!' });
     } catch (err) {
-        console.error('Break-end error:', err.message);
+        req.log.error({ err }, 'Break-end error');
         res.status(500).json({ error: 'Failed to end break' });
     }
 });
@@ -189,7 +190,7 @@ router.post('/clock-out', auth, async (req, res) => {
         logAction(req, 'clock_out', 'time_entry', null, {});
         res.json({ message: 'Clocked out. See you tomorrow!' });
     } catch (err) {
-        console.error('Clock-out error:', err.message);
+        req.log.error({ err }, 'Clock-out error');
         res.status(500).json({ error: 'Clock-out failed' });
     }
 });
@@ -226,7 +227,7 @@ router.get('/history', auth, async (req, res) => {
 
         res.json(dailySummaries);
     } catch (err) {
-        console.error('History error:', err.message);
+        req.log.error({ err }, 'History error');
         res.status(500).json({ error: 'Failed to fetch history' });
     }
 });
@@ -267,7 +268,7 @@ router.get('/analytics', auth, async (req, res) => {
 
         res.json(analytics);
     } catch (err) {
-        console.error('Analytics error:', err.message);
+        req.log.error({ err }, 'Analytics error');
         res.status(500).json({ error: 'Failed to fetch analytics' });
     }
 });
@@ -287,7 +288,7 @@ router.get('/manual-entries', auth, loadUserContext, async (req, res) => {
         );
         res.json(result.rows.map(e => ({ ...e, metadata: e.metadata ? JSON.parse(e.metadata) : null })));
     } catch (err) {
-        console.error('Manual entries error:', err.message);
+        req.log.error({ err }, 'Manual entries error');
         res.status(500).json({ error: 'Failed to fetch manual entries' });
     }
 });
@@ -408,7 +409,7 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
             needsApproval,
         });
     } catch (err) {
-        console.error('Manual entry error:', err.message);
+        req.log.error({ err }, 'Manual entry error');
         res.status(500).json({ error: 'Failed to add manual entry' });
     }
 });
@@ -526,7 +527,7 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
             needsApproval,
         });
     } catch (err) {
-        console.error('Manual entry edit error:', err.message);
+        req.log.error({ err }, 'Manual entry edit error');
         res.status(500).json({ error: 'Failed to update entry' });
     }
 });
@@ -555,7 +556,7 @@ router.delete('/entries/:date', auth, async (req, res) => {
         );
         res.json({ message: `Deleted ${result.rowCount} entries for ${date}` });
     } catch (err) {
-        console.error('Delete entries error:', err.message);
+        req.log.error({ err }, 'Delete entries error');
         res.status(500).json({ error: 'Failed to delete entries' });
     }
 });
@@ -573,7 +574,7 @@ router.get('/entries/:date', auth, async (req, res) => {
         );
         res.json(result.rows);
     } catch (err) {
-        console.error('Get entries error:', err.message);
+        req.log.error({ err }, 'Get entries error');
         res.status(500).json({ error: 'Failed to fetch entries' });
     }
 });
@@ -663,7 +664,7 @@ router.get('/widgets', auth, async (req, res) => {
 
         res.json({ avgFloorMinutes, punctualityPercent, attendancePercent, targetMetDays, workDays, totalWeekdays, leaveCount, officeDays, remoteDays });
     } catch (err) {
-        console.error('Widgets error:', err.message);
+        req.log.error({ err }, 'Widgets error');
         res.status(500).json({ error: 'Failed to fetch widgets' });
     }
 });
@@ -716,7 +717,7 @@ router.get('/weekly', auth, async (req, res) => {
 
         res.json({ days });
     } catch (err) {
-        console.error('Weekly error:', err.message);
+        req.log.error({ err }, 'Weekly error');
         res.status(500).json({ error: 'Failed to fetch weekly data' });
     }
 });
@@ -743,7 +744,7 @@ router.get('/task-summary', auth, async (req, res) => {
 
         res.json({ total, done, pending, inProgress, inReview, activeTasks });
     } catch (err) {
-        console.error('Task summary error:', err.message);
+        req.log.error({ err }, 'Task summary error');
         res.status(500).json({ error: 'Failed to fetch task summary' });
     }
 });
@@ -777,7 +778,7 @@ router.post('/overtime-request', auth, loadUserContext, async (req, res) => {
         logAction(req, 'create', 'overtime_request', null, { date, hours: numHours });
         res.json({ message: 'Overtime request submitted for approval' });
     } catch (err) {
-        console.error('Overtime request error:', err.message);
+        req.log.error({ err }, 'Overtime request error');
         res.status(500).json({ error: 'Failed to submit overtime request' });
     }
 });
@@ -802,7 +803,7 @@ router.get('/overtime-requests', auth, async (req, res) => {
         });
         res.json(requests);
     } catch (err) {
-        console.error('Overtime requests error:', err.message);
+        req.log.error({ err }, 'Overtime requests error');
         res.status(500).json({ error: 'Failed to fetch overtime requests' });
     }
 });

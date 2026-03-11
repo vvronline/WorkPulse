@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
 const { query, transaction } = require('../db');
 const { validatePassword, validateUsername } = require('../utils/password');
+const { logger } = require('../utils/logger');
 
 const router = express.Router();
 
@@ -125,7 +126,7 @@ router.post('/register', async (req, res) => {
         if (err.message === 'INVITE_EXHAUSTED') {
             return res.status(400).json({ error: 'This invite code has reached its usage limit.' });
         }
-        console.error('Register error:', err.message);
+        req.log.error({ err }, 'Register error');
         res.status(500).json({ error: 'Registration failed' });
     }
 });
@@ -196,7 +197,7 @@ router.post('/login', async (req, res) => {
             },
         });
     } catch (err) {
-        console.error('Login error:', err.message);
+        req.log.error({ err }, 'Login error');
         res.status(500).json({ error: 'Login failed' });
     }
 });
@@ -240,14 +241,14 @@ router.post('/forgot-password', async (req, res) => {
                         <p style="font-size:0.85rem;color:#888;">If you didn't request this, just ignore this email.</p>
                     </div>
                 `,
-            }).catch(err => console.error('Failed to send reset email:', err));
+            }).catch(err => logger.error({ err }, 'Failed to send reset email'));
         } else {
-            console.log(`\n🔑 Password reset link for ${user.username}: ${resetLink}\n`);
+            logger.info({ username: user.username, resetLink }, 'Password reset link generated (no SMTP)');
         }
 
         res.json({ message: 'If that email is registered, a reset link has been sent.' });
     } catch (err) {
-        console.error('Forgot password error:', err.message);
+        req.log.error({ err }, 'Forgot password error');
         res.status(500).json({ error: 'Failed to process request' });
     }
 });
@@ -286,7 +287,7 @@ router.post('/reset-password', async (req, res) => {
 
         res.json({ message: 'Password has been reset successfully. You can now sign in.' });
     } catch (err) {
-        console.error('Reset password error:', err.message);
+        req.log.error({ err }, 'Reset password error');
         res.status(500).json({ error: 'Failed to reset password' });
     }
 });

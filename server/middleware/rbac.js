@@ -5,6 +5,7 @@
  *   super_admin > hr_admin > manager > team_lead > employee
  */
 const { query } = require('../db');
+const { logger } = require('../utils/logger');
 
 const ROLE_LEVEL = {
     employee: 1,
@@ -38,7 +39,7 @@ async function loadUserContext(req, res, next) {
         req.roleLevel = ROLE_LEVEL[req.userRole] || 1;
         next();
     } catch (err) {
-        console.error('loadUserContext error:', err.message);
+        logger.error({ err, userId: req.userId }, 'loadUserContext error');
         return res.status(500).json({ error: 'Internal server error' });
     }
 }

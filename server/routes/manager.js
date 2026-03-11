@@ -6,6 +6,7 @@ const { logAction } = require('../utils/audit');
 const { getLocalToday, getTzModifier, getLocalDateFromTs, getOffsetMin } = require('../utils/timezone');
 const { computeFloorMs, computeBreakMs } = require('../utils/timeCalc');
 const { updateLeaveBalance } = require('./leaves');
+const { logger } = require('../utils/logger');
 
 const router = express.Router();
 router.use(auth, loadUserContext);
@@ -99,7 +100,7 @@ router.get('/team-attendance', async (req, res) => {
 
         res.json(result);
     } catch (err) {
-        console.error('GET /team-attendance error:', err.message);
+        req.log.error({ err }, 'GET /team-attendance error');
         res.status(500).json({ error: 'Failed to fetch team attendance' });
     }
 });
@@ -309,7 +310,7 @@ router.get('/team-analytics', async (req, res) => {
             expectedHours, expectedWeekdays, targetMinutes, avgPunctuality, avgTargetMet, trendDates, members,
         });
     } catch (err) {
-        console.error('GET /team-analytics error:', err.message);
+        req.log.error({ err }, 'GET /team-analytics error');
         res.status(500).json({ error: 'Failed to fetch team analytics' });
     }
 });
@@ -342,7 +343,7 @@ router.get('/approvals', async (req, res) => {
             return { ...a, metadata };
         }));
     } catch (err) {
-        console.error('GET /approvals error:', err.message);
+        req.log.error({ err }, 'GET /approvals error');
         res.status(500).json({ error: 'Failed to fetch approvals' });
     }
 });
@@ -369,7 +370,7 @@ router.get('/my-requests', async (req, res) => {
             return { ...r, metadata };
         }));
     } catch (err) {
-        console.error('GET /my-requests error:', err.message);
+        req.log.error({ err }, 'GET /my-requests error');
         res.status(500).json({ error: 'Failed to fetch requests' });
     }
 });
@@ -422,7 +423,7 @@ router.post('/approvals/:id/approve', async (req, res) => {
         logAction(req, 'approve', 'approval_request', Number(id), { type: txResult.type });
         res.json({ message: 'Request approved' });
     } catch (err) {
-        console.error('POST /approvals/:id/approve error:', err.message);
+        req.log.error({ err }, 'POST /approvals/:id/approve error');
         res.status(500).json({ error: 'Failed to approve request' });
     }
 });
@@ -467,7 +468,7 @@ router.post('/approvals/:id/reject', async (req, res) => {
         logAction(req, 'reject', 'approval_request', Number(id), { type: txResult.type, reject_reason });
         res.json({ message: 'Request rejected' });
     } catch (err) {
-        console.error('POST /approvals/:id/reject error:', err.message);
+        req.log.error({ err }, 'POST /approvals/:id/reject error');
         res.status(500).json({ error: 'Failed to reject request' });
     }
 });
@@ -540,7 +541,7 @@ router.post('/approvals/bulk', async (req, res) => {
         logAction(req, `bulk_${action}`, 'approval_request', null, { ids, count: processed, skipped });
         res.json({ message: `${processed} request(s) ${status}${skipped > 0 ? `, ${skipped} skipped (not authorized)` : ''}`, processed, skipped });
     } catch (err) {
-        console.error('POST /approvals/bulk error:', err.message);
+        req.log.error({ err }, 'POST /approvals/bulk error');
         res.status(500).json({ error: 'Failed to process bulk action' });
     }
 });
@@ -585,7 +586,7 @@ router.get('/member/:userId/hours', async (req, res) => {
 
         res.json(dailySummaries);
     } catch (err) {
-        console.error('GET /member/:userId/hours error:', err.message);
+        req.log.error({ err }, 'GET /member/:userId/hours error');
         res.status(500).json({ error: 'Failed to fetch member hours' });
     }
 });
@@ -604,7 +605,7 @@ router.get('/member/:userId/tasks', async (req, res) => {
 
         res.json(tasks);
     } catch (err) {
-        console.error('GET /member/:userId/tasks error:', err.message);
+        req.log.error({ err }, 'GET /member/:userId/tasks error');
         res.status(500).json({ error: 'Failed to fetch member tasks' });
     }
 });
@@ -629,7 +630,7 @@ router.get('/member/:userId/leaves', async (req, res) => {
 
         res.json(leaves);
     } catch (err) {
-        console.error('GET /member/:userId/leaves error:', err.message);
+        req.log.error({ err }, 'GET /member/:userId/leaves error');
         res.status(500).json({ error: 'Failed to fetch member leaves' });
     }
 });
@@ -653,7 +654,7 @@ router.get('/member/:userId/requests', async (req, res) => {
             return { ...r, metadata };
         }));
     } catch (err) {
-        console.error('GET /member/:userId/requests error:', err.message);
+        req.log.error({ err }, 'GET /member/:userId/requests error');
         res.status(500).json({ error: 'Failed to fetch member requests' });
     }
 });
@@ -829,7 +830,7 @@ router.get('/member/:userId/overview', async (req, res) => {
             leaveBalances,
         });
     } catch (err) {
-        console.error('GET /member/:userId/overview error:', err.message);
+        req.log.error({ err }, 'GET /member/:userId/overview error');
         res.status(500).json({ error: 'Failed to fetch member overview' });
     }
 });

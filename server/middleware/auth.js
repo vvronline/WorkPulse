@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const { query } = require('../db');
+const { logger } = require('../utils/logger');
 
 async function authMiddleware(req, res, next) {
     const token = req.cookies.token;
@@ -30,7 +31,7 @@ async function authMiddleware(req, res, next) {
         if (err.name === 'JsonWebTokenError') {
             return res.status(401).json({ error: 'Invalid token' });
         }
-        console.error('Auth middleware error:', err.name, err.message);
+        logger.error({ err, tokenError: err.name }, 'Auth middleware error');
         return res.status(401).json({ error: 'Authentication failed' });
     }
 }

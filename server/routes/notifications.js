@@ -1,6 +1,7 @@
 ﻿const express = require('express');
 const { query } = require('../db');
 const auth = require('../middleware/auth');
+const { logger } = require('../utils/logger');
 
 const router = express.Router();
 
@@ -17,7 +18,7 @@ router.get('/', auth, async (req, res) => {
         const unread = rows.filter(r => !r.is_read).length;
         res.json({ notifications: rows, unread });
     } catch (err) {
-        console.error('Error fetching notifications:', err.message);
+        req.log.error({ err }, 'Error fetching notifications');
         res.status(500).json({ error: 'Failed to fetch notifications' });
     }
 });

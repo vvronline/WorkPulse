@@ -3,6 +3,7 @@ const { query } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole, requireSameOrg, ROLE_LEVEL } = require('../middleware/rbac');
 const { logAction } = require('../utils/audit');
+const { logger } = require('../utils/logger');
 
 const router = express.Router();
 router.use(auth, loadUserContext);
@@ -30,7 +31,7 @@ router.post('/', requireRole('super_admin'), async (req, res) => {
 
         res.json({ id: orgId, name: name.trim(), slug, message: 'Organization created successfully' });
     } catch (err) {
-        console.error('POST /organizations error:', err.message);
+        req.log.error({ err }, 'POST /organizations error');
         res.status(500).json({ error: 'Failed to create organization' });
     }
 });
@@ -48,7 +49,7 @@ router.get('/current', async (req, res) => {
         if (!org) return res.json(null);
         res.json(org);
     } catch (err) {
-        console.error('GET /organizations/current error:', err.message);
+        req.log.error({ err }, 'GET /organizations/current error');
         res.status(500).json({ error: 'Failed to fetch organization' });
     }
 });
@@ -80,7 +81,7 @@ router.put('/settings', requireRole('hr_admin'), requireSameOrg, async (req, res
         const org = (await query('SELECT * FROM organizations WHERE id = $1', [req.userOrgId])).rows[0];
         res.json(org);
     } catch (err) {
-        console.error('PUT /organizations/settings error:', err.message);
+        req.log.error({ err }, 'PUT /organizations/settings error');
         res.status(500).json({ error: 'Failed to update settings' });
     }
 });
@@ -123,7 +124,7 @@ router.get('/members', requireRole('team_lead'), requireSameOrg, async (req, res
 
         res.json({ data: members, total, page, perPage });
     } catch (err) {
-        console.error('GET /organizations/members error:', err.message);
+        req.log.error({ err }, 'GET /organizations/members error');
         res.status(500).json({ error: 'Failed to fetch members' });
     }
 });
@@ -161,7 +162,7 @@ router.post('/invite', requireRole('hr_admin'), requireSameOrg, async (req, res)
 
         res.json({ message: `${target.full_name} added to the organization` });
     } catch (err) {
-        console.error('POST /organizations/invite error:', err.message);
+        req.log.error({ err }, 'POST /organizations/invite error');
         res.status(500).json({ error: 'Failed to invite user' });
     }
 });
@@ -181,7 +182,7 @@ router.post('/remove-member', requireRole('hr_admin'), requireSameOrg, async (re
 
         res.json({ message: `${target.full_name} has been removed from the organization` });
     } catch (err) {
-        console.error('POST /organizations/remove-member error:', err.message);
+        req.log.error({ err }, 'POST /organizations/remove-member error');
         res.status(500).json({ error: 'Failed to remove member' });
     }
 });
@@ -200,7 +201,7 @@ router.get('/departments', requireSameOrg, async (req, res) => {
         `, [req.userOrgId])).rows;
         res.json(departments);
     } catch (err) {
-        console.error('GET /departments error:', err.message);
+        req.log.error({ err }, 'GET /departments error');
         res.status(500).json({ error: 'Failed to fetch departments' });
     }
 });
@@ -218,7 +219,7 @@ router.post('/departments', requireRole('manager'), requireSameOrg, async (req, 
         res.json({ id: result.rows[0].id, name: name.trim(), message: 'Department created' });
     } catch (err) {
         if (err.code === '23505') return res.status(400).json({ error: 'Department name already exists' });
-        console.error('POST /departments error:', err.message);
+        req.log.error({ err }, 'POST /departments error');
         res.status(500).json({ error: 'Failed to create department' });
     }
 });
@@ -236,7 +237,7 @@ router.put('/departments/:id', requireRole('manager'), requireSameOrg, async (re
         logAction(req, 'update', 'department', Number(id), { name, head_id });
         res.json({ message: 'Department updated' });
     } catch (err) {
-        console.error('PUT /departments/:id error:', err.message);
+        req.log.error({ err }, 'PUT /departments/:id error');
         res.status(500).json({ error: 'Failed to update department' });
     }
 });
@@ -252,7 +253,7 @@ router.delete('/departments/:id', requireRole('hr_admin'), requireSameOrg, async
         logAction(req, 'delete', 'department', Number(id), { name: dept.name });
         res.json({ message: 'Department deleted' });
     } catch (err) {
-        console.error('DELETE /departments/:id error:', err.message);
+        req.log.error({ err }, 'DELETE /departments/:id error');
         res.status(500).json({ error: 'Failed to delete department' });
     }
 });
@@ -279,7 +280,7 @@ router.get('/teams', requireSameOrg, async (req, res) => {
         `, params)).rows;
         res.json(teams);
     } catch (err) {
-        console.error('GET /teams error:', err.message);
+        req.log.error({ err }, 'GET /teams error');
         res.status(500).json({ error: 'Failed to fetch teams' });
     }
 });
@@ -297,7 +298,7 @@ router.post('/teams', requireRole('team_lead'), requireSameOrg, async (req, res)
         res.json({ id: result.rows[0].id, name: name.trim(), message: 'Team created' });
     } catch (err) {
         if (err.code === '23505') return res.status(400).json({ error: 'Team name already exists' });
-        console.error('POST /teams error:', err.message);
+        req.log.error({ err }, 'POST /teams error');
         res.status(500).json({ error: 'Failed to create team' });
     }
 });
@@ -315,7 +316,7 @@ router.put('/teams/:id', requireRole('team_lead'), requireSameOrg, async (req, r
         logAction(req, 'update', 'team', Number(id), { name, department_id, lead_id });
         res.json({ message: 'Team updated' });
     } catch (err) {
-        console.error('PUT /teams/:id error:', err.message);
+        req.log.error({ err }, 'PUT /teams/:id error');
         res.status(500).json({ error: 'Failed to update team' });
     }
 });
@@ -331,7 +332,7 @@ router.delete('/teams/:id', requireRole('manager'), requireSameOrg, async (req, 
         logAction(req, 'delete', 'team', Number(id), { name: team.name });
         res.json({ message: 'Team deleted' });
     } catch (err) {
-        console.error('DELETE /teams/:id error:', err.message);
+        req.log.error({ err }, 'DELETE /teams/:id error');
         res.status(500).json({ error: 'Failed to delete team' });
     }
 });
@@ -371,7 +372,7 @@ router.get('/teams/:id/sprint-config', requireSameOrg, async (req, res) => {
 
         res.json({ teamId: team.id, teamName: team.name, sprintDurationWeeks: team.sprint_duration_weeks, sprintStartDate: team.sprint_start_date, currentSprint });
     } catch (err) {
-        console.error('GET /teams/:id/sprint-config error:', err.message);
+        req.log.error({ err }, 'GET /teams/:id/sprint-config error');
         res.status(500).json({ error: 'Failed to fetch sprint config' });
     }
 });
@@ -401,7 +402,7 @@ router.put('/teams/:id/sprint-config', requireRole('team_lead'), requireSameOrg,
         logAction(req, 'update', 'team', Number(id), { sprint_duration_weeks, sprint_start_date });
         res.json({ message: 'Sprint configuration updated' });
     } catch (err) {
-        console.error('PUT /teams/:id/sprint-config error:', err.message);
+        req.log.error({ err }, 'PUT /teams/:id/sprint-config error');
         res.status(500).json({ error: 'Failed to update sprint config' });
     }
 });
@@ -429,7 +430,7 @@ router.get('/chart', requireSameOrg, async (req, res) => {
 
         res.json({ departments, teams, members });
     } catch (err) {
-        console.error('GET /chart error:', err.message);
+        req.log.error({ err }, 'GET /chart error');
         res.status(500).json({ error: 'Failed to fetch org chart' });
     }
 });

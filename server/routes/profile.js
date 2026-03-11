@@ -10,6 +10,7 @@ const auth = require('../middleware/auth');
 const { loadUserContext } = require('../middleware/rbac');
 const { logAction } = require('../utils/audit');
 const { validatePassword } = require('../utils/password');
+const { logger } = require('../utils/logger');
 
 const router = express.Router();
 
@@ -101,7 +102,7 @@ router.get('/', auth, async (req, res) => {
         user.has_reports = !!hasReports;
         res.json(user);
     } catch (err) {
-        console.error('GET /profile error:', err.message);
+        req.log.error({ err }, 'GET /profile error');
         res.status(500).json({ error: 'Failed to fetch profile' });
     }
 });
@@ -120,7 +121,7 @@ router.put('/', auth, async (req, res) => {
         const updated = (await query('SELECT id, username, full_name, email, avatar FROM users WHERE id = $1', [req.userId])).rows[0];
         res.json(updated);
     } catch (err) {
-        console.error('PUT /profile error:', err.message);
+        req.log.error({ err }, 'PUT /profile error');
         res.status(500).json({ error: 'Failed to update profile' });
     }
 });
@@ -137,7 +138,7 @@ router.put('/email', auth, async (req, res) => {
         await query('UPDATE users SET email = $1 WHERE id = $2', [email, req.userId]);
         res.json({ email });
     } catch (err) {
-        console.error('PUT /profile/email error:', err.message);
+        req.log.error({ err }, 'PUT /profile/email error');
         res.status(500).json({ error: 'Failed to update email' });
     }
 });
@@ -162,7 +163,7 @@ router.put('/password', auth, loadUserContext, async (req, res) => {
         logAction(req, 'change_password', 'user', req.userId, {});
         res.json({ message: 'Password updated successfully' });
     } catch (err) {
-        console.error('PUT /profile/password error:', err.message);
+        req.log.error({ err }, 'PUT /profile/password error');
         res.status(500).json({ error: 'Failed to change password' });
     }
 });
@@ -193,7 +194,7 @@ router.delete('/', auth, async (req, res) => {
 
         res.json({ message: 'Account deleted successfully' });
     } catch (err) {
-        console.error('DELETE /profile error:', err.message);
+        req.log.error({ err }, 'DELETE /profile error');
         res.status(500).json({ error: 'Failed to delete account' });
     }
 });

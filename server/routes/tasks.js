@@ -1,8 +1,9 @@
-﻿const express = require('express');
+const express = require('express');
 const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext } = require('../middleware/rbac');
 const { getLocalToday } = require('../utils/timezone');
+const { logger } = require('../utils/logger');
 
 const router = express.Router();
 
@@ -205,7 +206,7 @@ router.get('/', auth, loadUserContext, async (req, res) => {
 
         res.json({ tasks: enriched, stats: { total, done, inProgress, percent: total > 0 ? Math.round((done / total) * 100) : 0 } });
     } catch (err) {
-        console.error('Error fetching tasks:', err.message);
+        req.log.error({ err: err }, 'Error fetching tasks:');
         res.status(500).json({ error: 'Failed to fetch tasks' });
     }
 });
@@ -259,7 +260,7 @@ router.post('/', auth, loadUserContext, async (req, res) => {
         const enriched = await enrichTasks([task]);
         res.json(enriched[0]);
     } catch (err) {
-        console.error('Error creating task:', err.message);
+        req.log.error({ err: err }, 'Error creating task:');
         res.status(500).json({ error: 'Failed to create task' });
     }
 });
@@ -286,7 +287,7 @@ router.patch('/:id/status', auth, async (req, res) => {
         const enriched = await enrichTasks([updated]);
         res.json(enriched[0]);
     } catch (err) {
-        console.error('Error updating task status:', err.message);
+        req.log.error({ err: err }, 'Error updating task status:');
         res.status(500).json({ error: 'Failed to update task status' });
     }
 });
@@ -371,7 +372,7 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
         const enriched = await enrichTasks([updated]);
         res.json(enriched[0]);
     } catch (err) {
-        console.error('Error updating task:', err.message);
+        req.log.error({ err: err }, 'Error updating task:');
         res.status(500).json({ error: 'Failed to update task' });
     }
 });
@@ -387,7 +388,7 @@ router.delete('/:id', auth, async (req, res) => {
         await query('DELETE FROM tasks WHERE id = $1', [id]);
         res.json({ message: 'Task deleted' });
     } catch (err) {
-        console.error('Error deleting task:', err.message);
+        req.log.error({ err: err }, 'Error deleting task:');
         res.status(500).json({ error: 'Failed to delete task' });
     }
 });
@@ -448,7 +449,7 @@ router.post('/carry-forward', auth, async (req, res) => {
 
         res.json({ message: `${carried} task(s) carried forward`, carried });
     } catch (err) {
-        console.error('Error carrying forward tasks:', err.message);
+        req.log.error({ err: err }, 'Error carrying forward tasks:');
         res.status(500).json({ error: 'Failed to carry forward tasks' });
     }
 });
@@ -484,7 +485,7 @@ router.get('/search', auth, loadUserContext, async (req, res) => {
         const enriched = await enrichTasks(tasks);
         res.json(enriched);
     } catch (err) {
-        console.error('Error in global search:', err.message);
+        req.log.error({ err: err }, 'Error in global search:');
         res.status(500).json({ error: 'Search failed' });
     }
 });
@@ -503,7 +504,7 @@ router.get('/assignable-users', auth, loadUserContext, async (req, res) => {
         }
         res.json(users);
     } catch (err) {
-        console.error('Error fetching assignable users:', err.message);
+        req.log.error({ err: err }, 'Error fetching assignable users:');
         res.status(500).json({ error: 'Failed to fetch users' });
     }
 });
@@ -517,7 +518,7 @@ router.get('/labels', auth, loadUserContext, async (req, res) => {
         }
         res.json(labels);
     } catch (err) {
-        console.error('Error fetching labels:', err.message);
+        req.log.error({ err: err }, 'Error fetching labels:');
         res.status(500).json({ error: 'Failed to fetch labels' });
     }
 });
@@ -587,7 +588,7 @@ router.get('/available-sprints', auth, loadUserContext, async (req, res) => {
 
         res.json(sprints);
     } catch (err) {
-        console.error('Error fetching available sprints:', err.message);
+        req.log.error({ err: err }, 'Error fetching available sprints:');
         res.status(500).json({ error: 'Failed to fetch sprints' });
     }
 });
@@ -622,7 +623,7 @@ router.patch('/:id/assign-sprint', auth, loadUserContext, async (req, res) => {
         const enriched = await enrichTasks([updated]);
         res.json(enriched[0]);
     } catch (err) {
-        console.error('Error assigning sprint:', err.message);
+        req.log.error({ err: err }, 'Error assigning sprint:');
         res.status(500).json({ error: 'Failed to assign sprint' });
     }
 });
@@ -643,7 +644,7 @@ router.get('/:id/comments', auth, async (req, res) => {
 
         res.json(comments);
     } catch (err) {
-        console.error('Error fetching comments:', err.message);
+        req.log.error({ err: err }, 'Error fetching comments:');
         res.status(500).json({ error: 'Failed to fetch comments' });
     }
 });
@@ -690,12 +691,12 @@ router.post('/:id/comments', auth, async (req, res) => {
                 }
             }
         } catch (mentionErr) {
-            console.error('Mention notification error:', mentionErr.message);
+            req.log.error({ err: mentionErr }, 'Mention notification error:');
         }
 
         res.json(comment);
     } catch (err) {
-        console.error('Error adding comment:', err.message);
+        req.log.error({ err: err }, 'Error adding comment:');
         res.status(500).json({ error: 'Failed to add comment' });
     }
 });
@@ -722,7 +723,7 @@ router.put('/:id/comments/:commentId', auth, async (req, res) => {
 
         res.json(updated);
     } catch (err) {
-        console.error('Error updating comment:', err.message);
+        req.log.error({ err: err }, 'Error updating comment:');
         res.status(500).json({ error: 'Failed to update comment' });
     }
 });
@@ -740,7 +741,7 @@ router.delete('/:id/comments/:commentId', auth, async (req, res) => {
         await query('DELETE FROM task_comments WHERE id = $1', [req.params.commentId]);
         res.json({ message: 'Comment deleted' });
     } catch (err) {
-        console.error('Error deleting comment:', err.message);
+        req.log.error({ err: err }, 'Error deleting comment:');
         res.status(500).json({ error: 'Failed to delete comment' });
     }
 });
@@ -820,7 +821,7 @@ router.get('/backlog', auth, loadUserContext, async (req, res) => {
 
         res.json({ tasks: enriched, summary });
     } catch (err) {
-        console.error('Error fetching backlog:', err.message);
+        req.log.error({ err: err }, 'Error fetching backlog:');
         res.status(500).json({ error: 'Failed to fetch backlog' });
     }
 });
@@ -873,7 +874,7 @@ router.post('/backlog', auth, loadUserContext, async (req, res) => {
         const enriched = await enrichTasks([task]);
         res.json(enriched[0]);
     } catch (err) {
-        console.error('Error creating backlog item:', err.message);
+        req.log.error({ err: err }, 'Error creating backlog item:');
         res.status(500).json({ error: 'Failed to create backlog item' });
     }
 });
@@ -898,7 +899,7 @@ router.patch('/:id/schedule', auth, async (req, res) => {
         const enriched = await enrichTasks([updated]);
         res.json(enriched[0]);
     } catch (err) {
-        console.error('Error scheduling task:', err.message);
+        req.log.error({ err: err }, 'Error scheduling task:');
         res.status(500).json({ error: 'Failed to schedule task' });
     }
 });
@@ -918,7 +919,7 @@ router.patch('/:id/unschedule', auth, async (req, res) => {
         const enriched = await enrichTasks([updated]);
         res.json(enriched[0]);
     } catch (err) {
-        console.error('Error unscheduling task:', err.message);
+        req.log.error({ err: err }, 'Error unscheduling task:');
         res.status(500).json({ error: 'Failed to move task to backlog' });
     }
 });
@@ -941,7 +942,7 @@ router.get('/:id/detail', auth, async (req, res) => {
 
         res.json({ ...enriched[0], comments });
     } catch (err) {
-        console.error('Error fetching task detail:', err.message);
+        req.log.error({ err: err }, 'Error fetching task detail:');
         res.status(500).json({ error: 'Failed to fetch task detail' });
     }
 });
@@ -963,7 +964,7 @@ router.get('/:id/history', auth, async (req, res) => {
 
         res.json(history);
     } catch (err) {
-        console.error('Error fetching task history:', err.message);
+        req.log.error({ err: err }, 'Error fetching task history:');
         res.status(500).json({ error: 'Failed to fetch task history' });
     }
 });

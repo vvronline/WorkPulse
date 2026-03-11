@@ -8,8 +8,10 @@ if (fs.existsSync(envPath)) {
     require('dotenv').config();
 }
 
+const { logger, requestLogger } = require('./utils/logger');
+
 if (!process.env.JWT_SECRET) {
-    console.error('FATAL: JWT_SECRET environment variable is not set. Server cannot start.');
+    logger.fatal('JWT_SECRET environment variable is not set. Server cannot start.');
     process.exit(1);
 }
 
@@ -70,12 +72,8 @@ app.use('/api/notes', express.json({ limit: '5mb' }));
 app.use(express.json({ limit: '100kb' }));
 app.use(express.urlencoded({ limit: '100kb', extended: true }));
 
-if (process.env.NODE_ENV !== 'production') {
-    app.use('/api', (req, res, next) => {
-        console.log(`[DEBUG] ${req.method} ${req.url}`);
-        next();
-    });
-}
+// Structured request logging with request IDs
+app.use(requestLogger);
 
 const authMiddleware = require('./middleware/auth');
 app.use('/uploads', authMiddleware, (req, res, next) => {
@@ -138,11 +136,11 @@ async function autoClockOut() {
             try {
                 await autoClockOutUser(user);
             } catch (e) {
-                console.error(`Auto clock-out failed for user ${user.id}:`, e.message);
+                logger.error({ userId: user.id, err: e }, 'Auto clock-out failed');
             }
         }
     } catch (e) {
-        console.error('autoClockOut query error:', e.message);
+        logger.error({ err: e }, 'autoClockOut query error');
     }
 }
 
@@ -180,7 +178,7 @@ async function autoClockOutUser(user) {
         }
         await client.query('INSERT INTO time_entries (user_id, entry_type, timestamp) VALUES ($1, $2, $3)',
             [user.id, 'clock_out', autoTs]);
-        console.log(`Auto-logged out user ${user.id} for ${yesterdayStr} (local)`);
+        logger.info({ userId: user.id, date: yesterdayStr }, 'Auto clock-out applied');
     });
 }
 
@@ -188,7 +186,7 @@ async function autoClockOutUser(user) {
 async function cleanupTokens() {
     try {
         await query("DELETE FROM password_reset_tokens WHERE used = TRUE OR expires_at < NOW()");
-    } catch (e) { console.error('Token cleanup error:', e.message); }
+    } catch (e) { logger.error({ err: e }, 'Token cleanup error'); }
 }
 
 // Serve React frontend in production
@@ -199,28 +197,34 @@ app.get(/.*/, (req, res) => {
 });
 
 app.use((err, req, res, next) => {
-    console.error('Unhandled error:', err);
+    (req.log || logger).error({ err }, 'Unhandled error');
     res.status(500).json({ error: 'Internal server error' });
 });
 
-(async () => {
-    await initDB();
-    const server = app.listen(PORT, () => {
-        console.log(`Server running on http://localhost:${PORT}`);
-    });
+// Export app for testing (supertest)
+module.exports = { app };
 
-    autoClockOut();
-    setInterval(autoClockOut, 5 * 60 * 1000);
-    setInterval(cleanupTokens, 60 * 60 * 1000);
-
-    async function shutdown() {
-        console.log('Shutting down gracefully...');
-        server.close(async () => {
-            await pool.end();
-            process.exit(0);
+// Only start the server when run directly (not when imported for tests)
+if (require.main === module) {
+    (async () => {
+        await initDB();
+        const server = app.listen(PORT, () => {
+            logger.info({ port: PORT }, 'Server running');
         });
-        setTimeout(async () => { await pool.end(); process.exit(1); }, 5000);
-    }
-    process.on('SIGTERM', shutdown);
-    process.on('SIGINT', shutdown);
-})();
+
+        autoClockOut();
+        setInterval(autoClockOut, 5 * 60 * 1000);
+        setInterval(cleanupTokens, 60 * 60 * 1000);
+
+        async function shutdown() {
+            logger.info('Shutting down gracefully...');
+            server.close(async () => {
+                await pool.end();
+                process.exit(0);
+            });
+            setTimeout(async () => { await pool.end(); process.exit(1); }, 5000);
+        }
+        process.on('SIGTERM', shutdown);
+        process.on('SIGINT', shutdown);
+    })();
+}

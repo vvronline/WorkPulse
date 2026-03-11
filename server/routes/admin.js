@@ -6,6 +6,7 @@ const { loadUserContext, requireRole, requireSameOrg, canManageUser, VALID_ROLES
 const { logAction, queryLogs } = require('../utils/audit');
 const { validatePassword, validateUsername } = require('../utils/password');
 const { getOffsetMin, getTzModifier } = require('../utils/timezone');
+const { logger } = require('../utils/logger');
 
 const router = express.Router();
 router.use(auth, loadUserContext, requireRole('hr_admin'));
@@ -26,7 +27,7 @@ router.get('/organizations', requireRole('super_admin'), async (req, res) => {
         `, [perPage, offset]);
         res.json({ data: orgsRes.rows, total, page, perPage });
     } catch (err) {
-        console.error('List orgs error:', err.message);
+        req.log.error({ err }, 'List orgs error');
         res.status(500).json({ error: 'Failed to list organizations' });
     }
 });
@@ -47,7 +48,7 @@ router.get('/organizations/:id', requireRole('super_admin'), async (req, res) =>
             teamCount: parseInt(teamRes.rows[0].count, 10),
         });
     } catch (err) {
-        console.error('Get org error:', err.message);
+        req.log.error({ err }, 'Get org error');
         res.status(500).json({ error: 'Failed to get organization' });
     }
 });
@@ -71,7 +72,7 @@ router.post('/organizations', requireRole('super_admin'), async (req, res) => {
         logAction(req, 'admin_create', 'organization', newId, { name: trimmedName });
         res.json({ id: newId, name: trimmedName, slug, message: 'Organization created successfully' });
     } catch (err) {
-        console.error('Create org error:', err.message);
+        req.log.error({ err }, 'Create org error');
         res.status(500).json({ error: 'Failed to create organization' });
     }
 });
@@ -105,7 +106,7 @@ router.put('/organizations/:id', requireRole('super_admin'), async (req, res) =>
         const updated = await query('SELECT * FROM organizations WHERE id = $1', [id]);
         res.json(updated.rows[0]);
     } catch (err) {
-        console.error('Update org error:', err.message);
+        req.log.error({ err }, 'Update org error');
         res.status(500).json({ error: 'Failed to update organization' });
     }
 });
@@ -133,7 +134,7 @@ router.delete('/organizations/:id', requireRole('super_admin'), async (req, res)
         logAction(req, 'admin_delete', 'organization', id, { name: org.name });
         res.json({ message: `Organization "${org.name}" deleted successfully` });
     } catch (err) {
-        console.error('Delete org error:', err.message);
+        req.log.error({ err }, 'Delete org error');
         res.status(500).json({ error: 'Failed to delete organization.' });
     }
 });
@@ -185,7 +186,7 @@ router.get('/users', async (req, res) => {
         `, [...params, perPage, (page - 1) * perPage]);
         res.json({ data: usersRes.rows, total, page, perPage });
     } catch (err) {
-        console.error('List users error:', err.message);
+        req.log.error({ err }, 'List users error');
         res.status(500).json({ error: 'Failed to list users' });
     }
 });
@@ -212,7 +213,7 @@ router.get('/users/:id', async (req, res) => {
         }
         res.json(user);
     } catch (err) {
-        console.error('Get user error:', err.message);
+        req.log.error({ err }, 'Get user error');
         res.status(500).json({ error: 'Failed to get user' });
     }
 });
@@ -238,7 +239,7 @@ router.put('/users/:id/role', async (req, res) => {
         logAction(req, 'update_role', 'user', Number(id), { old_role: target.role, new_role: role });
         res.json({ message: `${target.full_name}'s role updated to ${role}` });
     } catch (err) {
-        console.error('Update role error:', err.message);
+        req.log.error({ err }, 'Update role error');
         res.status(500).json({ error: 'Failed to update role' });
     }
 });
@@ -283,7 +284,7 @@ router.put('/users/:id/assignment', async (req, res) => {
         logAction(req, 'update_assignment', 'user', Number(id), { org_id: newOrgId, department_id: finalDeptId, team_id: finalTeamId, manager_id: finalManagerId });
         res.json({ message: `${target.full_name}'s assignment updated` });
     } catch (err) {
-        console.error('Update assignment error:', err.message);
+        req.log.error({ err }, 'Update assignment error');
         res.status(500).json({ error: 'Failed to update assignment' });
     }
 });
@@ -304,7 +305,7 @@ router.put('/users/:id/deactivate', async (req, res) => {
         logAction(req, action, 'user', Number(id), { name: target.full_name });
         res.json({ message: `${target.full_name} has been ${action}d`, is_active: newActive });
     } catch (err) {
-        console.error('Deactivate error:', err.message);
+        req.log.error({ err }, 'Deactivate error');
         res.status(500).json({ error: 'Failed to update user' });
     }
 });
@@ -328,7 +329,7 @@ router.post('/users/:id/reset-password', requireRole('hr_admin'), async (req, re
         logAction(req, 'admin_reset_password', 'user', Number(id), { name: target.full_name });
         res.json({ message: `Password reset for ${target.full_name}. User will be required to change password on next login.` });
     } catch (err) {
-        console.error('Reset password error:', err.message);
+        req.log.error({ err }, 'Reset password error');
         res.status(500).json({ error: 'Failed to reset password' });
     }
 });
@@ -360,7 +361,7 @@ router.delete('/users/:id', requireRole('super_admin'), async (req, res) => {
         logAction(req, 'admin_delete', 'user', userId, { name: target.full_name });
         res.json({ message: `User "${target.full_name}" has been permanently deleted` });
     } catch (err) {
-        console.error('Delete user error:', err.message);
+        req.log.error({ err }, 'Delete user error');
         res.status(500).json({ error: 'Failed to delete user.' });
     }
 });
@@ -395,7 +396,7 @@ router.post('/users', requireRole('hr_admin'), async (req, res) => {
         logAction(req, 'admin_create', 'user', result.rows[0].id, { username, role: assignRole });
         res.json({ id: result.rows[0].id, message: `User ${username} created successfully` });
     } catch (err) {
-        console.error('Create user error:', err.message);
+        req.log.error({ err }, 'Create user error');
         res.status(500).json({ error: 'Failed to create user' });
     }
 });
@@ -419,7 +420,7 @@ router.get('/audit-logs', async (req, res) => {
         });
         res.json(result);
     } catch (err) {
-        console.error('Audit logs error:', err.message);
+        req.log.error({ err }, 'Audit logs error');
         res.status(500).json({ error: 'Failed to fetch audit logs' });
     }
 });
@@ -463,7 +464,7 @@ router.get('/stats', requireSameOrg, async (req, res) => {
             clockedInToday: parseInt(clockedRes.rows[0].c, 10),
         });
     } catch (err) {
-        console.error('Stats error:', err.message);
+        req.log.error({ err }, 'Stats error');
         res.status(500).json({ error: 'Failed to fetch stats' });
     }
 });
@@ -564,7 +565,7 @@ router.get('/task-labels', async (req, res) => {
         );
         res.json(result.rows);
     } catch (err) {
-        console.error('Fetch labels error:', err.message);
+        req.log.error({ err }, 'Fetch labels error');
         res.status(500).json({ error: 'Failed to fetch labels' });
     }
 });
@@ -586,7 +587,7 @@ router.post('/task-labels', async (req, res) => {
         logAction(req, 'create', 'task_label', label.id, { name: label.name });
         res.json(label);
     } catch (err) {
-        console.error('Create label error:', err.message);
+        req.log.error({ err }, 'Create label error');
         res.status(500).json({ error: 'Failed to create label' });
     }
 });
@@ -612,7 +613,7 @@ router.put('/task-labels/:id', async (req, res) => {
         logAction(req, 'update', 'task_label', label.id, { name: newName });
         res.json(updated.rows[0]);
     } catch (err) {
-        console.error('Update label error:', err.message);
+        req.log.error({ err }, 'Update label error');
         res.status(500).json({ error: 'Failed to update label' });
     }
 });
@@ -630,7 +631,7 @@ router.delete('/task-labels/:id', async (req, res) => {
         logAction(req, 'delete', 'task_label', label.id, { name: label.name });
         res.json({ message: 'Label deleted' });
     } catch (err) {
-        console.error('Delete label error:', err.message);
+        req.log.error({ err }, 'Delete label error');
         res.status(500).json({ error: 'Failed to delete label' });
     }
 });

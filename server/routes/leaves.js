@@ -4,6 +4,7 @@ const auth = require('../middleware/auth');
 const { loadUserContext, requireSameOrg, requireRole } = require('../middleware/rbac');
 const { findApprover } = require('../utils/approver');
 const { initializeBalances, getAccruedQuota } = require('./leavePolicy');
+const { logger } = require('../utils/logger');
 
 const router = express.Router();
 router.use(auth, loadUserContext);
@@ -63,7 +64,7 @@ router.get('/', async (req, res) => {
 
         res.json(leaves);
     } catch (err) {
-        console.error('GET /leaves error:', err.message);
+        req.log.error({ err }, 'GET /leaves error');
         res.status(500).json({ error: 'Failed to fetch leaves' });
     }
 });
@@ -106,7 +107,7 @@ router.get('/summary', async (req, res) => {
 
         res.json(rows);
     } catch (err) {
-        console.error('GET /leaves/summary error:', err.message);
+        req.log.error({ err }, 'GET /leaves/summary error');
         res.status(500).json({ error: 'Failed to fetch leave summary' });
     }
 });
@@ -146,7 +147,7 @@ router.get('/monthly-summary', async (req, res) => {
 
         res.json(rows);
     } catch (err) {
-        console.error('GET /leaves/monthly-summary error:', err.message);
+        req.log.error({ err }, 'GET /leaves/monthly-summary error');
         res.status(500).json({ error: 'Failed to fetch monthly summary' });
     }
 });
@@ -170,7 +171,7 @@ router.get('/balance', async (req, res) => {
 
         res.json(balances);
     } catch (err) {
-        console.error('GET /leaves/balance error:', err.message);
+        req.log.error({ err }, 'GET /leaves/balance error');
         res.status(500).json({ error: 'Failed to fetch leave balance' });
     }
 });
@@ -197,7 +198,7 @@ router.get('/pending', requireRole('manager'), async (req, res) => {
 
         res.json(leaves);
     } catch (err) {
-        console.error('GET /leaves/pending error:', err.message);
+        req.log.error({ err }, 'GET /leaves/pending error');
         res.status(500).json({ error: 'Failed to fetch pending leaves' });
     }
 });
@@ -350,7 +351,7 @@ router.post('/', async (req, res) => {
         if (err.isValidation) {
             return res.status(400).json({ error: err.message });
         }
-        console.error('POST /leaves error:', err.message);
+        req.log.error({ err }, 'POST /leaves error');
         res.status(500).json({ error: 'Failed to submit leave' });
     }
 });
@@ -382,7 +383,7 @@ router.patch('/:id/approve', requireRole('manager'), async (req, res) => {
 
         res.json({ message: 'Leave approved' });
     } catch (err) {
-        console.error('PATCH /leaves/:id/approve error:', err.message);
+        req.log.error({ err }, 'PATCH /leaves/:id/approve error');
         res.status(500).json({ error: 'Failed to approve leave' });
     }
 });
@@ -414,7 +415,7 @@ router.patch('/:id/reject', requireRole('manager'), async (req, res) => {
 
         res.json({ message: 'Leave rejected' });
     } catch (err) {
-        console.error('PATCH /leaves/:id/reject error:', err.message);
+        req.log.error({ err }, 'PATCH /leaves/:id/reject error');
         res.status(500).json({ error: 'Failed to reject leave' });
     }
 });
@@ -429,7 +430,7 @@ router.delete('/:id', async (req, res) => {
         await query('DELETE FROM leaves WHERE id = $1', [leave.id]);
         res.json({ message: 'Leave cancelled' });
     } catch (err) {
-        console.error('DELETE /leaves/:id error:', err.message);
+        req.log.error({ err }, 'DELETE /leaves/:id error');
         res.status(500).json({ error: 'Failed to cancel leave' });
     }
 });
@@ -467,7 +468,7 @@ router.post('/:id/withdraw', async (req, res) => {
             res.json({ message: 'Withdrawal request submitted' });
         }
     } catch (err) {
-        console.error('POST /leaves/:id/withdraw error:', err.message);
+        req.log.error({ err }, 'POST /leaves/:id/withdraw error');
         res.status(500).json({ error: 'Failed to withdraw leave' });
     }
 });
@@ -489,7 +490,7 @@ router.patch('/:id/revoke', requireRole('manager'), async (req, res) => {
 
         res.json({ message: 'Leave revoked' });
     } catch (err) {
-        console.error('PATCH /leaves/:id/revoke error:', err.message);
+        req.log.error({ err }, 'PATCH /leaves/:id/revoke error');
         res.status(500).json({ error: 'Failed to revoke leave' });
     }
 });

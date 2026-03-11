@@ -1,6 +1,7 @@
 ﻿const express = require('express');
 const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
+const { logger } = require('../utils/logger');
 
 const router = express.Router();
 router.use(auth);
@@ -34,7 +35,7 @@ router.get('/', async (req, res) => {
         if (!row) return res.json({ data: null });
         res.json({ data: JSON.parse(row.data), updatedAt: row.updated_at });
     } catch (e) {
-        console.error('GET /notes error:', e.message);
+        req.log.error({ err: e }, 'GET /notes error');
         res.status(500).json({ error: 'Failed to fetch notes' });
     }
 });
@@ -66,7 +67,7 @@ router.put('/', async (req, res) => {
 
         res.json({ ok: true });
     } catch (e) {
-        console.error('PUT /notes error:', e.message);
+        req.log.error({ err: e }, 'PUT /notes error');
         res.status(500).json({ error: 'Failed to save notes' });
     }
 });
@@ -79,7 +80,7 @@ router.get('/history/:pageId', async (req, res) => {
         )).rows;
         res.json({ history: rows });
     } catch (e) {
-        console.error('GET /notes/history error:', e.message);
+        req.log.error({ err: e }, 'GET /notes/history error');
         res.status(500).json({ error: 'Failed to fetch history' });
     }
 });
@@ -93,7 +94,7 @@ router.get('/history/snapshot/:id', async (req, res) => {
         if (!row) return res.status(404).json({ error: 'Snapshot not found' });
         res.json({ snapshot: row });
     } catch (e) {
-        console.error('GET /notes/history/snapshot error:', e.message);
+        req.log.error({ err: e }, 'GET /notes/history/snapshot error');
         res.status(500).json({ error: 'Failed to fetch snapshot' });
     }
 });

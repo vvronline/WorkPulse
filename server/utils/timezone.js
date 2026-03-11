@@ -4,17 +4,19 @@
  * (value of Date.getTimezoneOffset() in minutes, e.g. -330 for IST).
  */
 
+const { logger } = require('./logger');
+
 // Clamp offset to valid range.
 // JS getTimezoneOffset() returns minutes: positive = west of UTC, negative = east.
 // Valid range: UTC-12 (720) to UTC+14 (-840).
 function clampOffset(raw) {
     const n = parseInt(raw);
     if (isNaN(n)) {
-        console.warn('Invalid timezone offset received:', raw);
+        logger.warn({ raw }, 'Invalid timezone offset received');
         return 0;
     }
     if (n < -840 || n > 720) {
-        console.warn('Timezone offset out of valid range:', n);
+        logger.warn({ offset: n }, 'Timezone offset out of valid range');
         return 0;
     }
     return n;

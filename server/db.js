@@ -7,9 +7,10 @@
  *   initDB()                 – create all tables on startup
  */
 const { Pool } = require('pg');
+const { logger } = require('./utils/logger');
 
 if (!process.env.DATABASE_URL) {
-    console.error('FATAL: DATABASE_URL environment variable is not set. Server cannot start.');
+    logger.fatal('DATABASE_URL environment variable is not set. Server cannot start.');
     process.exit(1);
 }
 
@@ -24,7 +25,7 @@ const pool = new Pool({
 });
 
 pool.on('error', (err) => {
-    console.error('Unexpected DB pool error:', err.message);
+    logger.error({ err }, 'Unexpected DB pool error');
 });
 
 /** Run a parameterised query. Returns a pg Result object ({ rows, rowCount }). */
@@ -461,11 +462,11 @@ async function initDB() {
         if (firstUser) {
             await query("UPDATE users SET role = 'super_admin' WHERE id = $1", [firstUser.id]);
             await query('INSERT INTO _migrations (name) VALUES ($1)', [migName]);
-            console.log(`✓ Promoted user #${firstUser.id} to super_admin (first-time setup)`);
+            logger.info({ userId: firstUser.id }, 'Promoted first user to super_admin');
         }
     }
 
-    console.log('✓ Database schema initialised');
+    logger.info('Database schema initialised');
 }
 
 module.exports = { query, transaction, initDB, pool };

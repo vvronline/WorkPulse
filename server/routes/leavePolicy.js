@@ -3,6 +3,7 @@ const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole, requireSameOrg } = require('../middleware/rbac');
 const { logAction } = require('../utils/audit');
+const { logger } = require('../utils/logger');
 
 const router = express.Router();
 router.use(auth, loadUserContext);
@@ -14,7 +15,7 @@ router.get('/policies', requireSameOrg, async (req, res) => {
         const policies = (await query('SELECT * FROM leave_policies WHERE org_id = $1 ORDER BY leave_type', [req.userOrgId])).rows;
         res.json(policies);
     } catch (err) {
-        console.error('GET /policies error:', err.message);
+        req.log.error({ err }, 'GET /policies error');
         res.status(500).json({ error: 'Failed to fetch policies' });
     }
 });
@@ -49,7 +50,7 @@ router.post('/policies', requireRole('hr_admin'), requireSameOrg, async (req, re
             res.json({ id: result.rows[0].id, message: `Leave policy for ${leave_type} created` });
         }
     } catch (err) {
-        console.error('POST /policies error:', err.message);
+        req.log.error({ err }, 'POST /policies error');
         res.status(500).json({ error: 'Failed to save policy' });
     }
 });
@@ -64,7 +65,7 @@ router.delete('/policies/:id', requireRole('hr_admin'), requireSameOrg, async (r
         logAction(req, 'delete', 'leave_policy', Number(id), { leave_type: policy.leave_type });
         res.json({ message: 'Policy deleted' });
     } catch (err) {
-        console.error('DELETE /policies/:id error:', err.message);
+        req.log.error({ err }, 'DELETE /policies/:id error');
         res.status(500).json({ error: 'Failed to delete policy' });
     }
 });
@@ -82,7 +83,7 @@ router.get('/balances', async (req, res) => {
         )).rows;
         res.json(balances);
     } catch (err) {
-        console.error('GET /balances error:', err.message);
+        req.log.error({ err }, 'GET /balances error');
         res.status(500).json({ error: 'Failed to fetch balances' });
     }
 });
@@ -105,7 +106,7 @@ router.get('/balances/:userId', requireRole('team_lead'), requireSameOrg, async 
         )).rows;
         res.json(balances);
     } catch (err) {
-        console.error('GET /balances/:userId error:', err.message);
+        req.log.error({ err }, 'GET /balances/:userId error');
         res.status(500).json({ error: 'Failed to fetch balances' });
     }
 });
@@ -146,7 +147,7 @@ router.put('/balances/:userId', requireRole('hr_admin'), requireSameOrg, async (
         logAction(req, 'update_balance', 'leave_balance', targetUserId, { leave_type, year, quota, carried_forward });
         res.json({ message: 'Balance updated' });
     } catch (err) {
-        console.error('PUT /balances/:userId error:', err.message);
+        req.log.error({ err }, 'PUT /balances/:userId error');
         res.status(500).json({ error: 'Failed to update balance' });
     }
 });
@@ -162,7 +163,7 @@ router.get('/holidays', requireSameOrg, async (req, res) => {
         )).rows;
         res.json(holidays);
     } catch (err) {
-        console.error('GET /holidays error:', err.message);
+        req.log.error({ err }, 'GET /holidays error');
         res.status(500).json({ error: 'Failed to fetch holidays' });
     }
 });
@@ -180,7 +181,7 @@ router.post('/holidays', requireRole('hr_admin'), requireSameOrg, async (req, re
         res.json({ id: result.rows[0].id, message: 'Holiday added' });
     } catch (err) {
         if (err.code === '23505') return res.status(400).json({ error: 'Holiday already exists on this date' });
-        console.error('POST /holidays error:', err.message);
+        req.log.error({ err }, 'POST /holidays error');
         res.status(500).json({ error: 'Failed to add holiday' });
     }
 });
@@ -207,7 +208,7 @@ router.post('/holidays/batch', requireRole('hr_admin'), requireSameOrg, async (r
         logAction(req, 'batch_create', 'holiday', null, { count: added });
         res.json({ message: `${added} holiday(s) added` });
     } catch (err) {
-        console.error('POST /holidays/batch error:', err.message);
+        req.log.error({ err }, 'POST /holidays/batch error');
         res.status(500).json({ error: 'Failed to add holidays' });
     }
 });
@@ -222,7 +223,7 @@ router.delete('/holidays/:id', requireRole('hr_admin'), requireSameOrg, async (r
         logAction(req, 'delete', 'holiday', Number(id), { name: holiday.name, date: holiday.date });
         res.json({ message: 'Holiday deleted' });
     } catch (err) {
-        console.error('DELETE /holidays/:id error:', err.message);
+        req.log.error({ err }, 'DELETE /holidays/:id error');
         res.status(500).json({ error: 'Failed to delete holiday' });
     }
 });
