@@ -1,5 +1,6 @@
 /* VersionHistory — slide-in panel showing saved snapshots for a page */
 import React, { useEffect, useState, useCallback } from 'react';
+import DOMPurify from 'dompurify';
 import { getPageHistory, getHistorySnapshot } from '../../../api';
 import s from './VersionHistory.module.css';
 
@@ -137,7 +138,7 @@ export default function VersionHistory({ pageId, pageTitle, onRestore, onClose }
               </div>
               <div
                 className={s.previewContent}
-                dangerouslySetInnerHTML={{ __html: preview.content || '<em>Empty page</em>' }}
+                dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(preview.content) || '<em>Empty page</em>' }}
               />
             </>
           )}

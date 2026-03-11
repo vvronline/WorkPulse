@@ -4,9 +4,15 @@ import hljs from '../../hljs-setup';
 import { getLocalToday } from '../../api';
 
 /** Pre-process HTML: syntax-highlight code blocks before React renders */
+const DOMPURIFY_CONFIG = {
+  ALLOWED_TAGS: ['b', 'i', 'em', 'strong', 'a', 'code', 'pre', 'ul', 'ol', 'li', 'p', 'br', 'span'],
+  ALLOWED_ATTR: ['href', 'title', 'target', 'rel', 'class'],
+  ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]*(?:[^a-z+.\-:]|$))/i,
+};
+
 export function highlightHtml(raw) {
   if (!raw) return '';
-  const clean = DOMPurify.sanitize(raw);
+  const clean = DOMPurify.sanitize(raw, DOMPURIFY_CONFIG);
   return clean.replace(/<pre\b[^>]*>([\s\S]*?)<\/pre>/gi, (match, code) => {
     const txt = code
       .replace(/&lt;/g, '<')

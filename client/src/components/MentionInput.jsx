@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
+import DOMPurify from 'dompurify';
 
 /**
  * Contenteditable comment input with @mention support.
@@ -19,7 +20,7 @@ export default function MentionInput({ value, onChange, users = [], placeholder,
   // Seed initial HTML (only once)
   useEffect(() => {
     if (!initialized.current && editorRef.current) {
-      editorRef.current.innerHTML = value || '';
+      editorRef.current.innerHTML = DOMPurify.sanitize(value || '');
       initialized.current = true;
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

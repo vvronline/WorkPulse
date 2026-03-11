@@ -148,7 +148,8 @@ router.post('/login', async (req, res) => {
             return res.status(423).json({ error: `Account locked. Try again in ${mins} minute(s).` });
         }
 
-        if (!user || !(await bcrypt.compare(password, user.password))) {
+        const DUMMY_HASH = '$2a$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWX012';
+        if (!user || !(await bcrypt.compare(password, user ? user.password : DUMMY_HASH))) {
             // Increment failed attempts
             if (user) {
                 const attempts = (user.failed_login_attempts || 0) + 1;
@@ -243,7 +244,7 @@ router.post('/forgot-password', async (req, res) => {
                 `,
             }).catch(err => logger.error({ err }, 'Failed to send reset email'));
         } else {
-            logger.info({ username: user.username, resetLink }, 'Password reset link generated (no SMTP)');
+            logger.info({ username: user.username }, 'Password reset link generated (no SMTP — token not logged)');
         }
 
         res.json({ message: 'If that email is registered, a reset link has been sent.' });

@@ -9,7 +9,7 @@ const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext } = require('../middleware/rbac');
 const { logAction } = require('../utils/audit');
-const { validatePassword } = require('../utils/password');
+const { validatePassword, validateUsername } = require('../utils/password');
 const { logger } = require('../utils/logger');
 
 const router = express.Router();
@@ -111,7 +111,8 @@ router.put('/', auth, async (req, res) => {
     try {
         const { full_name, username } = req.body;
         if (!full_name || !username) return res.status(400).json({ error: 'Name and username are required' });
-        if (username.length < 3 || username.length > 50) return res.status(400).json({ error: 'Username must be 3-50 characters' });
+        const usernameError = validateUsername(username);
+        if (usernameError) return res.status(400).json({ error: usernameError });
         if (full_name.length > 100) return res.status(400).json({ error: 'Full name must be 100 characters or less' });
 
         const existing = (await query('SELECT id FROM users WHERE username = $1 AND id != $2', [username, req.userId])).rows[0];
@@ -192,6 +193,7 @@ router.delete('/', auth, async (req, res) => {
             await client.query('DELETE FROM users WHERE id = $1', [req.userId]);
         });
 
+        res.clearCookie('token', { httpOnly: true, sameSite: 'lax', path: '/' });
         res.json({ message: 'Account deleted successfully' });
     } catch (err) {
         req.log.error({ err }, 'DELETE /profile error');

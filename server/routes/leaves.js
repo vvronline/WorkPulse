@@ -94,6 +94,9 @@ router.get('/summary', async (req, res) => {
         } else if (req.userOrgId) {
             conditions.push('u.org_id = $3');
             params.push(req.userOrgId);
+        } else {
+            conditions.push('l.user_id = $3');
+            params.push(req.userId);
         }
 
         const rows = (await query(`
@@ -131,6 +134,9 @@ router.get('/monthly-summary', async (req, res) => {
         } else if (req.userOrgId) {
             conditions.push(`u.org_id = $${pi++}`);
             params.push(req.userOrgId);
+        } else {
+            conditions.push(`l.user_id = $${pi++}`);
+            params.push(req.userId);
         }
 
         const rows = (await query(`
@@ -159,6 +165,12 @@ router.get('/balance', async (req, res) => {
             ? parseInt(req.query.user_id, 10)
             : req.userId;
 
+        // Cross-org check: managers can only view balance for users in their own org
+        if (targetUserId !== req.userId && req.userOrgId) {
+            const targetUser = (await query('SELECT org_id FROM users WHERE id = $1', [targetUserId])).rows[0];
+            if (!targetUser || targetUser.org_id !== req.userOrgId) return res.status(403).json({ error: 'Cannot view balance for users outside your organization' });
+        }
+
         const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getFullYear();
 
         const balances = (await query(`
@@ -186,6 +198,8 @@ router.get('/pending', requireRole('manager'), async (req, res) => {
         if (req.userOrgId) {
             conditions.push(`u.org_id = $${pi++}`);
             params.push(req.userOrgId);
+        } else {
+            return res.json([]);
         }
 
         const leaves = (await query(`
@@ -476,8 +490,9 @@ router.post('/:id/withdraw', async (req, res) => {
 // PATCH /leaves/:id/revoke — revoke approved leave (manager+)
 router.patch('/:id/revoke', requireRole('manager'), async (req, res) => {
     try {
-        const leave = (await query('SELECT * FROM leaves WHERE id = $1', [req.params.id])).rows[0];
+        const leave = (await query('SELECT l.*, u.org_id AS leave_org_id FROM leaves l JOIN users u ON u.id = l.user_id WHERE l.id = $1', [req.params.id])).rows[0];
         if (!leave) return res.status(404).json({ error: 'Leave not found' });
+        if (req.userOrgId && leave.leave_org_id !== req.userOrgId) return res.status(403).json({ error: 'Cannot revoke leaves from another organization' });
         if (leave.status !== 'approved') return res.status(400).json({ error: 'Leave is not approved' });
 
         await transaction(async (client) => {

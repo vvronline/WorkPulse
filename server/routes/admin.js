@@ -2,7 +2,7 @@
 const bcrypt = require('bcryptjs');
 const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
-const { loadUserContext, requireRole, requireSameOrg, canManageUser, VALID_ROLES } = require('../middleware/rbac');
+const { loadUserContext, requireRole, requireSameOrg, canManageUser, VALID_ROLES, ROLE_LEVEL } = require('../middleware/rbac');
 const { logAction, queryLogs } = require('../utils/audit');
 const { validatePassword, validateUsername } = require('../utils/password');
 const { getOffsetMin, getTzModifier } = require('../utils/timezone');
@@ -480,7 +480,7 @@ router.get('/registration-settings', async (req, res) => {
     }
 });
 
-router.put('/registration-settings', async (req, res) => {
+router.put('/registration-settings', requireRole('super_admin'), async (req, res) => {
     try {
         const { mode } = req.body;
         if (!['open', 'invite_only', 'closed'].includes(mode)) {
@@ -526,6 +526,9 @@ router.post('/invite-codes', async (req, res) => {
         const validRoles = ['employee', 'team_lead', 'manager', 'hr_admin'];
         if (role && !validRoles.includes(role)) {
             return res.status(400).json({ error: 'Invalid role for invite' });
+        }
+        if (role && ROLE_LEVEL[role] >= (ROLE_LEVEL[req.userRole] || 0)) {
+            return res.status(403).json({ error: 'Cannot create invite for a role at or above your own level' });
         }
         const code = require('crypto').randomBytes(6).toString('hex').toUpperCase();
         const expiresAt = expires_days ? new Date(Date.now() + expires_days * 86400000).toISOString() : null;
