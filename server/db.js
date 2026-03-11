@@ -9,11 +9,12 @@
 const { Pool } = require('pg');
 
 if (!process.env.DATABASE_URL) {
-    console.warn('WARNING: DATABASE_URL not set; falling back to local default.');
+    console.error('FATAL: DATABASE_URL environment variable is not set. Server cannot start.');
+    process.exit(1);
 }
 
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL || 'postgresql://workpulse:workpulse@localhost:5432/workpulse',
+    connectionString: process.env.DATABASE_URL,
     ssl: (process.env.DATABASE_URL && process.env.DATABASE_URL.includes('sslmode=require'))
         ? { rejectUnauthorized: false }
         : false,
@@ -101,12 +102,18 @@ async function initDB() {
             timezone_offset      INTEGER NOT NULL DEFAULT 0,
             avatar               TEXT,
             email                TEXT UNIQUE,
+            failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+            locked_until         TIMESTAMPTZ,
             token_version        INTEGER NOT NULL DEFAULT 0,
             must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
             created_at           TIMESTAMPTZ DEFAULT NOW()
         )
     `);
     await query(`CREATE INDEX IF NOT EXISTS idx_users_org ON users(org_id)`);
+
+    // Add lockout columns to existing databases
+    await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER NOT NULL DEFAULT 0`);
+    await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ`);
 
     await query(`
         CREATE TABLE IF NOT EXISTS departments (
@@ -442,14 +449,21 @@ async function initDB() {
         ON CONFLICT (key) DO NOTHING
     `);
 
-    // Promote first registered user to super_admin if still employee
-    try {
-        await query(`
-            UPDATE users SET role = 'super_admin'
-            WHERE id = (SELECT id FROM users ORDER BY id ASC LIMIT 1)
-              AND role = 'employee'
-        `);
-    } catch (_) { /* no users yet */ }
+    // Promote first registered user to super_admin (one-time setup, guarded by migration)
+    const migName = 'promote_first_admin';
+    const alreadyRan = (await query(
+        'SELECT 1 FROM _migrations WHERE name = $1', [migName]
+    )).rows[0];
+    if (!alreadyRan) {
+        const firstUser = (await query(
+            "SELECT id FROM users WHERE role = 'employee' ORDER BY id ASC LIMIT 1"
+        )).rows[0];
+        if (firstUser) {
+            await query("UPDATE users SET role = 'super_admin' WHERE id = $1", [firstUser.id]);
+            await query('INSERT INTO _migrations (name) VALUES ($1)', [migName]);
+            console.log(`✓ Promoted user #${firstUser.id} to super_admin (first-time setup)`);
+        }
+    }
 
     console.log('✓ Database schema initialised');
 }

@@ -90,7 +90,7 @@ router.post('/register', async (req, res) => {
 
         const hash = await bcrypt.hash(password, 10);
         const assignedOrgId = inviteRow?.org_id || null;
-        const assignedRole  = inviteRow?.role  || 'employee';
+        const assignedRole = inviteRow?.role || 'employee';
 
         const result = await transaction(async (client) => {
             if (inviteRow) {
@@ -140,11 +140,35 @@ router.post('/login', async (req, res) => {
 
         const userRes = await query('SELECT * FROM users WHERE username = $1', [username]);
         const user = userRes.rows[0];
+
+        // Check account lockout
+        if (user && user.locked_until && new Date(user.locked_until) > new Date()) {
+            const mins = Math.ceil((new Date(user.locked_until) - new Date()) / 60000);
+            return res.status(423).json({ error: `Account locked. Try again in ${mins} minute(s).` });
+        }
+
         if (!user || !(await bcrypt.compare(password, user.password))) {
+            // Increment failed attempts
+            if (user) {
+                const attempts = (user.failed_login_attempts || 0) + 1;
+                if (attempts >= 5) {
+                    await query(
+                        "UPDATE users SET failed_login_attempts = $1, locked_until = NOW() + INTERVAL '15 minutes' WHERE id = $2",
+                        [attempts, user.id],
+                    );
+                    return res.status(423).json({ error: 'Account locked for 15 minutes due to too many failed attempts.' });
+                }
+                await query('UPDATE users SET failed_login_attempts = $1 WHERE id = $2', [attempts, user.id]);
+            }
             return res.status(401).json({ error: 'Invalid credentials' });
         }
         if (!user.is_active) {
             return res.status(403).json({ error: 'Your account has been deactivated. Contact your administrator.' });
+        }
+
+        // Reset failed attempts on successful login
+        if (user.failed_login_attempts > 0) {
+            await query('UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1', [user.id]);
         }
 
         const token = jwt.sign(
@@ -190,8 +214,8 @@ router.post('/forgot-password', async (req, res) => {
         await query('UPDATE password_reset_tokens SET used = TRUE WHERE user_id = $1 AND used = FALSE', [user.id]);
 
         const resetToken = crypto.randomBytes(48).toString('hex');
-        const tokenHash  = crypto.createHash('sha256').update(resetToken).digest('hex');
-        const expiresAt  = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+        const tokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+        const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
         await query(
             'INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
@@ -205,7 +229,7 @@ router.post('/forgot-password', async (req, res) => {
         if (mailer) {
             mailer.sendMail({
                 from: process.env.SMTP_FROM || '"WorkPulse" <noreply@workpulse.app>',
-                to:   user.email,
+                to: user.email,
                 subject: 'WorkPulse — Password Reset',
                 html: `
                     <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;">
@@ -233,7 +257,7 @@ router.post('/reset-password', async (req, res) => {
     try {
         const { token, password } = req.body;
         if (!token || !password) return res.status(400).json({ error: 'Token and new password are required' });
-        if (password.length < 8)  return res.status(400).json({ error: 'Password must be at least 8 characters' });
+        if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
         if (password.length > 72) return res.status(400).json({ error: 'Password must be 72 characters or less' });
         const pwError = validatePassword(password);
         if (pwError) return res.status(400).json({ error: pwError });
@@ -247,8 +271,8 @@ router.post('/reset-password', async (req, res) => {
             [tokenHash],
         );
         const row = rowRes.rows[0];
-        if (!row)               return res.status(400).json({ error: 'Invalid or expired reset link' });
-        if (row.used)           return res.status(400).json({ error: 'This reset link has already been used' });
+        if (!row) return res.status(400).json({ error: 'Invalid or expired reset link' });
+        if (row.used) return res.status(400).json({ error: 'This reset link has already been used' });
         if (new Date(row.expires_at) < new Date()) {
             return res.status(400).json({ error: 'This reset link has expired' });
         }

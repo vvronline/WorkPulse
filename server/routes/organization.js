@@ -96,7 +96,8 @@ router.get('/members', requireRole('team_lead'), requireSameOrg, async (req, res
         let pi = 2;
 
         if (search) {
-            const s = `%${search}%`;
+            const escaped = search.replace(/[%_]/g, c => `\\${c}`);
+            const s = `%${escaped}%`;
             where.push(`(u.full_name ILIKE $${pi} OR u.username ILIKE $${pi} OR u.email ILIKE $${pi})`);
             params.push(s); pi++;
         }
@@ -395,8 +396,8 @@ router.put('/teams/:id/sprint-config', requireRole('team_lead'), requireSameOrg,
 
         await query('UPDATE teams SET sprint_duration_weeks = $1, sprint_start_date = $2 WHERE id = $3',
             [sprint_duration_weeks !== undefined ? sprint_duration_weeks : team.sprint_duration_weeks,
-             sprint_start_date !== undefined ? sprint_start_date : team.sprint_start_date,
-             id]);
+            sprint_start_date !== undefined ? sprint_start_date : team.sprint_start_date,
+                id]);
         logAction(req, 'update', 'team', Number(id), { sprint_duration_weeks, sprint_start_date });
         res.json({ message: 'Sprint configuration updated' });
     } catch (err) {

@@ -9,14 +9,12 @@ const { computeStatus, computeDaySummary } = require('../utils/timeCalc');
 
 const router = express.Router();
 
-// Helper: convert SQLite-style tz modifier '+330 minutes' to pg interval string
-// getTzModifier returns e.g. '+330 minutes' — pg uses INTERVAL syntax the same way
+// Helper: convert timezone offset to a pg date expression.
+// tzMod comes from getTzModifier() which is validated via clampOffset(),
+// but we defensively extract the integer to prevent any SQL injection.
 function pgDateInTz(col, tzMod) {
-    // tzMod is like '+330 minutes' or '-60 minutes'
-    // In pg: (col AT TIME ZONE 'UTC' + INTERVAL '330 minutes')::date
-    // But since timestamps are stored as TIMESTAMPTZ (UTC), we just shift for date comparison.
-    // We pass the shift as an interval literal.
-    return `(${col} + INTERVAL '${tzMod}')::date`;
+    const minutes = parseInt(tzMod, 10) || 0;
+    return `(${col} + INTERVAL '${minutes} minutes')::date`;
 }
 
 // Get current status for today

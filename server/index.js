@@ -51,11 +51,11 @@ app.use(cors({
         if (process.env.CORS_ORIGIN) {
             const allowed = process.env.CORS_ORIGIN.split(',').map(s => s.trim());
             if (allowed.includes(origin)) return callback(null, true);
+            return callback(new Error('Not allowed by CORS'));
         }
-        // In production, allow same-host requests (handles crossorigin attributes on script/link tags)
         if (process.env.NODE_ENV === 'production') {
-            if (process.env.CORS_ORIGIN) return callback(new Error('Not allowed by CORS'));
-            return callback(null, true);
+            // No CORS_ORIGIN configured — reject all cross-origin requests
+            return callback(new Error('Not allowed by CORS'));
         }
         const serverOrigin = `http://localhost:${PORT}`;
         if (origin === serverOrigin) return callback(null, true);
@@ -93,7 +93,7 @@ app.use('/api', (req, res, next) => {
     return res.status(403).json({ error: 'Missing CSRF header' });
 });
 
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100, message: { error: 'Too many attempts. Please try again later.' } });
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 15, message: { error: 'Too many attempts. Please try again later.' } });
 const forgotPasswordLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, message: { error: 'Too many password reset attempts. Please try again later.' } });
 const passwordLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: { error: 'Too many password attempts. Please try again later.' } });
 const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5000, message: { error: 'Too many requests. Please try again later.' } });

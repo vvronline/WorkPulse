@@ -175,8 +175,9 @@ router.get('/', auth, loadUserContext, async (req, res) => {
         }
 
         if (search && search.trim()) {
+            const escaped = search.trim().replace(/[%_]/g, c => `\\${c}`);
             conditions.push(`(t.title ILIKE $${pi} OR t.description ILIKE $${pi})`);
-            params.push(`%${search.trim()}%`);
+            params.push(`%${escaped}%`);
             pi++;
         }
 
@@ -458,8 +459,9 @@ router.get('/search', auth, loadUserContext, async (req, res) => {
         const { q } = req.query;
         if (!q || !q.trim() || q.trim().length < 2) return res.json([]);
 
+        const escapedQ = q.trim().replace(/[%_]/g, c => `\\${c}`);
         const conditions = ['(t.title ILIKE $1 OR t.description ILIKE $1)'];
-        const params = [`%${q.trim()}%`];
+        const params = [`%${escapedQ}%`];
         let pi = 2;
 
         if (req.userOrgId) {
@@ -786,8 +788,9 @@ router.get('/backlog', auth, loadUserContext, async (req, res) => {
         }
 
         if (search && search.trim()) {
+            const escaped = search.trim().replace(/[%_]/g, c => `\\${c}`);
             conditions.push(`(t.title ILIKE $${pi} OR t.description ILIKE $${pi})`);
-            params.push(`%${search.trim()}%`);
+            params.push(`%${escaped}%`);
             pi++;
         }
 

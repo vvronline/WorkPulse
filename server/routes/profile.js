@@ -14,11 +14,12 @@ const { validatePassword } = require('../utils/password');
 const router = express.Router();
 
 const isProduction = process.env.NODE_ENV === 'production';
+const useSecureCookie = isProduction && process.env.USE_HTTPS === 'true';
 
 function cookieOptions() {
     return {
         httpOnly: true,
-        secure: isProduction,
+        secure: useSecureCookie,
         sameSite: 'lax',
         maxAge: 24 * 60 * 60 * 1000
     };

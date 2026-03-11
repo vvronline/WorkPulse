@@ -115,14 +115,14 @@ router.get('/summary', async (req, res) => {
 router.get('/monthly-summary', async (req, res) => {
     try {
         const { year } = req.query;
-        const targetYear = year || new Date().getFullYear().toString();
+        const targetYear = parseInt(year, 10) || new Date().getFullYear();
 
         const conditions = [
             "l.status = 'approved'",
-            `l.date >= '${targetYear}-01-01' AND l.date <= '${targetYear}-12-31'`
+            `l.date >= $1 AND l.date <= $2`
         ];
-        const params = [];
-        let pi = 1;
+        const params = [`${targetYear}-01-01`, `${targetYear}-12-31`];
+        let pi = 3;
 
         if (req.userRole === 'employee') {
             conditions.push(`l.user_id = $${pi++}`);
@@ -358,9 +358,15 @@ router.post('/', async (req, res) => {
 // PATCH /leaves/:id/approve — approve leave
 router.patch('/:id/approve', requireRole('manager'), async (req, res) => {
     try {
-        const leave = (await query('SELECT * FROM leaves WHERE id = $1', [req.params.id])).rows[0];
+        const leave = (await query(
+            'SELECT l.*, u.org_id AS leave_org_id FROM leaves l JOIN users u ON u.id = l.user_id WHERE l.id = $1',
+            [req.params.id]
+        )).rows[0];
         if (!leave) return res.status(404).json({ error: 'Leave not found' });
         if (leave.status !== 'pending') return res.status(400).json({ error: 'Leave is not pending' });
+        if (req.userOrgId && leave.leave_org_id !== req.userOrgId) {
+            return res.status(403).json({ error: 'Cannot approve leaves for users outside your organization' });
+        }
 
         await transaction(async (client) => {
             await client.query(
@@ -385,9 +391,15 @@ router.patch('/:id/approve', requireRole('manager'), async (req, res) => {
 router.patch('/:id/reject', requireRole('manager'), async (req, res) => {
     try {
         const { reason } = req.body;
-        const leave = (await query('SELECT * FROM leaves WHERE id = $1', [req.params.id])).rows[0];
+        const leave = (await query(
+            'SELECT l.*, u.org_id AS leave_org_id FROM leaves l JOIN users u ON u.id = l.user_id WHERE l.id = $1',
+            [req.params.id]
+        )).rows[0];
         if (!leave) return res.status(404).json({ error: 'Leave not found' });
         if (leave.status !== 'pending') return res.status(400).json({ error: 'Leave is not pending' });
+        if (req.userOrgId && leave.leave_org_id !== req.userOrgId) {
+            return res.status(403).json({ error: 'Cannot reject leaves for users outside your organization' });
+        }
 
         await transaction(async (client) => {
             await client.query(
