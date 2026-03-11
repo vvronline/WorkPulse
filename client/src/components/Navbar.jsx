@@ -31,7 +31,9 @@ export default function Navbar() {
     setSignoutConfirming(true);
   };
   const confirmSignOut = async () => {
-    try { await apiClockOut(); } catch { }
+    if (workState === 'working' || workState === 'on_break') {
+      try { await apiClockOut(); } catch { }
+    }
     logout();
   };
 
