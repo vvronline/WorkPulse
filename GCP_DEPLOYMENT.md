@@ -69,7 +69,7 @@ gcloud compute addresses describe workpulse-ip \
   --region=us-central1 --format="get(address)"
 ```
 
-Save this IP — you'll use it as `YOUR_STATIC_IP` throughout.
+Save this IP (e.g., `34.132.137.32`) — you'll use it throughout.
 
 ---
 
@@ -115,7 +115,7 @@ gcloud compute firewall-rules create workpulse-allow-ssh \
 ```bash
 gcloud compute instances create workpulse \
   --zone=us-central1-a \
-  --machine-type=e2-small \
+  --machine-type=e2-medium \
   --image-family=ubuntu-2404-lts-amd64 \
   --image-project=ubuntu-os-cloud \
   --boot-disk-size=20GB \
@@ -131,7 +131,7 @@ gcloud compute instances create workpulse \
     usermod -aG docker $(ls /home/ | head -1)'
 ```
 
-> **Note:** `--scopes=storage-rw` enables GCS access for automated backups. The startup script pre-installs Docker.
+> **Note:** `e2-medium` (2 vCPU, 4GB RAM) is the most cost-effective option for running both the app and database. `--scopes=storage-rw` enables GCS access for automated backups. The startup script pre-installs Docker.
 
 Wait ~2 minutes for the VM to boot, then SSH in:
 
@@ -216,13 +216,13 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:80
 # Should print: 200
 ```
 
-Your app is live at `http://YOUR_STATIC_IP`
+Your app is live at `http://34.132.137.32`
 
 ---
 
 ## Step 7: Create Your First Account
 
-1. Open `http://YOUR_STATIC_IP` in your browser
+1. Open `http://34.132.137.32` in your browser
 2. Click **Register** and create your account
 3. Promote yourself to Super Admin:
 
