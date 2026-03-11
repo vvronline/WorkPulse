@@ -73,7 +73,7 @@ jobs:
 
       - name: Deploy to GCE
         run: |
-          gcloud compute ssh ${{ secrets.GCP_INSTANCE_NAME }} \
+          gcloud compute ssh ${{ secrets.GCP_VM_USER }}@${{ secrets.GCP_INSTANCE_NAME }} \
             --zone=${{ secrets.GCP_ZONE }} \
             --command="cd ~/WorkPulse && git pull origin master && docker-compose down && docker-compose up -d --build" \
             --quiet
