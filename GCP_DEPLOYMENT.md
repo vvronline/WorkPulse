@@ -1,332 +1,432 @@
-# WorkPulse Deployment Guide
+# WorkPulse — Enterprise GCP Deployment Guide
 
-Complete guide to deploy WorkPulse on a Google Cloud Platform (GCP) VM or any Ubuntu server.
+Production-grade deployment on Google Cloud Platform with security hardening, data persistence, automated backups, and HTTPS.
+
+---
+
+## Architecture Overview
+
+```
+Internet
+   │
+   ▼ (HTTPS :443 / HTTP :80)
+┌────────────────────────────┐
+│   GCP VM (Ubuntu 24.04)    │
+│                            │
+│  ┌──────────────────────┐  │
+│  │  Docker Network      │  │
+│  │  (internal bridge)   │  │
+│  │                      │  │
+│  │  ┌────────────────┐  │  │
+│  │  │ workpulse-app  │  │  │ ← Express + React SPA
+│  │  │   :5000 → :80  │  │  │
+│  │  └───────┬────────┘  │  │
+│  │          │            │  │
+│  │  ┌───────▼────────┐  │  │
+│  │  │   PostgreSQL   │  │  │ ← No external port
+│  │  │     :5432      │  │  │
+│  │  └───────┬────────┘  │  │
+│  └──────────┼────────────┘  │
+│             │               │
+│    ./data/postgres/         │ ← Persistent disk mount
+│    ./server/uploads/        │ ← Avatar storage
+└────────────────────────────┘
+         │
+         ▼ (daily cron)
+   GCS Backup Bucket
+```
+
+**Security features:**
+- PostgreSQL is **not exposed** to the internet (no port mapping)
+- App container runs as **non-root user**
+- Proper PID 1 signal handling (dumb-init)
+- Strong passwords via `.env` (not hardcoded)
+- `JWT_SECRET` is required (no fallback default)
+- Health checks with dependency ordering
+- GCP firewall with minimal open ports
+- Static IP to prevent address drift
+- Automated daily database backups
 
 ---
 
 ## Prerequisites
 
-- **GCP VM:** Ubuntu 22.04 LTS (or newer)
-- **Firewall:** Ensure **"Allow HTTP Traffic"** is checked in your VM settings
-  - GCP Console → Compute Engine → VM Instances → Click your VM → Edit → Firewalls → Check **"Allow HTTP traffic"** → Save
-- **SSH Access:** You must be able to SSH into the VM
+- A GCP account with billing enabled
+- `gcloud` CLI installed locally (or use GCP Cloud Shell)
 
 ---
 
-## Method 1: Docker Deployment (Recommended)
+## Step 1: Reserve a Static IP
 
-### Step 1: Install Docker
-
-SSH into your VM and install Docker:
+Reserve an IP **before** creating the VM so it never changes:
 
 ```bash
-sudo apt update && sudo apt upgrade -y
-sudo apt install git docker.io -y
+gcloud compute addresses create workpulse-ip \
+  --region=us-central1
+
+# Note the IP address
+gcloud compute addresses describe workpulse-ip \
+  --region=us-central1 --format="get(address)"
 ```
 
-> **Note:** Modern Ubuntu ships with Docker Compose v2 built into Docker (`docker compose` with a space). The legacy `docker-compose` (hyphenated) command is no longer needed.
+Save this IP — you'll use it as `YOUR_STATIC_IP` throughout.
 
-Add your user to the `docker` group so you don't need `sudo` for every Docker command:
+---
+
+## Step 2: Create Firewall Rules
+
+Create dedicated rules instead of relying on defaults:
 
 ```bash
-sudo usermod -aG docker $USER
+# Allow HTTP (port 80)
+gcloud compute firewall-rules create workpulse-allow-http \
+  --direction=INGRESS \
+  --action=ALLOW \
+  --rules=tcp:80 \
+  --source-ranges=0.0.0.0/0 \
+  --target-tags=workpulse-server \
+  --description="Allow HTTP traffic to WorkPulse"
+
+# Allow HTTPS (port 443) — for future TLS setup
+gcloud compute firewall-rules create workpulse-allow-https \
+  --direction=INGRESS \
+  --action=ALLOW \
+  --rules=tcp:443 \
+  --source-ranges=0.0.0.0/0 \
+  --target-tags=workpulse-server \
+  --description="Allow HTTPS traffic to WorkPulse"
+
+# Allow SSH (port 22) — restrict to your IP for security
+gcloud compute firewall-rules create workpulse-allow-ssh \
+  --direction=INGRESS \
+  --action=ALLOW \
+  --rules=tcp:22 \
+  --source-ranges=0.0.0.0/0 \
+  --target-tags=workpulse-server \
+  --description="Allow SSH to WorkPulse VM"
 ```
 
-**Log out and SSH back in** for the group change to take effect:
+> **Tip:** Replace `0.0.0.0/0` in the SSH rule with your office IP (e.g., `203.0.113.50/32`) for better security.
+
+---
+
+## Step 3: Create the VM
 
 ```bash
+gcloud compute instances create workpulse \
+  --zone=us-central1-a \
+  --machine-type=e2-small \
+  --image-family=ubuntu-2404-lts-amd64 \
+  --image-project=ubuntu-os-cloud \
+  --boot-disk-size=20GB \
+  --boot-disk-type=pd-balanced \
+  --tags=workpulse-server \
+  --address=workpulse-ip \
+  --scopes=storage-rw \
+  --metadata=startup-script='#!/bin/bash
+    apt-get update -y
+    apt-get install -y docker.io
+    systemctl enable docker
+    systemctl start docker
+    usermod -aG docker $(ls /home/ | head -1)'
+```
+
+> **Note:** `--scopes=storage-rw` enables GCS access for automated backups. The startup script pre-installs Docker.
+
+Wait ~2 minutes for the VM to boot, then SSH in:
+
+```bash
+gcloud compute ssh workpulse --zone=us-central1-a
+```
+
+---
+
+## Step 4: Verify Docker & Clone
+
+```bash
+# Re-login to pick up docker group (from startup script)
 exit
-# SSH back in
-```
+gcloud compute ssh workpulse --zone=us-central1-a
 
-Verify Docker works without sudo:
-
-```bash
+# Verify Docker
 docker --version
 docker compose version
-```
 
-### Step 2: Clone & Configure
-
-```bash
+# Clone the repository
 git clone https://github.com/vvronline/WorkPulse.git
 cd WorkPulse
 ```
 
-Create your environment file:
+---
 
-```bash
-nano .env
-```
+## Step 5: Configure Environment
 
-Paste this (replace `YOUR_SUPER_SECRET_KEY` with a strong random string):
-
-```env
-JWT_SECRET=YOUR_SUPER_SECRET_KEY
-```
-
-> **Note:** `CORS_ORIGIN` does not need to be set for Docker deployments. The app automatically allows same-origin requests in production since the SPA and API are served from the same Express server.
-
-Save and exit (`Ctrl+O`, `Enter`, `Ctrl+X`).
-
-### Step 3: Build & Deploy
-
-```bash
-# Build the Docker image (first build takes ~5-10 minutes)
-docker compose build
-
-# Start the container in detached mode
-docker compose up -d
-```
-
-### Step 4: Verify Deployment
-
-```bash
-# Check the container is running
-docker compose ps
-
-# Test the app responds
-curl -s -o /dev/null -w "%{http_code}" http://localhost:80
-# Should print: 200
-
-# Check logs if something is wrong
-docker compose logs --tail=30
-```
-
-Your app is now live at `http://YOUR_VM_IP`!
-
-### Step 5: Create Your First Account
-
-1. Open `http://YOUR_VM_IP` in your browser
-2. Click **Register** and create your account
-3. Back in the VM terminal, promote yourself to Super Admin:
-
-```bash
-docker compose exec postgres psql -U workpulse -d workpulse -c "UPDATE users SET role = 'super_admin' WHERE username = 'YOUR_USERNAME';"
-```
-
-*(Replace `YOUR_USERNAME` with the username you just registered.)*
-
-4. Log out and log back in — you'll now have the **Admin** tab
-
-### Updating the App
+Generate strong secrets and create the `.env` file:
 
 ```bash
 cd ~/WorkPulse
-git pull
 
-# If only server code changed (fast — uses cached layers):
+# Generate random secrets
+JWT_SECRET=$(openssl rand -base64 48)
+DB_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
+
+cat > .env << EOF
+JWT_SECRET=${JWT_SECRET}
+DB_PASSWORD=${DB_PASSWORD}
+EOF
+
+# Lock down permissions (owner read-only)
+chmod 600 .env
+
+# Verify
+cat .env
+```
+
+> **Important:** Save these values somewhere secure (password manager). If you lose `JWT_SECRET`, all user sessions will be invalidated. If you lose `DB_PASSWORD`, you'll need to reset the PostgreSQL password manually.
+
+---
+
+## Step 6: Build & Deploy
+
+```bash
+cd ~/WorkPulse
+
+# Build (first build takes ~2-5 minutes)
 docker compose build
+
+# Start
 docker compose up -d
 
-# If dependencies or Dockerfile changed (full rebuild):
+# Verify both containers are healthy
+docker compose ps
+```
+
+Expected output:
+```
+NAME                 STATUS                   PORTS
+workpulse-app        Up X seconds             0.0.0.0:80->5000/tcp
+workpulse-postgres   Up X seconds (healthy)   5432/tcp
+```
+
+Note: PostgreSQL shows `5432/tcp` but **no** `0.0.0.0:5432->` — it's only accessible inside the Docker network.
+
+Test:
+```bash
+curl -s -o /dev/null -w "%{http_code}" http://localhost:80
+# Should print: 200
+```
+
+Your app is live at `http://YOUR_STATIC_IP`
+
+---
+
+## Step 7: Create Your First Account
+
+1. Open `http://YOUR_STATIC_IP` in your browser
+2. Click **Register** and create your account
+3. Promote yourself to Super Admin:
+
+```bash
+cd ~/WorkPulse
+docker compose exec postgres psql -U workpulse -d workpulse \
+  -c "UPDATE users SET role = 'super_admin' WHERE username = 'YOUR_USERNAME';"
+```
+
+4. Log out and log back in — you'll now have the **Admin** tab
+
+---
+
+## Step 8: Set Up Automated Backups
+
+### Create a GCS Bucket
+
+```bash
+# Create bucket (name must be globally unique)
+gcloud storage buckets create gs://workpulse-backups-$(gcloud config get-value project) \
+  --location=us-central1 \
+  --default-storage-class=NEARLINE \
+  --uniform-bucket-level-access
+
+# Set lifecycle: auto-delete backups older than 90 days
+cat > /tmp/lifecycle.json << 'EOF'
+{
+  "rule": [{
+    "action": {"type": "Delete"},
+    "condition": {"age": 90}
+  }]
+}
+EOF
+gcloud storage buckets update gs://workpulse-backups-$(gcloud config get-value project) \
+  --lifecycle-file=/tmp/lifecycle.json
+```
+
+### Create Backup Script
+
+```bash
+cat > ~/WorkPulse/backup.sh << 'SCRIPT'
+#!/bin/bash
+set -euo pipefail
+
+TIMESTAMP=$(date +%F_%H%M)
+BACKUP_FILE="/tmp/workpulse-backup-${TIMESTAMP}.sql.gz"
+BUCKET="gs://workpulse-backups-$(gcloud config get-value project 2>/dev/null)"
+
+echo "[$(date)] Starting backup..."
+
+# Dump database and compress
+docker compose -f ~/WorkPulse/docker-compose.yml exec -T postgres \
+  pg_dump -U workpulse --clean --if-exists workpulse | gzip > "${BACKUP_FILE}"
+
+# Upload to GCS
+gcloud storage cp "${BACKUP_FILE}" "${BUCKET}/daily/${TIMESTAMP}.sql.gz"
+
+# Clean up local file
+rm -f "${BACKUP_FILE}"
+
+echo "[$(date)] Backup uploaded to ${BUCKET}/daily/${TIMESTAMP}.sql.gz"
+SCRIPT
+
+chmod +x ~/WorkPulse/backup.sh
+
+# Test it
+~/WorkPulse/backup.sh
+```
+
+### Schedule Daily Backup (2 AM UTC)
+
+```bash
+(crontab -l 2>/dev/null; echo "0 2 * * * ~/WorkPulse/backup.sh >> ~/WorkPulse/backup.log 2>&1") | crontab -
+
+# Verify
+crontab -l
+```
+
+### Restore from Backup
+
+```bash
+# List available backups
+gcloud storage ls gs://workpulse-backups-$(gcloud config get-value project)/daily/
+
+# Download and restore a specific backup
+gcloud storage cp gs://BUCKET/daily/2026-03-11_0200.sql.gz /tmp/restore.sql.gz
+gunzip /tmp/restore.sql.gz
+cat /tmp/restore.sql | docker compose exec -T postgres psql -U workpulse -d workpulse
+```
+
+---
+
+## Updating the App
+
+```bash
+cd ~/WorkPulse
+
+# Back up before updating
+./backup.sh
+
+# Pull latest code
+git pull
+
+# Rebuild and restart (zero-downtime for the database)
 docker compose build --no-cache
 docker compose up -d
 ```
 
-### Useful Docker Commands
+---
+
+## Useful Commands
 
 ```bash
 # View live logs
 docker compose logs -f --tail=50
 
-# Restart the container
+# View only app logs
+docker compose logs -f workpulse --tail=30
+
+# Restart containers
 docker compose restart
 
-# Stop containers (keeps database)
+# Stop containers (keeps database on disk)
 docker compose down
 
-# Remove containers and images (keeps database)
-docker compose down --rmi all
+# Check database size
+docker compose exec postgres psql -U workpulse -d workpulse \
+  -c "SELECT pg_size_pretty(pg_database_size('workpulse'));"
+
+# Interactive database shell
+docker compose exec postgres psql -U workpulse -d workpulse
 ```
 
-> **⚠️ Data Safety:** Your PostgreSQL data is stored in `./data/postgres/` on the host. Never delete this folder or the database will be lost. Back it up regularly:
-> ```bash
-> docker compose exec postgres pg_dump -U workpulse workpulse > backup_$(date +%F).sql
-> ```
-> To restore from a backup:
-> ```bash
-> cat backup_2026-03-11.sql | docker compose exec -T postgres psql -U workpulse workpulse
-> ```
+> **⚠️ Data Safety:** Your PostgreSQL data is in `~/WorkPulse/data/postgres/`. Never delete this directory. Automated backups go to GCS daily with 90-day retention.
 
 ---
 
-## Method 2: Manual Deployment (PM2 + Nginx)
+## Optional: HTTPS with Let's Encrypt
 
-*Use this only if you cannot use Docker.*
-
-### Step 1: Install Dependencies
-
-SSH into your VM and install Node.js, Nginx, Git, and PM2:
+If you have a domain name pointing to your static IP:
 
 ```bash
-sudo apt update && sudo apt upgrade -y
-sudo apt install git nginx -y
+# Install Certbot
+sudo apt install -y certbot
 
-# Install Node.js v20.x
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
+# Get certificate (stop the app briefly)
+docker compose down
+sudo certbot certonly --standalone -d yourdomain.com
 
-# Install PM2 globally
-sudo npm install -g pm2
+# Copy certs to project
+mkdir -p ~/WorkPulse/certs
+sudo cp /etc/letsencrypt/live/yourdomain.com/fullchain.pem ~/WorkPulse/certs/
+sudo cp /etc/letsencrypt/live/yourdomain.com/privkey.pem ~/WorkPulse/certs/
+sudo chown $USER:$USER ~/WorkPulse/certs/*
+
+# Start the app again
+docker compose up -d
 ```
 
-### Step 2: Clone the Repository
-
-```bash
-cd ~
-git clone https://github.com/vvronline/WorkPulse.git
-cd WorkPulse
-```
-
-### Step 3: Backend Setup
-
-```bash
-cd ~/WorkPulse/server
-npm install
-nano .env
-```
-
-Paste the following (replace `YOUR_VM_EXTERNAL_IP` with your actual IP, e.g., `34.31.27.200`):
-
-```env
-PORT=5000
-JWT_SECRET=your_super_secret_jwt_key_here
-CORS_ORIGIN=http://YOUR_VM_EXTERNAL_IP
-NODE_ENV=production
-```
-
-Save and exit (`Ctrl+O`, `Enter`, `Ctrl+X`).
-
-Start the backend:
-
-```bash
-sudo pm2 start index.js --name workpulse
-sudo pm2 save
-sudo pm2 startup
-```
-
-### Step 4: Frontend Build
-
-```bash
-cd ~/WorkPulse/client
-npm install
-npm run build
-```
-
-*This generates optimized static files in `~/WorkPulse/client/dist`.*
-
-### Step 5: Nginx Configuration
-
-```bash
-sudo nano /etc/nginx/sites-available/workpulse
-```
-
-Paste this configuration (replace `YOUR_VM_EXTERNAL_IP` and `YOUR_USERNAME`):
-
-```nginx
-server {
-    listen 80;
-    server_name YOUR_VM_EXTERNAL_IP;
-    client_max_body_size 10M;
-
-    root /home/YOUR_USERNAME/WorkPulse/client/dist;
-    index index.html;
-
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-
-    location /api/ {
-        proxy_pass http://localhost:5000/api/;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-
-    location /uploads/ {
-        alias /home/YOUR_USERNAME/WorkPulse/server/uploads/;
-        access_log off;
-        expires 30d;
-    }
-}
-```
-
-Enable the config and restart Nginx:
-
-```bash
-sudo ln -s /etc/nginx/sites-available/workpulse /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default
-sudo nginx -t
-sudo systemctl restart nginx
-```
-
-### Step 6: Initial Access & Admin Setup
-
-1. Open `http://YOUR_VM_EXTERNAL_IP` in your browser
-2. Click **Register** and create your first account
-3. Promote yourself to Super Admin:
-
-```bash
-cd ~/WorkPulse
-docker compose exec postgres psql -U workpulse -d workpulse -c "UPDATE users SET role = 'super_admin' WHERE username = 'YOUR_USERNAME';"
-```
-
-4. Log out and log back in — the **Admin** tab is now visible
+Then add an Nginx reverse proxy or update the Docker compose to mount certs and terminate TLS. Without a domain, use plain HTTP — browsers will show the COOP warning on raw IPs but it's non-breaking.
 
 ---
 
 ## Troubleshooting
 
-### GCP Firewall / `ERR_CONNECTION_TIMED_OUT`
-If the browser can't reach your VM at all, the GCP firewall is blocking port 80.
-- Go to **GCP Console** → **Compute Engine** → **VM Instances**
-- Click your VM → **Edit** → scroll to **Firewalls** → check **"Allow HTTP traffic"** → **Save**
-
-Verify from the VM:
+### `ERR_CONNECTION_TIMED_OUT`
+The GCP firewall is blocking port 80.
 ```bash
-# Docker method
-docker compose ps
-curl -s -o /dev/null -w "%{http_code}" http://localhost:80
+# Verify firewall rules exist
+gcloud compute firewall-rules list --filter="targetTags:workpulse-server"
 
-# Check if port 80 is listening
-ss -tlnp | grep :80
+# Verify VM has the correct tag
+gcloud compute instances describe workpulse --zone=us-central1-a \
+  --format="get(tags.items)"
 ```
 
-### Container Crash Loop (Docker)
-If `docker compose ps` shows `Restarting`, check logs:
+### Container Crash Loop
 ```bash
 docker compose logs --tail=30
 ```
 Common causes:
-- **`JWT_SECRET is not set`** — Create a `.env` file with `JWT_SECRET=your_key`
+- **`JWT_SECRET is not set`** — Check `.env` file exists with `JWT_SECRET=...`
+- **Database connection refused** — PostgreSQL isn't ready yet. The healthcheck should handle this, but check: `docker compose ps` (postgres should show `healthy`)
 
 ### 401 Unauthorized After Login
-If login appears to succeed but all API calls return 401, the JWT cookie isn't being stored.
-- **Cause:** The `Secure` cookie flag is set but the site uses HTTP (not HTTPS).
-- **Fix:** The app uses `USE_HTTPS=true` env var to enable secure cookies. Don't set this unless you have HTTPS configured.
+The JWT cookie's `Secure` flag may be set but you're using HTTP.
+- Don't set `USE_HTTPS=true` in `.env` unless you have HTTPS configured
 
 ### Registration Shows "Closed"
-If you see "Registration Closed" on a fresh deployment with an existing database:
 ```bash
-docker compose exec postgres psql -U workpulse -d workpulse -c "UPDATE app_settings SET value = 'open' WHERE key = 'registration_mode';"
+docker compose exec postgres psql -U workpulse -d workpulse \
+  -c "UPDATE app_settings SET value = 'open' WHERE key = 'registration_mode';"
 ```
 
-### 500 Internal Server Error on Login (PM2 method)
-Double check that `CORS_ORIGIN` in your `.env` file exactly matches the URL in the browser (e.g., `http://34.31.27.200`). Then restart:
+### IP Address Changed
+If you forgot to reserve a static IP and the VM restarted:
 ```bash
-sudo pm2 restart workpulse --update-env
-```
+# Find current external IP
+gcloud compute instances describe workpulse --zone=us-central1-a \
+  --format="get(networkInterfaces[0].accessConfigs[0].natIP)"
 
-### Blank White Screen / MIME Type Errors
-- **Docker:** Check container logs — the Vite build may have failed
-- **PM2 + Nginx:** Ensure the `root` directive in Nginx points to the correct absolute path, and that `npm run build` completed successfully in the `client/` directory
-
-### `sudo` Not Working / "I'm sorry... I'm afraid I can't do that"
-If `sudo-rs` blocks your commands, check if you're in the `docker` group:
-```bash
-groups
+# Promote it to static (prevents future changes)
+gcloud compute addresses create workpulse-ip \
+  --addresses=CURRENT_IP --region=us-central1
 ```
 If you see `docker` in the output, you can run Docker commands **without sudo**:
 ```bash

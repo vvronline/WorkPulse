@@ -4,14 +4,14 @@
 
 ## TIER 1 — Critical Blockers (Must-Have)
 
-### 1. Database: SQLite → PostgreSQL
-SQLite with WAL mode hits a hard wall at ~50 concurrent users. PostgreSQL enables row-level locking, connection pooling (pg-pool), and horizontal scaling.
-- [ ] Replace `better-sqlite3` with `pg` / `postgres.js`
-- [ ] Migrate schema (all tables, indexes, constraints)
-- [ ] Update all query syntax (parameterized `$1, $2` style)
-- [ ] Add connection pool config (`max`, `idleTimeoutMillis`)
-- [ ] Update Docker Compose to include a `postgres` service
-- [ ] Set up database URL via environment variable
+### 1. Database: SQLite → PostgreSQL ✅
+Migrated to PostgreSQL 16 with connection pooling via `pg-pool`.
+- [x] Replace `better-sqlite3` with `pg` / `pg-pool`
+- [x] Migrate schema (all tables, indexes, constraints)
+- [x] Update all query syntax (parameterized `$1, $2` style)
+- [x] Add connection pool config (`max`, `idleTimeoutMillis`)
+- [x] Update Docker Compose to include a `postgres` service
+- [x] Set up database URL via environment variable
 
 ### 2. Email Notification System
 Currently **0% implemented** — the biggest functional gap.
@@ -177,10 +177,10 @@ No guided setup when a new account is created.
 - [ ] Set up Prometheus metrics endpoint (`/metrics`)
 - [ ] Configure alerting for error rate spikes, slow queries, disk usage
 
-### 18. Database Backup & Recovery
-- [ ] Automated daily SQLite backup (or `pg_dump` for PostgreSQL)
-- [ ] Upload backups to S3 / GCS with retention policy
-- [ ] Point-in-time recovery documentation
+### 18. Database Backup & Recovery ✅
+- [x] Automated daily `pg_dump` backup
+- [x] Upload backups to GCS with 90-day retention policy
+- [x] Restore documentation
 - [ ] Backup integrity verification (restore test)
 - [ ] Disaster recovery runbook
 
@@ -210,7 +210,7 @@ Currently **0% test coverage** — high regression risk.
 
 | Tier | Feature | Status |
 |------|---------|--------|
-| 1 | PostgreSQL migration | ⬜ Not started |
+| 1 | PostgreSQL migration | ✅ Done |
 | 1 | Email notifications | ⬜ Not started |
 | 1 | In-app notification center | ⬜ Not started |
 | 1 | SSO / OAuth2 | ⬜ Not started |
@@ -227,10 +227,10 @@ Currently **0% test coverage** — high regression risk.
 | 3 | Org hierarchy enhancements | ⬜ Not started |
 | 4 | GDPR / data privacy | ⬜ Not started |
 | 4 | Structured logging & monitoring | ⬜ Not started |
-| 4 | Database backup & recovery | ⬜ Not started |
+| 4 | Database backup & recovery | 🟡 Partial (backup + GCS done) |
 | 4 | Security hardening | ⬜ Not started |
 | 4 | Test suite | ⬜ Not started |
 
 ---
 
-*Last updated: March 6, 2026*
+*Last updated: March 11, 2026*

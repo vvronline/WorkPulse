@@ -10,6 +10,12 @@ RUN npm run build
 FROM node:20-alpine
 WORKDIR /app/server
 
+# Install dumb-init for proper PID 1 signal handling
+RUN apk add --no-cache dumb-init
+
+# Create non-root user
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
 COPY server/package*.json ./
 RUN npm ci --omit=dev
 
@@ -18,12 +24,16 @@ COPY server/ ./
 # Copy built React files from the builder stage
 COPY --from=frontend-builder /app/client/dist /app/client/dist
 
-# Expose the API port
+# Create uploads directory owned by appuser
+RUN mkdir -p /app/server/uploads/avatars && chown -R appuser:appgroup /app/server/uploads
+
+# Switch to non-root user
+USER appuser
+
 EXPOSE 5000
 
-# Set environment variables for production execution
 ENV NODE_ENV=production
 ENV PORT=5000
 
-# We use node directly instead of pm2 for Docker
+ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "index.js"]
