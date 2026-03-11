@@ -68,13 +68,12 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Deploy to GCE via SSH
-        uses: google-github-actions/ssh-compute@v1
-        with:
-          instance_name: ${{ secrets.GCP_INSTANCE_NAME }}
-          zone: ${{ secrets.GCP_ZONE }}
-          command: |
-            cd ~/WorkPulse
-            git pull origin master
-            docker-compose down
-            docker-compose up -d --build
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to GCE
+        run: |
+          gcloud compute ssh ${{ secrets.GCP_INSTANCE_NAME }} \
+            --zone=${{ secrets.GCP_ZONE }} \
+            --command="cd ~/WorkPulse && git pull origin master && docker-compose down && docker-compose up -d --build" \
+            --quiet
