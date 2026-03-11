@@ -133,12 +133,21 @@ docker compose logs -f --tail=50
 # Restart the container
 docker compose restart
 
-# Stop the container
+# Stop containers (keeps database)
 docker compose down
 
-# Stop and remove everything (including images)
+# Remove containers and images (keeps database)
 docker compose down --rmi all
 ```
+
+> **⚠️ Data Safety:** Your PostgreSQL data is stored in `./data/postgres/` on the host. Never delete this folder or the database will be lost. Back it up regularly:
+> ```bash
+> docker compose exec postgres pg_dump -U workpulse workpulse > backup_$(date +%F).sql
+> ```
+> To restore from a backup:
+> ```bash
+> cat backup_2026-03-11.sql | docker compose exec -T postgres psql -U workpulse workpulse
+> ```
 
 ---
 
