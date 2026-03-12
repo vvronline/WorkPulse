@@ -1,6 +1,8 @@
 /**
  * Shared email service — used across all routes.
- * Lazy-initializes the SMTP transporter from env vars.
+ * Supports two auth modes (auto-detected from env vars):
+ *   1. Gmail OAuth2 (XOAUTH2) — recommended, token-based, no password stored
+ *   2. Plain SMTP (username + password / app-password) — simpler fallback
  */
 const nodemailer = require('nodemailer');
 const { logger } = require('./logger');
@@ -8,15 +10,37 @@ const { logger } = require('./logger');
 let transporter = null;
 
 function getTransporter() {
-    if (!transporter && process.env.SMTP_USER && process.env.SMTP_PASS) {
+    if (transporter) return transporter;
+
+    // ── Mode 1: Gmail OAuth2 ────────────────────────────────────────
+    if (process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET && process.env.GMAIL_REFRESH_TOKEN) {
+        transporter = nodemailer.createTransport({
+            service: 'gmail',
+            auth: {
+                type: 'OAuth2',
+                user: process.env.SMTP_USER,
+                clientId: process.env.GMAIL_CLIENT_ID,
+                clientSecret: process.env.GMAIL_CLIENT_SECRET,
+                refreshToken: process.env.GMAIL_REFRESH_TOKEN,
+            },
+        });
+        logger.info('Email transport: Gmail OAuth2');
+        return transporter;
+    }
+
+    // ── Mode 2: Plain SMTP (app-password) ───────────────────────────
+    if (process.env.SMTP_USER && process.env.SMTP_PASS) {
         transporter = nodemailer.createTransport({
             host: process.env.SMTP_HOST || 'smtp.gmail.com',
             port: Number(process.env.SMTP_PORT) || 587,
             secure: false,
             auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
         });
+        logger.info('Email transport: SMTP (password)');
+        return transporter;
     }
-    return transporter;
+
+    return null;
 }
 
 const FROM = () => process.env.SMTP_FROM || (process.env.SMTP_USER ? `"WorkPulse" <${process.env.SMTP_USER}>` : '"WorkPulse" <noreply@workpulse.app>');
