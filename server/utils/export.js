@@ -90,7 +90,7 @@ function sendPDF(res, { title, columns, rows, filename }) {
         values.forEach((val, i) => {
             const textY = y + cellPadding;
             doc.fillColor(options.textColor || '#333333')
-               .text(val, x + cellPadding, textY, { width: colWidths[i] - cellPadding * 2 });
+                .text(val, x + cellPadding, textY, { width: colWidths[i] - cellPadding * 2 });
             x += colWidths[i];
         });
 
