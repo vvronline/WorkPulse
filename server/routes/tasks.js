@@ -4,6 +4,8 @@ const auth = require('../middleware/auth');
 const { loadUserContext } = require('../middleware/rbac');
 const { getLocalToday } = require('../utils/timezone');
 const { logger } = require('../utils/logger');
+const { notifyByEmail } = require('../utils/mailer');
+const { sendToUser } = require('../utils/ws');
 
 const router = express.Router();
 
@@ -258,6 +260,17 @@ router.post('/', auth, loadUserContext, async (req, res) => {
 
         const task = (await query('SELECT * FROM tasks WHERE id = $1', [taskId])).rows[0];
         const enriched = await enrichTasks([task]);
+
+        // Notify assigned user
+        if (assignedTo && assignedTo !== req.userId) {
+            const assignee = (await query('SELECT email, full_name FROM users WHERE id = $1', [assignedTo])).rows[0];
+            const assigner = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
+            if (assignee) {
+                notifyByEmail('taskAssigned', assignee, task, assigner?.full_name || 'Someone');
+                sendToUser(assignedTo, 'task_assigned', { taskId, title: task.title });
+            }
+        }
+
         res.json(enriched[0]);
     } catch (err) {
         req.log.error({ err: err }, 'Error creating task:');
@@ -370,6 +383,17 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
 
         const updated = (await query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
         const enriched = await enrichTasks([updated]);
+
+        // Notify if assignment changed to a new user
+        if (newAssignedTo && String(newAssignedTo) !== String(task.assigned_to) && newAssignedTo !== req.userId) {
+            const assignee = (await query('SELECT email, full_name FROM users WHERE id = $1', [newAssignedTo])).rows[0];
+            const assigner = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
+            if (assignee) {
+                notifyByEmail('taskAssigned', assignee, updated, assigner?.full_name || 'Someone');
+                sendToUser(newAssignedTo, 'task_assigned', { taskId: updated.id, title: updated.title });
+            }
+        }
+
         res.json(enriched[0]);
     } catch (err) {
         req.log.error({ err: err }, 'Error updating task:');
@@ -688,6 +712,12 @@ router.post('/:id/comments', auth, async (req, res) => {
                         'INSERT INTO notifications (user_id, type, title, body, link_task_id) VALUES ($1, $2, $3, $4, $5)',
                         [uid, 'mention', `${commenterName} mentioned you`, `In task: ${task.title}`, task.id]
                     );
+                    // Email + WS notification for mention
+                    const mentioned = (await query('SELECT email, full_name FROM users WHERE id = $1', [uid])).rows[0];
+                    if (mentioned) {
+                        notifyByEmail('mention', mentioned, commenterName, task.title);
+                        sendToUser(uid, 'notification', { type: 'mention', title: `${commenterName} mentioned you`, body: `In task: ${task.title}` });
+                    }
                 }
             }
         } catch (mentionErr) {

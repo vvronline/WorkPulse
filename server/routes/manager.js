@@ -7,6 +7,8 @@ const { getLocalToday, getTzModifier, getLocalDateFromTs, getOffsetMin } = requi
 const { computeFloorMs, computeBreakMs } = require('../utils/timeCalc');
 const { updateLeaveBalance } = require('./leaves');
 const { logger } = require('../utils/logger');
+const { notifyByEmail } = require('../utils/mailer');
+const { sendToUser } = require('../utils/ws');
 
 const router = express.Router();
 router.use(auth, loadUserContext);
@@ -420,6 +422,28 @@ router.post('/approvals/:id/approve', async (req, res) => {
         });
 
         if (txResult.error) return res.status(txResult.status).json({ error: txResult.error });
+
+        // Notify the requester about approval
+        try {
+            const approval = (await query('SELECT * FROM approval_requests WHERE id = $1', [Number(id)])).rows[0];
+            if (approval) {
+                const requester = (await query('SELECT email, full_name FROM users WHERE id = $1', [approval.requester_id])).rows[0];
+                if (requester) {
+                    if (txResult.type === 'leave' || txResult.type === 'leave_withdraw') {
+                        notifyByEmail('leaveApproved', requester, { leave_type: 'leave', date: '' });
+                        sendToUser(approval.requester_id, 'leave_update', { status: 'approved' });
+                    } else if (txResult.type === 'manual_entry') {
+                        let meta = {};
+                        if (approval.metadata) { try { meta = JSON.parse(approval.metadata); } catch {} }
+                        notifyByEmail('manualEntryApproved', requester, meta.date || '');
+                        sendToUser(approval.requester_id, 'approval_update', { status: 'approved', type: 'manual_entry' });
+                    }
+                }
+            }
+        } catch (notifErr) {
+            req.log.error({ err: notifErr }, 'Approval notification error');
+        }
+
         logAction(req, 'approve', 'approval_request', Number(id), { type: txResult.type });
         res.json({ message: 'Request approved' });
     } catch (err) {
@@ -465,6 +489,28 @@ router.post('/approvals/:id/reject', async (req, res) => {
         });
 
         if (txResult.error) return res.status(txResult.status).json({ error: txResult.error });
+
+        // Notify the requester about rejection
+        try {
+            const approval = (await query('SELECT * FROM approval_requests WHERE id = $1', [Number(id)])).rows[0];
+            if (approval) {
+                const requester = (await query('SELECT email, full_name FROM users WHERE id = $1', [approval.requester_id])).rows[0];
+                if (requester) {
+                    if (txResult.type === 'leave') {
+                        notifyByEmail('leaveRejected', requester, { leave_type: 'leave', date: '' }, reject_reason);
+                        sendToUser(approval.requester_id, 'leave_update', { status: 'rejected' });
+                    } else if (txResult.type === 'manual_entry') {
+                        let meta = {};
+                        if (approval.metadata) { try { meta = JSON.parse(approval.metadata); } catch {} }
+                        notifyByEmail('manualEntryRejected', requester, meta.date || '', reject_reason);
+                        sendToUser(approval.requester_id, 'approval_update', { status: 'rejected', type: 'manual_entry' });
+                    }
+                }
+            }
+        } catch (notifErr) {
+            req.log.error({ err: notifErr }, 'Rejection notification error');
+        }
+
         logAction(req, 'reject', 'approval_request', Number(id), { type: txResult.type, reject_reason });
         res.json({ message: 'Request rejected' });
     } catch (err) {

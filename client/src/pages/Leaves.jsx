@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { getLeaves, addLeave, addLeavesBatch, withdrawLeave, getLeaveSummary, getLeaveBalances } from '../api';
+import { getLeaves, addLeave, addLeavesBatch, withdrawLeave, getLeaveSummary, getLeaveBalances, exportMyLeaves } from '../api';
 import ConfirmDialog from '../components/ConfirmDialog';
+import ExportButton from '../components/ExportButton';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import s from './Leaves.module.css';
 
@@ -156,6 +157,11 @@ export default function Leaves() {
           <p className={s.subtitle}>Request time off, track approvals, and view your leave history</p>
         </div>
         <div className={s.headerRight}>
+          <ExportButton
+            fetchFn={exportMyLeaves}
+            params={{ year: filterMonth.split('-')[0] }}
+            label="Export Leaves"
+          />
           <input
             type="month"
             value={filterMonth}

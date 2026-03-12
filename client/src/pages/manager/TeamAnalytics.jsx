@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { getTeamAnalytics } from '../../api';
+import { getTeamAnalytics, exportTeamAnalytics, getLocalDate, getLocalToday } from '../../api';
 import { ROLE_LABELS, formatMin } from './constants';
 import TodayStatusBadge from './TodayStatusBadge';
 import PercentBar from './PercentBar';
 import MiniTrend from './MiniTrend';
 import MemberExpandedCard from './MemberExpandedCard';
+import ExportButton from '../../components/ExportButton';
 import s from '../Admin.module.css';
 import m from '../ManagerDashboard.module.css';
 
@@ -90,6 +91,14 @@ export default function TeamAnalytics({ onSelectMember }) {
                         {departments.map(d => <option key={d} value={d}>{d}</option>)}
                     </select>
                 )}
+                <ExportButton
+                    fetchFn={exportTeamAnalytics}
+                    params={{
+                        from: range === 'custom' ? customFrom : getLocalDate(Number(range)),
+                        to: range === 'custom' ? customTo : getLocalToday(),
+                    }}
+                    label="Export Team"
+                />
             </div>
 
             <div className={m.summaryGrid}>

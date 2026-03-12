@@ -5,6 +5,8 @@ const { loadUserContext, requireSameOrg, requireRole } = require('../middleware/
 const { findApprover } = require('../utils/approver');
 const { initializeBalances, getAccruedQuota } = require('./leavePolicy');
 const { logger } = require('../utils/logger');
+const { notifyByEmail } = require('../utils/mailer');
+const { sendToUser } = require('../utils/ws');
 
 const router = express.Router();
 router.use(auth, loadUserContext);
@@ -395,6 +397,13 @@ router.patch('/:id/approve', requireRole('manager'), async (req, res) => {
             await updateLeaveBalance(leave.user_id, leave.leave_type, leave.date, leave.duration || 'full', 'add', client);
         });
 
+        // Notify the leave requester
+        const leaveUser = (await query('SELECT email, full_name FROM users WHERE id = $1', [leave.user_id])).rows[0];
+        if (leaveUser) {
+            notifyByEmail('leaveApproved', leaveUser, leave);
+            sendToUser(leave.user_id, 'leave_update', { id: leave.id, status: 'approved' });
+        }
+
         res.json({ message: 'Leave approved' });
     } catch (err) {
         req.log.error({ err }, 'PATCH /leaves/:id/approve error');
@@ -426,6 +435,13 @@ router.patch('/:id/reject', requireRole('manager'), async (req, res) => {
                 [req.userId, reason || null, leave.id]
             );
         });
+
+        // Notify the leave requester
+        const leaveUser = (await query('SELECT email, full_name FROM users WHERE id = $1', [leave.user_id])).rows[0];
+        if (leaveUser) {
+            notifyByEmail('leaveRejected', leaveUser, leave, reason);
+            sendToUser(leave.user_id, 'leave_update', { id: leave.id, status: 'rejected' });
+        }
 
         res.json({ message: 'Leave rejected' });
     } catch (err) {
@@ -502,6 +518,13 @@ router.patch('/:id/revoke', requireRole('manager'), async (req, res) => {
             );
             await updateLeaveBalance(leave.user_id, leave.leave_type, leave.date, leave.duration || 'full', 'subtract', client);
         });
+
+        // Notify the leave requester
+        const leaveUser = (await query('SELECT email, full_name FROM users WHERE id = $1', [leave.user_id])).rows[0];
+        if (leaveUser) {
+            notifyByEmail('leaveRevoked', leaveUser, leave);
+            sendToUser(leave.user_id, 'leave_update', { id: leave.id, status: 'revoked' });
+        }
 
         res.json({ message: 'Leave revoked' });
     } catch (err) {

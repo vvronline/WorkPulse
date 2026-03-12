@@ -14,7 +14,8 @@ import {
   ArcElement,
 } from 'chart.js';
 import { Bar, Line, Doughnut } from 'react-chartjs-2';
-import { getAnalytics, getHistory, getLocalDate, getLocalToday } from '../api';
+import { getAnalytics, getHistory, getLocalDate, getLocalToday, exportMyAnalytics } from '../api';
+import ExportButton from '../components/ExportButton';
 import s from './Analytics.module.css';
 
 ChartJS.register(
@@ -249,6 +250,11 @@ export default function Analytics() {
             Last {d} days
           </button>
         ))}
+        <ExportButton
+          fetchFn={exportMyAnalytics}
+          params={{ from: getLocalDate(days), to: getLocalToday() }}
+          label="Export Analytics"
+        />
       </div>
 
       {loading ? (

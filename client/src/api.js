@@ -226,4 +226,11 @@ export const markNotificationRead = (id) => API.post(`/notifications/${id}/read`
 export const markAllNotificationsRead = () => API.post('/notifications/read-all');
 export const deleteNotification = (id) => API.delete(`/notifications/${id}`);
 
+// Export
+export const exportMyAnalytics = (params) => API.get('/export/my-analytics', { params, responseType: 'blob' });
+export const exportMyLeaves = (params) => API.get('/export/my-leaves', { params, responseType: 'blob' });
+export const exportMyTasks = (params) => API.get('/export/my-tasks', { params, responseType: 'blob' });
+export const exportTeamAnalytics = (params) => API.get('/export/team-analytics', { params, responseType: 'blob' });
+export const exportTeamLeaves = (params) => API.get('/export/team-leaves', { params, responseType: 'blob' });
+
 export default API;

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getNotifications, markNotificationRead, markAllNotificationsRead, deleteNotification } from '../api';
+import useWebSocket from '../hooks/useWebSocket';
 
 const POLL_INTERVAL = 30_000;
 
@@ -32,12 +33,19 @@ export default function NotificationBell() {
     } catch { /* ignore polling errors */ }
   }, []);
 
-  // Initial fetch + polling
+  // Initial fetch + polling (fallback for when WS is unavailable)
   useEffect(() => {
     fetchNotifs();
     const id = setInterval(fetchNotifs, POLL_INTERVAL);
     return () => clearInterval(id);
   }, [fetchNotifs]);
+
+  // WebSocket: refresh notifications on real-time events
+  useWebSocket(useCallback((msg) => {
+    if (['notification', 'leave_update', 'task_assigned', 'approval_update'].includes(msg.type)) {
+      fetchNotifs();
+    }
+  }, [fetchNotifs]));
 
   // Close on outside click / Escape
   useEffect(() => {

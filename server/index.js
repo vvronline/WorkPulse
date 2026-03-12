@@ -33,6 +33,8 @@ const leavePolicyRoutes = require('./routes/leavePolicy');
 const sprintsRoutes = require('./routes/sprints');
 const notesRoutes = require('./routes/notes');
 const notificationsRoutes = require('./routes/notifications');
+const exportRoutes = require('./routes/export');
+const { setupWebSocket } = require('./utils/ws');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -111,6 +113,7 @@ app.use('/api/manager', apiLimiter, managerRoutes);
 app.use('/api/leave-policy', apiLimiter, leavePolicyRoutes);
 app.use('/api/notes', apiLimiter, notesRoutes);
 app.use('/api/notifications', apiLimiter, notificationsRoutes);
+app.use('/api/export', apiLimiter, exportRoutes);
 
 app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
@@ -206,9 +209,12 @@ module.exports = { app };
 
 // Only start the server when run directly (not when imported for tests)
 if (require.main === module) {
+    const http = require('http');
     (async () => {
         await initDB();
-        const server = app.listen(PORT, () => {
+        const server = http.createServer(app);
+        setupWebSocket(server);
+        server.listen(PORT, () => {
             logger.info({ port: PORT }, 'Server running');
         });
 
