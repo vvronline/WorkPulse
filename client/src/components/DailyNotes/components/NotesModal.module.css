@@ -19,6 +19,15 @@
   to   { opacity: 1; transform: scale(1) translateY(0); }
 }
 
+/* Embedded mode — fills parent container instead of fixed overlay */
+.modalEmbedded {
+  max-width: none; max-height: none;
+  height: 100%; width: 100%;
+  border-radius: 12px;
+  box-shadow: none;
+  animation: none;
+}
+
 /* Header */
 .header {
   display: flex; align-items: center; justify-content: space-between;

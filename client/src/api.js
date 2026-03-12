@@ -224,6 +224,12 @@ export const saveNotes = (data) => API.put('/notes', { data });
 export const getPageHistory = (pageId) => API.get(`/notes/history/${encodeURIComponent(pageId)}`);
 export const getHistorySnapshot = (snapshotId) => API.get(`/notes/history/snapshot/${snapshotId}`);
 
+// Calendar
+export const getCalendarEvents = (from, to) => API.get('/calendar', { params: { from, to } });
+export const createCalendarEvent = (data) => API.post('/calendar', data);
+export const updateCalendarEvent = (id, data) => API.put(`/calendar/${id}`, data);
+export const deleteCalendarEvent = (id) => API.delete(`/calendar/${id}`);
+
 // Notifications
 export const getNotifications = () => API.get('/notifications');
 export const markNotificationRead = (id) => API.post(`/notifications/${id}/read`);

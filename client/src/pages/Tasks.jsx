@@ -12,7 +12,6 @@ import 'highlight.js/styles/github-dark.css';
 
 import { COLUMNS } from './tasks/constants.js';
 import KanbanBoard from './tasks/KanbanBoard.jsx';
-import MyDayPanel from './tasks/MyDayPanel.jsx';
 import SprintImportPanel from './tasks/SprintImportPanel.jsx';
 import BacklogTab from './tasks/BacklogTab.jsx';
 import TasksHeader from './tasks/TasksHeader.jsx';
@@ -39,7 +38,7 @@ export default function Tasks() {
   const [error, setError] = useAutoDismiss('');
   const [taskToDelete, setTaskToDelete] = useState(null);
   const [carriedCount, setCarriedCount] = useState(0);
-  const [activeTab, setActiveTab] = useState('myday');
+  const [activeTab, setActiveTab] = useState('backlog');
   const [backlogOpen] = useState(false);
   const [availableSprints, setAvailableSprints] = useState([]);
   const [selectedSprintId, setSelectedSprintId] = useState(null);
@@ -63,12 +62,9 @@ export default function Tasks() {
       } else if (activeTab === 'sprint' && !selectedSprintId) {
         setTasks([]);
         setStats({ total: 0, done: 0, inProgress: 0, percent: 0 });
-      } else if (activeTab === 'myday') {
-        params.scope = 'personal';
-        params.include_due = '1';
-        const res = await getTasks(date, params);
-        setTasks(res.data.tasks);
-        setStats(res.data.stats);
+      } else {
+        setTasks([]);
+        setStats({ total: 0, done: 0, inProgress: 0, percent: 0 });
       }
       setError('');
     } catch {
@@ -121,11 +117,11 @@ export default function Tasks() {
 
   useEffect(() => {
     if (!currentUser?.team_id) {
-      if (activeTab === 'sprint') setActiveTab('myday');
+      if (activeTab === 'sprint') setActiveTab('backlog');
       return;
     }
     getTeamSprintConfig(currentUser.team_id).catch(() => {
-      if (activeTab === 'sprint') setActiveTab('myday');
+      if (activeTab === 'sprint') setActiveTab('backlog');
     });
   }, [currentUser?.team_id]);
 
@@ -301,19 +297,6 @@ export default function Tasks() {
             </div>
           )}
         </>
-      )}
-
-      {activeTab === 'myday' && (
-        <MyDayPanel
-          tasks={tasks}
-          loading={loading}
-          stats={stats}
-          currentUser={currentUser}
-          error={error}
-          onOpenDetail={detail.openTaskDetail}
-          onToggleDone={handleToggleDone}
-          onDelete={handleDelete}
-        />
       )}
 
       {activeTab === 'backlog' && (

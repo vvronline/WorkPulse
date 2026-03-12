@@ -20,6 +20,7 @@ export function useNotesStore(userId) {
     const [savedFlash, setSavedFlash] = useState(false);
     const [expanded, setExpanded] = useState(false);
     const [maximized, setMaximized] = useState(false);
+    const [embedded, setEmbedded] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [sortBy, setSortBy] = useState('modified');
@@ -254,7 +255,7 @@ export function useNotesStore(userId) {
     useEffect(() => {
         const h = (e) => {
             const ctrl = e.ctrlKey || e.metaKey;
-            const active = expanded || maximized;
+            const active = expanded || maximized || embedded;
             if (!active) return;
 
             if (ctrl && e.key === 'n' && !e.shiftKey) {
@@ -285,7 +286,7 @@ export function useNotesStore(userId) {
         document.addEventListener('keydown', h);
         return () => document.removeEventListener('keydown', h);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [expanded, maximized, pages, folders, activePageId, sortBy, persist]);
+    }, [expanded, maximized, embedded, pages, folders, activePageId, sortBy, persist]);
 
     /* ══════════════════════════ Handlers ═══════════════════════ */
 
@@ -505,7 +506,7 @@ export function useNotesStore(userId) {
         // data
         pages, folders, activePage, activePageId, setActivePageId, processedPages, dropdownPages, wc,
         // ui state
-        savedFlash, expanded, setExpanded, maximized, setMaximized,
+        savedFlash, expanded, setExpanded, maximized, setMaximized, embedded, setEmbedded,
         menuOpen, setMenuOpen, searchQuery, setSearchQuery,
         sortBy, showArchived, setShowArchived,
         folderFilter, setFolderFilter,

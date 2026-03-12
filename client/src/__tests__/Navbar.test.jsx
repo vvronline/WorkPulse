@@ -41,13 +41,28 @@ describe('Navbar', () => {
         renderNavbar('/');
         // Desktop and mobile nav both render these, so use getAllByText
         expect(screen.getAllByText('Dashboard').length).toBeGreaterThanOrEqual(1);
-        expect(screen.getAllByText('Planner').length).toBeGreaterThanOrEqual(1);
+        expect(screen.getAllByText('Calendar').length).toBeGreaterThanOrEqual(1);
+        expect(screen.getAllByText('Tasks').length).toBeGreaterThanOrEqual(1);
+        expect(screen.getAllByText('Notes').length).toBeGreaterThanOrEqual(1);
         expect(screen.getAllByText('Leaves').length).toBeGreaterThanOrEqual(1);
         expect(screen.getAllByText('Analytics').length).toBeGreaterThanOrEqual(1);
     });
 
-    test('shows More dropdown', () => {
+    test('does not render old Planner link', () => {
+        renderNavbar('/');
+        expect(screen.queryByText('Planner')).not.toBeInTheDocument();
+    });
+
+    test('shows More dropdown button', () => {
         renderNavbar('/');
         expect(screen.getByText('More')).toBeInTheDocument();
+    });
+
+    test('applies active class to matching route link', () => {
+        renderNavbar('/calendar');
+        // At least one Calendar link should carry the active class
+        const calendarLinks = screen.getAllByText('Calendar');
+        const anyActive = calendarLinks.some(el => el.closest('a')?.className.includes('active'));
+        expect(anyActive).toBe(true);
     });
 });

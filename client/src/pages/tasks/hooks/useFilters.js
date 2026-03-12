@@ -29,7 +29,7 @@ export function useFilters({ activeTab }) {
 
   const filterCount = useMemo(() => {
     const base = [filterAssignee, filterLabel, filterPriority, filterSearch.trim()];
-    if (activeTab === 'myday' || activeTab === 'sprint') base.push(filterStatus);
+    if (activeTab === 'sprint') base.push(filterStatus);
     return base.filter(Boolean).length;
   }, [filterAssignee, filterLabel, filterPriority, filterStatus, filterSearch, activeTab]);
 

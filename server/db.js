@@ -437,6 +437,26 @@ async function initDB() {
     `);
 
     await query(`
+        CREATE TABLE IF NOT EXISTS calendar_events (
+            id          SERIAL PRIMARY KEY,
+            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            org_id      INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
+            title       TEXT NOT NULL,
+            description TEXT,
+            start_time  TIMESTAMPTZ NOT NULL,
+            end_time    TIMESTAMPTZ NOT NULL,
+            all_day     BOOLEAN NOT NULL DEFAULT FALSE,
+            color       TEXT DEFAULT '#6366f1',
+            task_id     INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+            created_at  TIMESTAMPTZ DEFAULT NOW(),
+            updated_at  TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    await query(`
+        CREATE INDEX IF NOT EXISTS idx_cal_events_user_time ON calendar_events(user_id, start_time, end_time);
+    `);
+
+    await query(`
         CREATE TABLE IF NOT EXISTS notebook_history (
             id         SERIAL PRIMARY KEY,
             user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

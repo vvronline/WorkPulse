@@ -5,7 +5,7 @@ import ModalSidebar from './ModalSidebar';
 import ModalEditor from './ModalEditor';
 import s from './NotesModal.module.css';
 
-export default function NotesModal({ store }) {
+export default function NotesModal({ store, embedded = false }) {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const {
     activePage, activePageId, processedPages, folders, wc,
@@ -37,9 +37,9 @@ export default function NotesModal({ store }) {
 
   const folderName = (fid) => folders.find(f => f.id === fid)?.name || '';
 
-  return createPortal(
-    <div className={s.overlay} onClick={e => { if (e.target === e.currentTarget) setMaximized(false); }}>
-      <div className={s.modal}>
+  const content =
+    <div className={embedded ? undefined : s.overlay} onClick={!embedded ? (e => { if (e.target === e.currentTarget) setMaximized(false); }) : undefined}>
+      <div className={`${s.modal} ${embedded ? s.modalEmbedded : ''}`}>
         {/* Header */}
         <div className={s.header}>
           <div className={s.headerLeft}>
@@ -73,11 +73,13 @@ export default function NotesModal({ store }) {
               </svg>
               New page
             </button>
-            <button className={s.closeBtn} onClick={() => setMaximized(false)} title="Close (Esc)">
-              <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <path d="M2 2l10 10M12 2L2 12"/>
-              </svg>
-            </button>
+            {!embedded && (
+              <button className={s.closeBtn} onClick={() => setMaximized(false)} title="Close (Esc)">
+                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M2 2l10 10M12 2L2 12"/>
+                </svg>
+              </button>
+            )}
           </div>
         </div>
 
@@ -139,7 +141,8 @@ export default function NotesModal({ store }) {
           />
         </div>
       </div>
-    </div>,
-    document.body,
-  );
+    </div>;
+
+  if (embedded) return content;
+  return createPortal(content, document.body);
 }

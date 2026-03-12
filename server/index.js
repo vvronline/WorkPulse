@@ -32,6 +32,8 @@ const managerRoutes = require('./routes/manager');
 const leavePolicyRoutes = require('./routes/leavePolicy');
 const sprintsRoutes = require('./routes/sprints');
 const notesRoutes = require('./routes/notes');
+
+const calendarRoutes = require('./routes/calendar');
 const notificationsRoutes = require('./routes/notifications');
 const exportRoutes = require('./routes/export');
 const { setupWebSocket } = require('./utils/ws');
@@ -60,7 +62,9 @@ app.use(cors({
             return callback(new Error('Not allowed by CORS'));
         }
         if (process.env.NODE_ENV === 'production') {
-            // No CORS_ORIGIN configured — reject all cross-origin requests
+            // Allow same-origin requests (SPA served by this server)
+            const selfOrigins = [`http://localhost:${PORT}`, 'http://localhost', 'https://localhost'];
+            if (selfOrigins.includes(origin)) return callback(null, true);
             return callback(new Error('Not allowed by CORS'));
         }
         const serverOrigin = `http://localhost:${PORT}`;
@@ -114,6 +118,7 @@ app.use('/api/admin', apiLimiter, adminRoutes);
 app.use('/api/manager', apiLimiter, managerRoutes);
 app.use('/api/leave-policy', apiLimiter, leavePolicyRoutes);
 app.use('/api/notes', apiLimiter, notesRoutes);
+app.use('/api/calendar', apiLimiter, calendarRoutes);
 app.use('/api/notifications', apiLimiter, notificationsRoutes);
 app.use('/api/export', apiLimiter, exportRoutes);
 

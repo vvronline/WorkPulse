@@ -19,6 +19,8 @@ const Analytics = lazy(() => import('./pages/Analytics'));
 const ManualEntry = lazy(() => import('./pages/ManualEntry'));
 const Leaves = lazy(() => import('./pages/Leaves'));
 const Tasks = lazy(() => import('./pages/Tasks'));
+const CalendarPage = lazy(() => import('./pages/CalendarPage'));
+const NotesPage = lazy(() => import('./pages/NotesPage'));
 
 // Enterprise pages
 const Admin = lazy(() => import('./pages/Admin'));
@@ -66,6 +68,8 @@ function AppRoutes() {
           <Route path="/manual-entry" element={<ProtectedRoute><ManualEntry /></ProtectedRoute>} />
           <Route path="/leaves" element={<ProtectedRoute><Leaves /></ProtectedRoute>} />
           <Route path="/tasks" element={<ProtectedRoute><Tasks /></ProtectedRoute>} />
+          <Route path="/calendar" element={<ProtectedRoute><CalendarPage /></ProtectedRoute>} />
+          <Route path="/notes" element={<ProtectedRoute><NotesPage /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute minRole="hr_admin"><Admin /></ProtectedRoute>} />
           <Route path="/manager" element={<ProtectedRoute minRole="team_lead"><ManagerDashboard /></ProtectedRoute>} />
           <Route path="/leave-policy" element={<ProtectedRoute><LeavePolicy /></ProtectedRoute>} />

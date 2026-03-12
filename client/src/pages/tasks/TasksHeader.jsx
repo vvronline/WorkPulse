@@ -79,23 +79,12 @@ export default function TasksHeader({
                   : 'Loading sprint…'}
               </p>
             </>
-          ) : activeTab === 'backlog' ? (
+          ) : (
             <>
               <h2>
                 <span className="page-icon">📦</span> Backlog
               </h2>
               <p>Unscheduled items waiting to be planned</p>
-            </>
-          ) : (
-            <>
-              <h2>
-                <span className="page-icon">☀️</span> My Day
-              </h2>
-              <p>
-                {isToday
-                  ? 'Your personal tasks for today'
-                  : `Tasks for ${formatDate(date)}`}
-              </p>
             </>
           )}
         </div>
@@ -103,12 +92,6 @@ export default function TasksHeader({
         <div className={s['tasks-header-actions']}>
           {/* Tab switcher */}
           <div className={s['tab-switcher']}>
-            <button
-              className={`${s['tab-btn']} ${activeTab === 'myday' ? s['tab-active'] : ''}`}
-              onClick={() => setActiveTab('myday')}
-            >
-              ☀️ My Day
-            </button>
             {currentUser?.team_id && availableSprints.length > 0 && (
               <button
                 className={`${s['tab-btn']} ${activeTab === 'sprint' ? s['tab-active'] : ''}`}
@@ -147,16 +130,6 @@ export default function TasksHeader({
                 </option>
               ))}
             </select>
-          )}
-
-          {/* Date picker for My Day */}
-          {activeTab === 'myday' && (
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className={s['date-input']}
-            />
           )}
 
           <button
@@ -332,7 +305,7 @@ export default function TasksHeader({
                 ))}
               </select>
             </div>
-            {(activeTab === 'myday' || activeTab === 'sprint') && (
+            {activeTab === 'sprint' && (
               <div className={s['filter-group']}>
                 <label>Status</label>
                 <select
