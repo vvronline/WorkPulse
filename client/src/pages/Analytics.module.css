@@ -49,10 +49,17 @@
   gap: 0.5rem;
 }
 
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
 .date-filter {
   display: flex;
   gap: 0.4rem;
-  margin-bottom: 1.5rem;
   flex-wrap: wrap;
   background: var(--surface);
   padding: 4px;

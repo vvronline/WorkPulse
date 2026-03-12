@@ -50,38 +50,85 @@ function sendPDF(res, { title, columns, rows, filename }) {
         return;
     }
 
-    // Table
+    // Table layout
     const tableLeft = doc.page.margins.left;
     const usableWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-    const colWidths = columns.map(c => c.width || Math.floor(usableWidth / columns.length));
 
-    // Header row
-    let x = tableLeft;
-    const headerY = doc.y;
-    doc.font('Helvetica-Bold').fontSize(8);
-    columns.forEach((col, i) => {
-        doc.text(col.header, x, headerY, { width: colWidths[i], align: 'left' });
-        x += colWidths[i];
-    });
-    doc.moveDown(0.3);
-    doc.moveTo(tableLeft, doc.y).lineTo(tableLeft + usableWidth, doc.y).stroke('#ccc');
-    doc.moveDown(0.3);
+    // Calculate column widths: use explicit widths if provided, else distribute evenly
+    const totalExplicit = columns.reduce((sum, c) => sum + (c.width || 0), 0);
+    const colWidths = totalExplicit > 0
+        ? columns.map(c => c.width || Math.floor(usableWidth / columns.length))
+        : columns.map(() => Math.floor(usableWidth / columns.length));
 
-    // Data rows
-    doc.font('Helvetica').fontSize(7);
-    rows.forEach(row => {
-        if (doc.y > doc.page.height - 60) {
-            doc.addPage();
-            doc.font('Helvetica').fontSize(7);
+    // Scale widths to fit usable area
+    const rawTotal = colWidths.reduce((s, w) => s + w, 0);
+    if (rawTotal !== usableWidth) {
+        const scale = usableWidth / rawTotal;
+        for (let i = 0; i < colWidths.length; i++) colWidths[i] = Math.floor(colWidths[i] * scale);
+    }
+
+    const cellPadding = 4;
+    const rowSpacing = 6;
+
+    // Helper: draw a row and return the height consumed
+    function drawRow(y, values, font, fontSize, options = {}) {
+        doc.font(font).fontSize(fontSize);
+        // First pass: measure heights
+        const heights = values.map((val, i) => {
+            return doc.heightOfString(val, { width: colWidths[i] - cellPadding * 2 });
+        });
+        const rowHeight = Math.max(...heights) + cellPadding * 2;
+
+        // Draw background stripe if requested
+        if (options.bg) {
+            doc.save().rect(tableLeft, y, usableWidth, rowHeight).fill(options.bg).restore();
+            doc.font(font).fontSize(fontSize); // restore after fill
         }
-        x = tableLeft;
-        const rowY = doc.y;
-        columns.forEach((col, i) => {
-            const val = row[col.key] != null ? String(row[col.key]) : '';
-            doc.text(val, x, rowY, { width: colWidths[i], align: 'left' });
+
+        // Second pass: render text centered vertically in the row
+        let x = tableLeft;
+        values.forEach((val, i) => {
+            const textY = y + cellPadding;
+            doc.fillColor(options.textColor || '#333333')
+               .text(val, x + cellPadding, textY, { width: colWidths[i] - cellPadding * 2 });
             x += colWidths[i];
         });
-        doc.moveDown(0.5);
+
+        return rowHeight;
+    }
+
+    // Header row
+    const headerValues = columns.map(c => c.header);
+    const headerHeight = drawRow(doc.y, headerValues, 'Helvetica-Bold', 8, { bg: '#f0f0f0', textColor: '#444444' });
+    doc.y += headerHeight;
+
+    // Divider line
+    doc.moveTo(tableLeft, doc.y).lineTo(tableLeft + usableWidth, doc.y).lineWidth(0.5).stroke('#cccccc');
+    doc.y += 2;
+
+    // Data rows
+    rows.forEach((row, idx) => {
+        const values = columns.map(col => row[col.key] != null ? String(row[col.key]) : '');
+
+        // Measure to check if we need a page break
+        doc.font('Helvetica').fontSize(7);
+        const heights = values.map((val, i) =>
+            doc.heightOfString(val, { width: colWidths[i] - cellPadding * 2 })
+        );
+        const neededHeight = Math.max(...heights) + cellPadding * 2 + rowSpacing;
+
+        if (doc.y + neededHeight > doc.page.height - doc.page.margins.bottom) {
+            doc.addPage();
+            // Re-render header on new page
+            const hh = drawRow(doc.y, headerValues, 'Helvetica-Bold', 8, { bg: '#f0f0f0', textColor: '#444444' });
+            doc.y += hh;
+            doc.moveTo(tableLeft, doc.y).lineTo(tableLeft + usableWidth, doc.y).lineWidth(0.5).stroke('#cccccc');
+            doc.y += 2;
+        }
+
+        const bg = idx % 2 === 1 ? '#f9f9f9' : undefined;
+        const rh = drawRow(doc.y, values, 'Helvetica', 7, { bg, textColor: '#333333' });
+        doc.y += rh + rowSpacing;
     });
 
     doc.end();

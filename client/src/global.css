@@ -232,6 +232,25 @@ body {
   width: auto !important;
 }
 
+.btn-outline {
+  background: transparent;
+  border: 1.5px solid var(--glass-border);
+  color: var(--text-secondary);
+  box-shadow: none;
+}
+
+.btn-outline:hover {
+  background: var(--surface-hover);
+  border-color: var(--primary);
+  color: var(--primary-light);
+  transform: translateY(-1px);
+}
+
+.btn-outline:disabled {
+  opacity: 0.4;
+  border-color: var(--glass-border);
+}
+
 .btn-secondary {
   background: var(--surface);
   border: 1.5px solid var(--glass-border);

@@ -35,7 +35,7 @@ export default function ExportButton({ fetchFn, params, label = 'Export' }) {
     };
 
     return (
-        <span className="export-btn-group" style={{ display: 'inline-flex', gap: 4 }}>
+        <span className="export-btn-group" style={{ display: 'inline-flex', gap: '6px' }}>
             <button
                 className="btn btn-sm btn-outline"
                 onClick={() => handleExport('csv')}

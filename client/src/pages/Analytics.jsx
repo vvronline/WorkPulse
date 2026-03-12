@@ -239,17 +239,19 @@ export default function Analytics() {
     <div className={s.analytics}>
       <h2><span className="page-icon">📊</span> Analytics & History</h2>
 
-      {/* Date filter */}
-      <div className={s['date-filter']}>
-        {[7, 14, 30].map(d => (
-          <button
-            key={d}
-            className={days === d ? s.active : ''}
-            onClick={() => setDays(d)}
-          >
-            Last {d} days
-          </button>
-        ))}
+      {/* Date filter + Export */}
+      <div className={s.toolbar}>
+        <div className={s['date-filter']}>
+          {[7, 14, 30].map(d => (
+            <button
+              key={d}
+              className={days === d ? s.active : ''}
+              onClick={() => setDays(d)}
+            >
+              Last {d} days
+            </button>
+          ))}
+        </div>
         <ExportButton
           fetchFn={exportMyAnalytics}
           params={{ from: getLocalDate(days), to: getLocalToday() }}
