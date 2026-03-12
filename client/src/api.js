@@ -243,4 +243,24 @@ export const exportMyTasks = (params) => API.get('/export/my-tasks', { params, r
 export const exportTeamAnalytics = (params) => API.get('/export/team-analytics', { params, responseType: 'blob' });
 export const exportTeamLeaves = (params) => API.get('/export/team-leaves', { params, responseType: 'blob' });
 
+// Chat
+export const searchChatUsers = (q) => API.get('/chat/search', { params: { q } });
+export const getPresence = (userIds) => API.get('/chat/presence', { params: { userIds: userIds.join(',') } });
+export const getConversations = () => API.get('/chat/conversations');
+export const createConversation = (userId) => API.post('/chat/conversations', { userId });
+export const createGroup = (name, userIds) => API.post('/chat/conversations/group', { name, userIds });
+export const updateGroup = (convId, data) => API.put(`/chat/conversations/${convId}/group`, data);
+export const getMembers = (convId) => API.get(`/chat/conversations/${convId}/members`);
+export const getMessages = (convId, before) => API.get(`/chat/conversations/${convId}/messages`, { params: { before } });
+export const markConversationRead = (convId) => API.post(`/chat/conversations/${convId}/read`);
+export const getReadStatus = (convId) => API.get(`/chat/conversations/${convId}/read-status`);
+export const uploadChatFile = (convId, formData) => API.post(`/chat/conversations/${convId}/files`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+export const toggleReaction = (msgId, emoji) => API.post(`/chat/messages/${msgId}/reactions`, { emoji });
+export const editMessage = (msgId, content) => API.put(`/chat/messages/${msgId}`, { content });
+export const deleteMessage = (msgId) => API.delete(`/chat/messages/${msgId}`);
+export const togglePin = (msgId) => API.post(`/chat/messages/${msgId}/pin`);
+export const getPinnedMessages = (convId) => API.get(`/chat/conversations/${convId}/pinned`);
+export const searchMessages = (q, convId) => API.get('/chat/search-messages', { params: { q, convId } });
+export const forwardMessage = (msgId, conversationIds) => API.post(`/chat/messages/${msgId}/forward`, { conversationIds });
+
 export default API;

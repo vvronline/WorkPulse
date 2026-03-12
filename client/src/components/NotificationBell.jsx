@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getNotifications, markNotificationRead, markAllNotificationsRead, deleteNotification } from '../api';
 import useWebSocket from '../hooks/useWebSocket';
+import { useChatUnread } from '../ChatContext';
 
 const POLL_INTERVAL = 30_000;
 
@@ -40,12 +41,17 @@ export default function NotificationBell() {
     return () => clearInterval(id);
   }, [fetchNotifs]);
 
+  const { refreshUnread: refreshChatUnread } = useChatUnread();
+
   // WebSocket: refresh notifications on real-time events
   useWebSocket(useCallback((msg) => {
     if (['notification', 'leave_update', 'task_assigned', 'approval_update'].includes(msg.type)) {
       fetchNotifs();
     }
-  }, [fetchNotifs]));
+    if (msg.type === 'chat_message') {
+      refreshChatUnread();
+    }
+  }, [fetchNotifs, refreshChatUnread]));
 
   // Close on outside click / Escape
   useEffect(() => {

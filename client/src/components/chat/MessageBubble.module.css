@@ -1,0 +1,139 @@
+.row {
+    display: flex;
+    padding: 2px 16px;
+}
+.mine { justify-content: flex-end; }
+.theirs { justify-content: flex-start; }
+
+.bubble {
+    position: relative;
+    max-width: 70%;
+    padding: 8px 12px;
+    border-radius: 12px;
+    word-break: break-word;
+    line-height: 1.45;
+    font-size: 0.9rem;
+}
+.myBubble {
+    background: var(--primary);
+    color: #fff;
+    border-bottom-right-radius: 4px;
+}
+.theirBubble {
+    background: var(--glass);
+    color: var(--text);
+    border-bottom-left-radius: 4px;
+}
+.pinned { border-left: 3px solid #f59e0b; }
+.deleted {
+    background: var(--surface-hover);
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.pinnedBadge {
+    font-size: 0.7rem;
+    color: #f59e0b;
+    margin-bottom: 4px;
+}
+.forwarded {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+    font-style: italic;
+}
+.senderName {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--primary);
+    margin-bottom: 2px;
+}
+.theirBubble .senderName { color: var(--primary); }
+
+.text { margin: 4px 0; }
+.link {
+    color: inherit;
+    text-decoration: underline;
+    word-break: break-all;
+}
+.myBubble .link { color: #dbeafe; }
+
+.meta {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    justify-content: flex-end;
+    margin-top: 2px;
+}
+.time {
+    font-size: 0.65rem;
+    opacity: 0.7;
+}
+.edited {
+    font-size: 0.6rem;
+    opacity: 0.6;
+    font-style: italic;
+}
+
+/* Hover actions */
+.hoverActions {
+    position: absolute;
+    top: -14px;
+    right: 4px;
+    display: none;
+    gap: 2px;
+    padding: 2px 4px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.15);
+}
+.bubble:hover .hoverActions { display: flex; }
+.hoverActions button {
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 2px 4px;
+    border-radius: 4px;
+    transition: background var(--transition-fast);
+}
+.hoverActions button:hover { background: var(--surface-hover); }
+
+/* Reactions */
+.reactions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+}
+.reactionChip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 6px;
+    font-size: 0.75rem;
+    background: var(--surface-hover);
+    border: 1px solid var(--glass-border);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+.reactionChip:hover { background: var(--glass-border); }
+.myReaction {
+    border-color: var(--primary);
+    background: rgba(99,102,241,.15);
+}
+
+.pickerWrap {
+    position: absolute;
+    top: -46px;
+    right: 0;
+    z-index: 100;
+}
+.mine .pickerWrap { right: 0; }
+.theirs .pickerWrap { left: 0; right: auto; }
+
+@media (max-width: 768px) {
+    .bubble { max-width: 85%; }
+}

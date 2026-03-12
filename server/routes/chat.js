@@ -1,0 +1,886 @@
+const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const { query, transaction } = require('../db');
+const auth = require('../middleware/auth');
+const { sendToUser } = require('../utils/ws');
+
+const router = express.Router();
+
+// ─── File upload setup ───
+const uploadDir = path.join(__dirname, '..', 'uploads', 'chat');
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, uploadDir),
+    filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname).toLowerCase();
+        cb(null, `${req.userId}_${Date.now()}${ext}`);
+    }
+});
+
+const chatUpload = multer({
+    storage,
+    limits: { fileSize: 25 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+        const blockedExts = ['.exe', '.bat', '.cmd', '.sh', '.ps1', '.msi', '.dll', '.com'];
+        const ext = path.extname(file.originalname).toLowerCase();
+        if (blockedExts.includes(ext)) cb(new Error('File type not allowed'));
+        else cb(null, true);
+    }
+});
+
+// ─── Helper: verify participant ───
+async function verifyParticipant(convId, userId) {
+    const r = await query(
+        'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
+        [convId, userId]
+    );
+    return r.rows.length > 0;
+}
+
+// ─── Helper: get user org ───
+async function getUserOrg(userId) {
+    const r = await query('SELECT org_id FROM users WHERE id = $1', [userId]);
+    return r.rows[0]?.org_id;
+}
+
+/**
+ * GET /api/chat/search?q=term
+ */
+router.get('/search', auth, async (req, res) => {
+    try {
+        const { q } = req.query;
+        if (!q || q.trim().length < 2) return res.json([]);
+
+        const orgId = await getUserOrg(req.userId);
+        if (!orgId) return res.json([]);
+
+        const term = `%${q.trim()}%`;
+        const rows = (await query(`
+            SELECT id, username, full_name, email, avatar, last_seen_at
+            FROM users
+            WHERE org_id = $1 AND id != $2 AND is_active = TRUE
+              AND (username ILIKE $3 OR full_name ILIKE $3 OR email ILIKE $3)
+            ORDER BY full_name ASC
+            LIMIT 20
+        `, [orgId, req.userId, term])).rows;
+
+        res.json(rows);
+    } catch (err) {
+        req.log.error({ err }, 'Chat search error');
+        res.status(500).json({ error: 'Search failed' });
+    }
+});
+
+/**
+ * GET /api/chat/presence?userIds=1,2,3
+ */
+router.get('/presence', auth, async (req, res) => {
+    try {
+        const { userIds } = req.query;
+        if (!userIds) return res.json({});
+        const ids = userIds.split(',').map(Number).filter(n => n > 0);
+        if (ids.length === 0) return res.json({});
+
+        const rows = (await query(
+            'SELECT id, last_seen_at FROM users WHERE id = ANY($1)',
+            [ids]
+        )).rows;
+
+        const result = {};
+        const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
+        for (const r of rows) {
+            result[r.id] = r.last_seen_at && new Date(r.last_seen_at) > fiveMinAgo ? 'online' : 'offline';
+        }
+        res.json(result);
+    } catch (err) {
+        req.log.error({ err }, 'Presence error');
+        res.status(500).json({ error: 'Failed to get presence' });
+    }
+});
+
+/**
+ * POST /api/chat/conversations  { userId }
+ */
+router.post('/conversations', auth, async (req, res) => {
+    try {
+        const { userId: otherUserId } = req.body;
+        if (!otherUserId || otherUserId === req.userId) {
+            return res.status(400).json({ error: 'Invalid user' });
+        }
+
+        const users = (await query(
+            'SELECT id, org_id FROM users WHERE id = ANY($1) AND is_active = TRUE',
+            [[req.userId, otherUserId]]
+        )).rows;
+        if (users.length !== 2) return res.status(400).json({ error: 'User not found' });
+        if (users[0].org_id !== users[1].org_id || !users[0].org_id) {
+            return res.status(403).json({ error: 'Users must be in the same organization' });
+        }
+        const orgId = users[0].org_id;
+
+        const existing = (await query(`
+            SELECT cp1.conversation_id
+            FROM conversation_participants cp1
+            JOIN conversation_participants cp2 ON cp1.conversation_id = cp2.conversation_id
+            JOIN conversations c ON c.id = cp1.conversation_id
+            WHERE cp1.user_id = $1 AND cp2.user_id = $2
+              AND c.is_group = FALSE
+              AND (SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = cp1.conversation_id) = 2
+            LIMIT 1
+        `, [req.userId, otherUserId])).rows[0];
+
+        if (existing) {
+            return res.json({ conversationId: existing.conversation_id });
+        }
+
+        const conv = await transaction(async (client) => {
+            const c = (await client.query(
+                'INSERT INTO conversations (org_id) VALUES ($1) RETURNING id',
+                [orgId]
+            )).rows[0];
+            await client.query(
+                'INSERT INTO conversation_participants (conversation_id, user_id) VALUES ($1, $2), ($1, $3)',
+                [c.id, req.userId, otherUserId]
+            );
+            return c;
+        });
+
+        res.status(201).json({ conversationId: conv.id });
+    } catch (err) {
+        req.log.error({ err }, 'Create conversation error');
+        res.status(500).json({ error: 'Failed to create conversation' });
+    }
+});
+
+/**
+ * POST /api/chat/conversations/group  { name, userIds: [id, ...] }
+ */
+router.post('/conversations/group', auth, async (req, res) => {
+    try {
+        const { name, userIds } = req.body;
+        if (!name || !name.trim()) return res.status(400).json({ error: 'Group name is required' });
+        if (!Array.isArray(userIds) || userIds.length < 1) {
+            return res.status(400).json({ error: 'At least one other user is required' });
+        }
+
+        const allIds = [...new Set([req.userId, ...userIds.map(Number)])];
+        const orgId = await getUserOrg(req.userId);
+        if (!orgId) return res.status(400).json({ error: 'No organization' });
+
+        const users = (await query(
+            'SELECT id FROM users WHERE id = ANY($1) AND org_id = $2 AND is_active = TRUE',
+            [allIds, orgId]
+        )).rows;
+        if (users.length !== allIds.length) {
+            return res.status(400).json({ error: 'Some users not found in your organization' });
+        }
+
+        const conv = await transaction(async (client) => {
+            const c = (await client.query(
+                'INSERT INTO conversations (org_id, name, is_group) VALUES ($1, $2, TRUE) RETURNING id',
+                [orgId, name.trim().slice(0, 100)]
+            )).rows[0];
+            const values = allIds.map((uid, i) => `($1, $${i + 2})`).join(', ');
+            await client.query(
+                `INSERT INTO conversation_participants (conversation_id, user_id) VALUES ${values}`,
+                [c.id, ...allIds]
+            );
+            return c;
+        });
+
+        for (const uid of allIds) {
+            if (uid !== req.userId) {
+                sendToUser(uid, 'chat_group_created', { conversationId: conv.id, name: name.trim() });
+            }
+        }
+
+        res.status(201).json({ conversationId: conv.id });
+    } catch (err) {
+        req.log.error({ err }, 'Create group error');
+        res.status(500).json({ error: 'Failed to create group' });
+    }
+});
+
+/**
+ * PUT /api/chat/conversations/:id/group  { name?, addUserIds?, removeUserIds? }
+ */
+router.put('/conversations/:id/group', auth, async (req, res) => {
+    try {
+        const convId = parseInt(req.params.id, 10);
+        if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
+
+        const conv = (await query('SELECT * FROM conversations WHERE id = $1 AND is_group = TRUE', [convId])).rows[0];
+        if (!conv) return res.status(404).json({ error: 'Group not found' });
+        if (!(await verifyParticipant(convId, req.userId))) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        const { name, addUserIds, removeUserIds } = req.body;
+
+        if (name !== undefined) {
+            await query('UPDATE conversations SET name = $1 WHERE id = $2', [name.trim().slice(0, 100), convId]);
+        }
+
+        if (Array.isArray(addUserIds) && addUserIds.length > 0) {
+            const valid = (await query(
+                'SELECT id FROM users WHERE id = ANY($1) AND org_id = $2 AND is_active = TRUE',
+                [addUserIds, conv.org_id]
+            )).rows.map(r => r.id);
+            for (const uid of valid) {
+                await query(
+                    'INSERT INTO conversation_participants (conversation_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+                    [convId, uid]
+                );
+                sendToUser(uid, 'chat_group_added', { conversationId: convId });
+            }
+        }
+
+        if (Array.isArray(removeUserIds) && removeUserIds.length > 0) {
+            for (const uid of removeUserIds) {
+                if (uid === req.userId) continue;
+                await query(
+                    'DELETE FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
+                    [convId, uid]
+                );
+                sendToUser(uid, 'chat_group_removed', { conversationId: convId });
+            }
+        }
+
+        res.json({ ok: true });
+    } catch (err) {
+        req.log.error({ err }, 'Update group error');
+        res.status(500).json({ error: 'Failed to update group' });
+    }
+});
+
+/**
+ * GET /api/chat/conversations/:id/members
+ */
+router.get('/conversations/:id/members', auth, async (req, res) => {
+    try {
+        const convId = parseInt(req.params.id, 10);
+        if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
+        if (!(await verifyParticipant(convId, req.userId))) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        const rows = (await query(`
+            SELECT u.id, u.username, u.full_name, u.avatar, u.last_seen_at
+            FROM conversation_participants cp
+            JOIN users u ON u.id = cp.user_id
+            WHERE cp.conversation_id = $1
+            ORDER BY u.full_name
+        `, [convId])).rows;
+
+        res.json(rows);
+    } catch (err) {
+        req.log.error({ err }, 'Get members error');
+        res.status(500).json({ error: 'Failed to get members' });
+    }
+});
+
+/**
+ * GET /api/chat/conversations
+ */
+router.get('/conversations', auth, async (req, res) => {
+    try {
+        const rows = (await query(`
+            SELECT
+                c.id,
+                c.updated_at,
+                c.name AS group_name,
+                c.is_group,
+                CASE WHEN c.is_group = FALSE THEN u.id END        AS other_user_id,
+                CASE WHEN c.is_group = FALSE THEN u.username END   AS other_username,
+                CASE WHEN c.is_group = FALSE THEN u.full_name END  AS other_full_name,
+                CASE WHEN c.is_group = FALSE THEN u.avatar END     AS other_avatar,
+                CASE WHEN c.is_group = FALSE THEN u.last_seen_at END AS other_last_seen,
+                m.content   AS last_message,
+                m.sender_id AS last_sender_id,
+                m.sender_name AS last_sender_name,
+                m.created_at AS last_message_at,
+                m.file_url  AS last_file_url,
+                m.deleted_at AS last_deleted,
+                COALESCE(mr.last_read_at, '1970-01-01'::timestamptz) AS last_read_at,
+                (SELECT COUNT(*)::int FROM messages msg
+                 WHERE msg.conversation_id = c.id
+                   AND msg.created_at > COALESCE(mr.last_read_at, '1970-01-01'::timestamptz)
+                   AND msg.sender_id != $1
+                   AND msg.deleted_at IS NULL
+                ) AS unread_count,
+                CASE WHEN c.is_group THEN
+                    (SELECT COUNT(*)::int FROM conversation_participants WHERE conversation_id = c.id)
+                END AS member_count
+            FROM conversations c
+            JOIN conversation_participants cp ON cp.conversation_id = c.id AND cp.user_id = $1
+            LEFT JOIN conversation_participants cp2
+                ON cp2.conversation_id = c.id AND cp2.user_id != $1 AND c.is_group = FALSE
+            LEFT JOIN users u ON u.id = cp2.user_id AND c.is_group = FALSE
+            LEFT JOIN LATERAL (
+                SELECT lm.content, lm.sender_id, lm.created_at, lm.file_url, lm.deleted_at, usr.full_name AS sender_name
+                FROM messages lm
+                JOIN users usr ON usr.id = lm.sender_id
+                WHERE lm.conversation_id = c.id
+                ORDER BY lm.created_at DESC LIMIT 1
+            ) m ON TRUE
+            LEFT JOIN message_reads mr ON mr.conversation_id = c.id AND mr.user_id = $1
+            ORDER BY COALESCE(m.created_at, c.created_at) DESC
+        `, [req.userId])).rows;
+
+        res.json(rows);
+    } catch (err) {
+        req.log.error({ err }, 'List conversations error');
+        res.status(500).json({ error: 'Failed to list conversations' });
+    }
+});
+
+/**
+ * GET /api/chat/conversations/:id/messages?before=id&limit=50
+ */
+router.get('/conversations/:id/messages', auth, async (req, res) => {
+    try {
+        const convId = parseInt(req.params.id, 10);
+        if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
+
+        if (!(await verifyParticipant(convId, req.userId))) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
+        const before = parseInt(req.query.before, 10) || null;
+
+        let sql = `
+            SELECT m.id, m.sender_id, m.content, m.created_at,
+                   m.reply_to_id, m.file_url, m.file_name, m.file_type, m.file_size,
+                   m.edited_at, m.deleted_at, m.forwarded_from_id,
+                   m.pinned_at, m.pinned_by,
+                   u.full_name AS sender_name, u.avatar AS sender_avatar, u.username AS sender_username,
+                   rm.content AS reply_content, rm.sender_id AS reply_sender_id,
+                   ru.full_name AS reply_sender_name
+            FROM messages m
+            JOIN users u ON u.id = m.sender_id
+            LEFT JOIN messages rm ON rm.id = m.reply_to_id
+            LEFT JOIN users ru ON ru.id = rm.sender_id
+            WHERE m.conversation_id = $1
+        `;
+        const params = [convId];
+
+        if (before) {
+            sql += ` AND m.id < $${params.length + 1}`;
+            params.push(before);
+        }
+
+        sql += ` ORDER BY m.created_at DESC LIMIT $${params.length + 1}`;
+        params.push(limit);
+
+        const rows = (await query(sql, params)).rows;
+
+        // Fetch reactions for these messages
+        if (rows.length > 0) {
+            const msgIds = rows.map(r => r.id);
+            const reactions = (await query(`
+                SELECT mr.message_id, mr.emoji, mr.user_id, u.full_name
+                FROM message_reactions mr
+                JOIN users u ON u.id = mr.user_id
+                WHERE mr.message_id = ANY($1)
+                ORDER BY mr.created_at
+            `, [msgIds])).rows;
+
+            const reactionMap = {};
+            for (const r of reactions) {
+                if (!reactionMap[r.message_id]) reactionMap[r.message_id] = [];
+                reactionMap[r.message_id].push({ emoji: r.emoji, userId: r.user_id, fullName: r.full_name });
+            }
+            for (const row of rows) {
+                row.reactions = reactionMap[row.id] || [];
+            }
+        }
+
+        res.json(rows.reverse());
+    } catch (err) {
+        req.log.error({ err }, 'Get messages error');
+        res.status(500).json({ error: 'Failed to get messages' });
+    }
+});
+
+/**
+ * POST /api/chat/conversations/:id/read
+ */
+router.post('/conversations/:id/read', auth, async (req, res) => {
+    try {
+        const convId = parseInt(req.params.id, 10);
+        if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
+
+        if (!(await verifyParticipant(convId, req.userId))) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        await query(
+            `INSERT INTO message_reads (conversation_id, user_id, last_read_at)
+             VALUES ($1, $2, NOW())
+             ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = NOW()`,
+            [convId, req.userId]
+        );
+
+        // Notify others about read receipt
+        const participants = (await query(
+            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2',
+            [convId, req.userId]
+        )).rows;
+        for (const p of participants) {
+            sendToUser(p.user_id, 'chat_read_receipt', {
+                conversationId: convId,
+                userId: req.userId,
+                readAt: new Date().toISOString()
+            });
+        }
+
+        res.json({ ok: true });
+    } catch (err) {
+        req.log.error({ err }, 'Mark read error');
+        res.status(500).json({ error: 'Failed to mark as read' });
+    }
+});
+
+/**
+ * GET /api/chat/conversations/:id/read-status
+ */
+router.get('/conversations/:id/read-status', auth, async (req, res) => {
+    try {
+        const convId = parseInt(req.params.id, 10);
+        if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
+        if (!(await verifyParticipant(convId, req.userId))) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        const rows = (await query(`
+            SELECT mr.user_id, mr.last_read_at, u.full_name
+            FROM message_reads mr
+            JOIN users u ON u.id = mr.user_id
+            WHERE mr.conversation_id = $1 AND mr.user_id != $2
+        `, [convId, req.userId])).rows;
+
+        res.json(rows);
+    } catch (err) {
+        req.log.error({ err }, 'Read status error');
+        res.status(500).json({ error: 'Failed to get read status' });
+    }
+});
+
+/**
+ * POST /api/chat/conversations/:id/files
+ */
+router.post('/conversations/:id/files', auth, chatUpload.single('file'), async (req, res) => {
+    try {
+        const convId = parseInt(req.params.id, 10);
+        if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
+
+        if (!(await verifyParticipant(convId, req.userId))) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+        const fileUrl = `/uploads/chat/${req.file.filename}`;
+        const content = req.body.content || null;
+        const replyToId = req.body.replyToId ? parseInt(req.body.replyToId, 10) : null;
+
+        const result = (await query(
+            `INSERT INTO messages (conversation_id, sender_id, content, file_url, file_name, file_type, file_size, reply_to_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at`,
+            [convId, req.userId, content, fileUrl, req.file.originalname, req.file.mimetype, req.file.size, replyToId]
+        )).rows[0];
+
+        await query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [convId]);
+        await query(
+            `INSERT INTO message_reads (conversation_id, user_id, last_read_at)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = $3`,
+            [convId, req.userId, result.created_at]
+        );
+
+        const sender = (await query('SELECT full_name, avatar, username FROM users WHERE id = $1', [req.userId])).rows[0];
+
+        const participants = (await query(
+            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
+            [convId]
+        )).rows;
+
+        const outMsg = {
+            id: result.id,
+            conversationId: convId,
+            senderId: req.userId,
+            senderName: sender.full_name,
+            senderAvatar: sender.avatar,
+            senderUsername: sender.username,
+            content,
+            fileUrl,
+            fileName: req.file.originalname,
+            fileType: req.file.mimetype,
+            fileSize: req.file.size,
+            replyToId,
+            createdAt: result.created_at
+        };
+
+        for (const p of participants) {
+            sendToUser(p.user_id, 'chat_message', outMsg);
+        }
+
+        res.status(201).json(outMsg);
+    } catch (err) {
+        req.log.error({ err }, 'File upload error');
+        res.status(500).json({ error: 'Failed to upload file' });
+    }
+});
+
+/**
+ * POST /api/chat/messages/:id/reactions  { emoji }
+ */
+router.post('/messages/:id/reactions', auth, async (req, res) => {
+    try {
+        const msgId = parseInt(req.params.id, 10);
+        if (isNaN(msgId)) return res.status(400).json({ error: 'Invalid message' });
+
+        const { emoji } = req.body;
+        if (!emoji || emoji.length > 20) return res.status(400).json({ error: 'Invalid emoji' });
+
+        const msg = (await query('SELECT conversation_id FROM messages WHERE id = $1', [msgId])).rows[0];
+        if (!msg) return res.status(404).json({ error: 'Message not found' });
+        if (!(await verifyParticipant(msg.conversation_id, req.userId))) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        const existing = (await query(
+            'SELECT id FROM message_reactions WHERE message_id = $1 AND user_id = $2 AND emoji = $3',
+            [msgId, req.userId, emoji]
+        )).rows[0];
+
+        let action;
+        if (existing) {
+            await query('DELETE FROM message_reactions WHERE id = $1', [existing.id]);
+            action = 'removed';
+        } else {
+            await query(
+                'INSERT INTO message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3)',
+                [msgId, req.userId, emoji]
+            );
+            action = 'added';
+        }
+
+        const sender = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
+
+        const participants = (await query(
+            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
+            [msg.conversation_id]
+        )).rows;
+
+        for (const p of participants) {
+            sendToUser(p.user_id, 'chat_reaction', {
+                messageId: msgId,
+                conversationId: msg.conversation_id,
+                userId: req.userId,
+                fullName: sender.full_name,
+                emoji,
+                action
+            });
+        }
+
+        res.json({ ok: true, action });
+    } catch (err) {
+        req.log.error({ err }, 'Reaction error');
+        res.status(500).json({ error: 'Failed to toggle reaction' });
+    }
+});
+
+/**
+ * PUT /api/chat/messages/:id  { content }
+ */
+router.put('/messages/:id', auth, async (req, res) => {
+    try {
+        const msgId = parseInt(req.params.id, 10);
+        if (isNaN(msgId)) return res.status(400).json({ error: 'Invalid message' });
+
+        const { content } = req.body;
+        if (!content || typeof content !== 'string' || content.trim().length === 0 || content.length > 5000) {
+            return res.status(400).json({ error: 'Invalid content' });
+        }
+
+        const msg = (await query('SELECT * FROM messages WHERE id = $1', [msgId])).rows[0];
+        if (!msg) return res.status(404).json({ error: 'Message not found' });
+        if (msg.sender_id !== req.userId) return res.status(403).json({ error: 'Can only edit own messages' });
+        if (msg.deleted_at) return res.status(400).json({ error: 'Message is deleted' });
+
+        await query('UPDATE messages SET content = $1, edited_at = NOW() WHERE id = $2', [content.trim(), msgId]);
+
+        const participants = (await query(
+            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
+            [msg.conversation_id]
+        )).rows;
+
+        for (const p of participants) {
+            sendToUser(p.user_id, 'chat_edit', {
+                messageId: msgId,
+                conversationId: msg.conversation_id,
+                content: content.trim(),
+                editedAt: new Date().toISOString()
+            });
+        }
+
+        res.json({ ok: true });
+    } catch (err) {
+        req.log.error({ err }, 'Edit message error');
+        res.status(500).json({ error: 'Failed to edit message' });
+    }
+});
+
+/**
+ * DELETE /api/chat/messages/:id
+ */
+router.delete('/messages/:id', auth, async (req, res) => {
+    try {
+        const msgId = parseInt(req.params.id, 10);
+        if (isNaN(msgId)) return res.status(400).json({ error: 'Invalid message' });
+
+        const msg = (await query('SELECT * FROM messages WHERE id = $1', [msgId])).rows[0];
+        if (!msg) return res.status(404).json({ error: 'Message not found' });
+        if (msg.sender_id !== req.userId) return res.status(403).json({ error: 'Can only delete own messages' });
+        if (msg.deleted_at) return res.status(400).json({ error: 'Already deleted' });
+
+        await query('UPDATE messages SET deleted_at = NOW(), content = NULL, file_url = NULL WHERE id = $1', [msgId]);
+
+        const participants = (await query(
+            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
+            [msg.conversation_id]
+        )).rows;
+
+        for (const p of participants) {
+            sendToUser(p.user_id, 'chat_delete', {
+                messageId: msgId,
+                conversationId: msg.conversation_id
+            });
+        }
+
+        if (msg.file_url) {
+            const filePath = path.join(__dirname, '..', msg.file_url);
+            const resolved = path.resolve(filePath);
+            if (resolved.startsWith(path.resolve(__dirname, '..', 'uploads'))) {
+                fs.unlink(resolved, () => {});
+            }
+        }
+
+        res.json({ ok: true });
+    } catch (err) {
+        req.log.error({ err }, 'Delete message error');
+        res.status(500).json({ error: 'Failed to delete message' });
+    }
+});
+
+/**
+ * POST /api/chat/messages/:id/pin
+ */
+router.post('/messages/:id/pin', auth, async (req, res) => {
+    try {
+        const msgId = parseInt(req.params.id, 10);
+        if (isNaN(msgId)) return res.status(400).json({ error: 'Invalid message' });
+
+        const msg = (await query('SELECT * FROM messages WHERE id = $1', [msgId])).rows[0];
+        if (!msg) return res.status(404).json({ error: 'Message not found' });
+        if (!(await verifyParticipant(msg.conversation_id, req.userId))) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        const isPinned = !!msg.pinned_at;
+        if (isPinned) {
+            await query('UPDATE messages SET pinned_at = NULL, pinned_by = NULL WHERE id = $1', [msgId]);
+        } else {
+            await query('UPDATE messages SET pinned_at = NOW(), pinned_by = $1 WHERE id = $2', [req.userId, msgId]);
+        }
+
+        const participants = (await query(
+            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
+            [msg.conversation_id]
+        )).rows;
+
+        const sender = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
+
+        for (const p of participants) {
+            sendToUser(p.user_id, 'chat_pin', {
+                messageId: msgId,
+                conversationId: msg.conversation_id,
+                pinned: !isPinned,
+                pinnedBy: req.userId,
+                pinnedByName: sender.full_name
+            });
+        }
+
+        res.json({ ok: true, pinned: !isPinned });
+    } catch (err) {
+        req.log.error({ err }, 'Pin message error');
+        res.status(500).json({ error: 'Failed to pin message' });
+    }
+});
+
+/**
+ * GET /api/chat/conversations/:id/pinned
+ */
+router.get('/conversations/:id/pinned', auth, async (req, res) => {
+    try {
+        const convId = parseInt(req.params.id, 10);
+        if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
+        if (!(await verifyParticipant(convId, req.userId))) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        const rows = (await query(`
+            SELECT m.id, m.sender_id, m.content, m.created_at, m.pinned_at, m.pinned_by,
+                   m.file_url, m.file_name, m.file_type,
+                   u.full_name AS sender_name, u.avatar AS sender_avatar,
+                   pb.full_name AS pinned_by_name
+            FROM messages m
+            JOIN users u ON u.id = m.sender_id
+            LEFT JOIN users pb ON pb.id = m.pinned_by
+            WHERE m.conversation_id = $1 AND m.pinned_at IS NOT NULL AND m.deleted_at IS NULL
+            ORDER BY m.pinned_at DESC
+        `, [convId])).rows;
+
+        res.json(rows);
+    } catch (err) {
+        req.log.error({ err }, 'Get pinned error');
+        res.status(500).json({ error: 'Failed to get pinned messages' });
+    }
+});
+
+/**
+ * GET /api/chat/search-messages?q=term&convId=id
+ */
+router.get('/search-messages', auth, async (req, res) => {
+    try {
+        const { q, convId } = req.query;
+        if (!q || q.trim().length < 2) return res.json([]);
+
+        const orgId = await getUserOrg(req.userId);
+        if (!orgId) return res.json([]);
+
+        let sql, params;
+
+        if (convId) {
+            const cId = parseInt(convId, 10);
+            if (isNaN(cId)) return res.status(400).json({ error: 'Invalid conversation' });
+            if (!(await verifyParticipant(cId, req.userId))) {
+                return res.status(403).json({ error: 'Not a participant' });
+            }
+
+            sql = `
+                SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at,
+                       m.file_url, m.file_name,
+                       u.full_name AS sender_name, u.avatar AS sender_avatar
+                FROM messages m
+                JOIN users u ON u.id = m.sender_id
+                WHERE m.conversation_id = $1 AND m.deleted_at IS NULL
+                  AND to_tsvector('english', COALESCE(m.content, '')) @@ plainto_tsquery('english', $2)
+                ORDER BY m.created_at DESC
+                LIMIT 50
+            `;
+            params = [cId, q.trim()];
+        } else {
+            sql = `
+                SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at,
+                       m.file_url, m.file_name,
+                       u.full_name AS sender_name, u.avatar AS sender_avatar,
+                       c.name AS group_name, c.is_group
+                FROM messages m
+                JOIN users u ON u.id = m.sender_id
+                JOIN conversations c ON c.id = m.conversation_id
+                JOIN conversation_participants cp ON cp.conversation_id = c.id AND cp.user_id = $1
+                WHERE m.deleted_at IS NULL
+                  AND to_tsvector('english', COALESCE(m.content, '')) @@ plainto_tsquery('english', $2)
+                ORDER BY m.created_at DESC
+                LIMIT 50
+            `;
+            params = [req.userId, q.trim()];
+        }
+
+        const rows = (await query(sql, params)).rows;
+        res.json(rows);
+    } catch (err) {
+        req.log.error({ err }, 'Search messages error');
+        res.status(500).json({ error: 'Search failed' });
+    }
+});
+
+/**
+ * POST /api/chat/messages/:id/forward  { conversationIds: [id, ...] }
+ */
+router.post('/messages/:id/forward', auth, async (req, res) => {
+    try {
+        const msgId = parseInt(req.params.id, 10);
+        if (isNaN(msgId)) return res.status(400).json({ error: 'Invalid message' });
+
+        const { conversationIds } = req.body;
+        if (!Array.isArray(conversationIds) || conversationIds.length === 0) {
+            return res.status(400).json({ error: 'No conversations selected' });
+        }
+
+        const original = (await query(
+            'SELECT * FROM messages WHERE id = $1 AND deleted_at IS NULL',
+            [msgId]
+        )).rows[0];
+        if (!original) return res.status(404).json({ error: 'Message not found' });
+        if (!(await verifyParticipant(original.conversation_id, req.userId))) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        const sender = (await query('SELECT full_name, avatar, username FROM users WHERE id = $1', [req.userId])).rows[0];
+
+        for (const cId of conversationIds) {
+            const convIdNum = parseInt(cId, 10);
+            if (isNaN(convIdNum)) continue;
+            if (!(await verifyParticipant(convIdNum, req.userId))) continue;
+
+            const result = (await query(
+                `INSERT INTO messages (conversation_id, sender_id, content, file_url, file_name, file_type, file_size, forwarded_from_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at`,
+                [convIdNum, req.userId, original.content, original.file_url, original.file_name, original.file_type, original.file_size, msgId]
+            )).rows[0];
+
+            await query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [convIdNum]);
+
+            const participants = (await query(
+                'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
+                [convIdNum]
+            )).rows;
+
+            const outMsg = {
+                id: result.id,
+                conversationId: convIdNum,
+                senderId: req.userId,
+                senderName: sender.full_name,
+                senderAvatar: sender.avatar,
+                senderUsername: sender.username,
+                content: original.content,
+                fileUrl: original.file_url,
+                fileName: original.file_name,
+                fileType: original.file_type,
+                fileSize: original.file_size,
+                forwardedFromId: msgId,
+                createdAt: result.created_at
+            };
+
+            for (const p of participants) {
+                sendToUser(p.user_id, 'chat_message', outMsg);
+            }
+        }
+
+        res.json({ ok: true });
+    } catch (err) {
+        req.log.error({ err }, 'Forward message error');
+        res.status(500).json({ error: 'Failed to forward message' });
+    }
+});
+
+module.exports = router;

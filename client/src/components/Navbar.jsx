@@ -7,6 +7,7 @@ import { clockOut as apiClockOut, uploadAvatar, removeAvatar, baseURL } from '..
 import EditProfileModal from './EditProfileModal';
 import ConfirmDialog from './ConfirmDialog';
 import NotificationBell from './NotificationBell';
+import { useChatUnread } from '../ChatContext';
 import s from './Navbar.module.css';
 
 export default function Navbar() {
@@ -21,6 +22,7 @@ export default function Navbar() {
   const [removeAvatarConfirming, setRemoveAvatarConfirming] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  const { unreadCount: chatUnread } = useChatUnread();
   const profileRef = useRef(null);
   const fileInputRef = useRef(null);
   const moreRef = useRef(null);
@@ -168,6 +170,11 @@ export default function Navbar() {
             <NavLink to="/notes" className={location.pathname === '/notes' ? s.active : ''}>
               <svg className={s['nav-link-icon']} width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
               Notes
+            </NavLink>
+            <NavLink to="/chat" className={`${location.pathname === '/chat' ? s.active : ''} ${s.chatLink}`}>
+              <svg className={s['nav-link-icon']} width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2v10z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              Chat
+              {chatUnread > 0 && <span className={s.chatBadge}>{chatUnread > 99 ? '99+' : chatUnread}</span>}
             </NavLink>
             <NavLink to="/leaves" className={location.pathname === '/leaves' ? s.active : ''}>
               <svg className={s['nav-link-icon']} width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -340,6 +347,11 @@ export default function Navbar() {
         <NavLink to="/notes" className={location.pathname === '/notes' ? s.active : ''}>
           <span className={s['nav-icon']}>📝</span>
           <span className={s['tab-label']}>Notes</span>
+        </NavLink>
+        <NavLink to="/chat" className={`${location.pathname === '/chat' ? s.active : ''} ${s.chatLink}`}>
+          <span className={s['nav-icon']}>💬</span>
+          <span className={s['tab-label']}>Chat</span>
+          {chatUnread > 0 && <span className={s.chatBadge}>{chatUnread > 99 ? '99+' : chatUnread}</span>}
         </NavLink>
         <NavLink to="/leaves" className={location.pathname === '/leaves' ? s.active : ''}>
           <span className={s['nav-icon']}>🏖️</span>

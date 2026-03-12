@@ -45,6 +45,12 @@ export default function useWebSocket(onMessage) {
         wsRef.current = ws;
     }, []);
 
+    const sendMessage = useCallback((type, data) => {
+        if (wsRef.current && wsRef.current.readyState === 1) {
+            wsRef.current.send(JSON.stringify({ type, data }));
+        }
+    }, []);
+
     useEffect(() => {
         connect();
         return () => {
@@ -56,5 +62,5 @@ export default function useWebSocket(onMessage) {
         };
     }, [connect]);
 
-    return { connected };
+    return { connected, sendMessage };
 }

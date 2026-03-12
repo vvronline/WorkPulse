@@ -13,6 +13,7 @@ import Navbar from './components/Navbar';
 import AxiosInterceptor from './components/AxiosInterceptor';
 import ErrorBoundary from './components/ErrorBoundary';
 import { ToastProvider } from './components/Toast';
+import { ChatProvider } from './ChatContext';
 
 // Lazy-load non-critical pages for smaller initial bundle
 const Analytics = lazy(() => import('./pages/Analytics'));
@@ -21,6 +22,7 @@ const Leaves = lazy(() => import('./pages/Leaves'));
 const Tasks = lazy(() => import('./pages/Tasks'));
 const CalendarPage = lazy(() => import('./pages/CalendarPage'));
 const NotesPage = lazy(() => import('./pages/NotesPage'));
+const Chat = lazy(() => import('./pages/Chat'));
 
 // Enterprise pages
 const Admin = lazy(() => import('./pages/Admin'));
@@ -70,6 +72,7 @@ function AppRoutes() {
           <Route path="/tasks" element={<ProtectedRoute><Tasks /></ProtectedRoute>} />
           <Route path="/calendar" element={<ProtectedRoute><CalendarPage /></ProtectedRoute>} />
           <Route path="/notes" element={<ProtectedRoute><NotesPage /></ProtectedRoute>} />
+          <Route path="/chat" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute minRole="hr_admin"><Admin /></ProtectedRoute>} />
           <Route path="/manager" element={<ProtectedRoute minRole="team_lead"><ManagerDashboard /></ProtectedRoute>} />
           <Route path="/leave-policy" element={<ProtectedRoute><LeavePolicy /></ProtectedRoute>} />
@@ -91,7 +94,9 @@ export default function App() {
           <ToastProvider>
             <BrowserRouter>
               <AxiosInterceptor>
-                <AppRoutes />
+                <ChatProvider>
+                  <AppRoutes />
+                </ChatProvider>
               </AxiosInterceptor>
             </BrowserRouter>
           </ToastProvider>

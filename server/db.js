@@ -486,6 +486,93 @@ async function initDB() {
         CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read, created_at DESC)
     `);
 
+    // ---- Chat / Direct Messages ----
+    await query(`
+        CREATE TABLE IF NOT EXISTS conversations (
+            id          SERIAL PRIMARY KEY,
+            org_id      INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            name        VARCHAR(100),
+            is_group    BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at  TIMESTAMPTZ DEFAULT NOW(),
+            updated_at  TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    await query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS name VARCHAR(100)`);
+    await query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS is_group BOOLEAN NOT NULL DEFAULT FALSE`);
+
+    await query(`
+        CREATE TABLE IF NOT EXISTS conversation_participants (
+            conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            PRIMARY KEY (conversation_id, user_id)
+        )
+    `);
+    await query(`
+        CREATE INDEX IF NOT EXISTS idx_conv_participants_user ON conversation_participants(user_id)
+    `);
+    await query(`
+        CREATE TABLE IF NOT EXISTS messages (
+            id              SERIAL PRIMARY KEY,
+            conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            sender_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            content         TEXT,
+            reply_to_id     INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+            file_url        TEXT,
+            file_name       VARCHAR(255),
+            file_type       VARCHAR(50),
+            file_size        INTEGER,
+            edited_at       TIMESTAMPTZ,
+            deleted_at      TIMESTAMPTZ,
+            forwarded_from_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+            pinned_at       TIMESTAMPTZ,
+            pinned_by       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at      TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    // Migrate existing messages tables
+    await query(`ALTER TABLE messages ALTER COLUMN content DROP NOT NULL`);
+    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_id INTEGER REFERENCES messages(id) ON DELETE SET NULL`);
+    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_url TEXT`);
+    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_name VARCHAR(255)`);
+    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_type VARCHAR(50)`);
+    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_size INTEGER`);
+    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ`);
+    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`);
+    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS forwarded_from_id INTEGER REFERENCES messages(id) ON DELETE SET NULL`);
+    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ`);
+    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS pinned_by INTEGER REFERENCES users(id) ON DELETE SET NULL`);
+
+    await query(`
+        CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, created_at DESC)
+    `);
+    await query(`
+        CREATE TABLE IF NOT EXISTS message_reads (
+            conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            last_read_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (conversation_id, user_id)
+        )
+    `);
+
+    // ---- Message Reactions ----
+    await query(`
+        CREATE TABLE IF NOT EXISTS message_reactions (
+            id          SERIAL PRIMARY KEY,
+            message_id  INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            emoji       VARCHAR(20) NOT NULL,
+            created_at  TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE (message_id, user_id, emoji)
+        )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_reactions_message ON message_reactions(message_id)`);
+
+    // Presence tracking
+    await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ`);
+
+    // Full-text search index on messages
+    await query(`CREATE INDEX IF NOT EXISTS idx_messages_search ON messages USING gin(to_tsvector('english', COALESCE(content, '')))`);
+
     // Seed defaults
     await query(`
         INSERT INTO app_settings (key, value) VALUES ('registration_mode', 'open')

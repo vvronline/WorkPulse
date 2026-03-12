@@ -1,5 +1,5 @@
 /**
- * WebSocket server for real-time notifications.
+ * WebSocket server for real-time notifications and chat.
  * Attaches to the HTTP server and authenticates via the JWT cookie.
  */
 const { WebSocketServer } = require('ws');
@@ -45,15 +45,34 @@ function setupWebSocket(server) {
         }
 
         // Register client
+        const wasOffline = !clients.has(userId) || clients.get(userId).size === 0;
         if (!clients.has(userId)) clients.set(userId, new Set());
         clients.get(userId).add(ws);
         logger.debug({ userId }, 'WS client connected');
+
+        // Presence: mark online
+        if (wasOffline) {
+            query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId]).catch(() => { });
+            broadcastPresence(userId, 'online');
+        }
+
+        ws.on('message', (raw) => {
+            try {
+                const msg = JSON.parse(raw);
+                handleChatMessage(userId, msg);
+            } catch { /* ignore non-JSON */ }
+        });
 
         ws.on('close', () => {
             const set = clients.get(userId);
             if (set) {
                 set.delete(ws);
-                if (set.size === 0) clients.delete(userId);
+                if (set.size === 0) {
+                    clients.delete(userId);
+                    // Presence: mark offline
+                    query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId]).catch(() => { });
+                    broadcastPresence(userId, 'offline');
+                }
             }
             logger.debug({ userId }, 'WS client disconnected');
         });
@@ -81,6 +100,100 @@ function setupWebSocket(server) {
     return wss;
 }
 
+/** Handle incoming WS messages for chat */
+async function handleChatMessage(senderId, msg) {
+    if (msg.type === 'chat_message') {
+        const { conversationId, content, replyToId } = msg.data || {};
+        if (!conversationId || !content || typeof content !== 'string' || content.trim().length === 0 || content.length > 5000) return;
+
+        // Verify sender is a participant
+        const participant = (await query(
+            'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
+            [conversationId, senderId]
+        )).rows[0];
+        if (!participant) return;
+
+        // Insert message
+        const replyId = replyToId ? parseInt(replyToId, 10) : null;
+        const result = (await query(
+            'INSERT INTO messages (conversation_id, sender_id, content, reply_to_id) VALUES ($1, $2, $3, $4) RETURNING id, created_at',
+            [conversationId, senderId, content.trim(), replyId]
+        )).rows[0];
+
+        // Update conversation timestamp
+        await query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [conversationId]);
+
+        // Update sender's read cursor
+        await query(
+            `INSERT INTO message_reads (conversation_id, user_id, last_read_at)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = $3`,
+            [conversationId, senderId, result.created_at]
+        );
+
+        // Get all participants to broadcast
+        const participants = (await query(
+            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
+            [conversationId]
+        )).rows;
+
+        // Get sender info
+        const sender = (await query('SELECT full_name, avatar, username FROM users WHERE id = $1', [senderId])).rows[0];
+
+        const outMsg = {
+            id: result.id,
+            conversationId,
+            senderId,
+            senderName: sender?.full_name,
+            senderAvatar: sender?.avatar,
+            senderUsername: sender?.username,
+            content: content.trim(),
+            replyToId: replyId,
+            createdAt: result.created_at
+        };
+
+        for (const p of participants) {
+            sendToUser(p.user_id, 'chat_message', outMsg);
+        }
+    } else if (msg.type === 'chat_typing') {
+        const { conversationId } = msg.data || {};
+        if (!conversationId) return;
+
+        // Verify sender is a participant
+        const participant = (await query(
+            'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
+            [conversationId, senderId]
+        )).rows[0];
+        if (!participant) return;
+
+        // Notify other participants
+        const participants = (await query(
+            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2',
+            [conversationId, senderId]
+        )).rows;
+
+        for (const p of participants) {
+            sendToUser(p.user_id, 'chat_typing', { conversationId, userId: senderId });
+        }
+    } else if (msg.type === 'chat_read') {
+        const { conversationId } = msg.data || {};
+        if (!conversationId) return;
+
+        const participant = (await query(
+            'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
+            [conversationId, senderId]
+        )).rows[0];
+        if (!participant) return;
+
+        await query(
+            `INSERT INTO message_reads (conversation_id, user_id, last_read_at)
+             VALUES ($1, $2, NOW())
+             ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = NOW()`,
+            [conversationId, senderId]
+        );
+    }
+}
+
 /**
  * Send a message to a specific user (all their open tabs/devices).
  */
@@ -103,6 +216,28 @@ function broadcast(type, data) {
             if (ws.readyState === 1) ws.send(msg);
         }
     }
+}
+
+/**
+ * Broadcast presence change to org members who are online.
+ */
+async function broadcastPresence(userId, status) {
+    try {
+        const user = (await query('SELECT org_id, full_name FROM users WHERE id = $1', [userId])).rows[0];
+        if (!user?.org_id) return;
+
+        // Only notify online org users
+        const orgUsers = (await query(
+            'SELECT id FROM users WHERE org_id = $1 AND id != $2 AND is_active = TRUE',
+            [user.org_id, userId]
+        )).rows;
+
+        for (const u of orgUsers) {
+            if (clients.has(u.id)) {
+                sendToUser(u.id, 'presence_change', { userId, status, fullName: user.full_name });
+            }
+        }
+    } catch { /* ignore */ }
 }
 
 module.exports = { setupWebSocket, sendToUser, broadcast };
