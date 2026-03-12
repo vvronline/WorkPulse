@@ -25,7 +25,13 @@ const TimelineCard = memo(function TimelineCard({ entries }) {
       </h3>
       <div className={s['enhanced-timeline']}>
         {entries.map((entry, i) => {
-          const time = new Date(entry.timestamp.replace(' ', 'T') + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          const ts = entry.timestamp;
+          let time = '—';
+          if (ts) {
+            const raw = ts instanceof Date ? ts.toISOString() : String(ts).replace(' ', 'T');
+            const d = new Date(raw.endsWith('Z') ? raw : raw + 'Z');
+            time = isNaN(d) ? '—' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          }
           return (
             <div key={i} className={s['timeline-entry']}>
               <div className={s['timeline-connector']}>
