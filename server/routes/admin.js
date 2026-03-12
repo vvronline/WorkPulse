@@ -218,14 +218,23 @@ router.get('/users/:id', async (req, res) => {
     }
 });
 
+// Helper: determine which role levels must approve a role change
+function getRequiredApprovals(requestedRole) {
+    const allRoles = ['employee', 'team_lead', 'manager', 'hr_admin', 'super_admin'];
+    const targetLevel = ROLE_LEVEL[requestedRole] || 1;
+    // Every role strictly above the requested role must approve
+    return allRoles.filter(r => ROLE_LEVEL[r] > targetLevel);
+}
+
 router.put('/users/:id/role', async (req, res) => {
     try {
         const { id } = req.params;
-        const { role } = req.body;
+        const { role, reason } = req.body;
         if (!VALID_ROLES.includes(role)) return res.status(400).json({ error: `Invalid role. Valid roles: ${VALID_ROLES.join(', ')}` });
         const targetRes = await query('SELECT id, role, org_id, full_name FROM users WHERE id = $1', [Number(id)]);
         const target = targetRes.rows[0];
         if (!target) return res.status(404).json({ error: 'User not found' });
+        if (target.role === role) return res.status(400).json({ error: 'User already has this role' });
         if (req.userRole !== 'super_admin' && !canManageUser(req.userRole, target.role)) {
             return res.status(403).json({ error: 'Cannot modify a user with a role equal to or higher than your own' });
         }
@@ -235,12 +244,170 @@ router.put('/users/:id/role', async (req, res) => {
         if (Number(id) === req.userId && req.userRole !== 'super_admin') {
             return res.status(400).json({ error: 'Cannot change your own role' });
         }
-        await query('UPDATE users SET role = $1 WHERE id = $2', [role, Number(id)]);
-        logAction(req, 'update_role', 'user', Number(id), { old_role: target.role, new_role: role });
-        res.json({ message: `${target.full_name}'s role updated to ${role}` });
+        // Check for existing pending request
+        const existingRes = await query('SELECT id FROM role_change_requests WHERE target_user_id = $1 AND status = $2', [Number(id), 'pending']);
+        if (existingRes.rows[0]) return res.status(400).json({ error: 'A role change request is already pending for this user' });
+
+        // Super admin: apply immediately (no one higher to approve)
+        if (req.userRole === 'super_admin') {
+            await query('UPDATE users SET role = $1 WHERE id = $2', [role, Number(id)]);
+            await query(
+                `INSERT INTO role_change_requests (org_id, target_user_id, requested_by, current_role, requested_role, status, reason, approvals, resolved_at)
+                 VALUES ($1,$2,$3,$4,$5,'approved',$6,$7,NOW())`,
+                [req.userOrgId, Number(id), req.userId, target.role, role, reason || null, JSON.stringify({ super_admin: { status: 'approved', by: req.userId, at: new Date().toISOString() } })]
+            );
+            logAction(req, 'update_role', 'user', Number(id), { old_role: target.role, new_role: role });
+            return res.json({ message: `${target.full_name}'s role updated to ${role}`, immediate: true });
+        }
+
+        // Non-super-admin: create approval request
+        const required = getRequiredApprovals(role);
+        const approvals = {};
+        for (const r of required) approvals[r] = { status: 'pending' };
+
+        const result = await query(
+            `INSERT INTO role_change_requests (org_id, target_user_id, requested_by, current_role, requested_role, reason, approvals)
+             VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+            [req.userOrgId, Number(id), req.userId, target.role, role, reason || null, JSON.stringify(approvals)]
+        );
+        logAction(req, 'request_role_change', 'user', Number(id), { current_role: target.role, requested_role: role, request_id: result.rows[0].id });
+        res.json({ message: `Role change request created for ${target.full_name}. Awaiting approval.`, request_id: result.rows[0].id, pending: true });
     } catch (err) {
         req.log.error({ err }, 'Update role error');
         res.status(500).json({ error: 'Failed to update role' });
+    }
+});
+
+// ==================== ROLE CHANGE REQUESTS ====================
+
+router.get('/role-requests', async (req, res) => {
+    try {
+        const status = req.query.status || null;
+        const validStatuses = ['pending', 'approved', 'rejected', 'cancelled'];
+        const conditions = ['1=1'];
+        const params = [];
+        let pi = 1;
+
+        if (req.userRole !== 'super_admin') {
+            conditions.push(`r.org_id = $${pi++}`);
+            params.push(req.userOrgId);
+        }
+        if (status && validStatuses.includes(status)) {
+            conditions.push(`r.status = $${pi++}`);
+            params.push(status);
+        }
+
+        const result = await query(`
+            SELECT r.*, u.full_name AS target_name, u.username AS target_username,
+                   req.full_name AS requester_name
+            FROM role_change_requests r
+            JOIN users u ON u.id = r.target_user_id
+            JOIN users req ON req.id = r.requested_by
+            WHERE ${conditions.join(' AND ')}
+            ORDER BY r.created_at DESC LIMIT 100
+        `, params);
+        res.json(result.rows);
+    } catch (err) {
+        req.log.error({ err }, 'List role requests error');
+        res.status(500).json({ error: 'Failed to fetch role change requests' });
+    }
+});
+
+router.post('/role-requests/:id/approve', async (req, res) => {
+    try {
+        const reqId = Number(req.params.id);
+        const rcRes = await query('SELECT * FROM role_change_requests WHERE id = $1', [reqId]);
+        const rc = rcRes.rows[0];
+        if (!rc) return res.status(404).json({ error: 'Request not found' });
+        if (rc.status !== 'pending') return res.status(400).json({ error: `Request is already ${rc.status}` });
+        if (req.userRole === 'super_admin' || (rc.org_id && rc.org_id !== req.userOrgId && req.userRole !== 'super_admin')) {
+            // super_admin can approve any; others must be same org
+        }
+        if (rc.org_id && rc.org_id !== req.userOrgId && req.userRole !== 'super_admin') {
+            return res.status(403).json({ error: 'Cannot approve requests from another organization' });
+        }
+
+        const approvals = rc.approvals || {};
+        // Check if this user's role level is required
+        if (!approvals[req.userRole] || approvals[req.userRole].status !== 'pending') {
+            return res.status(400).json({ error: 'Your role level is not required for this approval or you have already approved' });
+        }
+
+        // Mark this level as approved
+        approvals[req.userRole] = { status: 'approved', by: req.userId, at: new Date().toISOString() };
+
+        // Check if all levels are now approved
+        const allApproved = Object.values(approvals).every(a => a.status === 'approved');
+
+        if (allApproved) {
+            // Apply the role change
+            await transaction(async (client) => {
+                await client.query('UPDATE users SET role = $1 WHERE id = $2', [rc.requested_role, rc.target_user_id]);
+                await client.query(
+                    'UPDATE role_change_requests SET status = $1, approvals = $2, resolved_at = NOW() WHERE id = $3',
+                    ['approved', JSON.stringify(approvals), reqId]
+                );
+            });
+            logAction(req, 'approve_role_change', 'user', rc.target_user_id, { from: rc.current_role, to: rc.requested_role, request_id: reqId });
+            const targetUser = (await query('SELECT full_name FROM users WHERE id = $1', [rc.target_user_id])).rows[0];
+            res.json({ message: `Role change approved. ${targetUser?.full_name}'s role updated to ${rc.requested_role}.`, fully_approved: true });
+        } else {
+            await query('UPDATE role_change_requests SET approvals = $1 WHERE id = $2', [JSON.stringify(approvals), reqId]);
+            logAction(req, 'partial_approve_role_change', 'role_change_request', reqId, { role_level: req.userRole });
+            const remaining = Object.entries(approvals).filter(([, a]) => a.status === 'pending').map(([r]) => r);
+            res.json({ message: `Approved at ${req.userRole} level. Still awaiting: ${remaining.join(', ')}`, fully_approved: false });
+        }
+    } catch (err) {
+        req.log.error({ err }, 'Approve role request error');
+        res.status(500).json({ error: 'Failed to approve role change request' });
+    }
+});
+
+router.post('/role-requests/:id/reject', async (req, res) => {
+    try {
+        const reqId = Number(req.params.id);
+        const { reject_reason } = req.body;
+        const rcRes = await query('SELECT * FROM role_change_requests WHERE id = $1', [reqId]);
+        const rc = rcRes.rows[0];
+        if (!rc) return res.status(404).json({ error: 'Request not found' });
+        if (rc.status !== 'pending') return res.status(400).json({ error: `Request is already ${rc.status}` });
+        if (rc.org_id && rc.org_id !== req.userOrgId && req.userRole !== 'super_admin') {
+            return res.status(403).json({ error: 'Cannot reject requests from another organization' });
+        }
+        const approvals = rc.approvals || {};
+        if (!approvals[req.userRole]) {
+            return res.status(400).json({ error: 'Your role level is not part of the approval chain for this request' });
+        }
+
+        await query(
+            'UPDATE role_change_requests SET status = $1, reject_reason = $2, rejected_by = $3, resolved_at = NOW() WHERE id = $4',
+            ['rejected', reject_reason || null, req.userId, reqId]
+        );
+        logAction(req, 'reject_role_change', 'role_change_request', reqId, { role_level: req.userRole, reason: reject_reason });
+        const targetUser = (await query('SELECT full_name FROM users WHERE id = $1', [rc.target_user_id])).rows[0];
+        res.json({ message: `Role change request for ${targetUser?.full_name} has been rejected.` });
+    } catch (err) {
+        req.log.error({ err }, 'Reject role request error');
+        res.status(500).json({ error: 'Failed to reject role change request' });
+    }
+});
+
+router.post('/role-requests/:id/cancel', async (req, res) => {
+    try {
+        const reqId = Number(req.params.id);
+        const rcRes = await query('SELECT * FROM role_change_requests WHERE id = $1', [reqId]);
+        const rc = rcRes.rows[0];
+        if (!rc) return res.status(404).json({ error: 'Request not found' });
+        if (rc.status !== 'pending') return res.status(400).json({ error: `Request is already ${rc.status}` });
+        if (rc.requested_by !== req.userId && req.userRole !== 'super_admin') {
+            return res.status(403).json({ error: 'Only the requester or a super admin can cancel' });
+        }
+        await query('UPDATE role_change_requests SET status = $1, resolved_at = NOW() WHERE id = $2', ['cancelled', reqId]);
+        logAction(req, 'cancel_role_change', 'role_change_request', reqId, {});
+        res.json({ message: 'Role change request cancelled.' });
+    } catch (err) {
+        req.log.error({ err }, 'Cancel role request error');
+        res.status(500).json({ error: 'Failed to cancel role change request' });
     }
 });
 

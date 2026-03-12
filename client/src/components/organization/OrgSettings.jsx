@@ -25,50 +25,36 @@ export default function OrgSettings({ org, onUpdate, userRole }) {
         } catch (e) { setMsg(e.response?.data?.error || 'Failed'); }
     };
 
-    // Non-admin roles see only basic read-only settings
-    if (!canEdit) {
-        return (
-            <div className={su['form-container-sm']}>
-                <div className={sf.formGroup}>
-                    <label>Organization Name</label>
-                    <input value={org.name} disabled />
-                </div>
-                <div className={sf.formGroup}>
-                    <label>Work Hours Per Day</label>
-                    <input value={org.work_hours_per_day} disabled />
-                </div>
-                <div className={sf.formGroup}>
-                    <label>Work Days</label>
-                    <input value={org.work_days} disabled />
-                </div>
-            </div>
-        );
-    }
+    const isSuperAdmin = userRole === 'super_admin';
+
+    if (!canEdit) return null;
 
     return (
         <form onSubmit={handleSave} className={su['form-container-sm']}>
             {msg && <div className={s.success}>{msg}</div>}
-            <div className={sf.formGroup}>
-                <label>Organization Name</label>
-                <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} disabled={!canEdit} />
-            </div>
-            <div className={sf.formGroup}>
-                <label>Work Hours Per Day</label>
-                <input type="number" step="0.5" min="1" max="24" value={form.work_hours_per_day} onChange={e => setForm({ ...form, work_hours_per_day: e.target.value })} disabled={!canEdit} />
-            </div>
-            <div className={sf.formGroup}>
-                <label>Work Days (comma-separated: 1=Mon, 7=Sun)</label>
-                <input value={form.work_days} onChange={e => setForm({ ...form, work_days: e.target.value })} placeholder="1,2,3,4,5" disabled={!canEdit} />
-            </div>
+            {isSuperAdmin && <>
+                <div className={sf.formGroup}>
+                    <label>Organization Name</label>
+                    <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+                </div>
+                <div className={sf.formGroup}>
+                    <label>Work Hours Per Day</label>
+                    <input type="number" step="0.5" min="1" max="24" value={form.work_hours_per_day} onChange={e => setForm({ ...form, work_hours_per_day: e.target.value })} />
+                </div>
+                <div className={sf.formGroup}>
+                    <label>Work Days (comma-separated: 1=Mon, 7=Sun)</label>
+                    <input value={form.work_days} onChange={e => setForm({ ...form, work_days: e.target.value })} placeholder="1,2,3,4,5" />
+                </div>
+            </>}
             <div className={sf.formGroup}>
                 <label>Timezone</label>
-                <input value={form.timezone} onChange={e => setForm({ ...form, timezone: e.target.value })} disabled={!canEdit} />
+                <input value={form.timezone} onChange={e => setForm({ ...form, timezone: e.target.value })} />
             </div>
             <div className={sf.formGroup}>
                 <label>Fiscal Year Start Month (1-12)</label>
-                <input type="number" min="1" max="12" value={form.fiscal_year_start} onChange={e => setForm({ ...form, fiscal_year_start: e.target.value })} disabled={!canEdit} />
+                <input type="number" min="1" max="12" value={form.fiscal_year_start} onChange={e => setForm({ ...form, fiscal_year_start: e.target.value })} />
             </div>
-            {canEdit && <button type="submit" className={s.btnPrimary}>Save Settings</button>}
+            <button type="submit" className={s.btnPrimary}>Save Settings</button>
         </form>
     );
 }

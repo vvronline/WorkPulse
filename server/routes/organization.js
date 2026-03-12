@@ -70,13 +70,14 @@ router.put('/settings', requireRole('hr_admin'), requireSameOrg, async (req, res
         const params = [];
         let pi = 1;
 
-        if (name) { updates.push(`name = $${pi++}`); params.push(name.trim()); }
-        if (work_hours_per_day !== undefined) {
+        // Only super_admin can change org name, work hours, and work days
+        if (name && req.userRole === 'super_admin') { updates.push(`name = $${pi++}`); params.push(name.trim()); }
+        if (work_hours_per_day !== undefined && req.userRole === 'super_admin') {
             const whpd = Number(work_hours_per_day);
             if (isNaN(whpd) || whpd < 1 || whpd > 24) return res.status(400).json({ error: 'Work hours per day must be between 1 and 24' });
             updates.push(`work_hours_per_day = $${pi++}`); params.push(whpd);
         }
-        if (work_days) { updates.push(`work_days = $${pi++}`); params.push(work_days); }
+        if (work_days && req.userRole === 'super_admin') { updates.push(`work_days = $${pi++}`); params.push(work_days); }
         if (timezone) { updates.push(`timezone = $${pi++}`); params.push(timezone); }
         if (fiscal_year_start !== undefined) { updates.push(`fiscal_year_start = $${pi++}`); params.push(Number(fiscal_year_start)); }
         updates.push('updated_at = CURRENT_TIMESTAMP');

@@ -170,11 +170,15 @@ export const deleteAdminOrganization = (id) => API.delete(`/admin/organizations/
 export const getAdminUsers = (params) => API.get('/admin/users', { params });
 export const getAdminUser = (id) => API.get(`/admin/users/${id}`);
 export const createAdminUser = (data) => API.post('/admin/users', data);
-export const updateUserRole = (id, role) => API.put(`/admin/users/${id}/role`, { role });
+export const updateUserRole = (id, role, reason) => API.put(`/admin/users/${id}/role`, { role, reason });
 export const updateUserAssignment = (id, data) => API.put(`/admin/users/${id}/assignment`, data);
 export const toggleUserActive = (id) => API.put(`/admin/users/${id}/deactivate`);
 export const deleteAdminUser = (id) => API.delete(`/admin/users/${id}`);
 export const adminResetPassword = (id, password) => API.post(`/admin/users/${id}/reset-password`, { new_password: password });
+export const getRoleChangeRequests = (params) => API.get('/admin/role-requests', { params });
+export const approveRoleChange = (id) => API.post(`/admin/role-requests/${id}/approve`);
+export const rejectRoleChange = (id, reason) => API.post(`/admin/role-requests/${id}/reject`, { reject_reason: reason });
+export const cancelRoleChange = (id) => API.post(`/admin/role-requests/${id}/cancel`);
 export const getAuditLogs = (params) => API.get('/admin/audit-logs', { params });
 export const getAdminStats = () => API.get('/admin/stats');
 export const getRegistrationSettings = () => API.get('/admin/registration-settings');

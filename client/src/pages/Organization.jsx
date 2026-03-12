@@ -11,9 +11,10 @@ import s from './Admin.module.css';
 
 export default function Organization() {
     const { user, updateUser } = useAuth();
+    const isAdmin = user?.role === 'hr_admin' || user?.role === 'super_admin';
     const [org, setOrg] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [tab, setTab] = useState('overview');
+    const [tab, setTab] = useState(isAdmin ? 'overview' : 'departments');
 
     const fetchOrg = useCallback(() => {
         getCurrentOrg().then(r => { setOrg(r.data); setLoading(false); }).catch(() => setLoading(false));
@@ -37,8 +38,6 @@ export default function Organization() {
         );
     }
 
-    const isAdmin = user?.role === 'hr_admin' || user?.role === 'super_admin';
-
     return (
         <div className={s.adminPage}>
             <h1>{org.name}</h1>
@@ -48,18 +47,12 @@ export default function Organization() {
                     <div className={s.statCard}><div className={s.value}>{org.memberCount}</div><div className={s.label}>Members</div></div>
                     <div className={s.statCard}><div className={s.value}>{org.deptCount}</div><div className={s.label}>Departments</div></div>
                     <div className={s.statCard}><div className={s.value}>{org.teamCount}</div><div className={s.label}>Teams</div></div>
-                    <div className={s.statCard}><div className={s.value}>{org.work_hours_per_day}h</div><div className={s.label}>Work Hours/Day</div></div>
-                </div>
-            )}
-
-            {!isAdmin && (
-                <div className={s.statsGrid}>
-                    <div className={s.statCard}><div className={s.value}>{org.work_hours_per_day}h</div><div className={s.label}>Work Hours/Day</div></div>
+                    {user?.role === 'super_admin' && <div className={s.statCard}><div className={s.value}>{org.work_hours_per_day}h</div><div className={s.label}>Work Hours/Day</div></div>}
                 </div>
             )}
 
             <div className={s.tabs}>
-                <button className={`${s.tab} ${tab === 'overview' ? s.active : ''}`} onClick={() => setTab('overview')}><span>⚙️</span> Settings</button>
+                {isAdmin && <button className={`${s.tab} ${tab === 'overview' ? s.active : ''}`} onClick={() => setTab('overview')}><span>⚙️</span> Settings</button>}
                 <button className={`${s.tab} ${tab === 'departments' ? s.active : ''}`} onClick={() => setTab('departments')}><span>🏢</span> {isAdmin ? 'Departments' : 'My Department'}</button>
                 <button className={`${s.tab} ${tab === 'teams' ? s.active : ''}`} onClick={() => setTab('teams')}><span>👥</span> {isAdmin ? 'Teams' : 'My Team'}</button>
                 <button className={`${s.tab} ${tab === 'chart' ? s.active : ''}`} onClick={() => setTab('chart')}><span>📈</span> Org Chart</button>

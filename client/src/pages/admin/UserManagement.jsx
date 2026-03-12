@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAutoDismiss } from '../../hooks/useAutoDismiss';
 import {
     getAdminUsers, updateUserRole, updateUserAssignment, toggleUserActive, deleteAdminUser,
-    getOrgDepartments, getOrgTeams, getAdminOrganizations
+    getOrgDepartments, getOrgTeams, getAdminOrganizations, getRoleChangeRequests, cancelRoleChange
 } from '../../api';
 import { ROLES, ROLE_LABELS } from './constants';
 import AssignmentModal from './AssignmentModal';
@@ -24,6 +24,8 @@ export default function UserManagement({ userRole }) {
     const [editingUser, setEditingUser] = useState(null);
     const [resetPwUser, setResetPwUser] = useState(null);
     const [deletingUser, setDeletingUser] = useState(null);
+    const [pendingRequests, setPendingRequests] = useState({});
+    const [roleConfirm, setRoleConfirm] = useState(null);
     const [msg, setMsg] = useAutoDismiss('');
 
     useEffect(() => {
@@ -40,7 +42,15 @@ export default function UserManagement({ userRole }) {
         getAdminUsers(params).then(r => setUsers(r.data?.data ?? r.data)).catch(e => console.error(e));
     }, [debouncedSearch, filterRole, filterActive]);
 
-    useEffect(() => { fetchUsers(); }, [fetchUsers]);
+    const fetchPendingRequests = useCallback(() => {
+        getRoleChangeRequests({ status: 'pending' }).then(r => {
+            const map = {};
+            (r.data || []).forEach(rr => { map[rr.target_user_id] = rr; });
+            setPendingRequests(map);
+        }).catch(() => {});
+    }, []);
+
+    useEffect(() => { fetchUsers(); fetchPendingRequests(); }, [fetchUsers, fetchPendingRequests]);
     useEffect(() => {
         getOrgDepartments().then(r => setDepartments(r.data)).catch(e => console.error(e));
         getOrgTeams().then(r => setTeams(r.data)).catch(e => console.error(e));
@@ -50,10 +60,27 @@ export default function UserManagement({ userRole }) {
     }, [userRole]);
 
     const handleRoleChange = async (id, role) => {
+        const user = users.find(u => u.id === id);
+        if (user?.role === role) return;
+        setRoleConfirm({ id, role, name: user?.full_name, reason: '' });
+    };
+
+    const submitRoleChange = async () => {
+        if (!roleConfirm) return;
         try {
-            await updateUserRole(id, role);
-            setMsg('Role updated');
+            const r = await updateUserRole(roleConfirm.id, roleConfirm.role, roleConfirm.reason);
+            setMsg(r.data.message);
+            setRoleConfirm(null);
             fetchUsers();
+            fetchPendingRequests();
+        } catch (e) { setMsg(e.response?.data?.error || 'Failed'); }
+    };
+
+    const handleCancelRoleRequest = async (requestId) => {
+        try {
+            const r = await cancelRoleChange(requestId);
+            setMsg(r.data.message);
+            fetchPendingRequests();
         } catch (e) { setMsg(e.response?.data?.error || 'Failed'); }
     };
 
@@ -116,9 +143,21 @@ export default function UserManagement({ userRole }) {
                             </td>
                             <td style={{ fontSize: '0.85rem', color: u.org_name ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{u.org_name || '—'}</td>
                             <td>
-                                <select value={u.role} onChange={e => handleRoleChange(u.id, e.target.value)} className={sf.inlineSelect}>
-                                    {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
-                                </select>
+                                {pendingRequests[u.id] ? (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                        <span className={sf.inlineSelect} style={{ background: 'var(--bg-warning, #fef3c7)', padding: '0.25rem 0.5rem', borderRadius: '4px', fontSize: '0.8rem' }}>
+                                            {ROLE_LABELS[u.role]} → {ROLE_LABELS[pendingRequests[u.id].requested_role]}
+                                        </span>
+                                        <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                                            ⏳ Pending approval
+                                            <button style={{ marginLeft: '0.5rem', fontSize: '0.7rem', cursor: 'pointer', background: 'none', border: 'none', color: 'var(--danger)', textDecoration: 'underline' }} onClick={() => handleCancelRoleRequest(pendingRequests[u.id].id)}>Cancel</button>
+                                        </span>
+                                    </div>
+                                ) : (
+                                    <select value={u.role} onChange={e => handleRoleChange(u.id, e.target.value)} className={sf.inlineSelect}>
+                                        {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+                                    </select>
+                                )}
                             </td>
                             <td>{u.department_name || '—'}</td>
                             <td>{u.team_name || '—'}</td>
@@ -174,6 +213,29 @@ export default function UserManagement({ userRole }) {
                                     fetchUsers();
                                 } catch (e) { setMsg(e.response?.data?.error || 'Failed to delete user'); }
                             }}>Delete Permanently</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {roleConfirm && (
+                <div className={sf.modalOverlay} onClick={() => setRoleConfirm(null)}>
+                    <div className={sf.modal} onClick={e => e.stopPropagation()}>
+                        <h2>Change Role</h2>
+                        <p>Change <strong>{roleConfirm.name}</strong>'s role to <strong>{ROLE_LABELS[roleConfirm.role]}</strong>?</p>
+                        {userRole !== 'super_admin' && (
+                            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                This will require approval from all higher role levels before taking effect.
+                            </p>
+                        )}
+                        <div className={sf.formGroup}>
+                            <label>Reason (optional)</label>
+                            <input value={roleConfirm.reason} onChange={e => setRoleConfirm({ ...roleConfirm, reason: e.target.value })} placeholder="Reason for role change..." />
+                        </div>
+                        <div className={sf.formActions}>
+                            <button className={sf.btnCancel} onClick={() => setRoleConfirm(null)}>Cancel</button>
+                            <button className={s.btnPrimary} onClick={submitRoleChange}>
+                                {userRole === 'super_admin' ? 'Change Role' : 'Submit Request'}
+                            </button>
                         </div>
                     </div>
                 </div>

@@ -314,6 +314,28 @@ async function initDB() {
     `);
 
     await query(`
+        CREATE TABLE IF NOT EXISTS role_change_requests (
+            id              SERIAL PRIMARY KEY,
+            org_id          INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
+            target_user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            requested_by    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            current_role    TEXT NOT NULL,
+            requested_role  TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected','cancelled')),
+            reason          TEXT,
+            reject_reason   TEXT,
+            rejected_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            approvals       JSONB NOT NULL DEFAULT '{}',
+            created_at      TIMESTAMPTZ DEFAULT NOW(),
+            resolved_at     TIMESTAMPTZ
+        )
+    `);
+    await query(`
+        CREATE INDEX IF NOT EXISTS idx_role_change_org_status ON role_change_requests(org_id, status);
+        CREATE INDEX IF NOT EXISTS idx_role_change_target     ON role_change_requests(target_user_id, status);
+    `);
+
+    await query(`
         CREATE TABLE IF NOT EXISTS audit_logs (
             id          SERIAL PRIMARY KEY,
             org_id      INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
