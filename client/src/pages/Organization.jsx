@@ -6,6 +6,7 @@ import OrgSettings from '../components/organization/OrgSettings';
 import Departments from '../components/organization/Departments';
 import Teams from '../components/organization/Teams';
 import OrgChartView from '../components/organization/OrgChartView';
+import TaskLabelsTab from './admin/TaskLabelsTab';
 import s from './Admin.module.css';
 
 export default function Organization() {
@@ -36,6 +37,8 @@ export default function Organization() {
         );
     }
 
+    const isAdmin = user?.role === 'hr_admin' || user?.role === 'super_admin';
+
     return (
         <div className={s.adminPage}>
             <h1>{org.name}</h1>
@@ -48,16 +51,20 @@ export default function Organization() {
             </div>
 
             <div className={s.tabs}>
-                <button className={`${s.tab} ${tab === 'overview' ? s.active : ''}`} onClick={() => setTab('overview')}>Settings</button>
-                <button className={`${s.tab} ${tab === 'departments' ? s.active : ''}`} onClick={() => setTab('departments')}>Departments</button>
-                <button className={`${s.tab} ${tab === 'teams' ? s.active : ''}`} onClick={() => setTab('teams')}>Teams</button>
-                <button className={`${s.tab} ${tab === 'chart' ? s.active : ''}`} onClick={() => setTab('chart')}>Org Chart</button>
+                <button className={`${s.tab} ${tab === 'overview' ? s.active : ''}`} onClick={() => setTab('overview')}><span>⚙️</span> Settings</button>
+                <button className={`${s.tab} ${tab === 'departments' ? s.active : ''}`} onClick={() => setTab('departments')}><span>🏢</span> Departments</button>
+                <button className={`${s.tab} ${tab === 'teams' ? s.active : ''}`} onClick={() => setTab('teams')}><span>👥</span> Teams</button>
+                <button className={`${s.tab} ${tab === 'chart' ? s.active : ''}`} onClick={() => setTab('chart')}><span>📈</span> Org Chart</button>
+                {isAdmin && (
+                    <button className={`${s.tab} ${tab === 'labels' ? s.active : ''}`} onClick={() => setTab('labels')}><span>🏷️</span> Task Labels</button>
+                )}
             </div>
 
             {tab === 'overview' && <OrgSettings org={org} onUpdate={fetchOrg} userRole={user.role} />}
             {tab === 'departments' && <Departments orgId={org.id} userRole={user.role} />}
             {tab === 'teams' && <Teams orgId={org.id} userRole={user.role} />}
             {tab === 'chart' && <OrgChartView />}
+            {tab === 'labels' && isAdmin && <TaskLabelsTab />}
         </div>
     );
 }

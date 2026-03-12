@@ -135,12 +135,12 @@ export default function Navbar() {
 
   // Collect secondary nav items for "More" dropdown
   const moreItems = [
-    { to: '/leaves', label: 'Leaves' },
-    { to: '/manual-entry', label: 'Manual Entry' },
+    { to: '/manual-entry', label: 'Manual Entry', icon: '📝' },
   ];
-  if (user?.org_id) moreItems.push({ to: '/leave-policy', label: 'Leave Policy' });
-  if (isTeamLead) moreItems.push({ to: '/manager', label: 'Manager' });
-  if (isHR) moreItems.push({ to: '/admin', label: 'Admin' });
+  if (user?.org_id) moreItems.push({ to: '/organization', label: 'Organization', icon: '🏢' });
+  if (user?.org_id) moreItems.push({ to: '/leave-policy', label: 'Leave Policy', icon: '📋' });
+  if (isTeamLead) moreItems.push({ to: '/manager', label: 'My Team', icon: '👥' });
+  if (isHR) moreItems.push({ to: '/admin', label: 'Admin', icon: '⚙️' });
   const moreIsActive = moreItems.some(item => location.pathname === item.to);
 
   return (
@@ -153,9 +153,22 @@ export default function Navbar() {
         <div className={s['navbar-right']}>
           {/* Desktop nav links — hidden on mobile via CSS */}
           <div className={`${s['nav-links']} ${s['nav-links-desktop']}`}>
-            <NavLink to="/" className={location.pathname === '/' ? s.active : ''}>Dashboard</NavLink>
-            <NavLink to="/analytics" className={location.pathname === '/analytics' ? s.active : ''}>Analytics</NavLink>
-            <NavLink to="/tasks" className={location.pathname === '/tasks' ? s.active : ''}>Planner</NavLink>
+            <NavLink to="/" className={location.pathname === '/' ? s.active : ''}>
+              <svg className={s['nav-link-icon']} width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              Dashboard
+            </NavLink>
+            <NavLink to="/tasks" className={location.pathname === '/tasks' ? s.active : ''}>
+              <svg className={s['nav-link-icon']} width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M9 14l2 2 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              Planner
+            </NavLink>
+            <NavLink to="/leaves" className={location.pathname === '/leaves' ? s.active : ''}>
+              <svg className={s['nav-link-icon']} width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/><path d="M16 2v4M8 2v4M3 10h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+              Leaves
+            </NavLink>
+            <NavLink to="/analytics" className={location.pathname === '/analytics' ? s.active : ''}>
+              <svg className={s['nav-link-icon']} width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M18 20V10M12 20V4M6 20v-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              Analytics
+            </NavLink>
             {moreItems.length > 0 && (
               <div className={s['more-wrapper']} ref={moreRef}>
                 <button
@@ -176,7 +189,7 @@ export default function Navbar() {
                         className={location.pathname === item.to ? s.active : ''}
                         onClick={() => setMoreOpen(false)}
                       >
-                        {item.label}
+                        <span>{item.icon}</span> {item.label}
                       </NavLink>
                     ))}
                   </div>
@@ -306,19 +319,19 @@ export default function Navbar() {
       <div className={s['mobile-tab-bar']}>
         <NavLink to="/" className={location.pathname === '/' ? s.active : ''}>
           <span className={s['nav-icon']}>🏠</span>
-          <span className={s['tab-label']}>Home</span>
+          <span className={s['tab-label']}>Dashboard</span>
         </NavLink>
-        <NavLink to="/analytics" className={location.pathname === '/analytics' ? s.active : ''}>
-          <span className={s['nav-icon']}>📈</span>
-          <span className={s['tab-label']}>Stats</span>
+        <NavLink to="/tasks" className={location.pathname === '/tasks' ? s.active : ''}>
+          <span className={s['nav-icon']}>📋</span>
+          <span className={s['tab-label']}>Planner</span>
         </NavLink>
         <NavLink to="/leaves" className={location.pathname === '/leaves' ? s.active : ''}>
           <span className={s['nav-icon']}>📅</span>
           <span className={s['tab-label']}>Leaves</span>
         </NavLink>
-        <NavLink to="/tasks" className={location.pathname === '/tasks' ? s.active : ''}>
-          <span className={s['nav-icon']}>📋</span>
-          <span className={s['tab-label']}>Planner</span>
+        <NavLink to="/analytics" className={location.pathname === '/analytics' ? s.active : ''}>
+          <span className={s['nav-icon']}>📈</span>
+          <span className={s['tab-label']}>Analytics</span>
         </NavLink>
         <div className={s['mobile-more-wrapper']} ref={mobileMoreRef}>
           <button
@@ -334,24 +347,11 @@ export default function Navbar() {
           </button>
           {mobileMoreOpen && (
             <div className={s['mobile-more-popup']}>
-              <NavLink to="/manual-entry" onClick={() => setMobileMoreOpen(false)}>
-                <span>📝</span> Manual Entry
-              </NavLink>
-              {isTeamLead && (
-                <NavLink to="/manager" onClick={() => setMobileMoreOpen(false)}>
-                  <span>👔</span> Manager
+              {moreItems.map(item => (
+                <NavLink key={item.to} to={item.to} onClick={() => setMobileMoreOpen(false)}>
+                  <span>{item.icon}</span> {item.label}
                 </NavLink>
-              )}
-              {user?.org_id && (
-                <NavLink to="/leave-policy" onClick={() => setMobileMoreOpen(false)}>
-                  <span>📋</span> Leave Policy
-                </NavLink>
-              )}
-              {isHR && (
-                <NavLink to="/admin" onClick={() => setMobileMoreOpen(false)}>
-                  <span>⚙️</span> Admin
-                </NavLink>
-              )}
+              ))}
             </div>
           )}
         </div>

@@ -24,6 +24,7 @@ const Tasks = lazy(() => import('./pages/Tasks'));
 const Admin = lazy(() => import('./pages/Admin'));
 const ManagerDashboard = lazy(() => import('./pages/ManagerDashboard'));
 const LeavePolicy = lazy(() => import('./pages/LeavePolicy'));
+const Organization = lazy(() => import('./pages/Organization'));
 const SetEmail = lazy(() => import('./pages/SetEmail'));
 
 function ProtectedRoute({ children, minRole }) {
@@ -68,6 +69,7 @@ function AppRoutes() {
           <Route path="/admin" element={<ProtectedRoute minRole="hr_admin"><Admin /></ProtectedRoute>} />
           <Route path="/manager" element={<ProtectedRoute minRole="team_lead"><ManagerDashboard /></ProtectedRoute>} />
           <Route path="/leave-policy" element={<ProtectedRoute><LeavePolicy /></ProtectedRoute>} />
+          <Route path="/organization" element={<ProtectedRoute><Organization /></ProtectedRoute>} />
           <Route path="/set-email" element={<ProtectedRoute><SetEmail /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>

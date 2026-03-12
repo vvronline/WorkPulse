@@ -4,7 +4,6 @@ import { getAdminStats } from '../../api';
 import UserManagement from './UserManagement';
 import CreateUser from './CreateUser';
 import OrganizationsTab from './OrganizationsTab';
-import TaskLabelsTab from './TaskLabelsTab';
 import AuditLogs from './AuditLogs';
 import s from '../Admin.module.css';
 
@@ -72,11 +71,6 @@ export default function AdminPanel() {
                         <span>🏢</span> Organizations
                     </button>
                 )}
-                {(user.role === 'super_admin' || user.org_id) && (
-                    <button className={`${s.tab} ${tab === 'labels' ? s.active : ''}`} onClick={() => setTab('labels')}>
-                        <span>🏷️</span> Task Labels
-                    </button>
-                )}
                 <button className={`${s.tab} ${tab === 'audit' ? s.active : ''}`} onClick={() => setTab('audit')}>
                     <span>📋</span> Audit Logs
                 </button>
@@ -85,7 +79,6 @@ export default function AdminPanel() {
             {tab === 'users' && <UserManagement userRole={user.role} />}
             {tab === 'create' && <CreateUser userRole={user.role} onCreated={() => setTab('users')} />}
             {tab === 'organizations' && (user.role === 'super_admin' || user.org_id) && <OrganizationsTab userRole={user.role} hasOrgId={!!user.org_id} />}
-            {tab === 'labels' && (user.role === 'super_admin' || user.org_id) && <TaskLabelsTab />}
             {tab === 'audit' && <AuditLogs />}
         </div>
     );

@@ -71,6 +71,9 @@
   font-size: 0.85rem;
   font-weight: 500;
   transition: all 0.25s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
 }
 
 .nav-links a:hover {
@@ -82,6 +85,18 @@
   background: var(--primary);
   color: white;
   box-shadow: 0 0 16px var(--primary-glow);
+}
+
+/* ---- Nav Link SVG Icons (desktop) ---- */
+.nav-link-icon {
+  flex-shrink: 0;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+
+.nav-links a:hover .nav-link-icon,
+.nav-links a.active .nav-link-icon {
+  opacity: 1;
 }
 
 /* ---- Desktop "More" Dropdown ---- */
@@ -157,6 +172,9 @@
   font-weight: 500;
   transition: all 0.2s ease;
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .more-dropdown a:hover {
