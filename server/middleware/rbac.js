@@ -84,6 +84,7 @@ function canManageUser(managerRole, targetRole) {
 
 /**
  * Get all user IDs visible to a manager/lead (async).
+ * Only includes users with a strictly lower role level (except self and direct reports).
  */
 async function getVisibleUserIds(userId, role, orgId, teamId) {
     const idSet = new Set();
@@ -95,24 +96,33 @@ async function getVisibleUserIds(userId, role, orgId, teamId) {
     );
     directRes.rows.forEach(u => idSet.add(u.id));
 
-    if (orgId) {
+    const roleLevel = ROLE_LEVEL[role] || 1;
+    // Determine which roles are strictly below the requester
+    const lowerRoles = Object.entries(ROLE_LEVEL)
+        .filter(([, lvl]) => lvl < roleLevel)
+        .map(([r]) => r);
+
+    if (orgId && lowerRoles.length > 0) {
         if (ROLE_LEVEL[role] >= ROLE_LEVEL.hr_admin) {
-            const res = await query('SELECT id FROM users WHERE org_id = $1 AND is_active = TRUE', [orgId]);
+            const res = await query(
+                'SELECT id FROM users WHERE org_id = $1 AND is_active = TRUE AND role = ANY($2::text[])',
+                [orgId, lowerRoles]
+            );
             res.rows.forEach(u => idSet.add(u.id));
         } else if (ROLE_LEVEL[role] >= ROLE_LEVEL.manager) {
             const userRes = await query('SELECT department_id FROM users WHERE id = $1', [userId]);
             const deptId = userRes.rows[0]?.department_id;
             if (deptId) {
                 const res = await query(
-                    'SELECT id FROM users WHERE org_id = $1 AND department_id = $2 AND is_active = TRUE',
-                    [orgId, deptId]
+                    'SELECT id FROM users WHERE org_id = $1 AND department_id = $2 AND is_active = TRUE AND role = ANY($3::text[])',
+                    [orgId, deptId, lowerRoles]
                 );
                 res.rows.forEach(u => idSet.add(u.id));
             }
         } else if (ROLE_LEVEL[role] >= ROLE_LEVEL.team_lead && teamId) {
             const res = await query(
-                'SELECT id FROM users WHERE org_id = $1 AND team_id = $2 AND is_active = TRUE',
-                [orgId, teamId]
+                'SELECT id FROM users WHERE org_id = $1 AND team_id = $2 AND is_active = TRUE AND role = ANY($3::text[])',
+                [orgId, teamId, lowerRoles]
             );
             res.rows.forEach(u => idSet.add(u.id));
         }

@@ -18,7 +18,8 @@ export default function Teams({ orgId, userRole }) {
     const [editId, setEditId] = useState(null);
     const [editForm, setEditForm] = useState({ name: '', department_id: '', lead_id: '', sprint_duration_weeks: 2, sprint_start_date: '' });
     const [msg, setMsg] = useAutoDismiss('');
-    const canManage = ['team_lead', 'manager', 'hr_admin', 'super_admin'].includes(userRole);
+    const canManage = ['hr_admin', 'super_admin'].includes(userRole);
+    const isAdmin = canManage;
 
     const fetchTeams = useCallback(() => {
         getOrgTeams().then(r => setTeams(r.data)).catch(e => console.error(e));
@@ -87,7 +88,7 @@ export default function Teams({ orgId, userRole }) {
                 </div>
             )}
             <table className={s.table}>
-                <thead><tr><th>Name</th><th>Department</th><th>Lead</th><th>Members</th><th>Sprint Config</th>{canManage && <th>Actions</th>}</tr></thead>
+                <thead><tr><th>Name</th><th>Department</th><th>Lead</th>{isAdmin && <th>Members</th>}<th>Sprint Config</th>{canManage && <th>Actions</th>}</tr></thead>
                 <tbody>
                     {teams.map(t => (
                         <React.Fragment key={t.id}>
@@ -105,7 +106,7 @@ export default function Teams({ orgId, userRole }) {
                                         {members.map(m => <option key={m.id} value={m.id}>{m.full_name || m.username}</option>)}
                                     </select>
                                 ) : (t.lead_name || '—')}</td>
-                                <td>{t.member_count}</td>
+                                {isAdmin && <td>{t.member_count}</td>}
                                 <td className={su['text-muted-sm']}>
                                     {t.sprint_duration_weeks ? `${t.sprint_duration_weeks} week${t.sprint_duration_weeks > 1 ? 's' : ''}` : 'Not set'}
                                     {t.sprint_start_date && ` (from ${t.sprint_start_date})`}
@@ -141,7 +142,7 @@ export default function Teams({ orgId, userRole }) {
                             </tr>
                             {editId === t.id && (
                                 <tr className={tc['sprint-edit-row']}>
-                                    <td colSpan={canManage ? 7 : 6} className={tc['sprint-edit-cell']}>
+                                    <td colSpan={canManage ? (isAdmin ? 7 : 6) : (isAdmin ? 6 : 5)} className={tc['sprint-edit-cell']}>
                                         <div className={tc['sprint-config-form']}>
                                             <div className={tc['sprint-field']}>
                                                 <label className={tc['field-label']}>🏃 Sprint Duration (weeks)</label>
@@ -170,7 +171,7 @@ export default function Teams({ orgId, userRole }) {
                             )}
                         </React.Fragment>
                     ))}
-                    {teams.length === 0 && <tr><td colSpan={canManage ? 7 : 6} className={s.emptyRow}>No teams yet</td></tr>}
+                    {teams.length === 0 && <tr><td colSpan={canManage ? (isAdmin ? 7 : 6) : (isAdmin ? 6 : 5)} className={s.emptyRow}>No teams yet</td></tr>}
                 </tbody>
             </table>
         </>

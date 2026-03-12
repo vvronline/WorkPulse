@@ -24,7 +24,7 @@ export default function MemberHoursTab({ userId }) {
         <>
             <h3 className={m['section-heading-mb']}>Hours (Last 30 Days) — Total: {totalHours.toFixed(1)}h</h3>
             <table className={s.table}>
-                <thead><tr><th>Date</th><th>Floor Time</th><th>Break Time</th><th>Work Mode</th></tr></thead>
+                <thead><tr><th>Date</th><th>Work Time</th><th>Break Time</th><th>Work Mode</th></tr></thead>
                 <tbody>
                     {hours.map(d => (
                         <tr key={d.date}>

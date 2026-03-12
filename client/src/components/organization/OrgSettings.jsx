@@ -25,6 +25,26 @@ export default function OrgSettings({ org, onUpdate, userRole }) {
         } catch (e) { setMsg(e.response?.data?.error || 'Failed'); }
     };
 
+    // Non-admin roles see only basic read-only settings
+    if (!canEdit) {
+        return (
+            <div className={su['form-container-sm']}>
+                <div className={sf.formGroup}>
+                    <label>Organization Name</label>
+                    <input value={org.name} disabled />
+                </div>
+                <div className={sf.formGroup}>
+                    <label>Work Hours Per Day</label>
+                    <input value={org.work_hours_per_day} disabled />
+                </div>
+                <div className={sf.formGroup}>
+                    <label>Work Days</label>
+                    <input value={org.work_days} disabled />
+                </div>
+            </div>
+        );
+    }
+
     return (
         <form onSubmit={handleSave} className={su['form-container-sm']}>
             {msg && <div className={s.success}>{msg}</div>}

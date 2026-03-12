@@ -122,7 +122,7 @@ export default function Navbar() {
       : s['dot-offline'];
 
   const statusLabel = workState === 'on_floor'
-    ? (workMode === 'remote' ? '🟢 Working Remotely' : '🟢 Online')
+    ? (workMode === 'remote' ? '🟢 Working Remotely' : '🟢 Working')
     : workState === 'on_break'
       ? '🟡 Away (On Break)'
       : '⚫ Offline';

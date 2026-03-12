@@ -16,7 +16,8 @@ export default function Departments({ orgId, userRole }) {
     const [editName, setEditName] = useState('');
     const [editHeadId, setEditHeadId] = useState('');
     const [msg, setMsg] = useAutoDismiss('');
-    const canManage = ['manager', 'hr_admin', 'super_admin'].includes(userRole);
+    const canManage = ['hr_admin', 'super_admin'].includes(userRole);
+    const isAdmin = canManage;
 
     const fetchDepts = useCallback(() => {
         getOrgDepartments().then(r => setDepartments(r.data)).catch(e => console.error(e));
@@ -78,7 +79,7 @@ export default function Departments({ orgId, userRole }) {
                 </div>
             )}
             <table className={s.table}>
-                <thead><tr><th>Name</th><th>Head</th><th>Members</th>{canManage && <th>Actions</th>}</tr></thead>
+                <thead><tr><th>Name</th><th>Head</th>{isAdmin && <th>Members</th>}{canManage && <th>Actions</th>}</tr></thead>
                 <tbody>
                     {departments.map(d => (
                         <tr key={d.id}>
@@ -89,7 +90,7 @@ export default function Departments({ orgId, userRole }) {
                                     {members.map(m => <option key={m.id} value={m.id}>{m.full_name || m.username}</option>)}
                                 </select>
                             ) : (d.head_name || '—')}</td>
-                            <td>{d.member_count}</td>
+                            {isAdmin && <td>{d.member_count}</td>}
                             {canManage && (
                                 <td>
                                     <div className={s.actions}>
@@ -109,7 +110,7 @@ export default function Departments({ orgId, userRole }) {
                             )}
                         </tr>
                     ))}
-                    {departments.length === 0 && <tr><td colSpan={4} className={s.emptyRow}>No departments yet</td></tr>}
+                    {departments.length === 0 && <tr><td colSpan={canManage ? 4 : isAdmin ? 3 : 2} className={s.emptyRow}>No departments yet</td></tr>}
                 </tbody>
             </table>
         </>

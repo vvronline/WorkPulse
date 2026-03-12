@@ -48,7 +48,7 @@ function getGreeting() {
 }
 
 function getStateLabel(state, mode) {
-  if (state === 'on_floor') return mode === 'remote' ? '● Working' : '● On Floor';
+  if (state === 'on_floor') return mode === 'remote' ? '● Working Remotely' : '● Working';
   if (state === 'on_break') return '● On Break';
   return 'Logged Out';
 }

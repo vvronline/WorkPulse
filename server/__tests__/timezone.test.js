@@ -3,7 +3,7 @@ jest.mock('../utils/logger', () => ({
     logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), fatal: jest.fn(), child: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() }) },
 }));
 
-const { clampOffset, getTzModifier, getLocalToday, getLocalDow, getOffsetMin } = require('../utils/timezone');
+const { clampOffset, getTzModifier, getLocalToday, getLocalYesterday, getLocalDow, getOffsetMin, getLocalDateFromTs } = require('../utils/timezone');
 
 const fakeReq = (offset) => ({ headers: { 'x-timezone-offset': String(offset) } });
 
@@ -56,5 +56,43 @@ describe('getLocalDow', () => {
         const dow = getLocalDow(fakeReq(0));
         expect(dow).toBeGreaterThanOrEqual(0);
         expect(dow).toBeLessThanOrEqual(6);
+    });
+});
+
+describe('getLocalYesterday', () => {
+    test('returns YYYY-MM-DD format', () => {
+        const result = getLocalYesterday(fakeReq(0));
+        expect(result).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    });
+
+    test('returns a date before getLocalToday', () => {
+        const today = getLocalToday(fakeReq(0));
+        const yesterday = getLocalYesterday(fakeReq(0));
+        expect(yesterday < today).toBe(true);
+    });
+});
+
+describe('getLocalDateFromTs', () => {
+    test('converts ISO timestamp using UTC offset', () => {
+        // 2025-07-01 23:00 UTC with offset=0 → 2025-07-01
+        const result = getLocalDateFromTs('2025-07-01T23:00:00Z', fakeReq(0));
+        expect(result).toBe('2025-07-01');
+    });
+
+    test('handles IST timezone (offset=-330) correctly', () => {
+        // 2025-07-01 20:00 UTC with IST (UTC+5:30 → offset=-330) → local is 2025-07-02 01:30
+        const result = getLocalDateFromTs('2025-07-01T20:00:00Z', fakeReq(-330));
+        expect(result).toBe('2025-07-02');
+    });
+
+    test('handles timestamp without Z suffix', () => {
+        const result = getLocalDateFromTs('2025-07-01 12:00:00', fakeReq(0));
+        expect(result).toBe('2025-07-01');
+    });
+
+    test('handles Date object input', () => {
+        const date = new Date('2025-07-01T12:00:00Z');
+        const result = getLocalDateFromTs(date, fakeReq(0));
+        expect(result).toBe('2025-07-01');
     });
 });

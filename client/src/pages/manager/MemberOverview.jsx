@@ -71,8 +71,8 @@ export default function MemberOverview({ data }) {
                     <h3 className={m.sectionTitle}>30-Day Performance</h3>
                     <div className={m.perfGrid}>
                         <div className={m.perfItem}><span className={m.perfValue}>{stats.daysWorked}</span><span className={m.perfLabel}>Days Worked</span></div>
-                        <div className={m.perfItem}><span className={m.perfValue}>{formatMin(stats.totalFloorMinutes)}</span><span className={m.perfLabel}>Total Floor Time</span></div>
-                        <div className={m.perfItem}><span className={m.perfValue}>{formatMin(stats.avgFloorMinutes)}</span><span className={m.perfLabel}>Avg Floor/Day</span></div>
+                        <div className={m.perfItem}><span className={m.perfValue}>{formatMin(stats.totalFloorMinutes)}</span><span className={m.perfLabel}>Total Work Time</span></div>
+                        <div className={m.perfItem}><span className={m.perfValue}>{formatMin(stats.avgFloorMinutes)}</span><span className={m.perfLabel}>Avg Work/Day</span></div>
                         <div className={m.perfItem}><span className={m.perfValue}>{formatMin(stats.avgBreakMinutes)}</span><span className={m.perfLabel}>Avg Break/Day</span></div>
                         <div className={m.perfItem}><span className={m.perfValue}>{stats.targetMetPercent}%</span><span className={m.perfLabel}>Target Met</span></div>
                         <div className={m.perfItem}><span className={m.perfValue}>{stats.punctualityPercent}%</span><span className={m.perfLabel}>Punctuality</span></div>

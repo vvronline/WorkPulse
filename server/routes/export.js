@@ -53,7 +53,7 @@ router.get('/my-analytics', async (req, res) => {
         const fields = [
             { label: 'Date', value: 'date' },
             { label: 'Work Mode', value: 'work_mode' },
-            { label: 'Floor Hours', value: 'floor_hours' },
+            { label: 'Work Hours', value: 'floor_hours' },
             { label: 'Break Hours', value: 'break_hours' },
             { label: 'Total Hours', value: 'total_hours' },
             { label: 'Target Met', value: 'target_met' },

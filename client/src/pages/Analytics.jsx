@@ -276,7 +276,7 @@ export default function Analytics() {
               <div className="stat-value break">{formatTime(totalBreak)}</div>
             </div>
             <div className="stat-card">
-              <div className="stat-label">Avg Floor / Day</div>
+              <div className="stat-label">Avg Work / Day</div>
               <div className="stat-value floor">{formatTime(avgFloor)}</div>
             </div>
             <div className="stat-card">
@@ -296,7 +296,7 @@ export default function Analytics() {
           {/* Charts Row */}
           <div className={s['analytics-charts-row']}>
             <div className={s['chart-card']}>
-              <h3>📊 Daily Floor vs Break Time</h3>
+              <h3>📊 Daily Work vs Break Time</h3>
               <Bar data={barData} options={barOptions} />
             </div>
             <div className={s['chart-card']}>

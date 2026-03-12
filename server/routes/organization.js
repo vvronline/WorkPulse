@@ -47,6 +47,15 @@ router.get('/current', async (req, res) => {
             FROM organizations o WHERE o.id = $1
         `, [req.userOrgId])).rows[0];
         if (!org) return res.json(null);
+
+        // Role-based masking: only hr_admin+ sees org-wide counts
+        const userLevel = ROLE_LEVEL[req.userRole] || 1;
+        if (userLevel < ROLE_LEVEL['hr_admin']) {
+            delete org.memberCount;
+            delete org.deptCount;
+            delete org.teamCount;
+        }
+
         res.json(org);
     } catch (err) {
         req.log.error({ err }, 'GET /organizations/current error');
@@ -194,14 +203,30 @@ router.post('/remove-member', requireRole('hr_admin'), requireSameOrg, async (re
 
 router.get('/departments', requireSameOrg, async (req, res) => {
     try {
+        const userLevel = ROLE_LEVEL[req.userRole] || 1;
+
+        // Only hr_admin+ can see all departments with member counts
+        if (userLevel >= ROLE_LEVEL['hr_admin']) {
+            const departments = (await query(`
+                SELECT d.*, u.full_name as head_name,
+                       (SELECT COUNT(*) FROM users WHERE department_id = d.id AND is_active = TRUE)::integer as member_count
+                FROM departments d
+                LEFT JOIN users u ON u.id = d.head_id
+                WHERE d.org_id = $1
+                ORDER BY d.name
+            `, [req.userOrgId])).rows;
+            return res.json(departments);
+        }
+
+        // Everyone else: only see their own department (no member counts)
+        const user = (await query('SELECT department_id FROM users WHERE id = $1', [req.userId])).rows[0];
+        if (!user?.department_id) return res.json([]);
         const departments = (await query(`
-            SELECT d.*, u.full_name as head_name,
-                   (SELECT COUNT(*) FROM users WHERE department_id = d.id AND is_active = TRUE)::integer as member_count
+            SELECT d.id, d.name, u.full_name as head_name
             FROM departments d
             LEFT JOIN users u ON u.id = d.head_id
-            WHERE d.org_id = $1
-            ORDER BY d.name
-        `, [req.userOrgId])).rows;
+            WHERE d.id = $1 AND d.org_id = $2
+        `, [user.department_id, req.userOrgId])).rows;
         res.json(departments);
     } catch (err) {
         req.log.error({ err }, 'GET /departments error');
@@ -209,7 +234,7 @@ router.get('/departments', requireSameOrg, async (req, res) => {
     }
 });
 
-router.post('/departments', requireRole('manager'), requireSameOrg, async (req, res) => {
+router.post('/departments', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
     try {
         const { name, head_id } = req.body;
         if (!name || !name.trim()) return res.status(400).json({ error: 'Department name is required' });
@@ -227,7 +252,7 @@ router.post('/departments', requireRole('manager'), requireSameOrg, async (req, 
     }
 });
 
-router.put('/departments/:id', requireRole('manager'), requireSameOrg, async (req, res) => {
+router.put('/departments/:id', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
     try {
         const { id } = req.params;
         const { name, head_id } = req.body;
@@ -266,21 +291,38 @@ router.delete('/departments/:id', requireRole('hr_admin'), requireSameOrg, async
 router.get('/teams', requireSameOrg, async (req, res) => {
     try {
         const { department_id } = req.query;
-        const where = ['t.org_id = $1'];
-        const params = [req.userOrgId];
-        let pi = 2;
+        const userLevel = ROLE_LEVEL[req.userRole] || 1;
 
-        if (department_id) { where.push(`t.department_id = $${pi++}`); params.push(Number(department_id)); }
+        // Only hr_admin+ can see all teams with member counts
+        if (userLevel >= ROLE_LEVEL['hr_admin']) {
+            const where = ['t.org_id = $1'];
+            const params = [req.userOrgId];
+            let pi = 2;
+            if (department_id) { where.push(`t.department_id = $${pi++}`); params.push(Number(department_id)); }
 
+            const teams = (await query(`
+                SELECT t.*, u.full_name as lead_name, d.name as department_name,
+                       (SELECT COUNT(*) FROM users WHERE team_id = t.id AND is_active = TRUE)::integer as member_count
+                FROM teams t
+                LEFT JOIN users u ON u.id = t.lead_id
+                LEFT JOIN departments d ON d.id = t.department_id
+                WHERE ${where.join(' AND ')}
+                ORDER BY t.name
+            `, params)).rows;
+            return res.json(teams);
+        }
+
+        // Everyone else: only see their own team (no member counts)
+        const user = (await query('SELECT team_id FROM users WHERE id = $1', [req.userId])).rows[0];
+        if (!user?.team_id) return res.json([]);
         const teams = (await query(`
-            SELECT t.*, u.full_name as lead_name, d.name as department_name,
-                   (SELECT COUNT(*) FROM users WHERE team_id = t.id AND is_active = TRUE)::integer as member_count
+            SELECT t.id, t.name, t.department_id, t.sprint_duration_weeks, t.sprint_start_date,
+                   u.full_name as lead_name, d.name as department_name
             FROM teams t
             LEFT JOIN users u ON u.id = t.lead_id
             LEFT JOIN departments d ON d.id = t.department_id
-            WHERE ${where.join(' AND ')}
-            ORDER BY t.name
-        `, params)).rows;
+            WHERE t.id = $1 AND t.org_id = $2
+        `, [user.team_id, req.userOrgId])).rows;
         res.json(teams);
     } catch (err) {
         req.log.error({ err }, 'GET /teams error');
@@ -288,7 +330,7 @@ router.get('/teams', requireSameOrg, async (req, res) => {
     }
 });
 
-router.post('/teams', requireRole('team_lead'), requireSameOrg, async (req, res) => {
+router.post('/teams', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
     try {
         const { name, department_id, lead_id } = req.body;
         if (!name || !name.trim()) return res.status(400).json({ error: 'Team name is required' });
@@ -306,7 +348,7 @@ router.post('/teams', requireRole('team_lead'), requireSameOrg, async (req, res)
     }
 });
 
-router.put('/teams/:id', requireRole('team_lead'), requireSameOrg, async (req, res) => {
+router.put('/teams/:id', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
     try {
         const { id } = req.params;
         const { name, department_id, lead_id } = req.body;
@@ -324,7 +366,7 @@ router.put('/teams/:id', requireRole('team_lead'), requireSameOrg, async (req, r
     }
 });
 
-router.delete('/teams/:id', requireRole('manager'), requireSameOrg, async (req, res) => {
+router.delete('/teams/:id', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
     try {
         const { id } = req.params;
         const team = (await query('SELECT * FROM teams WHERE id = $1 AND org_id = $2', [id, req.userOrgId])).rows[0];
