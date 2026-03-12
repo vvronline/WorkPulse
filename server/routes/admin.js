@@ -252,7 +252,7 @@ router.put('/users/:id/role', async (req, res) => {
         if (req.userRole === 'super_admin') {
             await query('UPDATE users SET role = $1 WHERE id = $2', [role, Number(id)]);
             await query(
-                `INSERT INTO role_change_requests (org_id, target_user_id, requested_by, current_role, requested_role, status, reason, approvals, resolved_at)
+                `INSERT INTO role_change_requests (org_id, target_user_id, requested_by, from_role, to_role, status, reason, approvals, resolved_at)
                  VALUES ($1,$2,$3,$4,$5,'approved',$6,$7,NOW())`,
                 [req.userOrgId, Number(id), req.userId, target.role, role, reason || null, JSON.stringify({ super_admin: { status: 'approved', by: req.userId, at: new Date().toISOString() } })]
             );
@@ -266,11 +266,11 @@ router.put('/users/:id/role', async (req, res) => {
         for (const r of required) approvals[r] = { status: 'pending' };
 
         const result = await query(
-            `INSERT INTO role_change_requests (org_id, target_user_id, requested_by, current_role, requested_role, reason, approvals)
+            `INSERT INTO role_change_requests (org_id, target_user_id, requested_by, from_role, to_role, reason, approvals)
              VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
             [req.userOrgId, Number(id), req.userId, target.role, role, reason || null, JSON.stringify(approvals)]
         );
-        logAction(req, 'request_role_change', 'user', Number(id), { current_role: target.role, requested_role: role, request_id: result.rows[0].id });
+        logAction(req, 'request_role_change', 'user', Number(id), { from_role: target.role, to_role: role, request_id: result.rows[0].id });
         res.json({ message: `Role change request created for ${target.full_name}. Awaiting approval.`, request_id: result.rows[0].id, pending: true });
     } catch (err) {
         req.log.error({ err }, 'Update role error');
@@ -299,7 +299,8 @@ router.get('/role-requests', async (req, res) => {
 
         const result = await query(`
             SELECT r.*, u.full_name AS target_name, u.username AS target_username,
-                   req.full_name AS requester_name
+                   req.full_name AS requester_name,
+                   r.from_role AS current_role, r.to_role AS requested_role
             FROM role_change_requests r
             JOIN users u ON u.id = r.target_user_id
             JOIN users req ON req.id = r.requested_by
@@ -342,15 +343,15 @@ router.post('/role-requests/:id/approve', async (req, res) => {
         if (allApproved) {
             // Apply the role change
             await transaction(async (client) => {
-                await client.query('UPDATE users SET role = $1 WHERE id = $2', [rc.requested_role, rc.target_user_id]);
+                await client.query('UPDATE users SET role = $1 WHERE id = $2', [rc.to_role, rc.target_user_id]);
                 await client.query(
                     'UPDATE role_change_requests SET status = $1, approvals = $2, resolved_at = NOW() WHERE id = $3',
                     ['approved', JSON.stringify(approvals), reqId]
                 );
             });
-            logAction(req, 'approve_role_change', 'user', rc.target_user_id, { from: rc.current_role, to: rc.requested_role, request_id: reqId });
+            logAction(req, 'approve_role_change', 'user', rc.target_user_id, { from: rc.from_role, to: rc.to_role, request_id: reqId });
             const targetUser = (await query('SELECT full_name FROM users WHERE id = $1', [rc.target_user_id])).rows[0];
-            res.json({ message: `Role change approved. ${targetUser?.full_name}'s role updated to ${rc.requested_role}.`, fully_approved: true });
+            res.json({ message: `Role change approved. ${targetUser?.full_name}'s role updated to ${rc.to_role}.`, fully_approved: true });
         } else {
             await query('UPDATE role_change_requests SET approvals = $1 WHERE id = $2', [JSON.stringify(approvals), reqId]);
             logAction(req, 'partial_approve_role_change', 'role_change_request', reqId, { role_level: req.userRole });
