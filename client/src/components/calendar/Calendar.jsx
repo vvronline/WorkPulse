@@ -7,6 +7,29 @@ const COLORS = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#ef4444'
 
 function pad(n) { return String(n).padStart(2, '0'); }
 function formatHour(h) { return h === 0 ? '12 AM' : h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h - 12} PM`; }
+
+const TIME_OPTIONS = [];
+for (let h = 0; h < 24; h++) {
+    for (let m = 0; m < 60; m += 15) {
+        const ampm = h < 12 ? 'AM' : 'PM';
+        const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+        TIME_OPTIONS.push({ value: `${pad(h)}:${pad(m)}`, label: `${h12}:${pad(m)} ${ampm}` });
+    }
+}
+
+function getDatePart(iso) { return iso ? iso.slice(0, 10) : ''; }
+function getTimePart(iso) { return iso ? iso.slice(11, 16) : ''; }
+function combineDatetime(date, time) { return date && time ? `${date}T${time}` : ''; }
+function getTimeOptions(timePart) {
+    if (!timePart) return TIME_OPTIONS;
+    const [, m] = timePart.split(':').map(Number);
+    if (m % 15 === 0) return TIME_OPTIONS;
+    const [h2] = timePart.split(':').map(Number);
+    const ampm = h2 < 12 ? 'AM' : 'PM';
+    const h12 = h2 === 0 ? 12 : h2 > 12 ? h2 - 12 : h2;
+    const extra = { value: timePart, label: `${h12}:${pad(m)} ${ampm}` };
+    return [...TIME_OPTIONS.filter(o => o.value < timePart), extra, ...TIME_OPTIONS.filter(o => o.value > timePart)];
+}
 function toLocalISO(d) {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
@@ -84,7 +107,9 @@ export default function Calendar({ tasks = [] }) {
         const now = new Date();
         let start = new Date(startDate);
         start.setHours(hour ?? now.getHours(), hour != null ? 0 : now.getMinutes(), 0, 0);
-        if (start < now) { start = new Date(now); start.setMinutes(now.getMinutes() + 1, 0, 0); }
+        if (start < now) { start = new Date(now); start.setSeconds(0, 0); }
+        const rem = start.getMinutes() % 15;
+        if (rem > 0) start.setMinutes(start.getMinutes() + (15 - rem), 0, 0);
         const end = new Date(start); end.setHours(start.getHours() + 1);
         setForm({ title: '', description: '', start_time: toLocalISO(start), end_time: toLocalISO(end), all_day: false, color: '#6366f1', task_id: '' });
         setModal('create');
@@ -305,13 +330,39 @@ export default function Calendar({ tasks = [] }) {
                         <div className={s.formRow}>
                             <div className={s.formGroup}>
                                 <label>Start</label>
-                                <input type="datetime-local" value={form.start_time} min={modal === 'create' ? nowMin : undefined}
-                                    onChange={e => handleStartChange(e.target.value)} />
+                                {form.all_day ? (
+                                    <input type="date" value={getDatePart(form.start_time)}
+                                        min={modal === 'create' ? getDatePart(nowMin) : undefined}
+                                        onChange={e => handleStartChange(combineDatetime(e.target.value, '00:00'))} />
+                                ) : (
+                                    <div className={s.datetimePicker}>
+                                        <input type="date" value={getDatePart(form.start_time)}
+                                            min={modal === 'create' ? getDatePart(nowMin) : undefined}
+                                            onChange={e => handleStartChange(combineDatetime(e.target.value, getTimePart(form.start_time)))} />
+                                        <select value={getTimePart(form.start_time)}
+                                            onChange={e => handleStartChange(combineDatetime(getDatePart(form.start_time), e.target.value))}>
+                                            {getTimeOptions(getTimePart(form.start_time)).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                        </select>
+                                    </div>
+                                )}
                             </div>
                             <div className={s.formGroup}>
                                 <label>End</label>
-                                <input type="datetime-local" value={form.end_time} min={form.start_time}
-                                    onChange={e => setForm({ ...form, end_time: e.target.value })} />
+                                {form.all_day ? (
+                                    <input type="date" value={getDatePart(form.end_time)}
+                                        min={getDatePart(form.start_time)}
+                                        onChange={e => setForm({ ...form, end_time: combineDatetime(e.target.value, '00:00') })} />
+                                ) : (
+                                    <div className={s.datetimePicker}>
+                                        <input type="date" value={getDatePart(form.end_time)}
+                                            min={getDatePart(form.start_time)}
+                                            onChange={e => setForm({ ...form, end_time: combineDatetime(e.target.value, getTimePart(form.end_time)) })} />
+                                        <select value={getTimePart(form.end_time)}
+                                            onChange={e => setForm({ ...form, end_time: combineDatetime(getDatePart(form.end_time), e.target.value) })}>
+                                            {getTimeOptions(getTimePart(form.end_time)).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                        </select>
+                                    </div>
+                                )}
                             </div>
                         </div>
                         <div className={s.formRow}>

@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useAuth } from '../AuthContext';
-import { getStatus, clockIn, breakStart, breakEnd, clockOut, getWidgets, getWeeklyChart, getTaskSummary } from '../api';
+import { getStatus, clockIn, breakStart, breakEnd, clockOut, getWidgets, getWeeklyChart, getTaskSummary, getCalendarEvents } from '../api';
 import { useWorkState } from '../WorkStateContext';
 import WidgetsGrid from '../components/WidgetsGrid';
 import WeeklyChart from '../components/WeeklyChart';
-import TimelineCard from '../components/TimelineCard';
+import TodayEventsCard from '../components/TodayEventsCard';
+import EventReminderToast from '../components/EventReminderToast';
 import TasksSummary from '../components/TasksSummary';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import { useLiveTimer } from '../hooks/useLiveTimer';
+import { useEventReminder } from '../hooks/useEventReminder';
 import s from './Dashboard.module.css';
 
 const TARGET_HOURS = 9 * 60; // 9 hours target in minutes
@@ -72,10 +74,14 @@ export default function Dashboard() {
   const [workMode, setWorkMode] = useState('office');
   const [showClockOutConfirm, setShowClockOutConfirm] = useState(false);
   const [quoteIndex, setQuoteIndex] = useState(() => Math.floor(Math.random() * QUOTES.length));
+  const [todayEvents, setTodayEvents] = useState([]);
   const quoteTimerRef = useRef(null);
 
   // Live timer hook
   const { liveFloorSec, liveBreakSec, showConfetti, reset: resetTimer } = useLiveTimer(status);
+
+  // Event reminder hook
+  const { reminders, dismiss: dismissReminder } = useEventReminder(todayEvents);
 
   // Rotate quotes every 20 seconds
   useEffect(() => {
@@ -90,8 +96,13 @@ export default function Dashboard() {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const [statusRes, widgetsRes, weeklyRes, taskRes] = await Promise.allSettled([
-        getStatus(), getWidgets(), getWeeklyChart(), getTaskSummary()
+      const now = new Date();
+      const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      const dayEnd   = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString();
+
+      const [statusRes, widgetsRes, weeklyRes, taskRes, eventsRes] = await Promise.allSettled([
+        getStatus(), getWidgets(), getWeeklyChart(), getTaskSummary(),
+        getCalendarEvents(dayStart, dayEnd),
       ]);
       if (statusRes.status === 'fulfilled') {
         setStatus(statusRes.value.data);
@@ -103,6 +114,7 @@ export default function Dashboard() {
       if (widgetsRes.status === 'fulfilled') setWidgets(widgetsRes.value.data);
       if (weeklyRes.status === 'fulfilled') setWeeklyData(weeklyRes.value.data);
       if (taskRes.status === 'fulfilled') setTaskSummary(taskRes.value.data);
+      if (eventsRes.status === 'fulfilled') setTodayEvents(eventsRes.value.data || []);
     } catch (err) {
       console.error('Dashboard fetch error:', err);
       setError('Failed to fetch status');
@@ -460,9 +472,9 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Right: Timeline + Tasks */}
+        {/* Right: Today's Events + Tasks */}
         <div className={s['dash-right-col']}>
-          <TimelineCard entries={status?.entries} />
+          <TodayEventsCard events={todayEvents} />
           <TasksSummary taskSummary={taskSummary} />
         </div>
       </div>
@@ -481,6 +493,8 @@ export default function Dashboard() {
         onConfirm={() => { setShowClockOutConfirm(false); handleAction(clockOut, 'clockOut'); }}
         onCancel={() => setShowClockOutConfirm(false)}
       />
+
+      <EventReminderToast reminders={reminders} onDismiss={dismissReminder} />
     </div>
   );
 }
