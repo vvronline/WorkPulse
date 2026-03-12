@@ -913,6 +913,21 @@ router.post('/backlog', auth, loadUserContext, async (req, res) => {
 
         const task = (await query('SELECT * FROM tasks WHERE id = $1', [taskId])).rows[0];
         const enriched = await enrichTasks([task]);
+
+        // Notify assigned user
+        if (assignedTo && assignedTo !== req.userId) {
+            const assignee = (await query('SELECT email, full_name FROM users WHERE id = $1', [assignedTo])).rows[0];
+            const assigner = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
+            if (assignee) {
+                await query(
+                    'INSERT INTO notifications (user_id, type, title, body, link_task_id) VALUES ($1, $2, $3, $4, $5)',
+                    [assignedTo, 'task', `Task Assigned: ${task.title}`, `${assigner?.full_name || 'Someone'} assigned you a task`, task.id]
+                );
+                notifyByEmail('taskAssigned', assignee, task, assigner?.full_name || 'Someone');
+                sendToUser(assignedTo, 'task_assigned', { taskId, title: task.title });
+            }
+        }
+
         res.json(enriched[0]);
     } catch (err) {
         req.log.error({ err: err }, 'Error creating backlog item:');
