@@ -24,8 +24,13 @@ function cookieOptions() {
 
 // Registration mode (public — no auth needed)
 router.get('/registration-mode', async (req, res) => {
-    const row = await query("SELECT value FROM app_settings WHERE key = 'registration_mode'");
-    res.json({ mode: row.rows[0]?.value || 'open' });
+    try {
+        const row = await query("SELECT value FROM app_settings WHERE key = 'registration_mode'");
+        res.json({ mode: row.rows[0]?.value || 'open' });
+    } catch (err) {
+        logger.error({ err }, 'GET /registration-mode error');
+        res.status(500).json({ error: 'Failed to fetch registration mode' });
+    }
 });
 
 // Register

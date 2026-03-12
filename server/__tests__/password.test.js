@@ -10,9 +10,9 @@ describe('validatePassword', () => {
         expect(validatePassword('Ab1!xyz')).toMatch(/at least 8/);
     });
 
-    test('rejects password over 72 chars', () => {
+    test('rejects password over 72 bytes', () => {
         const long = 'Aa1!' + 'x'.repeat(69);
-        expect(validatePassword(long)).toMatch(/72 characters/);
+        expect(validatePassword(long)).toMatch(/72 bytes/);
     });
 
     test('rejects password without lowercase', () => {

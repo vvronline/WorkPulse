@@ -26,6 +26,8 @@ async function updateLeaveBalance(userId, leaveType, date, duration, operation, 
             ? balance.used + durationValue
             : Math.max(0, balance.used - durationValue);
         await q('UPDATE leave_balances SET used = $1 WHERE id = $2', [newUsed, balance.id]);
+    } else {
+        logger.warn({ userId, leaveType, year }, 'Leave balance row not found — skipping balance update');
     }
 }
 
@@ -227,6 +229,7 @@ router.post('/', async (req, res) => {
         // Multi-day leave support
         const rawDates = Array.isArray(dates) && dates.length > 0 ? dates : (date ? [date] : null);
         if (!rawDates || rawDates.length === 0) return res.status(400).json({ error: 'Date(s) required' });
+        if (rawDates.length > 60) return res.status(400).json({ error: 'Cannot apply for more than 60 days at once' });
         if (!leave_type) return res.status(400).json({ error: 'Leave type required' });
         const validDurations = ['full', 'half', 'quarter'];
         const leaveDuration = validDurations.includes(duration) ? duration : 'full';
@@ -514,7 +517,7 @@ router.post('/:id/withdraw', async (req, res) => {
                     approver?.id || null,
                     leave.id,
                     null,
-                    JSON.stringify({ leave_type: leave.leave_type, date: leave.date, duration: leave.duration }),
+                    JSON.stringify({ leave_type: leave.leave_type, date: leave.date, duration: leave.duration, previous_status: leave.status }),
                 ]
             );
 

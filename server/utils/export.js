@@ -4,12 +4,24 @@
 const { Parser } = require('json2csv');
 const PDFDocument = require('pdfkit');
 
+/** Sanitize a cell value to prevent CSV formula injection. */
+function sanitizeCell(val) {
+    if (typeof val !== 'string') return val;
+    if (/^[=+\-@\t\r]/.test(val)) return `'${val}`;
+    return val;
+}
+
 /**
  * Stream a CSV response.
  */
 function sendCSV(res, data, fields, filename) {
+    const safeData = data.map(row => {
+        const out = {};
+        for (const key of Object.keys(row)) out[key] = sanitizeCell(row[key]);
+        return out;
+    });
     const parser = new Parser({ fields });
-    const csv = parser.parse(data);
+    const csv = parser.parse(safeData);
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(csv);

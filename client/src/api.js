@@ -128,7 +128,7 @@ export const deleteSprint = (id) => API.delete(`/sprints/${id}`);
 export const getSprintTasks = (id) => API.get(`/sprints/${id}/tasks`);
 
 // Profile
-export const getProfile = () => API.get('/profile');
+export const getProfile = (config) => API.get('/profile', config);
 export const updateProfile = (data) => API.put('/profile', data);
 export const updateEmail = (email) => API.put('/profile/email', { email });
 export const updatePassword = (data) => API.put('/profile/password', data);

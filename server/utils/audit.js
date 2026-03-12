@@ -37,7 +37,8 @@ function logAction(req, action, entityType, entityId = null, details = null) {
 /**
  * Query audit logs with filters. Returns { total, logs }.
  */
-async function queryLogs({ orgId, actorId, entityType, entityId, action, from, to, limit = 100, offset = 0 }) {
+async function queryLogs({ orgId, actorId, entityType, entityId, action, from, to, limit: rawLimit = 100, offset = 0 }) {
+    const limit = Math.min(Math.max(Number(rawLimit) || 100, 1), 500);
     const where = [];
     const params = [];
     let p = 1;

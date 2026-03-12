@@ -176,6 +176,9 @@ router.post('/remove-member', requireRole('hr_admin'), requireSameOrg, async (re
         if (!target) return res.status(404).json({ error: 'User not found' });
         if (target.org_id !== req.userOrgId) return res.status(400).json({ error: 'User is not in your organization' });
         if (target.id === req.userId) return res.status(400).json({ error: 'You cannot remove yourself' });
+        if ((ROLE_LEVEL[target.role] || 0) >= (ROLE_LEVEL[req.userRole] || 0)) {
+            return res.status(403).json({ error: 'Cannot remove a member with an equal or higher role' });
+        }
 
         await query("UPDATE users SET org_id = NULL, team_id = NULL, department_id = NULL, role = 'employee' WHERE id = $1", [user_id]);
         logAction(req, 'remove_member', 'user', user_id, { name: target.full_name });

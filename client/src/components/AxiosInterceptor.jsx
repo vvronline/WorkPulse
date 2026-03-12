@@ -19,7 +19,8 @@ export default function AxiosInterceptor({ children }) {
             response => response,
             error => {
                 const status = error.response?.status;
-                if (status === 401) {
+                const url = error.config?.url || '';
+                if (status === 401 && !url.includes('/auth/logout')) {
                     logoutRef.current();
                     navigate('/login', { replace: true });
                 } else if (status === 429) {

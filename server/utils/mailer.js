@@ -47,6 +47,12 @@ function getTransporter() {
 
 const FROM = () => process.env.SMTP_FROM || (process.env.SMTP_USER ? `"WorkPulse" <${process.env.SMTP_USER}>` : '"WorkPulse" <noreply@workpulse.app>');
 
+/** Escape user-controlled strings before embedding in HTML email templates. */
+function esc(str) {
+    if (str == null) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 /**
  * Send an email (fire-and-forget). Never throws.
  */
@@ -70,8 +76,8 @@ const templates = {
         subject: 'WorkPulse — Leave Approved',
         html: `<div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;">
             <h2 style="color:#22c55e;">Leave Approved ✅</h2>
-            <p>Hi <strong>${user.full_name}</strong>,</p>
-            <p>Your <strong>${leave.leave_type}</strong> leave on <strong>${leave.date}</strong> has been approved.</p>
+            <p>Hi <strong>${esc(user.full_name)}</strong>,</p>
+            <p>Your <strong>${esc(leave.leave_type)}</strong> leave on <strong>${esc(leave.date)}</strong> has been approved.</p>
         </div>`,
     }),
     leaveRejected: (user, leave, reason) => ({
@@ -79,9 +85,9 @@ const templates = {
         subject: 'WorkPulse — Leave Rejected',
         html: `<div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;">
             <h2 style="color:#ef4444;">Leave Rejected</h2>
-            <p>Hi <strong>${user.full_name}</strong>,</p>
-            <p>Your <strong>${leave.leave_type}</strong> leave on <strong>${leave.date}</strong> has been rejected.</p>
-            ${reason ? `<p><em>Reason: ${reason}</em></p>` : ''}
+            <p>Hi <strong>${esc(user.full_name)}</strong>,</p>
+            <p>Your <strong>${esc(leave.leave_type)}</strong> leave on <strong>${esc(leave.date)}</strong> has been rejected.</p>
+            ${reason ? `<p><em>Reason: ${esc(reason)}</em></p>` : ''}
         </div>`,
     }),
     leaveRevoked: (user, leave) => ({
@@ -89,28 +95,28 @@ const templates = {
         subject: 'WorkPulse — Leave Revoked',
         html: `<div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;">
             <h2 style="color:#f59e0b;">Leave Revoked</h2>
-            <p>Hi <strong>${user.full_name}</strong>,</p>
-            <p>Your <strong>${leave.leave_type}</strong> leave on <strong>${leave.date}</strong> has been revoked by management.</p>
+            <p>Hi <strong>${esc(user.full_name)}</strong>,</p>
+            <p>Your <strong>${esc(leave.leave_type)}</strong> leave on <strong>${esc(leave.date)}</strong> has been revoked by management.</p>
         </div>`,
     }),
     taskAssigned: (user, task, assignerName) => ({
         to: user.email,
-        subject: `WorkPulse — Task Assigned: ${task.title}`,
+        subject: `WorkPulse — Task Assigned: ${esc(task.title)}`,
         html: `<div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;">
             <h2 style="color:#6366f1;">New Task Assigned</h2>
-            <p>Hi <strong>${user.full_name}</strong>,</p>
-            <p><strong>${assignerName}</strong> assigned you a task:</p>
-            <p style="background:#f3f4f6;padding:12px;border-radius:8px;"><strong>${task.title}</strong></p>
-            ${task.due_date ? `<p>Due: ${task.due_date}</p>` : ''}
+            <p>Hi <strong>${esc(user.full_name)}</strong>,</p>
+            <p><strong>${esc(assignerName)}</strong> assigned you a task:</p>
+            <p style="background:#f3f4f6;padding:12px;border-radius:8px;"><strong>${esc(task.title)}</strong></p>
+            ${task.due_date ? `<p>Due: ${esc(task.due_date)}</p>` : ''}
         </div>`,
     }),
     mention: (user, commenterName, taskTitle) => ({
         to: user.email,
-        subject: `WorkPulse — ${commenterName} mentioned you`,
+        subject: `WorkPulse — ${esc(commenterName)} mentioned you`,
         html: `<div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;">
             <h2 style="color:#6366f1;">You were mentioned</h2>
-            <p>Hi <strong>${user.full_name}</strong>,</p>
-            <p><strong>${commenterName}</strong> mentioned you in a comment on task: <strong>${taskTitle}</strong></p>
+            <p>Hi <strong>${esc(user.full_name)}</strong>,</p>
+            <p><strong>${esc(commenterName)}</strong> mentioned you in a comment on task: <strong>${esc(taskTitle)}</strong></p>
         </div>`,
     }),
     manualEntryApproved: (user, date) => ({
@@ -118,8 +124,8 @@ const templates = {
         subject: 'WorkPulse — Manual Entry Approved',
         html: `<div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;">
             <h2 style="color:#22c55e;">Manual Entry Approved ✅</h2>
-            <p>Hi <strong>${user.full_name}</strong>,</p>
-            <p>Your manual time entry for <strong>${date}</strong> has been approved.</p>
+            <p>Hi <strong>${esc(user.full_name)}</strong>,</p>
+            <p>Your manual time entry for <strong>${esc(date)}</strong> has been approved.</p>
         </div>`,
     }),
     manualEntryRejected: (user, date, reason) => ({
@@ -127,9 +133,9 @@ const templates = {
         subject: 'WorkPulse — Manual Entry Rejected',
         html: `<div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;">
             <h2 style="color:#ef4444;">Manual Entry Rejected</h2>
-            <p>Hi <strong>${user.full_name}</strong>,</p>
-            <p>Your manual time entry for <strong>${date}</strong> has been rejected.</p>
-            ${reason ? `<p><em>Reason: ${reason}</em></p>` : ''}
+            <p>Hi <strong>${esc(user.full_name)}</strong>,</p>
+            <p>Your manual time entry for <strong>${esc(date)}</strong> has been rejected.</p>
+            ${reason ? `<p><em>Reason: ${esc(reason)}</em></p>` : ''}
         </div>`,
     }),
 };

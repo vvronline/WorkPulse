@@ -67,6 +67,12 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
         const validWorkModes = ['office', 'remote', 'hybrid'];
         const selectedWorkMode = validWorkModes.includes(req.body.work_mode) ? req.body.work_mode : 'office';
 
+        // Validate timezone offset before any DB writes
+        const tzOffset = getOffsetMin(req);
+        if (tzOffset < -840 || tzOffset > 720) {
+            return res.status(400).json({ error: 'Invalid timezone offset' });
+        }
+
         const txResult = await transaction(async (client) => {
             const lastRes = await client.query(
                 `SELECT * FROM time_entries
@@ -87,10 +93,6 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
 
         if (txResult.error) return res.status(400).json({ error: txResult.error });
 
-        const tzOffset = getOffsetMin(req);
-        if (tzOffset < -840 || tzOffset > 720) {
-            return res.status(400).json({ error: 'Invalid timezone offset' });
-        }
         await query('UPDATE users SET timezone_offset = $1 WHERE id = $2', [tzOffset, req.userId]);
         logAction(req, 'clock_in', 'time_entry', null, { work_mode: selectedWorkMode });
         res.json({ message: 'Logged in successfully' });

@@ -1,7 +1,7 @@
 const express = require('express');
 const { query } = require('../db');
 const auth = require('../middleware/auth');
-const { loadUserContext } = require('../middleware/rbac');
+const { loadUserContext, requireRole } = require('../middleware/rbac');
 const { logger } = require('../utils/logger');
 
 const router = express.Router();
@@ -42,12 +42,15 @@ router.get('/active', auth, loadUserContext, async (req, res) => {
     }
 });
 
-router.post('/', auth, loadUserContext, async (req, res) => {
+router.post('/', auth, loadUserContext, requireRole('team_lead'), async (req, res) => {
     try {
         if (!req.userTeamId) return res.status(403).json({ error: 'You must be assigned to a team to create sprints' });
 
         const { name, start_date, end_date, goal } = req.body;
         if (!name || !start_date || !end_date) return res.status(400).json({ error: 'Sprint name, start_date, and end_date are required' });
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(start_date) || !/^\d{4}-\d{2}-\d{2}$/.test(end_date)) {
+            return res.status(400).json({ error: 'Dates must be in YYYY-MM-DD format' });
+        }
 
         const existing = (await query('SELECT id FROM sprints WHERE team_id = $1 AND name = $2', [req.userTeamId, name])).rows[0];
         if (existing) return res.status(400).json({ error: 'A sprint with this name already exists for your team' });
@@ -64,7 +67,7 @@ router.post('/', auth, loadUserContext, async (req, res) => {
     }
 });
 
-router.put('/:id', auth, loadUserContext, async (req, res) => {
+router.put('/:id', auth, loadUserContext, requireRole('team_lead'), async (req, res) => {
     try {
         const { id } = req.params;
         const { name, start_date, end_date, goal, status } = req.body;
@@ -78,8 +81,14 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
         let pi = 1;
 
         if (name !== undefined) { updates.push(`name = $${pi++}`); params.push(name); }
-        if (start_date !== undefined) { updates.push(`start_date = $${pi++}`); params.push(start_date); }
-        if (end_date !== undefined) { updates.push(`end_date = $${pi++}`); params.push(end_date); }
+        if (start_date !== undefined) {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(start_date)) return res.status(400).json({ error: 'start_date must be YYYY-MM-DD' });
+            updates.push(`start_date = $${pi++}`); params.push(start_date);
+        }
+        if (end_date !== undefined) {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(end_date)) return res.status(400).json({ error: 'end_date must be YYYY-MM-DD' });
+            updates.push(`end_date = $${pi++}`); params.push(end_date);
+        }
         if (goal !== undefined) { updates.push(`goal = $${pi++}`); params.push(goal); }
         if (status !== undefined && ['planned', 'active', 'completed'].includes(status)) {
             updates.push(`status = $${pi++}`); params.push(status);
@@ -98,7 +107,7 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
     }
 });
 
-router.delete('/:id', auth, loadUserContext, async (req, res) => {
+router.delete('/:id', auth, loadUserContext, requireRole('team_lead'), async (req, res) => {
     try {
         const { id } = req.params;
 

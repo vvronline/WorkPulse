@@ -33,7 +33,7 @@ function ProtectedRoute({ children, minRole }) {
   if (user?.must_change_password) return <Navigate to="/change-password" />;
   if (minRole) {
     const levels = { employee: 1, team_lead: 2, manager: 3, hr_admin: 4, super_admin: 5 };
-    // Allow manager route if user has direct reports
+    // Allow manager route if user has direct reports (even if role < team_lead)
     if (minRole === 'team_lead' && user?.has_reports) return children;
     if ((levels[user?.role] || 1) < (levels[minRole] || 1)) return <Navigate to="/" />;
   }

@@ -100,11 +100,19 @@ async function canAccessTask(task, userId) {
 }
 
 // Helper: sync labels for a task
-async function syncLabels(taskId, labelIds) {
+async function syncLabels(taskId, labelIds, orgId) {
     if (!labelIds || !Array.isArray(labelIds)) return;
     await query('DELETE FROM task_label_map WHERE task_id = $1', [taskId]);
     for (const lid of labelIds) {
-        await query('INSERT INTO task_label_map (task_id, label_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [taskId, lid]);
+        const validLid = parseInt(lid, 10);
+        if (isNaN(validLid)) continue;
+        // Only allow labels from the same org (or personal labels with no org)
+        const label = orgId
+            ? (await query('SELECT id FROM labels WHERE id = $1 AND org_id = $2', [validLid, orgId])).rows[0]
+            : (await query('SELECT id FROM labels WHERE id = $1 AND org_id IS NULL', [validLid])).rows[0];
+        if (label) {
+            await query('INSERT INTO task_label_map (task_id, label_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [taskId, validLid]);
+        }
     }
 }
 
@@ -378,7 +386,7 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
 
         if (label_ids !== undefined) {
             const oldLabels = (await query('SELECT tl.name FROM task_label_map tlm JOIN task_labels tl ON tl.id = tlm.label_id WHERE tlm.task_id = $1 ORDER BY tl.name', [id])).rows.map(r => r.name);
-            await syncLabels(id, label_ids || []);
+            await syncLabels(id, label_ids || [], req.userOrgId);
             const newLabels = (await query('SELECT tl.name FROM task_label_map tlm JOIN task_labels tl ON tl.id = tlm.label_id WHERE tlm.task_id = $1 ORDER BY tl.name', [id])).rows.map(r => r.name);
             if (JSON.stringify(oldLabels) !== JSON.stringify(newLabels)) {
                 await logHistory(id, req.userId, 'updated', 'labels', oldLabels.join(', ') || 'none', newLabels.join(', ') || 'none');
@@ -497,15 +505,10 @@ router.get('/search', auth, loadUserContext, async (req, res) => {
         const params = [`%${escapedQ}%`];
         let pi = 2;
 
-        if (req.userOrgId) {
-            conditions.push(`(t.user_id = $${pi} OR t.assigned_to = $${pi} OR t.user_id IN (SELECT id FROM users WHERE org_id = $${pi + 1}))`);
-            params.push(req.userId, req.userOrgId);
-            pi += 2;
-        } else {
-            conditions.push(`(t.user_id = $${pi} OR t.assigned_to = $${pi})`);
-            params.push(req.userId);
-            pi++;
-        }
+        // Restrict search scope: own tasks + assigned to me + same team/dept
+        conditions.push(`(t.user_id = $${pi} OR t.assigned_to = $${pi})`);
+        params.push(req.userId);
+        pi++;
 
         const tasks = (await query(`
             SELECT t.* FROM tasks t
@@ -905,7 +908,7 @@ router.post('/backlog', auth, loadUserContext, async (req, res) => {
         );
         const taskId = result.rows[0].id;
 
-        if (label_ids && Array.isArray(label_ids) && label_ids.length > 0) await syncLabels(taskId, label_ids);
+        if (label_ids && Array.isArray(label_ids) && label_ids.length > 0) await syncLabels(taskId, label_ids, req.userOrgId);
         await logHistory(taskId, req.userId, 'created', null, null, null);
 
         const task = (await query('SELECT * FROM tasks WHERE id = $1', [taskId])).rows[0];

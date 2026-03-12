@@ -24,7 +24,8 @@ export function AuthProvider({ children }) {
       setIsInitializing(false);
       return;
     }
-    getProfile()
+    const controller = new AbortController();
+    getProfile({ signal: controller.signal })
       .then(res => {
         if (res.data) {
           setUser(res.data);
@@ -32,6 +33,7 @@ export function AuthProvider({ children }) {
         }
       })
       .catch(err => {
+        if (controller.signal.aborted) return;
         // Session expired or invalid — clear cached user
         if (err.response?.status === 401) {
           localStorage.removeItem('user');
@@ -52,6 +54,7 @@ export function AuthProvider({ children }) {
       .finally(() => {
         setIsInitializing(false);
       });
+    return () => controller.abort();
   }, []);
 
   const saveAuth = useCallback((user) => {

@@ -380,6 +380,9 @@ router.post('/users', requireRole('hr_admin'), async (req, res) => {
         const existingRes = await query('SELECT id FROM users WHERE username = $1 OR email = $2', [username, email]);
         if (existingRes.rows[0]) return res.status(400).json({ error: 'Username or email already taken' });
         const assignRole = VALID_ROLES.includes(role) ? role : 'employee';
+        if (req.userRole !== 'super_admin' && ROLE_LEVEL[assignRole] >= ROLE_LEVEL[req.userRole]) {
+            return res.status(403).json({ error: 'Cannot create a user with a role equal to or higher than your own' });
+        }
         const hash = await bcrypt.hash(password, 10);
         let assignOrgId = req.userOrgId;
         if (req.userRole === 'super_admin' && org_id !== undefined) {

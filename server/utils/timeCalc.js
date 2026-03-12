@@ -8,7 +8,13 @@
  */
 function tsToMs(timestamp) {
     if (timestamp instanceof Date) return timestamp.getTime();
-    return new Date(timestamp.replace(' ', 'T') + (timestamp.endsWith('Z') ? '' : 'Z')).getTime();
+    const s = String(timestamp).trim();
+    // Already has timezone info (Z, +HH:MM, -HH:MM) — parse directly
+    if (/[Zz]$/.test(s) || /[+-]\d{2}:\d{2}$/.test(s) || /[+-]\d{4}$/.test(s)) {
+        return new Date(s.replace(' ', 'T')).getTime();
+    }
+    // No timezone — assume UTC
+    return new Date(s.replace(' ', 'T') + 'Z').getTime();
 }
 
 /**

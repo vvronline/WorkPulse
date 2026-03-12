@@ -87,6 +87,7 @@ function canManageUser(managerRole, targetRole) {
  */
 async function getVisibleUserIds(userId, role, orgId, teamId) {
     const idSet = new Set();
+    idSet.add(userId); // Always include the requesting user
 
     const directRes = await query(
         'SELECT id FROM users WHERE manager_id = $1 AND is_active = TRUE',
@@ -117,7 +118,6 @@ async function getVisibleUserIds(userId, role, orgId, teamId) {
         }
     }
 
-    if (idSet.size === 0) idSet.add(userId);
     return [...idSet];
 }
 

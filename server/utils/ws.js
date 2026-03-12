@@ -5,6 +5,7 @@
 const { WebSocketServer } = require('ws');
 const jwt = require('jsonwebtoken');
 const cookie = require('cookie');
+const { query } = require('../db');
 const { logger } = require('./logger');
 
 /** Map<userId, Set<WebSocket>> */
@@ -13,7 +14,7 @@ const clients = new Map();
 function setupWebSocket(server) {
     const wss = new WebSocketServer({ server, path: '/ws' });
 
-    wss.on('connection', (ws, req) => {
+    wss.on('connection', async (ws, req) => {
         // Authenticate via cookie
         const cookies = cookie.parse(req.headers.cookie || '');
         const token = cookies.token;
@@ -30,7 +31,18 @@ function setupWebSocket(server) {
             return;
         }
 
+        // Verify token_version hasn't been revoked (password change/reset)
         const userId = payload.id;
+        try {
+            const userRow = (await query('SELECT token_version FROM users WHERE id = $1', [userId])).rows[0];
+            if (!userRow || (payload.tv !== undefined && userRow.token_version !== undefined && payload.tv !== userRow.token_version)) {
+                ws.close(4001, 'Token revoked');
+                return;
+            }
+        } catch {
+            ws.close(4001, 'Auth check failed');
+            return;
+        }
 
         // Register client
         if (!clients.has(userId)) clients.set(userId, new Set());

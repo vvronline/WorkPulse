@@ -5,7 +5,7 @@ const express = require('express');
 const { query } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole, getVisibleUserIds } = require('../middleware/rbac');
-const { getLocalToday, getTzModifier, getOffsetMin } = require('../utils/timezone');
+const { getOffsetMin } = require('../utils/timezone');
 const { computeFloorMs, computeBreakMs } = require('../utils/timeCalc');
 const { sendCSV, sendPDF } = require('../utils/export');
 const { logger } = require('../utils/logger');
@@ -19,13 +19,14 @@ router.get('/my-analytics', async (req, res) => {
         const { from, to, format } = req.query;
         if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
 
-        const tzMod = getTzModifier(req);
+        const offsetMin = getOffsetMin(req);
+        const intervalStr = `${-offsetMin} minutes`;
         const entries = (await query(`
             SELECT * FROM time_entries
             WHERE user_id = $1 AND approval_status = 'approved'
-                AND (timestamp + ${tzMod})::date BETWEEN $2::date AND $3::date
+                AND (timestamp + $4::interval)::date BETWEEN $2::date AND $3::date
             ORDER BY timestamp ASC
-        `, [req.userId, from, to])).rows;
+        `, [req.userId, from, to, intervalStr])).rows;
 
         // Group by date
         const byDate = {};
@@ -170,7 +171,7 @@ router.get('/team-analytics', requireRole('team_lead'), async (req, res) => {
         if (userIds.length === 0) return res.status(200).json([]);
 
         const members = (await query(`
-            SELECT u.id, u.full_name, u.email, u.role,
+            SELECT u.id, u.full_name, u.email, u.role, u.timezone_offset,
                    d.name AS department_name, tm.name AS team_name
             FROM users u
             LEFT JOIN departments d ON d.id = u.department_id
@@ -179,14 +180,16 @@ router.get('/team-analytics', requireRole('team_lead'), async (req, res) => {
             ORDER BY u.full_name
         `, [userIds])).rows;
 
+        const offsetMin = getOffsetMin(req);
         const rows = [];
         for (const member of members) {
+            const memberInterval = `${-(member.timezone_offset || offsetMin)} minutes`;
             const entries = (await query(`
                 SELECT * FROM time_entries
                 WHERE user_id = $1 AND approval_status = 'approved'
-                    AND timestamp::date BETWEEN $2::date AND $3::date
+                    AND (timestamp + $4::interval)::date BETWEEN $2::date AND $3::date
                 ORDER BY timestamp ASC
-            `, [member.id, from, to])).rows;
+            `, [member.id, from, to, memberInterval])).rows;
 
             // Group by date
             const byDate = {};

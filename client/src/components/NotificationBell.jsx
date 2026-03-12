@@ -94,9 +94,11 @@ export default function NotificationBell() {
     try {
       await deleteNotification(notifId);
       setNotifications(prev => {
-        const removed = prev.find(n => n.id === notifId);
-        if (removed && !removed.is_read) setUnread(u => Math.max(0, u - 1));
         return prev.filter(n => n.id !== notifId);
+      });
+      setUnread(prev => {
+        const removed = notifications.find(n => n.id === notifId);
+        return removed && !removed.is_read ? Math.max(0, prev - 1) : prev;
       });
     } catch { /* ignore */ }
   };
