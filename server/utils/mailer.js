@@ -15,7 +15,9 @@ function getTransporter() {
     // ── Mode 1: Gmail OAuth2 ────────────────────────────────────────
     if (process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET && process.env.GMAIL_REFRESH_TOKEN) {
         transporter = nodemailer.createTransport({
-            service: 'gmail',
+            host: 'smtp.gmail.com',
+            port: 465,
+            secure: true,
             auth: {
                 type: 'OAuth2',
                 user: process.env.SMTP_USER,
