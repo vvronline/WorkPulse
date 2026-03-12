@@ -173,6 +173,34 @@ export default function Calendar({ tasks = [] }) {
         return evStart <= dayEnd && evEnd >= dayStart;
     });
 
+    const layoutEvents = (evts, day) => {
+        const dayStart = new Date(day); dayStart.setHours(0, 0, 0, 0);
+        const items = evts.map(ev => {
+            const s = Math.max(0, (new Date(ev.start_time) - dayStart) / 60000);
+            const e = Math.min(1440, (new Date(ev.end_time) - dayStart) / 60000);
+            return { ev, startMin: s, endMin: e };
+        }).sort((a, b) => a.startMin - b.startMin || (b.endMin - b.startMin) - (a.endMin - a.startMin));
+
+        const columns = [];
+        const placed = [];
+        for (const item of items) {
+            let col = 0;
+            while (columns[col] && columns[col] > item.startMin) col++;
+            columns[col] = item.endMin;
+            placed.push({ ...item, col });
+        }
+
+        return placed.map(p => {
+            let maxCol = p.col;
+            for (const o of placed) {
+                if (o.startMin < p.endMin && o.endMin > p.startMin) {
+                    maxCol = Math.max(maxCol, o.col);
+                }
+            }
+            return { ...p, total: maxCol + 1 };
+        });
+    };
+
     const renderTimeGrid = (days) => {
         const isMulti = days.length > 1;
         return (
@@ -191,16 +219,20 @@ export default function Calendar({ tasks = [] }) {
                                 {HOURS.map(h => (
                                     <div key={h} className={s.hourSlot} onClick={() => openCreate(day, h)} />
                                 ))}
-                                {dayEvents.map(ev => {
+                                {layoutEvents(dayEvents, day).map(({ ev, startMin, endMin, col, total }) => {
                                     const evStart = new Date(ev.start_time);
                                     const evEnd = new Date(ev.end_time);
-                                    const dayStart = new Date(day); dayStart.setHours(0, 0, 0, 0);
-                                    const startMin = Math.max(0, (evStart - dayStart) / 60000);
-                                    const endMin = Math.min(1440, (evEnd - dayStart) / 60000);
                                     const top = startMin;
                                     const height = Math.max(20, endMin - startMin);
+                                    const gap = 2;
+                                    const colW = total === 1 ? undefined : `calc((100% - ${gap * (total + 1)}px) / ${total})`;
+                                    const colL = total === 1 ? '2px' : `calc(${col} * ((100% - ${gap * (total + 1)}px) / ${total}) + ${gap * (col + 1)}px)`;
+                                    const evStyle = total === 1
+                                        ? { top: `${top}px`, height: `${height}px`, left: '2px', right: '2px', '--ev-color': ev.color || '#6366f1' }
+                                        : { top: `${top}px`, height: `${height}px`, left: colL, width: colW, '--ev-color': ev.color || '#6366f1' };
                                     return (
-                                        <div key={ev.id} className={s.event} style={{ top: `${top}px`, height: `${height}px`, '--ev-color': ev.color || '#6366f1' }}
+                                        <div key={ev.id} className={s.event}
+                                            style={evStyle}
                                             onClick={(e) => { e.stopPropagation(); openEdit(ev); }}>
                                             <span className={s.eventTitle}>{ev.title}</span>
                                             {height >= 40 && <span className={s.eventTime}>
