@@ -438,7 +438,7 @@ router.post('/approvals/:id/approve', async (req, res) => {
                     sendToUser(txResult.requesterId, 'leave_update', { status: 'approved' });
                 } else if (txResult.type === 'manual_entry') {
                     let meta = {};
-                    if (txResult.metadata) { try { meta = JSON.parse(txResult.metadata); } catch {} }
+                    if (txResult.metadata) { try { meta = JSON.parse(txResult.metadata); } catch { } }
                     const entryDate = meta.date || '';
                     await query(
                         'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
@@ -513,7 +513,7 @@ router.post('/approvals/:id/reject', async (req, res) => {
                     sendToUser(txResult.requesterId, 'leave_update', { status: 'rejected' });
                 } else if (txResult.type === 'manual_entry') {
                     let meta = {};
-                    if (txResult.metadata) { try { meta = JSON.parse(txResult.metadata); } catch {} }
+                    if (txResult.metadata) { try { meta = JSON.parse(txResult.metadata); } catch { } }
                     const entryDate = meta.date || '';
                     await query(
                         'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',

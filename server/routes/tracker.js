@@ -7,6 +7,8 @@ const { logAction } = require('../utils/audit');
 const { getLocalToday, getLocalDow, getTzModifier, getLocalDateFromTs, getOffsetMin } = require('../utils/timezone');
 const { computeStatus, computeDaySummary } = require('../utils/timeCalc');
 const { logger } = require('../utils/logger');
+const { notifyByEmail } = require('../utils/mailer');
+const { sendToUser } = require('../utils/ws');
 
 const router = express.Router();
 
@@ -402,6 +404,23 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
             }
         });
 
+        // Notify the manager/approver about the new manual entry
+        if (needsApproval) {
+            try {
+                const approver = await findApprover(req.userId, req.userOrgId);
+                if (approver?.id) {
+                    const requesterName = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0]?.full_name || 'A team member';
+                    await query(
+                        'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
+                        [approver.id, 'approval', 'New Manual Entry Request', `${requesterName} submitted a manual time entry for ${date}.`]
+                    );
+                    sendToUser(approver.id, 'approval_update', { type: 'manual_entry', status: 'pending' });
+                }
+            } catch (notifErr) {
+                req.log.error({ err: notifErr }, 'Manager notification error (manual entry)');
+            }
+        }
+
         logAction(req, 'create', 'manual_entry', null, { date, clock_in, clock_out: clock_out || null, status: approvalStatus });
         res.json({
             message: needsApproval ? 'Manual entry submitted for approval' : 'Manual entry added successfully',
@@ -519,6 +538,23 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
                 );
             }
         });
+
+        // Notify the manager/approver about the edited manual entry
+        if (needsApproval) {
+            try {
+                const approver = await findApprover(req.userId, req.userOrgId);
+                if (approver?.id) {
+                    const requesterName = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0]?.full_name || 'A team member';
+                    await query(
+                        'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
+                        [approver.id, 'approval', 'Manual Entry Updated', `${requesterName} updated a manual time entry for ${date}.`]
+                    );
+                    sendToUser(approver.id, 'approval_update', { type: 'manual_entry', status: 'pending' });
+                }
+            } catch (notifErr) {
+                req.log.error({ err: notifErr }, 'Manager notification error (manual entry edit)');
+            }
+        }
 
         logAction(req, 'update', 'manual_entry', null, { date, clock_in, clock_out: clock_out || null, status: approvalStatus });
         res.json({
@@ -775,6 +811,21 @@ router.post('/overtime-request', auth, loadUserContext, async (req, res) => {
             [req.userOrgId || null, req.userId, approver?.id || null, reason,
             JSON.stringify({ date, hours: numHours })],
         );
+
+        // Notify the manager/approver about the overtime request
+        try {
+            if (approver?.id) {
+                const requesterName = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0]?.full_name || 'A team member';
+                await query(
+                    'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
+                    [approver.id, 'approval', 'Overtime Request', `${requesterName} requested ${numHours}h overtime for ${date}.`]
+                );
+                sendToUser(approver.id, 'approval_update', { type: 'overtime', status: 'pending' });
+            }
+        } catch (notifErr) {
+            req.log.error({ err: notifErr }, 'Manager notification error (overtime)');
+        }
+
         logAction(req, 'create', 'overtime_request', null, { date, hours: numHours });
         res.json({ message: 'Overtime request submitted for approval' });
     } catch (err) {

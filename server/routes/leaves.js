@@ -363,6 +363,20 @@ router.post('/', async (req, res) => {
         });
 
         res.json({ message: `${created.length} leave(s) submitted`, ids: created });
+
+        // Notify the manager/approver about the new leave request
+        try {
+            if (approver?.id) {
+                const requesterName = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0]?.full_name || 'A team member';
+                await query(
+                    'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
+                    [approver.id, 'approval', 'New Leave Request', `${requesterName} submitted ${created.length} ${leave_type} leave request(s).`]
+                );
+                sendToUser(approver.id, 'approval_update', { type: 'leave', status: 'pending' });
+            }
+        } catch (notifErr) {
+            req.log.error({ err: notifErr }, 'Manager notification error (leave request)');
+        }
     } catch (err) {
         if (err.isValidation) {
             return res.status(400).json({ error: err.message });
@@ -503,6 +517,21 @@ router.post('/:id/withdraw', async (req, res) => {
                     JSON.stringify({ leave_type: leave.leave_type, date: leave.date, duration: leave.duration }),
                 ]
             );
+
+            // Notify the manager/approver about the withdrawal request
+            try {
+                if (approver?.id) {
+                    const requesterName = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0]?.full_name || 'A team member';
+                    await query(
+                        'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
+                        [approver.id, 'approval', 'Leave Withdrawal Request', `${requesterName} requested withdrawal of ${leave.leave_type} leave on ${leave.date}.`]
+                    );
+                    sendToUser(approver.id, 'approval_update', { type: 'leave_withdraw', status: 'pending' });
+                }
+            } catch (notifErr) {
+                req.log.error({ err: notifErr }, 'Manager notification error (withdrawal)');
+            }
+
             res.json({ message: 'Withdrawal request submitted' });
         }
     } catch (err) {
