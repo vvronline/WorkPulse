@@ -25,3 +25,7 @@ npm-debug.log*
 
 # Uploads (Volume mounted, do not bake into image)
 server/uploads/
+
+# Postgres data volume (permission-restricted, must not be in build context)
+data/
+server/data/
