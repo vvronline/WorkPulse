@@ -53,7 +53,10 @@ router.put('/:id', async (req, res) => {
         if (!existing.rows[0]) return res.status(404).json({ error: 'Event not found' });
 
         const { title, description, start_time, end_time, all_day, color, task_id } = req.body;
-        if (start_time && end_time && new Date(end_time) <= new Date(start_time)) {
+        // Validate time ordering against whichever value will actually be stored
+        const effectiveStart = start_time ? new Date(start_time) : new Date(existing.rows[0].start_time);
+        const effectiveEnd   = end_time   ? new Date(end_time)   : new Date(existing.rows[0].end_time);
+        if (effectiveEnd <= effectiveStart) {
             return res.status(400).json({ error: 'end_time must be after start_time' });
         }
         const result = await query(

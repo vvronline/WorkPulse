@@ -237,7 +237,7 @@ router.post('/', auth, loadUserContext, async (req, res) => {
         if (assigned_to) {
             const targetUser = (await query('SELECT id, org_id, is_active FROM users WHERE id = $1', [assigned_to])).rows[0];
             if (!targetUser || !targetUser.is_active) return res.status(400).json({ error: 'Assigned user not found or inactive' });
-            if (req.userOrgId && targetUser.org_id && req.userOrgId !== targetUser.org_id) {
+            if (targetUser.org_id && req.userOrgId !== targetUser.org_id) {
                 return res.status(400).json({ error: 'Cannot assign tasks to users in a different organization' });
             }
             assignedTo = assigned_to;
@@ -337,7 +337,7 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
             } else {
                 const targetUser = (await query('SELECT id, org_id, is_active FROM users WHERE id = $1', [assigned_to])).rows[0];
                 if (!targetUser || !targetUser.is_active) return res.status(400).json({ error: 'Assigned user not found or inactive' });
-                if (req.userOrgId && targetUser.org_id && req.userOrgId !== targetUser.org_id) {
+                if (targetUser.org_id && req.userOrgId !== targetUser.org_id) {
                     return res.status(400).json({ error: 'Cannot assign tasks to users in a different organization' });
                 }
                 newAssignedTo = assigned_to;
@@ -882,7 +882,7 @@ router.post('/backlog', auth, loadUserContext, async (req, res) => {
         if (assigned_to) {
             const targetUser = (await query('SELECT id, org_id, is_active FROM users WHERE id = $1', [assigned_to])).rows[0];
             if (!targetUser || !targetUser.is_active) return res.status(400).json({ error: 'Assigned user not found or inactive' });
-            if (req.userOrgId && targetUser.org_id && req.userOrgId !== targetUser.org_id) {
+            if (targetUser.org_id && req.userOrgId !== targetUser.org_id) {
                 return res.status(400).json({ error: 'Cannot assign tasks to users in a different organization' });
             }
             assignedTo = assigned_to;

@@ -45,7 +45,7 @@ export default function Tasks() {
   const [sprintImportOpen, setSprintImportOpen] = useState(false);
   const [assignableUsers, setAssignableUsers] = useState([]);
   const [orgLabels, setOrgLabels] = useState([]);
-  const autoCarriedRef = useRef(false);
+  const autoCarriedRef = useRef(null); // stores the last date carry-forward ran
 
   const { confirmDialog, showConfirm, closeConfirm } = useConfirmDialog();
   const filters = useFilters({ activeTab });
@@ -127,8 +127,8 @@ export default function Tasks() {
 
   useEffect(() => {
     const today = getLocalToday();
-    if (date !== today || autoCarriedRef.current) return;
-    autoCarriedRef.current = true;
+    if (date !== today || autoCarriedRef.current === today) return;
+    autoCarriedRef.current = today;
     carryForwardTasks()
       .then((res) => {
         if (res.data.carried > 0) {
