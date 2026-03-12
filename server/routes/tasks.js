@@ -266,6 +266,10 @@ router.post('/', auth, loadUserContext, async (req, res) => {
             const assignee = (await query('SELECT email, full_name FROM users WHERE id = $1', [assignedTo])).rows[0];
             const assigner = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
             if (assignee) {
+                await query(
+                    'INSERT INTO notifications (user_id, type, title, body, link_task_id) VALUES ($1, $2, $3, $4, $5)',
+                    [assignedTo, 'task', `Task Assigned: ${task.title}`, `${assigner?.full_name || 'Someone'} assigned you a task`, task.id]
+                );
                 notifyByEmail('taskAssigned', assignee, task, assigner?.full_name || 'Someone');
                 sendToUser(assignedTo, 'task_assigned', { taskId, title: task.title });
             }
@@ -389,6 +393,10 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
             const assignee = (await query('SELECT email, full_name FROM users WHERE id = $1', [newAssignedTo])).rows[0];
             const assigner = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
             if (assignee) {
+                await query(
+                    'INSERT INTO notifications (user_id, type, title, body, link_task_id) VALUES ($1, $2, $3, $4, $5)',
+                    [newAssignedTo, 'task', `Task Assigned: ${updated.title}`, `${assigner?.full_name || 'Someone'} assigned you a task`, updated.id]
+                );
                 notifyByEmail('taskAssigned', assignee, updated, assigner?.full_name || 'Someone');
                 sendToUser(newAssignedTo, 'task_assigned', { taskId: updated.id, title: updated.title });
             }

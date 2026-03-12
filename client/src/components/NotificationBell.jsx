@@ -15,7 +15,7 @@ function timeAgo(dateStr) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-const TYPE_ICON = { mention: '@' };
+const TYPE_ICON = { mention: '@', leave: '📋', task: '📝', approval: '✅' };
 const DEFAULT_ICON = '🔔';
 
 export default function NotificationBell() {

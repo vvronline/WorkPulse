@@ -6,6 +6,7 @@ const nodemailer = require('nodemailer');
 const { query, transaction } = require('../db');
 const { validatePassword, validateUsername } = require('../utils/password');
 const { logger } = require('../utils/logger');
+const { getTransporter, sendMail } = require('../utils/mailer');
 
 const router = express.Router();
 
@@ -19,20 +20,6 @@ function cookieOptions() {
         sameSite: 'lax',
         maxAge: 24 * 60 * 60 * 1000,
     };
-}
-
-// ---- Email transporter (lazy init) ----
-let transporter = null;
-function getTransporter() {
-    if (!transporter && process.env.SMTP_USER && process.env.SMTP_PASS) {
-        transporter = nodemailer.createTransport({
-            host: process.env.SMTP_HOST || 'smtp.gmail.com',
-            port: Number(process.env.SMTP_PORT) || 587,
-            secure: false,
-            auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-        });
-    }
-    return transporter;
 }
 
 // Registration mode (public — no auth needed)
@@ -229,8 +216,7 @@ router.post('/forgot-password', async (req, res) => {
 
         const mailer = getTransporter();
         if (mailer) {
-            mailer.sendMail({
-                from: process.env.SMTP_FROM || '"WorkPulse" <noreply@workpulse.app>',
+            sendMail({
                 to: user.email,
                 subject: 'WorkPulse — Password Reset',
                 html: `
@@ -242,7 +228,7 @@ router.post('/forgot-password', async (req, res) => {
                         <p style="font-size:0.85rem;color:#888;">If you didn't request this, just ignore this email.</p>
                     </div>
                 `,
-            }).catch(err => logger.error({ err }, 'Failed to send reset email'));
+            });
         } else {
             logger.info({ username: user.username }, 'Password reset link generated (no SMTP — token not logged)');
         }

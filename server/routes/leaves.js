@@ -400,6 +400,10 @@ router.patch('/:id/approve', requireRole('manager'), async (req, res) => {
         // Notify the leave requester
         const leaveUser = (await query('SELECT email, full_name FROM users WHERE id = $1', [leave.user_id])).rows[0];
         if (leaveUser) {
+            await query(
+                'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
+                [leave.user_id, 'leave', 'Leave Approved ✅', `Your ${leave.leave_type} leave on ${leave.date} has been approved.`]
+            );
             notifyByEmail('leaveApproved', leaveUser, leave);
             sendToUser(leave.user_id, 'leave_update', { id: leave.id, status: 'approved' });
         }
@@ -439,6 +443,10 @@ router.patch('/:id/reject', requireRole('manager'), async (req, res) => {
         // Notify the leave requester
         const leaveUser = (await query('SELECT email, full_name FROM users WHERE id = $1', [leave.user_id])).rows[0];
         if (leaveUser) {
+            await query(
+                'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
+                [leave.user_id, 'leave', 'Leave Rejected', `Your ${leave.leave_type} leave on ${leave.date} has been rejected.${reason ? ' Reason: ' + reason : ''}`]
+            );
             notifyByEmail('leaveRejected', leaveUser, leave, reason);
             sendToUser(leave.user_id, 'leave_update', { id: leave.id, status: 'rejected' });
         }
@@ -522,6 +530,10 @@ router.patch('/:id/revoke', requireRole('manager'), async (req, res) => {
         // Notify the leave requester
         const leaveUser = (await query('SELECT email, full_name FROM users WHERE id = $1', [leave.user_id])).rows[0];
         if (leaveUser) {
+            await query(
+                'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
+                [leave.user_id, 'leave', 'Leave Revoked', `Your ${leave.leave_type} leave on ${leave.date} has been revoked by management.`]
+            );
             notifyByEmail('leaveRevoked', leaveUser, leave);
             sendToUser(leave.user_id, 'leave_update', { id: leave.id, status: 'revoked' });
         }

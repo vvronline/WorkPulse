@@ -19,7 +19,7 @@ function getTransporter() {
     return transporter;
 }
 
-const FROM = () => process.env.SMTP_FROM || '"WorkPulse" <noreply@workpulse.app>';
+const FROM = () => process.env.SMTP_FROM || (process.env.SMTP_USER ? `"WorkPulse" <${process.env.SMTP_USER}>` : '"WorkPulse" <noreply@workpulse.app>');
 
 /**
  * Send an email (fire-and-forget). Never throws.

@@ -418,26 +418,34 @@ router.post('/approvals/:id/approve', async (req, res) => {
                     );
                 }
             }
-            return { ok: true, type: approval.type };
+            return { ok: true, type: approval.type, requesterId: approval.requester_id, referenceId: approval.reference_id, metadata: approval.metadata };
         });
 
         if (txResult.error) return res.status(txResult.status).json({ error: txResult.error });
 
         // Notify the requester about approval
         try {
-            const approval = (await query('SELECT * FROM approval_requests WHERE id = $1', [Number(id)])).rows[0];
-            if (approval) {
-                const requester = (await query('SELECT email, full_name FROM users WHERE id = $1', [approval.requester_id])).rows[0];
-                if (requester) {
-                    if (txResult.type === 'leave' || txResult.type === 'leave_withdraw') {
-                        notifyByEmail('leaveApproved', requester, { leave_type: 'leave', date: '' });
-                        sendToUser(approval.requester_id, 'leave_update', { status: 'approved' });
-                    } else if (txResult.type === 'manual_entry') {
-                        let meta = {};
-                        if (approval.metadata) { try { meta = JSON.parse(approval.metadata); } catch {} }
-                        notifyByEmail('manualEntryApproved', requester, meta.date || '');
-                        sendToUser(approval.requester_id, 'approval_update', { status: 'approved', type: 'manual_entry' });
-                    }
+            const requester = (await query('SELECT email, full_name FROM users WHERE id = $1', [txResult.requesterId])).rows[0];
+            if (requester) {
+                if (txResult.type === 'leave' || txResult.type === 'leave_withdraw') {
+                    const leave = txResult.referenceId ? (await query('SELECT * FROM leaves WHERE id = $1', [txResult.referenceId])).rows[0] : null;
+                    const leaveInfo = leave || { leave_type: 'leave', date: '' };
+                    await query(
+                        'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
+                        [txResult.requesterId, 'leave', 'Leave Approved \u2705', `Your ${leaveInfo.leave_type} leave on ${leaveInfo.date} has been approved.`]
+                    );
+                    notifyByEmail('leaveApproved', requester, leaveInfo);
+                    sendToUser(txResult.requesterId, 'leave_update', { status: 'approved' });
+                } else if (txResult.type === 'manual_entry') {
+                    let meta = {};
+                    if (txResult.metadata) { try { meta = JSON.parse(txResult.metadata); } catch {} }
+                    const entryDate = meta.date || '';
+                    await query(
+                        'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
+                        [txResult.requesterId, 'approval', 'Manual Entry Approved \u2705', `Your manual time entry for ${entryDate} has been approved.`]
+                    );
+                    notifyByEmail('manualEntryApproved', requester, entryDate);
+                    sendToUser(txResult.requesterId, 'approval_update', { status: 'approved', type: 'manual_entry' });
                 }
             }
         } catch (notifErr) {
@@ -485,26 +493,34 @@ router.post('/approvals/:id/reject', async (req, res) => {
                     );
                 }
             }
-            return { ok: true, type: approval.type };
+            return { ok: true, type: approval.type, requesterId: approval.requester_id, referenceId: approval.reference_id, metadata: approval.metadata };
         });
 
         if (txResult.error) return res.status(txResult.status).json({ error: txResult.error });
 
         // Notify the requester about rejection
         try {
-            const approval = (await query('SELECT * FROM approval_requests WHERE id = $1', [Number(id)])).rows[0];
-            if (approval) {
-                const requester = (await query('SELECT email, full_name FROM users WHERE id = $1', [approval.requester_id])).rows[0];
-                if (requester) {
-                    if (txResult.type === 'leave') {
-                        notifyByEmail('leaveRejected', requester, { leave_type: 'leave', date: '' }, reject_reason);
-                        sendToUser(approval.requester_id, 'leave_update', { status: 'rejected' });
-                    } else if (txResult.type === 'manual_entry') {
-                        let meta = {};
-                        if (approval.metadata) { try { meta = JSON.parse(approval.metadata); } catch {} }
-                        notifyByEmail('manualEntryRejected', requester, meta.date || '', reject_reason);
-                        sendToUser(approval.requester_id, 'approval_update', { status: 'rejected', type: 'manual_entry' });
-                    }
+            const requester = (await query('SELECT email, full_name FROM users WHERE id = $1', [txResult.requesterId])).rows[0];
+            if (requester) {
+                if (txResult.type === 'leave') {
+                    const leave = txResult.referenceId ? (await query('SELECT * FROM leaves WHERE id = $1', [txResult.referenceId])).rows[0] : null;
+                    const leaveInfo = leave || { leave_type: 'leave', date: '' };
+                    await query(
+                        'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
+                        [txResult.requesterId, 'leave', 'Leave Rejected', `Your ${leaveInfo.leave_type} leave on ${leaveInfo.date} has been rejected.${reject_reason ? ' Reason: ' + reject_reason : ''}`]
+                    );
+                    notifyByEmail('leaveRejected', requester, leaveInfo, reject_reason);
+                    sendToUser(txResult.requesterId, 'leave_update', { status: 'rejected' });
+                } else if (txResult.type === 'manual_entry') {
+                    let meta = {};
+                    if (txResult.metadata) { try { meta = JSON.parse(txResult.metadata); } catch {} }
+                    const entryDate = meta.date || '';
+                    await query(
+                        'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
+                        [txResult.requesterId, 'approval', 'Manual Entry Rejected', `Your manual time entry for ${entryDate} has been rejected.${reject_reason ? ' Reason: ' + reject_reason : ''}`]
+                    );
+                    notifyByEmail('manualEntryRejected', requester, entryDate, reject_reason);
+                    sendToUser(txResult.requesterId, 'approval_update', { status: 'rejected', type: 'manual_entry' });
                 }
             }
         } catch (notifErr) {
