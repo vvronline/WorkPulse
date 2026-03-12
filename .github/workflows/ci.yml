@@ -75,5 +75,30 @@ jobs:
         run: |
           gcloud compute ssh ${{ secrets.GCP_VM_USER }}@${{ secrets.GCP_INSTANCE_NAME }} \
             --zone=${{ secrets.GCP_ZONE }} \
-            --command="cd ~/WorkPulse && git pull origin master && docker-compose down && docker-compose up -d --build" \
+            --ssh-flag="-o ConnectTimeout=30 -o ServerAliveInterval=10 -o ServerAliveCountMax=3" \
+            --command="
+              set -e
+              cd ~/WorkPulse
+              git fetch origin master
+              git reset --hard origin/master
+              docker-compose down --remove-orphans
+              docker-compose up -d --build
+            " \
             --quiet
+
+      - name: Wait for app to be healthy
+        run: |
+          echo "Waiting for app to start..."
+          for i in $(seq 1 18); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              --max-time 5 \
+              "http://${{ secrets.GCP_INSTANCE_IP }}/api/health" || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ App is healthy (attempt $i)"
+              exit 0
+            fi
+            echo "Attempt $i: got HTTP $STATUS — retrying in 10s..."
+            sleep 10
+          done
+          echo "❌ App did not become healthy after 180s"
+          exit 1
