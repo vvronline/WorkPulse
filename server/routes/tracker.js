@@ -14,10 +14,12 @@ const router = express.Router();
 
 // Helper: convert timezone offset to a pg date expression.
 // tzMod comes from getTzModifier() which is validated via clampOffset(),
-// but we defensively extract the integer to prevent any SQL injection.
+// and we defensively extract and clamp the integer to prevent any injection.
 function pgDateInTz(col, tzMod) {
     const minutes = parseInt(tzMod, 10) || 0;
-    return `(${col} + INTERVAL '${minutes} minutes')::date`;
+    // Clamp to valid timezone range: UTC-12 (720) to UTC+14 (-840)
+    const safe = Math.max(-840, Math.min(720, minutes));
+    return `(${col} + INTERVAL '${safe} minutes')::date`;
 }
 
 // Get current status for today

@@ -1,0 +1,100 @@
+.poll {
+    padding: 4px 0;
+    min-width: 220px;
+}
+.question {
+    font-weight: 600;
+    font-size: 0.88rem;
+    margin-bottom: 8px;
+    color: inherit;
+}
+.options {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.option {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--glass-border);
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font-size: 0.82rem;
+    text-align: left;
+    overflow: hidden;
+    transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+.option:hover:not(:disabled) {
+    border-color: var(--primary);
+}
+.option:disabled { cursor: default; }
+.voted {
+    border-color: var(--primary);
+}
+.optBar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    background: rgba(99,102,241,.12);
+    transition: width 0.3s ease;
+    border-radius: 6px;
+}
+.optLabel {
+    position: relative;
+    z-index: 1;
+    flex: 1;
+}
+.optCount {
+    position: relative;
+    z-index: 1;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.check {
+    position: relative;
+    z-index: 1;
+    color: var(--primary);
+    font-weight: 700;
+    font-size: 0.8rem;
+}
+
+/* ── Inside sender's blue bubble: invert colours so poll is readable ── */
+.pollMine .option {
+    border-color: rgba(255,255,255,0.35);
+    color: #fff;
+}
+.pollMine .option:hover:not(:disabled) {
+    border-color: rgba(255,255,255,0.75);
+}
+.pollMine .voted {
+    border-color: #fff;
+}
+.pollMine .optBar {
+    background: rgba(255,255,255,0.20);
+}
+.pollMine .optCount {
+    color: rgba(255,255,255,0.65);
+}
+.pollMine .check {
+    color: #fff;
+}
+.pollMine .meta {
+    color: rgba(255,255,255,0.65);
+}
+.meta {
+    margin-top: 6px;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+.loading {
+    padding: 8px;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}

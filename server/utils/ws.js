@@ -103,7 +103,7 @@ function setupWebSocket(server) {
 /** Handle incoming WS messages for chat */
 async function handleChatMessage(senderId, msg) {
     if (msg.type === 'chat_message') {
-        const { conversationId, content, replyToId } = msg.data || {};
+        const { conversationId, content, replyToId, formatType, mentions } = msg.data || {};
         if (!conversationId || !content || typeof content !== 'string' || content.trim().length === 0 || content.length > 5000) return;
 
         // Verify sender is a participant
@@ -115,9 +115,11 @@ async function handleChatMessage(senderId, msg) {
 
         // Insert message
         const replyId = replyToId ? parseInt(replyToId, 10) : null;
+        const fmtType = (formatType === 'markdown' || formatType === 'code') ? formatType : 'text';
         const result = (await query(
-            'INSERT INTO messages (conversation_id, sender_id, content, reply_to_id) VALUES ($1, $2, $3, $4) RETURNING id, created_at',
-            [conversationId, senderId, content.trim(), replyId]
+            `INSERT INTO messages (conversation_id, sender_id, content, reply_to_id, format_type)
+             VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
+            [conversationId, senderId, content.trim(), replyId, fmtType]
         )).rows[0];
 
         // Update conversation timestamp
@@ -162,6 +164,7 @@ async function handleChatMessage(senderId, msg) {
             senderAvatar: sender?.avatar,
             senderUsername: sender?.username,
             content: content.trim(),
+            formatType: fmtType,
             replyToId: replyId,
             replyContent,
             replySenderName,
@@ -170,6 +173,20 @@ async function handleChatMessage(senderId, msg) {
 
         for (const p of participants) {
             sendToUser(p.user_id, 'chat_message', outMsg);
+        }
+
+        // Send mention notifications
+        if (Array.isArray(mentions) && mentions.length > 0) {
+            const mentionedIds = mentions.map(Number).filter(n => n > 0 && n !== senderId);
+            for (const uid of mentionedIds) {
+                sendToUser(uid, 'chat_mention', {
+                    conversationId,
+                    messageId: result.id,
+                    senderId,
+                    senderName: sender?.full_name,
+                    content: content.trim().slice(0, 100)
+                });
+            }
         }
     } else if (msg.type === 'chat_typing') {
         const { conversationId } = msg.data || {};

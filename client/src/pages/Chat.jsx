@@ -3,14 +3,16 @@ import {
     searchChatUsers, getConversations, createConversation, getMessages,
     markConversationRead, getPresence, getMembers, getReadStatus,
     uploadChatFile, toggleReaction, editMessage, deleteMessage, togglePin,
-    forwardMessage
+    forwardMessage, toggleStar, createPoll, ackDelivered
 } from '../api';
 import { useAuth } from '../AuthContext';
 import { useChatUnread } from '../ChatContext';
 import useWebSocket from '../hooks/useWebSocket';
 import {
     ChatAvatar, MessageBubble, VoiceRecorder, ReplyPreview,
-    MessageSearch, ForwardModal, GroupModal, PinnedMessages
+    MessageSearch, ForwardModal, GroupModal, PinnedMessages,
+    EmojiGifPicker, MentionInput,
+    SharedFilesPanel, StarredMessages, PollCreator
 } from '../components/chat';
 import s from './Chat.module.css';
 
@@ -44,13 +46,24 @@ export default function Chat() {
     const [dragOver, setDragOver] = useState(false);
     const [readReceipts, setReadReceipts] = useState({});
 
+    // New feature state
+    const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+
+    const [showSharedFiles, setShowSharedFiles] = useState(false);
+    const [showStarred, setShowStarred] = useState(false);
+    const [showPollCreator, setShowPollCreator] = useState(false);
+    const [convMembers, setConvMembers] = useState([]);
+
     // Refs
     const messagesEndRef = useRef(null);
     const messagesContainerRef = useRef(null);
     const typingTimerRef = useRef(null);
     const typingTimeouts = useRef({});
     const fileInputRef = useRef(null);
+    const mentionInputRef = useRef(null);
+    const pendingCounter = useRef(0);
     const activeConvRef = useRef(activeConv);
+    const searchInputRef = useRef(null);
     activeConvRef.current = activeConv;
     const messagesRef = useRef(messages);
     messagesRef.current = messages;
@@ -61,32 +74,31 @@ export default function Chat() {
         switch (msg.type) {
             case 'chat_message': {
                 if (activeConvRef.current?.id === d.conversationId) {
+                    const msgFields = {
+                        id: d.id, sender_id: d.senderId, sender_name: d.senderName,
+                        sender_avatar: d.senderAvatar, content: d.content, created_at: d.createdAt,
+                        reply_to_id: d.replyToId || null, reply_sender_name: d.replySenderName,
+                        reply_content: d.replyContent, file_url: d.fileUrl, file_name: d.fileName,
+                        file_type: d.fileType, file_size: d.fileSize, forwarded_from_id: d.forwardedFromId,
+                        format_type: d.formatType || 'text', metadata: d.metadata || null,
+                        delivered_to: [], reactions: []
+                    };
                     setMessages(prev => {
                         if (d.senderId === user?.id) {
                             const idx = prev.findIndex(p => String(p.id).startsWith('pending_') && p.content === d.content);
                             if (idx >= 0) {
                                 const updated = [...prev];
-                                updated[idx] = {
-                                    id: d.id, sender_id: d.senderId, sender_name: d.senderName,
-                                    sender_avatar: d.senderAvatar, content: d.content, created_at: d.createdAt,
-                                    reply_to_id: d.replyToId || null, reply_sender_name: d.replySenderName,
-                                    reply_content: d.replyContent, file_url: d.fileUrl, file_name: d.fileName,
-                                    file_type: d.fileType, file_size: d.fileSize, forwarded_from_id: d.forwardedFromId,
-                                    reactions: []
-                                };
+                                updated[idx] = msgFields;
                                 return updated;
                             }
                         }
-                        return [...prev, {
-                            id: d.id, sender_id: d.senderId, sender_name: d.senderName,
-                            sender_avatar: d.senderAvatar, content: d.content, created_at: d.createdAt,
-                            reply_to_id: d.replyToId || null, reply_sender_name: d.replySenderName,
-                            reply_content: d.replyContent, file_url: d.fileUrl, file_name: d.fileName,
-                            file_type: d.fileType, file_size: d.fileSize, forwarded_from_id: d.forwardedFromId,
-                            reactions: []
-                        }];
+                        return [...prev, msgFields];
                     });
                     markConversationRead(d.conversationId).then(() => refreshUnread()).catch(() => {});
+                    // Acknowledge delivery
+                    if (d.senderId !== user?.id && d.id) {
+                        ackDelivered(d.id).catch(() => {});
+                    }
                 }
                 setConversations(prev => {
                     const isActive = activeConvRef.current?.id === d.conversationId;
@@ -174,11 +186,28 @@ export default function Chat() {
                 loadConversations();
                 break;
             }
+            case 'chat_poll_vote': {
+                // Dispatch a custom event so PollDisplay can react
+                window.dispatchEvent(new CustomEvent('poll_vote_update', { detail: d }));
+                break;
+            }
+            case 'chat_mention': {
+                // Could show a toast/notification — for now, no-op
+                break;
+            }
             default: break;
         }
     }, [user?.id]);
 
     const { sendMessage: wsSend } = useWebSocket(onWsMessage);
+
+    // Cleanup typing timeouts on unmount
+    useEffect(() => {
+        return () => {
+            clearTimeout(typingTimerRef.current);
+            Object.values(typingTimeouts.current).forEach(clearTimeout);
+        };
+    }, []);
 
     // ─── Load conversations & presence on mount ───
     useEffect(() => {
@@ -206,6 +235,22 @@ export default function Chat() {
             }
         } catch { /* ignore */ }
     };
+
+    // ─── Ctrl+F: sidebar search or in-chat message search ───
+    useEffect(() => {
+        const handler = (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+                e.preventDefault();
+                if (activeConv) {
+                    setShowSearch(true);
+                } else {
+                    searchInputRef.current?.focus();
+                }
+            }
+        };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    }, [activeConv]);
 
     // ─── Search users ───
     useEffect(() => {
@@ -247,6 +292,7 @@ export default function Chat() {
         setEditingMsg(null);
         setShowPinned(false);
         setShowSearch(false);
+        setShowSharedFiles(false);
         try {
             const { data } = await getMessages(convId);
             setMessages(data);
@@ -264,6 +310,11 @@ export default function Chat() {
                 rs.forEach(r => { map[r.user_id] = r.last_read_at; });
                 setReadReceipts(map);
             } catch { /* ignore */ }
+            // Load members for @mentions
+            try {
+                const { data: members } = await getMembers(convId);
+                setConvMembers(members);
+            } catch { setConvMembers([]); }
         } catch { /* ignore */ }
         setLoadingMsgs(false);
     };
@@ -305,14 +356,19 @@ export default function Chat() {
             setInput('');
             return;
         }
+        // Extract mentioned user IDs
+        const mentions = mentionInputRef.current?.getMentionedIds?.() || [];
+        mentionInputRef.current?.resetMentionedIds?.();
+
         setMessages(prev => [...prev, {
-            id: `pending_${Date.now()}`, sender_id: user.id, sender_name: user.full_name,
+            id: `pending_${++pendingCounter.current}`, sender_id: user.id, sender_name: user.full_name,
             content, created_at: new Date().toISOString(), reply_to_id: replyTo?.id || null,
             reactions: []
         }]);
         wsSend('chat_message', {
             conversationId: activeConv.id, content,
-            ...(replyTo ? { replyToId: replyTo.id } : {})
+            ...(replyTo ? { replyToId: replyTo.id } : {}),
+            ...(mentions.length > 0 ? { mentions } : {})
         });
         setInput('');
         setReplyTo(null);
@@ -329,10 +385,10 @@ export default function Chat() {
     };
 
     // ─── Voice send ───
-    const handleVoiceSend = (blob) => {
+    const handleVoiceSend = (blob, _duration, ext = 'webm') => {
         if (!activeConv) return;
         const formData = new FormData();
-        formData.append('file', blob, 'voice.webm');
+        formData.append('file', blob, `voice.${ext}`);
         uploadChatFile(activeConv.id, formData).catch(() => {});
         setRecording(false);
     };
@@ -382,6 +438,28 @@ export default function Chat() {
     };
 
     const handleForward = (msg) => setForwardMsg(msg);
+
+    const handleStar = async (msg) => {
+        try {
+            const { data } = await toggleStar(msg.id);
+            setMessages(prev => prev.map(m =>
+                m.id === msg.id ? { ...m, starred: data.starred } : m
+            ));
+        } catch { /* ignore */ }
+    };
+
+    const handleCreatePoll = async (pollData) => {
+        if (!activeConv) return;
+        try {
+            await createPoll(activeConv.id, pollData);
+            setShowPollCreator(false);
+        } catch { /* ignore */ }
+    };
+
+    const handleEmojiInsert = (emoji) => {
+        setInput(prev => prev + emoji);
+        setShowEmojiPicker(false);
+    };
 
     const handleJumpTo = (msgId) => {
         const el = document.getElementById(`msg-${msgId}`);
@@ -459,9 +537,11 @@ export default function Chat() {
                     <button className={s.newGroupBtn} onClick={() => { setGroupEditData(null); setShowGroupModal(true); }} title="New group">👥+</button>
                 </div>
                 <div className={s.searchBox}>
+                    <svg className={s.searchIcon} width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.4"/><path d="M10 10l2.5 2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
                     <input
+                        ref={searchInputRef}
                         type="text"
-                        placeholder="Search by name, username, or email..."
+                        placeholder="Search..."
                         value={search}
                         onChange={e => setSearch(e.target.value)}
                         className={s.searchInput}
@@ -561,8 +641,12 @@ export default function Chat() {
                                 </div>
                             </div>
                             <div className={s.headerActions}>
-                                <button onClick={() => setShowSearch(true)} title="Search messages">🔍</button>
+                                <button onClick={() => setShowSearch(true)} title="Search messages">
+                                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.5"/><path d="M11 11l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                                </button>
                                 <button onClick={() => setShowPinned(!showPinned)} title="Pinned messages">📌</button>
+                                <button onClick={() => setShowSharedFiles(!showSharedFiles)} title="Shared files">📁</button>
+                                <button onClick={() => setShowStarred(!showStarred)} title="Saved messages">⭐</button>
                                 {activeConv.is_group && <button onClick={openGroupEdit} title="Group settings">⚙️</button>}
                             </div>
                         </div>
@@ -611,6 +695,8 @@ export default function Chat() {
                                                 onPin={handlePin}
                                                 onForward={handleForward}
                                                 onReact={handleReact}
+                                                onStar={handleStar}
+                                                participantCount={convMembers.length || 2}
                                             />
                                         </div>
                                     );
@@ -634,6 +720,12 @@ export default function Chat() {
                                     onUnpin={handleUnpin}
                                 />
                             )}
+                            {showSharedFiles && (
+                                <SharedFilesPanel
+                                    convId={activeConv.id}
+                                    onClose={() => setShowSharedFiles(false)}
+                                />
+                            )}
                         </div>
 
                         {/* Reply / Edit preview */}
@@ -654,34 +746,69 @@ export default function Chat() {
 
                         {/* Input bar */}
                         {!recording && (
-                            <form className={s.inputBar} onSubmit={handleSend}>
-                                <button type="button" className={s.attachBtn} onClick={() => fileInputRef.current?.click()} title="Attach file">📎</button>
-                                <input
-                                    type="file"
-                                    ref={fileInputRef}
-                                    className={s.fileInput}
-                                    onChange={e => { if (e.target.files[0]) handleFileUpload(e.target.files[0]); e.target.value = ''; }}
-                                />
-                                <input
-                                    type="text"
-                                    placeholder={editingMsg ? 'Edit message...' : 'Type a message...'}
-                                    value={input}
-                                    onChange={e => { setInput(e.target.value); handleTyping(); }}
-                                    className={s.msgInput}
-                                    maxLength={5000}
-                                    autoFocus
-                                />
-                                <button type="button" className={s.voiceBtn} onClick={() => setRecording(true)} title="Voice message">🎤</button>
-                                <button type="submit" className={s.sendBtn} disabled={!input.trim()}>
-                                    {editingMsg ? '✓' : '➤'}
-                                </button>
-                            </form>
+                            <div className={s.inputArea}>
+                                <form className={s.inputBar} onSubmit={handleSend}>
+                                    <button type="button" className={s.inputIcon} onClick={() => fileInputRef.current?.click()} title="Attach file">
+                                        <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M17.5 9.58l-7.54 7.54a4.25 4.25 0 01-6.01-6.01l7.54-7.54a2.83 2.83 0 014.01 4.01l-7.55 7.54a1.42 1.42 0 01-2-2l6.96-6.96" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                                    </button>
+                                    <input
+                                        type="file"
+                                        ref={fileInputRef}
+                                        className={s.fileInput}
+                                        onChange={e => { if (e.target.files[0]) handleFileUpload(e.target.files[0]); e.target.value = ''; }}
+                                    />
+                                    <div className={s.inputBoxWrap}>
+                                        <MentionInput
+                                            ref={mentionInputRef}
+                                            value={input}
+                                            onChange={val => { setInput(val); handleTyping(); }}
+                                            members={convMembers}
+                                            placeholder={editingMsg ? 'Edit message...' : 'Type a message...'}
+                                            className={s.msgInput}
+                                            maxLength={5000}
+                                            onSubmit={handleSend}
+                                        />
+                                        <div className={s.inputTools}>
+                                            <button type="button" className={s.inputIcon} onClick={() => setShowEmojiPicker(!showEmojiPicker)} title="Emoji">
+                                                <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="7.5" stroke="currentColor" strokeWidth="1.5"/><circle cx="6.5" cy="7.5" r="1" fill="currentColor"/><circle cx="11.5" cy="7.5" r="1" fill="currentColor"/><path d="M6 11.5a3.5 3.5 0 006 0" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>
+                                            </button>
+                                            <button type="button" className={s.inputIcon} onClick={() => setShowPollCreator(true)} title="Create poll">
+                                                <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2" y="3" width="5" height="3" rx="1" stroke="currentColor" strokeWidth="1.3"/><rect x="2" y="7.5" width="10" height="3" rx="1" stroke="currentColor" strokeWidth="1.3"/><rect x="2" y="12" width="7" height="3" rx="1" stroke="currentColor" strokeWidth="1.3"/></svg>
+                                            </button>
+                                            <button type="button" className={s.inputIcon} onClick={() => setRecording(true)} title="Voice message">
+                                                <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="6.5" y="2" width="5" height="9" rx="2.5" stroke="currentColor" strokeWidth="1.5"/><path d="M4 9a5 5 0 0010 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><path d="M9 14v2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <button type="submit" className={s.sendBtn} disabled={!input.trim()}>
+                                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M2 3l14 6-14 6V10l10-1-10-1V3z" fill="currentColor"/></svg>
+                                    </button>
+                                </form>
+                                {showEmojiPicker && (
+                                    <EmojiGifPicker
+                                        onSelectEmoji={handleEmojiInsert}
+                                        onClose={() => setShowEmojiPicker(false)}
+                                    />
+                                )}
+                            </div>
                         )}
                     </>
                 )}
             </div>
 
             {/* ─── Modals ─── */}
+            {showStarred && (
+                <StarredMessages
+                    onJumpTo={(convId, msgId) => { setShowStarred(false); handleJumpTo(msgId); }}
+                    onClose={() => setShowStarred(false)}
+                />
+            )}
+            {showPollCreator && (
+                <PollCreator
+                    onSubmit={handleCreatePoll}
+                    onClose={() => setShowPollCreator(false)}
+                />
+            )}
             {showSearch && (
                 <MessageSearch
                     convId={activeConv?.id}

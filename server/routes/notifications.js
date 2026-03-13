@@ -1,11 +1,13 @@
 ﻿const express = require('express');
 const { query } = require('../db');
 const auth = require('../middleware/auth');
+const { loadUserContext } = require('../middleware/rbac');
 const { logger } = require('../utils/logger');
 
 const router = express.Router();
+router.use(auth, loadUserContext);
 
-router.get('/', auth, async (req, res) => {
+router.get('/', async (req, res) => {
     try {
         const rows = (await query(`
             SELECT n.*, t.title AS task_title
@@ -23,7 +25,7 @@ router.get('/', auth, async (req, res) => {
     }
 });
 
-router.post('/read-all', auth, async (req, res) => {
+router.post('/read-all', async (req, res) => {
     try {
         await query('UPDATE notifications SET is_read = TRUE WHERE user_id = $1', [req.userId]);
         res.json({ ok: true });
@@ -32,7 +34,7 @@ router.post('/read-all', auth, async (req, res) => {
     }
 });
 
-router.post('/:id/read', auth, async (req, res) => {
+router.post('/:id/read', async (req, res) => {
     try {
         await query('UPDATE notifications SET is_read = TRUE WHERE id = $1 AND user_id = $2',
             [req.params.id, req.userId]);
@@ -42,7 +44,7 @@ router.post('/:id/read', auth, async (req, res) => {
     }
 });
 
-router.delete('/:id', auth, async (req, res) => {
+router.delete('/:id', async (req, res) => {
     try {
         await query('DELETE FROM notifications WHERE id = $1 AND user_id = $2',
             [req.params.id, req.userId]);

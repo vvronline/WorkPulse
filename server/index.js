@@ -157,7 +157,9 @@ async function autoClockOut() {
 }
 
 async function autoClockOutUser(user) {
-    const offsetMin = user.timezone_offset || 0;
+    const rawOffset = user.timezone_offset || 0;
+    // Clamp to valid timezone range: UTC-12 (720) to UTC+14 (-840)
+    const offsetMin = (typeof rawOffset === 'number' && rawOffset >= -840 && rawOffset <= 720) ? rawOffset : 0;
     const intervalStr = `${-offsetMin} minutes`;
 
     const localNow = new Date(Date.now() - offsetMin * 60000);
@@ -221,9 +223,9 @@ if (require.main === module) {
     const http = require('http');
     (async () => {
         await initDB();
-        const server = http.createServer(app);
-        setupWebSocket(server);
-        server.listen(PORT, () => {
+        const httpServer = http.createServer(app);
+        setupWebSocket(httpServer);
+        httpServer.listen(PORT, () => {
             logger.info({ port: PORT }, 'Server running');
         });
 
@@ -233,7 +235,7 @@ if (require.main === module) {
 
         async function shutdown() {
             logger.info('Shutting down gracefully...');
-            server.close(async () => {
+            httpServer.close(async () => {
                 await pool.end();
                 process.exit(0);
             });

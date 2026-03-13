@@ -59,9 +59,6 @@ export default function Tasks() {
         const res = await getTasks(undefined, params);
         setTasks(res.data.tasks);
         setStats(res.data.stats);
-      } else if (activeTab === 'sprint' && !selectedSprintId) {
-        setTasks([]);
-        setStats({ total: 0, done: 0, inProgress: 0, percent: 0 });
       } else {
         setTasks([]);
         setStats({ total: 0, done: 0, inProgress: 0, percent: 0 });
@@ -137,7 +134,7 @@ export default function Tasks() {
           setTimeout(() => setCarriedCount(0), 4000);
         }
       })
-      .catch((e) => console.error(e));
+      .catch(() => setError('Failed to carry forward tasks'));
   }, [date, fetchTasks]);
 
   useEffect(() => {

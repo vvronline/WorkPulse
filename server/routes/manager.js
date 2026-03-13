@@ -14,9 +14,10 @@ const router = express.Router();
 router.use(auth, loadUserContext);
 
 router.use(async (req, res, next) => {
+    // Require at least team_lead role (level 2) to access manager endpoints.
+    // Having subordinates alone (manager_id pointing to this user) is not sufficient
+    // without an actual team_lead+ role assignment.
     if (req.roleLevel >= 2) return next();
-    const r = await query('SELECT 1 FROM users WHERE manager_id = $1 AND is_active = TRUE LIMIT 1', [req.userId]);
-    if (r.rows[0]) return next();
     return res.status(403).json({ error: 'Insufficient permissions' });
 });
 
@@ -411,7 +412,10 @@ router.post('/approvals/:id/approve', async (req, res) => {
                 let metadata = {};
                 if (approval.metadata) { try { metadata = JSON.parse(approval.metadata); } catch { } }
                 if (metadata.date) {
-                    const tzMod = getTzModifier(req);
+                    // Use the requester's stored timezone, not the manager's header
+                    const requesterRow = (await client.query('SELECT timezone_offset FROM users WHERE id = $1', [approval.requester_id])).rows[0];
+                    const reqOffset = requesterRow?.timezone_offset || 0;
+                    const tzMod = `${-reqOffset} minutes`;
                     await client.query(
                         `UPDATE time_entries SET approval_status = 'approved', approved_by = $1 WHERE user_id = $2 AND (timestamp + $3::interval)::date = $4::date AND is_manual = TRUE`,
                         [req.userId, approval.requester_id, tzMod, metadata.date]
@@ -486,7 +490,10 @@ router.post('/approvals/:id/reject', async (req, res) => {
                 let metadata = {};
                 if (approval.metadata) { try { metadata = JSON.parse(approval.metadata); } catch { } }
                 if (metadata.date) {
-                    const tzMod = getTzModifier(req);
+                    // Use the requester's stored timezone, not the manager's header
+                    const requesterRow = (await client.query('SELECT timezone_offset FROM users WHERE id = $1', [approval.requester_id])).rows[0];
+                    const reqOffset = requesterRow?.timezone_offset || 0;
+                    const tzMod = `${-reqOffset} minutes`;
                     await client.query(
                         `UPDATE time_entries SET approval_status = 'rejected', approved_by = $1 WHERE user_id = $2 AND (timestamp + $3::interval)::date = $4::date AND is_manual = TRUE`,
                         [req.userId, approval.requester_id, tzMod, metadata.date]

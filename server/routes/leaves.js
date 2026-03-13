@@ -12,12 +12,14 @@ const router = express.Router();
 router.use(auth, loadUserContext);
 
 // Helper: update leave balance (add or subtract used days)
+// IMPORTANT: client (transaction connection) is required to ensure atomicity
 async function updateLeaveBalance(userId, leaveType, date, duration, operation, client) {
-    const q = client ? client.query.bind(client) : query;
+    if (!client) throw new Error('updateLeaveBalance must be called within a transaction (client is required)');
+    const q = client.query.bind(client);
     const year = parseInt(date.slice(0, 4));
     const durationValue = duration === 'half' ? 0.5 : duration === 'quarter' ? 0.25 : 1;
     const balRes = await q(
-        'SELECT id, used FROM leave_balances WHERE user_id = $1 AND leave_type = $2 AND year = $3',
+        'SELECT id, used FROM leave_balances WHERE user_id = $1 AND leave_type = $2 AND year = $3 FOR UPDATE',
         [userId, leaveType, year]
     );
     const balance = balRes.rows[0];
@@ -27,7 +29,7 @@ async function updateLeaveBalance(userId, leaveType, date, duration, operation, 
             : Math.max(0, balance.used - durationValue);
         await q('UPDATE leave_balances SET used = $1 WHERE id = $2', [newUsed, balance.id]);
     } else {
-        logger.warn({ userId, leaveType, year }, 'Leave balance row not found — skipping balance update');
+        throw new Error(`Leave balance row not found for user ${userId}, type ${leaveType}, year ${year}`);
     }
 }
 
@@ -393,13 +395,20 @@ router.post('/', async (req, res) => {
 router.patch('/:id/approve', requireRole('manager'), async (req, res) => {
     try {
         const leave = (await query(
-            'SELECT l.*, u.org_id AS leave_org_id FROM leaves l JOIN users u ON u.id = l.user_id WHERE l.id = $1',
+            'SELECT l.*, u.org_id AS leave_org_id, u.manager_id AS leave_manager_id FROM leaves l JOIN users u ON u.id = l.user_id WHERE l.id = $1',
             [req.params.id]
         )).rows[0];
         if (!leave) return res.status(404).json({ error: 'Leave not found' });
         if (leave.status !== 'pending') return res.status(400).json({ error: 'Leave is not pending' });
         if (req.userOrgId && leave.leave_org_id !== req.userOrgId) {
             return res.status(403).json({ error: 'Cannot approve leaves for users outside your organization' });
+        }
+        // Only the assigned approver, the user's direct manager, or hr_admin+ can approve
+        const isAssignedApprover = leave.approved_by === req.userId;
+        const isDirectManager = leave.leave_manager_id === req.userId;
+        const isHrOrAbove = req.roleLevel >= 4; // hr_admin or super_admin
+        if (!isAssignedApprover && !isDirectManager && !isHrOrAbove) {
+            return res.status(403).json({ error: 'You are not authorized to approve this leave' });
         }
 
         await transaction(async (client) => {
@@ -437,13 +446,20 @@ router.patch('/:id/reject', requireRole('manager'), async (req, res) => {
     try {
         const { reason } = req.body;
         const leave = (await query(
-            'SELECT l.*, u.org_id AS leave_org_id FROM leaves l JOIN users u ON u.id = l.user_id WHERE l.id = $1',
+            'SELECT l.*, u.org_id AS leave_org_id, u.manager_id AS leave_manager_id FROM leaves l JOIN users u ON u.id = l.user_id WHERE l.id = $1',
             [req.params.id]
         )).rows[0];
         if (!leave) return res.status(404).json({ error: 'Leave not found' });
         if (leave.status !== 'pending') return res.status(400).json({ error: 'Leave is not pending' });
         if (req.userOrgId && leave.leave_org_id !== req.userOrgId) {
             return res.status(403).json({ error: 'Cannot reject leaves for users outside your organization' });
+        }
+        // Only the assigned approver, the user's direct manager, or hr_admin+ can reject
+        const isAssignedApprover = leave.approved_by === req.userId;
+        const isDirectManager = leave.leave_manager_id === req.userId;
+        const isHrOrAbove = req.roleLevel >= 4; // hr_admin or super_admin
+        if (!isAssignedApprover && !isDirectManager && !isHrOrAbove) {
+            return res.status(403).json({ error: 'You are not authorized to reject this leave' });
         }
 
         await transaction(async (client) => {

@@ -1,73 +1,90 @@
+/* ── Teams-style chat layout ── */
 .chatPage {
     display: flex;
     height: calc(100vh - 64px);
     background: var(--bg);
     overflow: hidden;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
 }
 
 /* ─── Sidebar ─── */
 .sidebar {
-    width: 360px;
-    min-width: 360px;
+    width: 320px;
+    min-width: 260px;
     border-right: 1px solid var(--glass-border);
     display: flex;
     flex-direction: column;
     background: var(--bg-secondary);
 }
 .sidebarHeader {
-    padding: 1.2rem 1.2rem 0.8rem;
+    padding: 0.85rem 1rem 0.6rem;
     display: flex;
     align-items: center;
     justify-content: space-between;
+    border-bottom: 1px solid var(--glass-border);
 }
 .sidebarHeader h2 {
-    font-size: 1.25rem;
+    font-size: 1rem;
+    font-weight: 600;
     color: var(--text);
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    letter-spacing: -0.01em;
 }
 .totalBadge {
     background: var(--primary);
     color: #fff;
-    font-size: 0.7rem;
+    font-size: 0.65rem;
     font-weight: 700;
-    padding: 0.15rem 0.5rem;
+    padding: 0.1rem 0.45rem;
     border-radius: var(--radius-full);
 }
 .newGroupBtn {
     background: none;
-    border: 1px solid var(--glass-border);
-    color: var(--text);
+    border: none;
+    color: var(--text-muted);
     cursor: pointer;
-    font-size: 0.9rem;
-    padding: 0.35rem 0.6rem;
-    border-radius: var(--radius-sm);
-    transition: background var(--transition-fast);
+    font-size: 1rem;
+    padding: 0.3rem;
+    border-radius: 4px;
+    transition: background var(--transition-fast), color var(--transition-fast);
+    line-height: 1;
 }
 .newGroupBtn:hover {
     background: var(--surface-hover);
+    color: var(--text);
 }
 
 /* ─── Search ─── */
 .searchBox {
-    padding: 0 1rem 0.8rem;
+    padding: 0.6rem 0.75rem;
     position: relative;
+    display: flex;
+    align-items: center;
+}
+.searchIcon {
+    position: absolute;
+    left: 1.35rem;
+    color: var(--text-muted);
+    pointer-events: none;
+    flex-shrink: 0;
 }
 .searchInput {
     width: 100%;
-    padding: 0.6rem 2rem 0.6rem 0.8rem;
-    border-radius: var(--radius-sm);
+    padding: 0.45rem 2rem 0.45rem 1.9rem;
+    border-radius: 4px;
     border: 1px solid var(--glass-border);
     background: var(--input-bg);
     color: var(--text);
-    font-size: 0.85rem;
+    font-size: 0.82rem;
     outline: none;
     transition: border var(--transition-fast);
     box-sizing: border-box;
 }
 .searchInput:focus {
     border-color: var(--primary);
+    background: var(--surface-hover);
 }
 .clearBtn {
     position: absolute;
@@ -138,11 +155,13 @@
 .convItem {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    padding: 0.75rem 1rem;
+    gap: 0.6rem;
+    padding: 0.55rem 0.75rem;
     cursor: pointer;
     transition: background var(--transition-fast);
     border-left: 3px solid transparent;
+    border-radius: 0 4px 4px 0;
+    margin: 1px 4px 1px 0;
 }
 .convItem:hover {
     background: var(--surface-hover);
@@ -158,28 +177,29 @@
 .convTop {
     display: flex;
     justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.15rem;
+    align-items: baseline;
+    margin-bottom: 0.1rem;
 }
 .convName {
     font-weight: 600;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     color: var(--text);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 .convTime {
-    font-size: 0.7rem;
+    font-size: 0.65rem;
     color: var(--text-muted);
     white-space: nowrap;
     margin-left: 0.5rem;
+    flex-shrink: 0;
 }
 .convPreview {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     color: var(--text-muted);
     white-space: nowrap;
     overflow: hidden;
@@ -196,17 +216,17 @@
 .badge {
     background: var(--primary);
     color: #fff;
-    font-size: 0.65rem;
+    font-size: 0.62rem;
     font-weight: 700;
-    min-width: 18px;
-    height: 18px;
+    min-width: 17px;
+    height: 17px;
     border-radius: var(--radius-full);
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 0 5px;
+    padding: 0 4px;
     flex-shrink: 0;
-    margin-left: 0.5rem;
+    margin-left: 0.4rem;
 }
 
 /* ─── Chat area ─── */
@@ -242,18 +262,21 @@
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    padding: 0.75rem 1.2rem;
+    padding: 0 1rem;
+    height: 48px;
     border-bottom: 1px solid var(--glass-border);
     background: var(--bg-secondary);
+    flex-shrink: 0;
 }
 .backBtn {
     display: none;
     background: none;
     border: none;
     color: var(--text);
-    font-size: 1.2rem;
+    font-size: 1.1rem;
     cursor: pointer;
-    padding: 0.25rem 0.5rem;
+    padding: 0.2rem 0.4rem;
+    border-radius: 4px;
 }
 .chatHeaderInfo {
     flex: 1;
@@ -261,29 +284,33 @@
 }
 .chatHeaderName {
     font-weight: 600;
-    font-size: 0.95rem;
+    font-size: 0.9rem;
     color: var(--text);
+    letter-spacing: -0.01em;
 }
 .chatHeaderMeta {
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     color: var(--text-muted);
+    margin-top: 1px;
 }
 .headerActions {
     display: flex;
-    gap: 0.25rem;
+    gap: 2px;
     align-items: center;
 }
 .headerActions button {
     background: none;
     border: none;
     cursor: pointer;
-    font-size: 1rem;
-    padding: 0.3rem 0.45rem;
-    border-radius: var(--radius-sm);
-    transition: background var(--transition-fast);
+    font-size: 0.95rem;
+    padding: 0.25rem 0.4rem;
+    border-radius: 4px;
+    color: var(--text-muted);
+    transition: background var(--transition-fast), color var(--transition-fast);
 }
 .headerActions button:hover {
     background: var(--surface-hover);
+    color: var(--text);
 }
 
 /* ─── Chat body (messages + pinned panel) ─── */
@@ -298,7 +325,7 @@
 .messagesContainer {
     flex: 1;
     overflow-y: auto;
-    padding: 12px 0;
+    padding: 8px 0 12px;
     display: flex;
     flex-direction: column;
     gap: 0;
@@ -306,24 +333,25 @@
 }
 .loadMore {
     align-self: center;
-    background: var(--glass);
+    background: transparent;
     border: 1px solid var(--glass-border);
-    color: var(--primary);
-    padding: 0.4rem 1rem;
-    border-radius: var(--radius-full);
+    color: var(--text-muted);
+    padding: 0.3rem 1rem;
+    border-radius: 4px;
     cursor: pointer;
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     margin-bottom: 0.5rem;
-    transition: background var(--transition-fast);
+    transition: background var(--transition-fast), color var(--transition-fast);
 }
 .loadMore:hover {
     background: var(--surface-hover);
+    color: var(--text);
 }
 .dateDivider {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 16px 20px 8px;
+    padding: 12px 16px 6px;
 }
 .dateDivider::before,
 .dateDivider::after {
@@ -334,9 +362,13 @@
 }
 .dateDivider span {
     color: var(--text-muted);
-    font-size: 0.7rem;
+    font-size: 0.68rem;
     font-weight: 500;
     white-space: nowrap;
+    background: var(--bg);
+    padding: 0 8px;
+    border-radius: 10px;
+    border: 1px solid var(--glass-border);
 }
 
 /* ─── Legacy message/bubble styles (kept for typing indicator) ─── */
@@ -427,68 +459,95 @@
     padding: 0.5rem 1rem;
     border-top: 1px solid var(--glass-border);
     background: var(--bg-secondary);
+    display: flex;
+    align-items: center;
 }
 
-/* ─── Input bar ─── */
+/* ─── Input area – Teams style: box with toolbar inside ─── */
+.inputArea {
+    position: relative;
+    padding: 0.5rem 1rem 0.65rem;
+    background: var(--bg-secondary);
+}
 .inputBar {
     display: flex;
     gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    border-top: 1px solid var(--glass-border);
-    background: var(--bg-secondary);
-    align-items: center;
+    align-items: flex-end;
+}
+.inputBoxWrap {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 6px;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+    position: relative;
+}
+.inputBoxWrap:focus-within {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px var(--primary-glow);
 }
 .msgInput {
-    flex: 1;
-    padding: 0.65rem 1rem;
-    border-radius: var(--radius-full);
-    border: 1px solid var(--glass-border);
-    background: var(--input-bg);
-    color: var(--text);
-    font-size: 0.9rem;
-    outline: none;
-    transition: border var(--transition-fast);
-}
-.msgInput:focus {
-    border-color: var(--primary);
-}
-.attachBtn,
-.voiceBtn {
-    background: none;
+    width: 100%;
+    padding: 0.55rem 0.75rem 0.25rem;
     border: none;
-    cursor: pointer;
-    font-size: 1.1rem;
-    padding: 0.3rem;
-    border-radius: var(--radius-sm);
-    transition: background var(--transition-fast);
+    background: transparent;
+    color: var(--text);
+    font-size: 0.875rem;
+    outline: none;
+    resize: none;
+    line-height: 1.5;
 }
-.attachBtn:hover,
-.voiceBtn:hover {
+.inputTools {
+    display: flex;
+    align-items: center;
+    gap: 1px;
+    padding: 0 0.4rem 0.3rem;
+}
+.inputIcon {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: none;
+    cursor: pointer;
+    border-radius: 4px;
+    color: var(--text-muted);
+    transition: background var(--transition-fast), color 0.15s;
+    padding: 0;
+    flex-shrink: 0;
+}
+.inputIcon:hover {
     background: var(--surface-hover);
+    color: var(--primary);
 }
 .fileInput {
     display: none;
 }
 .sendBtn {
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
     border: none;
     background: var(--primary);
     color: #fff;
-    font-size: 1.1rem;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: opacity var(--transition-fast);
+    transition: background var(--transition-fast), opacity var(--transition-fast);
+    flex-shrink: 0;
+    margin-bottom: 4px;
 }
 .sendBtn:disabled {
-    opacity: 0.4;
+    opacity: 0.35;
     cursor: default;
 }
 .sendBtn:not(:disabled):hover {
-    opacity: 0.9;
+    background: var(--primary-dark);
 }
 
 /* ─── Mobile ─── */

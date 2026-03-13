@@ -1,0 +1,94 @@
+.panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 340px;
+    background: var(--bg-secondary);
+    border-left: 1px solid var(--glass-border);
+    box-shadow: -4px 0 24px rgba(0,0,0,.15);
+    display: flex;
+    flex-direction: column;
+    z-index: 100;
+}
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--glass-border);
+}
+.header h4 {
+    margin: 0;
+    font-size: 0.95rem;
+    color: var(--text);
+}
+.close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+.close:hover { background: var(--surface-hover); }
+.list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+}
+.hint {
+    padding: 2rem;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+.item {
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: var(--surface);
+    margin-bottom: 8px;
+}
+.itemHeader {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 4px;
+}
+.sender {
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: var(--primary);
+}
+.date {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+.content {
+    font-size: 0.85rem;
+    color: var(--text);
+    line-height: 1.4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+}
+.actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+}
+.actionBtn {
+    padding: 3px 10px;
+    border: 1px solid var(--glass-border);
+    background: none;
+    color: var(--text-secondary);
+    font-size: 0.7rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+.actionBtn:hover { background: var(--surface-hover); }
+.danger { color: #ef4444; border-color: rgba(239,68,68,.3); }
+.danger:hover { background: rgba(239,68,68,.1); }

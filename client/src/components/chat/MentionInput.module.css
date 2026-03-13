@@ -1,0 +1,49 @@
+.wrap {
+    position: relative;
+    flex: 1;
+}
+.wrap textarea {
+    width: 100%;
+    box-sizing: border-box;
+    overflow-y: auto;
+    resize: none;
+}
+.suggestions {
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    right: 0;
+    background: var(--bg-secondary);
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    box-shadow: 0 -4px 16px rgba(0,0,0,.2);
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 50;
+    margin-bottom: 4px;
+}
+.suggestion {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 12px;
+    border: none;
+    background: none;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.85rem;
+    text-align: left;
+    transition: background var(--transition-fast);
+}
+.suggestion:hover,
+.selected {
+    background: var(--surface-hover);
+}
+.sugName {
+    font-weight: 600;
+}
+.sugUser {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+}

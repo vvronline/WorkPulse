@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import s from './FilePreview.module.css';
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
@@ -21,14 +22,24 @@ function fileIcon(type) {
 }
 
 export default function FilePreview({ fileUrl, fileName, fileType, fileSize, isMessage }) {
+    const [lightbox, setLightbox] = useState(false);
     const isImage = IMAGE_TYPES.includes(fileType);
     const isAudio = fileType?.startsWith('audio/');
 
     if (isImage && isMessage) {
         return (
-            <a href={fileUrl} target="_blank" rel="noopener noreferrer" className={s.imgWrap}>
-                <img src={fileUrl} alt={fileName} className={s.image} loading="lazy" />
-            </a>
+            <>
+                <div className={s.imgWrap} onClick={() => setLightbox(true)}>
+                    <img src={fileUrl} alt={fileName} className={s.image} loading="lazy" />
+                </div>
+                {lightbox && (
+                    <div className={s.lightbox} onClick={() => setLightbox(false)}>
+                        <button className={s.lbClose} onClick={() => setLightbox(false)}>✕</button>
+                        <img src={fileUrl} alt={fileName} className={s.lbImage} onClick={e => e.stopPropagation()} />
+                        <a href={fileUrl} download={fileName} className={s.lbDownload} onClick={e => e.stopPropagation()}>⬇ Download</a>
+                    </div>
+                )}
+            </>
         );
     }
 

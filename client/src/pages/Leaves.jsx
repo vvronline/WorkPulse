@@ -138,7 +138,7 @@ export default function Leaves() {
 
   // Stats from filtered month leaves
   const totalDays = useMemo(() => {
-    return leaves.reduce((acc, l) => acc + (l.duration === 'half_day' ? 0.5 : l.duration === 'quarter_day' ? 0.25 : 1), 0);
+    return leaves.reduce((acc, l) => acc + (l.duration === 'half' ? 0.5 : l.duration === 'quarter' ? 0.25 : 1), 0);
   }, [leaves]);
 
   const filteredLeaves = useMemo(() => {
@@ -371,7 +371,7 @@ export default function Leaves() {
                 {filteredLeaves.map(leave => {
                   const type = getType(leave.leave_type);
                   const status = STATUS_CONFIG[leave.status] || STATUS_CONFIG.pending;
-                  const durLabel = leave.duration === 'half_day' ? 'Half Day' : leave.duration === 'quarter_day' ? 'Quarter Day' : 'Full Day';
+                  const durLabel = leave.duration === 'half' ? 'Half Day' : leave.duration === 'quarter' ? 'Quarter Day' : 'Full Day';
                   return (
                     <div key={leave.id} className={s.leaveItem}>
                       <div className={s.leaveItemLeft}>

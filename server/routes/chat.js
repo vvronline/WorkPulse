@@ -14,11 +14,29 @@ if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
 }
 
+// Allowlist of safe MIME types → canonical extension
+const ALLOWED_TYPES = {
+    'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif',
+    'image/webp': 'webp', 'image/bmp': 'bmp',
+    'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov',
+    'audio/webm': 'webm', 'audio/mp4': 'm4a', 'audio/mpeg': 'mp3',
+    'audio/ogg': 'ogg', 'audio/wav': 'wav', 'audio/x-wav': 'wav',
+    'application/pdf': 'pdf',
+    'application/zip': 'zip', 'application/x-zip-compressed': 'zip',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+    'application/msword': 'doc',
+    'application/vnd.ms-excel': 'xls',
+    'text/plain': 'txt', 'text/csv': 'csv',
+};
+
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadDir),
     filename: (req, file, cb) => {
-        const ext = path.extname(file.originalname).toLowerCase();
-        cb(null, `${req.userId}_${Date.now()}${ext}`);
+        // Use canonical extension from MIME type — never trust originalname extension
+        const ext = ALLOWED_TYPES[file.mimetype] || 'bin';
+        cb(null, `${req.userId}_${Date.now()}.${ext}`);
     }
 });
 
@@ -26,10 +44,10 @@ const chatUpload = multer({
     storage,
     limits: { fileSize: 25 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
-        const blockedExts = ['.exe', '.bat', '.cmd', '.sh', '.ps1', '.msi', '.dll', '.com'];
-        const ext = path.extname(file.originalname).toLowerCase();
-        if (blockedExts.includes(ext)) cb(new Error('File type not allowed'));
-        else cb(null, true);
+        if (!ALLOWED_TYPES[file.mimetype]) {
+            return cb(new Error('File type not allowed'));
+        }
+        cb(null, true);
     }
 });
 
@@ -359,16 +377,19 @@ router.get('/conversations/:id/messages', auth, async (req, res) => {
                    m.reply_to_id, m.file_url, m.file_name, m.file_type, m.file_size,
                    m.edited_at, m.deleted_at, m.forwarded_from_id,
                    m.pinned_at, m.pinned_by,
+                   m.format_type, m.metadata, m.delivered_to,
                    u.full_name AS sender_name, u.avatar AS sender_avatar, u.username AS sender_username,
                    rm.content AS reply_content, rm.sender_id AS reply_sender_id,
-                   ru.full_name AS reply_sender_name
+                   ru.full_name AS reply_sender_name,
+                   CASE WHEN sm.message_id IS NOT NULL THEN true ELSE false END AS starred
             FROM messages m
             JOIN users u ON u.id = m.sender_id
             LEFT JOIN messages rm ON rm.id = m.reply_to_id
             LEFT JOIN users ru ON ru.id = rm.sender_id
-            WHERE m.conversation_id = $1
+            LEFT JOIN starred_messages sm ON sm.message_id = m.id AND sm.user_id = $1
+            WHERE m.conversation_id = $2
         `;
-        const params = [convId];
+        const params = [req.userId, convId];
 
         if (before) {
             sql += ` AND m.id < $${params.length + 1}`;
@@ -486,6 +507,12 @@ router.post('/conversations/:id/files', auth, chatUpload.single('file'), async (
 
         if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
+        // Sanitize the display name: strip control chars, path separators, limit length
+        const safeName = (req.file.originalname || 'file')
+            .replace(/[^\x20-\x7E\u00A0-\uFFFF]/g, '')   // strip control characters
+            .replace(/[/\\]/g, '_')                         // no path separators
+            .slice(0, 255) || 'file';
+
         const fileUrl = `/uploads/chat/${req.file.filename}`;
         const content = req.body.content || null;
         const replyToId = req.body.replyToId ? parseInt(req.body.replyToId, 10) : null;
@@ -493,7 +520,7 @@ router.post('/conversations/:id/files', auth, chatUpload.single('file'), async (
         const result = (await query(
             `INSERT INTO messages (conversation_id, sender_id, content, file_url, file_name, file_type, file_size, reply_to_id)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at`,
-            [convId, req.userId, content, fileUrl, req.file.originalname, req.file.mimetype, req.file.size, replyToId]
+            [convId, req.userId, content, fileUrl, safeName, req.file.mimetype, req.file.size, replyToId]
         )).rows[0];
 
         await query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [convId]);
@@ -520,7 +547,7 @@ router.post('/conversations/:id/files', auth, chatUpload.single('file'), async (
             senderUsername: sender.username,
             content,
             fileUrl,
-            fileName: req.file.originalname,
+            fileName: safeName,
             fileType: req.file.mimetype,
             fileSize: req.file.size,
             replyToId,
@@ -669,7 +696,7 @@ router.delete('/messages/:id', auth, async (req, res) => {
             const filePath = path.join(__dirname, '..', msg.file_url);
             const resolved = path.resolve(filePath);
             if (resolved.startsWith(path.resolve(__dirname, '..', 'uploads'))) {
-                fs.unlink(resolved, () => {});
+                fs.unlink(resolved, () => { });
             }
         }
 
@@ -880,6 +907,286 @@ router.post('/messages/:id/forward', auth, async (req, res) => {
     } catch (err) {
         req.log.error({ err }, 'Forward message error');
         res.status(500).json({ error: 'Failed to forward message' });
+    }
+});
+
+// ─────────────────────────────────────────────
+// STARRED MESSAGES
+// ─────────────────────────────────────────────
+
+/**
+ * POST /api/chat/messages/:id/star
+ */
+router.post('/messages/:id/star', auth, async (req, res) => {
+    try {
+        const msgId = parseInt(req.params.id, 10);
+        if (isNaN(msgId)) return res.status(400).json({ error: 'Invalid message' });
+
+        const msg = (await query('SELECT conversation_id FROM messages WHERE id = $1', [msgId])).rows[0];
+        if (!msg) return res.status(404).json({ error: 'Message not found' });
+        if (!(await verifyParticipant(msg.conversation_id, req.userId))) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        const existing = (await query(
+            'SELECT 1 FROM starred_messages WHERE user_id = $1 AND message_id = $2',
+            [req.userId, msgId]
+        )).rows[0];
+
+        if (existing) {
+            await query('DELETE FROM starred_messages WHERE user_id = $1 AND message_id = $2', [req.userId, msgId]);
+            res.json({ ok: true, starred: false });
+        } else {
+            await query('INSERT INTO starred_messages (user_id, message_id) VALUES ($1, $2)', [req.userId, msgId]);
+            res.json({ ok: true, starred: true });
+        }
+    } catch (err) {
+        req.log.error({ err }, 'Star message error');
+        res.status(500).json({ error: 'Failed to star message' });
+    }
+});
+
+/**
+ * GET /api/chat/starred
+ */
+router.get('/starred', auth, async (req, res) => {
+    try {
+        const rows = (await query(`
+            SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at,
+                   m.file_url, m.file_name, m.file_type, m.file_size,
+                   m.format_type, m.metadata,
+                   u.full_name AS sender_name, u.avatar AS sender_avatar,
+                   sm.created_at AS starred_at,
+                   c.name AS group_name, c.is_group
+            FROM starred_messages sm
+            JOIN messages m ON m.id = sm.message_id
+            JOIN users u ON u.id = m.sender_id
+            JOIN conversations c ON c.id = m.conversation_id
+            WHERE sm.user_id = $1 AND m.deleted_at IS NULL
+            ORDER BY sm.created_at DESC
+            LIMIT 100
+        `, [req.userId])).rows;
+
+        res.json(rows);
+    } catch (err) {
+        req.log.error({ err }, 'Get starred error');
+        res.status(500).json({ error: 'Failed to get starred messages' });
+    }
+});
+
+// ─────────────────────────────────────────────
+// POLLS
+// ─────────────────────────────────────────────
+
+/**
+ * POST /api/chat/conversations/:id/polls  { question, options: [str], multiSelect? }
+ */
+router.post('/conversations/:id/polls', auth, async (req, res) => {
+    try {
+        const convId = parseInt(req.params.id, 10);
+        if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
+        if (!(await verifyParticipant(convId, req.userId))) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        const { question, options, multiSelect } = req.body;
+        if (!question || !question.trim()) return res.status(400).json({ error: 'Question is required' });
+        if (!Array.isArray(options) || options.length < 2 || options.length > 10) {
+            return res.status(400).json({ error: '2-10 options required' });
+        }
+
+        const cleanOpts = options.map(o => String(o).trim().slice(0, 200)).filter(Boolean);
+        if (cleanOpts.length < 2) return res.status(400).json({ error: 'At least 2 non-empty options' });
+
+        const poll = (await query(
+            `INSERT INTO polls (conversation_id, creator_id, question, options, multi_select)
+             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+            [convId, req.userId, question.trim().slice(0, 500), JSON.stringify(cleanOpts), !!multiSelect]
+        )).rows[0];
+
+        // Insert a message of type 'poll' referencing this poll
+        const result = (await query(
+            `INSERT INTO messages (conversation_id, sender_id, content, format_type, metadata)
+             VALUES ($1, $2, $3, 'poll', $4) RETURNING id, created_at`,
+            [convId, req.userId, question.trim().slice(0, 500), JSON.stringify({ pollId: poll.id })]
+        )).rows[0];
+
+        await query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [convId]);
+
+        const sender = (await query('SELECT full_name, avatar, username FROM users WHERE id = $1', [req.userId])).rows[0];
+        const participants = (await query(
+            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1', [convId]
+        )).rows;
+
+        const outMsg = {
+            id: result.id, conversationId: convId, senderId: req.userId,
+            senderName: sender.full_name, senderAvatar: sender.avatar,
+            content: question.trim(), formatType: 'poll',
+            metadata: { pollId: poll.id, question: poll.question, options: cleanOpts, multiSelect: !!multiSelect, votes: {} },
+            createdAt: result.created_at
+        };
+
+        for (const p of participants) {
+            sendToUser(p.user_id, 'chat_message', outMsg);
+        }
+
+        res.status(201).json({ ok: true, poll, messageId: result.id });
+    } catch (err) {
+        req.log.error({ err }, 'Create poll error');
+        res.status(500).json({ error: 'Failed to create poll' });
+    }
+});
+
+/**
+ * POST /api/chat/polls/:id/vote  { optionIdx }
+ */
+router.post('/polls/:id/vote', auth, async (req, res) => {
+    try {
+        const pollId = parseInt(req.params.id, 10);
+        if (isNaN(pollId)) return res.status(400).json({ error: 'Invalid poll' });
+
+        const poll = (await query('SELECT * FROM polls WHERE id = $1', [pollId])).rows[0];
+        if (!poll) return res.status(404).json({ error: 'Poll not found' });
+        if (poll.closed_at) return res.status(400).json({ error: 'Poll is closed' });
+        if (!(await verifyParticipant(poll.conversation_id, req.userId))) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        const { optionIdx } = req.body;
+        const opts = poll.options;
+        if (typeof optionIdx !== 'number' || optionIdx < 0 || optionIdx >= opts.length) {
+            return res.status(400).json({ error: 'Invalid option' });
+        }
+
+        // Toggle vote
+        const existing = (await query(
+            'SELECT id FROM poll_votes WHERE poll_id = $1 AND user_id = $2 AND option_idx = $3',
+            [pollId, req.userId, optionIdx]
+        )).rows[0];
+
+        if (existing) {
+            await query('DELETE FROM poll_votes WHERE id = $1', [existing.id]);
+        } else {
+            if (!poll.multi_select) {
+                await query('DELETE FROM poll_votes WHERE poll_id = $1 AND user_id = $2', [pollId, req.userId]);
+            }
+            await query('INSERT INTO poll_votes (poll_id, user_id, option_idx) VALUES ($1, $2, $3)', [pollId, req.userId, optionIdx]);
+        }
+
+        // Fetch updated vote counts
+        const votes = (await query(
+            'SELECT option_idx, array_agg(user_id) AS user_ids FROM poll_votes WHERE poll_id = $1 GROUP BY option_idx',
+            [pollId]
+        )).rows;
+        const voteMap = {};
+        for (const v of votes) voteMap[v.option_idx] = v.user_ids;
+
+        // Broadcast poll update
+        const participants = (await query(
+            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1', [poll.conversation_id]
+        )).rows;
+        for (const p of participants) {
+            sendToUser(p.user_id, 'chat_poll_vote', {
+                pollId, conversationId: poll.conversation_id, votes: voteMap
+            });
+        }
+
+        res.json({ ok: true, votes: voteMap });
+    } catch (err) {
+        req.log.error({ err }, 'Poll vote error');
+        res.status(500).json({ error: 'Failed to vote' });
+    }
+});
+
+/**
+ * GET /api/chat/polls/:id
+ */
+router.get('/polls/:id', auth, async (req, res) => {
+    try {
+        const pollId = parseInt(req.params.id, 10);
+        if (isNaN(pollId)) return res.status(400).json({ error: 'Invalid poll' });
+
+        const poll = (await query('SELECT * FROM polls WHERE id = $1', [pollId])).rows[0];
+        if (!poll) return res.status(404).json({ error: 'Poll not found' });
+        if (!(await verifyParticipant(poll.conversation_id, req.userId))) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        const votes = (await query(
+            `SELECT pv.option_idx, pv.user_id, u.full_name
+             FROM poll_votes pv JOIN users u ON u.id = pv.user_id
+             WHERE pv.poll_id = $1`,
+            [pollId]
+        )).rows;
+
+        const voteMap = {};
+        for (const v of votes) {
+            if (!voteMap[v.option_idx]) voteMap[v.option_idx] = [];
+            voteMap[v.option_idx].push({ userId: v.user_id, fullName: v.full_name });
+        }
+
+        res.json({ ...poll, votes: voteMap });
+    } catch (err) {
+        req.log.error({ err }, 'Get poll error');
+        res.status(500).json({ error: 'Failed to get poll' });
+    }
+});
+
+// ─────────────────────────────────────────────
+// SHARED FILES
+// ─────────────────────────────────────────────
+
+/**
+ * GET /api/chat/conversations/:id/files
+ */
+router.get('/conversations/:id/files', auth, async (req, res) => {
+    try {
+        const convId = parseInt(req.params.id, 10);
+        if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
+        if (!(await verifyParticipant(convId, req.userId))) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        const rows = (await query(`
+            SELECT m.id, m.file_url, m.file_name, m.file_type, m.file_size,
+                   m.created_at, m.sender_id,
+                   u.full_name AS sender_name, u.avatar AS sender_avatar
+            FROM messages m
+            JOIN users u ON u.id = m.sender_id
+            WHERE m.conversation_id = $1 AND m.file_url IS NOT NULL AND m.deleted_at IS NULL
+            ORDER BY m.created_at DESC
+            LIMIT 100
+        `, [convId])).rows;
+
+        res.json(rows);
+    } catch (err) {
+        req.log.error({ err }, 'Get shared files error');
+        res.status(500).json({ error: 'Failed to get shared files' });
+    }
+});
+
+// ─────────────────────────────────────────────
+// DELIVERY ACKNOWLEDGEMENT
+// ─────────────────────────────────────────────
+
+/**
+ * POST /api/chat/messages/:id/delivered
+ */
+router.post('/messages/:id/delivered', auth, async (req, res) => {
+    try {
+        const msgId = parseInt(req.params.id, 10);
+        if (isNaN(msgId)) return res.status(400).json({ error: 'Invalid message' });
+
+        await query(
+            `UPDATE messages SET delivered_to = delivered_to || $1::jsonb
+             WHERE id = $2 AND NOT delivered_to @> $1::jsonb`,
+            [JSON.stringify([req.userId]), msgId]
+        );
+
+        res.json({ ok: true });
+    } catch (err) {
+        req.log.error({ err }, 'Delivery ack error');
+        res.status(500).json({ error: 'Failed' });
     }
 });
 

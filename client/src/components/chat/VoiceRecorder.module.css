@@ -9,6 +9,16 @@
     border: 1px solid var(--danger);
     animation: pulse 1.5s infinite;
 }
+.recorderError {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    padding: 6px 12px;
+    background: var(--bg-secondary);
+    border-radius: 20px;
+    border: 1px solid var(--glass-border);
+}
 @keyframes pulse {
     0%, 100% { border-color: var(--danger); }
     50% { border-color: transparent; }
@@ -40,6 +50,11 @@
     animation: blink 1s infinite;
 }
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+.errorMsg {
+    flex: 1;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
 .time {
     font-size: 0.85rem;
     color: var(--text-secondary);

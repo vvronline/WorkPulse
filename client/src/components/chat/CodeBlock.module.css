@@ -1,0 +1,46 @@
+.block {
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--glass-border);
+    margin: 4px 0;
+    font-size: 0.8rem;
+    background: #1e1e2e;
+}
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 10px;
+    background: rgba(255,255,255,.05);
+    border-bottom: 1px solid var(--glass-border);
+}
+.lang {
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+.copyBtn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: background var(--transition-fast), color 0.15s;
+}
+.copyBtn:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+}
+.pre {
+    margin: 0;
+    padding: 10px 12px;
+    overflow-x: auto;
+    line-height: 1.5;
+}
+.pre code {
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.8rem;
+}

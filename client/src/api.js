@@ -262,5 +262,12 @@ export const togglePin = (msgId) => API.post(`/chat/messages/${msgId}/pin`);
 export const getPinnedMessages = (convId) => API.get(`/chat/conversations/${convId}/pinned`);
 export const searchMessages = (q, convId) => API.get('/chat/search-messages', { params: { q, convId } });
 export const forwardMessage = (msgId, conversationIds) => API.post(`/chat/messages/${msgId}/forward`, { conversationIds });
+export const toggleStar = (msgId) => API.post(`/chat/messages/${msgId}/star`);
+export const getStarredMessages = () => API.get('/chat/starred');
+export const createPoll = (convId, data) => API.post(`/chat/conversations/${convId}/polls`, data);
+export const votePoll = (pollId, optionIdx) => API.post(`/chat/polls/${pollId}/vote`, { optionIdx });
+export const getPoll = (pollId) => API.get(`/chat/polls/${pollId}`);
+export const getSharedFiles = (convId) => API.get(`/chat/conversations/${convId}/files`);
+export const ackDelivered = (msgId) => API.post(`/chat/messages/${msgId}/delivered`);
 
 export default API;

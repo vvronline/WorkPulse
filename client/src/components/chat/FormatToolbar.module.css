@@ -1,0 +1,28 @@
+.bar {
+    display: flex;
+    gap: 2px;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--glass-border);
+    background: var(--bg-secondary);
+    align-items: center;
+    flex-wrap: wrap;
+}
+.btn {
+    padding: 3px 8px;
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background var(--transition-fast), color 0.15s;
+    min-width: 28px;
+    text-align: center;
+}
+.btn:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+}
+.italic { font-style: italic; }
+.mono { font-family: monospace; font-size: 0.7rem; }

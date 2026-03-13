@@ -1,5 +1,57 @@
-.imgWrap { display: block; max-width: 280px; border-radius: var(--radius-sm); overflow: hidden; }
-.image { width: 100%; display: block; border-radius: var(--radius-sm); cursor: pointer; }
+.imgWrap { display: block; max-width: 280px; border-radius: var(--radius-sm); overflow: hidden; cursor: pointer; }
+.image { width: 100%; display: block; border-radius: var(--radius-sm); }
+
+/* Lightbox overlay */
+.lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: rgba(0,0,0,.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: zoom-out;
+    animation: lbFadeIn 0.15s ease;
+}
+@keyframes lbFadeIn { from { opacity: 0; } to { opacity: 1; } }
+.lbImage {
+    max-width: 90vw;
+    max-height: 85vh;
+    object-fit: contain;
+    border-radius: 6px;
+    cursor: default;
+    box-shadow: 0 8px 40px rgba(0,0,0,.5);
+}
+.lbClose {
+    position: absolute;
+    top: 16px;
+    right: 20px;
+    background: rgba(255,255,255,.15);
+    border: none;
+    color: #fff;
+    font-size: 1.2rem;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+}
+.lbClose:hover { background: rgba(255,255,255,.3); }
+.lbDownload {
+    position: absolute;
+    bottom: 20px;
+    background: rgba(255,255,255,.15);
+    color: #fff;
+    text-decoration: none;
+    padding: 8px 18px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    transition: background 0.15s;
+}
+.lbDownload:hover { background: rgba(255,255,255,.3); }
 .audioWrap { width: 100%; max-width: 280px; }
 .audio { width: 100%; height: 36px; }
 .file {

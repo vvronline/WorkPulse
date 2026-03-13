@@ -573,6 +573,46 @@ async function initDB() {
     // Full-text search index on messages
     await query(`CREATE INDEX IF NOT EXISTS idx_messages_search ON messages USING gin(to_tsvector('english', COALESCE(content, '')))`);
 
+    // ---- Starred Messages ----
+    await query(`
+        CREATE TABLE IF NOT EXISTS starred_messages (
+            user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (user_id, message_id)
+        )
+    `);
+
+    // ---- Polls ----
+    await query(`
+        CREATE TABLE IF NOT EXISTS polls (
+            id              SERIAL PRIMARY KEY,
+            conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            creator_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            question        TEXT NOT NULL,
+            options         JSONB NOT NULL DEFAULT '[]',
+            multi_select    BOOLEAN NOT NULL DEFAULT FALSE,
+            closed_at       TIMESTAMPTZ,
+            created_at      TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    await query(`
+        CREATE TABLE IF NOT EXISTS poll_votes (
+            id         SERIAL PRIMARY KEY,
+            poll_id    INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+            user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            option_idx INTEGER NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE (poll_id, user_id, option_idx)
+        )
+    `);
+
+    // ---- Delivery status on messages ----
+    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivered_to JSONB DEFAULT '[]'`);
+
+    // ---- Message format_type for rich text / polls / code ----
+    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS format_type VARCHAR(20) DEFAULT 'text'`);
+    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS metadata JSONB`);
     // Seed defaults
     await query(`
         INSERT INTO app_settings (key, value) VALUES ('registration_mode', 'open')
