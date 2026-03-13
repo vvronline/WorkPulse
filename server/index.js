@@ -51,7 +51,7 @@ app.use(helmet({
             "upgrade-insecure-requests": null,
         }
     },
-    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
+    crossOriginOpenerPolicy: false,
     originAgentCluster: false
 }));
 app.use(cors({

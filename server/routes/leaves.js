@@ -22,15 +22,20 @@ async function updateLeaveBalance(userId, leaveType, date, duration, operation, 
         'SELECT id, used FROM leave_balances WHERE user_id = $1 AND leave_type = $2 AND year = $3 FOR UPDATE',
         [userId, leaveType, year]
     );
-    const balance = balRes.rows[0];
-    if (balance) {
-        const newUsed = operation === 'add'
-            ? balance.used + durationValue
-            : Math.max(0, balance.used - durationValue);
-        await q('UPDATE leave_balances SET used = $1 WHERE id = $2', [newUsed, balance.id]);
-    } else {
-        throw new Error(`Leave balance row not found for user ${userId}, type ${leaveType}, year ${year}`);
+    let balance = balRes.rows[0];
+    if (!balance) {
+        // Auto-create a balance row with quota 0 so approvals don't fail
+        // when no policy has been provisioned yet
+        const ins = await q(
+            'INSERT INTO leave_balances (user_id, leave_type, year, quota, used, carried_forward) VALUES ($1, $2, $3, 0, 0, 0) RETURNING id, used',
+            [userId, leaveType, year]
+        );
+        balance = ins.rows[0];
     }
+    const newUsed = operation === 'add'
+        ? balance.used + durationValue
+        : Math.max(0, balance.used - durationValue);
+    await q('UPDATE leave_balances SET used = $1 WHERE id = $2', [newUsed, balance.id]);
 }
 
 // GET /leaves — list leaves (own or visible)
