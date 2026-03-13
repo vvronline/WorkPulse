@@ -205,7 +205,7 @@ function cleanupForgotPwAttempts() {
         if (now - entry.firstAttempt > FORGOT_PW_WINDOW_MS) forgotPasswordAttempts.delete(key);
     }
 }
-setInterval(cleanupForgotPwAttempts, 60 * 1000);
+setInterval(cleanupForgotPwAttempts, 60 * 1000).unref();
 
 // Forgot Password
 router.post('/forgot-password', async (req, res) => {
