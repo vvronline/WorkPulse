@@ -120,9 +120,9 @@ describe('POST /api/tracker/clock-in', () => {
     });
 
     test('succeeds when not clocked in', async () => {
-        setupAuthMocks();
-        // org work_days query
-        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+        setupAuthMocks({ org_id: 1 });
+        // org work_days query — include all days so test passes regardless of day-of-week
+        mockQuery.mockResolvedValueOnce({ rows: [{ work_days: '0,1,2,3,4,5,6' }], rowCount: 1 });
 
         // transaction: last entry = clock_out (or empty) → allow
         mockTxClient.query
@@ -143,8 +143,8 @@ describe('POST /api/tracker/clock-in', () => {
     });
 
     test('returns 400 when already clocked in', async () => {
-        setupAuthMocks();
-        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // org work_days
+        setupAuthMocks({ org_id: 1 });
+        mockQuery.mockResolvedValueOnce({ rows: [{ work_days: '0,1,2,3,4,5,6' }], rowCount: 1 }); // org work_days
 
         mockTransaction.mockReset().mockImplementation(async () => ({ error: 'Already logged in. Logout first.' }));
 
