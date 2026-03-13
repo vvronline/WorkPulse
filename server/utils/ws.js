@@ -140,6 +140,20 @@ async function handleChatMessage(senderId, msg) {
         // Get sender info
         const sender = (await query('SELECT full_name, avatar, username FROM users WHERE id = $1', [senderId])).rows[0];
 
+        // Get reply details if replying
+        let replyContent = null, replySenderName = null;
+        if (replyId) {
+            const replyMsg = (await query(
+                `SELECT m.content, u.full_name AS sender_name
+                 FROM messages m JOIN users u ON u.id = m.sender_id
+                 WHERE m.id = $1`, [replyId]
+            )).rows[0];
+            if (replyMsg) {
+                replyContent = replyMsg.content;
+                replySenderName = replyMsg.sender_name;
+            }
+        }
+
         const outMsg = {
             id: result.id,
             conversationId,
@@ -149,6 +163,8 @@ async function handleChatMessage(senderId, msg) {
             senderUsername: sender?.username,
             content: content.trim(),
             replyToId: replyId,
+            replyContent,
+            replySenderName,
             createdAt: result.created_at
         };
 

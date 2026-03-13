@@ -9,6 +9,8 @@ export default function VoiceRecorder({ onSend, onCancel }) {
     const timerRef = useRef(null);
     const streamRef = useRef(null);
 
+    const durationRef = useRef(0);
+
     const start = useCallback(async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -20,16 +22,17 @@ export default function VoiceRecorder({ onSend, onCancel }) {
             mr.onstop = () => {
                 const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
                 stream.getTracks().forEach(t => t.stop());
-                onSend(blob, duration);
+                onSend(blob, durationRef.current);
             };
             mr.start();
             setRecording(true);
             setDuration(0);
-            timerRef.current = setInterval(() => setDuration(d => d + 1), 1000);
+            durationRef.current = 0;
+            timerRef.current = setInterval(() => setDuration(d => { durationRef.current = d + 1; return d + 1; }), 1000);
         } catch {
             onCancel?.();
         }
-    }, [onSend, onCancel, duration]);
+    }, [onSend, onCancel]);
 
     const stop = useCallback(() => {
         clearInterval(timerRef.current);

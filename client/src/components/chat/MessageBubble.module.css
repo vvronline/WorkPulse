@@ -1,63 +1,103 @@
+/* ─── Row layout: avatar + bubble ─── */
 .row {
     display: flex;
-    padding: 2px 16px;
+    align-items: flex-end;
+    padding: 1px 20px;
+    margin-top: 12px;
+    position: relative;
 }
-.mine { justify-content: flex-end; }
-.theirs { justify-content: flex-start; }
+.row.grouped {
+    margin-top: 2px;
+}
+.mine { flex-direction: row-reverse; }
+.theirs { flex-direction: row; }
 
+.avatarCol {
+    width: 28px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: flex-end;
+}
+.mine .avatarCol { margin-left: 8px; }
+.theirs .avatarCol { margin-right: 8px; }
+
+.bubbleWrap {
+    max-width: 65%;
+    min-width: 80px;
+    display: flex;
+    flex-direction: column;
+}
+.mine .bubbleWrap { align-items: flex-end; }
+.theirs .bubbleWrap { align-items: flex-start; }
+
+/* ─── Sender name (above bubble, Teams style) ─── */
+.senderName {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--primary);
+    margin-bottom: 3px;
+    padding: 0 4px;
+}
+.mineName {
+    color: var(--text-secondary);
+}
+
+/* ─── Bubble ─── */
 .bubble {
     position: relative;
-    max-width: 70%;
-    padding: 8px 12px;
-    border-radius: 12px;
+    padding: 8px 14px;
+    border-radius: 4px;
     word-break: break-word;
-    line-height: 1.45;
+    line-height: 1.5;
     font-size: 0.9rem;
+    width: fit-content;
+    max-width: 100%;
 }
 .myBubble {
     background: var(--primary);
     color: #fff;
-    border-bottom-right-radius: 4px;
+    border-radius: 4px 4px 0 4px;
 }
 .theirBubble {
-    background: var(--glass);
+    background: var(--surface-hover);
     color: var(--text);
-    border-bottom-left-radius: 4px;
+    border-radius: 4px 4px 4px 0;
 }
+.grouped .myBubble { border-radius: 4px 4px 0 4px; }
+.grouped .theirBubble { border-radius: 4px 4px 4px 0; }
+
 .pinned { border-left: 3px solid #f59e0b; }
 .deleted {
     background: var(--surface-hover);
     color: var(--text-muted);
     font-style: italic;
+    padding: 6px 14px;
+    border-radius: 4px;
 }
 
 .pinnedBadge {
-    font-size: 0.7rem;
+    font-size: 0.68rem;
     color: #f59e0b;
-    margin-bottom: 4px;
+    margin-bottom: 3px;
+    font-weight: 500;
 }
 .forwarded {
-    font-size: 0.7rem;
+    font-size: 0.68rem;
     color: var(--text-muted);
-    margin-bottom: 4px;
+    margin-bottom: 3px;
     font-style: italic;
 }
-.senderName {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: var(--primary);
-    margin-bottom: 2px;
-}
-.theirBubble .senderName { color: var(--primary); }
 
-.text { margin: 4px 0; }
+/* ─── Text & links ─── */
+.text { margin: 2px 0; }
 .link {
     color: inherit;
     text-decoration: underline;
     word-break: break-all;
 }
-.myBubble .link { color: #dbeafe; }
+.myBubble .link { color: #c7d8fb; }
 
+/* ─── Meta: time + edited ─── */
 .meta {
     display: flex;
     align-items: center;
@@ -67,40 +107,103 @@
 }
 .time {
     font-size: 0.65rem;
-    opacity: 0.7;
+    opacity: 0.6;
 }
 .edited {
     font-size: 0.6rem;
-    opacity: 0.6;
+    opacity: 0.55;
     font-style: italic;
 }
 
-/* Hover actions */
+/* ─── Hover toolbar – Teams bar ─── */
 .hoverActions {
     position: absolute;
-    top: -14px;
-    right: 4px;
+    top: -20px;
+    right: 8px;
     display: none;
-    gap: 2px;
-    padding: 2px 4px;
+    align-items: center;
+    gap: 0;
+    padding: 3px 4px;
     background: var(--bg-secondary);
     border: 1px solid var(--glass-border);
-    border-radius: 8px;
+    border-radius: 6px;
     box-shadow: 0 2px 8px rgba(0,0,0,.15);
+    z-index: 10;
 }
 .bubble:hover .hoverActions { display: flex; }
-.hoverActions button {
+.mine .hoverActions { right: 8px; left: auto; }
+.theirs .hoverActions { left: 8px; right: auto; }
+
+.quickReactions {
+    display: flex;
+    align-items: center;
+    gap: 1px;
+}
+.quickEmoji {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: none;
+    font-size: 0.95rem;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: background var(--transition-fast), transform 0.1s;
+    padding: 0;
+}
+.quickEmoji:hover {
+    background: var(--surface-hover);
+    transform: scale(1.2);
+}
+.moreEmoji {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     border: none;
     background: none;
     cursor: pointer;
-    font-size: 0.85rem;
-    padding: 2px 4px;
-    border-radius: 4px;
-    transition: background var(--transition-fast);
+    border-radius: 6px;
+    color: var(--text-muted);
+    transition: background var(--transition-fast), color 0.15s;
+    padding: 0;
 }
-.hoverActions button:hover { background: var(--surface-hover); }
+.moreEmoji:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+}
 
-/* Reactions */
+.toolbarDivider {
+    width: 1px;
+    height: 18px;
+    background: var(--glass-border);
+    margin: 0 3px;
+    flex-shrink: 0;
+}
+
+.toolbarBtn {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: none;
+    cursor: pointer;
+    border-radius: 6px;
+    color: var(--text-muted);
+    transition: background var(--transition-fast), color 0.15s;
+    padding: 0;
+}
+.toolbarBtn:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+}
+
+/* ─── Reactions ─── */
 .reactions {
     display: flex;
     flex-wrap: wrap;
@@ -135,5 +238,6 @@
 .theirs .pickerWrap { left: 0; right: auto; }
 
 @media (max-width: 768px) {
-    .bubble { max-width: 85%; }
+    .bubbleWrap { max-width: 80%; }
+    .row { padding: 1px 10px; }
 }

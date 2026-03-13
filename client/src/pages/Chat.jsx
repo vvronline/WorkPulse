@@ -114,9 +114,9 @@ export default function Chat() {
                         if (m.id !== d.messageId) return m;
                         let reactions = [...(m.reactions || [])];
                         if (d.action === 'added') {
-                            reactions.push({ user_id: d.userId, emoji: d.emoji });
+                            reactions.push({ userId: d.userId, fullName: d.fullName, emoji: d.emoji });
                         } else {
-                            reactions = reactions.filter(r => !(r.user_id === d.userId && r.emoji === d.emoji));
+                            reactions = reactions.filter(r => !(r.userId === d.userId && r.emoji === d.emoji));
                         }
                         return { ...m, reactions };
                     }));
@@ -134,7 +134,7 @@ export default function Chat() {
             case 'chat_delete': {
                 if (activeConvRef.current?.id === d.conversationId) {
                     setMessages(prev => prev.map(m =>
-                        m.id === d.messageId ? { ...m, deleted_at: d.deletedAt } : m
+                        m.id === d.messageId ? { ...m, deleted_at: new Date().toISOString() } : m
                     ));
                 }
                 break;
@@ -142,14 +142,14 @@ export default function Chat() {
             case 'chat_pin': {
                 if (activeConvRef.current?.id === d.conversationId) {
                     setMessages(prev => prev.map(m =>
-                        m.id === d.messageId ? { ...m, pinned_at: d.pinnedAt || null, pinned_by: d.pinnedBy || null } : m
+                        m.id === d.messageId ? { ...m, pinned_at: d.pinned ? new Date().toISOString() : null, pinned_by: d.pinned ? d.pinnedBy : null } : m
                     ));
                 }
                 break;
             }
             case 'chat_read_receipt': {
                 if (activeConvRef.current?.id === d.conversationId) {
-                    setReadReceipts(prev => ({ ...prev, [d.userId]: d.lastReadAt }));
+                    setReadReceipts(prev => ({ ...prev, [d.userId]: d.readAt }));
                 }
                 break;
             }
@@ -197,7 +197,11 @@ export default function Chat() {
             if (uids.size > 0) {
                 try {
                     const { data: pres } = await getPresence([...uids]);
-                    setOnlineUsers(new Set(pres.filter(p => p.online).map(p => p.userId)));
+                    setOnlineUsers(new Set(
+                        Object.entries(pres)
+                            .filter(([, v]) => v === 'online')
+                            .map(([k]) => Number(k))
+                    ));
                 } catch { /* ignore */ }
             }
         } catch { /* ignore */ }
@@ -371,9 +375,9 @@ export default function Chat() {
         } catch { /* ignore */ }
     };
 
-    const handleReact = async (msg, emoji) => {
+    const handleReact = async (msgId, emoji) => {
         try {
-            await toggleReaction(msg.id, emoji);
+            await toggleReaction(msgId, emoji);
         } catch { /* ignore */ }
     };
 
@@ -584,6 +588,10 @@ export default function Chat() {
                                 {messages.map((m, i) => {
                                     const isMine = m.sender_id === user.id;
                                     const showDate = i === 0 || new Date(m.created_at).toDateString() !== new Date(messages[i - 1].created_at).toDateString();
+                                    // Teams-style grouping: show avatar/name only for first msg in a consecutive run from the same sender
+                                    const prev = messages[i - 1];
+                                    const isNewGroup = !prev || prev.sender_id !== m.sender_id || showDate
+                                        || (new Date(m.created_at) - new Date(prev.created_at)) > 120000; // 2 min gap = new group
                                     return (
                                         <div key={m.id} id={`msg-${m.id}`}>
                                             {showDate && (
@@ -595,6 +603,8 @@ export default function Chat() {
                                                 msg={m}
                                                 isMine={isMine}
                                                 userId={user.id}
+                                                showAvatar={isNewGroup}
+                                                showName={isNewGroup}
                                                 onReply={handleReply}
                                                 onEdit={handleEdit}
                                                 onDelete={handleDelete}
