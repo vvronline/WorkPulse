@@ -51,7 +51,7 @@ function renderContent(text, isMine) {
 export default function MessageBubble({
     msg, isMine, userId, showAvatar, showName,
     onReply, onEdit, onDelete, onPin, onForward, onReact, onStar,
-    participantCount
+    participantCount, readReceipts
 }) {
     const [showReactions, setShowReactions] = useState(false);
     const [ctxMenu, setCtxMenu] = useState(null);
@@ -90,8 +90,22 @@ export default function MessageBubble({
         const delivered = msg.delivered_to || [];
         const others = (participantCount || 2) - 1;
         if (others <= 0) return null;
+
+        // Check if all other participants have read this message
+        const msgTime = new Date(msg.created_at).getTime();
+        const receipts = readReceipts || {};
+        const otherReaders = Object.entries(receipts).filter(
+            ([uid, readAt]) => Number(uid) !== userId && new Date(readAt).getTime() >= msgTime
+        );
+        if (otherReaders.length >= others) {
+            return <span className={s.deliveryRead} title="Read">✓✓</span>;
+        }
+        if (otherReaders.length > 0 && delivered.length >= others) {
+            return <span className={s.deliveryRead} title="Read">✓✓</span>;
+        }
+
         if (delivered.length >= others) {
-            return <span className={s.deliveryRead} title="Delivered to all">✓✓</span>;
+            return <span className={s.deliveryPartial} title="Delivered to all">✓✓</span>;
         }
         if (delivered.length > 0) {
             return <span className={s.deliveryPartial} title="Delivered">✓✓</span>;

@@ -398,6 +398,18 @@
 }
 
 /* ─── Typing indicator ─── */
+.typingRow {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    padding: 2px 16px;
+    margin-bottom: 4px;
+}
+.typingAvatar {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+}
 .typingBubble {
     padding: 0.65rem 1rem;
 }

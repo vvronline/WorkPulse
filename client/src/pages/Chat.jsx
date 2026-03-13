@@ -697,17 +697,29 @@ export default function Chat() {
                                                 onReact={handleReact}
                                                 onStar={handleStar}
                                                 participantCount={convMembers.length || 2}
+                                                readReceipts={readReceipts}
                                             />
                                         </div>
                                     );
                                 })}
-                                {typingUsers[activeConv?.id] && (
-                                    <div className={`${s.message} ${s.theirs}`}>
-                                        <div className={`${s.bubble} ${s.typingBubble}`}>
-                                            <span className={s.typingDots}><i /><i /><i /></span>
+                                {typingUsers[activeConv?.id] && (() => {
+                                    const typingUserId = typingUsers[activeConv.id];
+                                    const typingMember = convMembers.find(m => m.id === typingUserId);
+                                    return (
+                                        <div className={s.typingRow}>
+                                            <div className={s.typingAvatar}>
+                                                <ChatAvatar
+                                                    name={typingMember?.full_name || ''}
+                                                    avatar={typingMember?.avatar}
+                                                    size="sm"
+                                                />
+                                            </div>
+                                            <div className={`${s.bubble} ${s.typingBubble}`}>
+                                                <span className={s.typingDots}><i /><i /><i /></span>
+                                            </div>
                                         </div>
-                                    </div>
-                                )}
+                                    );
+                                })()}
                                 <div ref={messagesEndRef} />
                             </div>
 
