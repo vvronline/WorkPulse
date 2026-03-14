@@ -48,7 +48,7 @@ app.use(helmet({
     contentSecurityPolicy: {
         directives: {
             ...helmet.contentSecurityPolicy.getDefaultDirectives(),
-            "upgrade-insecure-requests": null,
+            "upgrade-insecure-requests": process.env.USE_HTTPS === 'true' ? [] : null,
         }
     },
     crossOriginOpenerPolicy: false,
@@ -206,7 +206,8 @@ async function cleanupTokens() {
 // Serve React frontend in production
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
 app.use(express.static(clientDist));
-app.get(/.*/, (req, res) => {
+// SPA fallback: only serve index.html for navigation requests, not file/asset requests
+app.get(/^[^.]*$/, (req, res) => {
     res.sendFile(path.join(clientDist, 'index.html'));
 });
 
