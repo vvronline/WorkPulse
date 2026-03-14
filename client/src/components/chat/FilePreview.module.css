@@ -52,8 +52,114 @@
     transition: background 0.15s;
 }
 .lbDownload:hover { background: rgba(255,255,255,.3); }
-.audioWrap { width: 100%; max-width: 280px; }
-.audio { width: 100%; height: 36px; }
+
+/* ─── Custom Audio Player ─── */
+.audioPlayer {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    max-width: 320px;
+    padding: 10px 14px;
+    background: var(--surface);
+    border-radius: var(--radius);
+    border: 1px solid var(--glass-border);
+}
+
+.playBtn {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: var(--primary);
+    color: #fff;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.15s ease;
+    box-shadow: 0 2px 8px var(--primary-glow);
+}
+.playBtn:hover {
+    background: var(--primary-light);
+    transform: scale(1.06);
+    box-shadow: 0 4px 16px var(--primary-glow);
+}
+
+.trackArea {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.progressBar {
+    position: relative;
+    height: 6px;
+    background: var(--glass-border);
+    border-radius: 3px;
+    cursor: pointer;
+    overflow: visible;
+}
+.progressBar:hover { height: 8px; }
+
+.progressFill {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    background: var(--primary);
+    border-radius: 3px;
+    transition: width 0.1s linear;
+}
+
+.progressThumb {
+    position: absolute;
+    top: 50%;
+    width: 12px;
+    height: 12px;
+    background: var(--primary);
+    border: 2px solid #fff;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 1px 4px rgba(0,0,0,.2);
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.progressBar:hover .progressThumb { opacity: 1; }
+
+.timeRow {
+    display: flex;
+    justify-content: space-between;
+}
+
+.timeLabel {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.01em;
+}
+
+.speedBtn {
+    border: none;
+    background: var(--surface-hover);
+    color: var(--text-secondary);
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 3px 6px;
+    border-radius: 6px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.15s ease;
+    letter-spacing: -0.02em;
+}
+.speedBtn:hover {
+    background: var(--glass-border);
+    color: var(--primary);
+}
+
 .file {
     display: flex;
     align-items: center;

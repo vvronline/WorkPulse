@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import s from './FilePreview.module.css';
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
@@ -19,6 +19,101 @@ function fileIcon(type) {
     if (type?.includes('document') || type?.includes('word')) return '📝';
     if (type?.includes('zip') || type?.includes('compressed')) return '📦';
     return '📎';
+}
+
+function fmtTime(sec) {
+    if (!sec || !isFinite(sec)) return '0:00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+const SPEEDS = [1, 1.5, 2];
+
+function AudioPlayer({ fileUrl, fileType }) {
+    const audioRef = useRef(null);
+    const [playing, setPlaying] = useState(false);
+    const [currentTime, setCurrentTime] = useState(0);
+    const [duration, setDuration] = useState(0);
+    const [speedIdx, setSpeedIdx] = useState(0);
+    const progressRef = useRef(null);
+
+    useEffect(() => {
+        const audio = audioRef.current;
+        if (!audio) return;
+        const onTime = () => setCurrentTime(audio.currentTime);
+        const onMeta = () => setDuration(audio.duration);
+        const onEnd = () => setPlaying(false);
+        audio.addEventListener('timeupdate', onTime);
+        audio.addEventListener('loadedmetadata', onMeta);
+        audio.addEventListener('ended', onEnd);
+        return () => {
+            audio.removeEventListener('timeupdate', onTime);
+            audio.removeEventListener('loadedmetadata', onMeta);
+            audio.removeEventListener('ended', onEnd);
+        };
+    }, []);
+
+    const togglePlay = useCallback(() => {
+        const audio = audioRef.current;
+        if (!audio) return;
+        if (playing) { audio.pause(); }
+        else { audio.play(); }
+        setPlaying(p => !p);
+    }, [playing]);
+
+    const seek = useCallback((e) => {
+        const audio = audioRef.current;
+        const bar = progressRef.current;
+        if (!audio || !bar || !duration) return;
+        const rect = bar.getBoundingClientRect();
+        const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        audio.currentTime = ratio * duration;
+    }, [duration]);
+
+    const cycleSpeed = useCallback(() => {
+        const next = (speedIdx + 1) % SPEEDS.length;
+        setSpeedIdx(next);
+        if (audioRef.current) audioRef.current.playbackRate = SPEEDS[next];
+    }, [speedIdx]);
+
+    const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+
+    return (
+        <div className={s.audioPlayer}>
+            <audio ref={audioRef} preload="metadata">
+                <source src={fileUrl} type={fileType} />
+            </audio>
+
+            <button className={s.playBtn} onClick={togglePlay} title={playing ? 'Pause' : 'Play'}>
+                {playing ? (
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                        <rect x="3" y="2" width="4" height="12" rx="1"/>
+                        <rect x="9" y="2" width="4" height="12" rx="1"/>
+                    </svg>
+                ) : (
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M4 2.5v11l9-5.5L4 2.5z"/>
+                    </svg>
+                )}
+            </button>
+
+            <div className={s.trackArea}>
+                <div className={s.progressBar} ref={progressRef} onClick={seek}>
+                    <div className={s.progressFill} style={{ width: `${progress}%` }} />
+                    <div className={s.progressThumb} style={{ left: `${progress}%` }} />
+                </div>
+                <div className={s.timeRow}>
+                    <span className={s.timeLabel}>{fmtTime(currentTime)}</span>
+                    <span className={s.timeLabel}>{fmtTime(duration)}</span>
+                </div>
+            </div>
+
+            <button className={s.speedBtn} onClick={cycleSpeed} title="Playback speed">
+                {SPEEDS[speedIdx]}x
+            </button>
+        </div>
+    );
 }
 
 export default function FilePreview({ fileUrl, fileName, fileType, fileSize, isMessage }) {
@@ -44,13 +139,7 @@ export default function FilePreview({ fileUrl, fileName, fileType, fileSize, isM
     }
 
     if (isAudio && isMessage) {
-        return (
-            <div className={s.audioWrap}>
-                <audio controls preload="metadata" className={s.audio}>
-                    <source src={fileUrl} type={fileType} />
-                </audio>
-            </div>
-        );
+        return <AudioPlayer fileUrl={fileUrl} fileType={fileType} />;
     }
 
     return (
