@@ -52,8 +52,18 @@ app.use(helmet({
         }
     },
     crossOriginOpenerPolicy: false,
-    originAgentCluster: false
+    originAgentCluster: false,
+    permissionsPolicy: {
+        features: {
+            microphone: ['self'],
+        }
+    }
 }));
+
+// Serve React static files BEFORE cors/auth — assets don't need CORS
+const clientDist = path.join(__dirname, '..', 'client', 'dist');
+app.use(express.static(clientDist));
+
 app.use(cors({
     origin: function (origin, callback) {
         if (!origin) return callback(null, true);
@@ -203,9 +213,6 @@ async function cleanupTokens() {
     } catch (e) { logger.error({ err: e }, 'Token cleanup error'); }
 }
 
-// Serve React frontend in production
-const clientDist = path.join(__dirname, '..', 'client', 'dist');
-app.use(express.static(clientDist));
 // SPA fallback: only serve index.html for navigation requests, not file/asset requests
 app.get(/^[^.]*$/, (req, res) => {
     res.sendFile(path.join(clientDist, 'index.html'));
