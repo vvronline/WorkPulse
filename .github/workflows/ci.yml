@@ -91,8 +91,8 @@ jobs:
           echo "Waiting for app to start..."
           for i in $(seq 1 18); do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-              --max-time 5 \
-              "http://${{ secrets.GCP_INSTANCE_IP }}/api/health" || echo "000")
+              -L --insecure --max-time 10 \
+              "https://workpulse.duckdns.org/api/health" || echo "000")
             if [ "$STATUS" = "200" ]; then
               echo "✅ App is healthy (attempt $i)"
               exit 0
