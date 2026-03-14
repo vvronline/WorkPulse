@@ -1,13 +1,14 @@
 @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
 .page {
-  width: 100%; margin: 0 auto; padding: 0.75rem 1rem 3rem;
+  width: 100%; margin: 0 auto; padding: 0.5rem 1rem 0.5rem;
   animation: fadeInUp 0.3s ease;
-  height: calc(100vh - 80px);
+  height: calc(100vh - 64px);
   display: flex; flex-direction: column;
   box-sizing: border-box;
+  min-height: 0; overflow: hidden;
 }
 
-@media (min-width: 1600px) { .page { padding: 0.75rem 2rem 3rem; } }
-@media (min-width: 2200px) { .page { padding: 0.75rem 3rem 3rem; } }
-@media (max-width: 768px)  { .page { padding: 0.5rem 0.5rem 4rem; } }
+@media (min-width: 1600px) { .page { padding: 0.5rem 2rem 0.5rem; } }
+@media (min-width: 2200px) { .page { padding: 0.5rem 3rem 0.5rem; } }
+@media (max-width: 768px)  { .page { height: calc(100vh - 56px - 60px); padding: 0.5rem 0.5rem 0.5rem; } }

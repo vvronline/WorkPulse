@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import ModalSidebar from './ModalSidebar';
 import ModalEditor from './ModalEditor';
+import { getFolderPath } from '../notesUtils';
 import s from './NotesModal.module.css';
 
 export default function NotesModal({ store, embedded = false }) {
@@ -35,10 +36,10 @@ export default function NotesModal({ store, embedded = false }) {
     persist, pages,
   } = store;
 
-  const folderName = (fid) => folders.find(f => f.id === fid)?.name || '';
+  const folderName = (fid) => getFolderPath(fid, folders);
 
   const content =
-    <div className={embedded ? undefined : s.overlay} onClick={!embedded ? (e => { if (e.target === e.currentTarget) setMaximized(false); }) : undefined}>
+    <div className={embedded ? s.embeddedWrap : s.overlay} onClick={!embedded ? (e => { if (e.target === e.currentTarget) setMaximized(false); }) : undefined}>
       <div className={`${s.modal} ${embedded ? s.modalEmbedded : ''}`}>
         {/* Header */}
         <div className={s.header}>

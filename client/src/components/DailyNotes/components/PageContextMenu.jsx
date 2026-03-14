@@ -1,5 +1,6 @@
 /* PageContextMenu — ⋯ dropdown for a single page item in the sidebar */
 import React from 'react';
+import { buildFolderTree } from '../notesUtils';
 import s from './PageContextMenu.module.css';
 
 export default function PageContextMenu({
@@ -38,11 +39,12 @@ export default function PageContextMenu({
           >
             — None
           </button>
-          {folders.map(f => (
+          {buildFolderTree(folders).map(f => (
             <button
               key={f.id}
               className={`${s.ctxItem} ${s.ctxSmall} ${page.folderId === f.id ? s.ctxActive : ''}`}
               onClick={() => onMoveToFolder(page.id, f.id)}
+              style={{ paddingLeft: `${1.5 + f.depth * 0.75}rem` }}
             >
               📁 {f.name}
             </button>

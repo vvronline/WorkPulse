@@ -6,7 +6,7 @@
    ───────────────────────────────────────────────────────── */
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { getNotes, saveNotes } from '../../api';
-import { newPage, newFolder, migratePageModel, getWordCount, stripHtml } from './notesUtils';
+import { newPage, newFolder, migratePageModel, getWordCount, stripHtml, getDescendantFolderIds } from './notesUtils';
 
 export function useNotesStore(userId) {
     /* ── Pages / folders ───────────────────────────────────── */
@@ -305,7 +305,7 @@ export function useNotesStore(userId) {
         scheduleAutoSave(updated, folders, activePageId);
     };
 
-    const handleNewPage = (explicitFolderId) => {
+    const handleNewPage = (explicitFolderId, inlineTitle) => {
         // Guard: if called as an onClick handler, explicitFolderId will be a synthetic
         // event or DOM element — treat it as "no explicit folder" in that case.
         const validFolder = (typeof explicitFolderId === 'string' || explicitFolderId === null)
@@ -314,13 +314,16 @@ export function useNotesStore(userId) {
         const folderId = validFolder !== undefined
             ? validFolder
             : (folderFilter !== 'all' && folderFilter !== 'none' ? folderFilter : null);
-        const page = newPage('Untitled', folderId);
+        const title = (typeof inlineTitle === 'string' && inlineTitle.trim()) ? inlineTitle.trim() : 'Untitled';
+        const page = newPage(title, folderId);
         const updated = [...pages, page];
         setPages(updated);
         setActivePageId(page.id);
         persist(updated, folders, page.id);
         setMenuOpen(false);
-        setTimeout(() => { setRenamingId(page.id); setRenameValue('Untitled'); }, 50);
+        if (!inlineTitle) {
+            setTimeout(() => { setRenamingId(page.id); setRenameValue(title); }, 50);
+        }
     };
 
     const handleSelectPage = (id) => {
@@ -427,23 +430,27 @@ export function useNotesStore(userId) {
         persist(updated, folders, activePageId);
     };
 
-    const handleNewFolder = () => {
-        const name = newFolderName.trim();
+    const handleNewFolder = (parentId = null, inlineName) => {
+        const name = (inlineName || newFolderName).trim();
         if (!name) return;
-        const f = newFolder(name);
+        const f = newFolder(name, parentId);
         const updated = [...folders, f];
         setFolders(updated);
         persist(pages, updated, activePageId);
-        setNewFolderOpen(false);
-        setNewFolderName('');
+        if (!inlineName) {
+            setNewFolderOpen(false);
+            setNewFolderName('');
+        }
     };
 
     const handleDeleteFolder = (folderId) => {
-        const updatedPages = pages.map(p => p.folderId === folderId ? { ...p, folderId: null } : p);
-        const updatedFolders = folders.filter(f => f.id !== folderId);
+        const descendantIds = getDescendantFolderIds(folderId, folders);
+        const allRemovedIds = [folderId, ...descendantIds];
+        const updatedPages = pages.map(p => allRemovedIds.includes(p.folderId) ? { ...p, folderId: null } : p);
+        const updatedFolders = folders.filter(f => !allRemovedIds.includes(f.id));
         setPages(updatedPages);
         setFolders(updatedFolders);
-        if (folderFilter === folderId) setFolderFilter('all');
+        if (allRemovedIds.includes(folderFilter)) setFolderFilter('all');
         persist(updatedPages, updatedFolders, activePageId);
     };
 

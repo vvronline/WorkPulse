@@ -37,8 +37,8 @@ export function newPage(title = 'Untitled', folderId = null) {
   };
 }
 
-export function newFolder(name) {
-  return { id: generateId(), name, sortOrder: Date.now() };
+export function newFolder(name, parentId = null) {
+  return { id: generateId(), name, parentId, sortOrder: Date.now() };
 }
 
 // ── Data migration ───────────────────────────────────────
@@ -56,6 +56,42 @@ export function migratePageModel(page) {
     archived: !!page.archived,
     sortOrder: page.sortOrder ?? Date.now(),
   };
+}
+
+// ── Folder tree helpers ─────────────────────────────
+
+/** Get all descendant folder IDs (recursive) */
+export function getDescendantFolderIds(folderId, folders) {
+  const children = folders.filter(f => f.parentId === folderId);
+  let ids = children.map(f => f.id);
+  for (const child of children) {
+    ids = ids.concat(getDescendantFolderIds(child.id, folders));
+  }
+  return ids;
+}
+
+/** Build a flat list of folders with depth for indented display */
+export function buildFolderTree(folders, parentId = null, depth = 0) {
+  const children = folders
+    .filter(f => (f.parentId || null) === parentId)
+    .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+  let result = [];
+  for (const folder of children) {
+    result.push({ ...folder, depth });
+    result = result.concat(buildFolderTree(folders, folder.id, depth + 1));
+  }
+  return result;
+}
+
+/** Get folder path string (e.g. "Work / Projects / Q1") */
+export function getFolderPath(folderId, folders) {
+  const parts = [];
+  let current = folders.find(f => f.id === folderId);
+  while (current) {
+    parts.unshift(current.name);
+    current = folders.find(f => f.id === current.parentId);
+  }
+  return parts.join(' / ');
 }
 
 // ── Formatting ───────────────────────────────────────────

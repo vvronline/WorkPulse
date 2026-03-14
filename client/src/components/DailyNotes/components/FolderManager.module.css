@@ -1,5 +1,5 @@
 .sidebarFooter {
-  border-top: 1px solid var(--border); padding: 0.4rem 0.5rem; flex-shrink: 0;
+  border-bottom: 1px solid var(--border); padding: 0.4rem 0.5rem; flex-shrink: 0;
 }
 .folderList    { margin-bottom: 0.35rem; }
 .folderListLabel {
@@ -67,5 +67,17 @@
   color: var(--text-muted); cursor: pointer; transition: color 0.12s, border-color 0.12s;
 }
 .newFolderBtn:hover { color: var(--primary); border-color: var(--primary); }
+
+.expandBtn {
+  background: none; border: none; cursor: pointer; color: var(--text-muted);
+  font-size: 0.7rem; padding: 0 0.15rem; line-height: 1; flex-shrink: 0;
+  width: 14px; text-align: center; transition: color 0.12s;
+}
+.expandBtn:hover { color: var(--text-primary); }
+
+.newSubRow {
+  display: flex; gap: 0.3rem; align-items: center;
+  padding: 0.15rem 0.25rem; box-sizing: border-box;
+}
 
 [data-theme="light"] .newFolderInput { background: #fff; }

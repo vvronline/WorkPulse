@@ -1,6 +1,6 @@
 /* ModalEditor — right panel of the maximized modal */
 import React, { useState } from 'react';
-import { formatDate } from '../notesUtils';
+import { formatDate, buildFolderTree } from '../notesUtils';
 import QuillEditor from './QuillEditor';
 import TagEditor from './TagEditor';
 import VersionHistory from './VersionHistory';
@@ -84,7 +84,9 @@ export default function ModalEditor({
           onChange={e => onMoveToFolder(activePage.id, e.target.value || null)}
         >
           <option value="">No folder</option>
-          {folders.map(f => <option key={f.id} value={f.id}>📁 {f.name}</option>)}
+          {buildFolderTree(folders).map(f => (
+            <option key={f.id} value={f.id}>{'\u00A0\u00A0'.repeat(f.depth)}📁 {f.name}</option>
+          ))}
         </select>
         <TagEditor
           tags={activePage.tags || []}

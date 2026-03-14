@@ -2,6 +2,7 @@
 import React from 'react';
 import PageItem from './PageItem';
 import FolderManager from './FolderManager';
+import { buildFolderTree } from '../notesUtils';
 import s from './ModalSidebar.module.css';
 
 export default function ModalSidebar({
@@ -69,7 +70,9 @@ export default function ModalSidebar({
         <select className={s.select} value={folderFilter} onChange={e => setFolderFilter(e.target.value)} title="Filter folder">
           <option value="all">All folders</option>
           <option value="none">Uncategorized</option>
-          {folders.map(f => <option key={f.id} value={f.id}>📁 {f.name}</option>)}
+          {buildFolderTree(folders).map(f => (
+            <option key={f.id} value={f.id}>{'\u00A0\u00A0'.repeat(f.depth)}📁 {f.name}</option>
+          ))}
         </select>
       </div>
 
@@ -78,6 +81,18 @@ export default function ModalSidebar({
         <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} />
         <span>Show archived</span>
       </label>
+
+      {/* Folder management */}
+      <FolderManager
+        folders={folders}
+        newFolderOpen={newFolderOpen}
+        setNewFolderOpen={setNewFolderOpen}
+        newFolderName={newFolderName}
+        setNewFolderName={setNewFolderName}
+        onNewFolder={onNewFolder}
+        onDeleteFolder={onDeleteFolder}
+        onNewPageInFolder={onNewPageInFolder}
+      />
 
       {/* Page list */}
       <div className={s.list}>
@@ -121,18 +136,6 @@ export default function ModalSidebar({
           </div>
         )}
       </div>
-
-      {/* Folder management */}
-      <FolderManager
-        folders={folders}
-        newFolderOpen={newFolderOpen}
-        setNewFolderOpen={setNewFolderOpen}
-        newFolderName={newFolderName}
-        setNewFolderName={setNewFolderName}
-        onNewFolder={onNewFolder}
-        onDeleteFolder={onDeleteFolder}
-        onNewPageInFolder={onNewPageInFolder}
-      />
     </div>
   );
 }
