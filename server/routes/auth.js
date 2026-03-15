@@ -11,13 +11,15 @@ const { getTransporter, sendMail } = require('../utils/mailer');
 const router = express.Router();
 
 const isProduction = process.env.NODE_ENV === 'production';
-const useSecureCookie = isProduction && process.env.USE_HTTPS === 'true';
+// In production, Caddy (or any reverse proxy) always terminates TLS,
+// so secure cookies are always appropriate. No manual USE_HTTPS opt-in needed.
+const useSecureCookie = isProduction;
 
 function cookieOptions() {
     return {
         httpOnly: true,
         secure: useSecureCookie,
-        sameSite: 'lax',
+        sameSite: 'strict',
         maxAge: 24 * 60 * 60 * 1000,
     };
 }
@@ -286,7 +288,7 @@ router.post('/reset-password', async (req, res) => {
 
 // Logout
 router.post('/logout', (req, res) => {
-    res.clearCookie('token', { httpOnly: true, secure: useSecureCookie, sameSite: 'lax' });
+    res.clearCookie('token', { httpOnly: true, secure: useSecureCookie, sameSite: 'strict', path: '/' });
     res.json({ message: 'Logged out successfully' });
 });
 

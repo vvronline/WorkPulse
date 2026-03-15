@@ -44,11 +44,14 @@ const PORT = process.env.PORT || 5000;
 
 app.set('trust proxy', 1);
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 app.use(helmet({
     contentSecurityPolicy: {
         directives: {
             ...helmet.contentSecurityPolicy.getDefaultDirectives(),
-            "upgrade-insecure-requests": process.env.USE_HTTPS === 'true' ? [] : null,
+            // Automatically enforce HTTPS upgrades in production (Caddy handles TLS)
+            "upgrade-insecure-requests": isProduction ? [] : null,
         }
     },
     crossOriginOpenerPolicy: false,
