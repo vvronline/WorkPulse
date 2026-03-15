@@ -104,10 +104,14 @@ router.get('/presence', auth, async (req, res) => {
         const ids = userIds.split(',').map(Number).filter(n => n > 0);
         if (ids.length === 0) return res.json({});
 
-        const rows = (await query(
-            'SELECT id, last_seen_at FROM users WHERE id = ANY($1)',
-            [ids]
-        )).rows;
+        // Only return presence for users within the same organization
+        const orgId = await getUserOrg(req.userId);
+        const rows = orgId
+            ? (await query(
+                'SELECT id, last_seen_at FROM users WHERE id = ANY($1) AND org_id = $2',
+                [ids, orgId]
+            )).rows
+            : [];
 
         const result = {};
         const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);

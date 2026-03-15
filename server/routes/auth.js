@@ -140,7 +140,7 @@ router.post('/login', async (req, res) => {
             return res.status(423).json({ error: `Account locked. Try again in ${mins} minute(s).` });
         }
 
-        const DUMMY_HASH = '$2a$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWX012';
+        const DUMMY_HASH = '$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy';
         if (!user || !(await bcrypt.compare(password, user ? user.password : DUMMY_HASH))) {
             // Increment failed attempts
             if (user) {
@@ -195,39 +195,11 @@ router.post('/login', async (req, res) => {
     }
 });
 
-// Simple in-memory rate limiter for password reset
-const forgotPasswordAttempts = new Map();
-const FORGOT_PW_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
-const FORGOT_PW_MAX_ATTEMPTS = 5;
-function cleanupForgotPwAttempts() {
-    const now = Date.now();
-    for (const [key, entry] of forgotPasswordAttempts) {
-        if (now - entry.firstAttempt > FORGOT_PW_WINDOW_MS) forgotPasswordAttempts.delete(key);
-    }
-}
-setInterval(cleanupForgotPwAttempts, 60 * 1000).unref();
-
-// Forgot Password
+// Forgot Password (rate-limited by forgotPasswordLimiter applied in index.js)
 router.post('/forgot-password', async (req, res) => {
     try {
         const { email } = req.body;
         if (!email) return res.status(400).json({ error: 'Email is required' });
-
-        // Rate limit by IP
-        const ip = req.ip || req.connection?.remoteAddress || 'unknown';
-        const now = Date.now();
-        const attempts = forgotPasswordAttempts.get(ip);
-        if (attempts) {
-            if (now - attempts.firstAttempt > FORGOT_PW_WINDOW_MS) {
-                forgotPasswordAttempts.set(ip, { count: 1, firstAttempt: now });
-            } else if (attempts.count >= FORGOT_PW_MAX_ATTEMPTS) {
-                return res.status(429).json({ error: 'Too many password reset requests. Please try again later.' });
-            } else {
-                attempts.count++;
-            }
-        } else {
-            forgotPasswordAttempts.set(ip, { count: 1, firstAttempt: now });
-        }
 
         const userRes = await query('SELECT id, username, email FROM users WHERE email = $1', [email]);
         const user = userRes.rows[0];

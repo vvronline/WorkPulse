@@ -142,13 +142,13 @@ async function handleChatMessage(senderId, msg) {
         // Get sender info
         const sender = (await query('SELECT full_name, avatar, username FROM users WHERE id = $1', [senderId])).rows[0];
 
-        // Get reply details if replying
+        // Get reply details if replying (must belong to the same conversation)
         let replyContent = null, replySenderName = null;
         if (replyId) {
             const replyMsg = (await query(
                 `SELECT m.content, u.full_name AS sender_name
                  FROM messages m JOIN users u ON u.id = m.sender_id
-                 WHERE m.id = $1`, [replyId]
+                 WHERE m.id = $1 AND m.conversation_id = $2`, [replyId, conversationId]
             )).rows[0];
             if (replyMsg) {
                 replyContent = replyMsg.content;
@@ -175,9 +175,10 @@ async function handleChatMessage(senderId, msg) {
             sendToUser(p.user_id, 'chat_message', outMsg);
         }
 
-        // Send mention notifications
+        // Send mention notifications (only to verified conversation participants)
         if (Array.isArray(mentions) && mentions.length > 0) {
-            const mentionedIds = mentions.map(Number).filter(n => n > 0 && n !== senderId);
+            const participantIdSet = new Set(participants.map(p => p.user_id));
+            const mentionedIds = mentions.map(Number).filter(n => n > 0 && n !== senderId && participantIdSet.has(n));
             for (const uid of mentionedIds) {
                 sendToUser(uid, 'chat_mention', {
                     conversationId,

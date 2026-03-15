@@ -11,6 +11,11 @@ function sanitizeCell(val) {
     return val;
 }
 
+/** Sanitize a filename for use in Content-Disposition header. */
+function sanitizeFilename(name) {
+    return String(name).replace(/[^a-zA-Z0-9._\-]/g, '_');
+}
+
 /**
  * Stream a CSV response.
  */
@@ -23,7 +28,7 @@ function sendCSV(res, data, fields, filename) {
     const parser = new Parser({ fields });
     const csv = parser.parse(safeData);
     res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${sanitizeFilename(filename)}"`);
     res.send(csv);
 }
 
@@ -35,7 +40,7 @@ function sendPDF(res, { title, columns, rows, filename }) {
     const doc = new PDFDocument({ margin: 40, size: 'A4', layout: rows.length > 0 && columns.length > 6 ? 'landscape' : 'portrait' });
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${sanitizeFilename(filename)}"`);
     doc.pipe(res);
 
     // Title

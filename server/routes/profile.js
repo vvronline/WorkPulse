@@ -193,7 +193,7 @@ router.delete('/', auth, async (req, res) => {
             await client.query('DELETE FROM users WHERE id = $1', [req.userId]);
         });
 
-        res.clearCookie('token', { httpOnly: true, sameSite: 'lax', path: '/' });
+        res.clearCookie('token', { httpOnly: true, secure: useSecureCookie, sameSite: 'lax', path: '/' });
         res.json({ message: 'Account deleted successfully' });
     } catch (err) {
         req.log.error({ err }, 'DELETE /profile error');

@@ -234,6 +234,9 @@ router.put('/users/:id/role', async (req, res) => {
         const targetRes = await query('SELECT id, role, org_id, full_name FROM users WHERE id = $1', [Number(id)]);
         const target = targetRes.rows[0];
         if (!target) return res.status(404).json({ error: 'User not found' });
+        if (req.userRole !== 'super_admin' && target.org_id !== req.userOrgId) {
+            return res.status(403).json({ error: 'Cannot modify users outside your organization' });
+        }
         if (target.role === role) return res.status(400).json({ error: 'User already has this role' });
         if (req.userRole !== 'super_admin' && !canManageUser(req.userRole, target.role)) {
             return res.status(403).json({ error: 'Cannot modify a user with a role equal to or higher than your own' });
@@ -464,6 +467,9 @@ router.put('/users/:id/deactivate', async (req, res) => {
         const target = targetRes.rows[0];
         if (!target) return res.status(404).json({ error: 'User not found' });
         if (Number(id) === req.userId) return res.status(400).json({ error: 'Cannot deactivate yourself' });
+        if (req.userRole !== 'super_admin' && target.org_id !== req.userOrgId) {
+            return res.status(403).json({ error: 'Cannot modify users outside your organization' });
+        }
         if (req.userRole !== 'super_admin' && !canManageUser(req.userRole, target.role)) {
             return res.status(403).json({ error: 'Cannot deactivate a user with equal or higher role' });
         }
@@ -489,6 +495,9 @@ router.post('/users/:id/reset-password', requireRole('hr_admin'), async (req, re
         const targetRes = await query('SELECT id, role, org_id, full_name FROM users WHERE id = $1', [Number(id)]);
         const target = targetRes.rows[0];
         if (!target) return res.status(404).json({ error: 'User not found' });
+        if (req.userRole !== 'super_admin' && target.org_id !== req.userOrgId) {
+            return res.status(403).json({ error: 'Cannot reset passwords for users outside your organization' });
+        }
         if (req.userRole !== 'super_admin' && !canManageUser(req.userRole, target.role)) {
             return res.status(403).json({ error: 'Cannot reset password for a user with equal or higher role' });
         }

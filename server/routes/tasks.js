@@ -108,8 +108,8 @@ async function syncLabels(taskId, labelIds, orgId) {
         if (isNaN(validLid)) continue;
         // Only allow labels from the same org (or personal labels with no org)
         const label = orgId
-            ? (await query('SELECT id FROM labels WHERE id = $1 AND org_id = $2', [validLid, orgId])).rows[0]
-            : (await query('SELECT id FROM labels WHERE id = $1 AND org_id IS NULL', [validLid])).rows[0];
+            ? (await query('SELECT id FROM task_labels WHERE id = $1 AND org_id = $2', [validLid, orgId])).rows[0]
+            : (await query('SELECT id FROM task_labels WHERE id = $1 AND org_id IS NULL', [validLid])).rows[0];
         if (label) {
             await query('INSERT INTO task_label_map (task_id, label_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [taskId, validLid]);
         }
@@ -263,7 +263,7 @@ router.post('/', auth, loadUserContext, async (req, res) => {
         );
         const taskId = result.rows[0].id;
 
-        if (label_ids && Array.isArray(label_ids) && label_ids.length > 0) await syncLabels(taskId, label_ids);
+        if (label_ids && Array.isArray(label_ids) && label_ids.length > 0) await syncLabels(taskId, label_ids, req.userOrgId);
         await logHistory(taskId, req.userId, 'created', null, null, null);
 
         const task = (await query('SELECT * FROM tasks WHERE id = $1', [taskId])).rows[0];
