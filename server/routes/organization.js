@@ -470,8 +470,12 @@ router.get('/chart', requireSameOrg, async (req, res) => {
         `, [req.userOrgId])).rows;
 
         const members = (await query(`
-            SELECT id, full_name, avatar, role, department_id, team_id
-            FROM users WHERE org_id = $1 AND is_active = TRUE ORDER BY full_name
+            SELECT u.id, u.full_name, u.email, u.avatar, u.role, u.department_id, u.team_id,
+                   u.manager_id, m.full_name AS manager_name
+            FROM users u
+            LEFT JOIN users m ON m.id = u.manager_id
+            WHERE u.org_id = $1 AND u.is_active = TRUE
+            ORDER BY u.full_name
         `, [req.userOrgId])).rows;
 
         res.json({ departments, teams, members });

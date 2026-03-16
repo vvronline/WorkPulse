@@ -12,6 +12,303 @@
     align-items: center;
     gap: 0.75rem;
     margin-bottom: 0.75rem;
+    user-select: none;
+}
+
+.dept-icon { font-size: 1.3rem; }
+
+.dept-name {
+    font-weight: 700;
+    font-size: 1.1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.team-card {
+    margin-left: 1.5rem;
+    margin-bottom: 0.75rem;
+    padding: 0.75rem;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+}
+
+.team-title {
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+}
+
+.team-lead-label {
+    font-weight: 400;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+/* ─── Member Chips ─── */
+.member-chip {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    background: var(--card-bg);
+    padding: 0.3rem 0.6rem;
+    border-radius: 6px;
+    cursor: default;
+    border: 1px solid transparent;
+    transition: border-color 0.15s;
+}
+.member-chip:hover { border-color: var(--accent, #6366f1); }
+
+.member-chip mark {
+    background: rgba(99, 102, 241, 0.3);
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 1px;
+}
+
+.member-chip-simple {
+    font-size: 0.85rem;
+    background: var(--bg-secondary);
+    padding: 0.3rem 0.6rem;
+    border-radius: 6px;
+}
+
+/* ─── Avatars ─── */
+.mini-avatar-sm { width: 20px; height: 20px; border-radius: 50%; object-fit: cover; }
+.mini-avatar-md { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+.mini-initials-sm {
+    width: 20px; height: 20px;
+    font-size: 0.5rem;
+}
+.mini-initials-md {
+    width: 28px; height: 28px;
+    font-size: 0.65rem;
+    flex-shrink: 0;
+}
+
+.badge-sm {
+    font-size: 0.65rem;
+    padding: 0.1rem 0.4rem;
+}
+
+/* ─── Headcount badge ─── */
+.headcount-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--accent, #6366f1);
+    color: #fff;
+    font-size: 0.65rem;
+    font-weight: 700;
+    border-radius: 10px;
+    padding: 0.1rem 0.45rem;
+    min-width: 1.4rem;
+    line-height: 1.4;
+}
+
+/* ─── Unassigned Section ─── */
+.unassigned-label {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.3rem;
+}
+
+.unassigned-section { margin-left: 1.5rem; }
+
+/* ─── Layout helpers ─── */
+.bold-heading { font-weight: 700; margin-bottom: 0.75rem; }
+
+.flex-wrap {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+/* ─── Controls bar ─── */
+.chart-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.25rem;
+}
+
+.view-toggle {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.view-btn {
+    background: none;
+    border: none;
+    padding: 0.45rem 0.9rem;
+    font-size: 0.85rem;
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: background 0.15s, color 0.15s;
+}
+.view-btn:hover { background: var(--bg-secondary); color: var(--text-primary); }
+.view-btn-active {
+    background: var(--accent, #6366f1);
+    color: #fff;
+}
+
+.search-box {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex: 1;
+    min-width: 200px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.4rem 0.75rem;
+}
+
+.search-icon { font-size: 0.9rem; opacity: 0.5; }
+
+.search-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+}
+.search-input::placeholder { color: var(--text-muted, #64748b); }
+
+.search-clear {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted, #64748b);
+    font-size: 0.8rem;
+    padding: 0 2px;
+    line-height: 1;
+}
+.search-clear:hover { color: var(--text-primary); }
+
+.member-total {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* ─── Loading ─── */
+.loading {
+    color: var(--text-secondary);
+    padding: 2rem;
+    text-align: center;
+}
+
+/* ─── Reporting Tree ─── */
+.tree-root {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.tree-node {
+    padding-left: calc(var(--depth, 0) * 1.75rem);
+}
+
+.tree-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.55rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: var(--card-bg);
+    margin-bottom: 2px;
+    transition: border-color 0.1s;
+}
+.tree-row:hover { border-color: var(--accent, #6366f1); }
+.tree-row-hl { border-color: var(--accent, #6366f1) !important; }
+
+.tree-toggle {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    width: 18px;
+    text-align: center;
+    flex-shrink: 0;
+    padding: 0;
+    line-height: 1;
+}
+.tree-toggle:hover { color: var(--text-primary); }
+
+.tree-leaf-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--border);
+    flex-shrink: 0;
+    margin: 0 6px;
+}
+
+.tree-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.tree-name {
+    font-size: 0.9rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tree-meta {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tree-count {
+    font-size: 0.7rem;
+    color: var(--text-muted, #64748b);
+    white-space: nowrap;
+    flex-shrink: 0;
+    background: var(--bg-secondary);
+    padding: 0.15rem 0.5rem;
+    border-radius: 10px;
+}
+
+.tree-children {
+    border-left: 2px solid var(--border);
+    margin-left: 0.85rem;
+    padding-left: 0.15rem;
+    margin-top: 2px;
+    margin-bottom: 4px;
+}
+    background: var(--card-bg);
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+    border: 1px solid var(--border);
+}
+
+.dept-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
 }
 
 .dept-icon { font-size: 1.3rem; }
