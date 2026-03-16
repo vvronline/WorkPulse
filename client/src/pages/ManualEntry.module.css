@@ -479,6 +479,23 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  background: color-mix(in srgb, var(--text-muted) 13%, transparent);
+  color: var(--text-muted);
+}
+
+.pending-item-status[data-status="pending"] {
+  background: color-mix(in srgb, var(--warning) 13%, transparent);
+  color: var(--warning);
+}
+
+.pending-item-status[data-status="approved"] {
+  background: color-mix(in srgb, var(--success) 13%, transparent);
+  color: var(--success);
+}
+
+.pending-item-status[data-status="rejected"] {
+  background: color-mix(in srgb, var(--danger) 13%, transparent);
+  color: var(--danger);
 }
 
 .pending-item-reason {

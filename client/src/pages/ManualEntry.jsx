@@ -1,37 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { addManualEntry, updateManualEntry, deleteEntries, getEntries, getLeaves, getStatus, getLocalToday, getManualEntryRequests, submitOvertimeRequest, getOvertimeRequests } from '../api';
+import { addManualEntry, updateManualEntry, getEntries, getLeaves, getStatus, getLocalToday, getManualEntryRequests, getOvertimeRequests } from '../api';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
+import { tsToLocalTime, parseEntries, entryTypeLabels, entryTypeIcons } from './manualEntry/manualEntryUtils';
+import PendingRequestsList from './manualEntry/PendingRequestsList';
+import OvertimeRequestForm from './manualEntry/OvertimeRequestForm';
 import s from './ManualEntry.module.css';
-
-// Convert a UTC timestamps string (SQLite format) to local HH:MM
-function tsToLocalTime(ts) {
-  const d = new Date(ts.replace(' ', 'T') + 'Z');
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  return `${hh}:${mm}`;
-}
-
-// Parse raw time_entries into form fields: clockIn, clockOut, breaks, workMode
-function parseEntries(entries) {
-  const clockInEntry = entries.find(e => e.entry_type === 'clock_in');
-  const clockOutEntry = entries.find(e => e.entry_type === 'clock_out');
-  const breakStarts = entries.filter(e => e.entry_type === 'break_start');
-  const breakEnds = entries.filter(e => e.entry_type === 'break_end');
-
-  // Pair breaks by index
-  const parsedBreaks = breakStarts.map((bs, i) => ({
-    start: tsToLocalTime(bs.timestamp),
-    end: breakEnds[i] ? tsToLocalTime(breakEnds[i].timestamp) : '',
-  }));
-
-  return {
-    clockIn: clockInEntry ? tsToLocalTime(clockInEntry.timestamp) : '09:00',
-    clockOut: clockOutEntry ? tsToLocalTime(clockOutEntry.timestamp) : '',
-    skipClockOut: !clockOutEntry,
-    breaks: parsedBreaks.length > 0 ? parsedBreaks : [{ start: '', end: '' }],
-    workMode: clockInEntry?.work_mode || 'office',
-  };
-}
 
 export default function ManualEntry() {
   const [date, setDate] = useState('');
@@ -50,12 +23,6 @@ export default function ManualEntry() {
   const [currentlyClocked, setCurrentlyClocked] = useState(false); // true if clocked in right now
   const [pendingRequests, setPendingRequests] = useState([]);
   const [overtimeRequests, setOvertimeRequests] = useState([]);
-  const [otDate, setOtDate] = useState('');
-  const [otHours, setOtHours] = useState('');
-  const [otReason, setOtReason] = useState('');
-  const [otLoading, setOtLoading] = useState(false);
-  const [otError, setOtError] = useAutoDismiss('');
-  const [otSuccess, setOtSuccess] = useAutoDismiss('');
   const checkDateReqId = useRef(0); // guard against race conditions
   const checkDateAbortRef = useRef(null); // AbortController for date-check requests
 
@@ -207,50 +174,12 @@ export default function ManualEntry() {
     }
   };
 
-  const entryTypeLabels = {
-    clock_in: 'Logged In',
-    break_start: 'Break Started',
-    break_end: 'Break Ended',
-    clock_out: 'Logged Out',
-  };
-
-  const entryTypeIcons = {
-    clock_in: '🟢',
-    break_start: '🟡',
-    break_end: '🔵',
-    clock_out: '🔴',
-  };
-
   // The form should be hidden when:
   // - There are existing entries and we're NOT in edit mode
   // - There's a leave on the date
   // - Currently clocked in today
   const showForm = !leaveOnDate && !currentlyClocked && (!existingEntries || isEditMode);
   const formDisabled = loading;
-
-  const handleOvertimeSubmit = async (e) => {
-    e.preventDefault();
-    setOtError('');
-    setOtSuccess('');
-    if (!otDate || !otHours || !otReason.trim()) {
-      setOtError('Please fill in all fields');
-      return;
-    }
-    setOtLoading(true);
-    try {
-      const res = await submitOvertimeRequest({ date: otDate, hours: parseFloat(otHours), reason: otReason.trim() });
-      setOtSuccess(res.data.message || 'Overtime request submitted');
-      setOtDate('');
-      setOtHours('');
-      setOtReason('');
-      const updated = await getOvertimeRequests();
-      setOvertimeRequests(Array.isArray(updated.data) ? updated.data : []);
-    } catch (err) {
-      setOtError(err.response?.data?.error || 'Failed to submit overtime request');
-    } finally {
-      setOtLoading(false);
-    }
-  };
 
   return (
     <div className={s['manual-entry-page']}>
@@ -457,40 +386,13 @@ export default function ManualEntry() {
         {/* Requests Card */}
         <div className={`${s['manual-entry-card']} ${s['info-card']}`}>
           <h3>📋 Your Requests</h3>
-
-          {/* Pending Requests */}
-          {pendingRequests.length > 0 ? (
-            <div className={s['pending-requests']}>
-              {pendingRequests.map(r => {
-                const meta = r.metadata || {};
-                const statusColors = { pending: 'var(--warning)', approved: 'var(--success)', rejected: 'var(--danger)' };
-                return (
-                  <div key={r.request_id} className={s['pending-item']}>
-                    <div className={s['pending-item-date']}>
-                      {meta.date ? new Date(meta.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '—'}
-                    </div>
-                    <div className={s['pending-item-time']}>
-                      {meta.clock_in || ''}{meta.clock_out ? ` → ${meta.clock_out}` : ''}
-                    </div>
-                    <span
-                      className={s['pending-item-status']}
-                      style={{
-                        background: `${statusColors[r.approval_status] || 'var(--text-muted)'}22`,
-                        color: statusColors[r.approval_status] || 'var(--text-muted)'
-                      }}
-                    >
-                      {r.approval_status}
-                    </span>
-                    {r.reject_reason && (
-                      <div className={s['pending-item-reason']}>Reason: {r.reject_reason}</div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <p className={s['empty-state']}>No requests yet.</p>
-          )}
+          <PendingRequestsList
+            requests={pendingRequests}
+            keyField="request_id"
+            statusField="approval_status"
+            renderTime={meta => `${meta.clock_in || ''}${meta.clock_out ? ` → ${meta.clock_out}` : ''}`}
+            rejectLabel="Reason: "
+          />
         </div>
       </div>
 
@@ -500,60 +402,19 @@ export default function ManualEntry() {
         <div className={s['manual-entry-grid']}>
           <div className={s['manual-entry-card']}>
             <h3>➕ Request Overtime</h3>
-            {otError && <div className="error-msg">{otError}</div>}
-            {otSuccess && <div className="success-msg">{otSuccess}</div>}
-            <form onSubmit={handleOvertimeSubmit}>
-              <div className="form-group">
-                <label>Date</label>
-                <input type="date" value={otDate} onChange={e => setOtDate(e.target.value)} required />
-              </div>
-              <div className="form-group">
-                <label>Extra Hours</label>
-                <input type="number" step="0.5" min="0.5" max="24" value={otHours} onChange={e => setOtHours(e.target.value)} placeholder="e.g. 2" required />
-              </div>
-              <div className="form-group">
-                <label>Reason</label>
-                <textarea value={otReason} onChange={e => setOtReason(e.target.value)} placeholder="Why do you need overtime?" rows={3} required className={s['textarea-resize']} />
-              </div>
-              <button type="submit" className="btn btn-primary" disabled={otLoading}>
-                {otLoading ? 'Submitting...' : '✓ Submit Overtime Request'}
-              </button>
-            </form>
+            <OvertimeRequestForm onSubmitted={setOvertimeRequests} />
           </div>
 
           <div className={`${s['manual-entry-card']} ${s['info-card']}`}>
             <h3>📋 Overtime Requests</h3>
-            {overtimeRequests.length > 0 ? (
-              <div className={s['pending-requests']}>
-                {overtimeRequests.map(r => {
-                  const meta = r.metadata || {};
-                  const statusColors = { pending: 'var(--warning)', approved: 'var(--success)', rejected: 'var(--danger)' };
-                  return (
-                    <div key={r.id} className={s['pending-item']}>
-                      <div className={s['pending-item-date']}>
-                        {meta.date ? new Date(meta.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '—'}
-                      </div>
-                      <div className={s['pending-item-time']}>
-                        {meta.hours ? `${meta.hours}h overtime` : ''}
-                      </div>
-                      <span
-                        className={s['pending-item-status']}
-                        style={{
-                          background: `${statusColors[r.status] || 'var(--text-muted)'}22`,
-                          color: statusColors[r.status] || 'var(--text-muted)'
-                        }}
-                      >
-                        {r.status}
-                      </span>
-                      {r.reason && <div className={s['pending-item-reason']}>{r.reason}</div>}
-                      {r.reject_reason && <div className={`${s['pending-item-reason']} ${s['text-danger']}`}>Rejected: {r.reject_reason}</div>}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className={s['empty-state']}>No overtime requests yet.</p>
-            )}
+            <PendingRequestsList
+              requests={overtimeRequests}
+              keyField="id"
+              statusField="status"
+              renderTime={meta => meta.hours ? `${meta.hours}h overtime` : ''}
+              showReason
+              emptyText="No overtime requests yet."
+            />
           </div>
         </div>
       </div>
