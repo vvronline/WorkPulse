@@ -6,7 +6,7 @@ import oc from './OrgChart.module.css';
 import su from '../../pages/admin/AdminUtils.module.css';
 
 function MemberAvatar({ member, size = 'sm' }) {
-    const src = member.avatar ? `/uploads/avatars/${member.avatar}` : null;
+    const src = member.avatar || null;
     return src
         ? <img src={src} className={size === 'md' ? oc['mini-avatar-md'] : oc['mini-avatar-sm']} alt="" />
         : <span className={`${s.initials} ${size === 'md' ? oc['mini-initials-md'] : oc['mini-initials-sm']}`}>
@@ -179,7 +179,7 @@ export default function OrgChartView() {
                     <button
                         className={`${oc['view-btn']} ${viewMode === 'tree' ? oc['view-btn-active'] : ''}`}
                         onClick={() => setViewMode('tree')}
-                    >🌳 Reporting Lines</button>
+                    >👥 Reporting Lines</button>
                 </div>
                 <div className={oc['search-box']}>
                     <span className={oc['search-icon']}>🔍</span>
