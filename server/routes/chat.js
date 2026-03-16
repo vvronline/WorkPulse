@@ -337,7 +337,9 @@ router.get('/conversations', auth, async (req, res) => {
                 ) AS unread_count,
                 CASE WHEN c.is_group THEN
                     (SELECT COUNT(*)::int FROM conversation_participants WHERE conversation_id = c.id)
-                END AS member_count
+                END AS member_count,
+                cp.is_pinned,
+                cp.is_favourite
             FROM conversations c
             JOIN conversation_participants cp ON cp.conversation_id = c.id AND cp.user_id = $1
             LEFT JOIN conversation_participants cp2
@@ -351,7 +353,7 @@ router.get('/conversations', auth, async (req, res) => {
                 ORDER BY lm.created_at DESC LIMIT 1
             ) m ON TRUE
             LEFT JOIN message_reads mr ON mr.conversation_id = c.id AND mr.user_id = $1
-            ORDER BY COALESCE(m.created_at, c.created_at) DESC
+            ORDER BY cp.is_pinned DESC, COALESCE(m.created_at, c.created_at) DESC
         `, [req.userId])).rows;
 
         res.json(rows);
@@ -1166,6 +1168,103 @@ router.get('/conversations/:id/files', auth, async (req, res) => {
     } catch (err) {
         req.log.error({ err }, 'Get shared files error');
         res.status(500).json({ error: 'Failed to get shared files' });
+    }
+});
+
+// ─────────────────────────────────────────────
+// PIN / FAVOURITE CONVERSATION
+// ─────────────────────────────────────────────
+
+/**
+ * POST /api/chat/conversations/:id/pin
+ * Toggle pin status for the current user.
+ */
+router.post('/conversations/:id/pin', auth, async (req, res) => {
+    try {
+        const convId = parseInt(req.params.id, 10);
+        if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
+
+        if (!(await verifyParticipant(convId, req.userId))) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        const result = (await query(
+            `UPDATE conversation_participants SET is_pinned = NOT is_pinned
+             WHERE conversation_id = $1 AND user_id = $2
+             RETURNING is_pinned`,
+            [convId, req.userId]
+        )).rows[0];
+
+        res.json({ pinned: result.is_pinned });
+    } catch (err) {
+        req.log.error({ err }, 'Pin conversation error');
+        res.status(500).json({ error: 'Failed to pin conversation' });
+    }
+});
+
+/**
+ * POST /api/chat/conversations/:id/favourite
+ * Toggle favourite status for the current user.
+ */
+router.post('/conversations/:id/favourite', auth, async (req, res) => {
+    try {
+        const convId = parseInt(req.params.id, 10);
+        if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
+
+        if (!(await verifyParticipant(convId, req.userId))) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        const result = (await query(
+            `UPDATE conversation_participants SET is_favourite = NOT is_favourite
+             WHERE conversation_id = $1 AND user_id = $2
+             RETURNING is_favourite`,
+            [convId, req.userId]
+        )).rows[0];
+
+        res.json({ favourite: result.is_favourite });
+    } catch (err) {
+        req.log.error({ err }, 'Favourite conversation error');
+        res.status(500).json({ error: 'Failed to favourite conversation' });
+    }
+});
+
+// ─────────────────────────────────────────────
+// DELETE CONVERSATION
+// ─────────────────────────────────────────────
+
+/**
+ * DELETE /api/chat/conversations/:id
+ * Deletes a conversation the user participates in.
+ * For 1-on-1 chats, both users' conversation is removed.
+ * For groups, only the creator or any participant can delete (removes for everyone).
+ */
+router.delete('/conversations/:id', auth, async (req, res) => {
+    try {
+        const convId = parseInt(req.params.id, 10);
+        if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
+
+        if (!(await verifyParticipant(convId, req.userId))) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        // Notify other participants before deletion
+        const participants = (await query(
+            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2',
+            [convId, req.userId]
+        )).rows;
+
+        // Delete the conversation (all children CASCADE automatically)
+        await query('DELETE FROM conversations WHERE id = $1', [convId]);
+
+        for (const p of participants) {
+            sendToUser(p.user_id, 'chat_conv_deleted', { conversationId: convId });
+        }
+
+        res.json({ ok: true });
+    } catch (err) {
+        req.log.error({ err }, 'Delete conversation error');
+        res.status(500).json({ error: 'Failed to delete conversation' });
     }
 });
 

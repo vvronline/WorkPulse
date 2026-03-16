@@ -510,6 +510,8 @@ async function initDB() {
     await query(`
         CREATE INDEX IF NOT EXISTS idx_conv_participants_user ON conversation_participants(user_id)
     `);
+    await query(`ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT FALSE`);
+    await query(`ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS is_favourite BOOLEAN NOT NULL DEFAULT FALSE`);
     await query(`
         CREATE TABLE IF NOT EXISTS messages (
             id              SERIAL PRIMARY KEY,

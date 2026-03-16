@@ -1,0 +1,322 @@
+/* ─── Sidebar ─── */
+.sidebar {
+    width: 320px;
+    min-width: 260px;
+    border-right: 1px solid var(--glass-border);
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-secondary);
+}
+.sidebarHeader {
+    padding: 0.85rem 1rem 0.6rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--glass-border);
+}
+.sidebarHeader h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    letter-spacing: -0.01em;
+}
+.totalBadge {
+    background: var(--primary);
+    color: #fff;
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 0.1rem 0.45rem;
+    border-radius: var(--radius-full);
+}
+.newGroupBtn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 0.3rem;
+    border-radius: 4px;
+    transition: background var(--transition-fast), color var(--transition-fast);
+    line-height: 1;
+}
+.newGroupBtn:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+}
+
+/* ─── Search ─── */
+.searchBox {
+    padding: 0.6rem 0.75rem;
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+.searchIcon {
+    position: absolute;
+    left: 1.35rem;
+    color: var(--text-muted);
+    pointer-events: none;
+    flex-shrink: 0;
+}
+.searchInput {
+    width: 100%;
+    padding: 0.45rem 2rem 0.45rem 1.9rem;
+    border-radius: 4px;
+    border: 1px solid var(--glass-border);
+    background: var(--input-bg);
+    color: var(--text);
+    font-size: 0.82rem;
+    outline: none;
+    transition: border var(--transition-fast);
+    box-sizing: border-box;
+}
+.searchInput:focus {
+    border-color: var(--primary);
+    background: var(--surface-hover);
+}
+.clearBtn {
+    position: absolute;
+    right: 1.4rem;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 0.2rem;
+}
+.searchResults {
+    flex: 1;
+    overflow-y: auto;
+}
+.searchItem {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.65rem 1rem;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+.searchItem:hover {
+    background: var(--surface-hover);
+}
+.hint {
+    padding: 1rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    text-align: center;
+}
+
+/* ─── User info (search results) ─── */
+.userInfo {
+    min-width: 0;
+}
+.userName {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.userMeta {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ─── Conversation list ─── */
+.convList {
+    flex: 1;
+    overflow-y: auto;
+}
+.empty {
+    padding: 2rem 1.2rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    text-align: center;
+    line-height: 1.5;
+}
+.convItem {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.55rem 0.75rem;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+    border-left: 3px solid transparent;
+    border-radius: 0 4px 4px 0;
+    margin: 1px 4px 1px 0;
+    position: relative;
+}
+.convItem:hover {
+    background: var(--surface-hover);
+}
+.convItem.active {
+    background: var(--surface-hover);
+    border-left-color: var(--primary);
+}
+
+/* Section headers */
+.convSection {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    padding: 0.6rem 0.75rem 0.25rem;
+    user-select: none;
+}
+
+/* 3-dot menu */
+.convMenuWrap {
+    position: relative;
+    flex-shrink: 0;
+}
+.convMenuBtn {
+    width: 26px;
+    height: 26px;
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+    transition: background 0.15s, color 0.15s;
+    padding: 0;
+    line-height: 1;
+}
+.convMenuBtn:hover {
+    background: var(--surface);
+    color: var(--text);
+}
+.convItem:hover .convMenuBtn,
+.convMenuBtn[class] + .convMenuDropdown ~ .convMenuBtn {
+    display: flex;
+}
+/* Keep button visible when dropdown is open */
+.convMenuWrap:has(.convMenuDropdown) .convMenuBtn {
+    display: flex;
+    background: var(--surface);
+    color: var(--text);
+}
+
+.convMenuDropdown {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    z-index: 100;
+    min-width: 150px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+}
+.convMenuDropdown button {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    width: 100%;
+    padding: 0.45rem 0.65rem;
+    border: none;
+    background: none;
+    color: var(--text);
+    font-size: 0.8rem;
+    font-family: inherit;
+    cursor: pointer;
+    border-radius: 5px;
+    transition: background 0.12s;
+    text-align: left;
+    white-space: nowrap;
+}
+.convMenuDropdown button:hover {
+    background: var(--surface-hover);
+}
+.menuDanger {
+    color: var(--danger) !important;
+}
+.menuDanger:hover {
+    background: rgba(239, 68, 68, 0.1) !important;
+}
+.convInfo {
+    flex: 1;
+    min-width: 0;
+}
+.convTop {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 0.1rem;
+}
+.convName {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.convTime {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    margin-left: 0.5rem;
+    flex-shrink: 0;
+}
+.convPreview {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.convPreview .unread {
+    color: var(--text);
+    font-weight: 600;
+}
+.typing {
+    color: var(--primary);
+    font-style: italic;
+}
+.badge {
+    background: var(--primary);
+    color: #fff;
+    font-size: 0.62rem;
+    font-weight: 700;
+    min-width: 17px;
+    height: 17px;
+    border-radius: var(--radius-full);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+    flex-shrink: 0;
+    margin-left: 0.4rem;
+}
+
+/* ─── Mobile ─── */
+@media (max-width: 768px) {
+    .sidebar {
+        width: 100%;
+        min-width: 0;
+    }
+    .hideMobile {
+        display: none;
+    }
+}

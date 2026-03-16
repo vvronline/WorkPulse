@@ -287,5 +287,8 @@ export const votePoll = (pollId, optionIdx) => API.post(`/chat/polls/${pollId}/v
 export const getPoll = (pollId) => API.get(`/chat/polls/${pollId}`);
 export const getSharedFiles = (convId) => API.get(`/chat/conversations/${convId}/files`);
 export const ackDelivered = (msgId) => API.post(`/chat/messages/${msgId}/delivered`);
+export const deleteConversation = (convId) => API.delete(`/chat/conversations/${convId}`);
+export const togglePinConversation = (convId) => API.post(`/chat/conversations/${convId}/pin`);
+export const toggleFavouriteConversation = (convId) => API.post(`/chat/conversations/${convId}/favourite`);
 
 export default API;

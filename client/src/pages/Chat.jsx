@@ -1,621 +1,83 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import ConfirmDialog from '../components/ConfirmDialog';
 import {
-    searchChatUsers, getConversations, createConversation, getMessages,
-    markConversationRead, getPresence, getMembers, getReadStatus,
-    uploadChatFile, toggleReaction, editMessage, deleteMessage, togglePin,
-    forwardMessage, toggleStar, createPoll, ackDelivered
-} from '../api';
-import { useAuth } from '../AuthContext';
-import { useChatUnread } from '../ChatContext';
-import useWebSocket from '../hooks/useWebSocket';
-import {
-    ChatAvatar, MessageBubble, VoiceRecorder, ReplyPreview,
-    MessageSearch, ForwardModal, GroupModal, PinnedMessages,
-    EmojiGifPicker, MentionInput,
-    SharedFilesPanel, StarredMessages, PollCreator
+    MessageSearch, ForwardModal, GroupModal,
+    StarredMessages, PollCreator
 } from '../components/chat';
+import ChatSidebar from './chat/ChatSidebar';
+import ChatHeader from './chat/ChatHeader';
+import ChatMessages from './chat/ChatMessages';
+import ChatInputBar from './chat/ChatInputBar';
+import useChatState from './chat/useChatState';
+import useChatActions from './chat/useChatActions';
+import { getConvName } from './chat/chatUtils';
 import s from './Chat.module.css';
+import msgStyles from './chat/ChatMessages.module.css';
 
 export default function Chat() {
-    const { user } = useAuth();
-    const { refreshUnread } = useChatUnread();
+    const state = useChatState();
+    const actions = useChatActions(state);
 
-    // Core state
-    const [conversations, setConversations] = useState([]);
-    const [activeConv, setActiveConv] = useState(null);
-    const [messages, setMessages] = useState([]);
-    const [input, setInput] = useState('');
-    const [search, setSearch] = useState('');
-    const [searchResults, setSearchResults] = useState([]);
-    const [searching, setSearching] = useState(false);
-    const [loadingMsgs, setLoadingMsgs] = useState(false);
-    const [hasMore, setHasMore] = useState(false);
-    const [typingUsers, setTypingUsers] = useState({});
-    const [mobileView, setMobileView] = useState('list');
+    const {
+        user, conversations, activeConv, messages, input, setInput,
+        search, setSearch, searchResults, searching,
+        typingUsers, mobileView, setMobileView, onlineUsers,
+        replyTo, editingMsg, showSearch, setShowSearch,
+        showPinned, setShowPinned, showGroupModal, setShowGroupModal,
+        groupEditData, setGroupEditData, forwardMsg, setForwardMsg,
+        recording, setRecording, dragOver, setDragOver, readReceipts,
+        showEmojiPicker, setShowEmojiPicker,
+        showSharedFiles, setShowSharedFiles, showStarred, setShowStarred,
+        showPollCreator, setShowPollCreator, convMembers,
+        deleteConfirm, setDeleteConfirm, convMenu, setConvMenu,
+        loadingMsgs, hasMore,
+        messagesEndRef, messagesContainerRef, fileInputRef, mentionInputRef,
+        searchInputRef,
+        startConversation, openConversation, loadMore, loadConversations,
+    } = state;
 
-    // New feature state
-    const [onlineUsers, setOnlineUsers] = useState(new Set());
-    const [replyTo, setReplyTo] = useState(null);
-    const [editingMsg, setEditingMsg] = useState(null);
-    const [showSearch, setShowSearch] = useState(false);
-    const [showPinned, setShowPinned] = useState(false);
-    const [showGroupModal, setShowGroupModal] = useState(false);
-    const [groupEditData, setGroupEditData] = useState(null);
-    const [forwardMsg, setForwardMsg] = useState(null);
-    const [recording, setRecording] = useState(false);
-    const [dragOver, setDragOver] = useState(false);
-    const [readReceipts, setReadReceipts] = useState({});
+    const {
+        handleSend, handleFileUpload, handleVoiceSend, handleDrop,
+        handleReply, handleEdit, handleDelete, handlePin, handleReact,
+        handleForward, handleStar, handleCreatePoll, handleEmojiInsert,
+        handleJumpTo, handleUnpin,
+        handleDeleteConv, handlePinConv, handleFavConv,
+        openGroupEdit, handleTyping,
+    } = actions;
 
-    // New feature state
-    const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-
-    const [showSharedFiles, setShowSharedFiles] = useState(false);
-    const [showStarred, setShowStarred] = useState(false);
-    const [showPollCreator, setShowPollCreator] = useState(false);
-    const [convMembers, setConvMembers] = useState([]);
-
-    // Refs
-    const messagesEndRef = useRef(null);
-    const messagesContainerRef = useRef(null);
-    const typingTimerRef = useRef(null);
-    const typingTimeouts = useRef({});
-    const fileInputRef = useRef(null);
-    const mentionInputRef = useRef(null);
-    const pendingCounter = useRef(0);
-    const activeConvRef = useRef(activeConv);
-    const searchInputRef = useRef(null);
-    activeConvRef.current = activeConv;
-    const messagesRef = useRef(messages);
-    messagesRef.current = messages;
-
-    // ─── WebSocket handler ───
-    const onWsMessage = useCallback((msg) => {
-        const d = msg.data;
-        switch (msg.type) {
-            case 'chat_message': {
-                if (activeConvRef.current?.id === d.conversationId) {
-                    const msgFields = {
-                        id: d.id, sender_id: d.senderId, sender_name: d.senderName,
-                        sender_avatar: d.senderAvatar, content: d.content, created_at: d.createdAt,
-                        reply_to_id: d.replyToId || null, reply_sender_name: d.replySenderName,
-                        reply_content: d.replyContent, file_url: d.fileUrl, file_name: d.fileName,
-                        file_type: d.fileType, file_size: d.fileSize, forwarded_from_id: d.forwardedFromId,
-                        format_type: d.formatType || 'text', metadata: d.metadata || null,
-                        delivered_to: [], reactions: []
-                    };
-                    setMessages(prev => {
-                        if (d.senderId === user?.id) {
-                            const idx = prev.findIndex(p => String(p.id).startsWith('pending_') && p.content === d.content);
-                            if (idx >= 0) {
-                                const updated = [...prev];
-                                updated[idx] = msgFields;
-                                return updated;
-                            }
-                        }
-                        return [...prev, msgFields];
-                    });
-                    markConversationRead(d.conversationId).then(() => refreshUnread()).catch(() => {});
-                    // Acknowledge delivery
-                    if (d.senderId !== user?.id && d.id) {
-                        ackDelivered(d.id).catch(() => {});
-                    }
-                }
-                setConversations(prev => {
-                    const isActive = activeConvRef.current?.id === d.conversationId;
-                    const preview = d.content || (d.fileName ? `📎 ${d.fileName}` : '🎤 Voice');
-                    return prev.map(c =>
-                        c.id === d.conversationId
-                            ? { ...c, last_message: preview, last_sender_id: d.senderId, last_message_at: d.createdAt,
-                                unread_count: (isActive || d.senderId === user.id) ? 0 : (c.unread_count || 0) + 1 }
-                            : c
-                    ).sort((a, b) => new Date(b.last_message_at || b.updated_at) - new Date(a.last_message_at || a.updated_at));
-                });
-                break;
-            }
-            case 'chat_typing': {
-                setTypingUsers(prev => ({ ...prev, [d.conversationId]: d.userId }));
-                clearTimeout(typingTimeouts.current[d.conversationId]);
-                typingTimeouts.current[d.conversationId] = setTimeout(() => {
-                    setTypingUsers(prev => { const n = { ...prev }; delete n[d.conversationId]; return n; });
-                }, 3000);
-                break;
-            }
-            case 'chat_reaction': {
-                if (activeConvRef.current?.id === d.conversationId) {
-                    setMessages(prev => prev.map(m => {
-                        if (m.id !== d.messageId) return m;
-                        let reactions = [...(m.reactions || [])];
-                        if (d.action === 'added') {
-                            reactions.push({ userId: d.userId, fullName: d.fullName, emoji: d.emoji });
-                        } else {
-                            reactions = reactions.filter(r => !(r.userId === d.userId && r.emoji === d.emoji));
-                        }
-                        return { ...m, reactions };
-                    }));
-                }
-                break;
-            }
-            case 'chat_edit': {
-                if (activeConvRef.current?.id === d.conversationId) {
-                    setMessages(prev => prev.map(m =>
-                        m.id === d.messageId ? { ...m, content: d.content, edited_at: d.editedAt } : m
-                    ));
-                }
-                break;
-            }
-            case 'chat_delete': {
-                if (activeConvRef.current?.id === d.conversationId) {
-                    setMessages(prev => prev.map(m =>
-                        m.id === d.messageId ? { ...m, deleted_at: new Date().toISOString() } : m
-                    ));
-                }
-                break;
-            }
-            case 'chat_pin': {
-                if (activeConvRef.current?.id === d.conversationId) {
-                    setMessages(prev => prev.map(m =>
-                        m.id === d.messageId ? { ...m, pinned_at: d.pinned ? new Date().toISOString() : null, pinned_by: d.pinned ? d.pinnedBy : null } : m
-                    ));
-                }
-                break;
-            }
-            case 'chat_read_receipt': {
-                if (activeConvRef.current?.id === d.conversationId) {
-                    setReadReceipts(prev => ({ ...prev, [d.userId]: d.readAt }));
-                }
-                break;
-            }
-            case 'presence_change': {
-                setOnlineUsers(prev => {
-                    const next = new Set(prev);
-                    d.status === 'online' ? next.add(d.userId) : next.delete(d.userId);
-                    return next;
-                });
-                break;
-            }
-            case 'chat_group_created':
-            case 'chat_group_added': {
-                loadConversations();
-                break;
-            }
-            case 'chat_group_removed': {
-                if (activeConvRef.current?.id === d.conversationId && d.userId === user?.id) {
-                    setActiveConv(null);
-                    setMessages([]);
-                }
-                loadConversations();
-                break;
-            }
-            case 'chat_poll_vote': {
-                // Dispatch a custom event so PollDisplay can react
-                window.dispatchEvent(new CustomEvent('poll_vote_update', { detail: d }));
-                break;
-            }
-            case 'chat_mention': {
-                // Could show a toast/notification — for now, no-op
-                break;
-            }
-            default: break;
-        }
-    }, [user?.id]);
-
-    const { sendMessage: wsSend } = useWebSocket(onWsMessage);
-
-    // Cleanup typing timeouts on unmount
-    useEffect(() => {
-        return () => {
-            clearTimeout(typingTimerRef.current);
-            Object.values(typingTimeouts.current).forEach(clearTimeout);
-        };
-    }, []);
-
-    // ─── Load conversations & presence on mount ───
-    useEffect(() => {
-        loadConversations();
-    }, []);
-
-    const loadConversations = async () => {
-        try {
-            const { data } = await getConversations();
-            setConversations(data);
-            // Fetch presence for all unique user IDs
-            const uids = new Set();
-            data.forEach(c => {
-                if (c.other_user_id) uids.add(c.other_user_id);
-            });
-            if (uids.size > 0) {
-                try {
-                    const { data: pres } = await getPresence([...uids]);
-                    setOnlineUsers(new Set(
-                        Object.entries(pres)
-                            .filter(([, v]) => v === 'online')
-                            .map(([k]) => Number(k))
-                    ));
-                } catch { /* ignore */ }
-            }
-        } catch { /* ignore */ }
-    };
-
-    // ─── Ctrl+F: sidebar search or in-chat message search ───
-    useEffect(() => {
-        const handler = (e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
-                e.preventDefault();
-                if (activeConv) {
-                    setShowSearch(true);
-                } else {
-                    searchInputRef.current?.focus();
-                }
-            }
-        };
-        window.addEventListener('keydown', handler);
-        return () => window.removeEventListener('keydown', handler);
-    }, [activeConv]);
-
-    // ─── Search users ───
-    useEffect(() => {
-        if (search.trim().length < 2) { setSearchResults([]); return; }
-        const timer = setTimeout(async () => {
-            setSearching(true);
-            try {
-                const { data } = await searchChatUsers(search.trim());
-                setSearchResults(data);
-            } catch { setSearchResults([]); }
-            setSearching(false);
-        }, 300);
-        return () => clearTimeout(timer);
-    }, [search]);
-
-    // ─── Start conversation from search ───
-    const startConversation = async (otherUser) => {
-        try {
-            const { data } = await createConversation(otherUser.id);
-            setSearch('');
-            setSearchResults([]);
-            await loadConversations();
-            openConversation(data.conversationId, {
-                other_user_id: otherUser.id,
-                other_username: otherUser.username,
-                other_full_name: otherUser.full_name,
-                other_avatar: otherUser.avatar
-            });
-        } catch { /* ignore */ }
-    };
-
-    // ─── Open conversation ───
-    const openConversation = async (convId, convData) => {
-        setActiveConv({ ...convData, id: convId });
-        setMessages([]);
-        setLoadingMsgs(true);
-        setMobileView('chat');
-        setReplyTo(null);
-        setEditingMsg(null);
-        setShowPinned(false);
-        setShowSearch(false);
-        setShowSharedFiles(false);
-        try {
-            const { data } = await getMessages(convId);
-            setMessages(data);
-            setHasMore(data.length >= 50);
-            await markConversationRead(convId);
-            refreshUnread();
-            wsSend('chat_read', { conversationId: convId });
-            setConversations(prev => prev.map(c =>
-                c.id === convId ? { ...c, unread_count: 0 } : c
-            ));
-            // Load read receipts
-            try {
-                const { data: rs } = await getReadStatus(convId);
-                const map = {};
-                rs.forEach(r => { map[r.user_id] = r.last_read_at; });
-                setReadReceipts(map);
-            } catch { /* ignore */ }
-            // Load members for @mentions
-            try {
-                const { data: members } = await getMembers(convId);
-                setConvMembers(members);
-            } catch { setConvMembers([]); }
-        } catch { /* ignore */ }
-        setLoadingMsgs(false);
-    };
-
-    // ─── Scroll to bottom ───
-    useEffect(() => {
-        if (messagesEndRef.current) {
-            messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-        }
-    }, [messages]);
-
-    // ─── Load older messages ───
-    const loadMore = async () => {
-        if (!activeConv || messages.length === 0 || !hasMore) return;
-        const container = messagesContainerRef.current;
-        const prevHeight = container?.scrollHeight || 0;
-        try {
-            const { data } = await getMessages(activeConv.id, messages[0].id);
-            setMessages(prev => [...data, ...prev]);
-            setHasMore(data.length >= 50);
-            requestAnimationFrame(() => {
-                if (container) container.scrollTop = container.scrollHeight - prevHeight;
-            });
-        } catch { /* ignore */ }
-    };
-
-    // ─── Send text message ───
-    const handleSend = (e) => {
-        e.preventDefault();
-        if (!input.trim() || !activeConv) return;
-        const content = input.trim();
-        if (editingMsg) {
-            editMessage(editingMsg.id, content).then(() => {
-                setMessages(prev => prev.map(m =>
-                    m.id === editingMsg.id ? { ...m, content, edited_at: new Date().toISOString() } : m
-                ));
-            }).catch(() => {});
-            setEditingMsg(null);
-            setInput('');
-            return;
-        }
-        // Extract mentioned user IDs
-        const mentions = mentionInputRef.current?.getMentionedIds?.() || [];
-        mentionInputRef.current?.resetMentionedIds?.();
-
-        setMessages(prev => [...prev, {
-            id: `pending_${++pendingCounter.current}`, sender_id: user.id, sender_name: user.full_name,
-            content, created_at: new Date().toISOString(), reply_to_id: replyTo?.id || null,
-            reactions: []
-        }]);
-        wsSend('chat_message', {
-            conversationId: activeConv.id, content,
-            ...(replyTo ? { replyToId: replyTo.id } : {}),
-            ...(mentions.length > 0 ? { mentions } : {})
-        });
-        setInput('');
-        setReplyTo(null);
-    };
-
-    // ─── File upload ───
-    const handleFileUpload = async (file) => {
-        if (!activeConv || !file) return;
-        const formData = new FormData();
-        formData.append('file', file);
-        try {
-            await uploadChatFile(activeConv.id, formData);
-        } catch { /* ignore */ }
-    };
-
-    // ─── Voice send ───
-    const handleVoiceSend = (blob, _duration, ext = 'webm') => {
-        if (!activeConv) return;
-        const formData = new FormData();
-        formData.append('file', blob, `voice.${ext}`);
-        uploadChatFile(activeConv.id, formData).catch(() => {});
-        setRecording(false);
-    };
-
-    // ─── Drag & drop ───
-    const handleDrop = (e) => {
-        e.preventDefault();
-        setDragOver(false);
-        const file = e.dataTransfer.files[0];
-        if (file) handleFileUpload(file);
-    };
-
-    // ─── Message actions ───
-    const handleReply = (msg) => {
-        setReplyTo(msg);
-        setEditingMsg(null);
-    };
-
-    const handleEdit = (msg) => {
-        setEditingMsg(msg);
-        setInput(msg.content || '');
-        setReplyTo(null);
-    };
-
-    const handleDelete = async (msg) => {
-        try {
-            await deleteMessage(msg.id);
-            setMessages(prev => prev.map(m =>
-                m.id === msg.id ? { ...m, deleted_at: new Date().toISOString() } : m
-            ));
-        } catch { /* ignore */ }
-    };
-
-    const handlePin = async (msg) => {
-        try {
-            await togglePin(msg.id);
-            setMessages(prev => prev.map(m =>
-                m.id === msg.id ? { ...m, pinned_at: m.pinned_at ? null : new Date().toISOString(), pinned_by: m.pinned_at ? null : user.id } : m
-            ));
-        } catch { /* ignore */ }
-    };
-
-    const handleReact = async (msgId, emoji) => {
-        try {
-            await toggleReaction(msgId, emoji);
-        } catch { /* ignore */ }
-    };
-
-    const handleForward = (msg) => setForwardMsg(msg);
-
-    const handleStar = async (msg) => {
-        try {
-            const { data } = await toggleStar(msg.id);
-            setMessages(prev => prev.map(m =>
-                m.id === msg.id ? { ...m, starred: data.starred } : m
-            ));
-        } catch { /* ignore */ }
-    };
-
-    const handleCreatePoll = async (pollData) => {
-        if (!activeConv) return;
-        try {
-            await createPoll(activeConv.id, pollData);
-            setShowPollCreator(false);
-        } catch { /* ignore */ }
-    };
-
-    const handleEmojiInsert = (emoji) => {
-        setInput(prev => prev + emoji);
-        setShowEmojiPicker(false);
-    };
-
-    const handleJumpTo = (msgId) => {
-        const el = document.getElementById(`msg-${msgId}`);
-        if (el) {
-            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            el.classList.add(s.highlight);
-            setTimeout(() => el.classList.remove(s.highlight), 2000);
-        }
-    };
-
-    const handleUnpin = async (msgId) => {
-        try {
-            await togglePin(msgId);
-            setMessages(prev => prev.map(m =>
-                m.id === msgId ? { ...m, pinned_at: null, pinned_by: null } : m
-            ));
-        } catch { /* ignore */ }
-    };
-
-    // ─── Group actions ───
-    const openGroupEdit = async () => {
-        if (!activeConv?.is_group) return;
-        try {
-            const { data } = await getMembers(activeConv.id);
-            setGroupEditData({ group: activeConv, members: data });
-            setShowGroupModal(true);
-        } catch { /* ignore */ }
-    };
-
-    // ─── Typing indicator ───
-    const handleTyping = () => {
-        if (!activeConv) return;
-        clearTimeout(typingTimerRef.current);
-        typingTimerRef.current = setTimeout(() => {
-            wsSend('chat_typing', { conversationId: activeConv.id });
-        }, 200);
-    };
-
-    // ─── Helpers ───
-    const fmtTime = (ts) => {
-        if (!ts) return '';
-        const dt = new Date(ts);
-        const now = new Date();
-        if (dt.toDateString() === now.toDateString())
-            return dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const yest = new Date(now);
-        yest.setDate(yest.getDate() - 1);
-        if (dt.toDateString() === yest.toDateString()) return 'Yesterday';
-        return dt.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    };
-
-    const getConvName = (c) => {
-        if (c.is_group) return c.group_name || c.name || 'Group';
-        return c.other_full_name || 'Unknown';
-    };
-
-    const getConvAvatar = (c) => {
-        if (c.is_group) return null;
-        return c.other_avatar;
-    };
-
-    const isUserOnline = (c) => {
-        if (c.is_group) return false;
-        return onlineUsers.has(c.other_user_id);
-    };
-
-    const totalUnread = conversations.reduce((sum, c) => sum + (c.unread_count || 0), 0);
+    const jumpTo = (msgId) => handleJumpTo(msgId, msgStyles.highlight);
 
     return (
         <div className={s.chatPage}>
-            {/* ─── Sidebar ─── */}
-            <div className={`${s.sidebar} ${mobileView === 'chat' ? s.hideMobile : ''}`}>
-                <div className={s.sidebarHeader}>
-                    <h2>💬 Messages{totalUnread > 0 && <span className={s.totalBadge}>{totalUnread}</span>}</h2>
-                    <button className={s.newGroupBtn} onClick={() => { setGroupEditData(null); setShowGroupModal(true); }} title="New group">👥+</button>
-                </div>
-                <div className={s.searchBox}>
-                    <svg className={s.searchIcon} width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.4"/><path d="M10 10l2.5 2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
-                    <input
-                        ref={searchInputRef}
-                        type="text"
-                        placeholder="Search..."
-                        value={search}
-                        onChange={e => setSearch(e.target.value)}
-                        className={s.searchInput}
-                    />
-                    {search && (
-                        <button className={s.clearBtn} onClick={() => { setSearch(''); setSearchResults([]); }}>✕</button>
-                    )}
-                </div>
+            <ChatSidebar
+                conversations={conversations}
+                activeConvId={activeConv?.id}
+                search={search}
+                setSearch={setSearch}
+                searchResults={searchResults}
+                searching={searching}
+                typingUsers={typingUsers}
+                onlineUsers={onlineUsers}
+                convMenu={convMenu}
+                mobileView={mobileView}
+                onSearchUser={startConversation}
+                onOpenConv={(c) => openConversation(c.id, {
+                    other_user_id: c.other_user_id,
+                    other_username: c.other_username,
+                    other_full_name: c.other_full_name,
+                    other_avatar: c.other_avatar,
+                    is_group: c.is_group,
+                    group_name: c.group_name,
+                    name: c.name,
+                    member_count: c.member_count
+                })}
+                onMenuToggle={(id) => setConvMenu(convMenu === id ? null : id)}
+                onPinConv={handlePinConv}
+                onFavConv={handleFavConv}
+                onDeleteConv={(c) => { setConvMenu(null); setDeleteConfirm(c); }}
+                onNewGroup={() => { setGroupEditData(null); setShowGroupModal(true); }}
+                searchInputRef={searchInputRef}
+            />
 
-                {search.trim().length >= 2 && (
-                    <div className={s.searchResults}>
-                        {searching && <div className={s.hint}>Searching...</div>}
-                        {!searching && searchResults.length === 0 && <div className={s.hint}>No users found</div>}
-                        {searchResults.map(u => (
-                            <div key={u.id} className={s.searchItem} onClick={() => startConversation(u)}>
-                                <ChatAvatar name={u.full_name} avatar={u.avatar} size="md" online={onlineUsers.has(u.id)} />
-                                <div className={s.userInfo}>
-                                    <div className={s.userName}>{u.full_name}</div>
-                                    <div className={s.userMeta}>@{u.username}{u.email ? ` · ${u.email}` : ''}</div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-
-                {!search && (
-                    <div className={s.convList}>
-                        {conversations.length === 0 && (
-                            <div className={s.empty}>No conversations yet. Search for a colleague to start chatting.</div>
-                        )}
-                        {conversations.map(c => (
-                            <div
-                                key={c.id}
-                                className={`${s.convItem} ${activeConv?.id === c.id ? s.active : ''}`}
-                                onClick={() => openConversation(c.id, {
-                                    other_user_id: c.other_user_id,
-                                    other_username: c.other_username,
-                                    other_full_name: c.other_full_name,
-                                    other_avatar: c.other_avatar,
-                                    is_group: c.is_group,
-                                    group_name: c.group_name,
-                                    name: c.name,
-                                    member_count: c.member_count
-                                })}
-                            >
-                                <ChatAvatar name={getConvName(c)} avatar={getConvAvatar(c)} size="md" online={isUserOnline(c)} />
-                                <div className={s.convInfo}>
-                                    <div className={s.convTop}>
-                                        <span className={s.convName}>
-                                            {c.is_group && '👥 '}{getConvName(c)}
-                                        </span>
-                                        <span className={s.convTime}>{fmtTime(c.last_message_at)}</span>
-                                    </div>
-                                    <div className={s.convPreview}>
-                                        {typingUsers[c.id]
-                                            ? <span className={s.typing}>typing...</span>
-                                            : <span className={c.unread_count > 0 ? s.unread : ''}>
-                                                {c.is_group && c.last_sender_name ? `${c.last_sender_name.split(' ')[0]}: ` : ''}
-                                                {c.last_deleted ? 'Message deleted'
-                                                    : c.last_message ? c.last_message
-                                                    : c.last_file_url?.includes('voice') ? '🎤 Voice message'
-                                                    : c.last_file_url ? '📎 Attachment'
-                                                    : 'No messages yet'}
-                                              </span>}
-                                        {c.unread_count > 0 && <span className={s.badge}>{c.unread_count}</span>}
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
-
-            {/* ─── Chat area ─── */}
             <div className={`${s.chatArea} ${mobileView === 'list' ? s.hideMobile : ''}`}>
                 {!activeConv ? (
                     <div className={s.noChat}>
@@ -625,189 +87,73 @@ export default function Chat() {
                     </div>
                 ) : (
                     <>
-                        <div className={s.chatHeader}>
-                            <button className={s.backBtn} onClick={() => setMobileView('list')}>←</button>
-                            <ChatAvatar
-                                name={getConvName(activeConv)}
-                                avatar={getConvAvatar(activeConv)}
-                                size="md"
-                                online={isUserOnline(activeConv)}
-                            />
-                            <div className={s.chatHeaderInfo} onClick={activeConv.is_group ? openGroupEdit : undefined}
-                                 style={activeConv.is_group ? { cursor: 'pointer' } : undefined}>
-                                <div className={s.chatHeaderName}>
-                                    {activeConv.is_group && '👥 '}{getConvName(activeConv)}
-                                </div>
-                                <div className={s.chatHeaderMeta}>
-                                    {activeConv.is_group
-                                        ? `${activeConv.member_count || ''} members`
-                                        : isUserOnline(activeConv) ? 'Online' : `@${activeConv.other_username}`}
-                                </div>
-                            </div>
-                            <div className={s.headerActions}>
-                                <button onClick={() => setShowSearch(true)} title="Search messages">
-                                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.5"/><path d="M11 11l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                                </button>
-                                <button onClick={() => setShowPinned(!showPinned)} title="Pinned messages">📌</button>
-                                <button onClick={() => setShowSharedFiles(!showSharedFiles)} title="Shared files">📁</button>
-                                <button onClick={() => setShowStarred(!showStarred)} title="Saved messages">⭐</button>
-                                {activeConv.is_group && <button onClick={openGroupEdit} title="Group settings">⚙️</button>}
-                            </div>
-                        </div>
+                        <ChatHeader
+                            activeConv={activeConv}
+                            onlineUsers={onlineUsers}
+                            onBack={() => setMobileView('list')}
+                            onGroupEdit={openGroupEdit}
+                            onToggleSearch={() => setShowSearch(true)}
+                            onTogglePinned={() => setShowPinned(!showPinned)}
+                            showPinned={showPinned}
+                            onToggleSharedFiles={() => setShowSharedFiles(!showSharedFiles)}
+                            showSharedFiles={showSharedFiles}
+                            onToggleStarred={() => setShowStarred(!showStarred)}
+                            showStarred={showStarred}
+                        />
 
-                        <div className={s.chatBody}>
-                            <div
-                                className={`${s.messagesContainer} ${dragOver ? s.dragOver : ''}`}
-                                ref={messagesContainerRef}
-                                onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-                                onDragLeave={() => setDragOver(false)}
-                                onDrop={handleDrop}
-                            >
-                                {dragOver && <div className={s.dropOverlay}>Drop file to send</div>}
-                                {hasMore && (
-                                    <button className={s.loadMore} onClick={loadMore}>Load older messages</button>
-                                )}
-                                {loadingMsgs && <div className={s.hint} style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>}
-                                {!loadingMsgs && messages.length === 0 && (
-                                    <div className={s.hint} style={{ padding: '2rem', textAlign: 'center' }}>
-                                        No messages yet. Say hello! 👋
-                                    </div>
-                                )}
-                                {messages.map((m, i) => {
-                                    const isMine = m.sender_id === user.id;
-                                    const showDate = i === 0 || new Date(m.created_at).toDateString() !== new Date(messages[i - 1].created_at).toDateString();
-                                    // Teams-style grouping: show avatar/name only for first msg in a consecutive run from the same sender
-                                    const prev = messages[i - 1];
-                                    const isNewGroup = !prev || prev.sender_id !== m.sender_id || showDate
-                                        || (new Date(m.created_at) - new Date(prev.created_at)) > 120000; // 2 min gap = new group
-                                    return (
-                                        <div key={m.id} id={`msg-${m.id}`}>
-                                            {showDate && (
-                                                <div className={s.dateDivider}>
-                                                    <span>{new Date(m.created_at).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}</span>
-                                                </div>
-                                            )}
-                                            <MessageBubble
-                                                msg={m}
-                                                isMine={isMine}
-                                                userId={user.id}
-                                                showAvatar={isNewGroup}
-                                                showName={isNewGroup}
-                                                onReply={handleReply}
-                                                onEdit={handleEdit}
-                                                onDelete={handleDelete}
-                                                onPin={handlePin}
-                                                onForward={handleForward}
-                                                onReact={handleReact}
-                                                onStar={handleStar}
-                                                participantCount={convMembers.length || 2}
-                                                readReceipts={readReceipts}
-                                            />
-                                        </div>
-                                    );
-                                })}
-                                {typingUsers[activeConv?.id] && (() => {
-                                    const typingUserId = typingUsers[activeConv.id];
-                                    const typingMember = convMembers.find(m => m.id === typingUserId);
-                                    return (
-                                        <div className={s.typingRow}>
-                                            <div className={s.typingAvatar}>
-                                                <ChatAvatar
-                                                    name={typingMember?.full_name || ''}
-                                                    avatar={typingMember?.avatar}
-                                                    size="sm"
-                                                />
-                                            </div>
-                                            <div className={`${s.bubble} ${s.typingBubble}`}>
-                                                <span className={s.typingDots}><i /><i /><i /></span>
-                                            </div>
-                                        </div>
-                                    );
-                                })()}
-                                <div ref={messagesEndRef} />
-                            </div>
+                        <ChatMessages
+                            messages={messages}
+                            user={user}
+                            activeConv={activeConv}
+                            convMembers={convMembers}
+                            readReceipts={readReceipts}
+                            typingUsers={typingUsers}
+                            loadingMsgs={loadingMsgs}
+                            hasMore={hasMore}
+                            dragOver={dragOver}
+                            messagesContainerRef={messagesContainerRef}
+                            messagesEndRef={messagesEndRef}
+                            onLoadMore={loadMore}
+                            onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                            onDragLeave={() => setDragOver(false)}
+                            onDrop={handleDrop}
+                            onReply={handleReply}
+                            onEdit={handleEdit}
+                            onDelete={handleDelete}
+                            onPin={handlePin}
+                            onForward={handleForward}
+                            onReact={handleReact}
+                            onStar={handleStar}
+                            showPinned={showPinned}
+                            onClosePinned={() => setShowPinned(false)}
+                            onJumpTo={jumpTo}
+                            onUnpin={handleUnpin}
+                            showSharedFiles={showSharedFiles}
+                            onCloseSharedFiles={() => setShowSharedFiles(false)}
+                        />
 
-                            {showPinned && (
-                                <PinnedMessages
-                                    convId={activeConv.id}
-                                    currentUserId={user.id}
-                                    onClose={() => setShowPinned(false)}
-                                    onJumpTo={handleJumpTo}
-                                    onUnpin={handleUnpin}
-                                />
-                            )}
-                            {showSharedFiles && (
-                                <SharedFilesPanel
-                                    convId={activeConv.id}
-                                    onClose={() => setShowSharedFiles(false)}
-                                />
-                            )}
-                        </div>
-
-                        {/* Reply / Edit preview */}
-                        {(replyTo || editingMsg) && (
-                            <div className={s.replyBar}>
-                                {editingMsg
-                                    ? <ReplyPreview senderName="Editing" content={editingMsg.content} onClear={() => { setEditingMsg(null); setInput(''); }} />
-                                    : <ReplyPreview senderName={replyTo.sender_name} content={replyTo.content} onClear={() => setReplyTo(null)} />}
-                            </div>
-                        )}
-
-                        {/* Voice recorder */}
-                        {recording && (
-                            <div className={s.voiceBar}>
-                                <VoiceRecorder onSend={handleVoiceSend} onCancel={() => setRecording(false)} />
-                            </div>
-                        )}
-
-                        {/* Input bar */}
-                        {!recording && (
-                            <div className={s.inputArea}>
-                                <form className={s.inputBar} onSubmit={handleSend}>
-                                    <button type="button" className={s.inputIcon} onClick={() => fileInputRef.current?.click()} title="Attach file">
-                                        <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M17.5 9.58l-7.54 7.54a4.25 4.25 0 01-6.01-6.01l7.54-7.54a2.83 2.83 0 014.01 4.01l-7.55 7.54a1.42 1.42 0 01-2-2l6.96-6.96" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                                    </button>
-                                    <input
-                                        type="file"
-                                        ref={fileInputRef}
-                                        className={s.fileInput}
-                                        onChange={e => { if (e.target.files[0]) handleFileUpload(e.target.files[0]); e.target.value = ''; }}
-                                    />
-                                    <div className={s.inputBoxWrap}>
-                                        <MentionInput
-                                            ref={mentionInputRef}
-                                            value={input}
-                                            onChange={val => { setInput(val); handleTyping(); }}
-                                            members={convMembers}
-                                            placeholder={editingMsg ? 'Edit message...' : 'Type a message...'}
-                                            className={s.msgInput}
-                                            maxLength={5000}
-                                            onSubmit={handleSend}
-                                        />
-                                        <div className={s.inputTools}>
-                                            <button type="button" className={s.inputIcon} onClick={() => setShowEmojiPicker(!showEmojiPicker)} title="Emoji">
-                                                <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="7.5" stroke="currentColor" strokeWidth="1.5"/><circle cx="6.5" cy="7.5" r="1" fill="currentColor"/><circle cx="11.5" cy="7.5" r="1" fill="currentColor"/><path d="M6 11.5a3.5 3.5 0 006 0" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>
-                                            </button>
-                                            <button type="button" className={s.inputIcon} onClick={() => setShowPollCreator(true)} title="Create poll">
-                                                <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2" y="3" width="5" height="3" rx="1" stroke="currentColor" strokeWidth="1.3"/><rect x="2" y="7.5" width="10" height="3" rx="1" stroke="currentColor" strokeWidth="1.3"/><rect x="2" y="12" width="7" height="3" rx="1" stroke="currentColor" strokeWidth="1.3"/></svg>
-                                            </button>
-                                            <button type="button" className={s.inputIcon} onClick={() => setRecording(true)} title="Voice message">
-                                                <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="6.5" y="2" width="5" height="9" rx="2.5" stroke="currentColor" strokeWidth="1.5"/><path d="M4 9a5 5 0 0010 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><path d="M9 14v2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <button type="submit" className={s.sendBtn} disabled={!input.trim()}>
-                                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M2 3l14 6-14 6V10l10-1-10-1V3z" fill="currentColor"/></svg>
-                                    </button>
-                                </form>
-                                {showEmojiPicker && (
-                                    <EmojiGifPicker
-                                        onSelectEmoji={handleEmojiInsert}
-                                        onClose={() => setShowEmojiPicker(false)}
-                                    />
-                                )}
-                            </div>
-                        )}
+                        <ChatInputBar
+                            input={input}
+                            setInput={setInput}
+                            editingMsg={editingMsg}
+                            replyTo={replyTo}
+                            recording={recording}
+                            showEmojiPicker={showEmojiPicker}
+                            convMembers={convMembers}
+                            mentionInputRef={mentionInputRef}
+                            fileInputRef={fileInputRef}
+                            onSend={handleSend}
+                            onFileUpload={handleFileUpload}
+                            onVoiceSend={handleVoiceSend}
+                            onCancelRecording={() => setRecording(false)}
+                            onStartRecording={() => setRecording(true)}
+                            onEmojiInsert={handleEmojiInsert}
+                            onToggleEmoji={() => setShowEmojiPicker(!showEmojiPicker)}
+                            onOpenPollCreator={() => setShowPollCreator(true)}
+                            onClearReply={() => setReplyTo(null)}
+                            onClearEdit={() => { setEditingMsg(null); setInput(''); }}
+                            onTyping={handleTyping}
+                        />
                     </>
                 )}
             </div>
@@ -815,7 +161,7 @@ export default function Chat() {
             {/* ─── Modals ─── */}
             {showStarred && (
                 <StarredMessages
-                    onJumpTo={(convId, msgId) => { setShowStarred(false); handleJumpTo(msgId); }}
+                    onJumpTo={(convId, msgId) => { setShowStarred(false); jumpTo(msgId); }}
                     onClose={() => setShowStarred(false)}
                 />
             )}
@@ -828,7 +174,7 @@ export default function Chat() {
             {showSearch && (
                 <MessageSearch
                     convId={activeConv?.id}
-                    onJumpTo={(msgId) => { setShowSearch(false); handleJumpTo(msgId); }}
+                    onJumpTo={(msgId) => { setShowSearch(false); jumpTo(msgId); }}
                     onClose={() => setShowSearch(false)}
                 />
             )}
@@ -848,6 +194,15 @@ export default function Chat() {
                     onSuccess={() => { setShowGroupModal(false); setGroupEditData(null); loadConversations(); }}
                 />
             )}
+
+            <ConfirmDialog
+                isOpen={!!deleteConfirm}
+                title="Delete Conversation"
+                message={`Delete your conversation with ${deleteConfirm ? getConvName(deleteConfirm) : ''}? This will permanently remove all messages for everyone.`}
+                confirmText="Delete"
+                onConfirm={() => handleDeleteConv(deleteConfirm.id)}
+                onCancel={() => setDeleteConfirm(null)}
+            />
         </div>
     );
 }
