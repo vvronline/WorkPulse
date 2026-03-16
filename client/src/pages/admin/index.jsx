@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../AuthContext';
+import { useSearchParams } from 'react-router-dom';
 import { getAdminStats } from '../../api';
 import UserManagement from './UserManagement';
 import CreateUser from './CreateUser';
@@ -12,8 +13,15 @@ import s from '../Admin.module.css';
 
 export default function AdminPanel() {
     const { user } = useAuth();
-    const [tab, setTab] = useState('users');
+    const [searchParams] = useSearchParams();
+    const [tab, setTab] = useState(searchParams.get('tab') || 'users');
     const [stats, setStats] = useState(null);
+
+    // Sync tab when URL changes (e.g. navigated from GlobalSearch)
+    useEffect(() => {
+        const t = searchParams.get('tab');
+        if (t) setTab(t);
+    }, [searchParams]);
 
     useEffect(() => {
         getAdminStats().then(r => setStats(r.data)).catch(e => console.error(e));

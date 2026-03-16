@@ -93,6 +93,42 @@ router.get('/', async (req, res) => {
             )).rows;
         }
 
+        // ── Calendar events: user's own, title/description ILIKE ─────────────
+        const eventRows = (await query(
+            `SELECT id, title, description, start_time, end_time, all_day
+             FROM calendar_events
+             WHERE user_id = $1 AND (title ILIKE $2 OR description ILIKE $2)
+             ORDER BY start_time ASC
+             LIMIT 7`,
+            [req.userId, ilikePat]
+        )).rows;
+
+        // ── Leaves: user's own, leave_type/reason ILIKE ───────────────────────
+        const leaveRows = (await query(
+            `SELECT id, date, leave_type, duration, status, reason
+             FROM leaves
+             WHERE user_id = $1 AND (leave_type ILIKE $2 OR COALESCE(reason, '') ILIKE $2)
+             ORDER BY date DESC
+             LIMIT 7`,
+            [req.userId, ilikePat]
+        )).rows;
+
+        // ── Sprints: user's team, name/goal ILIKE ─────────────────────────────
+        let sprintRows = [];
+        const teamRow = (await query(
+            'SELECT team_id FROM users WHERE id = $1', [req.userId]
+        )).rows[0];
+        if (teamRow?.team_id) {
+            sprintRows = (await query(
+                `SELECT id, name, goal, status, start_date, end_date
+                 FROM sprints
+                 WHERE team_id = $1 AND (name ILIKE $2 OR COALESCE(goal, '') ILIKE $2)
+                 ORDER BY start_date DESC
+                 LIMIT 7`,
+                [teamRow.team_id, ilikePat]
+            )).rows;
+        }
+
         // ── Audit logs: hr_admin+ only, ILIKE on action/entity_type/details ───
         let logRows = [];
         const userLevel = ROLE_LEVEL[req.userRole] || 1;
@@ -111,7 +147,15 @@ router.get('/', async (req, res) => {
             )).rows;
         }
 
-        res.json({ tasks: taskRows, notes: noteResults, users: userRows, logs: logRows });
+        res.json({
+            tasks: taskRows,
+            notes: noteResults,
+            users: userRows,
+            events: eventRows,
+            leaves: leaveRows,
+            sprints: sprintRows,
+            logs: logRows,
+        });
     } catch (err) {
         req.log.error({ err }, 'Global search error');
         res.status(500).json({ error: 'Search failed' });
