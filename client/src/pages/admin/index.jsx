@@ -6,6 +6,8 @@ import CreateUser from './CreateUser';
 import OrganizationsTab from './OrganizationsTab';
 import AuditLogs from './AuditLogs';
 import RoleRequests from './RoleRequests';
+import ImportUsers from './ImportUsers';
+import PayPeriods from './PayPeriods';
 import s from '../Admin.module.css';
 
 export default function AdminPanel() {
@@ -78,6 +80,12 @@ export default function AdminPanel() {
                 <button className={`${s.tab} ${tab === 'role-requests' ? s.active : ''}`} onClick={() => setTab('role-requests')}>
                     <span>🔄</span> Role Requests
                 </button>
+                <button className={`${s.tab} ${tab === 'import' ? s.active : ''}`} onClick={() => setTab('import')}>
+                    <span>📥</span> Import Users
+                </button>
+                <button className={`${s.tab} ${tab === 'payroll' ? s.active : ''}`} onClick={() => setTab('payroll')}>
+                    <span>💰</span> Payroll
+                </button>
             </div>
 
             {tab === 'users' && <UserManagement userRole={user.role} />}
@@ -85,6 +93,8 @@ export default function AdminPanel() {
             {tab === 'organizations' && (user.role === 'super_admin' || user.org_id) && <OrganizationsTab userRole={user.role} hasOrgId={!!user.org_id} />}
             {tab === 'audit' && <AuditLogs />}
             {tab === 'role-requests' && <RoleRequests userRole={user.role} />}
+            {tab === 'import' && <ImportUsers />}
+            {tab === 'payroll' && <PayPeriods />}
         </div>
     );
 }

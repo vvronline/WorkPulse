@@ -373,6 +373,17 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
             return res.status(400).json({ error: `You have a ${leaveRes.rows[0].leave_type} leave on this date. Remove the leave first to add a manual entry.` });
         }
 
+        // Reject if the date falls within a locked pay period for this org
+        if (req.userOrgId) {
+            const lockedPeriod = (await query(
+                `SELECT label FROM pay_periods WHERE org_id = $1 AND start_date <= $2 AND end_date >= $2`,
+                [req.userOrgId, date]
+            )).rows[0];
+            if (lockedPeriod) {
+                return res.status(400).json({ error: `This date is in a locked pay period (${lockedPeriod.label}). Time entries cannot be modified.` });
+            }
+        }
+
         let approvalStatus = 'approved';
         let needsApproval = false;
         const hasManager = req.userManagerId != null;
@@ -490,6 +501,17 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
             const [year, month, day] = dateStr.split('-').map(Number);
             const [hours, minutes] = timeStr.split(':').map(Number);
             return new Date(Date.UTC(year, month - 1, day, hours, minutes, 0) + offsetMs).toISOString();
+        }
+
+        // Reject if the date falls within a locked pay period for this org
+        if (req.userOrgId) {
+            const lockedPeriod = (await query(
+                `SELECT label FROM pay_periods WHERE org_id = $1 AND start_date <= $2 AND end_date >= $2`,
+                [req.userOrgId, date]
+            )).rows[0];
+            if (lockedPeriod) {
+                return res.status(400).json({ error: `This date is in a locked pay period (${lockedPeriod.label}). Time entries cannot be modified.` });
+            }
         }
 
         let approvalStatus = 'approved';

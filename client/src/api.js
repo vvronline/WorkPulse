@@ -242,6 +242,24 @@ export const exportMyLeaves = (params) => API.get('/export/my-leaves', { params,
 export const exportMyTasks = (params) => API.get('/export/my-tasks', { params, responseType: 'blob' });
 export const exportTeamAnalytics = (params) => API.get('/export/team-analytics', { params, responseType: 'blob' });
 export const exportTeamLeaves = (params) => API.get('/export/team-leaves', { params, responseType: 'blob' });
+export const exportPayrollHours = (from, to, format = 'csv') =>
+    API.get('/export/payroll-hours', { params: { from, to, format }, responseType: 'blob' });
+
+// Global Search
+export const globalSearch = (q) => API.get('/search', { params: { q } });
+
+// Pay Periods
+export const getPayPeriods = () => API.get('/admin/pay-periods');
+export const createPayPeriod = (data) => API.post('/admin/pay-periods', data);
+export const deletePayPeriod = (id) => API.delete(`/admin/pay-periods/${id}`);
+
+// Bulk User Import
+export const importUsers = (payload, isFile = false) => {
+    if (isFile) {
+        return API.post('/admin/users/import', payload, { headers: { 'Content-Type': 'multipart/form-data' } });
+    }
+    return API.post('/admin/users/import', payload);
+};
 
 // Chat
 export const searchChatUsers = (q) => API.get('/chat/search', { params: { q } });

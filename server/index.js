@@ -37,6 +37,7 @@ const calendarRoutes = require('./routes/calendar');
 const notificationsRoutes = require('./routes/notifications');
 const exportRoutes = require('./routes/export');
 const chatRoutes = require('./routes/chat');
+const searchRoutes = require('./routes/search');
 const { setupWebSocket } = require('./utils/ws');
 
 const app = express();
@@ -136,6 +137,7 @@ app.use('/api/calendar', apiLimiter, calendarRoutes);
 app.use('/api/notifications', apiLimiter, notificationsRoutes);
 app.use('/api/export', apiLimiter, exportRoutes);
 app.use('/api/chat', apiLimiter, chatRoutes);
+app.use('/api/search', apiLimiter, searchRoutes);
 
 app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });

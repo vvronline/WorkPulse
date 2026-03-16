@@ -613,6 +613,30 @@ async function initDB() {
     // ---- Message format_type for rich text / polls / code ----
     await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS format_type VARCHAR(20) DEFAULT 'text'`);
     await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS metadata JSONB`);
+    // ---- Full-text search index on tasks ----
+    await query(`
+        CREATE INDEX IF NOT EXISTS idx_tasks_fts ON tasks
+        USING gin(to_tsvector('english', title || ' ' || COALESCE(description, '')))
+    `);
+
+    // ---- Pay periods (for payroll locking) ----
+    await query(`
+        CREATE TABLE IF NOT EXISTS pay_periods (
+            id          SERIAL PRIMARY KEY,
+            org_id      INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            label       TEXT NOT NULL,
+            start_date  TEXT NOT NULL,
+            end_date    TEXT NOT NULL,
+            locked_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            locked_at   TIMESTAMPTZ DEFAULT NOW(),
+            created_at  TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(org_id, start_date, end_date)
+        )
+    `);
+    await query(`
+        CREATE INDEX IF NOT EXISTS idx_pay_periods_org ON pay_periods(org_id, start_date)
+    `);
+
     // Seed defaults
     await query(`
         INSERT INTO app_settings (key, value) VALUES ('registration_mode', 'open')

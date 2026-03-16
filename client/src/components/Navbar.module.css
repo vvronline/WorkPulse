@@ -649,6 +649,27 @@
   transform: scale(1.1);
 }
 
+.searchBtn {
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.searchBtn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  transform: scale(1.05);
+}
+
 /* ---- Light Theme ---- */
 [data-theme="light"] .navbar {
   background: rgba(255, 255, 255, 0.8);

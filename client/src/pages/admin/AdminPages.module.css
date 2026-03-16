@@ -1,0 +1,365 @@
+/* Shared styles for ImportUsers and PayPeriods admin tab components */
+
+.section {
+    padding: 0 0 20px;
+}
+
+.sectionTitle {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 6px;
+}
+
+.sectionDesc {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin: 0 0 20px;
+    line-height: 1.6;
+}
+
+/* ── Card ── */
+.card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px 16px;
+    margin-bottom: 16px;
+}
+
+.cardTitle {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0 0 14px;
+    color: var(--text-primary);
+}
+
+/* ── Rows ── */
+.row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: flex-end;
+}
+
+.btnRow {
+    display: flex;
+    gap: 8px;
+}
+
+/* ── Tabs (file vs json) ── */
+.tabRow {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.tab,
+.tabActive {
+    padding: 7px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    transition: all 0.15s;
+}
+
+.tab {
+    background: transparent;
+    color: var(--text-secondary);
+}
+
+.tab:hover {
+    background: var(--surface-hover);
+    color: var(--text-primary);
+}
+
+.tabActive {
+    background: var(--accent, #6366f1);
+    color: #fff;
+    border-color: var(--accent, #6366f1);
+}
+
+/* ── Form elements ── */
+.importForm {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.formGroup {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    flex: 1;
+    min-width: 140px;
+}
+
+.label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.input {
+    width: 100%;
+    padding: 8px 12px;
+    background: var(--input-bg, var(--surface));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    color: var(--text-primary);
+    box-sizing: border-box;
+    transition: border-color 0.15s;
+}
+
+.input:focus {
+    outline: none;
+    border-color: var(--accent, #6366f1);
+}
+
+.fileInput {
+    font-size: 14px;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.textarea {
+    width: 100%;
+    padding: 10px 12px;
+    background: var(--input-bg, var(--surface));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--text-primary);
+    font-family: monospace;
+    resize: vertical;
+    box-sizing: border-box;
+    transition: border-color 0.15s;
+}
+
+.textarea:focus {
+    outline: none;
+    border-color: var(--accent, #6366f1);
+}
+
+.example {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+
+.pre {
+    font-size: 12px;
+    padding: 10px;
+    background: var(--bg-tertiary, #1a1a2e);
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 8px 0 0;
+    color: var(--text-primary);
+    line-height: 1.6;
+}
+
+.hint {
+    font-size: 13px;
+    color: var(--text-muted, #64748b);
+    line-height: 1.5;
+    margin: 0;
+}
+
+.errorMsg {
+    color: var(--error-color, #f87171);
+    font-size: 14px;
+    margin: 4px 0;
+}
+
+/* ── Buttons ── */
+.primaryBtn {
+    align-self: flex-start;
+    padding: 9px 20px;
+    background: var(--accent, #6366f1);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+
+.primaryBtn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.primaryBtn:not(:disabled):hover {
+    opacity: 0.9;
+}
+
+.secondaryBtn {
+    padding: 8px 14px;
+    background: var(--surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.secondaryBtn:not(:disabled):hover {
+    background: var(--surface-hover);
+}
+
+.secondaryBtn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.dangerBtn {
+    padding: 5px 12px;
+    background: transparent;
+    color: var(--error-color, #f87171);
+    border: 1px solid var(--error-color, #f87171);
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.dangerBtn:hover {
+    background: rgba(248, 113, 113, 0.1);
+}
+
+/* ── Results / Tables ── */
+.resultBox {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-top: 8px;
+}
+
+.resultTitle {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 14px;
+}
+
+.failedSection,
+.successSection {
+    margin-bottom: 16px;
+}
+
+.failedTitle {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--error-color, #f87171);
+    margin: 0 0 8px;
+}
+
+.successTitle {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--success-color, #4ade80);
+    margin: 0 0 8px;
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.table th {
+    text-align: left;
+    padding: 6px 10px;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.table td {
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.05));
+    color: var(--text-primary);
+    vertical-align: top;
+}
+
+.table tr:last-child td {
+    border-bottom: none;
+}
+
+.errorCell {
+    color: var(--error-color, #f87171);
+}
+
+.tempPw code {
+    font-family: monospace;
+    font-size: 12px;
+    background: var(--bg-tertiary, #1a1a2e);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.muted {
+    color: var(--text-muted, #64748b);
+    font-style: italic;
+}
+
+/* ── Drop zone ── */
+.dropZone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 36px 20px;
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+    background: var(--surface);
+    transition: border-color 0.15s, background 0.15s;
+    text-align: center;
+    user-select: none;
+    outline: none;
+}
+
+.dropZone:hover,
+.dropZone:focus,
+.dropZoneActive {
+    border-color: var(--accent, #6366f1);
+    background: rgba(99, 102, 241, 0.05);
+}
+
+.dropZoneHasFile {
+    border-style: solid;
+    border-color: var(--accent, #6366f1);
+    background: rgba(99, 102, 241, 0.06);
+}
+
+.dropIcon {
+    font-size: 28px;
+    line-height: 1;
+}
+
+.dropPrimary {
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.dropFileName {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--accent, #6366f1);
+}
+
+.dropHint {
+    font-size: 13px;
+    color: var(--text-muted, #64748b);
+}

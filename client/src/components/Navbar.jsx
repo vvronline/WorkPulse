@@ -7,6 +7,7 @@ import { clockOut as apiClockOut, uploadAvatar, removeAvatar, baseURL } from '..
 import EditProfileModal from './EditProfileModal';
 import ConfirmDialog from './ConfirmDialog';
 import NotificationBell from './NotificationBell';
+import GlobalSearch from './GlobalSearch';
 import { useChatUnread } from '../ChatContext';
 import s from './Navbar.module.css';
 
@@ -22,6 +23,7 @@ export default function Navbar() {
   const [removeAvatarConfirming, setRemoveAvatarConfirming] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const { unreadCount: chatUnread } = useChatUnread();
   const profileRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -56,6 +58,10 @@ export default function Navbar() {
         setProfileOpen(false);
         setMoreOpen(false);
         setMobileMoreOpen(false);
+      }
+      if ((e.key === 'k' || e.key === 'K') && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        setSearchOpen(prev => !prev);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -214,6 +220,18 @@ export default function Navbar() {
           </div>
 
           <NotificationBell />
+
+          <button
+            className={s.searchBtn}
+            onClick={() => setSearchOpen(true)}
+            title="Search (Ctrl+K)"
+            aria-label="Open global search"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
+              <path d="M21 21l-4.35-4.35" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+          </button>
 
           <div className={s['profile-section']} ref={profileRef}>
             <button
@@ -388,6 +406,11 @@ export default function Navbar() {
       {/* Edit Profile Modal */}
       {editModalOpen && (
         <EditProfileModal onClose={() => setEditModalOpen(false)} />
+      )}
+
+      {/* Global Search Modal */}
+      {searchOpen && (
+        <GlobalSearch onClose={() => setSearchOpen(false)} />
       )}
 
       <ConfirmDialog

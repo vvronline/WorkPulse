@@ -1,0 +1,207 @@
+.overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 80px;
+    z-index: 9999;
+}
+
+.modal {
+    width: 100%;
+    max-width: 640px;
+    background: var(--bg-secondary, #1e1e2e);
+    border: 1px solid var(--border-color, #3a3a5c);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 120px);
+}
+
+.inputRow {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color, #3a3a5c);
+    gap: 10px;
+}
+
+.icon {
+    font-size: 16px;
+    flex-shrink: 0;
+    opacity: 0.6;
+}
+
+.input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    font-size: 16px;
+    color: var(--text-primary, #e2e8f0);
+    caret-color: var(--accent-color, #818cf8);
+}
+
+.input::placeholder {
+    color: var(--text-muted, #64748b);
+}
+
+.spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border-color, #3a3a5c);
+    border-top-color: var(--accent-color, #818cf8);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    flex-shrink: 0;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.closeBtn {
+    background: none;
+    border: none;
+    color: var(--text-muted, #64748b);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    transition: color 0.15s;
+}
+
+.closeBtn:hover {
+    color: var(--text-primary, #e2e8f0);
+    background: var(--bg-hover, #2d2d4a);
+}
+
+.hint {
+    padding: 20px 16px;
+    color: var(--text-muted, #64748b);
+    font-size: 14px;
+    text-align: center;
+    margin: 0;
+}
+
+.error {
+    padding: 10px 16px;
+    color: var(--error-color, #f87171);
+    font-size: 14px;
+    margin: 0;
+}
+
+.results {
+    overflow-y: auto;
+    flex: 1;
+}
+
+.sectionTitle {
+    padding: 8px 16px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted, #64748b);
+    margin: 0;
+    position: sticky;
+    top: 0;
+    background: var(--bg-secondary, #1e1e2e);
+    z-index: 1;
+}
+
+.item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 16px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    color: var(--text-primary, #e2e8f0);
+    transition: background 0.1s;
+}
+
+.item:hover,
+.item.active {
+    background: var(--bg-hover, #2a2a46);
+}
+
+.itemIcon {
+    font-size: 16px;
+    flex-shrink: 0;
+    width: 24px;
+    text-align: center;
+}
+
+.avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
+.itemBody {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.itemTitle {
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.snippet {
+    font-size: 12px;
+    color: var(--text-muted, #64748b);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ts_headline highlights */
+.snippet b {
+    color: var(--accent-color, #818cf8);
+    font-weight: 600;
+}
+
+.badge,
+.badgeDefault {
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 20px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    background: var(--bg-tertiary, #2d2d4a);
+    color: var(--text-muted, #94a3b8);
+}
+
+.status-done { background: #14532d; color: #86efac; }
+.status-in_progress { background: #1e3a5f; color: #93c5fd; }
+.status-in_review { background: #3b1f63; color: #d8b4fe; }
+.status-todo { background: #292929; color: #94a3b8; }
+
+.footer {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    padding: 8px 16px;
+    border-top: 1px solid var(--border-color, #3a3a5c);
+    font-size: 11px;
+    color: var(--text-muted, #64748b);
+}

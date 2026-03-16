@@ -421,6 +421,17 @@ router.post('/approvals/:id/approve', async (req, res) => {
                         [req.userId, approval.requester_id, tzMod, metadata.date]
                     );
                 }
+            } else if (approval.type === 'overtime') {
+                // Credit comp-off leave balance for the overtime worked
+                let meta = {};
+                if (approval.metadata) { try { meta = JSON.parse(approval.metadata); } catch { } }
+                if (meta.date && meta.hours) {
+                    const compHours = parseFloat(meta.hours);
+                    if (compHours > 0) {
+                        const compDuration = compHours >= 6 ? 'full' : compHours >= 3 ? 'half' : 'quarter';
+                        await updateLeaveBalance(approval.requester_id, 'comp_off', meta.date, compDuration, 'add', client);
+                    }
+                }
             }
             return { ok: true, type: approval.type, requesterId: approval.requester_id, referenceId: approval.reference_id, metadata: approval.metadata };
         });
@@ -450,6 +461,15 @@ router.post('/approvals/:id/approve', async (req, res) => {
                     );
                     notifyByEmail('manualEntryApproved', requester, entryDate);
                     sendToUser(txResult.requesterId, 'approval_update', { status: 'approved', type: 'manual_entry' });
+                } else if (txResult.type === 'overtime') {
+                    let meta = {};
+                    if (txResult.metadata) { try { meta = JSON.parse(txResult.metadata); } catch { } }
+                    const overtimeDate = meta.date || '';
+                    await query(
+                        'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
+                        [txResult.requesterId, 'approval', 'Overtime Approved \u2705', `Your overtime request for ${overtimeDate} has been approved. Comp-off has been credited.`]
+                    );
+                    sendToUser(txResult.requesterId, 'approval_update', { status: 'approved', type: 'overtime' });
                 }
             }
         } catch (notifErr) {
@@ -601,6 +621,17 @@ router.post('/approvals/bulk', async (req, res) => {
                             `UPDATE time_entries SET approval_status = $1, approved_by = $2 WHERE user_id = $3 AND (timestamp + $4::interval)::date = $5::date AND is_manual = TRUE`,
                             [action === 'approve' ? 'approved' : 'rejected', req.userId, approval.requester_id, tzMod, metadata.date]
                         );
+                    }
+                } else if (approval.type === 'overtime' && action === 'approve') {
+                    // Credit comp-off leave balance for overtime
+                    let meta = {};
+                    if (approval.metadata) { try { meta = JSON.parse(approval.metadata); } catch { } }
+                    if (meta.date && meta.hours) {
+                        const compHours = parseFloat(meta.hours);
+                        if (compHours > 0) {
+                            const compDuration = compHours >= 6 ? 'full' : compHours >= 3 ? 'half' : 'quarter';
+                            await updateLeaveBalance(approval.requester_id, 'comp_off', meta.date, compDuration, 'add', client);
+                        }
                     }
                 }
                 processed++;

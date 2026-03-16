@@ -1,5 +1,6 @@
 ﻿const express = require('express');
 const bcrypt = require('bcryptjs');
+const multer = require('multer');
 const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole, requireSameOrg, canManageUser, VALID_ROLES, ROLE_LEVEL } = require('../middleware/rbac');
@@ -816,6 +817,241 @@ router.delete('/task-labels/:id', async (req, res) => {
     } catch (err) {
         req.log.error({ err }, 'Delete label error');
         res.status(500).json({ error: 'Failed to delete label' });
+    }
+});
+
+// ==================== PAY PERIODS ====================
+
+router.get('/pay-periods', requireSameOrg, async (req, res) => {
+    try {
+        const orgId = req.userRole === 'super_admin' ? (req.query.org_id || req.userOrgId) : req.userOrgId;
+        if (!orgId) return res.json([]);
+        const result = await query(
+            `SELECT pp.*, u.full_name AS locked_by_name
+             FROM pay_periods pp
+             LEFT JOIN users u ON u.id = pp.locked_by
+             WHERE pp.org_id = $1
+             ORDER BY pp.start_date DESC`,
+            [orgId]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        req.log.error({ err }, 'GET pay-periods error');
+        res.status(500).json({ error: 'Failed to fetch pay periods' });
+    }
+});
+
+router.post('/pay-periods', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
+    try {
+        const { label, start_date, end_date } = req.body;
+        if (!label || !start_date || !end_date) {
+            return res.status(400).json({ error: 'label, start_date, and end_date are required' });
+        }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(start_date) || !/^\d{4}-\d{2}-\d{2}$/.test(end_date)) {
+            return res.status(400).json({ error: 'Dates must be in YYYY-MM-DD format' });
+        }
+        if (end_date < start_date) {
+            return res.status(400).json({ error: 'end_date must be on or after start_date' });
+        }
+        const orgId = req.userOrgId;
+        if (!orgId) return res.status(400).json({ error: 'Organization required' });
+        const result = await query(
+            `INSERT INTO pay_periods (org_id, label, start_date, end_date, locked_by)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (org_id, start_date, end_date) DO NOTHING
+             RETURNING *`,
+            [orgId, label.trim().slice(0, 100), start_date, end_date, req.userId]
+        );
+        if (!result.rows[0]) {
+            return res.status(409).json({ error: 'A pay period with these dates already exists' });
+        }
+        logAction(req, 'create', 'pay_period', result.rows[0].id, { label, start_date, end_date });
+        res.json(result.rows[0]);
+    } catch (err) {
+        req.log.error({ err }, 'POST pay-periods error');
+        res.status(500).json({ error: 'Failed to create pay period' });
+    }
+});
+
+router.delete('/pay-periods/:id', requireRole('hr_admin'), async (req, res) => {
+    try {
+        const pp = (await query('SELECT * FROM pay_periods WHERE id = $1', [Number(req.params.id)])).rows[0];
+        if (!pp) return res.status(404).json({ error: 'Pay period not found' });
+        if (req.userRole !== 'super_admin' && pp.org_id !== req.userOrgId) {
+            return res.status(403).json({ error: 'Cannot delete pay periods from another organization' });
+        }
+        await query('DELETE FROM pay_periods WHERE id = $1', [Number(req.params.id)]);
+        logAction(req, 'delete', 'pay_period', pp.id, { label: pp.label });
+        res.json({ message: 'Pay period deleted' });
+    } catch (err) {
+        req.log.error({ err }, 'DELETE pay-periods error');
+        res.status(500).json({ error: 'Failed to delete pay period' });
+    }
+});
+
+// ==================== BULK USER IMPORT ====================
+
+const importUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 2 * 1024 * 1024, files: 1 }, // 2 MB max
+    fileFilter: (_req, file, cb) => {
+        if (['text/csv', 'application/json', 'text/plain', 'application/octet-stream'].includes(file.mimetype) ||
+            /\.(csv|json)$/.test(file.originalname)) {
+            cb(null, true);
+        } else {
+            cb(new Error('Only CSV or JSON files are supported'));
+        }
+    },
+});
+
+/**
+ * POST /api/admin/users/import
+ * Accepts a JSON body { users: [...] } OR a multipart file upload (CSV or JSON).
+ * CSV expected columns: username, password, full_name, email, role
+ * Optional columns: department_name, team_name, manager_username
+ * Returns { imported: N, failed: [{row, error}] }
+ */
+router.post('/users/import', requireRole('hr_admin'), importUpload.single('file'), async (req, res) => {
+    try {
+        let usersToImport = [];
+
+        if (req.file) {
+            const raw = req.file.buffer.toString('utf-8').trim();
+            if (req.file.originalname.endsWith('.json') || req.file.mimetype === 'application/json') {
+                try { usersToImport = JSON.parse(raw); } catch { return res.status(400).json({ error: 'Invalid JSON file' }); }
+                if (!Array.isArray(usersToImport)) return res.status(400).json({ error: 'JSON file must contain an array of users' });
+            } else {
+                // Parse CSV: first row = headers. Handles quoted fields (RFC 4180).
+                function parseCSVLine(line) {
+                    const fields = [];
+                    let cur = '', inQuote = false;
+                    for (let i = 0; i < line.length; i++) {
+                        const ch = line[i];
+                        if (inQuote) {
+                            if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+                            else if (ch === '"') inQuote = false;
+                            else cur += ch;
+                        } else {
+                            if (ch === '"') inQuote = true;
+                            else if (ch === ',') { fields.push(cur.trim()); cur = ''; }
+                            else cur += ch;
+                        }
+                    }
+                    fields.push(cur.trim());
+                    return fields;
+                }
+                const lines = raw.split(/\r?\n/).filter(l => l.trim());
+                if (lines.length < 2) return res.status(400).json({ error: 'CSV file must have a header row and at least one data row' });
+                const headers = parseCSVLine(lines[0]).map(h => h.toLowerCase());
+                for (let i = 1; i < lines.length; i++) {
+                    const vals = parseCSVLine(lines[i]);
+                    const row = {};
+                    headers.forEach((h, idx) => { row[h] = vals[idx] ?? ''; });
+                    usersToImport.push(row);
+                }
+            }
+        } else if (req.body.users && Array.isArray(req.body.users)) {
+            usersToImport = req.body.users;
+        } else {
+            return res.status(400).json({ error: 'Provide a CSV/JSON file or a JSON body with a "users" array' });
+        }
+
+        if (usersToImport.length === 0) return res.status(400).json({ error: 'No users to import' });
+        if (usersToImport.length > 200) return res.status(400).json({ error: 'Maximum 200 users per import batch' });
+
+        const imported = [];
+        const failed = [];
+        const assignOrgId = req.userOrgId;
+
+        for (let i = 0; i < usersToImport.length; i++) {
+            const row = usersToImport[i];
+            const rowNum = i + 1;
+            try {
+                const username = (row.username || '').trim();
+                const password = (row.password || '').trim();
+                const full_name = (row.full_name || row.name || '').trim();
+                const email = (row.email || '').trim().toLowerCase();
+                const roleRaw = (row.role || 'employee').trim().toLowerCase();
+
+                if (!username) { failed.push({ row: rowNum, error: 'username is required' }); continue; }
+                if (!full_name) { failed.push({ row: rowNum, error: 'full_name is required' }); continue; }
+                if (!email) { failed.push({ row: rowNum, error: 'email is required' }); continue; }
+                if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { failed.push({ row: rowNum, error: 'Invalid email format' }); continue; }
+
+                const usernameErr = validateUsername(username);
+                if (usernameErr) { failed.push({ row: rowNum, error: usernameErr }); continue; }
+
+                const assignRole = VALID_ROLES.includes(roleRaw) ? roleRaw : 'employee';
+                if (ROLE_LEVEL[assignRole] >= ROLE_LEVEL[req.userRole]) {
+                    failed.push({ row: rowNum, error: `Cannot import user with role '${assignRole}' (at or above your own level)` }); continue;
+                }
+
+                // Either use provided password or auto-generate a temporary one
+                let plainPw = password;
+                let autoGenerated = false;
+                if (!plainPw) {
+                    // Generate a secure temporary password
+                    const crypto = require('crypto');
+                    plainPw = crypto.randomBytes(8).toString('base64').slice(0, 12) + 'A1!';
+                    autoGenerated = true;
+                } else {
+                    const pwErr = validatePassword(plainPw);
+                    if (pwErr) { failed.push({ row: rowNum, error: pwErr }); continue; }
+                }
+
+                // Resolve optional department/team by name
+                let deptId = null, teamId = null;
+                if (row.department_name && assignOrgId) {
+                    const deptRes = await query(
+                        'SELECT id FROM departments WHERE org_id = $1 AND LOWER(name) = LOWER($2)', [assignOrgId, row.department_name.trim()]
+                    );
+                    deptId = deptRes.rows[0]?.id || null;
+                }
+                if (row.team_name && assignOrgId) {
+                    const teamRes = await query(
+                        'SELECT id FROM teams WHERE org_id = $1 AND LOWER(name) = LOWER($2)', [assignOrgId, row.team_name.trim()]
+                    );
+                    teamId = teamRes.rows[0]?.id || null;
+                }
+                let managerId = null;
+                if (row.manager_username) {
+                    const mgrRes = await query(
+                        'SELECT id FROM users WHERE username = $1 AND org_id = $2', [row.manager_username.trim(), assignOrgId]
+                    );
+                    managerId = mgrRes.rows[0]?.id || null;
+                }
+
+                const existing = await query('SELECT id FROM users WHERE username = $1 OR email = $2', [username, email]);
+                if (existing.rows[0]) { failed.push({ row: rowNum, error: 'Username or email already taken' }); continue; }
+
+                const hash = await bcrypt.hash(plainPw, 10);
+                const created = await query(
+                    `INSERT INTO users (username, password, full_name, email, role, org_id, department_id, team_id, manager_id, must_change_password)
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE) RETURNING id`,
+                    [username, hash, full_name, email, assignRole, assignOrgId, deptId, teamId, managerId]
+                );
+                logAction(req, 'admin_create', 'user', created.rows[0].id, { username, role: assignRole, via: 'bulk_import' });
+                imported.push({
+                    row: rowNum,
+                    username,
+                    full_name,
+                    email,
+                    role: assignRole,
+                    id: created.rows[0].id,
+                    initial_password: plainPw,
+                    auto_generated: autoGenerated,
+                });
+            } catch (rowErr) {
+                req.log.error({ err: rowErr, row: i }, 'Bulk import row error');
+                failed.push({ row: rowNum, error: 'Internal error processing this row' });
+            }
+        }
+
+        logAction(req, 'bulk_import', 'users', null, { imported: imported.length, failed: failed.length });
+        res.json({ imported: imported.length, failed, details: imported });
+    } catch (err) {
+        req.log.error({ err }, 'POST /users/import error');
+        res.status(500).json({ error: 'Import failed' });
     }
 });
 
