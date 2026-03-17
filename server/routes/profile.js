@@ -24,7 +24,7 @@ function cookieOptions() {
         httpOnly: true,
         secure: useSecureCookie,
         sameSite: 'strict',
-        maxAge: 24 * 60 * 60 * 1000
+        maxAge: 8 * 60 * 60 * 1000
     };
 }
 
@@ -161,7 +161,7 @@ router.put('/password', auth, loadUserContext, async (req, res) => {
         const hash = await bcrypt.hash(new_password, 10);
         await query('UPDATE users SET password = $1, token_version = COALESCE(token_version, 0) + 1, must_change_password = FALSE WHERE id = $2', [hash, req.userId]);
         const updated = (await query('SELECT token_version FROM users WHERE id = $1', [req.userId])).rows[0];
-        const token = jwt.sign({ id: req.userId, username: req.username, tv: updated.token_version || 0 }, process.env.JWT_SECRET, { expiresIn: '24h' });
+        const token = jwt.sign({ id: req.userId, username: req.username, tv: updated.token_version || 0 }, process.env.JWT_SECRET, { expiresIn: '8h' });
         res.cookie('token', token, cookieOptions());
         logAction(req, 'change_password', 'user', req.userId, {});
         res.json({ message: 'Password updated successfully' });

@@ -7,6 +7,7 @@ const { query, transaction } = require('../db');
 const { validatePassword, validateUsername } = require('../utils/password');
 const { logger } = require('../utils/logger');
 const { getTransporter, sendMail } = require('../utils/mailer');
+const auth = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -20,7 +21,7 @@ function cookieOptions() {
         httpOnly: true,
         secure: useSecureCookie,
         sameSite: 'strict',
-        maxAge: 24 * 60 * 60 * 1000,
+        maxAge: 8 * 60 * 60 * 1000,
     };
 }
 
@@ -112,7 +113,7 @@ router.post('/register', async (req, res) => {
         const token = jwt.sign(
             { id: result.id, username, tv: 0 },
             process.env.JWT_SECRET,
-            { expiresIn: '24h' },
+            { expiresIn: '8h' },
         );
         res.cookie('token', token, cookieOptions());
         res.json({ user: { id: result.id, username, full_name, email, avatar: null, role: assignedRole, org_id: assignedOrgId } });
@@ -170,7 +171,7 @@ router.post('/login', async (req, res) => {
         const token = jwt.sign(
             { id: user.id, username: user.username, tv: user.token_version || 0 },
             process.env.JWT_SECRET,
-            { expiresIn: '24h' },
+            { expiresIn: '8h' },
         );
         res.cookie('token', token, cookieOptions());
 
@@ -283,6 +284,25 @@ router.post('/reset-password', async (req, res) => {
     } catch (err) {
         req.log.error({ err }, 'Reset password error');
         res.status(500).json({ error: 'Failed to reset password' });
+    }
+});
+
+// Refresh token
+router.post('/refresh', auth, async (req, res) => {
+    try {
+        const row = (await query('SELECT token_version FROM users WHERE id = $1', [req.userId])).rows[0];
+        if (!row) return res.status(401).json({ error: 'User not found' });
+
+        const token = jwt.sign(
+            { id: req.userId, username: req.username, tv: row.token_version || 0 },
+            process.env.JWT_SECRET,
+            { expiresIn: '8h' },
+        );
+        res.cookie('token', token, cookieOptions());
+        res.json({ message: 'Token refreshed' });
+    } catch (err) {
+        req.log.error({ err }, 'Token refresh error');
+        res.status(500).json({ error: 'Failed to refresh token' });
     }
 });
 

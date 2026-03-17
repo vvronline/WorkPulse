@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
-import { getProfile, logoutUser } from './api';
+import { getProfile, logoutUser, refreshToken } from './api';
 
 const AuthContext = createContext(null);
 
@@ -56,6 +56,17 @@ export function AuthProvider({ children }) {
       });
     return () => controller.abort();
   }, []);
+
+  // Silently refresh the JWT cookie periodically to keep active sessions alive.
+  // Runs every 30 minutes while the user is logged in.
+  useEffect(() => {
+    if (!user) return;
+    const REFRESH_INTERVAL = 30 * 60 * 1000; // 30 minutes
+    const id = setInterval(() => {
+      refreshToken().catch(() => { /* token expired or network error — AxiosInterceptor handles 401 */ });
+    }, REFRESH_INTERVAL);
+    return () => clearInterval(id);
+  }, [user]);
 
   const saveAuth = useCallback((user) => {
     localStorage.setItem('user', JSON.stringify(sanitizeForCache(user)));

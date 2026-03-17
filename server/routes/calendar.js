@@ -16,9 +16,10 @@ router.get('/', async (req, res) => {
             `SELECT ce.*, t.title AS task_title, t.status AS task_status, t.priority AS task_priority
              FROM calendar_events ce
              LEFT JOIN tasks t ON t.id = ce.task_id
-             WHERE ce.user_id = $1 AND ce.start_time < $3::timestamptz AND ce.end_time > $2::timestamptz
+             WHERE ce.user_id = $1 AND (ce.org_id = $2 OR ce.org_id IS NULL)
+               AND ce.start_time < $4::timestamptz AND ce.end_time > $3::timestamptz
              ORDER BY ce.start_time`,
-            [req.userId, from, to]
+            [req.userId, req.userOrgId || null, from, to]
         );
         res.json(result.rows);
     } catch (err) {
@@ -49,13 +50,13 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
     try {
         const eventId = Number(req.params.id);
-        const existing = await query('SELECT * FROM calendar_events WHERE id = $1 AND user_id = $2', [eventId, req.userId]);
+        const existing = await query('SELECT * FROM calendar_events WHERE id = $1 AND user_id = $2 AND (org_id = $3 OR org_id IS NULL)', [eventId, req.userId, req.userOrgId || null]);
         if (!existing.rows[0]) return res.status(404).json({ error: 'Event not found' });
 
         const { title, description, start_time, end_time, all_day, color, task_id } = req.body;
         // Validate time ordering against whichever value will actually be stored
         const effectiveStart = start_time ? new Date(start_time) : new Date(existing.rows[0].start_time);
-        const effectiveEnd   = end_time   ? new Date(end_time)   : new Date(existing.rows[0].end_time);
+        const effectiveEnd = end_time ? new Date(end_time) : new Date(existing.rows[0].end_time);
         if (effectiveEnd <= effectiveStart) {
             return res.status(400).json({ error: 'end_time must be after start_time' });
         }
@@ -69,8 +70,8 @@ router.put('/:id', async (req, res) => {
                 color = COALESCE($6, color),
                 task_id = $7,
                 updated_at = NOW()
-             WHERE id = $8 AND user_id = $9 RETURNING *`,
-            [title?.trim(), description, start_time, end_time, all_day, color, task_id !== undefined ? (task_id || null) : existing.rows[0].task_id, eventId, req.userId]
+             WHERE id = $8 AND user_id = $9 AND (org_id = $10 OR org_id IS NULL) RETURNING *`,
+            [title?.trim(), description, start_time, end_time, all_day, color, task_id !== undefined ? (task_id || null) : existing.rows[0].task_id, eventId, req.userId, req.userOrgId || null]
         );
         res.json(result.rows[0]);
     } catch (err) {
@@ -83,7 +84,7 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
     try {
         const eventId = Number(req.params.id);
-        const result = await query('DELETE FROM calendar_events WHERE id = $1 AND user_id = $2 RETURNING id', [eventId, req.userId]);
+        const result = await query('DELETE FROM calendar_events WHERE id = $1 AND user_id = $2 AND (org_id = $3 OR org_id IS NULL) RETURNING id', [eventId, req.userId, req.userOrgId || null]);
         if (!result.rows[0]) return res.status(404).json({ error: 'Event not found' });
         res.json({ message: 'Event deleted' });
     } catch (err) {

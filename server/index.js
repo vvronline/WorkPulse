@@ -146,17 +146,18 @@ app.get('/api/health', (req, res) => {
 // ============= AUTO CLOCK-OUT =============
 async function autoClockOut() {
     try {
+        // Use DISTINCT ON to efficiently find each user's latest time entry,
+        // then filter only those whose last entry is not a clock_out.
+        // This avoids O(N) correlated subqueries for large user bases.
         const activeUsers = (await query(`
             SELECT u.id, u.timezone_offset
             FROM users u
-            WHERE EXISTS (
-                SELECT 1 FROM time_entries t
+            INNER JOIN LATERAL (
+                SELECT entry_type FROM time_entries t
                 WHERE t.user_id = u.id
-                AND t.entry_type != 'clock_out'
-                AND t.timestamp = (
-                    SELECT MAX(t2.timestamp) FROM time_entries t2 WHERE t2.user_id = u.id
-                )
-            )
+                ORDER BY t.timestamp DESC
+                LIMIT 1
+            ) latest ON latest.entry_type != 'clock_out'
         `)).rows;
 
         for (const user of activeUsers) {

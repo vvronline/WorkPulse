@@ -437,6 +437,18 @@ router.put('/users/:id/assignment', async (req, res) => {
             const mgrRes = await query('SELECT id FROM users WHERE id = $1 AND is_active = TRUE', [Number(manager_id)]);
             if (!mgrRes.rows[0]) return res.status(400).json({ error: 'Manager not found' });
             if (Number(manager_id) === Number(id)) return res.status(400).json({ error: 'Cannot assign user as their own manager' });
+            // Prevent circular manager chains: walk up from proposed manager
+            let current = Number(manager_id);
+            const visited = new Set([Number(id)]);
+            for (let depth = 0; depth < 20; depth++) {
+                if (visited.has(current)) {
+                    return res.status(400).json({ error: 'Circular manager chain detected. This assignment would create a loop.' });
+                }
+                visited.add(current);
+                const parent = (await query('SELECT manager_id FROM users WHERE id = $1', [current])).rows[0];
+                if (!parent || !parent.manager_id) break;
+                current = parent.manager_id;
+            }
         }
         const newOrgId = org_id !== undefined ? (org_id || null) : target.org_id;
         if (department_id) {

@@ -21,6 +21,7 @@ jest.mock('../utils/ws', () => ({
 }));
 
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const request = require('supertest');
 
 // Mock DB
@@ -221,5 +222,51 @@ describe('POST /api/auth/logout', () => {
         expect(cookies).toBeDefined();
         // Cookie should be expired/cleared
         expect(cookies[0]).toMatch(/token=/);
+    });
+});
+
+const SECRET = process.env.JWT_SECRET || 'test-secret';
+
+function authCookie(userId = 1) {
+    const token = jwt.sign({ id: userId, username: 'testuser', tv: 0 }, SECRET, { expiresIn: '1h' });
+    return `token=${token}`;
+}
+
+describe('POST /api/auth/refresh', () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+    });
+
+    test('returns 401 without auth cookie', async () => {
+        const res = await request(app)
+            .post('/api/auth/refresh')
+            .set(CSRF);
+        expect(res.status).toBe(401);
+    });
+
+    test('refreshes token for valid authenticated user', async () => {
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ token_version: 0 }], rowCount: 1 }) // auth middleware
+            .mockResolvedValueOnce({ rows: [{ token_version: 0 }], rowCount: 1 }); // refresh query
+        const res = await request(app)
+            .post('/api/auth/refresh')
+            .set(CSRF)
+            .set('Cookie', authCookie());
+        expect(res.status).toBe(200);
+        expect(res.body.message).toMatch(/refreshed/i);
+        expect(res.headers['set-cookie']).toBeDefined();
+        expect(res.headers['set-cookie'][0]).toMatch(/token=/);
+    });
+
+    test('returns 401 when user no longer exists', async () => {
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ token_version: 0 }], rowCount: 1 }) // auth middleware
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // user not found
+        const res = await request(app)
+            .post('/api/auth/refresh')
+            .set(CSRF)
+            .set('Cookie', authCookie());
+        expect(res.status).toBe(401);
+        expect(res.body.error).toMatch(/not found/i);
     });
 });
