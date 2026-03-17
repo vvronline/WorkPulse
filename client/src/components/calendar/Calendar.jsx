@@ -284,7 +284,7 @@ export default function Calendar({ tasks = [] }) {
                     <h2 className={s.title}>{getTitle()}</h2>
                 </div>
                 <div className={s.toolbarRight}>
-                    <button className={s.addBtn} onClick={() => openCreate(baseDate)}>+ Event</button>
+                    <button className={s.addBtn} onClick={() => openCreate(baseDate)}>New Event</button>
                     <div className={s.viewToggle}>
                         {['day', 'week', 'month'].map(v => (
                             <button key={v} className={`${s.viewBtn} ${view === v ? s.activeView : ''}`} onClick={() => setView(v)}>
