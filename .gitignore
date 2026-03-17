@@ -8,3 +8,8 @@ server/uploads/
 server/data/
 data/
 .vite/
+
+# Local development config (not for production)
+.env.dev
+docker-compose.dev.yml
+Caddyfile.dev

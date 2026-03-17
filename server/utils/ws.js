@@ -12,7 +12,7 @@ const { logger } = require('./logger');
 const clients = new Map();
 
 function setupWebSocket(server) {
-    const wss = new WebSocketServer({ server, path: '/ws' });
+    const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 64 * 1024 });
 
     wss.on('connection', async (ws, req) => {
         // Authenticate via cookie
@@ -35,7 +35,8 @@ function setupWebSocket(server) {
         const userId = payload.id;
         try {
             const userRow = (await query('SELECT token_version FROM users WHERE id = $1', [userId])).rows[0];
-            if (!userRow || (payload.tv !== undefined && userRow.token_version !== undefined && payload.tv !== userRow.token_version)) {
+            const tokenVersion = payload.tv ?? 0;
+            if (!userRow || tokenVersion !== (userRow.token_version || 0)) {
                 ws.close(4001, 'Token revoked');
                 return;
             }

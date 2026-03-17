@@ -1,4 +1,4 @@
-﻿const path = require('path');
+const path = require('path');
 const fs = require('fs');
 
 const envPath = path.join(__dirname, '.env');
@@ -139,8 +139,14 @@ app.use('/api/export', apiLimiter, exportRoutes);
 app.use('/api/chat', apiLimiter, chatRoutes);
 app.use('/api/search', apiLimiter, searchRoutes);
 
-app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', time: new Date().toISOString() });
+app.get('/api/health', async (req, res) => {
+    try {
+        await query('SELECT 1');
+        res.json({ status: 'ok', time: new Date().toISOString() });
+    } catch (err) {
+        logger.error({ err }, 'Health check DB ping failed');
+        res.status(503).json({ status: 'error', time: new Date().toISOString(), error: 'Database unreachable' });
+    }
 });
 
 // ============= AUTO CLOCK-OUT =============

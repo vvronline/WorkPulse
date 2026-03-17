@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireSameOrg, requireRole } = require('../middleware/rbac');
@@ -184,13 +184,17 @@ router.get('/balance', async (req, res) => {
 
         const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getFullYear();
 
+        // Get the user's org_id for the policy lookup
+        const targetOrgRes = await query('SELECT org_id FROM users WHERE id = $1', [targetUserId]);
+        const targetOrgId = targetOrgRes.rows[0]?.org_id;
+
         const balances = (await query(`
             SELECT lb.*, lp.name as policy_name, lp.color
             FROM leave_balances lb
-            LEFT JOIN leave_policies lp ON lp.id = lb.policy_id
+            LEFT JOIN leave_policies lp ON lp.leave_type = lb.leave_type AND lp.org_id = $3
             WHERE lb.user_id = $1 AND lb.year = $2
             ORDER BY lb.leave_type ASC
-        `, [targetUserId, year])).rows;
+        `, [targetUserId, year, targetOrgId])).rows;
 
         res.json(balances);
     } catch (err) {
@@ -232,6 +236,8 @@ router.get('/pending', requireRole('manager'), async (req, res) => {
 router.post('/', async (req, res) => {
     try {
         const { leave_type, date, duration, reason, dates } = req.body;
+
+        if (reason && reason.length > 500) return res.status(400).json({ error: 'Reason must be 500 characters or less' });
 
         // Multi-day leave support
         const rawDates = Array.isArray(dates) && dates.length > 0 ? dates : (date ? [date] : null);
@@ -450,6 +456,7 @@ router.patch('/:id/approve', requireRole('manager'), async (req, res) => {
 router.patch('/:id/reject', requireRole('manager'), async (req, res) => {
     try {
         const { reason } = req.body;
+        if (reason && reason.length > 500) return res.status(400).json({ error: 'Rejection reason must be 500 characters or less' });
         const leave = (await query(
             'SELECT l.*, u.org_id AS leave_org_id, u.manager_id AS leave_manager_id FROM leaves l JOIN users u ON u.id = l.user_id WHERE l.id = $1',
             [req.params.id]

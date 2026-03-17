@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const { query } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole, requireSameOrg, ROLE_LEVEL } = require('../middleware/rbac');
@@ -71,6 +71,9 @@ router.put('/settings', requireRole('hr_admin'), requireSameOrg, async (req, res
         let pi = 1;
 
         // Only super_admin can change org name, work hours, and work days
+        if (name && name.trim().length > 100) return res.status(400).json({ error: 'Name must be 100 characters or less' });
+        if (timezone && timezone.length > 50) return res.status(400).json({ error: 'Timezone must be 50 characters or less' });
+        if (work_days && work_days.length > 50) return res.status(400).json({ error: 'Work days value too long' });
         if (name && req.userRole === 'super_admin') { updates.push(`name = $${pi++}`); params.push(name.trim()); }
         if (work_hours_per_day !== undefined && req.userRole === 'super_admin') {
             const whpd = Number(work_hours_per_day);
@@ -239,6 +242,7 @@ router.post('/departments', requireRole('hr_admin'), requireSameOrg, async (req,
     try {
         const { name, head_id } = req.body;
         if (!name || !name.trim()) return res.status(400).json({ error: 'Department name is required' });
+        if (name.trim().length > 100) return res.status(400).json({ error: 'Department name must be 100 characters or less' });
 
         const result = await query(
             'INSERT INTO departments (org_id, name, head_id) VALUES ($1, $2, $3) RETURNING id',
@@ -335,6 +339,7 @@ router.post('/teams', requireRole('hr_admin'), requireSameOrg, async (req, res) 
     try {
         const { name, department_id, lead_id } = req.body;
         if (!name || !name.trim()) return res.status(400).json({ error: 'Team name is required' });
+        if (name.trim().length > 100) return res.status(400).json({ error: 'Team name must be 100 characters or less' });
 
         const result = await query(
             'INSERT INTO teams (org_id, department_id, name, lead_id) VALUES ($1, $2, $3, $4) RETURNING id',

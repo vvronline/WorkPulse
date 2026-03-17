@@ -1,4 +1,4 @@
-﻿/**
+/**
  * PostgreSQL database module.
  *
  * Exports:
@@ -188,12 +188,24 @@ async function initDB() {
             leave_type    TEXT NOT NULL CHECK(leave_type IN ('sick','holiday','planned','personal','other')),
             reason        TEXT,
             status        TEXT NOT NULL DEFAULT 'pending'
-                              CHECK(status IN ('pending','approved','rejected','withdraw_pending')),
+                              CHECK(status IN ('pending','approved','rejected','withdraw_pending','revoked')),
             duration      TEXT NOT NULL DEFAULT 'full' CHECK(duration IN ('full','half','quarter')),
             approved_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
             reviewed_at   TIMESTAMPTZ,
-            reject_reason TEXT
+            reject_reason TEXT,
+            created_at    TIMESTAMPTZ DEFAULT NOW()
         )
+    `);
+    // Migration: add created_at to existing leaves tables
+    await query(`ALTER TABLE leaves ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
+    // Migration: update leaves status constraint to include 'revoked'
+    await query(`
+        DO $do$ BEGIN
+            ALTER TABLE leaves DROP CONSTRAINT IF EXISTS leaves_status_check;
+            ALTER TABLE leaves ADD CONSTRAINT leaves_status_check
+                CHECK(status IN ('pending','approved','rejected','withdraw_pending','revoked'));
+        EXCEPTION WHEN others THEN NULL;
+        END $do$
     `);
     await query(`CREATE INDEX IF NOT EXISTS idx_leaves_status ON leaves(user_id, status, date)`);
 
@@ -259,6 +271,8 @@ async function initDB() {
             id                   SERIAL PRIMARY KEY,
             org_id               INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
             leave_type           TEXT NOT NULL,
+            name                 TEXT,
+            color                TEXT DEFAULT '#6366f1',
             annual_quota         NUMERIC NOT NULL DEFAULT 0,
             accrual_type         TEXT NOT NULL DEFAULT 'annual',
             carry_forward_limit  NUMERIC NOT NULL DEFAULT 0,
@@ -266,6 +280,9 @@ async function initDB() {
             quarter_day_allowed  BOOLEAN NOT NULL DEFAULT FALSE
         )
     `);
+    // Migration: add name/color to existing leave_policies tables
+    await query(`ALTER TABLE leave_policies ADD COLUMN IF NOT EXISTS name TEXT`);
+    await query(`ALTER TABLE leave_policies ADD COLUMN IF NOT EXISTS color TEXT DEFAULT '#6366f1'`);
 
     await query(`
         CREATE TABLE IF NOT EXISTS leave_balances (
@@ -644,22 +661,6 @@ async function initDB() {
         INSERT INTO app_settings (key, value) VALUES ('registration_mode', 'open')
         ON CONFLICT (key) DO NOTHING
     `);
-
-    // Promote first registered user to super_admin (one-time setup, guarded by migration)
-    const migName = 'promote_first_admin';
-    const alreadyRan = (await query(
-        'SELECT 1 FROM _migrations WHERE name = $1', [migName]
-    )).rows[0];
-    if (!alreadyRan) {
-        const firstUser = (await query(
-            "SELECT id FROM users WHERE role = 'employee' ORDER BY id ASC LIMIT 1"
-        )).rows[0];
-        if (firstUser) {
-            await query("UPDATE users SET role = 'super_admin' WHERE id = $1", [firstUser.id]);
-            await query('INSERT INTO _migrations (name) VALUES ($1)', [migName]);
-            logger.info({ userId: firstUser.id }, 'Promoted first user to super_admin');
-        }
-    }
 
     logger.info('Database schema initialised');
 }

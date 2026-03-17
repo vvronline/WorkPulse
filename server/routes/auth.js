@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -103,9 +103,17 @@ router.post('/register', async (req, res) => {
                     [inviteRow.id],
                 );
             }
+
+            // Check if this is the first user
+            const userCount = (await client.query('SELECT COUNT(*) FROM users')).rows[0].count;
+            let finalRole = assignedRole;
+            if (parseInt(userCount) === 0) {
+                finalRole = 'super_admin';
+            }
+
             const ins = await client.query(
-                'INSERT INTO users (username, password, full_name, email, org_id, role) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
-                [username, hash, full_name, email, assignedOrgId, assignedRole],
+                'INSERT INTO users (username, password, full_name, email, org_id, role) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, role',
+                [username, hash, full_name, email, assignedOrgId, finalRole],
             );
             return ins.rows[0];
         });
@@ -116,7 +124,7 @@ router.post('/register', async (req, res) => {
             { expiresIn: '8h' },
         );
         res.cookie('token', token, cookieOptions());
-        res.json({ user: { id: result.id, username, full_name, email, avatar: null, role: assignedRole, org_id: assignedOrgId } });
+        res.json({ user: { id: result.id, username, full_name, email, avatar: null, role: result.role, org_id: assignedOrgId } });
     } catch (err) {
         if (err.message === 'INVITE_EXHAUSTED') {
             return res.status(400).json({ error: 'This invite code has reached its usage limit.' });

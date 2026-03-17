@@ -27,23 +27,107 @@ An enterprise-grade web application for tracking employee attendance, managing d
 
 ---
 
-## Getting Started (Local Development)
+## Getting Started (Local Development via Docker)
 
-### 1. Start the Backend
-```bash
-cd server
-npm install
-npm run dev
-```
-*Note: Make sure to configure your `.env` file in the server directory with a `JWT_SECRET` and `CORS_ORIGIN=http://localhost:3000` before running.*
+The recommended way to run WorkPulse locally is through Docker Compose, which handles PostgreSQL automatically.
 
-### 2. Start the Frontend
-```bash
-cd client
-npm install
-npm run dev
+> **Note:** The files below are gitignored and must be created manually. They are never committed to keep your production configuration safe.
+
+### 1. Create Dev Config Files
+
+**`.env.dev`** (in the project root):
+```env
+DB_PASSWORD=devpassword123
+JWT_SECRET=local-dev-jwt-secret-change-me
+CORS_ORIGIN=http://localhost
 ```
-*App runs on http://localhost:3000*
+
+**`Caddyfile.dev`** (in the project root):
+```
+localhost {
+    @ws { path /ws }
+    reverse_proxy @ws workpulse-dev:5000
+    reverse_proxy workpulse-dev:5000
+    tls internal
+}
+```
+
+**`docker-compose.dev.yml`** (in the project root):
+```yaml
+services:
+  postgres-dev:
+    image: postgres:16
+    container_name: workpulse-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: workpulse_dev
+      POSTGRES_USER: workpulse
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - ./data/postgres-dev:/var/lib/postgresql/data
+    networks: [workpulse-dev]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U workpulse -d workpulse_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  workpulse-dev:
+    build: .
+    container_name: workpulse-app-dev
+    restart: unless-stopped
+    depends_on:
+      postgres-dev:
+        condition: service_healthy
+    expose: ["5000"]
+    environment:
+      - PORT=5000
+      - NODE_ENV=development
+      - USE_HTTPS=false
+      - DATABASE_URL=postgresql://workpulse:${DB_PASSWORD}@postgres-dev:5432/workpulse_dev
+      - JWT_SECRET=${JWT_SECRET}
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost}
+    volumes:
+      - ./server/uploads:/app/server/uploads
+    networks: [workpulse-dev]
+
+  caddy-dev:
+    image: caddy:2-alpine
+    container_name: workpulse-caddy-dev
+    restart: unless-stopped
+    depends_on: [workpulse-dev]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile.dev:/etc/caddy/Caddyfile:ro
+      - caddy_dev_data:/data
+      - caddy_dev_config:/config
+    networks: [workpulse-dev]
+
+volumes:
+  caddy_dev_data:
+  caddy_dev_config:
+
+networks:
+  workpulse-dev:
+    driver: bridge
+```
+
+### 2. Start the Application
+
+```bash
+docker-compose -f docker-compose.dev.yml --env-file .env.dev up -d --build
+```
+
+The app will be available at **https://localhost** (self-signed cert via Caddy).
+
+### 3. Stop the Application
+
+```bash
+docker-compose -f docker-compose.dev.yml down
+```
 
 ---
 

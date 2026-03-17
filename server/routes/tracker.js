@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, ROLE_LEVEL } = require('../middleware/rbac');
@@ -11,6 +11,13 @@ const { notifyByEmail } = require('../utils/mailer');
 const { sendToUser } = require('../utils/ws');
 
 const router = express.Router();
+
+// Helper: validate HH:MM time string (range-checked, not just format)
+function isValidTime(str) {
+    if (!/^\d{2}:\d{2}$/.test(str)) return false;
+    const [h, m] = str.split(':').map(Number);
+    return h >= 0 && h <= 23 && m >= 0 && m <= 59;
+}
 
 // Helper: convert timezone offset to a pg date expression.
 // tzMod comes from getTzModifier() which is validated via clampOffset(),
@@ -307,9 +314,8 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
         if (!date || !clock_in) return res.status(400).json({ error: 'Date and login time are required' });
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
 
-        const timeRegex = /^\d{2}:\d{2}$/;
-        if (!timeRegex.test(clock_in) || (clock_out && !timeRegex.test(clock_out))) {
-            return res.status(400).json({ error: 'Invalid time format. Use HH:MM' });
+        if (!isValidTime(clock_in) || (clock_out && !isValidTime(clock_out))) {
+            return res.status(400).json({ error: 'Invalid time format. Use HH:MM (00:00–23:59)' });
         }
         if (clock_out && clock_out <= clock_in) {
             return res.status(400).json({ error: 'Logout time must be after login time' });
@@ -327,8 +333,8 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
             const sorted = [...breaks].sort((a, b) => (a.start || '').localeCompare(b.start || ''));
             for (let i = 0; i < sorted.length; i++) {
                 const brk = sorted[i];
-                if (!brk.start || !brk.end || !timeRegex.test(brk.start) || !timeRegex.test(brk.end)) {
-                    return res.status(400).json({ error: 'Each break must have valid start and end times (HH:MM)' });
+                if (!brk.start || !brk.end || !isValidTime(brk.start) || !isValidTime(brk.end)) {
+                    return res.status(400).json({ error: 'Each break must have valid start and end times (HH:MM, 00:00–23:59)' });
                 }
                 if (brk.end <= brk.start) return res.status(400).json({ error: 'Break end time must be after break start time' });
                 if (brk.start < clock_in || (clock_out && brk.end > clock_out)) {
@@ -392,6 +398,7 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
 
         const clockInTs = toUTC(date, clock_in);
         const clockOutTs = clock_out ? toUTC(date, clock_out) : null;
+        let txApprover = null;
 
         await transaction(async (client) => {
             const ins = (uid, type, ts, wm) => client.query(
@@ -410,6 +417,7 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
 
             if (needsApproval) {
                 const approver = await findApprover(req.userId, req.userOrgId);
+                txApprover = approver;
                 await client.query(
                     `INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
                      VALUES ($1,$2,$3,'manual_entry',NULL,$4,$5)`,
@@ -419,18 +427,15 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
             }
         });
 
-        // Notify the manager/approver about the new manual entry
-        if (needsApproval) {
+        // Notify the manager/approver about the new manual entry (reuse approver from transaction)
+        if (needsApproval && txApprover?.id) {
             try {
-                const approver = await findApprover(req.userId, req.userOrgId);
-                if (approver?.id) {
-                    const requesterName = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0]?.full_name || 'A team member';
-                    await query(
-                        'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
-                        [approver.id, 'approval', 'New Manual Entry Request', `${requesterName} submitted a manual time entry for ${date}.`]
-                    );
-                    sendToUser(approver.id, 'approval_update', { type: 'manual_entry', status: 'pending' });
-                }
+                const requesterName = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0]?.full_name || 'A team member';
+                await query(
+                    'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
+                    [txApprover.id, 'approval', 'New Manual Entry Request', `${requesterName} submitted a manual time entry for ${date}.`]
+                );
+                sendToUser(txApprover.id, 'approval_update', { type: 'manual_entry', status: 'pending' });
             } catch (notifErr) {
                 req.log.error({ err: notifErr }, 'Manager notification error (manual entry)');
             }
@@ -457,9 +462,8 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
         if (!date || !clock_in) return res.status(400).json({ error: 'Date and login time are required' });
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
 
-        const timeRegex = /^\d{2}:\d{2}$/;
-        if (!timeRegex.test(clock_in) || (clock_out && !timeRegex.test(clock_out))) {
-            return res.status(400).json({ error: 'Invalid time format. Use HH:MM' });
+        if (!isValidTime(clock_in) || (clock_out && !isValidTime(clock_out))) {
+            return res.status(400).json({ error: 'Invalid time format. Use HH:MM (00:00–23:59)' });
         }
         if (clock_out && clock_out <= clock_in) return res.status(400).json({ error: 'Logout time must be after login time' });
 
@@ -468,8 +472,8 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
             const sorted = [...breaks].sort((a, b) => (a.start || '').localeCompare(b.start || ''));
             for (let i = 0; i < sorted.length; i++) {
                 const brk = sorted[i];
-                if (!brk.start || !brk.end || !timeRegex.test(brk.start) || !timeRegex.test(brk.end)) {
-                    return res.status(400).json({ error: 'Each break must have valid start and end times' });
+                if (!brk.start || !brk.end || !isValidTime(brk.start) || !isValidTime(brk.end)) {
+                    return res.status(400).json({ error: 'Each break must have valid start and end times (HH:MM, 00:00–23:59)' });
                 }
                 if (brk.end <= brk.start) return res.status(400).json({ error: 'Break end must be after start' });
                 if (brk.start < clock_in || (clock_out && brk.end > clock_out)) {
@@ -523,6 +527,7 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
         const tzMod = getTzModifier(req);
         const clockInTs = toUTC(date, clock_in);
         const clockOutTs = clock_out ? toUTC(date, clock_out) : null;
+        let txApproverEdit = null;
 
         await transaction(async (client) => {
             // Cancel existing pending approval for this date
@@ -556,6 +561,7 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
 
             if (needsApproval) {
                 const approver = await findApprover(req.userId, req.userOrgId);
+                txApproverEdit = approver;
                 await client.query(
                     `INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
                      VALUES ($1,$2,$3,'manual_entry',NULL,$4,$5)`,
@@ -565,18 +571,15 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
             }
         });
 
-        // Notify the manager/approver about the edited manual entry
-        if (needsApproval) {
+        // Notify the manager/approver about the edited manual entry (reuse approver from transaction)
+        if (needsApproval && txApproverEdit?.id) {
             try {
-                const approver = await findApprover(req.userId, req.userOrgId);
-                if (approver?.id) {
-                    const requesterName = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0]?.full_name || 'A team member';
-                    await query(
-                        'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
-                        [approver.id, 'approval', 'Manual Entry Updated', `${requesterName} updated a manual time entry for ${date}.`]
-                    );
-                    sendToUser(approver.id, 'approval_update', { type: 'manual_entry', status: 'pending' });
-                }
+                const requesterName = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0]?.full_name || 'A team member';
+                await query(
+                    'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
+                    [txApproverEdit.id, 'approval', 'Manual Entry Updated', `${requesterName} updated a manual time entry for ${date}.`]
+                );
+                sendToUser(txApproverEdit.id, 'approval_update', { type: 'manual_entry', status: 'pending' });
             } catch (notifErr) {
                 req.log.error({ err: notifErr }, 'Manager notification error (manual entry edit)');
             }
@@ -604,7 +607,7 @@ router.delete('/entries/:date', auth, async (req, res) => {
         const protectedRes = await query(
             `SELECT 1 FROM time_entries
              WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
-               AND is_manual = TRUE AND approval_status IN ('pending','approved')
+               AND approval_status IN ('pending','approved')
              LIMIT 1`,
             [req.userId, date],
         );
