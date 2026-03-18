@@ -20,21 +20,26 @@ export default function MobileTabBar() {
     const isTeamLead = userLevel >= 2 || user?.has_reports;
     const isHR = userLevel >= 4;
 
+    // Secondary items shown in More sheet
     const moreItems = [
-        { to: '/manual-entry', label: 'Manual Entry', icon: '📝' },
+        { to: '/notes', label: 'Notes', icon: '📝' },
+        { to: '/leaves', label: 'Leaves', icon: '🏖️' },
+        { to: '/analytics', label: 'Analytics', icon: '📈' },
+        { to: '/manual-entry', label: 'Manual Entry', icon: '🗒️' },
     ];
     if (user?.org_id) moreItems.push({ to: '/organization', label: 'Organization', icon: '🏢' });
     if (user?.org_id) moreItems.push({ to: '/leave-policy', label: 'Leave Policy', icon: '📋' });
     if (isTeamLead) moreItems.push({ to: '/manager', label: 'My Team', icon: '👥' });
     if (isHR) moreItems.push({ to: '/admin', label: 'Admin', icon: '⚙️' });
 
+    const moreIsActive = moreItems.some(item => location.pathname === item.to);
     const p = location.pathname;
 
     return (
         <div className={s['mobile-tab-bar']}>
             <NavLink to="/" className={p === '/' ? s.active : ''}>
                 <span className={s['nav-icon']}>🏠</span>
-                <span className={s['tab-label']}>Dashboard</span>
+                <span className={s['tab-label']}>Home</span>
             </NavLink>
             <NavLink to="/calendar" className={p === '/calendar' ? s.active : ''}>
                 <span className={s['nav-icon']}>📅</span>
@@ -44,26 +49,14 @@ export default function MobileTabBar() {
                 <span className={s['nav-icon']}>📋</span>
                 <span className={s['tab-label']}>Tasks</span>
             </NavLink>
-            <NavLink to="/notes" className={p === '/notes' ? s.active : ''}>
-                <span className={s['nav-icon']}>📝</span>
-                <span className={s['tab-label']}>Notes</span>
-            </NavLink>
             <NavLink to="/chat" className={`${p === '/chat' ? s.active : ''} ${s.chatLink}`}>
                 <span className={s['nav-icon']}>💬</span>
                 <span className={s['tab-label']}>Chat</span>
                 {chatUnread > 0 && <span className={s.chatBadge}>{chatUnread > 99 ? '99+' : chatUnread}</span>}
             </NavLink>
-            <NavLink to="/leaves" className={p === '/leaves' ? s.active : ''}>
-                <span className={s['nav-icon']}>🏖️</span>
-                <span className={s['tab-label']}>Leaves</span>
-            </NavLink>
-            <NavLink to="/analytics" className={p === '/analytics' ? s.active : ''}>
-                <span className={s['nav-icon']}>📈</span>
-                <span className={s['tab-label']}>Analytics</span>
-            </NavLink>
             <div className={s['mobile-more-wrapper']} ref={mobileMoreRef}>
                 <button
-                    className={`${s['mobile-more-btn']} ${mobileMoreOpen ? s.active : ''}`}
+                    className={`${s['mobile-more-btn']} ${mobileMoreOpen || moreIsActive ? s.active : ''}`}
                     onClick={() => setMobileMoreOpen(prev => !prev)}
                 >
                     <span className={s['nav-icon']}>
@@ -76,7 +69,10 @@ export default function MobileTabBar() {
                 {mobileMoreOpen && (
                     <div className={s['mobile-more-popup']}>
                         {moreItems.map(item => (
-                            <NavLink key={item.to} to={item.to} onClick={() => setMobileMoreOpen(false)}>
+                            <NavLink key={item.to} to={item.to}
+                                className={p === item.to ? s.active : ''}
+                                onClick={() => setMobileMoreOpen(false)}
+                            >
                                 <span>{item.icon}</span> {item.label}
                             </NavLink>
                         ))}

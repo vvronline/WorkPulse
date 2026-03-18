@@ -76,7 +76,7 @@ export default function OvertimeRequestForm({ onSubmitted }) {
             className={s['textarea-resize']}
           />
         </div>
-        <button type="submit" className="btn btn-primary" disabled={otLoading}>
+        <button type="submit" className="btn btn-primary btn-fullwidth" disabled={otLoading}>
           {otLoading ? 'Submitting...' : '✓ Submit Overtime Request'}
         </button>
       </form>

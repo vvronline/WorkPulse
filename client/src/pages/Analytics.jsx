@@ -255,7 +255,17 @@ export default function Analytics() {
       </div>
 
       {loading ? (
-        <div className="loading-spinner"><div className="spinner"></div></div>
+        <div className={s['analytics-skeleton']}>
+          <div className={s['sk-stats-row']}>
+            {[0,1,2,3].map(i => <div key={i} className={s['sk-stat-card']} />)}
+          </div>
+          <div className={s['sk-chart-lg']} />
+          <div className={s['sk-chart-row']}>
+            <div className={s['sk-chart-sm']} />
+            <div className={s['sk-chart-sm']} />
+          </div>
+          <div className={s['sk-table']} />
+        </div>
       ) : error ? (
         <div className={`error-msg ${s['section-divider']}`}>{error}</div>
       ) : (

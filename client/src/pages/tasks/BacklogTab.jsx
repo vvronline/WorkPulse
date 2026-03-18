@@ -207,7 +207,7 @@ export default function BacklogTab({
                   </button>
                 ))}
               </div>
-              <button type="submit" className="btn btn-primary">
+              <button type="submit" className="btn btn-primary btn-fullwidth">
                 Create Ticket
               </button>
             </div>

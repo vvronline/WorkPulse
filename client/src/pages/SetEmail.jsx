@@ -49,7 +49,7 @@ export default function SetEmail() {
               required
             />
           </div>
-          <button type="submit" className="btn btn-primary" disabled={loading}>
+          <button type="submit" className="btn btn-primary btn-fullwidth" disabled={loading}>
             {loading ? 'Saving...' : 'Continue'}
           </button>
         </form>

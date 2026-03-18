@@ -48,7 +48,7 @@ export default function ForgotPassword() {
                 required
               />
             </div>
-            <button type="submit" className="btn btn-primary" disabled={loading}>
+            <button type="submit" className="btn btn-primary btn-fullwidth" disabled={loading}>
               {loading ? 'Sending...' : 'Send Reset Link'}
             </button>
           </form>

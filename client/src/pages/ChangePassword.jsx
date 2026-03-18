@@ -77,7 +77,7 @@ export default function ChangePassword() {
               minLength={8}
             />
           </div>
-          <button type="submit" className="btn btn-primary" disabled={loading}>
+          <button type="submit" className="btn btn-primary btn-fullwidth" disabled={loading}>
             {loading ? 'Updating...' : '→ Set New Password'}
           </button>
         </form>

@@ -61,7 +61,7 @@ export default function Login() {
           <div className={s['auth-forgot']}>
             <Link to="/forgot-password">Forgot password?</Link>
           </div>
-          <button type="submit" className="btn btn-primary" disabled={loading}>
+          <button type="submit" className="btn btn-primary btn-fullwidth" disabled={loading}>
             {loading ? 'Signing in...' : '→ Sign In'}
           </button>
         </form>

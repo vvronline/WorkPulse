@@ -41,7 +41,7 @@
   font-size: 1.15rem;
   font-weight: 700;
   letter-spacing: -0.03em;
-  background: linear-gradient(135deg, #534242 0%, var(--primary-light) 100%);
+  background: linear-gradient(135deg, var(--text) 0%, var(--primary-light) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -84,7 +84,9 @@
 .nav-links a.active {
   background: var(--primary);
   color: white;
-  box-shadow: 0 0 16px var(--primary-glow);
+  font-weight: 600;
+  box-shadow: 0 0 20px var(--primary-glow), inset 0 1px 0 rgba(255,255,255,0.15), 0 2px 0 rgba(99,102,241,0.5);
+  letter-spacing: -0.01em;
 }
 
 /* ---- Nav Link SVG Icons (desktop) ---- */

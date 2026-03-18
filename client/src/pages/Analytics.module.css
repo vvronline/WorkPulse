@@ -6,6 +6,36 @@
   animation: fadeInUp 0.4s ease;
 }
 
+/* ============= LOADING SKELETON ============= */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.analytics-skeleton { display: flex; flex-direction: column; gap: 1rem; }
+
+.sk-stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+}
+
+.sk-stat-card,
+.sk-chart-lg,
+.sk-chart-sm,
+.sk-table {
+  background: linear-gradient(90deg, var(--glass) 25%, var(--glass-border) 37%, var(--glass) 63%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 14px;
+}
+
+.sk-stat-card  { height: 100px; }
+.sk-chart-lg   { height: 280px; }
+.sk-chart-row  { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.sk-chart-sm   { height: 220px; }
+.sk-table      { height: 180px; }
+
 .analytics h2 {
   font-size: 1.65rem;
   font-weight: 800;

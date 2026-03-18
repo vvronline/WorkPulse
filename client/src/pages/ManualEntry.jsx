@@ -371,7 +371,7 @@ export default function ManualEntry() {
 
                 <button
                   type="submit"
-                  className="btn btn-primary"
+                  className="btn btn-primary btn-fullwidth"
                   disabled={formDisabled}
                 >
                   {loading

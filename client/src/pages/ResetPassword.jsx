@@ -79,7 +79,7 @@ export default function ResetPassword() {
                 minLength={8}
               />
             </div>
-            <button type="submit" className="btn btn-primary" disabled={loading}>
+            <button type="submit" className="btn btn-primary btn-fullwidth" disabled={loading}>
               {loading ? 'Resetting...' : 'Reset Password'}
             </button>
           </form>

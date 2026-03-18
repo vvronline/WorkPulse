@@ -175,7 +175,6 @@ body {
 .btn-primary {
   background: var(--primary);
   color: white;
-  width: 100%;
   box-shadow: 0 2px 12px var(--primary-glow), inset 0 1px 0 rgba(255,255,255,0.12);
 }
 
@@ -322,19 +321,11 @@ input[type="time"] {
   color-scheme: dark;
 }
 
-
-input[type="date"]::-webkit-calendar-picker-indicator {
-  opacity: 1;
-  cursor: pointer;
-}
-
-[data-theme="light"] input[type="date"]::-webkit-calendar-picker-indicator {
-  filter: none;
-}
-
-
 [data-theme="light"] input[type="date"],
-[data-theme="light"] input[type="time"] {
+[data-theme="light"] input[type="time"],
+[data-theme="light"] .form-group input[type="date"],
+[data-theme="light"] .form-group input[type="time"],
+[data-theme="light"] .form-group input {
   color-scheme: light;
 }
 
@@ -397,6 +388,7 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   text-align: center;
   position: relative;
   overflow: hidden;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast);
 }
 
 .status-card::before {
@@ -416,6 +408,13 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   gap: 1rem;
   margin-bottom: 1rem;
 }
+
+/* ============= TYPOGRAPHY HIERARCHY ============= */
+h1 { font-size: 1.8rem; font-weight: 800; letter-spacing: -0.04em; }
+h2 { font-size: 1.4rem; font-weight: 700; letter-spacing: -0.03em; }
+h3 { font-size: 1.1rem; font-weight: 600; letter-spacing: -0.02em; }
+h4 { font-size: 0.95rem; font-weight: 600; letter-spacing: -0.01em; }
+h5 { font-size: 0.88rem; font-weight: 600; }
 
 .stat-card {
   background: var(--glass);

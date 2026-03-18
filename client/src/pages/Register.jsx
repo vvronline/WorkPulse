@@ -127,7 +127,7 @@ export default function Register() {
               />
             </div>
           )}
-          <button type="submit" className="btn btn-primary" disabled={loading}>
+          <button type="submit" className="btn btn-primary btn-fullwidth" disabled={loading}>
             {loading ? 'Creating...' : 'Create Account'}
           </button>
         </form>
