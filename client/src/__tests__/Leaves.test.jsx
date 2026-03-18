@@ -2,6 +2,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
+import { ToastProvider } from '../components/Toast';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────────
 
@@ -49,9 +50,11 @@ import Leaves from '../pages/Leaves';
 
 function renderLeaves() {
     return render(
-        <MemoryRouter>
-            <Leaves />
-        </MemoryRouter>
+        <ToastProvider>
+            <MemoryRouter>
+                <Leaves />
+            </MemoryRouter>
+        </ToastProvider>
     );
 }
 

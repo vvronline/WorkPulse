@@ -4,7 +4,7 @@ import { getNotifications, markNotificationRead, markAllNotificationsRead, delet
 import useWebSocket from '../hooks/useWebSocket';
 import { useChatUnread } from '../ChatContext';
 
-const POLL_INTERVAL = 30_000;
+import { NOTIFICATION_POLL_INTERVAL } from '../constants';
 
 function timeAgo(dateStr) {
   // SQLite CURRENT_TIMESTAMP is UTC but has no 'Z'; append it so JS parses correctly
@@ -37,7 +37,7 @@ export default function NotificationBell() {
   // Initial fetch + polling (fallback for when WS is unavailable)
   useEffect(() => {
     fetchNotifs();
-    const id = setInterval(fetchNotifs, POLL_INTERVAL);
+    const id = setInterval(fetchNotifs, NOTIFICATION_POLL_INTERVAL);
     return () => clearInterval(id);
   }, [fetchNotifs]);
 

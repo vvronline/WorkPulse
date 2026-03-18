@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useAuth } from '../AuthContext';
+import { QUOTE_ROTATION_INTERVAL, STATUS_POLL_INTERVAL } from '../constants';
 import { useWorkState } from '../WorkStateContext';
 import {
     getStatus, clockIn, breakStart, breakEnd, clockOut,
@@ -70,7 +71,7 @@ export function useDashboardData() {
     useEffect(() => {
         quoteTimerRef.current = setInterval(() => {
             setQuoteIndex(prev => (prev + 1) % QUOTES.length);
-        }, 20000);
+        }, QUOTE_ROTATION_INTERVAL);
         return () => clearInterval(quoteTimerRef.current);
     }, []);
 
@@ -114,7 +115,7 @@ export function useDashboardData() {
         document.addEventListener('visibilitychange', handleVisibility);
         const pollInterval = setInterval(() => {
             if (!document.hidden && !cancelled) fetchStatus();
-        }, 120000);
+        }, STATUS_POLL_INTERVAL);
 
         return () => {
             cancelled = true;

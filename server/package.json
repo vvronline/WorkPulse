@@ -8,6 +8,9 @@
     "test": "jest --forceExit --detectOpenHandles",
     "test:watch": "jest --watch --forceExit --detectOpenHandles"
   },
+  "jest": {
+    "setupFiles": ["./jest.setup.js"]
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",

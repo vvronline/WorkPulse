@@ -1,165 +1,24 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../AuthContext';
-import { globalSearch } from '../api';
+import { useGlobalSearch } from '../hooks/useGlobalSearch';
 import s from './GlobalSearch.module.css';
 
+const LEAVE_STATUS_COLOR = { approved: '#16a34a', pending: '#d97706', rejected: '#dc2626', withdraw_pending: '#7c3aed' };
+const SPRINT_STATUS_COLOR = { active: '#16a34a', planned: '#2563eb', completed: '#6b7280' };
 const ROLE_LABELS = {
     employee: 'Employee', team_lead: 'Team Lead', manager: 'Manager',
     hr_admin: 'HR Admin', super_admin: 'Super Admin',
 };
 
-const ROLE_LEVEL = { employee: 1, team_lead: 2, manager: 3, hr_admin: 4, super_admin: 5 };
-
-// Static navigation / command-palette index.
-// minRole: user must be at least this role to see the item.
-const NAV_INDEX = [
-    { icon: '🏠', title: 'Dashboard',          sub: 'Home overview & time tracker',          path: '/',                         keywords: 'home overview clock tracker' },
-    { icon: '📅', title: 'Calendar',            sub: 'Events, reminders & schedules',         path: '/calendar',                 keywords: 'events reminders schedule' },
-    { icon: '✅', title: 'Tasks',               sub: 'My tasks & assignments',                path: '/tasks',                    keywords: 'todo assignments work tickets' },
-    { icon: '📝', title: 'Notes',               sub: 'Personal notebook',                     path: '/notes',                    keywords: 'notebook journal writing pages' },
-    { icon: '💬', title: 'Chat',                sub: 'Team messaging',                        path: '/chat',                     keywords: 'messages messaging team direct' },
-    { icon: '🏖️', title: 'Leaves',              sub: 'Leave requests & history',              path: '/leaves',                   keywords: 'vacation time off absence sick holiday request' },
-    { icon: '📊', title: 'Analytics',           sub: 'Work hours & productivity stats',       path: '/analytics',                keywords: 'reports hours productivity stats charts' },
-    { icon: '✏️', title: 'Manual Entry',        sub: 'Log work hours manually',               path: '/manual-entry',             keywords: 'clock time log entry hours manual' },
-    { icon: '🏢', title: 'Organization',        sub: 'Org profile & settings',                path: '/organization',             keywords: 'company settings profile org details' },
-    { icon: '📋', title: 'Leave Policy',        sub: 'Leave balances & public holidays',      path: '/leave-policy',             keywords: 'balance quota leave entitlement policy' },
-    { icon: '💰', title: 'Leave Balances',      sub: 'My leave balances & quotas',            path: '/leave-policy?tab=balances', keywords: 'quota remaining sick planned balance' },
-    { icon: '🎉', title: 'Holidays',            sub: 'Company public holidays',               path: '/leave-policy?tab=holidays', keywords: 'public holiday national bank calendar' },
-    { icon: '👥', title: 'Manager Dashboard',   sub: 'Team approvals & reports',              path: '/manager',                  keywords: 'approve team overtime manual reports pending', minRole: 'team_lead' },
-    { icon: '🔧', title: 'Admin Panel',         sub: 'User & org management',                 path: '/admin',                    keywords: 'admin manage settings panel',               minRole: 'hr_admin' },
-    { icon: '👤', title: 'User Management',     sub: 'View & edit user accounts',             path: '/admin?tab=users',          keywords: 'users employees accounts manage',            minRole: 'hr_admin' },
-    { icon: '➕', title: 'Create User',         sub: 'Add a new user account',                path: '/admin?tab=create',         keywords: 'new user create add register',               minRole: 'hr_admin' },
-    { icon: '📥', title: 'Import Users',        sub: 'Bulk import from CSV / JSON',           path: '/admin?tab=import',         keywords: 'bulk import csv json users batch',           minRole: 'hr_admin' },
-    { icon: '📜', title: 'Audit Logs',          sub: 'System activity history',               path: '/admin?tab=audit',          keywords: 'logs history activity events actions audit', minRole: 'hr_admin' },
-    { icon: '🔄', title: 'Role Requests',       sub: 'Pending role change requests',          path: '/admin?tab=role-requests',  keywords: 'role promotion request pending',             minRole: 'hr_admin' },
-    { icon: '💰', title: 'Payroll',             sub: 'Pay periods & payroll export',          path: '/admin?tab=payroll',        keywords: 'pay salary export hours period payroll',     minRole: 'hr_admin' },
-    { icon: '🏛️', title: 'Organizations',       sub: 'Manage all organizations / tenants',    path: '/admin?tab=organizations',  keywords: 'org tenant company organizations',           minRole: 'super_admin' },
-    { icon: '📋', title: 'Leave Policies',      sub: 'Configure leave quotas & accrual',      path: '/leave-policy?tab=policies', keywords: 'policy accrual quota configure sick',      minRole: 'hr_admin' },
-    { icon: '👥', title: 'All Leave Balances',  sub: "View all employees' leave balances",    path: '/leave-policy?tab=allBalances', keywords: 'all balances employees leave',            minRole: 'hr_admin' },
-];
-
-const LEAVE_STATUS_COLOR = { approved: '#16a34a', pending: '#d97706', rejected: '#dc2626', withdraw_pending: '#7c3aed' };
-const SPRINT_STATUS_COLOR = { active: '#16a34a', planned: '#2563eb', completed: '#6b7280' };
-
 export default function GlobalSearch({ onClose }) {
-    const { user } = useAuth();
-    const [query, setQuery] = useState('');
-    const [results, setResults] = useState(null);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState('');
-    const [activeIdx, setActiveIdx] = useState(-1);
-    const inputRef = useRef(null);
-    const navigate = useNavigate();
-    const debounceRef = useRef(null);
-    const abortCtrlRef = useRef(null);
-
-    const userLevel = ROLE_LEVEL[user?.role] || 1;
-
-    // Filter nav items the user is allowed to see
-    const visibleNav = useMemo(() => NAV_INDEX.filter(n =>
-        !n.minRole || userLevel >= (ROLE_LEVEL[n.minRole] || 1)
-    ), [userLevel]);
-
-    // Client-side nav filter
-    const navResults = useMemo(() => {
-        if (!query || query.trim().length < 2) return [];
-        const lower = query.trim().toLowerCase();
-        return visibleNav.filter(n =>
-            n.title.toLowerCase().includes(lower) ||
-            n.sub.toLowerCase().includes(lower) ||
-            n.keywords.toLowerCase().includes(lower)
-        ).slice(0, 6);
-    }, [query, visibleNav]);
-
-    useEffect(() => { inputRef.current?.focus(); }, []);
-
-    useEffect(() => {
-        const handle = (e) => { if (e.key === 'Escape') onClose(); };
-        window.addEventListener('keydown', handle);
-        return () => window.removeEventListener('keydown', handle);
-    }, [onClose]);
-
-    const doSearch = useCallback(async (q) => {
-        if (q.trim().length < 2) { setResults(null); setError(''); return; }
-        abortCtrlRef.current?.abort();
-        const controller = new AbortController();
-        abortCtrlRef.current = controller;
-        setLoading(true);
-        setError('');
-        try {
-            const res = await globalSearch(q.trim(), controller.signal);
-            setResults(res.data);
-            setActiveIdx(-1);
-        } catch (err) {
-            if (err.name === 'CanceledError' || err.code === 'ERR_CANCELED') return;
-            setError('Search failed. Please try again.');
-            setResults(null);
-        } finally {
-            setLoading(false);
-        }
-    }, []);
-
-    // Abort any pending request and debounce timer on unmount
-    useEffect(() => () => {
-        clearTimeout(debounceRef.current);
-        abortCtrlRef.current?.abort();
-    }, []);
-
-    const handleChange = (e) => {
-        const val = e.target.value;
-        setQuery(val);
-        clearTimeout(debounceRef.current);
-        debounceRef.current = setTimeout(() => doSearch(val), 350);
-    };
-
-    // Flatten all results for keyboard navigation
-    const flatItems = [
-        ...navResults.map(n => ({ type: 'nav', data: n })),
-        ...(results?.tasks  || []).map(t => ({ type: 'task',   data: t })),
-        ...(results?.notes  || []).map(n => ({ type: 'note',   data: n })),
-        ...(results?.events || []).map(e => ({ type: 'event',  data: e })),
-        ...(results?.leaves || []).map(l => ({ type: 'leave',  data: l })),
-        ...(results?.sprints|| []).map(sp=> ({ type: 'sprint', data: sp})),
-        ...(results?.users  || []).map(u => ({ type: 'user',   data: u })),
-        ...(results?.logs   || []).map(l => ({ type: 'log',    data: l })),
-    ];
-
-    const handleKeyDown = (e) => {
-        if (!flatItems.length) return;
-        if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            setActiveIdx(i => Math.min(i + 1, flatItems.length - 1));
-        } else if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            setActiveIdx(i => Math.max(i - 1, 0));
-        } else if (e.key === 'Enter' && activeIdx >= 0) {
-            e.preventDefault();
-            navigateToItem(flatItems[activeIdx]);
-        }
-    };
-
-    const navigateToItem = ({ type, data }) => {
-        onClose();
-        switch (type) {
-            case 'nav':    navigate(data.path); break;
-            case 'task':   navigate(`/tasks?taskId=${data.id}`); break;
-            case 'note':   navigate(`/notes?pageId=${data.id}`); break;
-            case 'event':  navigate('/calendar'); break;
-            case 'leave':  navigate('/leaves'); break;
-            case 'sprint': navigate('/manager'); break;
-            case 'user':   navigate(`/admin?tab=users&userId=${data.id}`); break;
-            case 'log':    navigate('/admin?tab=audit'); break;
-        }
-    };
-
-    const hasResults = navResults.length > 0 || (results && (
-        results.tasks?.length || results.notes?.length || results.events?.length ||
-        results.leaves?.length || results.sprints?.length ||
-        results.users?.length || results.logs?.length
-    ));
-
-    let flatIdx = 0;
+    const {
+        query, results, loading, error,
+        activeIdx, setActiveIdx,
+        inputRef,
+        navResults,
+        sectionOffsets,
+        handleChange, handleKeyDown,
+        navigateToItem,
+        hasResults,
+    } = useGlobalSearch({ onClose });
 
     return (
         <div className={s.overlay} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -183,10 +42,6 @@ export default function GlobalSearch({ onClose }) {
 
                 {error && <p className={s.error}>{error}</p>}
 
-                {!hasResults && !loading && query.trim().length < 2 && (
-                    <p className={s.hint}>Type at least 2 characters — search tasks, notes, leaves, events, people, or jump to any page</p>
-                )}
-
                 {!hasResults && !loading && query.trim().length >= 2 && (
                     <p className={s.hint}>No results for "{query}"</p>
                 )}
@@ -198,8 +53,8 @@ export default function GlobalSearch({ onClose }) {
                         {navResults.length > 0 && (
                             <section>
                                 <h4 className={s.sectionTitle}>Pages &amp; Features</h4>
-                                {navResults.map((n) => {
-                                    const idx = flatIdx++;
+                                {navResults.map((n, i) => {
+                                    const idx = sectionOffsets.nav + i;
                                     return (
                                         <button
                                             key={`nav-${n.path}`}
@@ -223,8 +78,8 @@ export default function GlobalSearch({ onClose }) {
                         {results?.tasks?.length > 0 && (
                             <section>
                                 <h4 className={s.sectionTitle}>Tasks</h4>
-                                {results.tasks.map((t) => {
-                                    const idx = flatIdx++;
+                                {results.tasks.map((t, i) => {
+                                    const idx = sectionOffsets.task + i;
                                     return (
                                         <button
                                             key={`task-${t.id}`}
@@ -236,10 +91,7 @@ export default function GlobalSearch({ onClose }) {
                                             <div className={s.itemBody}>
                                                 <span className={s.itemTitle}>{t.title}</span>
                                                 {t.snippet && (
-                                                    <span
-                                                        className={s.snippet}
-                                                        dangerouslySetInnerHTML={{ __html: t.snippet }}
-                                                    />
+                                                    <span className={s.snippet} dangerouslySetInnerHTML={{ __html: t.snippet }} />
                                                 )}
                                             </div>
                                             <span className={`${s.badge} ${s[`status-${t.status}`] || s.badgeDefault}`}>
@@ -255,8 +107,8 @@ export default function GlobalSearch({ onClose }) {
                         {results?.notes?.length > 0 && (
                             <section>
                                 <h4 className={s.sectionTitle}>Notes</h4>
-                                {results.notes.map((n) => {
-                                    const idx = flatIdx++;
+                                {results.notes.map((n, i) => {
+                                    const idx = sectionOffsets.note + i;
                                     return (
                                         <button
                                             key={`note-${n.id}`}
@@ -279,8 +131,8 @@ export default function GlobalSearch({ onClose }) {
                         {results?.events?.length > 0 && (
                             <section>
                                 <h4 className={s.sectionTitle}>Calendar Events</h4>
-                                {results.events.map((e) => {
-                                    const idx = flatIdx++;
+                                {results.events.map((e, i) => {
+                                    const idx = sectionOffsets.event + i;
                                     const dateStr = e.all_day
                                         ? new Date(e.start_time).toLocaleDateString()
                                         : `${new Date(e.start_time).toLocaleDateString()} ${new Date(e.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
@@ -306,8 +158,8 @@ export default function GlobalSearch({ onClose }) {
                         {results?.leaves?.length > 0 && (
                             <section>
                                 <h4 className={s.sectionTitle}>Leave Requests</h4>
-                                {results.leaves.map((l) => {
-                                    const idx = flatIdx++;
+                                {results.leaves.map((l, i) => {
+                                    const idx = sectionOffsets.leave + i;
                                     return (
                                         <button
                                             key={`leave-${l.id}`}
@@ -331,8 +183,8 @@ export default function GlobalSearch({ onClose }) {
                         {results?.sprints?.length > 0 && (
                             <section>
                                 <h4 className={s.sectionTitle}>Sprints</h4>
-                                {results.sprints.map((sp) => {
-                                    const idx = flatIdx++;
+                                {results.sprints.map((sp, i) => {
+                                    const idx = sectionOffsets.sprint + i;
                                     return (
                                         <button
                                             key={`sprint-${sp.id}`}
@@ -356,8 +208,8 @@ export default function GlobalSearch({ onClose }) {
                         {results?.users?.length > 0 && (
                             <section>
                                 <h4 className={s.sectionTitle}>People</h4>
-                                {results.users.map((u) => {
-                                    const idx = flatIdx++;
+                                {results.users.map((u, i) => {
+                                    const idx = sectionOffsets.user + i;
                                     return (
                                         <button
                                             key={`user-${u.id}`}
@@ -384,8 +236,8 @@ export default function GlobalSearch({ onClose }) {
                         {results?.logs?.length > 0 && (
                             <section>
                                 <h4 className={s.sectionTitle}>Audit Logs</h4>
-                                {results.logs.map((l) => {
-                                    const idx = flatIdx++;
+                                {results.logs.map((l, i) => {
+                                    const idx = sectionOffsets.log + i;
                                     return (
                                         <button
                                             key={`log-${l.id}`}

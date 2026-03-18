@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { getConversations } from './api';
 import { useAuth } from './AuthContext';
 
@@ -18,8 +18,10 @@ export function ChatProvider({ children }) {
 
   useEffect(() => { refreshUnread(); }, [refreshUnread]);
 
+  const value = useMemo(() => ({ unreadCount, refreshUnread }), [unreadCount, refreshUnread]);
+
   return (
-    <ChatCtx.Provider value={{ unreadCount, refreshUnread }}>
+    <ChatCtx.Provider value={value}>
       {children}
     </ChatCtx.Provider>
   );

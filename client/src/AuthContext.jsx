@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import { getProfile, logoutUser, refreshToken } from './api';
+import { REFRESH_TOKEN_INTERVAL } from './constants';
 
 const AuthContext = createContext(null);
 
@@ -61,10 +62,9 @@ export function AuthProvider({ children }) {
   // Runs every 30 minutes while the user is logged in.
   useEffect(() => {
     if (!user) return;
-    const REFRESH_INTERVAL = 30 * 60 * 1000; // 30 minutes
     const id = setInterval(() => {
       refreshToken().catch(() => { /* token expired or network error — AxiosInterceptor handles 401 */ });
-    }, REFRESH_INTERVAL);
+    }, REFRESH_TOKEN_INTERVAL);
     return () => clearInterval(id);
   }, [user]);
 
