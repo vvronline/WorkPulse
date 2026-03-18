@@ -1,22 +1,21 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import {
   getTaskDetail, getTaskHistory, getTaskComments,
   deleteTaskComment, updateTask, updateTaskStatus,
+  addTaskComment, updateTaskComment,
 } from '../../../api';
 
-export function useTaskDetail({ activeTab, backlogOpen, showConfirm, closeConfirm, setTasks, setBacklogTasks, fetchTasks, fetchBacklog, setError }) {
+/**
+ * Manages task detail panel state.
+ * Edit state (title, desc, priority, etc.) has been moved into TaskDetailModal itself
+ * so it is co-located with the form that owns it.
+ * `saveDetailEdit` now receives the current edit values as an argument.
+ */
+export function useTaskDetail({ activeTab, showConfirm, closeConfirm, setTasks, setBacklogTasks, fetchTasks, fetchBacklog, setError }) {
   const [detailTask, setDetailTask] = useState(null);
   const [detailComments, setDetailComments] = useState([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailEditing, setDetailEditing] = useState(false);
-  const [detailEditTitle, setDetailEditTitle] = useState('');
-  const [detailEditDesc, setDetailEditDesc] = useState('');
-  const [detailEditPriority, setDetailEditPriority] = useState('medium');
-  const [detailEditAssignedTo, setDetailEditAssignedTo] = useState('');
-  const [detailEditDueDate, setDetailEditDueDate] = useState('');
-  const [detailEditSprintId, setDetailEditSprintId] = useState('');
-  const [detailEditLabels, setDetailEditLabels] = useState([]);
-  const [detailEditLabelDropdownOpen, setDetailEditLabelDropdownOpen] = useState(false);
   const [detailTab, setDetailTab] = useState('comments');
   const [detailHistory, setDetailHistory] = useState([]);
 
@@ -59,33 +58,26 @@ export function useTaskDetail({ activeTab, backlogOpen, showConfirm, closeConfir
     setDetailTab('comments');
   };
 
-  const startDetailEdit = (task) => {
-    setDetailEditing(true);
-    setDetailEditTitle(task.title);
-    setDetailEditDesc(task.description || '');
-    setDetailEditPriority(task.priority || 'medium');
-    setDetailEditAssignedTo(task.assigned_to || '');
-    setDetailEditDueDate(task.due_date || '');
-    setDetailEditSprintId(task.sprint_id || '');
-    setDetailEditLabels(task.labels?.map((l) => l.id) || []);
-  };
+  // Edit state now lives in TaskDetailModal; this just flips the mode flag.
+  const startDetailEdit = () => setDetailEditing(true);
 
-  const saveDetailEdit = () => {
+  // Receives current edit values from TaskDetailModal to avoid state duplication.
+  const saveDetailEdit = (editData) => {
     if (!detailTask) return;
     showConfirm(
       'Save Changes',
-      `Save changes to "${detailEditTitle || detailTask.title}"?`,
+      `Save changes to "${editData.title || detailTask.title}"?`,
       async () => {
         closeConfirm();
         try {
           await updateTask(detailTask.id, {
-            title: detailEditTitle,
-            description: detailEditDesc,
-            priority: detailEditPriority,
-            assigned_to: detailEditAssignedTo || null,
-            due_date: detailEditDueDate || null,
-            sprint_id: detailEditSprintId || null,
-            label_ids: detailEditLabels,
+            title: editData.title,
+            description: editData.description,
+            priority: editData.priority,
+            assigned_to: editData.assignedTo || null,
+            due_date: editData.dueDate || null,
+            sprint_id: editData.sprintId || null,
+            label_ids: editData.labels,
           });
           setDetailEditing(false);
           const res = await getTaskDetail(detailTask.id);
@@ -93,7 +85,7 @@ export function useTaskDetail({ activeTab, backlogOpen, showConfirm, closeConfir
           setDetailComments(res.data.comments || []);
           refreshDetailHistory(detailTask.id);
           fetchTasks();
-          if (backlogOpen || activeTab === 'backlog') fetchBacklog();
+          if (activeTab === 'backlog') fetchBacklog();
         } catch {
           setError('Failed to update item');
         }
@@ -101,6 +93,24 @@ export function useTaskDetail({ activeTab, backlogOpen, showConfirm, closeConfir
       { confirmText: 'Save' }
     );
   };
+
+  const handleAddDetailComment = useCallback(async (content) => {
+    if (!detailTask) return;
+    try {
+      const res = await addTaskComment(detailTask.id, content);
+      setDetailComments(prev => [...prev, res.data]);
+      setTasks(prev => prev.map(t => t.id === detailTask.id ? { ...t, comment_count: (t.comment_count || 0) + 1 } : t));
+      setBacklogTasks(prev => prev.map(t => t.id === detailTask.id ? { ...t, comment_count: (t.comment_count || 0) + 1 } : t));
+    } catch { setError('Failed to add comment'); }
+  }, [detailTask, setTasks, setBacklogTasks, setError]);
+
+  const handleEditDetailComment = useCallback(async (commentId, content) => {
+    if (!detailTask) return;
+    try {
+      const res = await updateTaskComment(detailTask.id, commentId, content);
+      setDetailComments(prev => prev.map(c => c.id === commentId ? res.data : c));
+    } catch { setError('Failed to update comment'); }
+  }, [detailTask, setError]);
 
   const handleDetailDeleteComment = (commentId) => {
     showConfirm(
@@ -110,24 +120,14 @@ export function useTaskDetail({ activeTab, backlogOpen, showConfirm, closeConfir
         closeConfirm();
         try {
           await deleteTaskComment(detailTask.id, commentId);
-          setDetailComments((prev) => prev.filter((c) => c.id !== commentId));
-          setTasks((prev) =>
-            prev.map((t) =>
-              t.id === detailTask.id
-                ? { ...t, comment_count: Math.max(0, (t.comment_count || 1) - 1) }
-                : t
-            )
-          );
-          setBacklogTasks((prev) =>
-            prev.map((t) =>
-              t.id === detailTask.id
-                ? { ...t, comment_count: Math.max(0, (t.comment_count || 1) - 1) }
-                : t
-            )
-          );
-        } catch {
-          setError('Failed to delete comment');
-        }
+          setDetailComments(prev => prev.filter(c => c.id !== commentId));
+          setTasks(prev => prev.map(t =>
+            t.id === detailTask.id ? { ...t, comment_count: Math.max(0, (t.comment_count || 1) - 1) } : t
+          ));
+          setBacklogTasks(prev => prev.map(t =>
+            t.id === detailTask.id ? { ...t, comment_count: Math.max(0, (t.comment_count || 1) - 1) } : t
+          ));
+        } catch { setError('Failed to delete comment'); }
       },
       { confirmText: 'Delete', isDanger: true }
     );
@@ -141,13 +141,11 @@ export function useTaskDetail({ activeTab, backlogOpen, showConfirm, closeConfir
         closeConfirm();
         try {
           await updateTaskStatus(task.id, col.id);
-          setDetailTask((prev) => ({ ...prev, status: col.id }));
+          setDetailTask(prev => ({ ...prev, status: col.id }));
           refreshDetailHistory(task.id);
           fetchTasks();
-          if (backlogOpen || activeTab === 'backlog') fetchBacklog();
-        } catch {
-          setError('Failed to update status');
-        }
+          if (activeTab === 'backlog') fetchBacklog();
+        } catch { setError('Failed to update status'); }
       },
       { confirmText: 'Move' }
     );
@@ -158,18 +156,11 @@ export function useTaskDetail({ activeTab, backlogOpen, showConfirm, closeConfir
     detailComments, setDetailComments,
     detailLoading,
     detailEditing, setDetailEditing,
-    detailEditTitle, setDetailEditTitle,
-    detailEditDesc, setDetailEditDesc,
-    detailEditPriority, setDetailEditPriority,
-    detailEditAssignedTo, setDetailEditAssignedTo,
-    detailEditDueDate, setDetailEditDueDate,
-    detailEditSprintId, setDetailEditSprintId,
-    detailEditLabels, setDetailEditLabels,
-    detailEditLabelDropdownOpen, setDetailEditLabelDropdownOpen,
     detailTab, setDetailTab,
     detailHistory,
     openTaskDetail, closeTaskDetail,
     startDetailEdit, saveDetailEdit,
+    handleAddDetailComment, handleEditDetailComment,
     handleDetailDeleteComment, handleDetailStatusChange,
   };
 }

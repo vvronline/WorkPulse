@@ -4,26 +4,27 @@
    Returns a single "store" object consumed by index.jsx and
    passed down as props to child components.
    ───────────────────────────────────────────────────────── */
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { getNotes, saveNotes } from '../../api';
-import { newPage, newFolder, migratePageModel, getWordCount, stripHtml, getDescendantFolderIds } from './notesUtils';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { newPage, newFolder, getDescendantFolderIds } from './notesUtils';
+import { useNotesPersistence } from './useNotesPersistence';
+import { useNotesFilters } from './useNotesFilters';
+import { useClickOutside } from '../../hooks/useClickOutside';
 
 export function useNotesStore(userId) {
-    /* ── Pages / folders ───────────────────────────────────── */
-    const [pages, setPages] = useState([]);
-    const [folders, setFolders] = useState([]);
-
-    /* ── Active selection ──────────────────────────────────── */
-    const [activePageId, setActivePageId] = useState(null);
+    const {
+        pages, setPages, folders, setFolders,
+        activePageId, setActivePageId,
+        sortBy, setSortBy,
+        savedFlash, setSavedFlash,
+        saveTimerRef, persist, scheduleAutoSave,
+    } = useNotesPersistence(userId);
 
     /* ── UI flags ──────────────────────────────────────────── */
-    const [savedFlash, setSavedFlash] = useState(false);
     const [expanded, setExpanded] = useState(false);
     const [maximized, setMaximized] = useState(false);
     const [embedded, setEmbedded] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
-    const [sortBy, setSortBy] = useState('modified');
     const [showArchived, setShowArchived] = useState(false);
     const [folderFilter, setFolderFilter] = useState('all');
     const [confirmDelete, setConfirmDelete] = useState(false);
@@ -46,7 +47,6 @@ export function useNotesStore(userId) {
     const [dragOverId, setDragOverId] = useState(null);
 
     /* ── Refs ───────────────────────────────────────────────── */
-    const saveTimerRef = useRef(null);
     const renameRef = useRef(null);
     const menuRef = useRef(null);
     const quillRef = useRef(null);
@@ -56,162 +56,10 @@ export function useNotesStore(userId) {
     const pageMenuRef = useRef(null);
     const dragRef = useRef(null);
 
-    // Snapshot refs – used in async callbacks / unmount flush
-    const latestPages = useRef([]);
-    const latestFolders = useRef([]);
-    const latestActiveId = useRef(null);
-    const latestSortBy = useRef('modified');
-    const userIdRef = useRef(userId);
-
-    /* ── Keep snapshot refs in sync ─────────────────────────── */
-    useEffect(() => { latestPages.current = pages; }, [pages]);
-    useEffect(() => { latestFolders.current = folders; }, [folders]);
-    useEffect(() => { latestActiveId.current = activePageId; }, [activePageId]);
-    useEffect(() => { latestSortBy.current = sortBy; }, [sortBy]);
-    useEffect(() => { userIdRef.current = userId; }, [userId]);
-
     /* ── Derived values ─────────────────────────────────────── */
-    const activePage = pages.find(p => p.id === activePageId) || null;
-
-    const wc = useMemo(
-        () => activePage ? getWordCount(activePage.content) : { words: 0, chars: 0 },
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-        [activePage?.content],
-    );
-
-    const processedPages = useMemo(() => {
-        let list = pages.filter(p => showArchived ? p.archived : !p.archived);
-        if (folderFilter !== 'all') {
-            list = folderFilter === 'none'
-                ? list.filter(p => !p.folderId)
-                : list.filter(p => p.folderId === folderFilter);
-        }
-        if (searchQuery.trim()) {
-            const q = searchQuery.toLowerCase();
-            list = list.filter(p =>
-                p.title.toLowerCase().includes(q) ||
-                stripHtml(p.content).toLowerCase().includes(q) ||
-                (p.tags || []).some(t => t.toLowerCase().includes(q)),
-            );
-        }
-        return [...list].sort((a, b) => {
-            if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-            switch (sortBy) {
-                case 'name': return a.title.localeCompare(b.title);
-                case 'created': return new Date(b.createdAt) - new Date(a.createdAt);
-                case 'manual': return (a.sortOrder || 0) - (b.sortOrder || 0);
-                default: return new Date(b.updatedAt) - new Date(a.updatedAt);
-            }
-        });
-    }, [pages, showArchived, folderFilter, searchQuery, sortBy]);
-
-    const dropdownPages = useMemo(() => {
-        let list = pages.filter(p => !p.archived);
-        if (dropdownSearch.trim()) {
-            const q = dropdownSearch.toLowerCase();
-            list = list.filter(p => p.title.toLowerCase().includes(q));
-        }
-        return [...list].sort((a, b) => {
-            if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-            return new Date(b.updatedAt) - new Date(a.updatedAt);
-        });
-    }, [pages, dropdownSearch]);
-
-    /* ── Server persistence ─────────────────────────────────── */
-    const saveToServer = useCallback(async (data) => {
-        try {
-            await saveNotes(data);
-        } catch (e) {
-            console.error('Failed to save notes:', e);
-            if (userIdRef.current)
-                localStorage.setItem('workpulse-notes-' + userIdRef.current, JSON.stringify(data));
-        }
-    }, []);
-
-    const persist = useCallback((pgs, flds, aid, sort) => {
-        saveToServer({
-            pages: pgs ?? latestPages.current,
-            folders: flds ?? latestFolders.current,
-            activePageId: aid ?? latestActiveId.current,
-            sortBy: sort ?? latestSortBy.current,
-        });
-    }, [saveToServer]);
-
-    const scheduleAutoSave = useCallback((pgs, flds, aid) => {
-        clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = setTimeout(() => {
-            persist(pgs, flds, aid);
-            setSavedFlash(true);
-            setTimeout(() => setSavedFlash(false), 2000);
-        }, 10000);
-    }, [persist]);
-
-    /* ── Load on mount ──────────────────────────────────────── */
-    useEffect(() => {
-        if (!userId) return;
-        let cancelled = false;
-        (async () => {
-            try {
-                const res = await getNotes();
-                if (cancelled) return;
-                if (res.data?.data) {
-                    const nb = res.data.data;
-                    const pgs = (nb.pages || []).map(migratePageModel);
-                    const flds = nb.folders || [];
-                    if (pgs.length > 0) {
-                        setPages(pgs);
-                        setFolders(flds);
-                        setActivePageId(nb.activePageId || pgs[0]?.id);
-                        setSortBy(nb.sortBy || 'modified');
-                        return;
-                    }
-                }
-            } catch (e) {
-                console.warn('Could not load from server, checking localStorage:', e.message);
-            }
-            try {
-                const raw = localStorage.getItem('workpulse-notes-' + userId);
-                if (raw) {
-                    const nb = JSON.parse(raw);
-                    if (nb.pages?.length > 0) {
-                        const pgs = nb.pages.map(migratePageModel);
-                        const flds = nb.folders || [];
-                        if (!cancelled) {
-                            setPages(pgs);
-                            setFolders(flds);
-                            setActivePageId(nb.activePageId || pgs[0]?.id);
-                            setSortBy(nb.sortBy || 'modified');
-                            saveToServer({ pages: pgs, folders: flds, activePageId: nb.activePageId || pgs[0]?.id, sortBy: nb.sortBy || 'modified' });
-                        }
-                        return;
-                    }
-                }
-            } catch { /* ignore */ }
-            if (!cancelled) {
-                const first = newPage('My Notes');
-                setPages([first]);
-                setActivePageId(first.id);
-            }
-        })();
-        return () => { cancelled = true; };
-    }, [userId, saveToServer]);
-
-    /* ── Flush on unmount / page unload ─────────────────────── */
-    useEffect(() => {
-        const flush = () => {
-            clearTimeout(saveTimerRef.current);
-            if (userIdRef.current && latestPages.current.length > 0) {
-                const data = {
-                    pages: latestPages.current, folders: latestFolders.current,
-                    activePageId: latestActiveId.current, sortBy: latestSortBy.current,
-                };
-                localStorage.setItem('workpulse-notes-' + userIdRef.current, JSON.stringify(data));
-                saveToServer(data).catch(() => { });
-            }
-        };
-        window.addEventListener('beforeunload', flush);
-        return () => { window.removeEventListener('beforeunload', flush); flush(); };
-    }, [saveToServer]);
+    const { activePage, wc, processedPages, dropdownPages } = useNotesFilters({
+        pages, activePageId, sortBy, showArchived, folderFilter, searchQuery, dropdownSearch,
+    });
 
     /* ── Focus rename input when it mounts ──────────────────── */
     useEffect(() => {
@@ -221,21 +69,8 @@ export function useNotesStore(userId) {
         }
     }, [renamingId]);
 
-    /* ── Close page-switcher dropdown on outside click ──────── */
-    useEffect(() => {
-        if (!menuOpen) return;
-        const h = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false); };
-        document.addEventListener('mousedown', h);
-        return () => document.removeEventListener('mousedown', h);
-    }, [menuOpen]);
-
-    /* ── Close page context menu on outside click ───────────── */
-    useEffect(() => {
-        if (!pageMenu) return;
-        const h = (e) => { if (pageMenuRef.current && !pageMenuRef.current.contains(e.target)) setPageMenu(null); };
-        document.addEventListener('mousedown', h);
-        return () => document.removeEventListener('mousedown', h);
-    }, [pageMenu]);
+    useClickOutside(menuRef, () => setMenuOpen(false), menuOpen);
+    useClickOutside(pageMenuRef, () => setPageMenu(null), !!pageMenu);
 
     /* ── Escape closes maximized modal ─────────────────────── */
     useEffect(() => {

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import CommentSection from '../../components/CommentSection';
@@ -6,11 +6,8 @@ import SprintSelector from '../../components/SprintSelector';
 import LabelSelector from './LabelSelector.jsx';
 import { PRIORITIES, COLUMNS } from './constants.js';
 import { HighlightedHtml, formatDueDate, isDueOverdue, getAvatarUrl } from './utils.jsx';
+import { useTaskCtx } from './TaskContext.jsx';
 import s from './TaskDetailModal.module.css';
-
-function getPriority(p) {
-  return PRIORITIES.find((pr) => pr.value === p) || PRIORITIES[1];
-}
 
 export default function TaskDetailModal({
   detailTask,
@@ -20,30 +17,6 @@ export default function TaskDetailModal({
   detailTab,
   setDetailTab,
   detailHistory,
-  // Edit state
-  detailEditTitle,
-  setDetailEditTitle,
-  detailEditDesc,
-  setDetailEditDesc,
-  detailEditPriority,
-  setDetailEditPriority,
-  detailEditAssignedTo,
-  setDetailEditAssignedTo,
-  detailEditDueDate,
-  setDetailEditDueDate,
-  detailEditSprintId,
-  setDetailEditSprintId,
-  detailEditLabels,
-  setDetailEditLabels,
-  detailEditLabelDropdownOpen,
-  setDetailEditLabelDropdownOpen,
-  // Shared data
-  assignableUsers,
-  orgLabels,
-  availableSprints,
-  currentUser,
-  activeTab,
-  backlogOpen,
   // Callbacks
   onClose,
   onStartEdit,
@@ -56,17 +29,57 @@ export default function TaskDetailModal({
   onSchedule,
   onUnschedule,
   onStatusChange,
-  onToggleLabel,
   showConfirm,
   closeConfirm,
   fetchTasks,
   fetchBacklog,
   setError,
 }) {
+  const { assignableUsers, orgLabels, availableSprints, currentUser, activeTab } = useTaskCtx();
+
+  // Edit state lives here — co-located with the form that uses it.
+  const [editTitle, setEditTitle] = useState('');
+  const [editDesc, setEditDesc] = useState('');
+  const [editPriority, setEditPriority] = useState('medium');
+  const [editAssignedTo, setEditAssignedTo] = useState('');
+  const [editDueDate, setEditDueDate] = useState('');
+  const [editSprintId, setEditSprintId] = useState('');
+  const [editLabels, setEditLabels] = useState([]);
+  const [editLabelDropdownOpen, setEditLabelDropdownOpen] = useState(false);
+
+  // Initialise edit fields from detailTask whenever edit mode is entered.
+  useEffect(() => {
+    if (detailEditing && detailTask) {
+      setEditTitle(detailTask.title);
+      setEditDesc(detailTask.description || '');
+      setEditPriority(detailTask.priority || 'medium');
+      setEditAssignedTo(String(detailTask.assigned_to || ''));
+      setEditDueDate(detailTask.due_date || '');
+      setEditSprintId(detailTask.sprint_id || '');
+      setEditLabels(detailTask.labels?.map(l => l.id) || []);
+      setEditLabelDropdownOpen(false);
+    }
+  }, [detailEditing]);
+
+  const handleSaveEdit = () => {
+    onSaveEdit({
+      title: editTitle,
+      description: editDesc,
+      priority: editPriority,
+      assignedTo: editAssignedTo,
+      dueDate: editDueDate,
+      sprintId: editSprintId,
+      labels: editLabels,
+    });
+  };
+
+  const toggleLabel = (id) => {
+    setEditLabels(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
   if (!detailTask) return null;
 
-  const pri = getPriority(detailTask.priority);
-  const colInfo = COLUMNS.find((c) => c.id === detailTask.status) || COLUMNS[0];
+  const pri = (PRIORITIES.find(pr => pr.value === detailTask.priority) || PRIORITIES[1]);
+  const colInfo = COLUMNS.find(c => c.id === detailTask.status) || COLUMNS[0];
   const dueFmt = formatDueDate(detailTask.due_date);
   const overdue = isDueOverdue(detailTask.due_date) && detailTask.status !== 'done';
   const isBacklogItem = !detailTask.date;
@@ -99,7 +112,7 @@ export default function TaskDetailModal({
               <>
                 <button
                   className="btn btn-secondary btn-sm"
-                  onClick={() => onStartEdit(detailTask)}
+                  onClick={onStartEdit}
                 >
                   ✏️ Edit
                 </button>
@@ -128,8 +141,8 @@ export default function TaskDetailModal({
                 <label>Title</label>
                 <input
                   type="text"
-                  value={detailEditTitle}
-                  onChange={(e) => setDetailEditTitle(e.target.value)}
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
                   className={s['task-edit-input']}
                   autoFocus
                 />
@@ -138,8 +151,8 @@ export default function TaskDetailModal({
                 <label>Description</label>
                 <ReactQuill
                   theme="snow"
-                  value={detailEditDesc}
-                  onChange={setDetailEditDesc}
+                  value={editDesc}
+                  onChange={setEditDesc}
                   placeholder="Description"
                 />
               </div>
@@ -147,8 +160,8 @@ export default function TaskDetailModal({
                 <div className={s['form-extra-group']}>
                   <label>Priority</label>
                   <select
-                    value={detailEditPriority}
-                    onChange={(e) => setDetailEditPriority(e.target.value)}
+                    value={editPriority}
+                    onChange={(e) => setEditPriority(e.target.value)}
                   >
                     {PRIORITIES.map((p) => (
                       <option key={p.value} value={p.value}>
@@ -160,8 +173,8 @@ export default function TaskDetailModal({
                 <div className={s['form-extra-group']}>
                   <label>Assign to</label>
                   <select
-                    value={detailEditAssignedTo}
-                    onChange={(e) => setDetailEditAssignedTo(e.target.value)}
+                    value={editAssignedTo}
+                    onChange={(e) => setEditAssignedTo(e.target.value)}
                   >
                     <option value="">Unassigned</option>
                     {assignableUsers.map((u) => (
@@ -175,29 +188,29 @@ export default function TaskDetailModal({
                   <label>{(isBacklogItem || activeTab === 'backlog') ? 'Due date / Schedule to' : 'Due date'}</label>
                   <input
                     type="date"
-                    value={detailEditDueDate}
-                    onChange={(e) => setDetailEditDueDate(e.target.value)}
+                    value={editDueDate}
+                    onChange={(e) => setEditDueDate(e.target.value)}
                   />
                 </div>
                 <SprintSelector
                   sprints={availableSprints}
-                  selected={detailEditSprintId}
+                  selected={editSprintId}
                   onChange={(id) => {
-                    setDetailEditSprintId(id);
+                    setEditSprintId(id);
                     if (!id) {
-                      setDetailEditDueDate('');
+                      setEditDueDate('');
                     } else {
                       const sp = availableSprints.find((sp) => sp.id === id);
-                      if (sp) setDetailEditDueDate(sp.end_date);
+                      if (sp) setEditDueDate(sp.end_date);
                     }
                   }}
                 />
                 <LabelSelector
                   labels={orgLabels}
-                  selected={detailEditLabels}
-                  onToggle={(id) => onToggleLabel(id, detailEditLabels, setDetailEditLabels)}
-                  open={detailEditLabelDropdownOpen}
-                  setOpen={setDetailEditLabelDropdownOpen}
+                  selected={editLabels}
+                  onToggle={toggleLabel}
+                  open={editLabelDropdownOpen}
+                  setOpen={setEditLabelDropdownOpen}
                 />
 
               </div>
@@ -205,7 +218,7 @@ export default function TaskDetailModal({
                 {isBacklogItem || activeTab === 'backlog' ? (
                   <button
                     className="btn btn-secondary btn-sm"
-                    onClick={() => onSchedule(detailTask.id, detailTask.title, onClose, detailEditDueDate)}
+                    onClick={() => onSchedule(detailTask.id, detailTask.title, onClose, editDueDate)}
                   >
                     📅 Schedule to Day
                   </button>
@@ -217,7 +230,7 @@ export default function TaskDetailModal({
                     📦 Move to Backlog
                   </button>
                 )}
-                <button className="btn btn-primary btn-sm" onClick={onSaveEdit}>
+                <button className="btn btn-primary btn-sm" onClick={handleSaveEdit}>
                   💾 Save Changes
                 </button>
                 <button className="btn btn-secondary btn-sm" onClick={onCancelEdit}>

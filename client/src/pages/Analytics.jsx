@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
+import { formatTime } from '../utils/time';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -22,12 +23,6 @@ ChartJS.register(
   CategoryScale, LinearScale, BarElement, LineElement,
   PointElement, Title, Tooltip, Legend, Filler, ArcElement
 );
-
-function formatTime(totalMinutes) {
-  const hrs = Math.floor(totalMinutes / 60);
-  const mins = totalMinutes % 60;
-  return `${hrs}h ${mins}m`;
-}
 
 export default function Analytics() {
   const [days, setDays] = useState(7);

@@ -52,6 +52,7 @@ export default function GlobalSearch({ onClose }) {
     const inputRef = useRef(null);
     const navigate = useNavigate();
     const debounceRef = useRef(null);
+    const abortCtrlRef = useRef(null);
 
     const userLevel = ROLE_LEVEL[user?.role] || 1;
 
@@ -81,18 +82,28 @@ export default function GlobalSearch({ onClose }) {
 
     const doSearch = useCallback(async (q) => {
         if (q.trim().length < 2) { setResults(null); setError(''); return; }
+        abortCtrlRef.current?.abort();
+        const controller = new AbortController();
+        abortCtrlRef.current = controller;
         setLoading(true);
         setError('');
         try {
-            const res = await globalSearch(q.trim());
+            const res = await globalSearch(q.trim(), controller.signal);
             setResults(res.data);
             setActiveIdx(-1);
-        } catch {
+        } catch (err) {
+            if (err.name === 'CanceledError' || err.code === 'ERR_CANCELED') return;
             setError('Search failed. Please try again.');
             setResults(null);
         } finally {
             setLoading(false);
         }
+    }, []);
+
+    // Abort any pending request and debounce timer on unmount
+    useEffect(() => () => {
+        clearTimeout(debounceRef.current);
+        abortCtrlRef.current?.abort();
     }, []);
 
     const handleChange = (e) => {

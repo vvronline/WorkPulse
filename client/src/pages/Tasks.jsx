@@ -17,6 +17,7 @@ import BacklogTab from './tasks/BacklogTab.jsx';
 import TasksHeader from './tasks/TasksHeader.jsx';
 import TaskDetailModal from './tasks/TaskDetailModal.jsx';
 import InlineCommentPanel from './tasks/InlineCommentPanel.jsx';
+import { TaskProvider } from './tasks/TaskContext.jsx';
 
 import { useConfirmDialog } from './tasks/hooks/useConfirmDialog.js';
 import { useFilters } from './tasks/hooks/useFilters.js';
@@ -39,13 +40,14 @@ export default function Tasks() {
   const [taskToDelete, setTaskToDelete] = useState(null);
   const [carriedCount, setCarriedCount] = useState(0);
   const [activeTab, setActiveTab] = useState('backlog');
-  const [backlogOpen] = useState(false);
   const [availableSprints, setAvailableSprints] = useState([]);
   const [selectedSprintId, setSelectedSprintId] = useState(null);
   const [sprintImportOpen, setSprintImportOpen] = useState(false);
   const [assignableUsers, setAssignableUsers] = useState([]);
   const [orgLabels, setOrgLabels] = useState([]);
   const autoCarriedRef = useRef(null); // stores the last date carry-forward ran
+
+  // backlogOpen was always false — removed dead state
 
   const { confirmDialog, showConfirm, closeConfirm } = useConfirmDialog();
   const filters = useFilters({ activeTab });
@@ -72,12 +74,12 @@ export default function Tasks() {
   }, [date, activeTab, selectedSprintId, filters.plannerFilters]);
 
   const backlog = useBacklog({
-    activeTab, backlogOpen, date,
+    activeTab, backlogOpen: false, date,
     backlogFilters: filters.backlogFilters,
     selectedSprintId, showConfirm, closeConfirm, fetchTasks, setError,
   });
   const detail = useTaskDetail({
-    activeTab, backlogOpen, showConfirm, closeConfirm,
+    activeTab, backlogOpen: false, showConfirm, closeConfirm,
     setTasks, setBacklogTasks: backlog.setBacklogTasks,
     fetchTasks, fetchBacklog: backlog.fetchBacklog, setError,
   });
@@ -138,8 +140,8 @@ export default function Tasks() {
   }, [date, fetchTasks]);
 
   useEffect(() => {
-    if (activeTab === 'backlog' || backlogOpen) backlog.fetchBacklog();
-  }, [activeTab, backlogOpen, backlog.fetchBacklog]);
+    if (activeTab === 'backlog') backlog.fetchBacklog();
+  }, [activeTab, backlog.fetchBacklog]);
 
   const handleDelete = (task) => setTaskToDelete(task);
   const confirmDeleteWithRefresh = async () => {
@@ -184,6 +186,13 @@ export default function Tasks() {
   const summaryAllActive = !filters.filterPriority;
 
   return (
+    <TaskProvider
+      assignableUsers={assignableUsers}
+      orgLabels={orgLabels}
+      availableSprints={availableSprints}
+      currentUser={currentUser}
+      activeTab={activeTab}
+    >
     <div className={s['tasks-page']}>
       <TasksHeader
         activeTab={activeTab}
@@ -191,10 +200,8 @@ export default function Tasks() {
         date={date}
         setDate={setDate}
         isToday={isToday}
-        availableSprints={availableSprints}
         selectedSprintId={selectedSprintId}
         setSelectedSprintId={setSelectedSprintId}
-        currentUser={currentUser}
         backlogTasks={backlog.backlogTasks}
         filterCount={filters.filterCount}
         filtersOpen={filters.filtersOpen}
@@ -209,8 +216,6 @@ export default function Tasks() {
         setFilterStatus={filters.setFilterStatus}
         filterSearch={filters.filterSearch}
         setFilterSearch={filters.setFilterSearch}
-        assignableUsers={assignableUsers}
-        orgLabels={orgLabels}
         globalSearch={globalSearch.globalSearch}
         globalResults={globalSearch.globalResults}
         globalSearching={globalSearch.globalSearching}
@@ -326,9 +331,6 @@ export default function Tasks() {
           setScheduleTaskId={backlog.setScheduleTaskId}
           scheduleDate={backlog.scheduleDate}
           setScheduleDate={backlog.setScheduleDate}
-          assignableUsers={assignableUsers}
-          orgLabels={orgLabels}
-          availableSprints={availableSprints}
           filterPriority={filters.filterPriority}
           summaryAllActive={summaryAllActive}
           error={error}
@@ -366,52 +368,17 @@ export default function Tasks() {
         detailTab={detail.detailTab}
         setDetailTab={detail.setDetailTab}
         detailHistory={detail.detailHistory}
-        detailEditTitle={detail.detailEditTitle}
-        setDetailEditTitle={detail.setDetailEditTitle}
-        detailEditDesc={detail.detailEditDesc}
-        setDetailEditDesc={detail.setDetailEditDesc}
-        detailEditPriority={detail.detailEditPriority}
-        setDetailEditPriority={detail.setDetailEditPriority}
-        detailEditAssignedTo={detail.detailEditAssignedTo}
-        setDetailEditAssignedTo={detail.setDetailEditAssignedTo}
-        detailEditDueDate={detail.detailEditDueDate}
-        setDetailEditDueDate={detail.setDetailEditDueDate}
-        detailEditSprintId={detail.detailEditSprintId}
-        setDetailEditSprintId={detail.setDetailEditSprintId}
-        detailEditLabels={detail.detailEditLabels}
-        setDetailEditLabels={detail.setDetailEditLabels}
-        detailEditLabelDropdownOpen={detail.detailEditLabelDropdownOpen}
-        setDetailEditLabelDropdownOpen={detail.setDetailEditLabelDropdownOpen}
-        assignableUsers={assignableUsers}
-        orgLabels={orgLabels}
-        availableSprints={availableSprints}
-        currentUser={currentUser}
-        activeTab={activeTab}
-        backlogOpen={backlogOpen}
         onClose={detail.closeTaskDetail}
         onStartEdit={detail.startDetailEdit}
         onSaveEdit={detail.saveDetailEdit}
         onCancelEdit={() => detail.setDetailEditing(false)}
         onDelete={handleDelete}
-        onAddComment={async (content) => {
-          try {
-            const res = await addTaskComment(detail.detailTask.id, content);
-            detail.setDetailComments((prev) => [...prev, res.data]);
-            setTasks((prev) => prev.map((t) => t.id === detail.detailTask.id ? { ...t, comment_count: (t.comment_count || 0) + 1 } : t));
-            backlog.setBacklogTasks((prev) => prev.map((t) => t.id === detail.detailTask.id ? { ...t, comment_count: (t.comment_count || 0) + 1 } : t));
-          } catch { setError('Failed to add comment'); }
-        }}
-        onEditComment={async (commentId, content) => {
-          try {
-            const res = await updateTaskComment(detail.detailTask.id, commentId, content);
-            detail.setDetailComments((prev) => prev.map((c) => (c.id === commentId ? res.data : c)));
-          } catch { setError('Failed to update comment'); }
-        }}
+        onAddComment={detail.handleAddDetailComment}
+        onEditComment={detail.handleEditDetailComment}
         onDeleteComment={detail.handleDetailDeleteComment}
         onSchedule={backlog.handleScheduleTask}
         onUnschedule={backlog.handleUnscheduleTask}
         onStatusChange={detail.handleDetailStatusChange}
-        onToggleLabel={toggleLabel}
         showConfirm={showConfirm}
         closeConfirm={closeConfirm}
         fetchTasks={fetchTasks}
@@ -439,5 +406,6 @@ export default function Tasks() {
         onCancel={closeConfirm}
       />
     </div>
+    </TaskProvider>
   );
 }

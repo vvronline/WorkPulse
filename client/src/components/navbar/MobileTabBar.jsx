@@ -1,0 +1,88 @@
+import { useState, useRef } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
+import { useAuth } from '../../AuthContext';
+import { useChatUnread } from '../../ChatContext';
+import { useClickOutside } from '../../hooks/useClickOutside';
+import s from '../Navbar.module.css';
+
+const ROLE_LEVELS = { employee: 1, team_lead: 2, manager: 3, hr_admin: 4, super_admin: 5 };
+
+export default function MobileTabBar() {
+    const { user } = useAuth();
+    const location = useLocation();
+    const { unreadCount: chatUnread } = useChatUnread();
+    const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+    const mobileMoreRef = useRef(null);
+
+    useClickOutside(mobileMoreRef, () => setMobileMoreOpen(false));
+
+    const userLevel = ROLE_LEVELS[user?.role] || 1;
+    const isTeamLead = userLevel >= 2 || user?.has_reports;
+    const isHR = userLevel >= 4;
+
+    const moreItems = [
+        { to: '/manual-entry', label: 'Manual Entry', icon: '📝' },
+    ];
+    if (user?.org_id) moreItems.push({ to: '/organization', label: 'Organization', icon: '🏢' });
+    if (user?.org_id) moreItems.push({ to: '/leave-policy', label: 'Leave Policy', icon: '📋' });
+    if (isTeamLead) moreItems.push({ to: '/manager', label: 'My Team', icon: '👥' });
+    if (isHR) moreItems.push({ to: '/admin', label: 'Admin', icon: '⚙️' });
+
+    const p = location.pathname;
+
+    return (
+        <div className={s['mobile-tab-bar']}>
+            <NavLink to="/" className={p === '/' ? s.active : ''}>
+                <span className={s['nav-icon']}>🏠</span>
+                <span className={s['tab-label']}>Dashboard</span>
+            </NavLink>
+            <NavLink to="/calendar" className={p === '/calendar' ? s.active : ''}>
+                <span className={s['nav-icon']}>📅</span>
+                <span className={s['tab-label']}>Calendar</span>
+            </NavLink>
+            <NavLink to="/tasks" className={p === '/tasks' ? s.active : ''}>
+                <span className={s['nav-icon']}>📋</span>
+                <span className={s['tab-label']}>Tasks</span>
+            </NavLink>
+            <NavLink to="/notes" className={p === '/notes' ? s.active : ''}>
+                <span className={s['nav-icon']}>📝</span>
+                <span className={s['tab-label']}>Notes</span>
+            </NavLink>
+            <NavLink to="/chat" className={`${p === '/chat' ? s.active : ''} ${s.chatLink}`}>
+                <span className={s['nav-icon']}>💬</span>
+                <span className={s['tab-label']}>Chat</span>
+                {chatUnread > 0 && <span className={s.chatBadge}>{chatUnread > 99 ? '99+' : chatUnread}</span>}
+            </NavLink>
+            <NavLink to="/leaves" className={p === '/leaves' ? s.active : ''}>
+                <span className={s['nav-icon']}>🏖️</span>
+                <span className={s['tab-label']}>Leaves</span>
+            </NavLink>
+            <NavLink to="/analytics" className={p === '/analytics' ? s.active : ''}>
+                <span className={s['nav-icon']}>📈</span>
+                <span className={s['tab-label']}>Analytics</span>
+            </NavLink>
+            <div className={s['mobile-more-wrapper']} ref={mobileMoreRef}>
+                <button
+                    className={`${s['mobile-more-btn']} ${mobileMoreOpen ? s.active : ''}`}
+                    onClick={() => setMobileMoreOpen(prev => !prev)}
+                >
+                    <span className={s['nav-icon']}>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                            <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                        </svg>
+                    </span>
+                    <span className={s['tab-label']}>More</span>
+                </button>
+                {mobileMoreOpen && (
+                    <div className={s['mobile-more-popup']}>
+                        {moreItems.map(item => (
+                            <NavLink key={item.to} to={item.to} onClick={() => setMobileMoreOpen(false)}>
+                                <span>{item.icon}</span> {item.label}
+                            </NavLink>
+                        ))}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}

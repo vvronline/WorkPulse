@@ -2,6 +2,7 @@ import React from 'react';
 import { PRIORITIES, COLUMNS } from './constants.js';
 import { formatDate } from './utils.jsx';
 import { getLocalToday } from '../../api';
+import { useTaskCtx } from './TaskContext.jsx';
 import s from './TasksHeader.module.css';
 
 export default function TasksHeader({
@@ -10,10 +11,8 @@ export default function TasksHeader({
   date,
   setDate,
   isToday,
-  availableSprints,
   selectedSprintId,
   setSelectedSprintId,
-  currentUser,
   backlogTasks,
   filterCount,
   filtersOpen,
@@ -28,8 +27,6 @@ export default function TasksHeader({
   setFilterStatus,
   filterSearch,
   setFilterSearch,
-  assignableUsers,
-  orgLabels,
   globalSearch,
   globalResults,
   globalSearching,
@@ -43,6 +40,7 @@ export default function TasksHeader({
   fetchBacklog,
   clearFilters,
 }) {
+  const { assignableUsers, orgLabels, availableSprints, currentUser } = useTaskCtx();
   const currentSprint = availableSprints.find((sp) => sp.id === selectedSprintId);
   const teamName = currentUser?.team_name || 'Team';
   const daysLeft = currentSprint

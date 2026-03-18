@@ -6,6 +6,7 @@ import LabelSelector from './LabelSelector.jsx';
 import { PRIORITIES, COLUMNS } from './constants.js';
 import { formatDueDate, formatRelativeTime, isDueOverdue, stripHtml, getAvatarUrl } from './utils.jsx';
 import { getLocalToday } from '../../api';
+import { useTaskCtx } from './TaskContext.jsx';
 import s from './BacklogTab.module.css';
 
 function getPriority(p) {
@@ -41,9 +42,6 @@ export default function BacklogTab({
   setScheduleTaskId,
   scheduleDate,
   setScheduleDate,
-  assignableUsers,
-  orgLabels,
-  availableSprints,
   filterPriority,
   summaryAllActive,
   error,
@@ -54,6 +52,7 @@ export default function BacklogTab({
   onHandleSummaryPriority,
   onToggleLabel,
 }) {
+  const { assignableUsers, orgLabels, availableSprints } = useTaskCtx();
   return (
     <>
       {error && <div className="error-msg error-msg-mb">{error}</div>}

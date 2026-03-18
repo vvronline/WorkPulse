@@ -53,7 +53,15 @@ export const forgotPassword = (data) => API.post('/auth/forgot-password', data);
 export const resetPassword = (data) => API.post('/auth/reset-password', data);
 
 // Tracker
-export const getStatus = () => API.get('/tracker/status');
+// getStatus is deduplicated: concurrent calls within the same event loop
+// tick share a single HTTP request (e.g. Dashboard + WorkStateContext on mount).
+let _statusInFlight = null;
+export const getStatus = () => {
+    if (!_statusInFlight) {
+        _statusInFlight = API.get('/tracker/status').finally(() => { _statusInFlight = null; });
+    }
+    return _statusInFlight;
+};
 export const clockIn = (workMode) => API.post('/tracker/clock-in', { work_mode: workMode || 'office' });
 export const breakStart = () => API.post('/tracker/break-start');
 export const breakEnd = () => API.post('/tracker/break-end');
@@ -247,7 +255,7 @@ export const exportPayrollHours = (from, to, format = 'csv') =>
     API.get('/export/payroll-hours', { params: { from, to, format }, responseType: 'blob' });
 
 // Global Search
-export const globalSearch = (q) => API.get('/search', { params: { q } });
+export const globalSearch = (q, signal) => API.get('/search', { params: { q }, ...(signal && { signal }) });
 
 // Pay Periods
 export const getPayPeriods = () => API.get('/admin/pay-periods');

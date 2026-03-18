@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../AuthContext';
 import { updateProfile, updateEmail, updatePassword, deleteAccount } from '../api';
 import PasswordInput from './PasswordInput';
-import { useAutoDismiss } from '../hooks/useAutoDismiss';
+import { useAsyncAction } from '../hooks/useAsyncAction';
 import s from './EditProfileModal.module.css';
 
 export default function EditProfileModal({ onClose }) {
@@ -44,94 +44,67 @@ export default function EditProfileModal({ onClose }) {
     // Section: profile
     const [fullName, setFullName] = useState(user?.full_name || '');
     const [username, setUsername] = useState(user?.username || '');
-    const [profileMsg, setProfileMsg] = useAutoDismiss(null);
-    const [profileLoading, setProfileLoading] = useState(false);
+    const profileAction = useAsyncAction();
 
     // Section: email
     const [email, setEmail] = useState(user?.email || '');
-    const [emailMsg, setEmailMsg] = useAutoDismiss(null);
-    const [emailLoading, setEmailLoading] = useState(false);
+    const emailAction = useAsyncAction();
 
     // Section: password
     const [curPw, setCurPw] = useState('');
     const [newPw, setNewPw] = useState('');
     const [confirmPw, setConfirmPw] = useState('');
-    const [pwMsg, setPwMsg] = useAutoDismiss(null);
-    const [pwLoading, setPwLoading] = useState(false);
+    const pwAction = useAsyncAction();
 
     // Section: delete
     const [deletePw, setDeletePw] = useState('');
     const [deleteConfirm, setDeleteConfirm] = useState(false);
-    const [deleteMsg, setDeleteMsg] = useAutoDismiss(null);
-    const [deleteLoading, setDeleteLoading] = useState(false);
+    const deleteAction = useAsyncAction();
 
-    const handleProfileSave = async (e) => {
+    const handleProfileSave = (e) => {
         e.preventDefault();
-        setProfileLoading(true);
-        setProfileMsg(null);
-        try {
+        profileAction.run(async () => {
             const { data } = await updateProfile({ full_name: fullName, username });
             updateUser({ full_name: data.full_name, username: data.username });
-            setProfileMsg({ ok: true, text: 'Profile updated!' });
-        } catch (err) {
-            setProfileMsg({ ok: false, text: err.response?.data?.error || 'Failed to update profile' });
-        } finally {
-            setProfileLoading(false);
-        }
+            return 'Profile updated!';
+        });
     };
 
-    const handleEmailSave = async (e) => {
+    const handleEmailSave = (e) => {
         e.preventDefault();
-        setEmailLoading(true);
-        setEmailMsg(null);
-        try {
+        emailAction.run(async () => {
             await updateEmail(email);
             updateUser({ email });
-            setEmailMsg({ ok: true, text: 'Email updated!' });
-        } catch (err) {
-            setEmailMsg({ ok: false, text: err.response?.data?.error || 'Failed to update email' });
-        } finally {
-            setEmailLoading(false);
-        }
+            return 'Email updated!';
+        });
     };
 
-    const handlePasswordSave = async (e) => {
+    const handlePasswordSave = (e) => {
         e.preventDefault();
-        setPwMsg(null);
         if (newPw !== confirmPw) {
-            setPwMsg({ ok: false, text: 'New passwords do not match' });
+            pwAction.run(async () => { throw { response: { data: { error: 'New passwords do not match' } } }; });
             return;
         }
         if (newPw.length < 8) {
-            setPwMsg({ ok: false, text: 'Password must be at least 8 characters' });
+            pwAction.run(async () => { throw { response: { data: { error: 'Password must be at least 8 characters' } } }; });
             return;
         }
-        setPwLoading(true);
-        try {
+        pwAction.run(async () => {
             await updatePassword({ current_password: curPw, new_password: newPw });
             setCurPw(''); setNewPw(''); setConfirmPw('');
-            setPwMsg({ ok: true, text: 'Password changed successfully!' });
-        } catch (err) {
-            setPwMsg({ ok: false, text: err.response?.data?.error || 'Failed to change password' });
-        } finally {
-            setPwLoading(false);
-        }
+            return 'Password changed successfully!';
+        });
     };
 
-    const handleDeleteAccount = async () => {
+    const handleDeleteAccount = () => {
         if (!deletePw) {
-            setDeleteMsg({ ok: false, text: 'Please enter your password to confirm' });
+            deleteAction.run(async () => { throw { response: { data: { error: 'Please enter your password to confirm' } } }; });
             return;
         }
-        setDeleteLoading(true);
-        setDeleteMsg(null);
-        try {
+        deleteAction.run(async () => {
             await deleteAccount(deletePw);
             logout();
-        } catch (err) {
-            setDeleteMsg({ ok: false, text: err.response?.data?.error || 'Failed to delete account' });
-            setDeleteLoading(false);
-        }
+        });
     };
 
     return (
@@ -171,9 +144,9 @@ export default function EditProfileModal({ onClose }) {
                                     />
                                 </div>
                             </div>
-                            {profileMsg && <p className={profileMsg.ok ? s.success : s.error}>{profileMsg.text}</p>}
-                            <button type="submit" className={s.saveBtn} disabled={profileLoading}>
-                                {profileLoading ? 'Saving…' : 'Save Changes'}
+                            {profileAction.msg && <p className={profileAction.msg.ok ? s.success : s.error}>{profileAction.msg.text}</p>}
+                            <button type="submit" className={s.saveBtn} disabled={profileAction.loading}>
+                                {profileAction.loading ? 'Saving…' : 'Save Changes'}
                             </button>
                         </form>
                     </section>
@@ -194,9 +167,9 @@ export default function EditProfileModal({ onClose }) {
                                     required
                                 />
                             </div>
-                            {emailMsg && <p className={emailMsg.ok ? s.success : s.error}>{emailMsg.text}</p>}
-                            <button type="submit" className={s.saveBtn} disabled={emailLoading}>
-                                {emailLoading ? 'Saving…' : 'Update Email'}
+                            {emailAction.msg && <p className={emailAction.msg.ok ? s.success : s.error}>{emailAction.msg.text}</p>}
+                            <button type="submit" className={s.saveBtn} disabled={emailAction.loading}>
+                                {emailAction.loading ? 'Saving…' : 'Update Email'}
                             </button>
                         </form>
                     </section>
@@ -234,9 +207,9 @@ export default function EditProfileModal({ onClose }) {
                                     required
                                 />
                             </div>
-                            {pwMsg && <p className={pwMsg.ok ? s.success : s.error}>{pwMsg.text}</p>}
-                            <button type="submit" className={s.saveBtn} disabled={pwLoading}>
-                                {pwLoading ? 'Saving…' : 'Change Password'}
+                            {pwAction.msg && <p className={pwAction.msg.ok ? s.success : s.error}>{pwAction.msg.text}</p>}
+                            <button type="submit" className={s.saveBtn} disabled={pwAction.loading}>
+                                {pwAction.loading ? 'Saving…' : 'Change Password'}
                             </button>
                         </form>
                     </section>
@@ -262,14 +235,14 @@ export default function EditProfileModal({ onClose }) {
                                     placeholder="Your password"
                                     className={s.deleteInput}
                                 />
-                                {deleteMsg && <p className={s.error}>{deleteMsg.text}</p>}
+                                {deleteAction.msg && <p className={s.error}>{deleteAction.msg.text}</p>}
                                 <div className={s.deleteActions}>
                                     <button
                                         className={s.dangerBtnConfirm}
                                         onClick={handleDeleteAccount}
-                                        disabled={deleteLoading}
+                                        disabled={deleteAction.loading}
                                     >
-                                        {deleteLoading ? 'Deleting…' : '🗑 Yes, Delete Forever'}
+                                        {deleteAction.loading ? 'Deleting…' : '🗑 Yes, Delete Forever'}
                                     </button>
                                     <button
                                         className={s.cancelBtn}

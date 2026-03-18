@@ -14,6 +14,7 @@ import AxiosInterceptor from './components/AxiosInterceptor';
 import ErrorBoundary from './components/ErrorBoundary';
 import { ToastProvider } from './components/Toast';
 import { ChatProvider } from './ChatContext';
+import PageSkeleton from './components/PageSkeleton';
 
 // Lazy-load non-critical pages for smaller initial bundle
 const Analytics = lazy(() => import('./pages/Analytics'));
@@ -58,7 +59,7 @@ function AppRoutes() {
     <div className="app">
       <ErrorBoundary resetKey={location.pathname}>
       {isAuthenticated && <Navbar />}
-      <Suspense fallback={<div style={{ maxWidth: '1400px', margin: '2rem auto', padding: '0 2.5rem' }}><div className="status-card"><div className="loading-spinner"><div className="spinner"></div></div></div></div>}>
+      <Suspense fallback={<PageSkeleton />}>
         <Routes>
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
           <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
