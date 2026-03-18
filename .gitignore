@@ -3,6 +3,9 @@ node_modules/
 *.db
 *.db-shm
 *.db-wal
+*.log
+server-log.txt
+server-output.log
 client/dist/
 server/uploads/
 server/data/
