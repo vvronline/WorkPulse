@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useDashboardData, CONFETTI_PIECES } from '../hooks/useDashboardData';
 import TimerCard from './dashboard/TimerCard';
 import DashboardSkeleton from './dashboard/DashboardSkeleton';
@@ -18,6 +19,7 @@ function getGreeting() {
 }
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const {
     user, state, loading, actionLoading, error,
     workMode, setWorkMode,
@@ -33,6 +35,7 @@ export default function Dashboard() {
     showClockOutConfirm, setShowClockOutConfirm,
     handleClockIn, handleBreakStart, handleBreakEnd, handleConfirmClockOut,
     radius, circumference, strokeDashoffset,
+    dailyTargetMet, targetMinutes,
   } = useDashboardData();
 
   if (loading) return <DashboardSkeleton />;
@@ -86,6 +89,9 @@ export default function Dashboard() {
           mandatoryRemaining={mandatoryRemaining}
           estimatedClockOut={estimatedClockOut}
           overtimeMinutes={overtimeMinutes}
+          targetMinutes={targetMinutes}
+          dailyTargetMet={dailyTargetMet}
+          onOvertimeRequest={() => navigate('/manual-entry')}
           weeklyData={weeklyData}
           actionLoading={actionLoading}
           error={error}
@@ -107,9 +113,9 @@ export default function Dashboard() {
 
       <ConfirmDialog
         isOpen={showClockOutConfirm}
-        title="Clock Out"
-        message={`You've worked ${formatTime(floorMinutes)} today${!completedMandatory ? ` (${formatTime(mandatoryRemaining)} short of 8hr minimum)` : ''}. Are you sure you want to clock out?`}
-        confirmText={actionLoading === 'clockOut' ? 'Clocking out...' : 'Clock Out'}
+        title="Logout"
+        message={`You've worked ${formatTime(floorMinutes)} today${!completedMandatory ? ` (${formatTime(mandatoryRemaining)} short of the daily target)` : ''}. Are you sure you want to logout?`}
+        confirmText={actionLoading === 'clockOut' ? 'Logging out...' : 'Logout'}
         onConfirm={handleConfirmClockOut}
         onCancel={() => setShowClockOutConfirm(false)}
       />

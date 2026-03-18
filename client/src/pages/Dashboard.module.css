@@ -645,6 +645,23 @@
   font-weight: 600;
 }
 
+.daily-target-met-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  width: 100%;
+}
+
+.daily-target-met-msg {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fbbf24;
+  text-align: center;
+}
+
 /* ETA / Overtime under timer */
 .timer-under-badges {
   display: flex;

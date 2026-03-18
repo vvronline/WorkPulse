@@ -140,6 +140,8 @@ export function useDashboardData() {
     }, [fetchStatus, resetTimer]);
 
     const state = status?.state || 'logged_out';
+    const targetMinutes = status?.targetMinutes ?? MANDATORY_HOURS;
+    const dailyTargetMet = status?.dailyTargetMet ?? false;
 
     // Sync work state & mode to shared context so Navbar can read them
     useEffect(() => { setWorkState(state); }, [state, setWorkState]);
@@ -148,7 +150,7 @@ export function useDashboardData() {
     const displayFloorSec = state === 'logged_out' ? 0 : liveFloorSec;
     const displayBreakSec = state === 'logged_out' ? 0 : liveBreakSec;
     const floorMinutes = Math.floor(displayFloorSec / 60);
-    const progressPercent = Math.min((floorMinutes / TARGET_HOURS) * 100, 100);
+    const progressPercent = Math.min((floorMinutes / targetMinutes) * 100, 100);
 
     const clockInEntry = status?.entries?.find(e => e.entry_type === 'clock_in');
     const clockInTime = useMemo(() =>
@@ -172,20 +174,20 @@ export function useDashboardData() {
         [status?.entries],
     );
 
-    const completedTarget = floorMinutes >= TARGET_HOURS;
-    const completedMandatory = floorMinutes >= MANDATORY_HOURS;
-    const remaining = Math.max(0, TARGET_HOURS - floorMinutes);
-    const mandatoryRemaining = Math.max(0, MANDATORY_HOURS - floorMinutes);
+    const completedTarget = floorMinutes >= targetMinutes;
+    const completedMandatory = completedTarget;
+    const remaining = Math.max(0, targetMinutes - floorMinutes);
+    const mandatoryRemaining = remaining;
     const isWeekend = status?.isWeekend;
-    const overtimeMinutes = Math.max(0, floorMinutes - TARGET_HOURS);
+    const overtimeMinutes = Math.max(0, floorMinutes - targetMinutes);
 
     const estimatedClockOut = useMemo(() => {
         if (state !== 'on_floor' || completedTarget) return null;
-        const remainingSec = (TARGET_HOURS * 60) - liveFloorSec;
+        const remainingSec = (targetMinutes * 60) - liveFloorSec;
         if (remainingSec <= 0) return null;
         const est = new Date(Date.now() + remainingSec * 1000);
         return est.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    }, [state, completedTarget, liveFloorSec]);
+    }, [state, completedTarget, liveFloorSec, targetMinutes]);
 
     const radius = 90;
     const circumference = 2 * Math.PI * radius;
@@ -216,5 +218,6 @@ export function useDashboardData() {
         handleClockIn, handleBreakStart, handleBreakEnd, handleConfirmClockOut,
         radius, circumference, strokeDashoffset,
         displayFloorSec, displayBreakSec,
+        dailyTargetMet, targetMinutes,
     };
 }

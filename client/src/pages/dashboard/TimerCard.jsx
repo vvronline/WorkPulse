@@ -1,6 +1,5 @@
 import WeeklyChart from '../../components/WeeklyChart';
 import { formatTime, formatTimeSec } from '../../utils/time';
-import { TARGET_HOURS, MANDATORY_HOURS } from '../../hooks/useDashboardData';
 import s from '../Dashboard.module.css';
 
 function getStateLabel(state, mode) {
@@ -21,6 +20,7 @@ export default function TimerCard({
     progressPercent, progressColor, radius, circumference, strokeDashoffset,
     completedTarget, completedMandatory, remaining, mandatoryRemaining,
     estimatedClockOut, overtimeMinutes,
+    targetMinutes, dailyTargetMet, onOvertimeRequest,
     weeklyData,
     actionLoading, error,
     handleClockIn, handleBreakStart, handleBreakEnd, onClockOut,
@@ -88,7 +88,7 @@ export default function TimerCard({
                     <div className={s['timer-under-badges']}>
                         {estimatedClockOut && (
                             <div className={s['eta-banner']}>
-                                <span className="page-icon">🕐</span> 9hrs by <strong>{estimatedClockOut}</strong>
+                                <span className="page-icon">🕐</span> {Math.round(targetMinutes / 60)}hr by <strong>{estimatedClockOut}</strong>
                             </div>
                         )}
                         {overtimeMinutes > 0 && (
@@ -134,48 +134,27 @@ export default function TimerCard({
                 </div>
             </div>
 
-            {/* Linear progress bar (visible while clocked in) */}
-            {state !== 'logged_out' && (
-                <div className={s['progress-section']}>
-                    <div className={s['progress-text']}>
-                        <span>{formatTime(floorMinutes)} of {formatTime(TARGET_HOURS)}</span>
-                        <span>{Math.round(progressPercent)}%{!completedTarget ? ` • ${formatTime(remaining)} left` : ''}</span>
-                    </div>
-                    <div className={s['progress-bar-container']}>
-                        <div
-                            className={s['progress-bar-fill']}
-                            style={{
-                                '--progress-width': `${progressPercent}%`,
-                                '--progress-bg': `linear-gradient(90deg, ${progressColor.color}, ${progressColor.color}dd)`,
-                            }}
-                        />
-                        <div
-                            className={s['mandatory-marker']}
-                            style={{ '--marker-left': `${(MANDATORY_HOURS / TARGET_HOURS) * 100}%` }}
-                            title="8hr mandatory"
-                        >
-                            <span className={s['mandatory-marker-label']}>8h</span>
-                        </div>
-                    </div>
-                </div>
-            )}
 
-            {completedMandatory && !completedTarget && (
-                <div className={s['mandatory-complete-banner']}>
-                    ✅ 8hr mandatory complete! {formatTime(remaining)} to full 9hr target.
-                </div>
-            )}
+
             {completedTarget && (
                 <div className={s['go-home-banner']}>
-                    🎉 9 hours complete! Great work today.
+                    🎉 Daily target complete! Great work today.
                 </div>
             )}
 
             {error && <div className="error-msg error-msg-mt">{error}</div>}
 
-            {/* Clock in / break / clock out buttons */}
+            {/* Action buttons */}
             <div className={s['action-buttons']}>
-                {state === 'logged_out' && !isWeekend && (
+                {state === 'logged_out' && !isWeekend && dailyTargetMet && (
+                    <div className={s['daily-target-met-state']}>
+                        <p className={s['daily-target-met-msg']}>🎯 Daily target complete! Need to keep working?</p>
+                        <button className="btn btn-warning" onClick={onOvertimeRequest}>
+                            ⚡ Apply for Overtime
+                        </button>
+                    </div>
+                )}
+                {state === 'logged_out' && !isWeekend && !dailyTargetMet && (
                     <>
                         <div className={s['work-mode-toggle']}>
                             <button
@@ -192,7 +171,7 @@ export default function TimerCard({
                             </button>
                         </div>
                         <button className="btn btn-success" onClick={handleClockIn} disabled={!!actionLoading}>
-                            {actionLoading === 'clockIn' ? 'Clocking in...' : '▶ Clock In'}
+                            {actionLoading === 'clockIn' ? 'Logging in...' : '▶ Login'}
                         </button>
                     </>
                 )}
@@ -202,7 +181,7 @@ export default function TimerCard({
                             {actionLoading === 'breakStart' ? 'Starting...' : '☕ Break'}
                         </button>
                         <button className="btn btn-danger" onClick={onClockOut} disabled={!!actionLoading}>
-                            ⏹ Clock Out
+                            ⏹ Logout
                         </button>
                     </>
                 )}
@@ -212,7 +191,7 @@ export default function TimerCard({
                             {actionLoading === 'breakEnd' ? 'Resuming...' : '▶ Resume'}
                         </button>
                         <button className="btn btn-danger" onClick={onClockOut} disabled={!!actionLoading}>
-                            ⏹ Clock Out
+                            ⏹ Logout
                         </button>
                     </>
                 )}

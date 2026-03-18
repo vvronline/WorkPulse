@@ -135,11 +135,11 @@ export default function ManualEntry() {
     setSuccess('');
 
     if (!date || !clockIn) {
-      setError('Please fill in date and clock-in time');
+      setError('Please fill in date and login time');
       return;
     }
     if (!skipClockOut && !clockOut) {
-      setError('Please fill in clock-out time, or check "Still working" to skip it');
+      setError('Please fill in logout time, or check "Still working" to skip it');
       return;
     }
 
@@ -242,7 +242,7 @@ export default function ManualEntry() {
                 <div className={s['warning-header']}>🔴 You're currently clocked in</div>
                 <p className={s['warning-helper-text']}>
                   Manual entry for today is only allowed after you've clocked out.
-                  Please clock out from the Dashboard first.
+                  Please logout from the Dashboard first.
                 </p>
               </div>
             )}

@@ -78,7 +78,8 @@ describe('GET /api/tracker/status', () => {
     test('returns logged_out state when no entries', async () => {
         mockQuery
             .mockResolvedValueOnce({ rows: [{ token_version: 0 }], rowCount: 1 }) // auth
-            .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // time_entries query
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 })                      // org join (no org)
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 });                     // time_entries
 
         const res = await request(app)
             .get('/api/tracker/status')
@@ -91,10 +92,11 @@ describe('GET /api/tracker/status', () => {
     test('returns on_floor state after clock_in', async () => {
         mockQuery
             .mockResolvedValueOnce({ rows: [{ token_version: 0 }], rowCount: 1 }) // auth
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 })                      // org join (no org)
             .mockResolvedValueOnce({
                 rows: [{ entry_type: 'clock_in', timestamp: new Date().toISOString(), work_mode: 'office' }],
                 rowCount: 1,
-            });
+            });                                                                    // time_entries
 
         const res = await request(app)
             .get('/api/tracker/status')
@@ -102,6 +104,51 @@ describe('GET /api/tracker/status', () => {
             .set('X-Timezone-Offset', '-330');
         expect(res.status).toBe(200);
         expect(res.body.state).toBe('on_floor');
+    });
+
+    test('returns targetMinutes and dailyTargetMet in response', async () => {
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ token_version: 0 }], rowCount: 1 })      // auth
+            .mockResolvedValueOnce({ rows: [{ work_hours_per_day: 9 }], rowCount: 1 }) // org join (9hr target)
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 });                         // time_entries
+
+        const res = await request(app)
+            .get('/api/tracker/status')
+            .set('Cookie', authCookie())
+            .set('X-Timezone-Offset', '-330');
+        expect(res.status).toBe(200);
+        expect(res.body.targetMinutes).toBe(540);
+        expect(res.body.dailyTargetMet).toBe(false);
+        expect(res.body.autoLoggedOut).toBe(false);
+    });
+
+    test('auto clocks out when daily target is met', async () => {
+        const nineHoursAgo = new Date(Date.now() - 9 * 60 * 60 * 1000).toISOString();
+        const nowTs = new Date().toISOString();
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ token_version: 0 }], rowCount: 1 })      // auth
+            .mockResolvedValueOnce({ rows: [{ work_hours_per_day: 8 }], rowCount: 1 }) // org join (8hr target)
+            .mockResolvedValueOnce({
+                rows: [{ entry_type: 'clock_in', timestamp: nineHoursAgo, work_mode: 'office' }],
+                rowCount: 1,
+            })                                                                          // time_entries: 9hr session active
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 })                          // INSERT clock_out
+            .mockResolvedValueOnce({
+                rows: [
+                    { entry_type: 'clock_in', timestamp: nineHoursAgo, work_mode: 'office' },
+                    { entry_type: 'clock_out', timestamp: nowTs },
+                ],
+                rowCount: 2,
+            });                                                                        // refreshed entries
+
+        const res = await request(app)
+            .get('/api/tracker/status')
+            .set('Cookie', authCookie())
+            .set('X-Timezone-Offset', '-330');
+        expect(res.status).toBe(200);
+        expect(res.body.state).toBe('logged_out');
+        expect(res.body.autoLoggedOut).toBe(true);
+        expect(res.body.dailyTargetMet).toBe(true);
     });
 });
 
@@ -157,6 +204,66 @@ describe('POST /api/tracker/clock-in', () => {
         expect(res.status).toBe(400);
         expect(res.body.error).toMatch(/already/i);
     });
+
+    test('returns 403 when daily target met and no approved overtime', async () => {
+        setupAuthMocks({ org_id: 1 });
+        const nineHoursAgo = new Date(Date.now() - 9 * 60 * 60 * 1000).toISOString();
+        const nowTs = new Date().toISOString();
+
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ work_days: '0,1,2,3,4,5,6' }], rowCount: 1 }) // work_days
+            .mockResolvedValueOnce({ rows: [{ work_hours_per_day: 8 }], rowCount: 1 })       // work_hours_per_day
+            .mockResolvedValueOnce({                                                          // today entries: met target
+                rows: [
+                    { entry_type: 'clock_in', timestamp: nineHoursAgo, work_mode: 'office' },
+                    { entry_type: 'clock_out', timestamp: nowTs },
+                ],
+                rowCount: 2,
+            })
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 });                               // no approved OT found
+
+        const res = await request(app)
+            .post('/api/tracker/clock-in')
+            .set(CSRF)
+            .set('Cookie', authCookie())
+            .set('X-Timezone-Offset', '-330')
+            .send({ work_mode: 'office' });
+        expect(res.status).toBe(403);
+        expect(res.body.code).toBe('DAILY_TARGET_MET');
+        expect(res.body.error).toMatch(/daily target/i);
+    });
+
+    test('allows login when daily target met and approved overtime exists', async () => {
+        setupAuthMocks({ org_id: 1 });
+        const nineHoursAgo = new Date(Date.now() - 9 * 60 * 60 * 1000).toISOString();
+        const nowTs = new Date().toISOString();
+
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ work_days: '0,1,2,3,4,5,6' }], rowCount: 1 }) // work_days
+            .mockResolvedValueOnce({ rows: [{ work_hours_per_day: 8 }], rowCount: 1 })       // work_hours_per_day
+            .mockResolvedValueOnce({                                                          // today entries: met target
+                rows: [
+                    { entry_type: 'clock_in', timestamp: nineHoursAgo, work_mode: 'office' },
+                    { entry_type: 'clock_out', timestamp: nowTs },
+                ],
+                rowCount: 2,
+            })
+            .mockResolvedValueOnce({ rows: [{ id: 42 }], rowCount: 1 });                    // approved OT exists
+
+        // transaction: last entry = clock_out → allow login
+        mockTxClient.query
+            .mockResolvedValueOnce({ rows: [{ entry_type: 'clock_out' }], rowCount: 1 })
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // INSERT clock_in
+
+        const res = await request(app)
+            .post('/api/tracker/clock-in')
+            .set(CSRF)
+            .set('Cookie', authCookie())
+            .set('X-Timezone-Offset', '-330')
+            .send({ work_mode: 'office' });
+        expect(res.status).toBe(200);
+        expect(res.body.message).toMatch(/logged in/i);
+    });
 });
 
 describe('POST /api/tracker/clock-out', () => {
@@ -180,7 +287,7 @@ describe('POST /api/tracker/clock-out', () => {
             .set('Cookie', authCookie())
             .set('X-Timezone-Offset', '-330');
         expect(res.status).toBe(200);
-        expect(res.body.message).toMatch(/clocked out/i);
+        expect(res.body.message).toMatch(/logged out/i);
     });
 
     test('returns 400 when not clocked in', async () => {

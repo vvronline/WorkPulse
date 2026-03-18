@@ -37,18 +37,52 @@ router.get('/status', auth, async (req, res) => {
         const dow = getLocalDow(req);
         const isWeekend = dow === 0 || dow === 6;
 
+        // Load this user's org work hours target
+        const orgRow = (await query(
+            `SELECT o.work_hours_per_day
+             FROM users u JOIN organizations o ON o.id = u.org_id
+             WHERE u.id = $1`,
+            [req.userId],
+        )).rows[0];
+        const targetMinutes = (orgRow?.work_hours_per_day || 8) * 60;
+
         const result = await query(
             `SELECT * FROM time_entries
              WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
              ORDER BY timestamp ASC`,
             [req.userId, today],
         );
-        const entries = result.rows;
+        let entries = result.rows;
 
         const status = computeStatus(entries);
+
+        // Auto clock-out when daily target is met and user is still active
+        let autoLoggedOut = false;
+        if (status.state !== 'logged_out' && status.floorMinutes >= targetMinutes) {
+            await query(
+                'INSERT INTO time_entries (user_id, entry_type) VALUES ($1, $2)',
+                [req.userId, 'clock_out'],
+            );
+            logAction(req, 'auto_clock_out', 'time_entry', null, {
+                floorMinutes: status.floorMinutes, targetMinutes,
+            });
+            const refreshed = await query(
+                `SELECT * FROM time_entries
+                 WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
+                 ORDER BY timestamp ASC`,
+                [req.userId, today],
+            );
+            entries = refreshed.rows;
+            Object.assign(status, computeStatus(entries));
+            autoLoggedOut = true;
+        }
+
         status.isWeekend = isWeekend;
         const clockInEntry = entries.find(e => e.entry_type === 'clock_in');
         status.workMode = clockInEntry?.work_mode || 'office';
+        status.targetMinutes = targetMinutes;
+        status.dailyTargetMet = status.floorMinutes >= targetMinutes;
+        status.autoLoggedOut = autoLoggedOut;
         res.json(status);
     } catch (err) {
         req.log.error({ err }, 'Status error');
@@ -71,6 +105,35 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
         }
         if (!workDays.includes(dow)) {
             return res.status(400).json({ error: "It's a day off! Enjoy your rest. 🎉" });
+        }
+
+        // Block re-login if daily target already met without approved overtime
+        if (req.userOrgId) {
+            const orgRes = await query('SELECT work_hours_per_day FROM organizations WHERE id = $1', [req.userOrgId]);
+            const targetMin = (orgRes.rows[0]?.work_hours_per_day || 8) * 60;
+            const todayEntries = (await query(
+                `SELECT * FROM time_entries
+                 WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
+                 ORDER BY timestamp ASC`,
+                [req.userId, today],
+            )).rows;
+            const todayStatus = computeStatus(todayEntries);
+            if (todayStatus.state === 'logged_out' && todayStatus.floorMinutes >= targetMin) {
+                const approvedOT = (await query(
+                    `SELECT id FROM approval_requests
+                     WHERE requester_id = $1
+                       AND type = 'overtime'
+                       AND status = 'approved'
+                       AND (metadata->>'date') = $2`,
+                    [req.userId, today],
+                )).rows[0];
+                if (!approvedOT) {
+                    return res.status(403).json({
+                        error: 'Daily target reached. Apply for overtime approval to continue working.',
+                        code: 'DAILY_TARGET_MET',
+                    });
+                }
+            }
         }
 
         const validWorkModes = ['office', 'remote', 'hybrid'];
@@ -201,7 +264,7 @@ router.post('/clock-out', auth, async (req, res) => {
 
         if (txResult.error) return res.status(400).json({ error: txResult.error });
         logAction(req, 'clock_out', 'time_entry', null, {});
-        res.json({ message: 'Clocked out. See you tomorrow!' });
+        res.json({ message: 'Logged out. See you tomorrow!' });
     } catch (err) {
         req.log.error({ err }, 'Clock-out error');
         res.status(500).json({ error: 'Clock-out failed' });
