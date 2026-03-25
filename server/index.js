@@ -51,8 +51,8 @@ app.use(helmet({
     contentSecurityPolicy: {
         directives: {
             ...helmet.contentSecurityPolicy.getDefaultDirectives(),
-            // Automatically enforce HTTPS upgrades in production (Caddy handles TLS)
-            "upgrade-insecure-requests": isProduction ? [] : null,
+            // upgrade-insecure-requests omitted: serving over plain HTTP (no TLS)
+            "upgrade-insecure-requests": null,
         }
     },
     crossOriginOpenerPolicy: false,
