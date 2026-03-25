@@ -14,7 +14,7 @@ router.use(auth, loadUserContext, requireRole('hr_admin'));
 
 // ==================== ORGANIZATIONS ====================
 
-router.get('/organizations', requireRole('super_admin'), async (req, res) => {
+router.get('/organizations', requireRole('platform_admin'), async (req, res) => {
     try {
         const page = Math.max(parseInt(req.query.page) || 1, 1);
         const perPage = Math.min(Math.max(parseInt(req.query.per_page) || 50, 1), 100);
@@ -33,7 +33,7 @@ router.get('/organizations', requireRole('super_admin'), async (req, res) => {
     }
 });
 
-router.get('/organizations/:id', requireRole('super_admin'), async (req, res) => {
+router.get('/organizations/:id', requireRole('platform_admin'), async (req, res) => {
     try {
         const { id } = req.params;
         const orgRes = await query('SELECT * FROM organizations WHERE id = $1', [id]);
@@ -54,7 +54,7 @@ router.get('/organizations/:id', requireRole('super_admin'), async (req, res) =>
     }
 });
 
-router.post('/organizations', requireRole('super_admin'), async (req, res) => {
+router.post('/organizations', requireRole('platform_admin'), async (req, res) => {
     try {
         const { name, work_hours_per_day, work_days, timezone } = req.body;
         const trimmedName = name?.trim();
@@ -78,7 +78,7 @@ router.post('/organizations', requireRole('super_admin'), async (req, res) => {
     }
 });
 
-router.put('/organizations/:id', requireRole('super_admin'), async (req, res) => {
+router.put('/organizations/:id', requireRole('platform_admin'), async (req, res) => {
     try {
         const { id } = req.params;
         const { name, work_hours_per_day, work_days, timezone, fiscal_year_start } = req.body;
@@ -112,7 +112,7 @@ router.put('/organizations/:id', requireRole('super_admin'), async (req, res) =>
     }
 });
 
-router.delete('/organizations/:id', requireRole('super_admin'), async (req, res) => {
+router.delete('/organizations/:id', requireRole('platform_admin'), async (req, res) => {
     try {
         const { id } = req.params;
         const orgRes = await query('SELECT id, name FROM organizations WHERE id = $1', [id]);
@@ -151,9 +151,10 @@ router.get('/users', async (req, res) => {
         const where = [];
         const params = [];
 
-        if (req.userRole === 'super_admin' && org_id) {
-            where.push(`u.org_id = $${pi++}`); params.push(Number(org_id));
-        } else if (req.userRole !== 'super_admin') {
+        if (req.userRole === 'platform_admin') {
+            // System operator: can filter by org_id or see all users
+            if (org_id) { where.push(`u.org_id = $${pi++}`); params.push(Number(org_id)); }
+        } else {
             if (req.userOrgId) { where.push(`u.org_id = $${pi++}`); params.push(req.userOrgId); }
             else { where.push(`u.id = $${pi++}`); params.push(req.userId); }
         }
@@ -209,7 +210,7 @@ router.get('/users/:id', async (req, res) => {
         `, [Number(id)]);
         const user = userRes.rows[0];
         if (!user) return res.status(404).json({ error: 'User not found' });
-        if (req.userRole !== 'super_admin' && user.org_id !== req.userOrgId) {
+        if (req.userRole !== 'platform_admin' && user.org_id !== req.userOrgId) {
             return res.status(403).json({ error: 'Cannot view users outside your organization' });
         }
         res.json(user);
@@ -232,39 +233,49 @@ router.put('/users/:id/role', async (req, res) => {
         const { id } = req.params;
         const { role, reason } = req.body;
         if (!VALID_ROLES.includes(role)) return res.status(400).json({ error: `Invalid role. Valid roles: ${VALID_ROLES.join(', ')}` });
+        // platform_admin is a system operator role — cannot be self-assigned via this endpoint
+        if (role === 'platform_admin') return res.status(403).json({ error: 'Cannot assign platform_admin role via this interface' });
+        // super_admin assignment requires platform_admin authority
+        if (role === 'super_admin' && req.userRole !== 'platform_admin') {
+            return res.status(403).json({ error: 'Only platform administrators can assign the super_admin role' });
+        }
         const targetRes = await query('SELECT id, role, org_id, full_name FROM users WHERE id = $1', [Number(id)]);
         const target = targetRes.rows[0];
         if (!target) return res.status(404).json({ error: 'User not found' });
-        if (req.userRole !== 'super_admin' && target.org_id !== req.userOrgId) {
+        if (req.userRole !== 'platform_admin' && target.org_id !== req.userOrgId) {
             return res.status(403).json({ error: 'Cannot modify users outside your organization' });
         }
         if (target.role === role) return res.status(400).json({ error: 'User already has this role' });
-        if (req.userRole !== 'super_admin' && !canManageUser(req.userRole, target.role)) {
+        if (req.userRole !== 'platform_admin' && !canManageUser(req.userRole, target.role)) {
             return res.status(403).json({ error: 'Cannot modify a user with a role equal to or higher than your own' });
         }
-        if (req.userRole !== 'super_admin' && !canManageUser(req.userRole, role)) {
+        if (req.userRole !== 'platform_admin' && !canManageUser(req.userRole, role)) {
             return res.status(403).json({ error: 'Cannot assign a role equal to or higher than your own' });
         }
-        if (Number(id) === req.userId && req.userRole !== 'super_admin') {
+        if (Number(id) === req.userId && req.userRole !== 'platform_admin') {
             return res.status(400).json({ error: 'Cannot change your own role' });
         }
         // Check for existing pending request
         const existingRes = await query('SELECT id FROM role_change_requests WHERE target_user_id = $1 AND status = $2', [Number(id), 'pending']);
         if (existingRes.rows[0]) return res.status(400).json({ error: 'A role change request is already pending for this user' });
 
-        // Super admin: apply immediately (no one higher to approve)
-        if (req.userRole === 'super_admin') {
+        // platform_admin: apply immediately (no one above them)
+        // super_admin: apply immediately for roles below super_admin within their org
+        const canApplyImmediately = req.userRole === 'platform_admin' ||
+            (req.userRole === 'super_admin' && ROLE_LEVEL[role] < ROLE_LEVEL['super_admin']);
+        if (canApplyImmediately) {
             await query('UPDATE users SET role = $1 WHERE id = $2', [role, Number(id)]);
+            const approverKey = req.userRole;
             await query(
                 `INSERT INTO role_change_requests (org_id, target_user_id, requested_by, from_role, to_role, status, reason, approvals, resolved_at)
                  VALUES ($1,$2,$3,$4,$5,'approved',$6,$7,NOW())`,
-                [req.userOrgId, Number(id), req.userId, target.role, role, reason || null, JSON.stringify({ super_admin: { status: 'approved', by: req.userId, at: new Date().toISOString() } })]
+                [req.userOrgId, Number(id), req.userId, target.role, role, reason || null, JSON.stringify({ [approverKey]: { status: 'approved', by: req.userId, at: new Date().toISOString() } })]
             );
             logAction(req, 'update_role', 'user', Number(id), { old_role: target.role, new_role: role });
             return res.json({ message: `${target.full_name}'s role updated to ${role}`, immediate: true });
         }
 
-        // Non-super-admin: create approval request
+        // Otherwise: create approval request
         const required = getRequiredApprovals(role);
         const approvals = {};
         for (const r of required) approvals[r] = { status: 'pending' };
@@ -292,7 +303,7 @@ router.get('/role-requests', async (req, res) => {
         const params = [];
         let pi = 1;
 
-        if (req.userRole !== 'super_admin') {
+        if (req.userRole !== 'platform_admin') {
             conditions.push(`r.org_id = $${pi++}`);
             params.push(req.userOrgId);
         }
@@ -325,10 +336,7 @@ router.post('/role-requests/:id/approve', async (req, res) => {
         const rc = rcRes.rows[0];
         if (!rc) return res.status(404).json({ error: 'Request not found' });
         if (rc.status !== 'pending') return res.status(400).json({ error: `Request is already ${rc.status}` });
-        if (req.userRole === 'super_admin' || (rc.org_id && rc.org_id !== req.userOrgId && req.userRole !== 'super_admin')) {
-            // super_admin can approve any; others must be same org
-        }
-        if (rc.org_id && rc.org_id !== req.userOrgId && req.userRole !== 'super_admin') {
+        if (rc.org_id && rc.org_id !== req.userOrgId && req.userRole !== 'platform_admin') {
             return res.status(403).json({ error: 'Cannot approve requests from another organization' });
         }
 
@@ -376,7 +384,7 @@ router.post('/role-requests/:id/reject', async (req, res) => {
         const rc = rcRes.rows[0];
         if (!rc) return res.status(404).json({ error: 'Request not found' });
         if (rc.status !== 'pending') return res.status(400).json({ error: `Request is already ${rc.status}` });
-        if (rc.org_id && rc.org_id !== req.userOrgId && req.userRole !== 'super_admin') {
+        if (rc.org_id && rc.org_id !== req.userOrgId && req.userRole !== 'platform_admin') {
             return res.status(403).json({ error: 'Cannot reject requests from another organization' });
         }
         const approvals = rc.approvals || {};
@@ -404,8 +412,8 @@ router.post('/role-requests/:id/cancel', async (req, res) => {
         const rc = rcRes.rows[0];
         if (!rc) return res.status(404).json({ error: 'Request not found' });
         if (rc.status !== 'pending') return res.status(400).json({ error: `Request is already ${rc.status}` });
-        if (rc.requested_by !== req.userId && req.userRole !== 'super_admin') {
-            return res.status(403).json({ error: 'Only the requester or a super admin can cancel' });
+        if (rc.requested_by !== req.userId && req.userRole !== 'platform_admin') {
+            return res.status(403).json({ error: 'Only the requester or a platform admin can cancel' });
         }
         await query('UPDATE role_change_requests SET status = $1, resolved_at = NOW() WHERE id = $2', ['cancelled', reqId]);
         logAction(req, 'cancel_role_change', 'role_change_request', reqId, {});
@@ -423,11 +431,11 @@ router.put('/users/:id/assignment', async (req, res) => {
         const targetRes = await query('SELECT id, org_id, full_name FROM users WHERE id = $1', [Number(id)]);
         const target = targetRes.rows[0];
         if (!target) return res.status(404).json({ error: 'User not found' });
-        if (req.userRole !== 'super_admin' && target.org_id !== req.userOrgId) {
+        if (req.userRole !== 'platform_admin' && target.org_id !== req.userOrgId) {
             return res.status(403).json({ error: 'User is not in your organization' });
         }
-        if (org_id !== undefined && req.userRole !== 'super_admin') {
-            return res.status(403).json({ error: 'Only super admin can change organization assignment' });
+        if (org_id !== undefined && req.userRole !== 'platform_admin') {
+            return res.status(403).json({ error: 'Only platform admins can change organization assignment' });
         }
         if (org_id) {
             const orgRes = await query('SELECT id FROM organizations WHERE id = $1', [Number(org_id)]);
@@ -480,10 +488,10 @@ router.put('/users/:id/deactivate', async (req, res) => {
         const target = targetRes.rows[0];
         if (!target) return res.status(404).json({ error: 'User not found' });
         if (Number(id) === req.userId) return res.status(400).json({ error: 'Cannot deactivate yourself' });
-        if (req.userRole !== 'super_admin' && target.org_id !== req.userOrgId) {
+        if (req.userRole !== 'platform_admin' && target.org_id !== req.userOrgId) {
             return res.status(403).json({ error: 'Cannot modify users outside your organization' });
         }
-        if (req.userRole !== 'super_admin' && !canManageUser(req.userRole, target.role)) {
+        if (req.userRole !== 'platform_admin' && !canManageUser(req.userRole, target.role)) {
             return res.status(403).json({ error: 'Cannot deactivate a user with equal or higher role' });
         }
         const newActive = !target.is_active;
@@ -508,10 +516,10 @@ router.post('/users/:id/reset-password', requireRole('hr_admin'), async (req, re
         const targetRes = await query('SELECT id, role, org_id, full_name FROM users WHERE id = $1', [Number(id)]);
         const target = targetRes.rows[0];
         if (!target) return res.status(404).json({ error: 'User not found' });
-        if (req.userRole !== 'super_admin' && target.org_id !== req.userOrgId) {
+        if (req.userRole !== 'platform_admin' && target.org_id !== req.userOrgId) {
             return res.status(403).json({ error: 'Cannot reset passwords for users outside your organization' });
         }
-        if (req.userRole !== 'super_admin' && !canManageUser(req.userRole, target.role)) {
+        if (req.userRole !== 'platform_admin' && !canManageUser(req.userRole, target.role)) {
             return res.status(403).json({ error: 'Cannot reset password for a user with equal or higher role' });
         }
         const hash = await bcrypt.hash(new_password, 10);
@@ -527,11 +535,16 @@ router.post('/users/:id/reset-password', requireRole('hr_admin'), async (req, re
 router.delete('/users/:id', requireRole('super_admin'), async (req, res) => {
     try {
         const userId = Number(req.params.id);
-        const targetRes = await query('SELECT id, role, full_name, is_active FROM users WHERE id = $1', [userId]);
+        const targetRes = await query('SELECT id, role, org_id, full_name, is_active FROM users WHERE id = $1', [userId]);
         const target = targetRes.rows[0];
         if (!target) return res.status(404).json({ error: 'User not found' });
         if (userId === req.userId) return res.status(400).json({ error: 'Cannot delete yourself' });
-        if (target.role === 'super_admin') return res.status(400).json({ error: 'Cannot delete another super admin' });
+        if (target.role === 'super_admin' && req.userRole !== 'platform_admin') return res.status(400).json({ error: 'Only platform admins can delete a super admin' });
+        if (target.role === 'platform_admin') return res.status(400).json({ error: 'Cannot delete a platform admin' });
+        // Non-platform_admin can only delete users within their own org
+        if (req.userRole !== 'platform_admin' && target.org_id !== req.userOrgId) {
+            return res.status(403).json({ error: 'Cannot delete users outside your organization' });
+        }
         await transaction(async (client) => {
             await client.query('DELETE FROM time_entries WHERE user_id = $1', [userId]);
             await client.query('DELETE FROM leaves WHERE user_id = $1', [userId]);
@@ -570,12 +583,12 @@ router.post('/users', requireRole('hr_admin'), async (req, res) => {
         const existingRes = await query('SELECT id FROM users WHERE username = $1 OR email = $2', [username, email]);
         if (existingRes.rows[0]) return res.status(400).json({ error: 'Username or email already taken' });
         const assignRole = VALID_ROLES.includes(role) ? role : 'employee';
-        if (req.userRole !== 'super_admin' && ROLE_LEVEL[assignRole] >= ROLE_LEVEL[req.userRole]) {
+        if (req.userRole !== 'platform_admin' && ROLE_LEVEL[assignRole] >= ROLE_LEVEL[req.userRole]) {
             return res.status(403).json({ error: 'Cannot create a user with a role equal to or higher than your own' });
         }
         const hash = await bcrypt.hash(password, 10);
         let assignOrgId = req.userOrgId;
-        if (req.userRole === 'super_admin' && org_id !== undefined) {
+        if (req.userRole === 'platform_admin' && org_id !== undefined) {
             if (org_id) {
                 const orgRes = await query('SELECT id FROM organizations WHERE id = $1', [org_id]);
                 if (!orgRes.rows[0]) return res.status(400).json({ error: 'Organization not found' });
@@ -599,7 +612,7 @@ router.post('/users', requireRole('hr_admin'), async (req, res) => {
 router.get('/audit-logs', async (req, res) => {
     try {
         const { actor_id, entity_type, entity_id, action, from, to, limit, offset } = req.query;
-        const orgId = req.userRole === 'super_admin' ? (req.query.org_id || null) : req.userOrgId;
+        const orgId = req.userRole === 'platform_admin' ? (req.query.org_id || null) : req.userOrgId;
         const result = await queryLogs({
             orgId,
             actorId: actor_id ? Number(actor_id) : null,
@@ -673,7 +686,7 @@ router.get('/registration-settings', async (req, res) => {
     }
 });
 
-router.put('/registration-settings', requireRole('super_admin'), async (req, res) => {
+router.put('/registration-settings', requireRole('platform_admin'), async (req, res) => {
     try {
         const { mode } = req.body;
         if (!['open', 'invite_only', 'closed'].includes(mode)) {
@@ -740,7 +753,7 @@ router.delete('/invite-codes/:id', async (req, res) => {
         const codeRes = await query('SELECT id, org_id FROM invite_codes WHERE id = $1', [Number(req.params.id)]);
         const code = codeRes.rows[0];
         if (!code) return res.status(404).json({ error: 'Invite code not found' });
-        if (req.userRole !== 'super_admin' && code.org_id !== req.userOrgId) {
+        if (req.userRole !== 'platform_admin' && code.org_id !== req.userOrgId) {
             return res.status(403).json({ error: 'Cannot deactivate invite codes from another organization' });
         }
         await query('UPDATE invite_codes SET is_active = FALSE WHERE id = $1', [Number(req.params.id)]);
@@ -793,7 +806,7 @@ router.put('/task-labels/:id', async (req, res) => {
         const labelRes = await query('SELECT * FROM task_labels WHERE id = $1', [Number(req.params.id)]);
         const label = labelRes.rows[0];
         if (!label) return res.status(404).json({ error: 'Label not found' });
-        if (req.userRole !== 'super_admin' && label.org_id !== req.userOrgId) {
+        if (req.userRole !== 'platform_admin' && label.org_id !== req.userOrgId) {
             return res.status(403).json({ error: 'Cannot edit labels from another organization' });
         }
         const { name, color } = req.body;
@@ -819,7 +832,7 @@ router.delete('/task-labels/:id', async (req, res) => {
         const labelRes = await query('SELECT * FROM task_labels WHERE id = $1', [Number(req.params.id)]);
         const label = labelRes.rows[0];
         if (!label) return res.status(404).json({ error: 'Label not found' });
-        if (req.userRole !== 'super_admin' && label.org_id !== req.userOrgId) {
+        if (req.userRole !== 'platform_admin' && label.org_id !== req.userOrgId) {
             return res.status(403).json({ error: 'Cannot delete labels from another organization' });
         }
         await query('DELETE FROM task_label_map WHERE label_id = $1', [label.id]);
@@ -836,7 +849,7 @@ router.delete('/task-labels/:id', async (req, res) => {
 
 router.get('/pay-periods', requireSameOrg, async (req, res) => {
     try {
-        const orgId = req.userRole === 'super_admin' ? (req.query.org_id || req.userOrgId) : req.userOrgId;
+        const orgId = req.userRole === 'platform_admin' ? (req.query.org_id || req.userOrgId) : req.userOrgId;
         if (!orgId) return res.json([]);
         const result = await query(
             `SELECT pp.*, u.full_name AS locked_by_name
@@ -889,7 +902,7 @@ router.delete('/pay-periods/:id', requireRole('hr_admin'), async (req, res) => {
     try {
         const pp = (await query('SELECT * FROM pay_periods WHERE id = $1', [Number(req.params.id)])).rows[0];
         if (!pp) return res.status(404).json({ error: 'Pay period not found' });
-        if (req.userRole !== 'super_admin' && pp.org_id !== req.userOrgId) {
+        if (req.userRole !== 'platform_admin' && pp.org_id !== req.userOrgId) {
             return res.status(403).json({ error: 'Cannot delete pay periods from another organization' });
         }
         await query('DELETE FROM pay_periods WHERE id = $1', [Number(req.params.id)]);

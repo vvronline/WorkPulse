@@ -94,7 +94,7 @@ async function initDB() {
             full_name            TEXT NOT NULL,
             theme                TEXT NOT NULL DEFAULT 'dark',
             role                 TEXT NOT NULL DEFAULT 'employee'
-                                     CHECK(role IN ('employee','team_lead','manager','hr_admin','super_admin')),
+                                     CHECK(role IN ('employee','team_lead','manager','hr_admin','super_admin','platform_admin')),
             is_active            BOOLEAN NOT NULL DEFAULT TRUE,
             org_id               INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
             team_id              INTEGER,
@@ -229,6 +229,20 @@ async function initDB() {
     await query(`
         CREATE INDEX IF NOT EXISTS idx_tasks_user_date   ON tasks(user_id, date);
         CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON tasks(assigned_to, date);
+    `);
+    // Migration: add org_id to tasks for tenant isolation
+    await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS org_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_tasks_org ON tasks(org_id)`);
+    // Backfill org_id from the task owner's org
+    await query(`UPDATE tasks t SET org_id = u.org_id FROM users u WHERE u.id = t.user_id AND t.org_id IS NULL AND u.org_id IS NOT NULL`);
+    // Migration: update role CHECK to include platform_admin on existing databases
+    await query(`
+        DO $do$ BEGIN
+            ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+            ALTER TABLE users ADD CONSTRAINT users_role_check
+                CHECK(role IN ('employee','team_lead','manager','hr_admin','super_admin','platform_admin'));
+        EXCEPTION WHEN others THEN NULL;
+        END $do$
     `);
 
     await query(`

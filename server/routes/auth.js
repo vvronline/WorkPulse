@@ -104,11 +104,11 @@ router.post('/register', async (req, res) => {
                 );
             }
 
-            // Check if this is the first user
+            // Check if this is the first user — bootstrap as platform_admin (system operator, no org)
             const userCount = (await client.query('SELECT COUNT(*) FROM users')).rows[0].count;
             let finalRole = assignedRole;
             if (parseInt(userCount) === 0) {
-                finalRole = 'super_admin';
+                finalRole = 'platform_admin';
             }
 
             const ins = await client.query(

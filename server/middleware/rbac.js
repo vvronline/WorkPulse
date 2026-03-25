@@ -13,8 +13,11 @@ const ROLE_LEVEL = {
     manager: 3,
     hr_admin: 4,
     super_admin: 5,
+    platform_admin: 6, // System operator only — cross-org, no tenant assignment
 };
 
+// Roles that can be assigned to org members (excludes platform_admin)
+const ORG_ROLES = ['employee', 'team_lead', 'manager', 'hr_admin', 'super_admin'];
 const VALID_ROLES = Object.keys(ROLE_LEVEL);
 
 /**
@@ -59,9 +62,10 @@ function requireRole(minRole) {
 
 /**
  * Middleware: require that the user belongs to an org OR has direct reports.
+ * platform_admin is the only role that can operate cross-org without an org.
  */
 async function requireSameOrg(req, res, next) {
-    if (req.userRole === 'super_admin') return next();
+    if (req.userRole === 'platform_admin') return next(); // System operator — cross-org allowed
     if (req.userOrgId) return next();
     try {
         const result = await query(
@@ -103,7 +107,14 @@ async function getVisibleUserIds(userId, role, orgId, teamId) {
         .map(([r]) => r);
 
     if (orgId && lowerRoles.length > 0) {
-        if (ROLE_LEVEL[role] >= ROLE_LEVEL.hr_admin) {
+        if (ROLE_LEVEL[role] >= ROLE_LEVEL.super_admin) {
+            // super_admin sees all active org members (fully org-scoped tenant admin)
+            const res = await query(
+                'SELECT id FROM users WHERE org_id = $1 AND is_active = TRUE',
+                [orgId]
+            );
+            res.rows.forEach(u => idSet.add(u.id));
+        } else if (ROLE_LEVEL[role] >= ROLE_LEVEL.hr_admin) {
             const res = await query(
                 'SELECT id FROM users WHERE org_id = $1 AND is_active = TRUE AND role = ANY($2::text[])',
                 [orgId, lowerRoles]
@@ -134,6 +145,7 @@ async function getVisibleUserIds(userId, role, orgId, teamId) {
 module.exports = {
     ROLE_LEVEL,
     VALID_ROLES,
+    ORG_ROLES,
     loadUserContext,
     requireRole,
     requireSameOrg,

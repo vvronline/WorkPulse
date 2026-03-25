@@ -50,7 +50,7 @@ router.get('/', async (req, res) => {
         if (user_id && ['manager', 'hr_admin', 'super_admin'].includes(req.userRole)) {
             // Validate target user is in the same organization to prevent cross-org data leakage
             const targetUser = (await query('SELECT org_id FROM users WHERE id = $1', [parseInt(user_id, 10)])).rows[0];
-            if (targetUser && req.userOrgId && targetUser.org_id !== req.userOrgId && req.userRole !== 'super_admin') {
+            if (targetUser && req.userOrgId && targetUser.org_id !== req.userOrgId) {
                 return res.status(403).json({ error: 'Cannot view leaves for users outside your organization' });
             }
             conditions.push(`l.user_id = $${pi++}`);

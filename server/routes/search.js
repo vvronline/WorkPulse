@@ -133,7 +133,7 @@ router.get('/', async (req, res) => {
         let logRows = [];
         const userLevel = ROLE_LEVEL[req.userRole] || 1;
         if (userLevel >= ROLE_LEVEL['hr_admin']) {
-            const orgId = req.userRole === 'super_admin' ? null : req.userOrgId;
+            const orgId = req.userRole === 'platform_admin' ? null : req.userOrgId;
             logRows = (await query(
                 `SELECT al.id, al.action, al.entity_type, al.entity_id, al.details, al.created_at,
                         u.full_name AS actor_name

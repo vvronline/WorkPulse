@@ -12,6 +12,10 @@ router.use(auth, loadUserContext);
 
 router.post('/', requireRole('super_admin'), async (req, res) => {
     try {
+        // platform_admin manages organizations via the admin panel, not this self-service route
+        if (req.userRole === 'platform_admin') {
+            return res.status(403).json({ error: 'Platform admins manage organizations via the admin panel' });
+        }
         const { name } = req.body;
         if (!name || !name.trim()) return res.status(400).json({ error: 'Organization name is required' });
         if (name.trim().length > 100) return res.status(400).json({ error: 'Name must be 100 characters or less' });
