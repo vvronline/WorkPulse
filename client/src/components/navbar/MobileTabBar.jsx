@@ -5,7 +5,7 @@ import { useChatUnread } from '../../ChatContext';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import s from '../Navbar.module.css';
 
-const ROLE_LEVELS = { employee: 1, team_lead: 2, manager: 3, hr_admin: 4, super_admin: 5 };
+const ROLE_LEVELS = { employee: 1, team_lead: 2, manager: 3, hr_admin: 4, super_admin: 5, platform_admin: 6 };
 
 export default function MobileTabBar() {
     const { user } = useAuth();
