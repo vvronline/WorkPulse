@@ -27,8 +27,8 @@ export default function AdminPanel() {
         getAdminStats().then(r => setStats(r.data)).catch(e => console.error(e));
     }, []);
 
-    if (!user || !['hr_admin', 'super_admin'].includes(user.role)) {
-        return <div className={s.adminPage}><div className={s.error}>Access denied. HR Admin or Super Admin role required.</div></div>;
+    if (!user || !['hr_admin', 'super_admin', 'platform_admin'].includes(user.role)) {
+        return <div className={s.adminPage}><div className={s.error}>Access denied. HR Admin, Super Admin, or Platform Admin role required.</div></div>;
     }
 
     return (
@@ -77,7 +77,7 @@ export default function AdminPanel() {
                 <button className={`${s.tab} ${tab === 'create' ? s.active : ''}`} onClick={() => setTab('create')}>
                     <span>➕</span> Create User
                 </button>
-                {(user.role === 'super_admin' || user.org_id) && (
+                {(user.role === 'platform_admin' || user.role === 'super_admin' || user.org_id) && (
                     <button className={`${s.tab} ${tab === 'organizations' ? s.active : ''}`} onClick={() => setTab('organizations')}>
                         <span>🏢</span> Organizations
                     </button>
@@ -98,7 +98,7 @@ export default function AdminPanel() {
 
             {tab === 'users' && <UserManagement userRole={user.role} />}
             {tab === 'create' && <CreateUser userRole={user.role} onCreated={() => setTab('users')} />}
-            {tab === 'organizations' && (user.role === 'super_admin' || user.org_id) && <OrganizationsTab userRole={user.role} hasOrgId={!!user.org_id} />}
+            {tab === 'organizations' && (user.role === 'platform_admin' || user.role === 'super_admin' || user.org_id) && <OrganizationsTab userRole={user.role} hasOrgId={!!user.org_id} />}
             {tab === 'audit' && <AuditLogs />}
             {tab === 'role-requests' && <RoleRequests userRole={user.role} />}
             {tab === 'import' && <ImportUsers />}

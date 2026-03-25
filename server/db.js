@@ -380,6 +380,8 @@ async function initDB() {
             created_at  TIMESTAMPTZ DEFAULT NOW()
         )
     `);
+    // Migration: add org_id to existing audit_logs tables that pre-date tenant isolation
+    await query(`ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS org_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL`);
     await query(`
         CREATE INDEX IF NOT EXISTS idx_audit_actor  ON audit_logs(actor_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_audit_org    ON audit_logs(org_id, created_at);
