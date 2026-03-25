@@ -12,9 +12,10 @@ const auth = require('../middleware/auth');
 const router = express.Router();
 
 const isProduction = process.env.NODE_ENV === 'production';
-// In production, Caddy (or any reverse proxy) always terminates TLS,
-// so secure cookies are always appropriate. No manual USE_HTTPS opt-in needed.
-const useSecureCookie = isProduction;
+// Use secure cookies only when HTTPS is actually configured.
+// When serving over plain HTTP (e.g. IP-only deployment), secure:true would
+// cause browsers to silently drop the cookie on every request.
+const useSecureCookie = isProduction && process.env.USE_HTTPS === 'true';
 
 function cookieOptions() {
     return {
