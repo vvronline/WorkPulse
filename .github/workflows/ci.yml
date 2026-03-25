@@ -93,7 +93,7 @@ jobs:
           for i in $(seq 1 18); do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
               -L --insecure --max-time 10 \
-              "https://workpulse.duckdns.org/api/health" || echo "000")
+              "http://35.239.116.119/api/health" || echo "000")
             if [ "$STATUS" = "200" ]; then
               echo "✅ App is healthy (attempt $i)"
               exit 0

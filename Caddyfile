@@ -1,4 +1,4 @@
-workpulse.duckdns.org {
+http://35.239.116.119 {
     reverse_proxy workpulse:5000
 
     # WebSocket support for /ws path
@@ -9,7 +9,6 @@ workpulse.duckdns.org {
 
     # Security headers (complement what Express/Helmet already sets)
     header {
-        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
         X-Content-Type-Options "nosniff"
         X-Frame-Options "DENY"
         Referrer-Policy "strict-origin-when-cross-origin"
