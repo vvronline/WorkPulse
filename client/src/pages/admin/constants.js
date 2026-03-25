@@ -5,4 +5,5 @@ export const ROLE_LABELS = {
     manager: 'Manager',
     hr_admin: 'HR Admin',
     super_admin: 'Super Admin',
+    platform_admin: 'Platform Admin',
 };
