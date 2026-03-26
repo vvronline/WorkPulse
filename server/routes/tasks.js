@@ -88,15 +88,26 @@ async function enrichTasks(tasks) {
     }));
 }
 
-// Helper: check if user can access task (creator, assignee, or same team)
-async function canAccessTask(task, userId) {
+// Helper: check if user can access task within tenant boundary
+async function canAccessTask(task, userId, requesterOrgId) {
     if (!task) return false;
-    if (task.user_id === userId || task.assigned_to === userId) return true;
-    const userRes = await query('SELECT team_id FROM users WHERE id = $1', [userId]);
-    const ownerRes = await query('SELECT team_id FROM users WHERE id = $1', [task.user_id]);
-    const user = userRes.rows[0];
+    if (!requesterOrgId) {
+        // Users without an organization can only access their own direct tasks.
+        return task.user_id === userId || task.assigned_to === userId;
+    }
+
+    const ownerRes = await query('SELECT team_id, org_id FROM users WHERE id = $1', [task.user_id]);
     const owner = ownerRes.rows[0];
-    return user?.team_id && owner?.team_id && user.team_id === owner.team_id;
+    const taskOrgId = task.org_id || owner?.org_id || null;
+
+    if (!taskOrgId || taskOrgId !== requesterOrgId) return false;
+    if (task.user_id === userId || task.assigned_to === userId) return true;
+
+    const userRes = await query('SELECT team_id, org_id FROM users WHERE id = $1', [userId]);
+    const user = userRes.rows[0];
+    if (!user || user.org_id !== requesterOrgId || owner?.org_id !== requesterOrgId) return false;
+
+    return user.team_id && owner.team_id && user.team_id === owner.team_id;
 }
 
 // Helper: sync labels for a task
@@ -124,6 +135,13 @@ router.get('/', auth, loadUserContext, async (req, res) => {
         const conditions = [];
         const params = [];
         let pi = 1;
+
+        if (req.userOrgId) {
+            conditions.push(`t.org_id = $${pi++}`);
+            params.push(req.userOrgId);
+        } else {
+            conditions.push('t.org_id IS NULL');
+        }
 
         if (sprint_id) {
             conditions.push(`t.sprint_id = $${pi++}`);
@@ -258,8 +276,8 @@ router.post('/', auth, loadUserContext, async (req, res) => {
         }
 
         const result = await query(
-            'INSERT INTO tasks (user_id, date, title, description, priority, assigned_to, due_date, sprint_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
-            [req.userId, targetDate, title.trim(), description?.trim() || null, validPriority, assignedTo, validDueDate, validSprintId]
+            'INSERT INTO tasks (user_id, date, title, description, priority, assigned_to, due_date, sprint_id, org_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id',
+            [req.userId, targetDate, title.trim(), description?.trim() || null, validPriority, assignedTo, validDueDate, validSprintId, req.userOrgId || null]
         );
         const taskId = result.rows[0].id;
 
@@ -291,7 +309,7 @@ router.post('/', auth, loadUserContext, async (req, res) => {
 });
 
 // ─── Update task status ──────────────────────────────────────────────────
-router.patch('/:id/status', auth, async (req, res) => {
+router.patch('/:id/status', auth, loadUserContext, async (req, res) => {
     try {
         const { id } = req.params;
         const { status } = req.body;
@@ -301,7 +319,7 @@ router.patch('/:id/status', auth, async (req, res) => {
         }
 
         const task = (await query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
-        if (!await canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId)) return res.status(404).json({ error: 'Task not found' });
 
         const completedAt = status === 'done' ? new Date().toISOString() : null;
         await query('UPDATE tasks SET status = $1, completed_at = $2 WHERE id = $3', [status, completedAt, id]);
@@ -324,7 +342,7 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
         const { title, description, priority, assigned_to, due_date, label_ids, sprint_id } = req.body;
 
         const task = (await query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
-        if (!await canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId)) return res.status(404).json({ error: 'Task not found' });
 
         const newTitle = title?.trim() || task.title;
         const newDesc = description !== undefined ? (description?.trim() || null) : task.description;
@@ -418,11 +436,13 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
 });
 
 // ─── Delete a task (only creator can delete) ─────────────────────────────
-router.delete('/:id', auth, async (req, res) => {
+router.delete('/:id', auth, loadUserContext, async (req, res) => {
     try {
         const { id } = req.params;
-        const task = (await query('SELECT * FROM tasks WHERE id = $1 AND user_id = $2', [id, req.userId])).rows[0];
+        const task = (await query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
         if (!task) return res.status(404).json({ error: 'Task not found' });
+        if (task.user_id !== req.userId) return res.status(403).json({ error: 'Only task creator can delete task' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId)) return res.status(404).json({ error: 'Task not found' });
 
         await logHistory(id, req.userId, 'deleted', null, task.title, null);
         await query('DELETE FROM tasks WHERE id = $1', [id]);
@@ -434,22 +454,28 @@ router.delete('/:id', auth, async (req, res) => {
 });
 
 // ─── Carry-forward incomplete tasks ──────────────────────────────────────
-router.post('/carry-forward', auth, async (req, res) => {
+router.post('/carry-forward', auth, loadUserContext, async (req, res) => {
     try {
         const today = getLocalToday(req);
 
         const lastTaskDay = (await query(`
             SELECT date FROM tasks
-            WHERE (user_id = $1 OR assigned_to = $1) AND date::date < $2::date AND date::date >= $2::date - INTERVAL '7 days'
+            WHERE (user_id = $1 OR assigned_to = $1)
+              AND date::date < $2::date
+              AND date::date >= $2::date - INTERVAL '7 days'
+              AND ((org_id = $3) OR (org_id IS NULL AND $3::integer IS NULL))
             ORDER BY date DESC LIMIT 1
-        `, [req.userId, today])).rows[0];
+        `, [req.userId, today, req.userOrgId || null])).rows[0];
 
         if (!lastTaskDay) return res.json({ message: 'No tasks to carry forward', carried: 0 });
 
         const incomplete = (await query(`
             SELECT title, description, priority, assigned_to, due_date FROM tasks
-            WHERE (user_id = $1 OR assigned_to = $1) AND date = $2 AND status != 'done'
-        `, [req.userId, lastTaskDay.date])).rows;
+            WHERE (user_id = $1 OR assigned_to = $1)
+              AND date = $2
+              AND status != 'done'
+              AND ((org_id = $3) OR (org_id IS NULL AND $3::integer IS NULL))
+        `, [req.userId, lastTaskDay.date, req.userOrgId || null])).rows;
 
         if (incomplete.length === 0) return res.json({ message: 'No tasks to carry forward', carried: 0 });
 
@@ -463,8 +489,8 @@ router.post('/carry-forward', auth, async (req, res) => {
                 if (!exists) {
                     const dueDate = t.due_date && t.due_date < today ? today : t.due_date;
                     const insertRes = await client.query(
-                        'INSERT INTO tasks (user_id, date, title, description, priority, assigned_to, due_date) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
-                        [req.userId, today, t.title, t.description, t.priority, t.assigned_to, dueDate]
+                        'INSERT INTO tasks (user_id, date, title, description, priority, assigned_to, due_date, org_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
+                        [req.userId, today, t.title, t.description, t.priority, t.assigned_to, dueDate, req.userOrgId || null]
                     );
                     const newTaskId = insertRes.rows[0].id;
                     const origTask = (await client.query(
@@ -504,6 +530,13 @@ router.get('/search', auth, loadUserContext, async (req, res) => {
         const conditions = ['(t.title ILIKE $1 OR t.description ILIKE $1)'];
         const params = [`%${escapedQ}%`];
         let pi = 2;
+
+        if (req.userOrgId) {
+            conditions.push(`t.org_id = $${pi++}`);
+            params.push(req.userOrgId);
+        } else {
+            conditions.push('t.org_id IS NULL');
+        }
 
         // Restrict search scope: own tasks + assigned to me + same team/dept
         conditions.push(`(t.user_id = $${pi} OR t.assigned_to = $${pi})`);
@@ -635,7 +668,7 @@ router.patch('/:id/assign-sprint', auth, loadUserContext, async (req, res) => {
         const { sprint_id } = req.body;
 
         const task = (await query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
-        if (!await canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId)) return res.status(404).json({ error: 'Task not found' });
 
         if (sprint_id === null || sprint_id === undefined || sprint_id === '') {
             const oldSprint = task.sprint_id ? (await query('SELECT name FROM sprints WHERE id = $1', [task.sprint_id])).rows[0] : null;
@@ -664,10 +697,10 @@ router.patch('/:id/assign-sprint', auth, loadUserContext, async (req, res) => {
 });
 
 // ─── Get comments for a task ──────────────────────────────────────────────
-router.get('/:id/comments', auth, async (req, res) => {
+router.get('/:id/comments', auth, loadUserContext, async (req, res) => {
     try {
         const task = (await query('SELECT * FROM tasks WHERE id = $1', [req.params.id])).rows[0];
-        if (!await canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId)) return res.status(404).json({ error: 'Task not found' });
 
         const comments = (await query(`
             SELECT tc.*, u.username, u.full_name, u.avatar
@@ -685,10 +718,10 @@ router.get('/:id/comments', auth, async (req, res) => {
 });
 
 // ─── Add comment ──────────────────────────────────────────────────────────
-router.post('/:id/comments', auth, async (req, res) => {
+router.post('/:id/comments', auth, loadUserContext, async (req, res) => {
     try {
         const task = (await query('SELECT * FROM tasks WHERE id = $1', [req.params.id])).rows[0];
-        if (!await canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId)) return res.status(404).json({ error: 'Task not found' });
 
         const { content } = req.body;
         if (!content || !content.trim()) return res.status(400).json({ error: 'Comment cannot be empty' });
@@ -718,7 +751,16 @@ router.post('/:id/comments', auth, async (req, res) => {
             if (mentionedIds.size > 0) {
                 const commenter = (await query('SELECT username, full_name FROM users WHERE id = $1', [req.userId])).rows[0];
                 const commenterName = commenter?.full_name || commenter?.username || 'Someone';
-                for (const uid of mentionedIds) {
+                const orgMentionRows = req.userOrgId
+                    ? (await query(
+                        'SELECT id FROM users WHERE id = ANY($1) AND org_id = $2 AND is_active = TRUE',
+                        [[...mentionedIds], req.userOrgId]
+                    )).rows
+                    : [];
+
+                for (const row of orgMentionRows) {
+                    const uid = row.id;
+                    if (!await canAccessTask(task, uid, req.userOrgId)) continue;
                     await query(
                         'INSERT INTO notifications (user_id, type, title, body, link_task_id) VALUES ($1, $2, $3, $4, $5)',
                         [uid, 'mention', `${commenterName} mentioned you`, `In task: ${task.title}`, task.id]
@@ -795,6 +837,13 @@ router.get('/backlog', auth, loadUserContext, async (req, res) => {
         const conditions = ['t.date IS NULL', 't.sprint_id IS NULL'];
         const params = [];
         let pi = 1;
+
+        if (req.userOrgId) {
+            conditions.push(`t.org_id = $${pi++}`);
+            params.push(req.userOrgId);
+        } else {
+            conditions.push('t.org_id IS NULL');
+        }
 
         if (req.userTeamId) {
             conditions.push(`(t.user_id = $${pi} OR t.assigned_to = $${pi} OR t.user_id IN (SELECT id FROM users WHERE team_id = $${pi + 1}))`);
@@ -903,8 +952,8 @@ router.post('/backlog', auth, loadUserContext, async (req, res) => {
         }
 
         const result = await query(
-            'INSERT INTO tasks (user_id, date, title, description, priority, assigned_to, due_date, sprint_id) VALUES ($1, NULL, $2, $3, $4, $5, $6, $7) RETURNING id',
-            [req.userId, title.trim(), description?.trim() || null, validPriority, assignedTo, validDueDate, validSprintId]
+            'INSERT INTO tasks (user_id, date, title, description, priority, assigned_to, due_date, sprint_id, org_id) VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
+            [req.userId, title.trim(), description?.trim() || null, validPriority, assignedTo, validDueDate, validSprintId, req.userOrgId || null]
         );
         const taskId = result.rows[0].id;
 
@@ -936,7 +985,7 @@ router.post('/backlog', auth, loadUserContext, async (req, res) => {
 });
 
 // ─── Move backlog item to a specific date (schedule it) ───────────────────
-router.patch('/:id/schedule', auth, async (req, res) => {
+router.patch('/:id/schedule', auth, loadUserContext, async (req, res) => {
     try {
         const { id } = req.params;
         const { date } = req.body;
@@ -946,7 +995,7 @@ router.patch('/:id/schedule', auth, async (req, res) => {
         }
 
         const task = (await query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
-        if (!await canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId)) return res.status(404).json({ error: 'Task not found' });
 
         await query('UPDATE tasks SET date = $1 WHERE id = $2', [date, id]);
         await logHistory(id, req.userId, 'scheduled', 'date', task.date || 'backlog', date);
@@ -961,12 +1010,12 @@ router.patch('/:id/schedule', auth, async (req, res) => {
 });
 
 // ─── Move a dated task back to backlog ────────────────────────────────────
-router.patch('/:id/unschedule', auth, async (req, res) => {
+router.patch('/:id/unschedule', auth, loadUserContext, async (req, res) => {
     try {
         const { id } = req.params;
 
         const task = (await query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
-        if (!await canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId)) return res.status(404).json({ error: 'Task not found' });
 
         await query('UPDATE tasks SET date = NULL WHERE id = $1', [id]);
         await logHistory(id, req.userId, 'unscheduled', 'date', task.date, 'backlog');
@@ -981,10 +1030,10 @@ router.patch('/:id/unschedule', auth, async (req, res) => {
 });
 
 // ─── Get single task detail ───────────────────────────────────────────────
-router.get('/:id/detail', auth, async (req, res) => {
+router.get('/:id/detail', auth, loadUserContext, async (req, res) => {
     try {
         const task = (await query('SELECT * FROM tasks WHERE id = $1', [req.params.id])).rows[0];
-        if (!await canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId)) return res.status(404).json({ error: 'Task not found' });
 
         const enriched = await enrichTasks([task]);
 
@@ -1004,11 +1053,11 @@ router.get('/:id/detail', auth, async (req, res) => {
 });
 
 // ─── Get task history ─────────────────────────────────────────────────────
-router.get('/:id/history', auth, async (req, res) => {
+router.get('/:id/history', auth, loadUserContext, async (req, res) => {
     try {
         const task = (await query('SELECT * FROM tasks WHERE id = $1', [req.params.id])).rows[0];
         if (!task) return res.status(404).json({ error: 'Task not found' });
-        if (!await canAccessTask(task, req.userId)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId)) return res.status(404).json({ error: 'Task not found' });
 
         const history = (await query(`
             SELECT th.*, u.username, u.full_name, u.avatar

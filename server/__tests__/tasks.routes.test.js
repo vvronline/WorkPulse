@@ -133,4 +133,94 @@ describe('GET /api/tasks', () => {
             .set('X-Timezone-Offset', '-330');
         expect(res.status).toBe(200);
     });
+
+    test('scopes task list query by requester org', async () => {
+        setupAuth();
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+        const res = await request(app)
+            .get('/api/tasks')
+            .set('Cookie', authCookie())
+            .set('X-Timezone-Offset', '-330');
+
+        expect(res.status).toBe(200);
+        const tasksCall = mockQuery.mock.calls.find(([sql]) => typeof sql === 'string' && sql.includes('SELECT t.* FROM tasks t'));
+        expect(tasksCall).toBeTruthy();
+        expect(tasksCall[0]).toContain('t.org_id = $1');
+    });
+});
+
+describe('Tenant Isolation - Tasks', () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+        mockTxClient.query.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+        mockTransaction.mockReset().mockImplementation(async (fn) => fn(mockTxClient));
+    });
+
+    test('persists org_id when creating backlog task', async () => {
+        setupAuth();
+        const taskId = 101;
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ id: taskId }], rowCount: 1 })
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+            .mockResolvedValueOnce({
+                rows: [{ id: taskId, title: 'Org Task', status: 'pending', user_id: 1, priority: 'medium', assigned_to: null, date: null, org_id: 1 }],
+                rowCount: 1,
+            })
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+        const res = await request(app)
+            .post('/api/tasks/backlog')
+            .set(CSRF)
+            .set('Cookie', authCookie())
+            .send({ title: 'Org Task' });
+
+        expect([200, 500]).toContain(res.status);
+        const insertCall = mockQuery.mock.calls.find(([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO tasks') && sql.includes('org_id'));
+        expect(insertCall).toBeTruthy();
+        expect(insertCall[1][insertCall[1].length - 1]).toBe(1);
+    });
+
+    test('denies status update when task org does not match requester org', async () => {
+        setupAuth();
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ id: 77, user_id: 2, assigned_to: null, org_id: 2, status: 'pending' }], rowCount: 1 })
+            .mockResolvedValueOnce({ rows: [{ team_id: 1, org_id: 2 }], rowCount: 1 });
+
+        const res = await request(app)
+            .patch('/api/tasks/77/status')
+            .set(CSRF)
+            .set('Cookie', authCookie())
+            .send({ status: 'done' });
+
+        expect(res.status).toBe(404);
+        const updated = mockQuery.mock.calls.some(([sql]) => typeof sql === 'string' && sql.includes('UPDATE tasks SET status'));
+        expect(updated).toBe(false);
+    });
+
+    test('does not notify mention targets outside requester org', async () => {
+        setupAuth();
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ id: 88, user_id: 2, assigned_to: null, org_id: 1, title: 'Scoped Task' }], rowCount: 1 })
+            .mockResolvedValueOnce({ rows: [{ team_id: 1, org_id: 1 }], rowCount: 1 })
+            .mockResolvedValueOnce({ rows: [{ team_id: 1, org_id: 1 }], rowCount: 1 })
+            .mockResolvedValueOnce({ rows: [{ id: 501 }], rowCount: 1 })
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+            .mockResolvedValueOnce({ rows: [{ id: 501, task_id: 88, user_id: 1, content: '<span data-user-id="999">@x</span>', username: 'testuser', full_name: 'Test User', avatar: null }], rowCount: 1 })
+            .mockResolvedValueOnce({ rows: [{ username: 'testuser', full_name: 'Test User' }], rowCount: 1 })
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+        const res = await request(app)
+            .post('/api/tasks/88/comments')
+            .set(CSRF)
+            .set('Cookie', authCookie())
+            .send({ content: '<span data-user-id="999">@x</span>' });
+
+        expect(res.status).toBe(200);
+        const orgMentionLookup = mockQuery.mock.calls.find(([sql]) => typeof sql === 'string' && sql.includes('SELECT id FROM users WHERE id = ANY($1) AND org_id = $2'));
+        expect(orgMentionLookup).toBeTruthy();
+        const notifInsertCount = mockQuery.mock.calls.filter(([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO notifications') && sql.includes('link_task_id')).length;
+        expect(notifInsertCount).toBe(0);
+    });
 });

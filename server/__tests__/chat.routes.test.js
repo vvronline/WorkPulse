@@ -317,3 +317,50 @@ describe('POST /api/chat/conversations/group', () => {
         expect(res.body.conversationId).toBe(99);
     });
 });
+
+describe('PUT /api/chat/conversations/:id/group', () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+    });
+
+    test('returns 403 when requester is not a participant', async () => {
+        setupAuth();
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ id: 10, is_group: true, org_id: 1 }], rowCount: 1 })
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+        const res = await request(app)
+            .put('/api/chat/conversations/10/group')
+            .set(CSRF)
+            .set('Cookie', authCookie(1))
+            .send({ removeUserIds: [2] });
+
+        expect(res.status).toBe(403);
+    });
+
+    test('removes only users validated in the same org', async () => {
+        setupAuth();
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ id: 10, is_group: true, org_id: 1 }], rowCount: 1 })
+            .mockResolvedValueOnce({ rows: [{ '?column?': 1 }], rowCount: 1 })
+            .mockResolvedValueOnce({ rows: [{ id: 2 }], rowCount: 1 })
+            .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+        const res = await request(app)
+            .put('/api/chat/conversations/10/group')
+            .set(CSRF)
+            .set('Cookie', authCookie(1))
+            .send({ removeUserIds: [2, 999] });
+
+        expect(res.status).toBe(200);
+
+        const validateCall = mockQuery.mock.calls.find(([sql]) => typeof sql === 'string' && sql.includes('SELECT id FROM users WHERE id = ANY($1) AND org_id = $2 AND is_active = TRUE'));
+        expect(validateCall).toBeTruthy();
+        expect(validateCall[1][0]).toEqual([2, 999]);
+        expect(validateCall[1][1]).toBe(1);
+
+        const deleteCalls = mockQuery.mock.calls.filter(([sql]) => typeof sql === 'string' && sql.includes('DELETE FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2'));
+        expect(deleteCalls).toHaveLength(1);
+        expect(deleteCalls[0][1]).toEqual([10, 2]);
+    });
+});

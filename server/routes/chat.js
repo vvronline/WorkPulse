@@ -263,7 +263,12 @@ router.put('/conversations/:id/group', auth, async (req, res) => {
         }
 
         if (Array.isArray(removeUserIds) && removeUserIds.length > 0) {
-            for (const uid of removeUserIds) {
+            const validRemoveIds = (await query(
+                'SELECT id FROM users WHERE id = ANY($1) AND org_id = $2 AND is_active = TRUE',
+                [removeUserIds, conv.org_id]
+            )).rows.map(r => r.id);
+
+            for (const uid of validRemoveIds) {
                 if (uid === req.userId) continue;
                 await query(
                     'DELETE FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',

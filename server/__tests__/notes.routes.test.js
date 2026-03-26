@@ -210,3 +210,43 @@ describe('GET /api/notes/history/:pageId', () => {
         expect(items[0].id).toBe(10);
     });
 });
+
+describe('GET /api/notes/history/snapshot/:id', () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+    });
+
+    test('returns 401 without auth', async () => {
+        const res = await request(app).get('/api/notes/history/snapshot/10');
+        expect(res.status).toBe(401);
+    });
+
+    test('returns 404 for snapshot not owned by requester', async () => {
+        setupAuth();
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+        const res = await request(app)
+            .get('/api/notes/history/snapshot/10')
+            .set('Cookie', authCookie());
+
+        expect(res.status).toBe(404);
+        const snapshotCall = mockQuery.mock.calls.find(([sql]) => typeof sql === 'string' && sql.includes('FROM notebook_history WHERE id = $1 AND user_id = $2'));
+        expect(snapshotCall).toBeTruthy();
+        expect(snapshotCall[1][1]).toBe(1);
+    });
+
+    test('returns snapshot when owned by requester', async () => {
+        setupAuth();
+        mockQuery.mockResolvedValueOnce({
+            rows: [{ id: 10, page_id: 'p1', page_title: 'My Page', content: '<p>v1</p>', saved_at: '2024-01-01T10:00:00Z' }],
+            rowCount: 1,
+        });
+
+        const res = await request(app)
+            .get('/api/notes/history/snapshot/10')
+            .set('Cookie', authCookie());
+
+        expect(res.status).toBe(200);
+        expect(res.body.snapshot.id).toBe(10);
+    });
+});
