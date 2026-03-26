@@ -158,7 +158,7 @@ export const updateOrgSettings = (data) => API.put('/org/settings', data);
 export const getOrgMembers = (params) => API.get('/org/members', { params });
 export const inviteToOrg = (data) => API.post('/org/invite', data);
 export const removeMember = (userId) => API.post('/org/remove-member', { user_id: userId });
-export const getOrgDepartments = () => API.get('/org/departments');
+export const getOrgDepartments = (params) => API.get('/org/departments', { params });
 export const createDepartment = (data) => API.post('/org/departments', data);
 export const updateDepartment = (id, data) => API.put(`/org/departments/${id}`, data);
 export const deleteDepartment = (id) => API.delete(`/org/departments/${id}`);

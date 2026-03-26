@@ -212,9 +212,14 @@ router.post('/remove-member', requireRole('hr_admin'), requireSameOrg, async (re
 router.get('/departments', requireSameOrg, async (req, res) => {
     try {
         const userLevel = ROLE_LEVEL[req.userRole] || 1;
+        // platform_admin can query any org's departments by passing ?org_id=X
+        const effectiveOrgId = req.userRole === 'platform_admin'
+            ? (req.query.org_id ? Number(req.query.org_id) : null)
+            : req.userOrgId;
 
         // Only hr_admin+ can see all departments with member counts
         if (userLevel >= ROLE_LEVEL['hr_admin']) {
+            if (!effectiveOrgId) return res.json([]);
             const departments = (await query(`
                 SELECT d.*, u.full_name as head_name,
                        (SELECT COUNT(*) FROM users WHERE department_id = d.id AND is_active = TRUE)::integer as member_count
@@ -222,7 +227,7 @@ router.get('/departments', requireSameOrg, async (req, res) => {
                 LEFT JOIN users u ON u.id = d.head_id
                 WHERE d.org_id = $1
                 ORDER BY d.name
-            `, [req.userOrgId])).rows;
+            `, [effectiveOrgId])).rows;
             return res.json(departments);
         }
 
@@ -301,11 +306,16 @@ router.get('/teams', requireSameOrg, async (req, res) => {
     try {
         const { department_id } = req.query;
         const userLevel = ROLE_LEVEL[req.userRole] || 1;
+        // platform_admin can query any org's teams by passing ?org_id=X
+        const effectiveOrgId = req.userRole === 'platform_admin'
+            ? (req.query.org_id ? Number(req.query.org_id) : null)
+            : req.userOrgId;
 
         // Only hr_admin+ can see all teams with member counts
         if (userLevel >= ROLE_LEVEL['hr_admin']) {
+            if (!effectiveOrgId) return res.json([]);
             const where = ['t.org_id = $1'];
-            const params = [req.userOrgId];
+            const params = [effectiveOrgId];
             let pi = 2;
             if (department_id) { where.push(`t.department_id = $${pi++}`); params.push(Number(department_id)); }
 

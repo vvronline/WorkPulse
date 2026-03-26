@@ -17,6 +17,7 @@ export default function CreateUser({ userRole, onCreated }) {
     const [teams, setTeams] = useState([]);
     const [users, setUsers] = useState([]);
 
+    // Load org list once on mount
     useEffect(() => {
         if (userRole === 'platform_admin') {
             getAdminOrganizations().then(r => setOrganizations(r.data.data || r.data)).catch(e => console.error(e));
@@ -31,10 +32,23 @@ export default function CreateUser({ userRole, onCreated }) {
                 })
                 .catch(e => console.error(e));
         }
-        getOrgDepartments().then(r => setDepartments(r.data)).catch(e => console.error(e));
-        getOrgTeams().then(r => setTeams(r.data)).catch(e => console.error(e));
-        getAdminUsers({}).then(r => setUsers(r.data?.data ?? r.data)).catch(e => console.error(e));
     }, [userRole]);
+
+    // Re-fetch departments, teams and users whenever the selected org changes
+    useEffect(() => {
+        const isPlatformAdmin = userRole === 'platform_admin';
+        if (isPlatformAdmin && !form.org_id) {
+            setDepartments([]);
+            setTeams([]);
+            setUsers([]);
+            return;
+        }
+        const orgParam = isPlatformAdmin ? { org_id: form.org_id } : {};
+        getOrgDepartments(orgParam).then(r => setDepartments(r.data)).catch(e => console.error(e));
+        getOrgTeams(orgParam).then(r => setTeams(r.data)).catch(e => console.error(e));
+        getAdminUsers(isPlatformAdmin ? { org_id: form.org_id } : {})
+            .then(r => setUsers(r.data?.data ?? r.data)).catch(e => console.error(e));
+    }, [form.org_id, userRole]);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
