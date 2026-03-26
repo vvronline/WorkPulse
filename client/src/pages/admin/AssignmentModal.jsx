@@ -10,13 +10,13 @@ export default function AssignmentModal({ user, departments, teams, organization
     const [managerId, setManagerId] = useState(user.manager_id || '');
 
     const managerOptions = (allUsers || []).filter(u => u.id !== user.id && u.is_active);
-    const isSuperAdmin = userRole === 'super_admin';
+    const isPlatformAdmin = userRole === 'platform_admin';
 
     return (
         <div className={sf.modalOverlay} onClick={onClose}>
             <div className={sf.modal} onClick={e => e.stopPropagation()}>
                 <h2>Assign {user.full_name}</h2>
-                {isSuperAdmin && (
+                {isPlatformAdmin && (
                     <div className={sf.formGroup}>
                         <label>Organization</label>
                         <select value={orgId} onChange={e => { setOrgId(e.target.value); setDeptId(''); setTeamId(''); setManagerId(''); }}>
@@ -48,7 +48,7 @@ export default function AssignmentModal({ user, departments, teams, organization
                 </div>
                 <div className={sf.formActions}>
                     <button className={sf.btnCancel} onClick={onClose}>Cancel</button>
-                    <button className={s.btnPrimary} onClick={() => onSave(user.id, isSuperAdmin ? orgId : undefined, deptId || null, teamId || null, managerId || null)}>Save</button>
+                    <button className={s.btnPrimary} onClick={() => onSave(user.id, isPlatformAdmin ? orgId : undefined, deptId || null, teamId || null, managerId || null)}>Save</button>
                 </div>
             </div>
         </div>

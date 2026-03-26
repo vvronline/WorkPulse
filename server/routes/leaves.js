@@ -405,9 +405,11 @@ router.post('/', async (req, res) => {
 // PATCH /leaves/:id/approve — approve leave
 router.patch('/:id/approve', requireRole('manager'), async (req, res) => {
     try {
+        const leaveId = parseInt(req.params.id, 10);
+        if (isNaN(leaveId)) return res.status(400).json({ error: 'Invalid leave ID' });
         const leave = (await query(
             'SELECT l.*, u.org_id AS leave_org_id, u.manager_id AS leave_manager_id FROM leaves l JOIN users u ON u.id = l.user_id WHERE l.id = $1',
-            [req.params.id]
+            [leaveId]
         )).rows[0];
         if (!leave) return res.status(404).json({ error: 'Leave not found' });
         if (leave.status !== 'pending') return res.status(400).json({ error: 'Leave is not pending' });
@@ -455,11 +457,13 @@ router.patch('/:id/approve', requireRole('manager'), async (req, res) => {
 // PATCH /leaves/:id/reject — reject leave
 router.patch('/:id/reject', requireRole('manager'), async (req, res) => {
     try {
+        const leaveId = parseInt(req.params.id, 10);
+        if (isNaN(leaveId)) return res.status(400).json({ error: 'Invalid leave ID' });
         const { reason } = req.body;
         if (reason && reason.length > 500) return res.status(400).json({ error: 'Rejection reason must be 500 characters or less' });
         const leave = (await query(
             'SELECT l.*, u.org_id AS leave_org_id, u.manager_id AS leave_manager_id FROM leaves l JOIN users u ON u.id = l.user_id WHERE l.id = $1',
-            [req.params.id]
+            [leaveId]
         )).rows[0];
         if (!leave) return res.status(404).json({ error: 'Leave not found' });
         if (leave.status !== 'pending') return res.status(400).json({ error: 'Leave is not pending' });
@@ -506,7 +510,9 @@ router.patch('/:id/reject', requireRole('manager'), async (req, res) => {
 // DELETE /leaves/:id — cancel pending leave (own only)
 router.delete('/:id', async (req, res) => {
     try {
-        const leave = (await query('SELECT * FROM leaves WHERE id = $1 AND user_id = $2', [req.params.id, req.userId])).rows[0];
+        const leaveId = parseInt(req.params.id, 10);
+        if (isNaN(leaveId)) return res.status(400).json({ error: 'Invalid leave ID' });
+        const leave = (await query('SELECT * FROM leaves WHERE id = $1 AND user_id = $2', [leaveId, req.userId])).rows[0];
         if (!leave) return res.status(404).json({ error: 'Leave not found' });
         if (leave.status === 'approved') return res.status(400).json({ error: 'Cannot cancel an approved leave. Ask your manager to revoke it.' });
 
@@ -521,7 +527,9 @@ router.delete('/:id', async (req, res) => {
 // POST /leaves/:id/withdraw — employee withdraws pending or approved leave
 router.post('/:id/withdraw', async (req, res) => {
     try {
-        const leave = (await query('SELECT * FROM leaves WHERE id = $1 AND user_id = $2', [req.params.id, req.userId])).rows[0];
+        const leaveId = parseInt(req.params.id, 10);
+        if (isNaN(leaveId)) return res.status(400).json({ error: 'Invalid leave ID' });
+        const leave = (await query('SELECT * FROM leaves WHERE id = $1 AND user_id = $2', [leaveId, req.userId])).rows[0];
         if (!leave) return res.status(404).json({ error: 'Leave not found' });
         if (!['pending', 'approved'].includes(leave.status)) {
             return res.status(400).json({ error: 'Leave cannot be withdrawn in its current status' });
@@ -574,7 +582,9 @@ router.post('/:id/withdraw', async (req, res) => {
 // PATCH /leaves/:id/revoke — revoke approved leave (manager+)
 router.patch('/:id/revoke', requireRole('manager'), async (req, res) => {
     try {
-        const leave = (await query('SELECT l.*, u.org_id AS leave_org_id FROM leaves l JOIN users u ON u.id = l.user_id WHERE l.id = $1', [req.params.id])).rows[0];
+        const leaveId = parseInt(req.params.id, 10);
+        if (isNaN(leaveId)) return res.status(400).json({ error: 'Invalid leave ID' });
+        const leave = (await query('SELECT l.*, u.org_id AS leave_org_id FROM leaves l JOIN users u ON u.id = l.user_id WHERE l.id = $1', [leaveId])).rows[0];
         if (!leave) return res.status(404).json({ error: 'Leave not found' });
         if (req.userOrgId && leave.leave_org_id !== req.userOrgId) return res.status(403).json({ error: 'Cannot revoke leaves from another organization' });
         if (leave.status !== 'approved') return res.status(400).json({ error: 'Leave is not approved' });

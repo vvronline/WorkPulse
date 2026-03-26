@@ -54,7 +54,7 @@ export default function UserManagement({ userRole }) {
     useEffect(() => {
         getOrgDepartments().then(r => setDepartments(r.data)).catch(e => console.error(e));
         getOrgTeams().then(r => setTeams(r.data)).catch(e => console.error(e));
-        if (userRole === 'super_admin') {
+        if (userRole === 'platform_admin') {
             getAdminOrganizations().then(r => setOrganizations(r.data.data || r.data)).catch(e => console.error(e));
         }
     }, [userRole]);
@@ -176,7 +176,8 @@ export default function UserManagement({ userRole }) {
                                     <button className={`${s.btnSmall} ${s.btnWarning}`} onClick={() => setResetPwUser(u)} title="Reset user password">
                                         🔑 Reset
                                     </button>
-                                    {userRole === 'super_admin' && u.role !== 'super_admin' && (
+                                    {(userRole === 'super_admin' || userRole === 'platform_admin') &&
+                                        (u.role !== 'super_admin' || userRole === 'platform_admin') && (
                                         <button className={`${s.btnSmall} ${s.btnDanger}`} onClick={() => setDeletingUser(u)} title="Permanently delete user">
                                             🗑️ Delete
                                         </button>

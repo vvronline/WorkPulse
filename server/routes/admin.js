@@ -595,6 +595,14 @@ router.post('/users', requireRole('hr_admin'), async (req, res) => {
             }
             assignOrgId = org_id || null;
         }
+        if (department_id && assignOrgId) {
+            const deptRes = await query('SELECT id FROM departments WHERE id = $1 AND org_id = $2', [Number(department_id), Number(assignOrgId)]);
+            if (!deptRes.rows[0]) return res.status(400).json({ error: 'Department not found in the target organization' });
+        }
+        if (team_id && assignOrgId) {
+            const teamRes = await query('SELECT id FROM teams WHERE id = $1 AND org_id = $2', [Number(team_id), Number(assignOrgId)]);
+            if (!teamRes.rows[0]) return res.status(400).json({ error: 'Team not found in the target organization' });
+        }
         const result = await query(
             'INSERT INTO users (username, password, full_name, email, role, org_id, department_id, team_id, manager_id, must_change_password) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE) RETURNING id',
             [username, hash, full_name, email, assignRole, assignOrgId, department_id || null, team_id || null, manager_id || null]
