@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAutoDismiss } from '../../hooks/useAutoDismiss';
 import {
-    createAdminUser, getAdminOrganizations, getOrgDepartments, getOrgTeams, getAdminUsers
+    createAdminUser, getAdminOrganizations, getCurrentOrg, getOrgDepartments, getOrgTeams, getAdminUsers
 } from '../../api';
 import { ROLES, ROLE_LABELS } from './constants';
 import s from '../Admin.module.css';
@@ -18,8 +18,18 @@ export default function CreateUser({ userRole, onCreated }) {
     const [users, setUsers] = useState([]);
 
     useEffect(() => {
-        if (userRole === 'super_admin') {
+        if (userRole === 'platform_admin') {
             getAdminOrganizations().then(r => setOrganizations(r.data.data || r.data)).catch(e => console.error(e));
+        } else if (userRole === 'super_admin') {
+            getCurrentOrg()
+                .then(r => {
+                    const org = r.data;
+                    setOrganizations(org ? [org] : []);
+                    if (org?.id) {
+                        setForm(prev => ({ ...prev, org_id: String(org.id) }));
+                    }
+                })
+                .catch(e => console.error(e));
         }
         getOrgDepartments().then(r => setDepartments(r.data)).catch(e => console.error(e));
         getOrgTeams().then(r => setTeams(r.data)).catch(e => console.error(e));
@@ -43,7 +53,8 @@ export default function CreateUser({ userRole, onCreated }) {
         } catch (e) { setError(e.response?.data?.error || 'Failed to create user'); }
     };
 
-    const isSuperAdmin = userRole === 'super_admin';
+    const canShowOrganization = userRole === 'platform_admin' || userRole === 'super_admin';
+    const canChooseOrganization = userRole === 'platform_admin';
     const filteredTeams = form.department_id ? teams.filter(t => t.department_id === Number(form.department_id)) : teams;
     const managerOptions = users.filter(u => u.is_active);
 
@@ -86,13 +97,18 @@ export default function CreateUser({ userRole, onCreated }) {
                             {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
                         </select>
                     </div>
-                    {isSuperAdmin && (
+                    {canShowOrganization && (
                         <div className={sf.formGroup}>
                             <label>Organization</label>
-                            <select value={form.org_id} onChange={e => { setForm({ ...form, org_id: e.target.value, department_id: '', team_id: '', manager_id: '' }); }}>
-                                <option value="">None</option>
+                            <select
+                                value={form.org_id}
+                                disabled={!canChooseOrganization}
+                                onChange={e => { setForm({ ...form, org_id: e.target.value, department_id: '', team_id: '', manager_id: '' }); }}
+                            >
+                                {canChooseOrganization && <option value="">None</option>}
                                 {organizations.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                             </select>
+                            {!canChooseOrganization && <small className={sf.hint}>Users created by Super Admin are assigned to your organization.</small>}
                         </div>
                     )}
                 </div>
