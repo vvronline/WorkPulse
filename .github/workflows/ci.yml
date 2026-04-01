@@ -63,37 +63,21 @@ jobs:
     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
 
     steps:
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
 
-      - name: Set up gcloud CLI
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Deploy to GCE
-        run: |
-          gcloud compute ssh ${{ secrets.GCP_VM_USER }}@${{ secrets.GCP_INSTANCE_NAME }} \
-            --zone=${{ secrets.GCP_ZONE }} \
-            --ssh-flag="-o ConnectTimeout=30 -o ServerAliveInterval=10 -o ServerAliveCountMax=3" \
-            --command="
-              set -e
-              cd ~/WorkPulse
-              git fetch origin master
-              git reset --hard origin/master
-              docker-compose down --remove-orphans
-              docker-compose build --no-cache
-              docker-compose up -d
-            " \
-            --quiet
+      - name: Deploy to Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --service ${{ secrets.RAILWAY_SERVICE_ID }} --detach
 
       - name: Wait for app to be healthy
         run: |
           echo "Waiting for app to start..."
           for i in $(seq 1 18); do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-              -L --insecure --max-time 10 \
-              "http://35.239.116.119/api/health" || echo "000")
+              -L --max-time 10 \
+              "https://${{ secrets.RAILWAY_APP_DOMAIN }}/api/health" || echo "000")
             if [ "$STATUS" = "200" ]; then
               echo "✅ App is healthy (attempt $i)"
               exit 0
