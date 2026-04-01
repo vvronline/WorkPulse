@@ -10,8 +10,8 @@ RUN npm run build
 FROM node:20-alpine
 WORKDIR /app/server
 
-# Install dumb-init for proper PID 1 signal handling
-RUN apk add --no-cache dumb-init
+# Install dumb-init for PID 1 signal handling and su-exec for privilege drop
+RUN apk add --no-cache dumb-init su-exec
 
 # Create non-root user
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
@@ -24,16 +24,20 @@ COPY server/ ./
 # Copy built React files from the builder stage
 COPY --from=frontend-builder /app/client/dist /app/client/dist
 
-# Create uploads directory owned by appuser
+# Copy entrypoint script (runs as root, fixes volume permissions, drops to appuser)
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Create uploads directory so it exists even without a volume mount
 RUN mkdir -p /app/server/uploads/avatars && chown -R appuser:appgroup /app/server/uploads
 
-# Switch to non-root user
-USER appuser
+# Do NOT switch to appuser here — entrypoint.sh handles the privilege drop
+# so it can fix volume mount ownership at runtime before starting the app
 
 EXPOSE 5000
 
 ENV NODE_ENV=production
 ENV PORT=5000
 
-ENTRYPOINT ["dumb-init", "--"]
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["node", "index.js"]
