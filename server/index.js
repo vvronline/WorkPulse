@@ -16,7 +16,6 @@ if (!process.env.JWT_SECRET) {
 }
 
 const express = require('express');
-const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
@@ -68,28 +67,51 @@ app.use(helmet({
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
 app.use(express.static(clientDist));
 
-app.use(cors({
-    origin: function (origin, callback) {
-        if (!origin) return callback(null, true);
+app.use((req, res, next) => {
+    const origin = req.headers.origin;
+
+    const isAllowed = (() => {
+        if (!origin) return true;
+
+        // Explicitly allowed origins from env (comma-separated)
         if (process.env.CORS_ORIGIN) {
             const allowed = process.env.CORS_ORIGIN.split(',').map(s => s.trim());
-            if (allowed.includes(origin)) return callback(null, true);
-            return callback(new Error('Not allowed by CORS'));
+            if (allowed.includes(origin)) return true;
         }
-        if (process.env.NODE_ENV === 'production') {
-            // Allow same-origin requests (SPA served by this server)
-            const selfOrigins = [`http://localhost:${PORT}`, 'http://localhost', 'https://localhost'];
-            if (selfOrigins.includes(origin)) return callback(null, true);
-            return callback(new Error('Not allowed by CORS'));
+
+        // Always allow same-origin requests: when the SPA served by this
+        // Express server makes API calls, Origin matches the Host header.
+        // This works regardless of what domain Railway assigns.
+        const host = req.headers.host;
+        if (host && (origin === `https://${host}` || origin === `http://${host}`)) {
+            return true;
         }
-        const serverOrigin = `http://localhost:${PORT}`;
-        if (origin === serverOrigin) return callback(null, true);
-        const devOrigins = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002', 'http://localhost:5173'];
-        if (devOrigins.includes(origin)) return callback(null, true);
-        callback(new Error('Not allowed by CORS'));
-    },
-    credentials: true
-}));
+
+        if (process.env.NODE_ENV !== 'production') {
+            const devOrigins = [
+                `http://localhost:${PORT}`, 'http://localhost', 'https://localhost',
+                'http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002', 'http://localhost:5173',
+            ];
+            if (devOrigins.includes(origin)) return true;
+        }
+
+        return false;
+    })();
+
+    if (!isAllowed) {
+        return res.status(403).json({ error: 'Not allowed by CORS' });
+    }
+
+    if (origin) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, x-timezone-offset');
+    }
+
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    next();
+});
 app.use(cookieParser());
 app.use('/api/notes', express.json({ limit: '5mb' }));
 app.use('/api/profile/avatar', express.json({ limit: '10mb' }));
