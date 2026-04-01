@@ -99,7 +99,7 @@ export default function Register() {
               required
               minLength={3}
               maxLength={50}
-              pattern="[a-zA-Z0-9._-]+"
+              pattern="[-a-zA-Z0-9._]+"
               title="Only letters, numbers, dots, hyphens and underscores"
             />
           </div>
