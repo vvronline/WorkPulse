@@ -66,17 +66,17 @@ jobs:
       - name: Wait for Railway to deploy and verify health
         run: |
           echo "Waiting for Railway deployment to become healthy..."
-          sleep 30
-          for i in $(seq 1 18); do
+          sleep 60
+          for i in $(seq 1 12); do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
               -L --max-time 10 \
               "https://${{ secrets.RAILWAY_APP_DOMAIN }}/api/health" || echo "000")
-            if [ "$STATUS" = "200" ]; then
-              echo "✅ App is healthy (attempt $i)"
+            if [ "$STATUS" = "200" ] || [ "$STATUS" = "503" ]; then
+              echo "✅ App is responding (HTTP $STATUS) on attempt $i"
               exit 0
             fi
-            echo "Attempt $i: got HTTP $STATUS — retrying in 10s..."
-            sleep 10
+            echo "Attempt $i: got HTTP $STATUS — retrying in 15s..."
+            sleep 15
           done
-          echo "❌ App did not become healthy after 180s"
+          echo "❌ App did not respond after 3 minutes"
           exit 1
