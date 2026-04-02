@@ -15,17 +15,23 @@ function MemberAvatar({ member, size = 'sm' }) {
           </span>;
 }
 
-function MemberChip({ member, highlight }) {
+function MemberChip({ member, highlight, showDeptTeam }) {
     const name = member.full_name;
     const hl = highlight?.toLowerCase();
     const escapedHl = hl ? hl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : null;
     const hiName = escapedHl && name.toLowerCase().includes(hl)
         ? DOMPurify.sanitize(name.replace(new RegExp(`(${escapedHl})`, 'gi'), '<mark>$1</mark>'))
         : name;
+    const deptTeamLabel = showDeptTeam
+        ? [member.department_name, member.team_name].filter(Boolean).join(' › ') || null
+        : null;
     return (
-        <div className={oc['member-chip']} title={`${name}\n${ROLE_LABELS[member.role] || member.role}${member.manager_name ? `\nReports to: ${member.manager_name}` : ''}`}>
+        <div className={oc['member-chip']} title={`${name}\n${ROLE_LABELS[member.role] || member.role}${member.department_name ? `\nDepartment: ${member.department_name}` : ''}${member.team_name ? `\nTeam: ${member.team_name}` : ''}${member.manager_name ? `\nReports to: ${member.manager_name}` : ''}`}>
             <MemberAvatar member={member} />
-            <span dangerouslySetInnerHTML={{ __html: hiName }} />
+            <div className={oc['member-chip-info']}>
+                <span dangerouslySetInnerHTML={{ __html: hiName }} />
+                {deptTeamLabel && <span className={oc['member-chip-dept']}>{deptTeamLabel}</span>}
+            </div>
             <span className={`${s.badgeRole} ${oc['badge-sm']}`} data-role={member.role}>
                 {ROLE_LABELS[member.role] || member.role}
             </span>
@@ -54,6 +60,8 @@ function TreeNode({ member, childrenMap, depth = 0, highlight }) {
                     <span className={oc['tree-name']}>{member.full_name}</span>
                     <span className={oc['tree-meta']}>
                         {ROLE_LABELS[member.role] || member.role}
+                        {member.department_name ? ` · ${member.department_name}` : ''}
+                        {member.team_name ? ` › ${member.team_name}` : ''}
                         {member.manager_name ? ` · reports to ${member.manager_name}` : ''}
                     </span>
                 </div>
@@ -145,7 +153,9 @@ export default function OrgChartView({ orgId }) {
             m.full_name.toLowerCase().includes(q) ||
             m.email?.toLowerCase().includes(q) ||
             (ROLE_LABELS[m.role] || m.role).toLowerCase().includes(q) ||
-            m.manager_name?.toLowerCase().includes(q)
+            m.manager_name?.toLowerCase().includes(q) ||
+            m.department_name?.toLowerCase().includes(q) ||
+            m.team_name?.toLowerCase().includes(q)
         );
     }, [chart, search]);
 

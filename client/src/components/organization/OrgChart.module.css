@@ -63,6 +63,19 @@
 }
 .member-chip:hover { border-color: var(--accent, #6366f1); }
 
+.member-chip-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    line-height: 1.2;
+}
+
+.member-chip-dept {
+    font-size: 0.7rem;
+    color: var(--text-muted, #888);
+    opacity: 0.8;
+}
+
 .member-chip mark {
     background: rgba(99, 102, 241, 0.3);
     color: inherit;

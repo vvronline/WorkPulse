@@ -642,6 +642,22 @@ async function initDB() {
         )
     `);
 
+    // ---- Call Logs ----
+    await query(`
+        CREATE TABLE IF NOT EXISTS call_logs (
+            id              SERIAL PRIMARY KEY,
+            conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            caller_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            call_type       VARCHAR(10) NOT NULL DEFAULT 'voice',
+            status          VARCHAR(20) NOT NULL DEFAULT 'ringing',
+            started_at      TIMESTAMPTZ,
+            ended_at        TIMESTAMPTZ,
+            duration        INTEGER,
+            created_at      TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_call_logs_conv ON call_logs(conversation_id, created_at DESC)`);
+
     // ---- Delivery status on messages ----
     await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivered_to JSONB DEFAULT '[]'`);
 

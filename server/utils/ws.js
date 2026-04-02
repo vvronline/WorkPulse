@@ -226,6 +226,178 @@ async function handleChatMessage(senderId, msg) {
              ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = NOW()`,
             [conversationId, senderId]
         );
+    } else if (msg.type === 'call_initiate') {
+        // Caller initiates a call → create call_log, notify participants
+        const { conversationId, callType } = msg.data || {};
+        if (!conversationId || !['voice', 'video'].includes(callType)) return;
+
+        const participant = (await query(
+            'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
+            [conversationId, senderId]
+        )).rows[0];
+        if (!participant) return;
+
+        // Create call log entry
+        const callLog = (await query(
+            `INSERT INTO call_logs (conversation_id, caller_id, call_type, status)
+             VALUES ($1, $2, $3, 'ringing') RETURNING id, created_at`,
+            [conversationId, senderId, callType]
+        )).rows[0];
+
+        const caller = (await query('SELECT full_name, avatar FROM users WHERE id = $1', [senderId])).rows[0];
+
+        // Notify all other participants about incoming call
+        const participants = (await query(
+            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2',
+            [conversationId, senderId]
+        )).rows;
+
+        // Get conversation info for the notification
+        const conv = (await query('SELECT name, is_group FROM conversations WHERE id = $1', [conversationId])).rows[0];
+
+        for (const p of participants) {
+            sendToUser(p.user_id, 'call_incoming', {
+                callId: callLog.id,
+                conversationId,
+                callerId: senderId,
+                callerName: caller?.full_name,
+                callerAvatar: caller?.avatar,
+                callType,
+                isGroup: conv?.is_group || false,
+                groupName: conv?.name
+            });
+        }
+
+        // Confirm call started to caller
+        sendToUser(senderId, 'call_started', {
+            callId: callLog.id,
+            conversationId,
+            callType
+        });
+
+    } else if (msg.type === 'call_accept') {
+        // Callee accepts → update call log, notify caller with acceptance
+        const { callId, conversationId } = msg.data || {};
+        if (!callId || !conversationId) return;
+
+        const callLog = (await query(
+            `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2 AND status = 'ringing'`,
+            [callId, conversationId]
+        )).rows[0];
+        if (!callLog) return;
+
+        const participant = (await query(
+            'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
+            [conversationId, senderId]
+        )).rows[0];
+        if (!participant) return;
+
+        await query(`UPDATE call_logs SET status = 'answered', started_at = NOW() WHERE id = $1`, [callId]);
+
+        const accepter = (await query('SELECT full_name, avatar FROM users WHERE id = $1', [senderId])).rows[0];
+
+        // Notify the caller that call was accepted
+        sendToUser(callLog.caller_id, 'call_accepted', {
+            callId,
+            conversationId,
+            userId: senderId,
+            userName: accepter?.full_name,
+            userAvatar: accepter?.avatar
+        });
+
+    } else if (msg.type === 'call_reject') {
+        // Callee rejects → update call log, notify caller
+        const { callId, conversationId } = msg.data || {};
+        if (!callId || !conversationId) return;
+
+        const callLog = (await query(
+            `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2`,
+            [callId, conversationId]
+        )).rows[0];
+        if (!callLog) return;
+
+        await query(
+            `UPDATE call_logs SET status = 'declined', ended_at = NOW() WHERE id = $1 AND status = 'ringing'`,
+            [callId]
+        );
+
+        const rejecter = (await query('SELECT full_name FROM users WHERE id = $1', [senderId])).rows[0];
+
+        // Notify other participants
+        const participants = (await query(
+            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2',
+            [conversationId, senderId]
+        )).rows;
+
+        for (const p of participants) {
+            sendToUser(p.user_id, 'call_rejected', {
+                callId,
+                conversationId,
+                userId: senderId,
+                userName: rejecter?.full_name
+            });
+        }
+
+    } else if (msg.type === 'call_end') {
+        // Either party ends the call → update log, notify others
+        const { callId, conversationId } = msg.data || {};
+        if (!callId || !conversationId) return;
+
+        const callLog = (await query(
+            `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2`,
+            [callId, conversationId]
+        )).rows[0];
+        if (!callLog) return;
+
+        // Calculate duration if call was answered
+        let duration = null;
+        if (callLog.started_at) {
+            duration = Math.round((Date.now() - new Date(callLog.started_at).getTime()) / 1000);
+        }
+
+        await query(
+            `UPDATE call_logs SET status = CASE WHEN status = 'ringing' THEN 'missed' ELSE 'ended' END,
+             ended_at = NOW(), duration = $2 WHERE id = $1`,
+            [callId, duration]
+        );
+
+        // Notify all participants
+        const participants = (await query(
+            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2',
+            [conversationId, senderId]
+        )).rows;
+
+        for (const p of participants) {
+            sendToUser(p.user_id, 'call_ended', {
+                callId,
+                conversationId,
+                endedBy: senderId,
+                duration
+            });
+        }
+
+    } else if (msg.type === 'call_signal') {
+        // WebRTC signaling relay: offer, answer, ICE candidates
+        const { conversationId, targetUserId, signal } = msg.data || {};
+        if (!conversationId || !targetUserId || !signal) return;
+
+        // Verify both sender and target are in the conversation
+        const senderOk = (await query(
+            'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
+            [conversationId, senderId]
+        )).rows[0];
+        const targetOk = (await query(
+            'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
+            [conversationId, targetUserId]
+        )).rows[0];
+        if (!senderOk || !targetOk) return;
+
+        // Relay the signal to the target user
+        sendToUser(targetUserId, 'call_signal', {
+            conversationId,
+            fromUserId: senderId,
+            signal
+        });
     }
 }
 

@@ -1,7 +1,7 @@
 import ConfirmDialog from '../components/ConfirmDialog';
 import {
     MessageSearch, ForwardModal, GroupModal,
-    StarredMessages, PollCreator
+    StarredMessages, PollCreator, CallOverlay
 } from '../components/chat';
 import ChatSidebar from './chat/ChatSidebar';
 import ChatHeader from './chat/ChatHeader';
@@ -29,6 +29,7 @@ export default function Chat() {
         showSharedFiles, setShowSharedFiles, showStarred, setShowStarred,
         showPollCreator, setShowPollCreator, convMembers,
         deleteConfirm, setDeleteConfirm, convMenu, setConvMenu,
+        callState, wsSend,
         loadingMsgs, hasMore,
         messagesEndRef, messagesContainerRef, fileInputRef, mentionInputRef,
         searchInputRef,
@@ -42,6 +43,7 @@ export default function Chat() {
         handleJumpTo, handleUnpin,
         handleDeleteConv, handlePinConv, handleFavConv,
         openGroupEdit, handleTyping,
+        handleVoiceCall, handleVideoCall, handleEndCall,
     } = actions;
 
     const jumpTo = (msgId) => handleJumpTo(msgId, msgStyles.highlight);
@@ -99,6 +101,8 @@ export default function Chat() {
                             showSharedFiles={showSharedFiles}
                             onToggleStarred={() => setShowStarred(!showStarred)}
                             showStarred={showStarred}
+                            onVoiceCall={handleVoiceCall}
+                            onVideoCall={handleVideoCall}
                         />
 
                         <ChatMessages
@@ -203,6 +207,16 @@ export default function Chat() {
                 onConfirm={() => handleDeleteConv(deleteConfirm.id)}
                 onCancel={() => setDeleteConfirm(null)}
             />
+
+            {/* ─── Call Overlay ─── */}
+            {callState && (
+                <CallOverlay
+                    callState={callState}
+                    user={user}
+                    wsSend={wsSend}
+                    onEnd={handleEndCall}
+                />
+            )}
         </div>
     );
 }

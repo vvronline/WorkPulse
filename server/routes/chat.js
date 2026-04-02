@@ -1301,4 +1301,38 @@ router.post('/messages/:id/delivered', auth, async (req, res) => {
     }
 });
 
+// ─────────────────────────────────────────────
+// CALL HISTORY
+// ─────────────────────────────────────────────
+
+/**
+ * GET /api/chat/conversations/:id/calls
+ * Returns call history for a conversation.
+ */
+router.get('/conversations/:id/calls', auth, async (req, res) => {
+    try {
+        const convId = parseInt(req.params.id, 10);
+        if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
+        if (!(await verifyParticipant(convId, req.userId))) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        const rows = (await query(`
+            SELECT cl.id, cl.caller_id, cl.call_type, cl.status, cl.started_at,
+                   cl.ended_at, cl.duration, cl.created_at,
+                   u.full_name AS caller_name, u.avatar AS caller_avatar
+            FROM call_logs cl
+            JOIN users u ON u.id = cl.caller_id
+            WHERE cl.conversation_id = $1
+            ORDER BY cl.created_at DESC
+            LIMIT 50
+        `, [convId])).rows;
+
+        res.json(rows);
+    } catch (err) {
+        req.log.error({ err }, 'Get call history error');
+        res.status(500).json({ error: 'Failed to get call history' });
+    }
+});
+
 module.exports = router;

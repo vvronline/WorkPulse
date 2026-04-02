@@ -303,5 +303,6 @@ export const ackDelivered = (msgId) => API.post(`/chat/messages/${msgId}/deliver
 export const deleteConversation = (convId) => API.delete(`/chat/conversations/${convId}`);
 export const togglePinConversation = (convId) => API.post(`/chat/conversations/${convId}/pin`);
 export const toggleFavouriteConversation = (convId) => API.post(`/chat/conversations/${convId}/favourite`);
+export const getCallHistory = (convId) => API.get(`/chat/conversations/${convId}/calls`);
 
 export default API;

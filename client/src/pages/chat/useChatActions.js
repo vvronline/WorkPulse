@@ -19,7 +19,8 @@ export default function useChatActions(state) {
         setDeleteConfirm, setConvMenu,
         setShowGroupModal, setGroupEditData,
         mentionInputRef, pendingCounter, typingTimerRef,
-        refreshUnread
+        refreshUnread,
+        setCallState, callSignalRef, callEndRef
     } = state;
 
     // ─── Send text message ───
@@ -192,6 +193,39 @@ export default function useChatActions(state) {
         }, 200);
     };
 
+    // ─── Call actions ───
+    const initiateCall = (callType) => {
+        if (!activeConv) return;
+        const remoteName = activeConv.is_group
+            ? (activeConv.group_name || activeConv.name)
+            : (activeConv.other_full_name || activeConv.other_username);
+        const remoteAvatar = activeConv.is_group ? null : activeConv.other_avatar;
+
+        setCallState({
+            callId: null,
+            conversationId: activeConv.id,
+            callType,
+            isIncoming: false,
+            callerId: user.id,
+            remoteName,
+            remoteAvatar,
+            isGroup: activeConv.is_group || false,
+            accepted: false,
+            acceptedBy: null,
+            onSignal: callSignalRef,
+            onEndExternal: callEndRef
+        });
+
+        wsSend('call_initiate', {
+            conversationId: activeConv.id,
+            callType
+        });
+    };
+
+    const handleVoiceCall = () => initiateCall('voice');
+    const handleVideoCall = () => initiateCall('video');
+    const handleEndCall = () => setCallState(null);
+
     return {
         handleSend, handleFileUpload, handleVoiceSend, handleDrop,
         handleReply, handleEdit, handleDelete, handlePin, handleReact,
@@ -199,5 +233,6 @@ export default function useChatActions(state) {
         handleJumpTo, handleUnpin,
         handleDeleteConv, handlePinConv, handleFavConv,
         openGroupEdit, handleTyping,
+        handleVoiceCall, handleVideoCall, handleEndCall,
     };
 }

@@ -45,6 +45,13 @@ export default function useChatState() {
     const [deleteConfirm, setDeleteConfirm] = useState(null);
     const [convMenu, setConvMenu] = useState(null);
 
+    // Call state
+    const [callState, setCallState] = useState(null);
+    const callSignalRef = useRef(null);
+    const callEndRef = useRef(null);
+    const callActiveRef = useRef(false);
+    useEffect(() => { callActiveRef.current = !!callState; }, [callState]);
+
     // Refs
     const messagesEndRef = useRef(null);
     const messagesContainerRef = useRef(null);
@@ -191,6 +198,56 @@ export default function useChatState() {
                 break;
             }
             case 'chat_mention': break;
+            // ─── Call events ───
+            case 'call_incoming': {
+                // Someone is calling us
+                if (!callActiveRef.current) {
+                    setCallState({
+                        callId: d.callId,
+                        conversationId: d.conversationId,
+                        callType: d.callType,
+                        isIncoming: true,
+                        callerId: d.callerId,
+                        remoteName: d.callerName,
+                        remoteAvatar: d.callerAvatar,
+                        isGroup: d.isGroup,
+                        accepted: false,
+                        acceptedBy: null,
+                        onSignal: callSignalRef,
+                        onEndExternal: callEndRef
+                    });
+                }
+                break;
+            }
+            case 'call_started': {
+                // Confirmation that our outgoing call was registered
+                setCallState(prev => prev ? { ...prev, callId: d.callId } : prev);
+                break;
+            }
+            case 'call_accepted': {
+                // Remote peer accepted our call → trigger offer creation
+                setCallState(prev => prev ? { ...prev, accepted: true, acceptedBy: d.userId } : prev);
+                break;
+            }
+            case 'call_rejected': {
+                // Remote peer rejected
+                if (callEndRef.current) callEndRef.current();
+                else setCallState(null);
+                break;
+            }
+            case 'call_ended': {
+                // Remote peer ended the call
+                if (callEndRef.current) callEndRef.current();
+                else setCallState(null);
+                break;
+            }
+            case 'call_signal': {
+                // WebRTC signaling data
+                if (callSignalRef.current) {
+                    callSignalRef.current(d.signal, d.fromUserId);
+                }
+                break;
+            }
             default: break;
         }
     }, [user?.id]);
@@ -362,6 +419,9 @@ export default function useChatState() {
         convMembers,
         deleteConfirm, setDeleteConfirm,
         convMenu, setConvMenu,
+        // Call state
+        callState, setCallState,
+        callSignalRef, callEndRef,
         // Refs
         messagesEndRef, messagesContainerRef,
         fileInputRef, mentionInputRef,

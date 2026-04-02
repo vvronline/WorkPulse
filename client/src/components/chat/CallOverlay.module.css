@@ -1,0 +1,203 @@
+/* ── Call Overlay ── */
+.overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    color: #fff;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    animation: fadeIn 0.3s ease;
+}
+
+.overlay.videoMode {
+    background: #000;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* ── Remote video (full screen) ── */
+.remoteVideo {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    z-index: 1;
+    background: #000;
+}
+
+/* ── Local video (PiP) ── */
+.localVideo {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    width: 160px;
+    height: 120px;
+    object-fit: cover;
+    border-radius: 12px;
+    border: 2px solid rgba(255,255,255,0.3);
+    z-index: 10;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+}
+
+/* ── Call info (avatar, name, status) ── */
+.callInfo {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    z-index: 5;
+}
+
+.avatarContainer {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.avatarContainer.pulsing {
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.4); }
+    50% { box-shadow: 0 0 0 20px rgba(76, 175, 80, 0); }
+}
+
+.callerName {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin: 0;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.callStatus {
+    font-size: 0.95rem;
+    opacity: 0.8;
+    margin: 0;
+    letter-spacing: 0.3px;
+}
+
+/* ── Video overlay info ── */
+.videoOverlayInfo {
+    position: absolute;
+    top: 1rem;
+    left: 1rem;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.videoCallerName {
+    font-size: 1rem;
+    font-weight: 600;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+}
+
+.videoDuration {
+    font-size: 0.85rem;
+    opacity: 0.8;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+}
+
+/* ── Controls bar ── */
+.controls {
+    position: absolute;
+    bottom: 3rem;
+    display: flex;
+    gap: 1.25rem;
+    align-items: center;
+    z-index: 10;
+    padding: 0.75rem 1.5rem;
+    border-radius: 40px;
+    background: rgba(0,0,0,0.3);
+    backdrop-filter: blur(10px);
+}
+
+.controlBtn {
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255,255,255,0.15);
+    color: #fff;
+    transition: all 0.2s ease;
+}
+
+.controlBtn:hover {
+    background: rgba(255,255,255,0.25);
+    transform: scale(1.05);
+}
+
+.controlBtn.active {
+    background: rgba(255,255,255,0.9);
+    color: #333;
+}
+
+.controlBtn.endBtn,
+.controlBtn.rejectBtn {
+    background: #e53935;
+    width: 62px;
+    height: 62px;
+}
+
+.controlBtn.endBtn:hover,
+.controlBtn.rejectBtn:hover {
+    background: #c62828;
+}
+
+.controlBtn.acceptBtn {
+    background: #4caf50;
+    width: 62px;
+    height: 62px;
+}
+
+.controlBtn.acceptBtn:hover {
+    background: #388e3c;
+}
+
+/* ── Mobile ── */
+@media (max-width: 768px) {
+    .localVideo {
+        width: 100px;
+        height: 75px;
+        top: 0.5rem;
+        right: 0.5rem;
+    }
+
+    .controls {
+        bottom: 2rem;
+        gap: 1rem;
+    }
+
+    .controlBtn {
+        width: 48px;
+        height: 48px;
+    }
+
+    .controlBtn.endBtn,
+    .controlBtn.rejectBtn,
+    .controlBtn.acceptBtn {
+        width: 56px;
+        height: 56px;
+    }
+
+    .callerName {
+        font-size: 1.25rem;
+    }
+}

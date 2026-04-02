@@ -53,6 +53,13 @@
     background: var(--surface-hover);
     color: var(--text);
 }
+.callBtn {
+    color: var(--accent, #4caf50) !important;
+}
+.callBtn:hover {
+    background: rgba(76, 175, 80, 0.12) !important;
+    color: var(--accent, #4caf50) !important;
+}
 
 /* ─── Mobile ─── */
 @media (max-width: 768px) {

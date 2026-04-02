@@ -52,12 +52,29 @@ export default function UserManagement({ userRole }) {
 
     useEffect(() => { fetchUsers(); fetchPendingRequests(); }, [fetchUsers, fetchPendingRequests]);
     useEffect(() => {
-        getOrgDepartments().then(r => setDepartments(r.data)).catch(e => console.error(e));
-        getOrgTeams().then(r => setTeams(r.data)).catch(e => console.error(e));
         if (userRole === 'platform_admin') {
             getAdminOrganizations().then(r => setOrganizations(r.data.data || r.data)).catch(e => console.error(e));
         }
     }, [userRole]);
+
+    // Fetch departments & teams scoped to each org the users belong to
+    useEffect(() => {
+        if (users.length === 0) return;
+        const orgIds = [...new Set(users.map(u => u.org_id).filter(Boolean))];
+        if (orgIds.length === 0) return;
+        const deptPromises = orgIds.map(oid => getOrgDepartments(userRole === 'platform_admin' ? { org_id: oid } : {}).then(r => r.data).catch(() => []));
+        const teamPromises = orgIds.map(oid => getOrgTeams(userRole === 'platform_admin' ? { org_id: oid } : {}).then(r => r.data).catch(() => []));
+        Promise.all(deptPromises).then(results => {
+            const all = results.flat();
+            const unique = [...new Map(all.map(d => [d.id, d])).values()];
+            setDepartments(unique);
+        });
+        Promise.all(teamPromises).then(results => {
+            const all = results.flat();
+            const unique = [...new Map(all.map(t => [t.id, t])).values()];
+            setTeams(unique);
+        });
+    }, [users, userRole]);
 
     const handleRoleChange = async (id, role) => {
         const user = users.find(u => u.id === id);
@@ -96,6 +113,30 @@ export default function UserManagement({ userRole }) {
             await updateUserAssignment(userId, { org_id: orgId !== undefined ? (orgId || null) : undefined, department_id: deptId || null, team_id: teamId || null, manager_id: managerId || null });
             setMsg('Assignment updated');
             setEditingUser(null);
+            fetchUsers();
+        } catch (e) { setMsg(e.response?.data?.error || 'Failed'); }
+    };
+
+    const handleInlineDept = async (userId, deptId) => {
+        const u = users.find(x => x.id === userId);
+        try {
+            await updateUserAssignment(userId, { department_id: deptId || null, team_id: null, manager_id: u?.manager_id || null });
+            fetchUsers();
+        } catch (e) { setMsg(e.response?.data?.error || 'Failed'); }
+    };
+
+    const handleInlineTeam = async (userId, teamId) => {
+        const u = users.find(x => x.id === userId);
+        try {
+            await updateUserAssignment(userId, { department_id: u?.department_id || null, team_id: teamId || null, manager_id: u?.manager_id || null });
+            fetchUsers();
+        } catch (e) { setMsg(e.response?.data?.error || 'Failed'); }
+    };
+
+    const handleInlineManager = async (userId, managerId) => {
+        const u = users.find(x => x.id === userId);
+        try {
+            await updateUserAssignment(userId, { department_id: u?.department_id || null, team_id: u?.team_id || null, manager_id: managerId || null });
             fetchUsers();
         } catch (e) { setMsg(e.response?.data?.error || 'Failed'); }
     };
@@ -159,9 +200,24 @@ export default function UserManagement({ userRole }) {
                                     </select>
                                 )}
                             </td>
-                            <td>{u.department_name || '—'}</td>
-                            <td>{u.team_name || '—'}</td>
-                            <td>{u.manager_name || '—'}</td>
+                            <td>
+                                <select value={u.department_id || ''} onChange={e => handleInlineDept(u.id, e.target.value)} className={sf.inlineSelect}>
+                                    <option value="">—</option>
+                                    {departments.filter(d => !u.org_id || d.org_id === u.org_id).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                                </select>
+                            </td>
+                            <td>
+                                <select value={u.team_id || ''} onChange={e => handleInlineTeam(u.id, e.target.value)} className={sf.inlineSelect}>
+                                    <option value="">—</option>
+                                    {teams.filter(t => (!u.org_id || t.org_id === u.org_id) && (!u.department_id || t.department_id === Number(u.department_id))).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                </select>
+                            </td>
+                            <td>
+                                <select value={u.manager_id || ''} onChange={e => handleInlineManager(u.id, e.target.value)} className={sf.inlineSelect}>
+                                    <option value="">—</option>
+                                    {users.filter(m => m.id !== u.id && m.is_active && (!u.org_id || m.org_id === u.org_id)).map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}
+                                </select>
+                            </td>
                             <td>
                                 {u.is_active ? <span className={s.badgeActive}>Active</span> : <span className={s.badgeInactive}>Inactive</span>}
                             </td>
