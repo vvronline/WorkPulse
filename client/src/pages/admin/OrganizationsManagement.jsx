@@ -8,7 +8,7 @@ import s from '../Admin.module.css';
 import sf from './AdminForms.module.css';
 import su from './AdminUtils.module.css';
 
-export default function OrganizationsManagement({ onOrgChange }) {
+export default function OrganizationsManagement({ onOrgChange, onManageOrg }) {
     const [orgs, setOrgs] = useState([]);
     const [creating, setCreating] = useState(false);
     const [editing, setEditing] = useState(null);
@@ -77,6 +77,7 @@ export default function OrganizationsManagement({ onOrgChange }) {
                             <td>{o.member_count}</td>
                             <td>
                                 <div className={s.actions}>
+                                    <button className={`${s.btnSmall} ${s.btnPrimary}`} onClick={() => onManageOrg?.(o)}>🏗️ Manage</button>
                                     <button className={`${s.btnSmall} ${s.btnAccent}`} onClick={() => setEditing(o)}>✏️ Edit</button>
                                     <button className={`${s.btnSmall} ${s.btnDanger}`} onClick={() => setDeleting(o)}>🗑️ Delete</button>
                                 </div>

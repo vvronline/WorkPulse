@@ -172,7 +172,7 @@ export const updateTeam = (id, data) => API.put(`/org/teams/${id}`, data);
 export const deleteTeam = (id) => API.delete(`/org/teams/${id}`);
 export const getTeamSprintConfig = (teamId) => API.get(`/org/teams/${teamId}/sprint-config`);
 export const updateTeamSprintConfig = (teamId, data) => API.put(`/org/teams/${teamId}/sprint-config`, data);
-export const getOrgChart = () => API.get('/org/chart');
+export const getOrgChart = (params) => API.get('/org/chart', { params });
 
 // Admin
 export const getAdminOrganizations = () => API.get('/admin/organizations');

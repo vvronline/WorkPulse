@@ -8,6 +8,18 @@ const { logger } = require('../utils/logger');
 const router = express.Router();
 router.use(auth, loadUserContext);
 
+/**
+ * Resolve the effective org_id for platform_admin (who has no user-level org).
+ * For mutations, platform_admin passes org_id in the request body; for queries, via query params.
+ */
+function resolveOrgId(req, source = 'body') {
+    if (req.userRole === 'platform_admin') {
+        const id = source === 'body' ? req.body?.org_id : req.query?.org_id;
+        return id ? Number(id) : null;
+    }
+    return req.userOrgId;
+}
+
 // ==================== ORGANIZATIONS ====================
 
 router.post('/', requireRole('super_admin'), async (req, res) => {
@@ -109,8 +121,11 @@ router.get('/members', requireRole('team_lead'), requireSameOrg, async (req, res
         const page = Math.max(parseInt(req.query.page) || 1, 1);
         const perPage = Math.min(Math.max(parseInt(req.query.per_page) || 50, 1), 100);
 
+        const effectiveOrgId = resolveOrgId(req, 'query');
+        if (!effectiveOrgId) return res.json({ data: [], total: 0, page: 1, perPage });
+
         const where = ['u.org_id = $1'];
-        const params = [req.userOrgId];
+        const params = [effectiveOrgId];
         let pi = 2;
 
         if (search) {
@@ -253,9 +268,12 @@ router.post('/departments', requireRole('hr_admin'), requireSameOrg, async (req,
         if (!name || !name.trim()) return res.status(400).json({ error: 'Department name is required' });
         if (name.trim().length > 100) return res.status(400).json({ error: 'Department name must be 100 characters or less' });
 
+        const effectiveOrgId = resolveOrgId(req, 'body');
+        if (!effectiveOrgId) return res.status(400).json({ error: 'Organization ID is required' });
+
         const result = await query(
             'INSERT INTO departments (org_id, name, head_id) VALUES ($1, $2, $3) RETURNING id',
-            [req.userOrgId, name.trim(), head_id || null]
+            [effectiveOrgId, name.trim(), head_id || null]
         );
         logAction(req, 'create', 'department', result.rows[0].id, { name: name.trim() });
         res.json({ id: result.rows[0].id, name: name.trim(), message: 'Department created' });
@@ -271,7 +289,10 @@ router.put('/departments/:id', requireRole('hr_admin'), requireSameOrg, async (r
         const { id } = req.params;
         const { name, head_id } = req.body;
 
-        const dept = (await query('SELECT * FROM departments WHERE id = $1 AND org_id = $2', [id, req.userOrgId])).rows[0];
+        const deptQuery = req.userRole === 'platform_admin'
+            ? await query('SELECT * FROM departments WHERE id = $1', [id])
+            : await query('SELECT * FROM departments WHERE id = $1 AND org_id = $2', [id, req.userOrgId]);
+        const dept = deptQuery.rows[0];
         if (!dept) return res.status(404).json({ error: 'Department not found' });
 
         await query('UPDATE departments SET name = $1, head_id = $2 WHERE id = $3',
@@ -287,7 +308,10 @@ router.put('/departments/:id', requireRole('hr_admin'), requireSameOrg, async (r
 router.delete('/departments/:id', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
     try {
         const { id } = req.params;
-        const dept = (await query('SELECT * FROM departments WHERE id = $1 AND org_id = $2', [id, req.userOrgId])).rows[0];
+        const deptQuery = req.userRole === 'platform_admin'
+            ? await query('SELECT * FROM departments WHERE id = $1', [id])
+            : await query('SELECT * FROM departments WHERE id = $1 AND org_id = $2', [id, req.userOrgId]);
+        const dept = deptQuery.rows[0];
         if (!dept) return res.status(404).json({ error: 'Department not found' });
 
         await query('UPDATE users SET department_id = NULL WHERE department_id = $1', [id]);
@@ -355,9 +379,12 @@ router.post('/teams', requireRole('hr_admin'), requireSameOrg, async (req, res) 
         if (!name || !name.trim()) return res.status(400).json({ error: 'Team name is required' });
         if (name.trim().length > 100) return res.status(400).json({ error: 'Team name must be 100 characters or less' });
 
+        const effectiveOrgId = resolveOrgId(req, 'body');
+        if (!effectiveOrgId) return res.status(400).json({ error: 'Organization ID is required' });
+
         const result = await query(
             'INSERT INTO teams (org_id, department_id, name, lead_id) VALUES ($1, $2, $3, $4) RETURNING id',
-            [req.userOrgId, department_id || null, name.trim(), lead_id || null]
+            [effectiveOrgId, department_id || null, name.trim(), lead_id || null]
         );
         logAction(req, 'create', 'team', result.rows[0].id, { name: name.trim(), department_id });
         res.json({ id: result.rows[0].id, name: name.trim(), message: 'Team created' });
@@ -373,7 +400,10 @@ router.put('/teams/:id', requireRole('hr_admin'), requireSameOrg, async (req, re
         const { id } = req.params;
         const { name, department_id, lead_id } = req.body;
 
-        const team = (await query('SELECT * FROM teams WHERE id = $1 AND org_id = $2', [id, req.userOrgId])).rows[0];
+        const teamQuery = req.userRole === 'platform_admin'
+            ? await query('SELECT * FROM teams WHERE id = $1', [id])
+            : await query('SELECT * FROM teams WHERE id = $1 AND org_id = $2', [id, req.userOrgId]);
+        const team = teamQuery.rows[0];
         if (!team) return res.status(404).json({ error: 'Team not found' });
 
         await query('UPDATE teams SET name = $1, department_id = $2, lead_id = $3 WHERE id = $4',
@@ -389,7 +419,10 @@ router.put('/teams/:id', requireRole('hr_admin'), requireSameOrg, async (req, re
 router.delete('/teams/:id', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
     try {
         const { id } = req.params;
-        const team = (await query('SELECT * FROM teams WHERE id = $1 AND org_id = $2', [id, req.userOrgId])).rows[0];
+        const teamQuery = req.userRole === 'platform_admin'
+            ? await query('SELECT * FROM teams WHERE id = $1', [id])
+            : await query('SELECT * FROM teams WHERE id = $1 AND org_id = $2', [id, req.userOrgId]);
+        const team = teamQuery.rows[0];
         if (!team) return res.status(404).json({ error: 'Team not found' });
 
         await query('UPDATE users SET team_id = NULL WHERE team_id = $1', [id]);
@@ -405,7 +438,10 @@ router.delete('/teams/:id', requireRole('hr_admin'), requireSameOrg, async (req,
 router.get('/teams/:id/sprint-config', requireSameOrg, async (req, res) => {
     try {
         const { id } = req.params;
-        const team = (await query('SELECT * FROM teams WHERE id = $1 AND org_id = $2', [id, req.userOrgId])).rows[0];
+        const teamQuery = req.userRole === 'platform_admin'
+            ? await query('SELECT * FROM teams WHERE id = $1', [id])
+            : await query('SELECT * FROM teams WHERE id = $1 AND org_id = $2', [id, req.userOrgId]);
+        const team = teamQuery.rows[0];
         if (!team) return res.status(404).json({ error: 'Team not found' });
 
         let currentSprint = null;
@@ -447,7 +483,10 @@ router.put('/teams/:id/sprint-config', requireRole('team_lead'), requireSameOrg,
         const { id } = req.params;
         const { sprint_duration_weeks, sprint_start_date } = req.body;
 
-        const team = (await query('SELECT * FROM teams WHERE id = $1 AND org_id = $2', [id, req.userOrgId])).rows[0];
+        const teamQuery = req.userRole === 'platform_admin'
+            ? await query('SELECT * FROM teams WHERE id = $1', [id])
+            : await query('SELECT * FROM teams WHERE id = $1 AND org_id = $2', [id, req.userOrgId]);
+        const team = teamQuery.rows[0];
         if (!team) return res.status(404).json({ error: 'Team not found' });
 
         if (sprint_duration_weeks !== undefined) {
@@ -476,17 +515,20 @@ router.put('/teams/:id/sprint-config', requireRole('team_lead'), requireSameOrg,
 
 router.get('/chart', requireSameOrg, async (req, res) => {
     try {
+        const effectiveOrgId = resolveOrgId(req, 'query');
+        if (!effectiveOrgId) return res.json({ departments: [], teams: [], members: [] });
+
         const departments = (await query(`
             SELECT d.id, d.name, d.head_id, u.full_name as head_name, u.avatar as head_avatar
             FROM departments d LEFT JOIN users u ON u.id = d.head_id
             WHERE d.org_id = $1 ORDER BY d.name
-        `, [req.userOrgId])).rows;
+        `, [effectiveOrgId])).rows;
 
         const teams = (await query(`
             SELECT t.id, t.name, t.department_id, t.lead_id, u.full_name as lead_name, u.avatar as lead_avatar
             FROM teams t LEFT JOIN users u ON u.id = t.lead_id
             WHERE t.org_id = $1 ORDER BY t.name
-        `, [req.userOrgId])).rows;
+        `, [effectiveOrgId])).rows;
 
         const members = (await query(`
             SELECT u.id, u.full_name, u.email, u.avatar, u.role, u.department_id, u.team_id,
@@ -495,7 +537,7 @@ router.get('/chart', requireSameOrg, async (req, res) => {
             LEFT JOIN users m ON m.id = u.manager_id
             WHERE u.org_id = $1 AND u.is_active = TRUE
             ORDER BY u.full_name
-        `, [req.userOrgId])).rows;
+        `, [effectiveOrgId])).rows;
 
         res.json({ departments, teams, members });
     } catch (err) {

@@ -12,9 +12,9 @@ describe('clampOffset', () => {
         expect(clampOffset('abc')).toBe(0);
     });
 
-    test('clamps to 0 if out of range', () => {
-        expect(clampOffset('800')).toBe(0);  // > 720
-        expect(clampOffset('-900')).toBe(0); // < -840
+    test('returns null if out of range', () => {
+        expect(clampOffset('800')).toBe(null);  // > 720
+        expect(clampOffset('-900')).toBe(null); // < -840
     });
 
     test('accepts valid values', () => {

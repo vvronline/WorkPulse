@@ -193,6 +193,8 @@ describe('POST /api/calendar', () => {
     test('creates event with valid data', async () => {
         setupAuth();
         const created = { id: 42, title: 'Team sync', start_time: '2026-03-04T09:00:00Z', end_time: '2026-03-04T10:00:00Z', color: '#6366f1', user_id: 1 };
+        // First mock: event count check; second mock: INSERT
+        mockQuery.mockResolvedValueOnce({ rows: [{ c: '5' }], rowCount: 1 });
         mockQuery.mockResolvedValueOnce({ rows: [created], rowCount: 1 });
 
         const res = await request(app)
@@ -208,6 +210,8 @@ describe('POST /api/calendar', () => {
     test('creates event with optional fields (color, description, task_id)', async () => {
         setupAuth();
         const created = { id: 7, title: 'Review', description: 'PR review', color: '#10b981', task_id: 5, start_time: '2026-03-04T14:00:00Z', end_time: '2026-03-04T15:00:00Z' };
+        // First mock: event count check; second mock: INSERT
+        mockQuery.mockResolvedValueOnce({ rows: [{ c: '5' }], rowCount: 1 });
         mockQuery.mockResolvedValueOnce({ rows: [created], rowCount: 1 });
 
         const res = await request(app)

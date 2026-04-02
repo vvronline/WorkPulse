@@ -28,6 +28,16 @@ export default function Organization() {
         if (user?.role === 'super_admin') {
             return <CreateOrgView onCreated={(orgId) => { fetchOrg(); updateUser({ org_id: orgId, role: 'super_admin' }); }} />;
         }
+        if (user?.role === 'platform_admin') {
+            return (
+                <div className={s.adminPage}>
+                    <h1>Organization</h1>
+                    <p style={{ color: 'var(--text-secondary)', marginTop: '1rem' }}>
+                        As a Platform Admin, manage organizations from the <a href="/admin?tab=organizations">Admin Panel → Organizations</a> tab.
+                    </p>
+                </div>
+            );
+        }
         return (
             <div className={s.adminPage}>
                 <h1>Organization</h1>

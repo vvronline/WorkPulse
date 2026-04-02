@@ -18,26 +18,26 @@ export default function Teams({ orgId, userRole }) {
     const [editId, setEditId] = useState(null);
     const [editForm, setEditForm] = useState({ name: '', department_id: '', lead_id: '', sprint_duration_weeks: 2, sprint_start_date: '' });
     const [msg, setMsg] = useAutoDismiss('');
-    const canManage = ['hr_admin', 'super_admin'].includes(userRole);
+    const canManage = ['hr_admin', 'super_admin', 'platform_admin'].includes(userRole);
     const isAdmin = canManage;
 
     const fetchTeams = useCallback(() => {
-        getOrgTeams().then(r => setTeams(r.data)).catch(e => console.error(e));
-        getOrgDepartments().then(r => setDepartments(r.data)).catch(e => console.error(e));
-    }, []);
+        getOrgTeams(orgId ? { org_id: orgId } : undefined).then(r => setTeams(r.data)).catch(e => console.error(e));
+        getOrgDepartments(orgId ? { org_id: orgId } : undefined).then(r => setDepartments(r.data)).catch(e => console.error(e));
+    }, [orgId]);
 
     useEffect(() => { fetchTeams(); }, [fetchTeams]);
 
     useEffect(() => {
         if (canManage) {
-            getOrgMembers({ is_active: true }).then(r => setMembers(r.data?.data ?? r.data)).catch(e => console.error(e));
+            getOrgMembers(orgId ? { is_active: true, org_id: orgId } : { is_active: true }).then(r => setMembers(r.data?.data ?? r.data)).catch(e => console.error(e));
         }
-    }, [canManage]);
+    }, [canManage, orgId]);
 
     const handleCreate = async (e) => {
         e.preventDefault();
         try {
-            await createTeam({ name: form.name, department_id: form.department_id || null, lead_id: form.lead_id || null });
+            await createTeam({ name: form.name, department_id: form.department_id || null, lead_id: form.lead_id || null, org_id: orgId || undefined });
             setForm({ name: '', department_id: '', lead_id: '' });
             setShowForm(false);
             fetchTeams();

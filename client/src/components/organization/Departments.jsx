@@ -16,25 +16,25 @@ export default function Departments({ orgId, userRole }) {
     const [editName, setEditName] = useState('');
     const [editHeadId, setEditHeadId] = useState('');
     const [msg, setMsg] = useAutoDismiss('');
-    const canManage = ['hr_admin', 'super_admin'].includes(userRole);
+    const canManage = ['hr_admin', 'super_admin', 'platform_admin'].includes(userRole);
     const isAdmin = canManage;
 
     const fetchDepts = useCallback(() => {
-        getOrgDepartments().then(r => setDepartments(r.data)).catch(e => console.error(e));
-    }, []);
+        getOrgDepartments(orgId ? { org_id: orgId } : undefined).then(r => setDepartments(r.data)).catch(e => console.error(e));
+    }, [orgId]);
 
     useEffect(() => { fetchDepts(); }, [fetchDepts]);
 
     useEffect(() => {
         if (canManage) {
-            getOrgMembers({ is_active: true }).then(r => setMembers(r.data?.data ?? r.data)).catch(e => console.error(e));
+            getOrgMembers(orgId ? { is_active: true, org_id: orgId } : { is_active: true }).then(r => setMembers(r.data?.data ?? r.data)).catch(e => console.error(e));
         }
-    }, [canManage]);
+    }, [canManage, orgId]);
 
     const handleCreate = async (e) => {
         e.preventDefault();
         try {
-            await createDepartment({ name, head_id: headId || null });
+            await createDepartment({ name, head_id: headId || null, org_id: orgId || undefined });
             setName('');
             setHeadId('');
             setShowForm(false);

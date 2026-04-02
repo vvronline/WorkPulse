@@ -354,7 +354,7 @@ describe('PUT /api/chat/conversations/:id/group', () => {
 
         expect(res.status).toBe(200);
 
-        const validateCall = mockQuery.mock.calls.find(([sql]) => typeof sql === 'string' && sql.includes('SELECT id FROM users WHERE id = ANY($1) AND org_id = $2 AND is_active = TRUE'));
+        const validateCall = mockQuery.mock.calls.find(([sql]) => typeof sql === 'string' && sql.includes('SELECT u.id FROM users u'));
         expect(validateCall).toBeTruthy();
         expect(validateCall[1][0]).toEqual([2, 999]);
         expect(validateCall[1][1]).toBe(1);

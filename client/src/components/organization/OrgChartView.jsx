@@ -126,14 +126,15 @@ function DeptCard({ dept, teams, members, highlight }) {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────
-export default function OrgChartView() {
+export default function OrgChartView({ orgId }) {
     const [chart, setChart] = useState(null);
     const [viewMode, setViewMode] = useState('dept');   // 'dept' | 'tree'
     const [search, setSearch] = useState('');
 
     useEffect(() => {
-        getOrgChart().then(r => setChart(r.data)).catch(e => console.error(e));
-    }, []);
+        const params = orgId ? { org_id: orgId } : undefined;
+        getOrgChart(params).then(r => setChart(r.data)).catch(e => console.error(e));
+    }, [orgId]);
 
     // Filtered members for dept view
     const filteredMembers = useMemo(() => {
