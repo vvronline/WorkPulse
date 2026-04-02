@@ -45,6 +45,12 @@ router.put('/', async (req, res) => {
         const { data } = req.body;
         if (!data) return res.status(400).json({ error: 'No data provided' });
 
+        // Prevent oversized notebook payloads
+        const serialized = JSON.stringify(data);
+        if (serialized.length > 2 * 1024 * 1024) {
+            return res.status(400).json({ error: 'Notebook data too large (max 2 MB)' });
+        }
+
         const old = await getNotebook(req.userId);
         const oldMap = {};
         if (old?.pages) old.pages.forEach(p => { oldMap[p.id] = p; });

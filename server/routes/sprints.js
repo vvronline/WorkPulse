@@ -48,6 +48,8 @@ router.post('/', auth, loadUserContext, requireRole('team_lead'), async (req, re
 
         const { name, start_date, end_date, goal } = req.body;
         if (!name || !start_date || !end_date) return res.status(400).json({ error: 'Sprint name, start_date, and end_date are required' });
+        if (name.trim().length > 100) return res.status(400).json({ error: 'Sprint name must be 100 characters or less' });
+        if (goal && goal.length > 1000) return res.status(400).json({ error: 'Sprint goal must be 1000 characters or less' });
         if (!/^\d{4}-\d{2}-\d{2}$/.test(start_date) || !/^\d{4}-\d{2}-\d{2}$/.test(end_date)) {
             return res.status(400).json({ error: 'Dates must be in YYYY-MM-DD format' });
         }

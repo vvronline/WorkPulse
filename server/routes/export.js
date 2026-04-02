@@ -170,15 +170,22 @@ router.get('/team-analytics', requireRole('team_lead'), async (req, res) => {
         const userIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId);
         if (userIds.length === 0) return res.status(200).json([]);
 
+        // Enforce org boundary: only include members from the requester's org
+        const memberConditions = ['u.id = ANY($1)', 'u.is_active = TRUE'];
+        const memberParams = [userIds];
+        if (req.userOrgId) {
+            memberConditions.push('u.org_id = $2');
+            memberParams.push(req.userOrgId);
+        }
         const members = (await query(`
             SELECT u.id, u.full_name, u.email, u.role, u.timezone_offset,
                    d.name AS department_name, tm.name AS team_name
             FROM users u
             LEFT JOIN departments d ON d.id = u.department_id
             LEFT JOIN teams tm ON tm.id = u.team_id
-            WHERE u.id = ANY($1) AND u.is_active = TRUE
+            WHERE ${memberConditions.join(' AND ')}
             ORDER BY u.full_name
-        `, [userIds])).rows;
+        `, memberParams)).rows;
 
         const offsetMin = getOffsetMin(req);
         const rows = [];

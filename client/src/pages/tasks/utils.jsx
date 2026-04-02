@@ -7,7 +7,8 @@ import { getLocalToday } from '../../api';
 const DOMPURIFY_CONFIG = {
   ALLOWED_TAGS: ['b', 'i', 'em', 'strong', 'a', 'code', 'pre', 'ul', 'ol', 'li', 'p', 'br', 'span'],
   ALLOWED_ATTR: ['href', 'title', 'target', 'rel', 'class'],
-  ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel):|[^a-z]|[a-z+.\-]*(?:[^a-z+.\-:]|$))/i,
+  ALLOW_UNKNOWN_PROTOCOLS: false,
+  ALLOWED_URI_REGEXP: /^(?:(?:f|ht)tps?|mailto|tel):/i,
 };
 
 export function highlightHtml(raw) {

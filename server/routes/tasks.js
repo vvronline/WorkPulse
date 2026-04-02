@@ -113,8 +113,10 @@ async function canAccessTask(task, userId, requesterOrgId) {
 // Helper: sync labels for a task
 async function syncLabels(taskId, labelIds, orgId) {
     if (!labelIds || !Array.isArray(labelIds)) return;
+    // Limit labels per task to prevent resource exhaustion
+    const limitedIds = labelIds.slice(0, 20);
     await query('DELETE FROM task_label_map WHERE task_id = $1', [taskId]);
-    for (const lid of labelIds) {
+    for (const lid of limitedIds) {
         const validLid = parseInt(lid, 10);
         if (isNaN(validLid)) continue;
         // Only allow labels from the same org (or personal labels with no org)
@@ -388,7 +390,7 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
         );
 
         if (newTitle !== task.title) await logHistory(id, req.userId, 'updated', 'title', task.title, newTitle);
-        if (newDesc !== task.description) await logHistory(id, req.userId, 'updated', 'description', task.description ? 'changed' : null, newDesc ? 'changed' : null);
+        if (newDesc !== task.description) await logHistory(id, req.userId, 'updated', 'description', task.description ? task.description.slice(0, 100) : null, newDesc ? newDesc.slice(0, 100) : null);
         if (newPriority !== task.priority) await logHistory(id, req.userId, 'updated', 'priority', task.priority, newPriority);
         if (String(newAssignedTo || '') !== String(task.assigned_to || '')) {
             const oldUser = task.assigned_to ? (await query('SELECT full_name FROM users WHERE id = $1', [task.assigned_to])).rows[0] : null;

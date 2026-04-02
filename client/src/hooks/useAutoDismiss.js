@@ -21,7 +21,7 @@ export function useAutoDismiss(initialValue = '', delayMs = 5000) {
         return () => {
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
         };
-    }, [value, initialValue, delayMs]);
+    }, [value, delayMs]);
 
     const setValueClearTimeout = (newValue) => {
         if (timeoutRef.current) clearTimeout(timeoutRef.current);

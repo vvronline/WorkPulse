@@ -13,6 +13,7 @@ export default function AxiosInterceptor({ children }) {
     toastRef.current = toast;
     const logoutRef = useRef(logout);
     logoutRef.current = logout;
+    const isLoggingOutRef = useRef(false);
 
     useEffect(() => {
         const interceptor = API.interceptors.response.use(
@@ -21,8 +22,12 @@ export default function AxiosInterceptor({ children }) {
                 const status = error.response?.status;
                 const url = error.config?.url || '';
                 if (status === 401 && !url.includes('/auth/logout')) {
-                    logoutRef.current();
-                    navigate('/login', { replace: true });
+                    // Debounce: only the first 401 triggers logout
+                    if (!isLoggingOutRef.current) {
+                        isLoggingOutRef.current = true;
+                        logoutRef.current().finally(() => { isLoggingOutRef.current = false; });
+                        navigate('/login', { replace: true });
+                    }
                 } else if (status === 429) {
                     toastRef.current.warning('Too many requests. Please slow down.');
                 } else if (status >= 500) {

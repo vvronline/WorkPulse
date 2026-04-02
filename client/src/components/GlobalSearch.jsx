@@ -1,3 +1,4 @@
+import DOMPurify from 'dompurify';
 import { useGlobalSearch } from '../hooks/useGlobalSearch';
 import s from './GlobalSearch.module.css';
 
@@ -91,7 +92,7 @@ export default function GlobalSearch({ onClose }) {
                                             <div className={s.itemBody}>
                                                 <span className={s.itemTitle}>{t.title}</span>
                                                 {t.snippet && (
-                                                    <span className={s.snippet} dangerouslySetInnerHTML={{ __html: t.snippet }} />
+                                                    <span className={s.snippet} dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(t.snippet) }} />
                                                 )}
                                             </div>
                                             <span className={`${s.badge} ${s[`status-${t.status}`] || s.badgeDefault}`}>

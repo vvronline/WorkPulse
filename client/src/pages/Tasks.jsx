@@ -53,12 +53,12 @@ export default function Tasks() {
   const filters = useFilters({ activeTab });
   const globalSearch = useGlobalSearch();
 
-  const fetchTasks = useCallback(async () => {
+  const fetchTasks = useCallback(async (signal) => {
     try {
       const params = { ...filters.plannerFilters };
       if (activeTab === 'sprint' && selectedSprintId) {
         params.sprint_id = selectedSprintId;
-        const res = await getTasks(undefined, params);
+        const res = await getTasks(undefined, params, signal);
         setTasks(res.data.tasks);
         setStats(res.data.stats);
       } else {
@@ -110,7 +110,7 @@ export default function Tasks() {
     if (activeTab === 'backlog') return;
     const controller = new AbortController();
     setLoading(true);
-    fetchTasks().finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    fetchTasks(controller.signal).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [fetchTasks, activeTab]);
 

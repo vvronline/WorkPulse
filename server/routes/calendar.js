@@ -33,7 +33,16 @@ router.post('/', async (req, res) => {
     try {
         const { title, description, start_time, end_time, all_day, color, task_id } = req.body;
         if (!title || !start_time || !end_time) return res.status(400).json({ error: 'title, start_time, end_time required' });
+        if (title.trim().length > 200) return res.status(400).json({ error: 'Title must be 200 characters or less' });
+        if (description && description.length > 2000) return res.status(400).json({ error: 'Description must be 2000 characters or less' });
         if (new Date(end_time) <= new Date(start_time)) return res.status(400).json({ error: 'end_time must be after start_time' });
+
+        // Rate limit: max 100 events per user
+        const countRes = await query('SELECT COUNT(*) AS c FROM calendar_events WHERE user_id = $1', [req.userId]);
+        if (parseInt(countRes.rows[0].c, 10) >= 1000) {
+            return res.status(400).json({ error: 'Maximum event limit reached (1000). Delete old events first.' });
+        }
+
         const result = await query(
             `INSERT INTO calendar_events (user_id, org_id, title, description, start_time, end_time, all_day, color, task_id)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,

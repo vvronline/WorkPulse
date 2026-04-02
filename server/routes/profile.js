@@ -57,8 +57,12 @@ const upload = multer({
 const uploadsRoot = path.resolve(__dirname, '..', 'uploads');
 
 function safeAvatarPath(avatarRelative) {
+    if (!avatarRelative || avatarRelative.includes('..') || avatarRelative.includes('\0')) {
+        throw new Error('Invalid avatar path');
+    }
     const resolved = path.resolve(__dirname, '..', avatarRelative);
-    if (!resolved.startsWith(uploadsRoot)) {
+    const normalizedRoot = fs.realpathSync(uploadsRoot);
+    if (!resolved.startsWith(normalizedRoot)) {
         throw new Error('Invalid avatar path');
     }
     return resolved;

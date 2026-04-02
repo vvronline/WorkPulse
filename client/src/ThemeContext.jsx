@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { getTheme, updateTheme } from './api';
 import { useAuth } from './AuthContext';
 
@@ -7,6 +7,7 @@ const ThemeContext = createContext(null);
 export function ThemeProvider({ children }) {
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
   const { isAuthenticated } = useAuth();
+  const hasFetchedRef = useRef(false);
 
   // Apply theme to document
   useEffect(() => {
@@ -15,12 +16,16 @@ export function ThemeProvider({ children }) {
     localStorage.setItem('theme', theme);
   }, [theme]);
 
-  // Fetch theme from server when authenticated
+  // Fetch theme from server only once when first authenticated
   useEffect(() => {
-    if (isAuthenticated) {
+    if (isAuthenticated && !hasFetchedRef.current) {
+      hasFetchedRef.current = true;
       getTheme().then(({ data }) => {
         setTheme(data.theme);
       }).catch(e => console.error(e));
+    }
+    if (!isAuthenticated) {
+      hasFetchedRef.current = false;
     }
   }, [isAuthenticated]);
 

@@ -22,7 +22,7 @@ router.get('/', async (req, res) => {
             return res.json({ tasks: [], notes: [], users: [], logs: [] });
         }
 
-        const term = q.trim().slice(0, 200); // cap length to avoid excessive DB load
+        const term = q.trim().slice(0, 100); // cap length to prevent expensive queries
 
         // Build a prefix-matching tsquery: each word gets :* for partial matching
         const tsQuery = term

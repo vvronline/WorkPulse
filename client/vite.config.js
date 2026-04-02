@@ -18,10 +18,5 @@ export default defineConfig({
             '/api': 'http://localhost:5000',
             '/uploads': 'http://localhost:5000'
         },
-        hmr: {
-            port: 3000,
-            host: 'localhost',
-            protocol: 'ws'
-        }
     }
 });

@@ -12,7 +12,7 @@ export default function NotesPage() {
   useEffect(() => {
     store.setEmbedded(true);
     return () => store.setEmbedded(false);
-  }, []);
+  }, [store]);
 
   if (!user?.id) return null;
 

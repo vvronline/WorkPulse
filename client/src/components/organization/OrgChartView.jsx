@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import DOMPurify from 'dompurify';
 import { getOrgChart } from '../../api';
 import { ROLE_LABELS } from '../../pages/admin/constants';
 import s from '../../pages/Admin.module.css';
@@ -17,8 +18,9 @@ function MemberAvatar({ member, size = 'sm' }) {
 function MemberChip({ member, highlight }) {
     const name = member.full_name;
     const hl = highlight?.toLowerCase();
-    const hiName = hl && name.toLowerCase().includes(hl)
-        ? name.replace(new RegExp(`(${hl})`, 'gi'), '<mark>$1</mark>')
+    const escapedHl = hl ? hl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : null;
+    const hiName = escapedHl && name.toLowerCase().includes(hl)
+        ? DOMPurify.sanitize(name.replace(new RegExp(`(${escapedHl})`, 'gi'), '<mark>$1</mark>'))
         : name;
     return (
         <div className={oc['member-chip']} title={`${name}\n${ROLE_LABELS[member.role] || member.role}${member.manager_name ? `\nReports to: ${member.manager_name}` : ''}`}>

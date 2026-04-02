@@ -39,17 +39,26 @@ export function AuthProvider({ children }) {
         if (err.response?.status === 401) {
           localStorage.removeItem('user');
           setUser(null);
-        } else {
-          // Non-401 error (500, network) — use cached display-safe fields only.
+        } else if (!err.response) {
+          // Network error (no response) — use cached display-safe fields only.
           // Role/org_id/has_reports are NOT in the cache, so the user gets a
           // basic view without admin or manager features until the server reconnects.
           try {
             const cachedUser = JSON.parse(cached);
-            setUser(sanitizeForCache(cachedUser));
+            if (cachedUser) {
+              setUser(sanitizeForCache(cachedUser));
+            } else {
+              localStorage.removeItem('user');
+              setUser(null);
+            }
           } catch {
             localStorage.removeItem('user');
             setUser(null);
           }
+        } else {
+          // Server error (500, 403, etc.) — don't trust cached permissions
+          localStorage.removeItem('user');
+          setUser(null);
         }
       })
       .finally(() => {

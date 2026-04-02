@@ -138,10 +138,12 @@ app.use('/api', (req, res, next) => {
 });
 
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 15, message: { error: 'Too many attempts. Please try again later.' } });
+const registerLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: { error: 'Too many registration attempts. Please try again later.' } });
 const forgotPasswordLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, message: { error: 'Too many password reset attempts. Please try again later.' } });
 const passwordLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: { error: 'Too many password attempts. Please try again later.' } });
 const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5000, message: { error: 'Too many requests. Please try again later.' } });
 
+app.use('/api/auth/register', registerLimiter);
 app.use('/api/auth/forgot-password', forgotPasswordLimiter);
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/tracker', apiLimiter, trackerRoutes);

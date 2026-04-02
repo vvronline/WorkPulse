@@ -55,10 +55,14 @@ export const resetPassword = (data) => API.post('/auth/reset-password', data);
 // Tracker
 // getStatus is deduplicated: concurrent calls within the same event loop
 // tick share a single HTTP request (e.g. Dashboard + WorkStateContext on mount).
+// On failure, the in-flight ref is cleared so subsequent callers can retry.
 let _statusInFlight = null;
 export const getStatus = () => {
     if (!_statusInFlight) {
-        _statusInFlight = API.get('/tracker/status').finally(() => { _statusInFlight = null; });
+        _statusInFlight = API.get('/tracker/status').then(
+            res => { _statusInFlight = null; return res; },
+            err => { _statusInFlight = null; throw err; },
+        );
     }
     return _statusInFlight;
 };
@@ -98,12 +102,12 @@ export const withdrawLeave = (id) => API.post(`/leaves/${id}/withdraw`);
 export const getLeaveSummary = (month, year) => API.get('/leaves/summary', { params: { month, year } });
 
 // Tasks
-export const getTasks = (date, filters) => {
+export const getTasks = (date, filters, signal) => {
     const params = { ...filters };
     if (date !== undefined) {
         params.date = date;
     }
-    return API.get('/tasks', { params });
+    return API.get('/tasks', { params, signal });
 };
 export const addTask = (data) => API.post('/tasks', data);
 export const updateTaskStatus = (id, status) => API.patch(`/tasks/${id}/status`, { status });

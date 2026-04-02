@@ -27,7 +27,7 @@ export default function ApprovalsTab() {
     const handleApprove = async (id) => {
         if (processing) return;
         setProcessing(id);
-        try { await approveRequest(id); fetchApprovals(); } catch { } finally { setProcessing(null); }
+        try { await approveRequest(id); fetchApprovals(); } catch (err) { console.error('Approve failed:', err); } finally { setProcessing(null); }
     };
 
     const handleReject = async () => {
@@ -38,13 +38,13 @@ export default function ApprovalsTab() {
             setRejectId(null);
             setRejectReason('');
             fetchApprovals();
-        } catch { } finally { setProcessing(null); }
+        } catch (err) { console.error('Reject failed:', err); } finally { setProcessing(null); }
     };
 
     const handleBulk = async (action) => {
         if (selected.size === 0 || processing) return;
         setProcessing('bulk');
-        try { await bulkApproval(Array.from(selected), action); fetchApprovals(); } catch { } finally { setProcessing(null); }
+        try { await bulkApproval(Array.from(selected), action); fetchApprovals(); } catch (err) { console.error('Bulk action failed:', err); } finally { setProcessing(null); }
     };
 
     const toggleSelect = (id) => {

@@ -7,18 +7,23 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 export default function useWebSocket(onMessage) {
     const wsRef = useRef(null);
     const reconnectTimer = useRef(null);
+    const connectingRef = useRef(false);
     const [connected, setConnected] = useState(false);
     const onMessageRef = useRef(onMessage);
     onMessageRef.current = onMessage;
 
     const connect = useCallback(() => {
-        if (wsRef.current && wsRef.current.readyState <= 1) return; // already open or connecting
+        // Prevent duplicate connections: skip if already open, connecting, or a connect is in-flight
+        if (connectingRef.current) return;
+        if (wsRef.current && wsRef.current.readyState <= 1) return;
+        connectingRef.current = true;
 
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const host = import.meta.env.PROD ? window.location.host : 'localhost:5000';
         const ws = new WebSocket(`${protocol}//${host}/ws`);
 
         ws.onopen = () => {
+            connectingRef.current = false;
             setConnected(true);
         };
 
@@ -30,6 +35,7 @@ export default function useWebSocket(onMessage) {
         };
 
         ws.onclose = (e) => {
+            connectingRef.current = false;
             setConnected(false);
             wsRef.current = null;
             // Reconnect after 3s unless auth failure

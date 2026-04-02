@@ -263,9 +263,12 @@ router.put('/conversations/:id/group', auth, async (req, res) => {
         }
 
         if (Array.isArray(removeUserIds) && removeUserIds.length > 0) {
+            // Only remove users who are actually participants in this conversation
             const validRemoveIds = (await query(
-                'SELECT id FROM users WHERE id = ANY($1) AND org_id = $2 AND is_active = TRUE',
-                [removeUserIds, conv.org_id]
+                `SELECT u.id FROM users u
+                 JOIN conversation_participants cp ON cp.user_id = u.id AND cp.conversation_id = $3
+                 WHERE u.id = ANY($1) AND u.org_id = $2 AND u.is_active = TRUE`,
+                [removeUserIds, conv.org_id, convId]
             )).rows.map(r => r.id);
 
             for (const uid of validRemoveIds) {
