@@ -733,7 +733,7 @@ router.get('/widgets', auth, async (req, res) => {
         let leaveDatesSet = new Set();
         try {
             const leaveRes = await query(
-                `SELECT date FROM leaves WHERE user_id = $1 AND date >= $2::date - INTERVAL '60 days' AND date <= $3`,
+                `SELECT date FROM leaves WHERE user_id = $1 AND date::date >= $2::date - INTERVAL '60 days' AND date::date <= $3::date`,
                 [req.userId, today, today],
             );
             leaveRes.rows.forEach(r => leaveDatesSet.add(r.date));
