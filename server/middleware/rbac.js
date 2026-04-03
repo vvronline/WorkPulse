@@ -6,6 +6,7 @@
  */
 const { query } = require('../db');
 const { logger } = require('../utils/logger');
+const redis = require('../redis');
 
 const ROLE_LEVEL = {
     employee: 1,
@@ -26,6 +27,19 @@ const VALID_ROLES = Object.keys(ROLE_LEVEL);
  */
 async function loadUserContext(req, res, next) {
     try {
+        // Try Redis cache first
+        const cached = await redis.getUserContext(req.userId);
+        if (cached) {
+            req.userRole = cached.role || 'employee';
+            req.userOrgId = cached.org_id || null;
+            req.userTeamId = cached.team_id || null;
+            req.userDeptId = cached.department_id || null;
+            req.userManagerId = cached.manager_id || null;
+            req.roleLevel = ROLE_LEVEL[req.userRole] || 1;
+            if (!cached.is_active) return res.status(403).json({ error: 'Account has been deactivated. Contact your administrator.' });
+            return next();
+        }
+
         const result = await query(
             'SELECT role, org_id, team_id, department_id, manager_id, is_active FROM users WHERE id = $1',
             [req.userId]
@@ -33,6 +47,12 @@ async function loadUserContext(req, res, next) {
         const user = result.rows[0];
         if (!user) return res.status(401).json({ error: 'User not found' });
         if (!user.is_active) return res.status(403).json({ error: 'Account has been deactivated. Contact your administrator.' });
+
+        // Cache user context in Redis
+        await redis.setUserContext(req.userId, {
+            role: user.role, org_id: user.org_id, team_id: user.team_id,
+            department_id: user.department_id, manager_id: user.manager_id, is_active: user.is_active,
+        });
 
         req.userRole = user.role || 'employee';
         req.userOrgId = user.org_id || null;

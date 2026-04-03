@@ -9,8 +9,20 @@ const { computeStatus, computeDaySummary } = require('../utils/timeCalc');
 const { logger } = require('../utils/logger');
 const { notifyByEmail } = require('../utils/mailer');
 const { sendToUser } = require('../utils/ws');
+const redis = require('../redis');
 
 const router = express.Router();
+
+// Helper: fetch org config with Redis cache
+async function getOrgWorkConfig(orgId) {
+    if (!orgId) return { work_hours_per_day: 8, work_days: '1,2,3,4,5' };
+    const cached = await redis.getOrgConfig(orgId);
+    if (cached) return cached;
+    const result = await query('SELECT work_hours_per_day, work_days FROM organizations WHERE id = $1', [orgId]);
+    const config = result.rows[0] || { work_hours_per_day: 8, work_days: '1,2,3,4,5' };
+    await redis.setOrgConfig(orgId, config);
+    return config;
+}
 
 // Helper: validate HH:MM time string (range-checked, not just format)
 function isValidTime(str) {
@@ -39,12 +51,10 @@ router.get('/status', auth, async (req, res) => {
 
         // Load this user's org work hours target
         const orgRow = (await query(
-            `SELECT o.work_hours_per_day
-             FROM users u JOIN organizations o ON o.id = u.org_id
-             WHERE u.id = $1`,
-            [req.userId],
+            `SELECT u.org_id FROM users u WHERE u.id = $1`, [req.userId],
         )).rows[0];
-        const targetMinutes = (orgRow?.work_hours_per_day || 8) * 60;
+        const orgConfig = await getOrgWorkConfig(orgRow?.org_id);
+        const targetMinutes = (orgConfig.work_hours_per_day || 8) * 60;
 
         const result = await query(
             `SELECT * FROM time_entries
@@ -99,8 +109,8 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
 
         let workDays = [1, 2, 3, 4, 5];
         if (req.userOrgId) {
-            const orgRes = await query('SELECT work_days FROM organizations WHERE id = $1', [req.userOrgId]);
-            const wd = orgRes.rows[0]?.work_days;
+            const orgConfig = await getOrgWorkConfig(req.userOrgId);
+            const wd = orgConfig.work_days;
             if (wd) workDays = wd.split(',').map(Number).filter(n => !isNaN(n));
         }
         if (!workDays.includes(dow)) {
@@ -109,8 +119,8 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
 
         // Block re-login if daily target already met without approved overtime
         if (req.userOrgId) {
-            const orgRes = await query('SELECT work_hours_per_day FROM organizations WHERE id = $1', [req.userOrgId]);
-            const targetMin = (orgRes.rows[0]?.work_hours_per_day || 8) * 60;
+            const orgConfig = await getOrgWorkConfig(req.userOrgId);
+            const targetMin = (orgConfig.work_hours_per_day || 8) * 60;
             const todayEntries = (await query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
@@ -743,8 +753,8 @@ router.get('/widgets', auth, async (req, res) => {
         let totalFloorMin = 0, workDays = 0, targetMetDays = 0, officeDays = 0, remoteDays = 0;
         let orgWhpd = 8;
         if (req.userOrgId) {
-            const orgRes = await query('SELECT work_hours_per_day FROM organizations WHERE id = $1', [req.userOrgId]);
-            if (orgRes.rows[0]?.work_hours_per_day) orgWhpd = orgRes.rows[0].work_hours_per_day;
+            const orgConfig = await getOrgWorkConfig(req.userOrgId);
+            if (orgConfig.work_hours_per_day) orgWhpd = orgConfig.work_hours_per_day;
         }
         const TARGET = orgWhpd * 60;
 

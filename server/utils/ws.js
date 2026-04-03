@@ -7,12 +7,33 @@ const jwt = require('jsonwebtoken');
 const cookie = require('cookie');
 const { query } = require('../db');
 const { logger } = require('./logger');
+const redis = require('../redis');
 
-/** Map<userId, Set<WebSocket>> */
+/** Map<userId, Set<WebSocket>> — local instance connections only */
 const clients = new Map();
+
+/** Unique instance ID for Pub/Sub dedup */
+const INSTANCE_ID = `ws-${process.pid}-${Date.now()}`;
 
 function setupWebSocket(server) {
     const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 64 * 1024 });
+
+    // ── Redis Pub/Sub: subscribe to user message channels ──
+    const sub = redis.getSubscriber();
+    if (sub) {
+        sub.subscribe('ws:broadcast', (err) => {
+            if (err) logger.warn({ err: err.message }, 'Redis subscribe failed for ws:broadcast');
+        });
+        sub.on('message', (channel, raw) => {
+            try {
+                const envelope = JSON.parse(raw);
+                if (envelope._from === INSTANCE_ID) return; // ignore own publishes
+                if (channel === 'ws:broadcast') {
+                    deliverLocal(envelope.userId, envelope.type, envelope.data);
+                }
+            } catch { /* ignore */ }
+        });
+    }
 
     wss.on('connection', async (ws, req) => {
         // Authenticate via cookie
@@ -34,9 +55,15 @@ function setupWebSocket(server) {
         // Verify token_version hasn't been revoked (password change/reset)
         const userId = payload.id;
         try {
-            const userRow = (await query('SELECT token_version FROM users WHERE id = $1', [userId])).rows[0];
             const tokenVersion = payload.tv ?? 0;
-            if (!userRow || tokenVersion !== (userRow.token_version || 0)) {
+            let dbTokenVersion = await redis.getTokenVersion(userId);
+            if (dbTokenVersion === null) {
+                const userRow = (await query('SELECT token_version FROM users WHERE id = $1', [userId])).rows[0];
+                if (!userRow) { ws.close(4001, 'Token revoked'); return; }
+                dbTokenVersion = userRow.token_version || 0;
+                await redis.setTokenVersion(userId, dbTokenVersion);
+            }
+            if (tokenVersion !== dbTokenVersion) {
                 ws.close(4001, 'Token revoked');
                 return;
             }
@@ -53,6 +80,7 @@ function setupWebSocket(server) {
 
         // Presence: mark online
         if (wasOffline) {
+            redis.setPresence(userId, redis.TTL.PRESENCE);
             query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId]).catch(() => { });
             broadcastPresence(userId, 'online');
         }
@@ -71,6 +99,7 @@ function setupWebSocket(server) {
                 if (set.size === 0) {
                     clients.delete(userId);
                     // Presence: mark offline
+                    redis.removePresence(userId);
                     query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId]).catch(() => { });
                     broadcastPresence(userId, 'offline');
                 }
@@ -174,9 +203,11 @@ async function handleChatMessage(senderId, msg) {
 
         for (const p of participants) {
             sendToUser(p.user_id, 'chat_message', outMsg);
+            // Increment unread counter for recipients (not sender)
+            if (p.user_id !== senderId) {
+                redis.incrUnread(p.user_id, conversationId);
+            }
         }
-
-        // Send mention notifications (only to verified conversation participants)
         if (Array.isArray(mentions) && mentions.length > 0) {
             const participantIdSet = new Set(participants.map(p => p.user_id));
             const mentionedIds = mentions.map(Number).filter(n => n > 0 && n !== senderId && participantIdSet.has(n));
@@ -226,6 +257,7 @@ async function handleChatMessage(senderId, msg) {
              ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = NOW()`,
             [conversationId, senderId]
         );
+        redis.resetUnread(senderId, conversationId);
     } else if (msg.type === 'call_initiate') {
         // Caller initiates a call → create call_log, notify participants
         const { conversationId, callType } = msg.data || {};
@@ -747,9 +779,9 @@ async function handleChatMessage(senderId, msg) {
 }
 
 /**
- * Send a message to a specific user (all their open tabs/devices).
+ * Deliver a message to a user's local WebSocket connections (this instance only).
  */
-function sendToUser(userId, type, data) {
+function deliverLocal(userId, type, data) {
     const set = clients.get(userId);
     if (!set) return;
     const msg = JSON.stringify({ type, data });
@@ -759,7 +791,17 @@ function sendToUser(userId, type, data) {
 }
 
 /**
- * Broadcast to all connected clients.
+ * Send a message to a specific user (all their open tabs/devices, across all instances).
+ */
+function sendToUser(userId, type, data) {
+    // Always deliver locally first
+    deliverLocal(userId, type, data);
+    // Publish to Redis for other instances
+    redis.publish('ws:broadcast', { _from: INSTANCE_ID, userId, type, data });
+}
+
+/**
+ * Broadcast to all connected clients (local instance).
  */
 function broadcast(type, data) {
     const msg = JSON.stringify({ type, data });
@@ -785,11 +827,32 @@ async function broadcastPresence(userId, status) {
         )).rows;
 
         for (const u of orgUsers) {
-            if (clients.has(u.id)) {
-                sendToUser(u.id, 'presence_change', { userId, status, fullName: user.full_name });
-            }
+            sendToUser(u.id, 'presence_change', { userId, status, fullName: user.full_name });
         }
     } catch { /* ignore */ }
 }
 
-module.exports = { setupWebSocket, sendToUser, broadcast };
+/**
+ * Create a notification in the DB and push it to the user via WebSocket.
+ * Drop-in wrapper: call this instead of raw INSERT INTO notifications.
+ */
+async function notifyUser(userId, type, title, body, linkTaskId) {
+    try {
+        const sql = linkTaskId
+            ? 'INSERT INTO notifications (user_id, type, title, body, link_task_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at'
+            : 'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4) RETURNING id, created_at';
+        const params = linkTaskId
+            ? [userId, type, title, body, linkTaskId]
+            : [userId, type, title, body];
+        const row = (await query(sql, params)).rows[0];
+        if (row) {
+            sendToUser(userId, 'notification', {
+                id: row.id, type, title, body,
+                link_task_id: linkTaskId || null,
+                created_at: row.created_at, is_read: false,
+            });
+        }
+    } catch { /* ignore — notification delivery is best-effort */ }
+}
+
+module.exports = { setupWebSocket, sendToUser, broadcast, notifyUser };

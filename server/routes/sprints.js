@@ -3,6 +3,7 @@ const { query } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole } = require('../middleware/rbac');
 const { logger } = require('../utils/logger');
+const redis = require('../redis');
 
 const router = express.Router();
 
@@ -29,11 +30,17 @@ router.get('/active', auth, loadUserContext, async (req, res) => {
     try {
         if (!req.userTeamId) return res.json({ sprint: null });
 
+        // Try Redis cache first
+        const cached = await redis.getActiveSprint(req.userTeamId);
+        if (cached !== null) return res.json({ sprint: cached || null });
+
         const sprint = (await query(`
             SELECT * FROM sprints
             WHERE team_id = $1 AND status = 'active'
             ORDER BY start_date DESC LIMIT 1
         `, [req.userTeamId])).rows[0];
+
+        await redis.setActiveSprint(req.userTeamId, sprint || false);
 
         res.json({ sprint: sprint || null });
     } catch (err) {
@@ -100,6 +107,7 @@ router.put('/:id', auth, loadUserContext, requireRole('team_lead'), async (req, 
 
         params.push(id);
         await query(`UPDATE sprints SET ${updates.join(', ')} WHERE id = $${pi}`, params);
+        await redis.invalidateActiveSprint(sprint.team_id);
 
         const updated = (await query('SELECT * FROM sprints WHERE id = $1', [id])).rows[0];
         res.json({ sprint: updated });
@@ -119,6 +127,7 @@ router.delete('/:id', auth, loadUserContext, requireRole('team_lead'), async (re
 
         await query('UPDATE tasks SET sprint_id = NULL WHERE sprint_id = $1', [id]);
         await query('DELETE FROM sprints WHERE id = $1', [id]);
+        await redis.invalidateActiveSprint(sprint.team_id);
         res.json({ message: 'Sprint deleted successfully' });
     } catch (err) {
         req.log.error({ err }, 'Error deleting sprint:');

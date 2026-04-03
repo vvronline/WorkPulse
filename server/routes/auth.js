@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
+const redis = require('../redis');
 const { query, transaction } = require('../db');
 const { validatePassword, validateUsername } = require('../utils/password');
 const { logger } = require('../utils/logger');
@@ -287,6 +288,7 @@ router.post('/reset-password', async (req, res) => {
             'UPDATE users SET password = $1, token_version = COALESCE(token_version, 0) + 1 WHERE id = $2',
             [hash, row.user_id],
         );
+        await redis.invalidateTokenVersion(row.user_id);
         await query('UPDATE password_reset_tokens SET used = TRUE WHERE id = $1', [row.id]);
 
         res.json({ message: 'Password has been reset successfully. You can now sign in.' });

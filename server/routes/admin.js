@@ -8,6 +8,7 @@ const { logAction, queryLogs } = require('../utils/audit');
 const { validatePassword, validateUsername } = require('../utils/password');
 const { getOffsetMin, getTzModifier } = require('../utils/timezone');
 const { logger } = require('../utils/logger');
+const redis = require('../redis');
 
 const router = express.Router();
 router.use(auth, loadUserContext, requireRole('hr_admin'));
@@ -265,6 +266,7 @@ router.put('/users/:id/role', async (req, res) => {
             (req.userRole === 'super_admin' && ROLE_LEVEL[role] < ROLE_LEVEL['super_admin']);
         if (canApplyImmediately) {
             await query('UPDATE users SET role = $1 WHERE id = $2', [role, Number(id)]);
+            await redis.invalidateUserContext(Number(id));
             const approverKey = req.userRole;
             await query(
                 `INSERT INTO role_change_requests (org_id, target_user_id, requested_by, from_role, to_role, status, reason, approvals, resolved_at)
@@ -361,6 +363,7 @@ router.post('/role-requests/:id/approve', async (req, res) => {
                     ['approved', JSON.stringify(approvals), reqId]
                 );
             });
+            await redis.invalidateUserContext(rc.target_user_id);
             logAction(req, 'approve_role_change', 'user', rc.target_user_id, { from: rc.from_role, to: rc.to_role, request_id: reqId });
             const targetUser = (await query('SELECT full_name FROM users WHERE id = $1', [rc.target_user_id])).rows[0];
             res.json({ message: `Role change approved. ${targetUser?.full_name}'s role updated to ${rc.to_role}.`, fully_approved: true });
@@ -473,6 +476,7 @@ router.put('/users/:id/assignment', async (req, res) => {
         const finalManagerId = orgChanged ? null : (manager_id || null);
         await query('UPDATE users SET org_id = $1, department_id = $2, team_id = $3, manager_id = $4 WHERE id = $5',
             [newOrgId, finalDeptId, finalTeamId, finalManagerId, Number(id)]);
+        await redis.invalidateUserContext(Number(id));
         logAction(req, 'update_assignment', 'user', Number(id), { org_id: newOrgId, department_id: finalDeptId, team_id: finalTeamId, manager_id: finalManagerId });
         res.json({ message: `${target.full_name}'s assignment updated` });
     } catch (err) {
@@ -496,6 +500,7 @@ router.put('/users/:id/deactivate', async (req, res) => {
         }
         const newActive = !target.is_active;
         await query('UPDATE users SET is_active = $1 WHERE id = $2', [newActive, Number(id)]);
+        await redis.invalidateUserContext(Number(id));
         const action = target.is_active ? 'deactivate' : 'reactivate';
         logAction(req, action, 'user', Number(id), { name: target.full_name });
         res.json({ message: `${target.full_name} has been ${action}d`, is_active: newActive });
@@ -524,6 +529,7 @@ router.post('/users/:id/reset-password', requireRole('hr_admin'), async (req, re
         }
         const hash = await bcrypt.hash(new_password, 10);
         await query('UPDATE users SET password = $1, token_version = COALESCE(token_version, 0) + 1, must_change_password = TRUE WHERE id = $2', [hash, Number(id)]);
+        await redis.invalidateTokenVersion(Number(id));
         logAction(req, 'admin_reset_password', 'user', Number(id), { name: target.full_name });
         res.json({ message: `Password reset for ${target.full_name}. User will be required to change password on next login.` });
     } catch (err) {

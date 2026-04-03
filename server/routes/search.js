@@ -6,6 +6,7 @@ const express = require('express');
 const { query } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, ROLE_LEVEL } = require('../middleware/rbac');
+const redis = require('../redis');
 
 const router = express.Router();
 router.use(auth, loadUserContext);
@@ -23,6 +24,10 @@ router.get('/', async (req, res) => {
         }
 
         const term = q.trim().slice(0, 100); // cap length to prevent expensive queries
+
+        // Check Redis cache first
+        const cached = await redis.getSearchCache(req.userId, term);
+        if (cached) return res.json(cached);
 
         // Build a prefix-matching tsquery: each word gets :* for partial matching
         const tsQuery = term
@@ -147,7 +152,7 @@ router.get('/', async (req, res) => {
             )).rows;
         }
 
-        res.json({
+        const results = {
             tasks: taskRows,
             notes: noteResults,
             users: userRows,
@@ -155,7 +160,12 @@ router.get('/', async (req, res) => {
             leaves: leaveRows,
             sprints: sprintRows,
             logs: logRows,
-        });
+        };
+
+        // Cache results in Redis (2-min TTL)
+        await redis.setSearchCache(req.userId, term, results);
+
+        res.json(results);
     } catch (err) {
         req.log.error({ err }, 'Global search error');
         res.status(500).json({ error: 'Search failed' });

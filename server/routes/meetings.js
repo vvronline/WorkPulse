@@ -3,6 +3,7 @@ const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext } = require('../middleware/rbac');
 const { sendToUser } = require('../utils/ws');
+const redis = require('../redis');
 
 const router = express.Router();
 router.use(auth);
@@ -51,19 +52,24 @@ async function insertSystemMessage(conversationId, senderId, metadata) {
 
 /** Check which users have conflicting calendar events in a time range */
 async function getConflictsForUsers(userIds, startTime, endTime) {
+    if (!userIds.length) return {};
+    // Batch query: fetch all conflicts in a single query instead of per-user
+    const rows = (await query(
+        `SELECT user_id, id, title, start_time, end_time
+         FROM calendar_events
+         WHERE user_id = ANY($1)
+           AND start_time < $3::timestamptz
+           AND end_time > $2::timestamptz
+         ORDER BY user_id, start_time
+         LIMIT 100`,
+        [userIds, startTime, endTime]
+    )).rows;
+
     const conflicts = {};
-    for (const uid of userIds) {
-        const overlapping = (await query(
-            `SELECT id, title, start_time, end_time
-             FROM calendar_events
-             WHERE user_id = $1
-               AND start_time < $3::timestamptz
-               AND end_time > $2::timestamptz
-             LIMIT 3`,
-            [uid, startTime, endTime]
-        )).rows;
-        if (overlapping.length > 0) {
-            conflicts[uid] = overlapping;
+    for (const row of rows) {
+        if (!conflicts[row.user_id]) conflicts[row.user_id] = [];
+        if (conflicts[row.user_id].length < 3) {
+            conflicts[row.user_id].push({ id: row.id, title: row.title, start_time: row.start_time, end_time: row.end_time });
         }
     }
     return conflicts;
@@ -160,13 +166,20 @@ router.get('/:code', async (req, res) => {
             if (!isParticipant) return res.status(403).json({ error: 'Access denied' });
         }
 
-        const participants = await query(
-            `SELECT mp.*, u.full_name, u.avatar, u.username
-             FROM meeting_participants mp JOIN users u ON u.id = mp.user_id
-             WHERE mp.meeting_id = $1 ORDER BY mp.id`,
-            [meeting.id]
-        );
-        meeting.participants = participants.rows;
+        // Fetch participants (with Redis cache for active meetings)
+        let participantRows = await redis.getMeetingParticipants(meeting.id);
+        if (!participantRows) {
+            participantRows = (await query(
+                `SELECT mp.*, u.full_name, u.avatar, u.username
+                 FROM meeting_participants mp JOIN users u ON u.id = mp.user_id
+                 WHERE mp.meeting_id = $1 ORDER BY mp.id`,
+                [meeting.id]
+            )).rows;
+            if (meeting.status === 'active' || meeting.status === 'scheduled') {
+                await redis.setMeetingParticipants(meeting.id, participantRows);
+            }
+        }
+        meeting.participants = participantRows;
         res.json(meeting);
     } catch (err) {
         req.log.error({ err }, 'Get meeting error');
@@ -410,6 +423,7 @@ router.post('/:id/participants', async (req, res) => {
              VALUES ($1, $2, 'participant', 'invited') ON CONFLICT (meeting_id, user_id) DO NOTHING`,
             [meetingId, user_id]
         );
+        await redis.invalidateMeetingParticipants(meetingId);
 
         // Add to conversation
         if (meeting.conversation_id) {
@@ -485,6 +499,7 @@ router.delete('/:id/participants/:userId', async (req, res) => {
         }
 
         await query('DELETE FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2', [meetingId, targetId]);
+        await redis.invalidateMeetingParticipants(meetingId);
         sendToUser(targetId, 'meeting_removed', { meetingId, title: meeting.title });
 
         res.json({ message: 'Participant removed' });

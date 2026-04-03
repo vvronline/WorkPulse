@@ -5,6 +5,7 @@ const fs = require('fs');
 const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
 const { sendToUser } = require('../utils/ws');
+const redis = require('../redis');
 
 const router = express.Router();
 
@@ -106,12 +107,17 @@ router.get('/presence', auth, async (req, res) => {
 
         // Only return presence for users within the same organization
         const orgId = await getUserOrg(req.userId);
-        const rows = orgId
-            ? (await query(
-                'SELECT id, last_seen_at FROM users WHERE id = ANY($1) AND org_id = $2',
-                [ids, orgId]
-            )).rows
-            : [];
+        if (!orgId) return res.json({});
+
+        // Try Redis presence first
+        const redisPresence = await redis.getOnlineUsers(ids);
+        if (redisPresence) return res.json(redisPresence);
+
+        // Fallback to DB
+        const rows = (await query(
+            'SELECT id, last_seen_at FROM users WHERE id = ANY($1) AND org_id = $2',
+            [ids, orgId]
+        )).rows;
 
         const result = {};
         const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
@@ -364,6 +370,17 @@ router.get('/conversations', auth, async (req, res) => {
             ORDER BY cp.is_pinned DESC, COALESCE(m.created_at, c.created_at) DESC
         `, [req.userId])).rows;
 
+        // Overlay Redis unread counts if available (faster than the SQL subquery)
+        if (rows.length > 0) {
+            const convIds = rows.map(r => r.id);
+            const redisCounts = await redis.getUnreadCounts(req.userId, convIds);
+            if (redisCounts) {
+                for (const row of rows) {
+                    row.unread_count = redisCounts[row.id] ?? row.unread_count;
+                }
+            }
+        }
+
         res.json(rows);
     } catch (err) {
         req.log.error({ err }, 'List conversations error');
@@ -461,6 +478,7 @@ router.post('/conversations/:id/read', auth, async (req, res) => {
              ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = NOW()`,
             [convId, req.userId]
         );
+        redis.resetUnread(req.userId, convId);
 
         // Notify others about read receipt
         const participants = (await query(
@@ -570,6 +588,9 @@ router.post('/conversations/:id/files', auth, chatUpload.single('file'), async (
 
         for (const p of participants) {
             sendToUser(p.user_id, 'chat_message', outMsg);
+            if (p.user_id !== req.userId) {
+                redis.incrUnread(p.user_id, convId);
+            }
         }
 
         res.status(201).json(outMsg);

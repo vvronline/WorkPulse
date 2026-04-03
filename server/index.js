@@ -18,8 +18,10 @@ if (!process.env.JWT_SECRET) {
 const express = require('express');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const { RedisStore } = require('rate-limit-redis');
 const cookieParser = require('cookie-parser');
 const { pool, initDB, query, transaction } = require('./db');
+const redis = require('./redis');
 const authRoutes = require('./routes/auth');
 const trackerRoutes = require('./routes/tracker');
 const leaveRoutes = require('./routes/leaves');
@@ -39,6 +41,7 @@ const chatRoutes = require('./routes/chat');
 const searchRoutes = require('./routes/search');
 const meetingsRoutes = require('./routes/meetings');
 const { setupWebSocket } = require('./utils/ws');
+const { initJobs, shutdownJobs } = require('./jobs');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -138,11 +141,20 @@ app.use('/api', (req, res, next) => {
     return res.status(403).json({ error: 'Missing CSRF header' });
 });
 
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 15, message: { error: 'Too many attempts. Please try again later.' } });
-const registerLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: { error: 'Too many registration attempts. Please try again later.' } });
-const forgotPasswordLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, message: { error: 'Too many password reset attempts. Please try again later.' } });
-const passwordLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: { error: 'Too many password attempts. Please try again later.' } });
-const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5000, message: { error: 'Too many requests. Please try again later.' } });
+// Build a Redis-backed store factory; falls back to in-memory when Redis is unavailable
+function makeStore(prefix) {
+    const redisClient = redis.getClient();
+    if (redisClient) {
+        return new RedisStore({ sendCommand: (...args) => redisClient.call(...args), prefix: `rl:${prefix}:` });
+    }
+    return undefined; // express-rate-limit uses MemoryStore by default
+}
+
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 15, store: makeStore('auth'), message: { error: 'Too many attempts. Please try again later.' } });
+const registerLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, store: makeStore('reg'), message: { error: 'Too many registration attempts. Please try again later.' } });
+const forgotPasswordLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, store: makeStore('fp'), message: { error: 'Too many password reset attempts. Please try again later.' } });
+const passwordLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, store: makeStore('pw'), message: { error: 'Too many password attempts. Please try again later.' } });
+const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5000, store: makeStore('api'), message: { error: 'Too many requests. Please try again later.' } });
 
 app.use('/api/auth/register', registerLimiter);
 app.use('/api/auth/forgot-password', forgotPasswordLimiter);
@@ -269,23 +281,24 @@ if (require.main === module) {
     const http = require('http');
     (async () => {
         await initDB();
+        redis.initRedis();
         const httpServer = http.createServer(app);
         setupWebSocket(httpServer);
         httpServer.listen(PORT, () => {
             logger.info({ port: PORT }, 'Server running');
         });
 
-        autoClockOut();
-        setInterval(autoClockOut, 5 * 60 * 1000);
-        setInterval(cleanupTokens, 60 * 60 * 1000);
+        initJobs({ autoClockOut, cleanupTokens });
 
         async function shutdown() {
             logger.info('Shutting down gracefully...');
             httpServer.close(async () => {
+                await shutdownJobs();
+                await redis.shutdown();
                 await pool.end();
                 process.exit(0);
             });
-            setTimeout(async () => { await pool.end(); process.exit(1); }, 5000);
+            setTimeout(async () => { await shutdownJobs(); await redis.shutdown(); await pool.end(); process.exit(1); }, 5000);
         }
         process.on('SIGTERM', shutdown);
         process.on('SIGINT', shutdown);

@@ -109,7 +109,8 @@ describe('GET /api/tracker/status', () => {
     test('returns targetMinutes and dailyTargetMet in response', async () => {
         mockQuery
             .mockResolvedValueOnce({ rows: [{ token_version: 0 }], rowCount: 1 })      // auth
-            .mockResolvedValueOnce({ rows: [{ work_hours_per_day: 9 }], rowCount: 1 }) // org join (9hr target)
+            .mockResolvedValueOnce({ rows: [{ org_id: 1 }], rowCount: 1 })              // user org_id lookup
+            .mockResolvedValueOnce({ rows: [{ work_hours_per_day: 9, work_days: '1,2,3,4,5' }], rowCount: 1 }) // org config
             .mockResolvedValueOnce({ rows: [], rowCount: 0 });                         // time_entries
 
         const res = await request(app)
@@ -127,7 +128,8 @@ describe('GET /api/tracker/status', () => {
         const nowTs = new Date().toISOString();
         mockQuery
             .mockResolvedValueOnce({ rows: [{ token_version: 0 }], rowCount: 1 })      // auth
-            .mockResolvedValueOnce({ rows: [{ work_hours_per_day: 8 }], rowCount: 1 }) // org join (8hr target)
+            .mockResolvedValueOnce({ rows: [{ org_id: 1 }], rowCount: 1 })              // user org_id lookup
+            .mockResolvedValueOnce({ rows: [{ work_hours_per_day: 8, work_days: '1,2,3,4,5' }], rowCount: 1 }) // org config
             .mockResolvedValueOnce({
                 rows: [{ entry_type: 'clock_in', timestamp: nineHoursAgo, work_mode: 'office' }],
                 rowCount: 1,
