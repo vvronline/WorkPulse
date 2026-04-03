@@ -19,8 +19,14 @@ export default function ContextMenu({ x, y, items, onClose }) {
         if (rect.right > window.innerWidth) {
             ref.current.style.left = `${x - rect.width}px`;
         }
+        if (rect.left < 0) {
+            ref.current.style.left = `4px`;
+        }
         if (rect.bottom > window.innerHeight) {
             ref.current.style.top = `${y - rect.height}px`;
+        }
+        if (rect.top < 0) {
+            ref.current.style.top = `4px`;
         }
     }, [x, y]);
 

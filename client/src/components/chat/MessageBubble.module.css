@@ -134,6 +134,7 @@
     position: absolute;
     top: -18px;
     right: 16px;
+    left: auto;
     display: none;
     align-items: center;
     gap: 0;
@@ -145,8 +146,10 @@
     z-index: 10;
 }
 .bubble:hover .hoverActions { display: flex; }
-.mine .hoverActions { right: 16px; left: auto; }
-.theirs .hoverActions { right: 16px; left: auto; }
+/* Mine (right-side): toolbar anchors to the right edge of the bubble */
+.mine .hoverActions { right: 0; left: auto; }
+/* Theirs (left-side): toolbar anchors to left edge of the bubble, not the right */
+.theirs .hoverActions { left: 0; right: auto; }
 
 .quickReactions {
     display: flex;
@@ -246,6 +249,16 @@
 .pickerWrap {
     position: relative;
     z-index: 100;
+}
+/* For sent (mine) messages: picker opens to the left so it doesn't overflow right */
+.mine .pickerWrap {
+    display: flex;
+    justify-content: flex-end;
+}
+/* For received (theirs) messages: picker opens to the right so it doesn't overflow left */
+.theirs .pickerWrap {
+    display: flex;
+    justify-content: flex-start;
 }
 
 @media (max-width: 768px) {

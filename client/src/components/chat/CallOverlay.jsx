@@ -166,6 +166,20 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
         if (callState.onSignal) callState.onSignal.current = handleSignal;
     }, [handleSignal, callState.onSignal]);
 
+    // For OUTGOING calls: acquire media immediately on mount (still within user gesture chain)
+    useEffect(() => {
+        if (!isIncoming && !localStreamRef.current) {
+            startMedia().then(stream => {
+                if (!stream) {
+                    // Permission denied or no device — abort the call
+                    wsSend('call_end', { callId, conversationId });
+                    cleanup();
+                    onEnd();
+                }
+            });
+        }
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
     // Accept incoming call
     const handleAccept = useCallback(async () => {
         setStatus('connecting');
@@ -180,13 +194,13 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
         createPeerConnection(stream, targetUserId);
     }, [callId, conversationId, wsSend, startMedia, createPeerConnection, callState.callerId, stopRingtone]);
 
-    // Handle call accepted (caller side) → create offer
+    // Handle call accepted (caller side) → create offer using already-acquired media
     useEffect(() => {
         if (callState.accepted && !isIncoming) {
             (async () => {
                 setStatus('connecting');
                 stopRingtone();
-                const stream = await startMedia();
+                const stream = localStreamRef.current;
                 if (!stream) { handleEnd(); return; }
 
                 const pc = createPeerConnection(stream, callState.acceptedBy);
