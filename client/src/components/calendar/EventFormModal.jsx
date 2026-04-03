@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { searchChatUsers, getMeeting } from '../../api';
+import { searchChatUsers, getMeeting, checkMeetingConflicts } from '../../api';
 import s from './Calendar.module.css';
 
 const COLORS = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#ef4444', '#8b5cf6', '#14b8a6'];
@@ -44,7 +44,7 @@ function getTimeOptions(timePart) {
  *   onStartChange – (val: string) => void — handles start time changes with end-time adjustment
  *   existingMeetingCode – meeting_code if editing an event that has a meeting
  */
-function MeetingParticipantPicker({ participants, excludeIds = [], onChange }) {
+function MeetingParticipantPicker({ participants, excludeIds = [], onChange, conflicts = {} }) {
     const [query, setQuery] = useState('');
     const [results, setResults] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -76,12 +76,21 @@ function MeetingParticipantPicker({ participants, excludeIds = [], onChange }) {
     return (
         <div className={s.participantPicker}>
             <div className={s.participantChips}>
-                {participants.map(p => (
-                    <span key={p.id} className={s.participantChip}>
-                        {p.name || p.full_name || p.username}
-                        <button type="button" onClick={() => remove(p.id)}>×</button>
-                    </span>
-                ))}
+                {participants.map(p => {
+                    const hasConflict = !!conflicts[p.id];
+                    const conflictEvt = hasConflict ? conflicts[p.id].events[0] : null;
+                    return (
+                        <span
+                            key={p.id}
+                            className={`${s.participantChip} ${hasConflict ? s.participantChipConflict : ''}`}
+                            title={hasConflict ? `⚠️ Conflicts with "${conflictEvt?.title}"` : undefined}
+                        >
+                            {hasConflict && <span className={s.conflictChipIcon} aria-label="conflict">⚠️</span>}
+                            {p.name || p.full_name || p.username}
+                            <button type="button" onClick={() => remove(p.id)}>×</button>
+                        </span>
+                    );
+                })}
             </div>
             <div className={s.participantSearch}>
                 <input
@@ -112,6 +121,8 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
     const [optionalParticipants, setOptionalParticipants] = useState([]);
     const [meetingSettings, setMeetingSettings] = useState({ muteOnJoin: false, allowScreenShare: true });
     const [meetingInfo, setMeetingInfo] = useState(null);
+    const [conflicts, setConflicts] = useState({});
+    const conflictTimerRef = useRef(null);
 
     // Reset meeting state when modal opens/closes
     useEffect(() => {
@@ -121,8 +132,35 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
             setOptionalParticipants([]);
             setMeetingSettings({ muteOnJoin: false, allowScreenShare: true });
             setMeetingInfo(null);
+            setConflicts({});
         }
     }, [modal]);
+
+    // Debounce conflict check when participants or times change
+    useEffect(() => {
+        if (!addMeeting || modal !== 'create') return;
+        const allParticipants = [...requiredParticipants, ...optionalParticipants];
+        if (!allParticipants.length || !form.start_time || !form.end_time) {
+            setConflicts({});
+            return;
+        }
+        clearTimeout(conflictTimerRef.current);
+        conflictTimerRef.current = setTimeout(async () => {
+            try {
+                const r = await checkMeetingConflicts({
+                    user_ids: allParticipants.map(p => p.id),
+                    start_time: new Date(form.start_time).toISOString(),
+                    end_time: new Date(form.end_time).toISOString(),
+                });
+                const map = {};
+                for (const c of (r.data.conflicts || [])) {
+                    map[c.userId] = { name: c.name, events: c.events };
+                }
+                setConflicts(map);
+            } catch { setConflicts({}); }
+        }, 500);
+        return () => clearTimeout(conflictTimerRef.current);
+    }, [requiredParticipants, optionalParticipants, form.start_time, form.end_time, addMeeting, modal]);
 
     // Fetch meeting participants when viewing an existing meeting event
     useEffect(() => {
@@ -338,6 +376,7 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
                 participants={requiredParticipants}
                 excludeIds={optionalParticipants.map(p => p.id)}
                 onChange={setRequiredParticipants}
+                conflicts={conflicts}
               />
             </div>
             <div className={s.formGroup}>
@@ -346,8 +385,21 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
                 participants={optionalParticipants}
                 excludeIds={requiredParticipants.map(p => p.id)}
                 onChange={setOptionalParticipants}
+                conflicts={conflicts}
               />
             </div>
+            {Object.keys(conflicts).length > 0 && (
+              <div className={s.conflictWarning} role="alert">
+                <span className={s.conflictWarningIcon}>⚠️</span>
+                <div>
+                  {Object.values(conflicts).map((c, i) => (
+                    <div key={i}>
+                      <strong>{c.name}</strong> has a scheduling conflict: &quot;{c.events[0]?.title}&quot;
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className={s.meetingSettingsRow}>
               <label className={s.checkbox}>
                 <input

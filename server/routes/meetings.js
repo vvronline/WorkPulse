@@ -49,6 +49,57 @@ async function insertSystemMessage(conversationId, senderId, metadata) {
     return result;
 }
 
+/** Check which users have conflicting calendar events in a time range */
+async function getConflictsForUsers(userIds, startTime, endTime) {
+    const conflicts = {};
+    for (const uid of userIds) {
+        const overlapping = (await query(
+            `SELECT id, title, start_time, end_time
+             FROM calendar_events
+             WHERE user_id = $1
+               AND start_time < $3::timestamptz
+               AND end_time > $2::timestamptz
+             LIMIT 3`,
+            [uid, startTime, endTime]
+        )).rows;
+        if (overlapping.length > 0) {
+            conflicts[uid] = overlapping;
+        }
+    }
+    return conflicts;
+}
+
+// ─── Check participant conflicts for a time slot ────────────────────────────
+router.post('/check-conflicts', async (req, res) => {
+    try {
+        const { user_ids, start_time, end_time } = req.body;
+        if (!Array.isArray(user_ids) || !user_ids.length || !start_time || !end_time) {
+            return res.json({ conflicts: [] });
+        }
+        const ids = user_ids.map(Number).filter(n => n > 0);
+        if (!ids.length) return res.json({ conflicts: [] });
+
+        const conflictMap = await getConflictsForUsers(ids, start_time, end_time);
+        const result = [];
+        for (const uid of ids) {
+            if (conflictMap[uid]) {
+                const userInfo = (await query(
+                    'SELECT full_name, username FROM users WHERE id = $1', [uid]
+                )).rows[0];
+                result.push({
+                    userId: uid,
+                    name: userInfo?.full_name || userInfo?.username || 'Unknown',
+                    events: conflictMap[uid]
+                });
+            }
+        }
+        res.json({ conflicts: result });
+    } catch (err) {
+        req.log.error({ err }, 'Check conflicts error');
+        res.status(500).json({ error: 'Failed to check conflicts' });
+    }
+});
+
 // ─── List user's meetings ───────────────────────────────────────────────────
 router.get('/', async (req, res) => {
     try {
@@ -126,7 +177,7 @@ router.get('/:code', async (req, res) => {
 // ─── Create meeting ─────────────────────────────────────────────────────────
 router.post('/', async (req, res) => {
     try {
-        const { title, description, required_participant_ids, optional_participant_ids, participant_ids, calendar_event_id, settings } = req.body;
+        const { title, description, required_participant_ids, optional_participant_ids, participant_ids, calendar_event_id, settings, start_time, end_time } = req.body;
         if (!title || !title.trim()) return res.status(400).json({ error: 'title is required' });
         if (title.trim().length > 200) return res.status(400).json({ error: 'Title too long (max 200 chars)' });
 
@@ -215,11 +266,23 @@ router.post('/', async (req, res) => {
             text: `📹 Meeting "${meeting.title}" created`
         });
 
+        // Check conflicts for all invitees if time range provided
+        const conflictMap = (start_time && end_time)
+            ? await getConflictsForUsers(inviteeIds, start_time, end_time)
+            : {};
+
         // Send notifications to invitees
         for (const uid of inviteeIds) {
+            const conflictEvents = conflictMap[uid] || [];
+            const hasConflict = conflictEvents.length > 0;
+            const conflictTitle = hasConflict ? conflictEvents[0].title : null;
+            const notifBody = hasConflict
+                ? `${organizer?.full_name || 'Someone'} invited you to "${meeting.title}" — ⚠️ Conflicts with "${conflictTitle}"`
+                : `${organizer?.full_name || 'Someone'} invited you to "${meeting.title}"`;
+
             await query(
                 `INSERT INTO notifications (user_id, type, title, body) VALUES ($1, 'meeting_invite', $2, $3)`,
-                [uid, `Meeting invitation`, `${organizer?.full_name || 'Someone'} invited you to "${meeting.title}"`]
+                [uid, `Meeting invitation`, notifBody]
             );
             sendToUser(uid, 'meeting_invite', {
                 meetingId: meeting.id,
@@ -227,7 +290,9 @@ router.post('/', async (req, res) => {
                 title: meeting.title,
                 organizerName: organizer?.full_name,
                 organizerAvatar: organizer?.avatar,
-                conversationId
+                conversationId,
+                hasConflict,
+                conflictTitle,
             });
         }
 
@@ -356,10 +421,36 @@ router.post('/:id/participants', async (req, res) => {
 
         const organizer = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
 
+        // Check if new participant has a conflict with this meeting's calendar event
+        let hasConflict = false;
+        let conflictTitle = null;
+        const calEvent = (await query(
+            'SELECT start_time, end_time FROM calendar_events WHERE meeting_id = $1 AND user_id = $2 LIMIT 1',
+            [meetingId, meeting.created_by]
+        )).rows[0];
+        if (calEvent) {
+            const overlapping = (await query(
+                `SELECT title FROM calendar_events
+                 WHERE user_id = $1
+                   AND start_time < $3::timestamptz
+                   AND end_time > $2::timestamptz
+                   AND meeting_id IS DISTINCT FROM $4
+                 LIMIT 1`,
+                [user_id, calEvent.start_time, calEvent.end_time, meetingId]
+            )).rows;
+            if (overlapping.length > 0) {
+                hasConflict = true;
+                conflictTitle = overlapping[0].title;
+            }
+        }
+
         // Notify invitee
+        const notifBody = hasConflict
+            ? `${organizer?.full_name || 'Someone'} invited you to "${meeting.title}" — ⚠️ Conflicts with "${conflictTitle}"`
+            : `${organizer?.full_name || 'Someone'} invited you to "${meeting.title}"`;
         await query(
             `INSERT INTO notifications (user_id, type, title, body) VALUES ($1, 'meeting_invite', $2, $3)`,
-            [user_id, `Meeting invitation`, `${organizer?.full_name || 'Someone'} invited you to "${meeting.title}"`]
+            [user_id, `Meeting invitation`, notifBody]
         );
         sendToUser(user_id, 'meeting_invite', {
             meetingId,
@@ -367,10 +458,12 @@ router.post('/:id/participants', async (req, res) => {
             title: meeting.title,
             organizerName: organizer?.full_name,
             conversationId: meeting.conversation_id,
-            isOngoing: meeting.status === 'active'
+            isOngoing: meeting.status === 'active',
+            hasConflict,
+            conflictTitle,
         });
 
-        res.json({ message: 'Participant added', user: targetUser });
+        res.json({ message: 'Participant added', user: targetUser, hasConflict, conflictTitle });
     } catch (err) {
         req.log.error({ err }, 'Add participant error');
         res.status(500).json({ error: 'Failed to add participant' });

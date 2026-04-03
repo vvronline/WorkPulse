@@ -307,6 +307,7 @@ export const getCallHistory = (convId) => API.get(`/chat/conversations/${convId}
 
 // Meetings
 export const createMeeting = (data) => API.post('/meetings', data);
+export const checkMeetingConflicts = (data) => API.post('/meetings/check-conflicts', data);
 export const getMyMeetings = (params) => API.get('/meetings', { params });
 export const getMeeting = (code) => API.get(`/meetings/${code}`);
 export const updateMeeting = (id, data) => API.put(`/meetings/${id}`, data);

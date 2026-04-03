@@ -132,6 +132,8 @@ export default function Calendar({ tasks = [] }) {
                         required_participant_ids: meetingOptions.required.map(p => p.id),
                         optional_participant_ids: meetingOptions.optional.map(p => p.id),
                         settings: meetingOptions.settings,
+                        start_time: new Date(form.start_time).toISOString(),
+                        end_time: new Date(form.end_time).toISOString(),
                     });
                     payload.meeting_id = mtgRes.data.id;
                 }

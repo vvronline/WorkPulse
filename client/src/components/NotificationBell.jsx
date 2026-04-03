@@ -16,7 +16,7 @@ function timeAgo(dateStr) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-const TYPE_ICON = { mention: '@', leave: '📋', task: '📝', approval: '✅' };
+const TYPE_ICON = { mention: '@', leave: '📋', task: '📝', approval: '✅', meeting_invite: '📹' };
 const DEFAULT_ICON = '🔔';
 
 export default function NotificationBell() {
@@ -45,7 +45,7 @@ export default function NotificationBell() {
 
   // WebSocket: refresh notifications on real-time events
   useWebSocket(useCallback((msg) => {
-    if (['notification', 'leave_update', 'task_assigned', 'approval_update'].includes(msg.type)) {
+    if (['notification', 'leave_update', 'task_assigned', 'approval_update', 'meeting_invite'].includes(msg.type)) {
       fetchNotifs();
     }
     if (msg.type === 'chat_message') {
@@ -92,6 +92,8 @@ export default function NotificationBell() {
     }
     if (notif.link_task_id) {
       navigate(`/tasks?task=${notif.link_task_id}`);
+    } else if (notif.type === 'meeting_invite') {
+      navigate('/calendar');
     }
   };
 
