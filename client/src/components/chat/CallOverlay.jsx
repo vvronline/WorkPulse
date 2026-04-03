@@ -24,8 +24,10 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     const remoteStreamRef = useRef(null);
     const localVideoRef = useRef(null);
     const remoteVideoRef = useRef(null);
+    const remoteAudioRef = useRef(null);
     const timerRef = useRef(null);
     const ringtoneRef = useRef(null);
+    const pendingSignalsRef = useRef([]);
 
     // Duration timer
     useEffect(() => {
@@ -108,11 +110,20 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
             stream.getTracks().forEach(track => pc.addTrack(track, stream));
         }
 
-        // Handle remote tracks
+        // Handle remote tracks — attach to both audio and video elements
         pc.ontrack = (e) => {
-            remoteStreamRef.current = e.streams[0];
+            const remoteStream = e.streams[0];
+            remoteStreamRef.current = remoteStream;
+
+            // Always play remote audio through the hidden <audio> element
+            if (remoteAudioRef.current) {
+                remoteAudioRef.current.srcObject = remoteStream;
+                remoteAudioRef.current.play().catch(() => {});
+            }
+
+            // For video calls, also attach to the video element
             if (remoteVideoRef.current) {
-                remoteVideoRef.current.srcObject = e.streams[0];
+                remoteVideoRef.current.srcObject = remoteStream;
             }
         };
 
@@ -139,8 +150,17 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
         return pc;
     }, [conversationId, wsSend, stopRingtone]);
 
-    // Handle incoming WebRTC signals
-    const handleSignal = useCallback(async (signal, fromUserId) => {
+    // Flush any signals that arrived before the peer connection was ready
+    const flushPendingSignals = useCallback(() => {
+        if (!pcRef.current) return;
+        const pending = pendingSignalsRef.current.splice(0);
+        for (const { signal, fromUserId } of pending) {
+            handleSignalInternal(signal, fromUserId);
+        }
+    }, []);
+
+    // Internal signal handler (assumes pcRef.current exists)
+    const handleSignalInternal = useCallback(async (signal, fromUserId) => {
         if (!pcRef.current) return;
 
         if (signal.type === 'offer') {
@@ -161,6 +181,15 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
         }
     }, [conversationId, wsSend]);
 
+    // Public signal handler — queues if PC not ready yet
+    const handleSignal = useCallback((signal, fromUserId) => {
+        if (!pcRef.current) {
+            pendingSignalsRef.current.push({ signal, fromUserId });
+            return;
+        }
+        handleSignalInternal(signal, fromUserId);
+    }, [handleSignalInternal]);
+
     // Expose signal handler
     useEffect(() => {
         if (callState.onSignal) callState.onSignal.current = handleSignal;
@@ -176,19 +205,25 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
         }
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Accept incoming call
+    // Accept incoming call — acquire media & create PC BEFORE notifying caller
     const handleAccept = useCallback(async () => {
         setStatus('connecting');
         stopRingtone();
-        wsSend('call_accept', { callId, conversationId });
 
+        // Get media first (we're inside a click handler, so user gesture is valid)
         const stream = await startMedia();
         if (!stream) { handleEnd(); return; }
 
-        // The caller will send an offer after receiving acceptance
+        // Create peer connection so it's ready to receive the offer
         const targetUserId = callState.callerId;
         createPeerConnection(stream, targetUserId);
-    }, [callId, conversationId, wsSend, startMedia, createPeerConnection, callState.callerId, stopRingtone]);
+
+        // Flush any signals (offers/ICE) that may have queued
+        flushPendingSignals();
+
+        // NOW tell the caller we accepted — they'll send an offer
+        wsSend('call_accept', { callId, conversationId });
+    }, [callId, conversationId, wsSend, startMedia, createPeerConnection, callState.callerId, stopRingtone, flushPendingSignals]);
 
     // Handle call accepted (caller side) → create offer using already-acquired media
     useEffect(() => {
@@ -200,6 +235,10 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
                 if (!stream) { handleEnd(); return; }
 
                 const pc = createPeerConnection(stream, callState.acceptedBy);
+
+                // Flush any early signals from the acceptee
+                flushPendingSignals();
+
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
                 wsSend('call_signal', {
@@ -241,10 +280,14 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
             localStreamRef.current.getTracks().forEach(t => t.stop());
             localStreamRef.current = null;
         }
+        if (remoteAudioRef.current) {
+            remoteAudioRef.current.srcObject = null;
+        }
         if (pcRef.current) {
             pcRef.current.close();
             pcRef.current = null;
         }
+        pendingSignalsRef.current = [];
         clearInterval(timerRef.current);
     };
 
@@ -275,6 +318,9 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
 
     return (
         <div className={`${s.overlay} ${callType === 'video' && status === 'connected' ? s.videoMode : ''}`}>
+            {/* Hidden audio element — always present for remote audio playback */}
+            <audio ref={remoteAudioRef} autoPlay playsInline />
+
             {/* Video elements */}
             {callType === 'video' && (
                 <>
