@@ -15,6 +15,8 @@ import AxiosInterceptor from './components/AxiosInterceptor';
 import ErrorBoundary from './components/ErrorBoundary';
 import { ToastProvider } from './components/Toast';
 import { ChatProvider } from './ChatContext';
+import { MeetingProvider } from './MeetingContext';
+import MeetingPiP from './components/MeetingPiP';
 import PageSkeleton from './components/PageSkeleton';
 
 // Lazy-load non-critical pages for smaller initial bundle
@@ -60,7 +62,7 @@ function AppRoutes() {
   return (
     <div className="app">
       <ErrorBoundary resetKey={location.pathname}>
-      {isAuthenticated && <Navbar />}
+      {isAuthenticated && !location.pathname.match(/^\/meeting\/[^/]+\/room/) && <Navbar />}
       <Suspense fallback={<PageSkeleton />}>
         <Routes>
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
@@ -100,7 +102,10 @@ export default function App() {
             <BrowserRouter>
               <AxiosInterceptor>
                 <ChatProvider>
-                  <AppRoutes />
+                  <MeetingProvider>
+                    <AppRoutes />
+                    <MeetingPiP />
+                  </MeetingProvider>
                 </ChatProvider>
               </AxiosInterceptor>
             </BrowserRouter>

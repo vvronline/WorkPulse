@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
+import { useMeeting } from '../MeetingContext';
 import { useMeetingState } from './meeting/useMeetingState';
 import ParticipantTile from './meeting/ParticipantTile';
 import PresenterView from './meeting/PresenterView';
@@ -9,34 +10,34 @@ import MeetingChat from './meeting/MeetingChat';
 import MeetingParticipants from './meeting/MeetingParticipants';
 import './meeting/MeetingRoom.css';
 
-function useAppWs() {
-    const wsRef = useRef(null);
-
-    useEffect(() => {
-        const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const host = import.meta.env.PROD ? window.location.host : `${window.location.hostname}:${import.meta.env.VITE_API_PORT || '5000'}`;
-        const wsUrl = `${proto}://${host}/ws`;
-        const ws = new WebSocket(wsUrl);
-        wsRef.current = ws;
-        return () => { ws.close(); };
-    }, []);
-
-    return wsRef;
-}
-
 export default function MeetingRoom() {
     const { code } = useParams();
     const { state: routeState } = useLocation();
     const navigate = useNavigate();
     const { user } = useAuth();
+    const { session, joinMeeting, leaveMeeting: ctxLeave, setLocalStream, localStreamRef, wsRef } = useMeeting();
     const [copied, setCopied] = useState(false);
     const [meetingTimer, setMeetingTimer] = useState(0);
 
-    const meeting = routeState?.meeting;
+    const meeting = routeState?.meeting || session?.meeting;
     const meetingId = meeting?.id;
     const isOrganizer = meeting?.created_by === user?.id;
+    const isReturning = routeState?.returning || false;
 
-    const wsRef = useAppWs();
+    // Register meeting session in global context on first mount (not on return)
+    useEffect(() => {
+        if (!meetingId) return;
+        // If already in a session for this meeting, skip
+        if (session?.meetingId === meetingId) return;
+        joinMeeting({
+            meetingId,
+            code,
+            meeting,
+            initialMuted: routeState?.initialMuted ?? false,
+            initialVideoOff: routeState?.initialVideoOff ?? false,
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [meetingId]);
 
     const {
         localStream, screenStream, muted, videoOff, screenSharing,
@@ -51,7 +52,14 @@ export default function MeetingRoom() {
         ws: wsRef.current,
         initialMuted: routeState?.initialMuted ?? false,
         initialVideoOff: routeState?.initialVideoOff ?? false,
+        keepAliveOnUnmount: true,
+        existingStream: isReturning ? localStreamRef.current : null,
     });
+
+    // Store localStream in context so PiP can access it
+    useEffect(() => {
+        if (localStream) setLocalStream(localStream);
+    }, [localStream, setLocalStream]);
 
     // Route incoming WS messages to the hook
     useEffect(() => {
@@ -62,7 +70,7 @@ export default function MeetingRoom() {
         };
         ws.addEventListener('message', onMessage);
         return () => ws.removeEventListener('message', onMessage);
-    }, [handleWsMessage]);
+    }, [handleWsMessage, wsRef]);
 
     // Meeting duration timer
     useEffect(() => {
@@ -71,13 +79,12 @@ export default function MeetingRoom() {
         return () => clearInterval(interval);
     }, [status]);
 
-    // Navigate away when meeting ends or left
+    // On explicit leave or end, tear down the global session
     useEffect(() => {
-        if (status === 'ended' || status === 'left') {
-            const timer = setTimeout(() => navigate(-1), 4000);
-            return () => clearTimeout(timer);
+        if (status === 'left' || status === 'ended') {
+            ctxLeave();
         }
-    }, [status, navigate]);
+    }, [status, ctxLeave]);
 
     if (!meetingId) {
         navigate(`/meeting/${code}`);
@@ -87,18 +94,20 @@ export default function MeetingRoom() {
     const allParticipants = [...participants.values()];
     const totalCount = allParticipants.length + 1;
 
-    // Presenter mode: someone is screen-sharing
     const presenterUser = presenterId
         ? (presenterId === user?.id ? { name: 'You', stream: screenStream } : participants.get(presenterId))
         : null;
 
-    // In presenter mode, show fewer tiles in a strip
     const tilesInGrid = presenterId ? allParticipants.filter(p => p.userId !== presenterId) : allParticipants;
     const gridCount = Math.min(presenterId ? tilesInGrid.length + 1 : totalCount, 9);
     const gridDataCount = presenterId ? 'strip' : (gridCount <= 6 ? String(gridCount) : 'n');
 
-    const handleLeave = () => { leaveMeeting(); navigate(-1); };
+    const handleLeave = () => { leaveMeeting(); };
     const handleEnd = () => { endMeeting(); };
+
+    const handleRejoin = () => {
+        navigate(`/meeting/${code}`, { state: { meeting } });
+    };
 
     const copyMeetingId = () => {
         navigator.clipboard.writeText(code).then(() => {
@@ -134,9 +143,9 @@ export default function MeetingRoom() {
                     <div className="mr-leave-icon">{status === 'ended' ? '📞' : '👋'}</div>
                     <h2>{status === 'ended' ? 'Meeting has ended' : 'You left the meeting'}</h2>
                     {meetingTimer > 0 && <p className="mr-leave-duration">Duration: {formatTimer(meetingTimer)}</p>}
-                    <p className="mr-leave-sub">Redirecting you back…</p>
                     <div className="mr-leave-actions">
-                        <button className="mr-back-btn" onClick={() => navigate(-1)}>Go back now</button>
+                        <button className="mr-rejoin-btn" onClick={handleRejoin}>Rejoin</button>
+                        <button className="mr-back-btn" onClick={() => navigate('/')}>Go to Dashboard</button>
                     </div>
                 </div>
             </div>

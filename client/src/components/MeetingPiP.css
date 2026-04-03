@@ -1,0 +1,145 @@
+/* ========== MEETING PiP (Picture-in-Picture) ========== */
+.pip-root {
+    position: fixed;
+    z-index: 9999;
+    width: 280px;
+    background: #1a1a2e;
+    border-radius: 14px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.08);
+    overflow: hidden;
+    cursor: grab;
+    user-select: none;
+    transition: box-shadow 0.2s;
+    animation: pip-enter 0.3s ease-out;
+}
+
+.pip-root:active { cursor: grabbing; }
+.pip-root:hover { box-shadow: 0 8px 40px rgba(0,0,0,0.55), 0 0 0 1px rgba(99,102,241,0.4); }
+
+@keyframes pip-enter {
+    from { opacity: 0; transform: translateY(30px) scale(0.9); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Video area */
+.pip-video-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16/9;
+    background: #111118;
+    cursor: pointer;
+    overflow: hidden;
+}
+
+.pip-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    transform: scaleX(-1);
+}
+
+.pip-avatar {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    font-weight: 700;
+    color: #fff;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+}
+
+.pip-overlay {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 4px 10px 6px;
+    background: linear-gradient(transparent, rgba(0,0,0,0.7));
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    pointer-events: none;
+}
+
+.pip-title {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #fff;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 65%;
+}
+
+.pip-timer {
+    font-size: 0.68rem;
+    font-family: monospace;
+    color: rgba(255,255,255,0.6);
+    background: rgba(0,0,0,0.4);
+    padding: 1px 6px;
+    border-radius: 3px;
+}
+
+.pip-return-hint {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #fff;
+    background: rgba(0,0,0,0.55);
+    padding: 4px 12px;
+    border-radius: 6px;
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+}
+
+.pip-video-wrap:hover .pip-return-hint { opacity: 1; }
+
+/* Controls bar */
+.pip-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 10px;
+    background: #16161e;
+}
+
+.pip-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+}
+
+.pip-btn:hover { background: rgba(255,255,255,0.15); }
+.pip-btn-off { background: rgba(239, 68, 68, 0.2); }
+.pip-btn-off:hover { background: rgba(239, 68, 68, 0.35); }
+
+.pip-btn-hangup {
+    background: #ef4444 !important;
+    transform: rotate(135deg);
+}
+
+.pip-btn-hangup:hover { background: #dc2626 !important; }
+
+/* Responsive: smaller on mobile */
+@media (max-width: 480px) {
+    .pip-root { width: 200px; }
+    .pip-btn { width: 30px; height: 30px; font-size: 0.85rem; }
+    .pip-title { font-size: 0.65rem; }
+}

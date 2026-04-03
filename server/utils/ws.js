@@ -439,17 +439,24 @@ async function handleChatMessage(senderId, msg) {
 
         const meeting = (await query('SELECT * FROM meetings WHERE id = $1', [meetingId])).rows[0];
         if (!meeting) return;
-        if (meeting.status === 'ended') return;
+
+        // Allow rejoining ended meetings — reactivate the meeting
+        if (meeting.status === 'ended') {
+            await query(`UPDATE meetings SET status = 'active', ended_at = NULL WHERE id = $1`, [meetingId]);
+        }
 
         // Verify participant is allowed
         const mp = (await query(
-            'SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2',
+            'SELECT status FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2',
             [meetingId, senderId]
         )).rows[0];
         const isOrgMember = meeting.org_id
             ? (await query('SELECT 1 FROM users WHERE id = $1 AND org_id = $2', [senderId, meeting.org_id])).rows[0]
             : true;
         if (!mp && !isOrgMember) return;
+
+        // Track if this is a rejoin (already had status 'joined') to skip duplicate system messages
+        const wasAlreadyJoined = mp?.status === 'joined';
 
         // Upsert participant
         await query(
@@ -486,8 +493,8 @@ async function handleChatMessage(senderId, msg) {
             });
         }
 
-        // System message in conversation
-        if (meeting.conversation_id) {
+        // System message in conversation (skip on PiP rejoin to avoid duplicates)
+        if (meeting.conversation_id && !wasAlreadyJoined) {
             const sysMsg = (await query(
                 `INSERT INTO messages (conversation_id, sender_id, content, format_type, metadata)
                  VALUES ($1, $2, '', 'system', $3) RETURNING id, created_at`,

@@ -13,8 +13,11 @@ const ICE_CONFIG = {
  * useMeetingState — WebRTC mesh hook for multi-participant meetings.
  *
  * Fixed WS format: server expects { type, data: { ... } } and sends { type, data: { ... } }.
+ *
+ * keepAliveOnUnmount: when true, don't send meeting_leave or stop streams on unmount (PiP mode).
+ * existingStream: re-use a previous MediaStream when returning from PiP.
  */
-export function useMeetingState({ meetingId, ws, initialMuted = false, initialVideoOff = false }) {
+export function useMeetingState({ meetingId, ws, initialMuted = false, initialVideoOff = false, keepAliveOnUnmount = false, existingStream = null }) {
     const { user } = useAuth();
 
     // Local media
@@ -53,8 +56,13 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         }
     }, []);
 
-    // Acquire local media on mount
+    // Acquire local media on mount (skip if existingStream is provided)
     useEffect(() => {
+        if (existingStream) {
+            localStreamRef.current = existingStream;
+            setLocalStream(existingStream);
+            return;
+        }
         let stream;
         const constraints = {
             audio: true,
@@ -81,7 +89,10 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                         setVideoOff(true);
                     });
             });
-        return () => { if (stream) stream.getTracks().forEach(t => t.stop()); };
+        return () => {
+            // Only stop tracks if not keeping alive for PiP
+            if (!keepAliveOnUnmount && stream) stream.getTracks().forEach(t => t.stop());
+        };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -339,9 +350,12 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         if (!ws || !meetingId) return;
         wsSend('meeting_join', { meetingId });
         return () => {
-            wsSend('meeting_leave', { meetingId });
-            pcsRef.current.forEach(pc => pc.close());
-            pcsRef.current.clear();
+            // If keepAliveOnUnmount (PiP mode), don't leave — the meeting stays active
+            if (!keepAliveOnUnmount) {
+                wsSend('meeting_leave', { meetingId });
+                pcsRef.current.forEach(pc => pc.close());
+                pcsRef.current.clear();
+            }
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [ws, meetingId]);

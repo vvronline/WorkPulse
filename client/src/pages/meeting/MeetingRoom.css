@@ -163,7 +163,21 @@
 .mr-leave-screen h2 { margin: 0; font-size: 1.4rem; font-weight: 700; color: #fff; }
 .mr-leave-duration { margin: 0; font-size: 0.85rem; color: rgba(255,255,255,0.5); font-family: monospace; }
 .mr-leave-sub { margin: 0; color: rgba(255,255,255,0.35); font-size: 0.82rem; }
-.mr-leave-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+.mr-leave-actions { display: flex; gap: 0.75rem; margin-top: 0.5rem; }
+
+.mr-rejoin-btn {
+    padding: 0.55rem 1.5rem;
+    background: #6366f1;
+    border: none;
+    border-radius: 8px;
+    color: #fff;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 600;
+    transition: background 0.15s;
+}
+
+.mr-rejoin-btn:hover { background: #4f46e5; }
 
 .mr-back-btn {
     padding: 0.5rem 1.25rem;
