@@ -71,7 +71,7 @@ export default function Calendar({ tasks = [] }) {
         }
     }, [view, baseDate]);
 
-    const navigate = (dir) => {
+    const navigateDate = (dir) => {
         const d = new Date(baseDate);
         if (view === 'week') d.setDate(d.getDate() + dir * 7);
         else if (view === 'day') d.setDate(d.getDate() + dir);
@@ -299,9 +299,9 @@ export default function Calendar({ tasks = [] }) {
         <div className={s.calendar}>
             <div className={s.toolbar}>
                 <div className={s.toolbarLeft}>
-                    <button className={s.navBtn} onClick={() => navigate(-1)}>‹</button>
+                    <button className={s.navBtn} onClick={() => navigateDate(-1)}>‹</button>
                     <button className={s.todayBtn} onClick={goToday}>Today</button>
-                    <button className={s.navBtn} onClick={() => navigate(1)}>›</button>
+                    <button className={s.navBtn} onClick={() => navigateDate(1)}>›</button>
                     <h2 className={s.title}>{getTitle()}</h2>
                 </div>
                 <div className={s.toolbarRight}>

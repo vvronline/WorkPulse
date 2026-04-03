@@ -1,12 +1,12 @@
 import React, { useEffect, useRef } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
-import { useAuth } from '../../AuthContext';
-import { useMeetingState } from './useMeetingState';
-import ParticipantTile from './ParticipantTile';
-import MeetingBottomBar from './MeetingBottomBar';
-import MeetingChat from './MeetingChat';
-import MeetingParticipants from './MeetingParticipants';
-import './MeetingRoom.css';
+import { useAuth } from '../AuthContext';
+import { useMeetingState } from './meeting/useMeetingState';
+import ParticipantTile from './meeting/ParticipantTile';
+import MeetingBottomBar from './meeting/MeetingBottomBar';
+import MeetingChat from './meeting/MeetingChat';
+import MeetingParticipants from './meeting/MeetingParticipants';
+import './meeting/MeetingRoom.css';
 
 // Access the WebSocket from the window (set up by App.jsx / ws utility)
 // In production, import from your WS context or hook.
