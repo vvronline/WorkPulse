@@ -194,8 +194,22 @@ export default function useChatActions(state) {
     };
 
     // ─── Call actions ───
-    const initiateCall = (callType) => {
+    const initiateCall = async (callType) => {
         if (!activeConv) return;
+
+        // Acquire media NOW inside the click handler (user gesture required by browsers)
+        let stream = null;
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({
+                audio: true,
+                video: callType === 'video' ? { width: 1280, height: 720, facingMode: 'user' } : false
+            });
+        } catch (err) {
+            console.error('Failed to get media:', err);
+            alert('Could not access microphone' + (callType === 'video' ? '/camera' : '') + '. Please allow permissions and try again.');
+            return;
+        }
+
         const remoteName = activeConv.is_group
             ? (activeConv.group_name || activeConv.name)
             : (activeConv.other_full_name || activeConv.other_username);
@@ -213,7 +227,8 @@ export default function useChatActions(state) {
             accepted: false,
             acceptedBy: null,
             onSignal: callSignalRef,
-            onEndExternal: callEndRef
+            onEndExternal: callEndRef,
+            localStream: stream
         });
 
         wsSend('call_initiate', {

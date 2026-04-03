@@ -166,17 +166,13 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
         if (callState.onSignal) callState.onSignal.current = handleSignal;
     }, [handleSignal, callState.onSignal]);
 
-    // For OUTGOING calls: acquire media immediately on mount (still within user gesture chain)
+    // For OUTGOING calls: use the stream already acquired in the click handler
     useEffect(() => {
-        if (!isIncoming && !localStreamRef.current) {
-            startMedia().then(stream => {
-                if (!stream) {
-                    // Permission denied or no device — abort the call
-                    wsSend('call_end', { callId, conversationId });
-                    cleanup();
-                    onEnd();
-                }
-            });
+        if (!isIncoming && callState.localStream && !localStreamRef.current) {
+            localStreamRef.current = callState.localStream;
+            if (localVideoRef.current && callType === 'video') {
+                localVideoRef.current.srcObject = callState.localStream;
+            }
         }
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
