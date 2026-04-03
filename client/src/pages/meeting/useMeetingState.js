@@ -1,12 +1,18 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useAuth } from '../../AuthContext';
 
-const STUN_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
+const ICE_CONFIG = {
+    iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+    ]
+};
 
 /**
  * useMeetingState — WebRTC mesh hook for multi-participant meetings.
  *
- * Returns state and actions for MeetingRoom.
+ * Fixed WS format: server expects { type, data: { ... } } and sends { type, data: { ... } }.
  */
 export function useMeetingState({ meetingId, ws, initialMuted = false, initialVideoOff = false }) {
     const { user } = useAuth();
@@ -18,13 +24,16 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     const [videoOff, setVideoOff] = useState(initialVideoOff);
     const [screenSharing, setScreenSharing] = useState(false);
 
-    // Participants: Map userId -> { userId, name, stream, muted, videoOff, raisedHand, role }
+    // Participants: Map userId -> { userId, name, stream, muted, videoOff, raisedHand, role, screenSharing }
     const [participants, setParticipants] = useState(new Map());
+
+    // Presenter: userId of whoever is screen-sharing (null = nobody)
+    const [presenterId, setPresenterId] = useState(null);
 
     // UI
     const [activePanel, setActivePanel] = useState(null); // 'chat' | 'participants' | null
     const [messages, setMessages] = useState([]);
-    const [status, setStatus] = useState('joining'); // joining | connected | ended
+    const [status, setStatus] = useState('joining'); // joining | connecting | connected | ended | left
     const [raisedHand, setRaisedHand] = useState(false);
     const [connectionQualities, setConnectionQualities] = useState(new Map());
 
@@ -34,6 +43,15 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     const pcsRef = useRef(new Map()); // userId -> RTCPeerConnection
     const pendingSignals = useRef(new Map()); // userId -> []
     const qualityTimerRef = useRef(null);
+    const wsRef = useRef(ws);
+    wsRef.current = ws;
+
+    // Helper: send WS message in { type, data } format
+    const wsSend = useCallback((type, data) => {
+        if (wsRef.current && wsRef.current.readyState === 1) {
+            wsRef.current.send(JSON.stringify({ type, data }));
+        }
+    }, []);
 
     // Acquire local media on mount
     useEffect(() => {
@@ -50,7 +68,6 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 setLocalStream(st);
             })
             .catch(() => {
-                // Try audio only
                 navigator.mediaDevices.getUserMedia({ audio: true })
                     .then(st => {
                         stream = st;
@@ -68,6 +85,15 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    // Device change detection — re-enumerate when devices are added/removed
+    useEffect(() => {
+        const handleChange = () => {
+            navigator.mediaDevices.enumerateDevices().catch(() => { });
+        };
+        navigator.mediaDevices?.addEventListener('devicechange', handleChange);
+        return () => navigator.mediaDevices?.removeEventListener('devicechange', handleChange);
+    }, []);
+
     // Quality monitoring
     useEffect(() => {
         qualityTimerRef.current = setInterval(async () => {
@@ -78,12 +104,13 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                     let totalPacketLoss = 0, roundTripTime = 0, count = 0;
                     stats.forEach(s => {
                         if (s.type === 'inbound-rtp') {
-                            const loss = s.packetsLost / (s.packetsReceived + s.packetsLost || 1);
+                            const total = (s.packetsReceived || 0) + (s.packetsLost || 0);
+                            const loss = total > 0 ? s.packetsLost / total : 0;
                             totalPacketLoss += loss;
                             count++;
                         }
                         if (s.type === 'candidate-pair' && s.state === 'succeeded') {
-                            roundTripTime = s.currentRoundTripTime * 1000;
+                            roundTripTime = (s.currentRoundTripTime || 0) * 1000;
                         }
                     });
                     const avgLoss = count > 0 ? totalPacketLoss / count : 0;
@@ -101,7 +128,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     const createPeerConnection = useCallback((remoteUserId, isInitiator) => {
         if (pcsRef.current.has(remoteUserId)) return pcsRef.current.get(remoteUserId);
 
-        const pc = new RTCPeerConnection(STUN_SERVERS);
+        const pc = new RTCPeerConnection(ICE_CONFIG);
         pcsRef.current.set(remoteUserId, pc);
 
         // Add local tracks
@@ -123,13 +150,12 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
 
         // ICE candidates
         pc.onicecandidate = (e) => {
-            if (e.candidate && ws) {
-                ws.send(JSON.stringify({
-                    type: 'meeting_signal',
+            if (e.candidate) {
+                wsSend('meeting_signal', {
                     meetingId,
                     targetUserId: remoteUserId,
                     signal: { type: 'candidate', candidate: e.candidate },
-                }));
+                });
             }
         };
 
@@ -142,6 +168,10 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                     return next;
                 });
             }
+            // Update status to connected once at least one peer is connected
+            if (pc.connectionState === 'connected') {
+                setStatus('connected');
+            }
         };
 
         // If initiator, create offer
@@ -149,18 +179,17 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             pc.createOffer()
                 .then(offer => pc.setLocalDescription(offer))
                 .then(() => {
-                    ws?.send(JSON.stringify({
-                        type: 'meeting_signal',
+                    wsSend('meeting_signal', {
                         meetingId,
                         targetUserId: remoteUserId,
                         signal: { type: 'offer', sdp: pc.localDescription },
-                    }));
+                    });
                 })
                 .catch(console.error);
         }
 
         return pc;
-    }, [meetingId, ws]);
+    }, [meetingId, wsSend]);
 
     // Flush any buffered signals for a peer
     const flushPendingSignals = useCallback(async (userId, pc) => {
@@ -177,12 +206,11 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
-            ws?.send(JSON.stringify({
-                type: 'meeting_signal',
+            wsSend('meeting_signal', {
                 meetingId,
                 targetUserId: fromUserId,
                 signal: { type: 'answer', sdp: pc.localDescription },
-            }));
+            });
             await flushPendingSignals(fromUserId, pc);
         } else if (signal.type === 'answer') {
             if (pc.signalingState === 'have-local-offer') {
@@ -198,45 +226,46 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 pendingSignals.current.set(fromUserId, q);
             }
         }
-    }, [meetingId, ws, flushPendingSignals]);
+    }, [meetingId, wsSend, flushPendingSignals]);
 
-    // WebSocket message handler
-    const handleWsMessage = useCallback((data) => {
-        switch (data.type) {
-            case 'meeting_joined': {
-                // New participant joined — add to list and create PC as initiator
-                setParticipants(prev => {
-                    const next = new Map(prev);
-                    if (!next.has(data.userId)) {
-                        next.set(data.userId, { userId: data.userId, name: data.name, stream: null, muted: false, videoOff: false, raisedHand: false, role: data.role });
-                    }
-                    return next;
-                });
-                // We are an existing participant, so we are initiators
-                if (data.userId !== user?.id) {
-                    const pc = createPeerConnection(data.userId, true);
-                    pcsRef.current.set(data.userId, pc);
+    // WebSocket message handler — handles { type, data } envelope from server
+    const handleWsMessage = useCallback((msg) => {
+        const { type, data } = msg;
+        if (!data) return;
+
+        switch (type) {
+            case 'meeting_participant_joined': {
+                // Server sends: { userId, fullName, avatar, username, existingPeers? }
+                if (data.existingPeers) {
+                    // We are the new joiner — existingPeers is sent only to us
+                    data.existingPeers.forEach(peerId => {
+                        const pc = createPeerConnection(peerId, false);
+                        pcsRef.current.set(peerId, pc);
+                    });
+                    setStatus(data.existingPeers.length > 0 ? 'connecting' : 'connected');
                 }
-                setStatus('connected');
-                break;
-            }
-            case 'meeting_existing_peers': {
-                // Server sent list of peers already in the meeting (for new joiner)
-                const peers = data.peers || [];
-                peers.forEach(p => {
+                // Add participant to our list (could be us or a new peer)
+                if (data.userId !== user?.id) {
                     setParticipants(prev => {
                         const next = new Map(prev);
-                        if (!next.has(p.userId)) {
-                            next.set(p.userId, { userId: p.userId, name: p.name, stream: null, muted: false, videoOff: false, raisedHand: false, role: p.role });
+                        if (!next.has(data.userId)) {
+                            next.set(data.userId, {
+                                userId: data.userId,
+                                name: data.fullName || data.username || 'Participant',
+                                stream: null, muted: false, videoOff: false,
+                                raisedHand: false, role: data.role || 'participant',
+                                screenSharing: false,
+                            });
                         }
                         return next;
                     });
-                    // Existing peer will initiate, so we are receivers
-                    const pc = createPeerConnection(p.userId, false);
-                    pcsRef.current.set(p.userId, pc);
-                });
-                if (peers.length === 0) setStatus('connected');
-                else setStatus('connecting');
+                    // If we're an existing participant, initiate connection to the new joiner
+                    if (!data.existingPeers) {
+                        const pc = createPeerConnection(data.userId, true);
+                        pcsRef.current.set(data.userId, pc);
+                    }
+                }
+                setStatus('connected');
                 break;
             }
             case 'meeting_signal': {
@@ -249,11 +278,12 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 handleSignal(fromUserId, pc, signal).catch(console.error);
                 break;
             }
-            case 'meeting_left': {
+            case 'meeting_participant_left': {
                 const { userId } = data;
                 pcsRef.current.get(userId)?.close();
                 pcsRef.current.delete(userId);
                 setParticipants(prev => { const next = new Map(prev); next.delete(userId); return next; });
+                if (presenterId === userId) setPresenterId(null);
                 break;
             }
             case 'meeting_ended': {
@@ -263,7 +293,6 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 break;
             }
             case 'meeting_muted': {
-                // Organizer forced mute
                 setMuted(true);
                 if (localStreamRef.current) {
                     localStreamRef.current.getAudioTracks().forEach(t => { t.enabled = false; });
@@ -280,20 +309,37 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 });
                 break;
             }
+            case 'meeting_track_state': {
+                // Remote participant's track state changed
+                const { userId, muted: isMuted, videoOff: isVideoOff, screenSharing: isScreenSharing } = data;
+                setParticipants(prev => {
+                    const next = new Map(prev);
+                    const p = next.get(userId);
+                    if (p) next.set(userId, { ...p, muted: isMuted, videoOff: isVideoOff, screenSharing: isScreenSharing });
+                    return next;
+                });
+                if (isScreenSharing) setPresenterId(userId);
+                else if (presenterId === userId) setPresenterId(null);
+                break;
+            }
             case 'meeting_message': {
                 setMessages(prev => [...prev, data.message]);
                 break;
             }
+            case 'meeting_invite': {
+                // Another user invited us to an ongoing meeting — ignore in room context
+                break;
+            }
             default: break;
         }
-    }, [user, createPeerConnection, handleSignal]);
+    }, [user, createPeerConnection, handleSignal, presenterId]);
 
     // Send WS join on mount
     useEffect(() => {
         if (!ws || !meetingId) return;
-        ws.send(JSON.stringify({ type: 'meeting_join', meetingId }));
+        wsSend('meeting_join', { meetingId });
         return () => {
-            ws.send(JSON.stringify({ type: 'meeting_leave', meetingId }));
+            wsSend('meeting_leave', { meetingId });
             pcsRef.current.forEach(pc => pc.close());
             pcsRef.current.clear();
         };
@@ -307,10 +353,10 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             if (localStreamRef.current) {
                 localStreamRef.current.getAudioTracks().forEach(t => { t.enabled = !next; });
             }
-            ws?.send(JSON.stringify({ type: 'meeting_track_state', meetingId, muted: next, videoOff }));
+            wsSend('meeting_track_state', { meetingId, muted: next, videoOff });
             return next;
         });
-    }, [meetingId, videoOff, ws]);
+    }, [meetingId, videoOff, wsSend]);
 
     const toggleVideo = useCallback(() => {
         setVideoOff(v => {
@@ -318,10 +364,10 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             if (localStreamRef.current) {
                 localStreamRef.current.getVideoTracks().forEach(t => { t.enabled = !next; });
             }
-            ws?.send(JSON.stringify({ type: 'meeting_track_state', meetingId, muted, videoOff: next }));
+            wsSend('meeting_track_state', { meetingId, muted, videoOff: next });
             return next;
         });
-    }, [meetingId, muted, ws]);
+    }, [meetingId, muted, wsSend]);
 
     const toggleScreenShare = useCallback(async () => {
         if (screenSharing) {
@@ -331,6 +377,8 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             }
             setScreenSharing(false);
             setScreenStream(null);
+            setPresenterId(null);
+            wsSend('meeting_track_state', { meetingId, muted, videoOff, screenSharing: false });
             // Revert to camera on all peers
             pcsRef.current.forEach((pc) => {
                 const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
@@ -339,10 +387,11 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             });
         } else {
             try {
-                const ss = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+                const ss = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
                 screenStreamRef.current = ss;
                 setScreenStream(ss);
                 setScreenSharing(true);
+                setPresenterId(user?.id);
                 const screenTrack = ss.getVideoTracks()[0];
                 // Replace video track on all peers
                 pcsRef.current.forEach((pc) => {
@@ -350,48 +399,91 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                     if (videoSender) videoSender.replaceTrack(screenTrack).catch(() => { });
                 });
                 screenTrack.onended = () => toggleScreenShare();
+                wsSend('meeting_track_state', { meetingId, muted, videoOff, screenSharing: true });
             } catch { /* user cancelled */ }
         }
-    }, [screenSharing]);
+    }, [screenSharing, meetingId, muted, videoOff, wsSend]);
 
     const raiseHand = useCallback(() => {
         const next = !raisedHand;
         setRaisedHand(next);
-        ws?.send(JSON.stringify({ type: 'meeting_raise_hand', meetingId, raised: next }));
-    }, [raisedHand, meetingId, ws]);
+        wsSend('meeting_raise_hand', { meetingId, raised: next });
+    }, [raisedHand, meetingId, wsSend]);
 
     const sendChatMessage = useCallback((text) => {
         if (!text.trim()) return;
-        ws?.send(JSON.stringify({ type: 'meeting_chat', meetingId, text: text.trim() }));
-    }, [meetingId, ws]);
+        wsSend('meeting_chat', { meetingId, text: text.trim() });
+    }, [meetingId, wsSend]);
 
     const endMeeting = useCallback(() => {
-        ws?.send(JSON.stringify({ type: 'meeting_end', meetingId }));
+        wsSend('meeting_end', { meetingId });
         setStatus('ended');
-    }, [meetingId, ws]);
+    }, [meetingId, wsSend]);
 
     const leaveMeeting = useCallback(() => {
-        ws?.send(JSON.stringify({ type: 'meeting_leave', meetingId }));
-        setStatus('ended');
-    }, [meetingId, ws]);
+        wsSend('meeting_leave', { meetingId });
+        setStatus('left');
+    }, [meetingId, wsSend]);
 
     const muteParticipant = useCallback((userId) => {
-        ws?.send(JSON.stringify({ type: 'meeting_mute_participant', meetingId, targetUserId: userId }));
-    }, [meetingId, ws]);
+        wsSend('meeting_mute_participant', { meetingId, targetUserId: userId });
+    }, [meetingId, wsSend]);
 
     const addParticipant = useCallback((userId) => {
-        ws?.send(JSON.stringify({ type: 'meeting_add_participant', meetingId, targetUserId: userId }));
-    }, [meetingId, ws]);
+        wsSend('meeting_add_participant', { meetingId, targetUserId: userId });
+    }, [meetingId, wsSend]);
+
+    // Switch input device mid-call
+    const switchAudioDevice = useCallback(async (deviceId) => {
+        try {
+            const newStream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId } } });
+            const newTrack = newStream.getAudioTracks()[0];
+            if (!newTrack) return;
+            // Replace in peer connections
+            pcsRef.current.forEach(pc => {
+                const sender = pc.getSenders().find(s => s.track?.kind === 'audio');
+                if (sender) sender.replaceTrack(newTrack).catch(() => { });
+            });
+            // Replace in local stream
+            if (localStreamRef.current) {
+                localStreamRef.current.getAudioTracks().forEach(t => t.stop());
+                localStreamRef.current.removeTrack(localStreamRef.current.getAudioTracks()[0]);
+                localStreamRef.current.addTrack(newTrack);
+            }
+            newTrack.enabled = !muted;
+        } catch (err) { console.error('switchAudioDevice:', err); }
+    }, [muted]);
+
+    const switchVideoDevice = useCallback(async (deviceId) => {
+        try {
+            const newStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId } } });
+            const newTrack = newStream.getVideoTracks()[0];
+            if (!newTrack) return;
+            pcsRef.current.forEach(pc => {
+                const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+                if (sender) sender.replaceTrack(newTrack).catch(() => { });
+            });
+            if (localStreamRef.current) {
+                localStreamRef.current.getVideoTracks().forEach(t => t.stop());
+                const oldTrack = localStreamRef.current.getVideoTracks()[0];
+                if (oldTrack) localStreamRef.current.removeTrack(oldTrack);
+                localStreamRef.current.addTrack(newTrack);
+                setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+            }
+            newTrack.enabled = !videoOff;
+        } catch (err) { console.error('switchVideoDevice:', err); }
+    }, [videoOff]);
 
     return {
         // State
         localStream, screenStream, muted, videoOff, screenSharing,
         participants, status, raisedHand, messages,
         activePanel, setActivePanel,
-        connectionQualities,
+        connectionQualities, presenterId,
         // Actions
         toggleMute, toggleVideo, toggleScreenShare, raiseHand,
         sendChatMessage, endMeeting, leaveMeeting, muteParticipant, addParticipant,
+        switchAudioDevice, switchVideoDevice,
         // WS message handler (MeetingRoom passes incoming WS msgs here)
         handleWsMessage,
     };

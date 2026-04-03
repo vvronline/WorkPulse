@@ -664,6 +664,44 @@ async function handleChatMessage(senderId, msg) {
             sendToUser(p.user_id, 'meeting_hand_raised', { meetingId, userId: senderId, name: raiser?.full_name, raised: !!raised });
         }
 
+    } else if (msg.type === 'meeting_track_state') {
+        // Participant broadcasts their muted/videoOff state
+        const { meetingId, muted, videoOff, screenSharing } = msg.data || {};
+        if (!meetingId) return;
+
+        const participants = (await query(
+            `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined'`,
+            [meetingId]
+        )).rows;
+
+        for (const p of participants) {
+            if (p.user_id !== senderId) {
+                sendToUser(p.user_id, 'meeting_track_state', { meetingId, userId: senderId, muted: !!muted, videoOff: !!videoOff, screenSharing: !!screenSharing });
+            }
+        }
+
+    } else if (msg.type === 'meeting_chat') {
+        // In-meeting chat message relay
+        const { meetingId, text } = msg.data || {};
+        if (!meetingId || !text || !text.trim()) return;
+
+        const sender = (await query('SELECT full_name FROM users WHERE id = $1', [senderId])).rows[0];
+        const participants = (await query(
+            `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined'`,
+            [meetingId]
+        )).rows;
+
+        const message = {
+            sender_id: senderId,
+            sender_name: sender?.full_name || 'Participant',
+            text: text.trim(),
+            created_at: new Date().toISOString()
+        };
+
+        for (const p of participants) {
+            sendToUser(p.user_id, 'meeting_message', { meetingId, message });
+        }
+
     } else if (msg.type === 'call_add_participant') {
         // Add a participant to an ongoing 1:1 call (upgrade to group)
         const { callId, conversationId, targetUserId } = msg.data || {};

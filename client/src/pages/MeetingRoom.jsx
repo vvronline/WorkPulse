@@ -1,25 +1,21 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { useMeetingState } from './meeting/useMeetingState';
 import ParticipantTile from './meeting/ParticipantTile';
+import PresenterView from './meeting/PresenterView';
 import MeetingBottomBar from './meeting/MeetingBottomBar';
 import MeetingChat from './meeting/MeetingChat';
 import MeetingParticipants from './meeting/MeetingParticipants';
 import './meeting/MeetingRoom.css';
 
-// Access the WebSocket from the window (set up by App.jsx / ws utility)
-// In production, import from your WS context or hook.
 function useAppWs() {
     const wsRef = useRef(null);
 
     useEffect(() => {
-        // Re-use existing WS if already established via ChatContext
-        // Fall back to direct connection
         const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const host = window.location.hostname;
-        const port = import.meta.env.VITE_API_PORT || '5000';
-        const wsUrl = `${proto}://${host}:${port}/ws`;
+        const host = import.meta.env.PROD ? window.location.host : `${window.location.hostname}:${import.meta.env.VITE_API_PORT || '5000'}`;
+        const wsUrl = `${proto}://${host}/ws`;
         const ws = new WebSocket(wsUrl);
         wsRef.current = ws;
         return () => { ws.close(); };
@@ -33,19 +29,20 @@ export default function MeetingRoom() {
     const { state: routeState } = useLocation();
     const navigate = useNavigate();
     const { user } = useAuth();
+    const [copied, setCopied] = useState(false);
+    const [meetingTimer, setMeetingTimer] = useState(0);
 
     const meeting = routeState?.meeting;
     const meetingId = meeting?.id;
     const isOrganizer = meeting?.created_by === user?.id;
 
-    // WS connection for the meeting room
     const wsRef = useAppWs();
 
     const {
         localStream, screenStream, muted, videoOff, screenSharing,
         participants, status, raisedHand, messages,
         activePanel, setActivePanel,
-        connectionQualities,
+        connectionQualities, presenterId,
         toggleMute, toggleVideo, toggleScreenShare, raiseHand,
         sendChatMessage, endMeeting, leaveMeeting, muteParticipant, addParticipant,
         handleWsMessage,
@@ -67,10 +64,17 @@ export default function MeetingRoom() {
         return () => ws.removeEventListener('message', onMessage);
     }, [handleWsMessage]);
 
-    // Navigate away when meeting ends
+    // Meeting duration timer
     useEffect(() => {
-        if (status === 'ended') {
-            const timer = setTimeout(() => navigate(-1), 3000);
+        if (status !== 'connected') return;
+        const interval = setInterval(() => setMeetingTimer(t => t + 1), 1000);
+        return () => clearInterval(interval);
+    }, [status]);
+
+    // Navigate away when meeting ends or left
+    useEffect(() => {
+        if (status === 'ended' || status === 'left') {
+            const timer = setTimeout(() => navigate(-1), 4000);
             return () => clearTimeout(timer);
         }
     }, [status, navigate]);
@@ -81,38 +85,106 @@ export default function MeetingRoom() {
     }
 
     const allParticipants = [...participants.values()];
-    const totalCount = allParticipants.length + 1; // +1 for local user
-    const gridCount = Math.min(totalCount, 9);
-    const gridDataCount = gridCount <= 6 ? String(gridCount) : 'n';
+    const totalCount = allParticipants.length + 1;
+
+    // Presenter mode: someone is screen-sharing
+    const presenterUser = presenterId
+        ? (presenterId === user?.id ? { name: 'You', stream: screenStream } : participants.get(presenterId))
+        : null;
+
+    // In presenter mode, show fewer tiles in a strip
+    const tilesInGrid = presenterId ? allParticipants.filter(p => p.userId !== presenterId) : allParticipants;
+    const gridCount = Math.min(presenterId ? tilesInGrid.length + 1 : totalCount, 9);
+    const gridDataCount = presenterId ? 'strip' : (gridCount <= 6 ? String(gridCount) : 'n');
 
     const handleLeave = () => { leaveMeeting(); navigate(-1); };
     const handleEnd = () => { endMeeting(); };
+
+    const copyMeetingId = () => {
+        navigator.clipboard.writeText(code).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        });
+    };
+
+    const formatTimer = (s) => {
+        const m = Math.floor(s / 60);
+        const sec = s % 60;
+        return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+    };
+
+    // Waiting screen
+    if (status === 'joining' || status === 'connecting') {
+        return (
+            <div className="mr-root">
+                <div className="mr-waiting">
+                    <div className="mr-waiting-spinner" />
+                    <h2>{status === 'joining' ? 'Joining meeting…' : 'Connecting to participants…'}</h2>
+                    <p>{meeting?.title || 'Meeting'}</p>
+                </div>
+            </div>
+        );
+    }
+
+    // Left / ended screen
+    if (status === 'left' || status === 'ended') {
+        return (
+            <div className="mr-root">
+                <div className="mr-leave-screen">
+                    <div className="mr-leave-icon">{status === 'ended' ? '📞' : '👋'}</div>
+                    <h2>{status === 'ended' ? 'Meeting has ended' : 'You left the meeting'}</h2>
+                    {meetingTimer > 0 && <p className="mr-leave-duration">Duration: {formatTimer(meetingTimer)}</p>}
+                    <p className="mr-leave-sub">Redirecting you back…</p>
+                    <div className="mr-leave-actions">
+                        <button className="mr-back-btn" onClick={() => navigate(-1)}>Go back now</button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="mr-root">
             {/* Header */}
             <div className="mr-header">
-                <span className="mr-header-title">{meeting?.title || 'Meeting'}</span>
+                <div className="mr-header-left">
+                    <span className="mr-header-title">{meeting?.title || 'Meeting'}</span>
+                    {meetingTimer > 0 && <span className="mr-header-timer">{formatTimer(meetingTimer)}</span>}
+                </div>
                 <div className="mr-header-info">
-                    <span className="mr-code">{code}</span>
-                    <span>{totalCount} participant{totalCount !== 1 ? 's' : ''}</span>
+                    <button className="mr-code-btn" onClick={copyMeetingId} title="Copy meeting code">
+                        <span className="mr-code">{code}</span>
+                        <span className="mr-copy-icon">{copied ? '✓' : '📋'}</span>
+                    </button>
+                    <span>👥 {totalCount}</span>
                 </div>
             </div>
 
             {/* Body */}
             <div className="mr-body">
-                {/* Main video area */}
                 <div className="mr-main">
-                    <div className="mr-grid" data-count={gridDataCount}>
-                        {/* Local tile always first */}
+                    {/* Presenter view when someone is screen-sharing */}
+                    {presenterId && presenterUser && (
+                        <PresenterView
+                            presenterStream={presenterUser.stream}
+                            presenterName={presenterUser.name || 'Participant'}
+                            isLocal={presenterId === user?.id}
+                            localStream={localStream}
+                        />
+                    )}
+
+                    {/* Participant grid */}
+                    <div className={`mr-grid ${presenterId ? 'mr-grid-strip' : ''}`} data-count={gridDataCount}>
                         <ParticipantTile
                             isLocal
                             localStream={localStream}
                             screenStream={screenStream}
-                            screenSharing={screenSharing}
+                            screenSharing={screenSharing && !presenterId}
+                            userName={user?.full_name || user?.username}
+                            muted={muted}
+                            videoOff={videoOff}
                         />
-                        {/* Remote participants */}
-                        {allParticipants.map(p => (
+                        {tilesInGrid.map(p => (
                             <ParticipantTile
                                 key={p.userId}
                                 participant={p}
@@ -159,17 +231,6 @@ export default function MeetingRoom() {
                     </div>
                 )}
             </div>
-
-            {/* Meeting ended overlay */}
-            {status === 'ended' && (
-                <div className="mr-status">
-                    <h2>Meeting ended</h2>
-                    <p>Returning you to the previous page…</p>
-                    <div className="mr-status-actions">
-                        <button className="mr-back-btn" onClick={() => navigate(-1)}>Go back now</button>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }
