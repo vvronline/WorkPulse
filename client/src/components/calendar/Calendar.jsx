@@ -128,7 +128,9 @@ export default function Calendar({ tasks = [] }) {
                     // Create meeting first, then calendar event linked to it
                     const mtgRes = await createMeeting({
                         title: form.title.trim(),
-                        participant_ids: meetingOptions.participants.map(p => p.id),
+                        description: form.description || undefined,
+                        required_participant_ids: meetingOptions.required.map(p => p.id),
+                        optional_participant_ids: meetingOptions.optional.map(p => p.id),
                         settings: meetingOptions.settings,
                     });
                     payload.meeting_id = mtgRes.data.id;

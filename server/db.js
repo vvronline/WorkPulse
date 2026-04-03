@@ -696,6 +696,7 @@ async function initDB() {
 
     // ---- Extend calendar_events with meeting_id ----
     await query(`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS meeting_id INTEGER REFERENCES meetings(id) ON DELETE SET NULL`);
+    await query(`ALTER TABLE meeting_participants ADD COLUMN IF NOT EXISTS participant_type VARCHAR(20) NOT NULL DEFAULT 'required'`);
 
     // ---- Delivery status on messages ----
     await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivered_to JSONB DEFAULT '[]'`);

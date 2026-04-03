@@ -50,6 +50,29 @@ router.post('/', async (req, res) => {
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
             [req.userId, req.userOrgId || null, title.trim(), description || null, start_time, end_time, all_day || false, color || '#6366f1', task_id || null, meeting_id || null]
         );
+
+        // If linked to a meeting, also create calendar events for all other participants
+        if (meeting_id) {
+            const otherParticipants = (await query(
+                `SELECT mp.user_id FROM meeting_participants mp
+                 WHERE mp.meeting_id = $1 AND mp.user_id != $2`,
+                [meeting_id, req.userId]
+            )).rows;
+            for (const p of otherParticipants) {
+                const existing = (await query(
+                    'SELECT id FROM calendar_events WHERE user_id = $1 AND meeting_id = $2',
+                    [p.user_id, meeting_id]
+                )).rows[0];
+                if (!existing) {
+                    await query(
+                        `INSERT INTO calendar_events (user_id, org_id, title, description, start_time, end_time, all_day, color, meeting_id)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                        [p.user_id, req.userOrgId || null, title.trim(), description || null, start_time, end_time, all_day || false, color || '#6366f1', meeting_id]
+                    );
+                }
+            }
+        }
+
         res.json(result.rows[0]);
     } catch (err) {
         req.log.error({ err }, 'Create event error');

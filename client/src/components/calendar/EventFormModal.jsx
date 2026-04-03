@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { searchChatUsers } from '../../api';
+import { searchChatUsers, getMeeting } from '../../api';
 import s from './Calendar.module.css';
 
 const COLORS = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#ef4444', '#8b5cf6', '#14b8a6'];
@@ -44,11 +44,13 @@ function getTimeOptions(timePart) {
  *   onStartChange – (val: string) => void — handles start time changes with end-time adjustment
  *   existingMeetingCode – meeting_code if editing an event that has a meeting
  */
-function MeetingParticipantPicker({ participants, onChange }) {
+function MeetingParticipantPicker({ participants, excludeIds = [], onChange }) {
     const [query, setQuery] = useState('');
     const [results, setResults] = useState([]);
     const [loading, setLoading] = useState(false);
     const timerRef = useRef(null);
+
+    const allExcluded = new Set([...participants.map(p => p.id), ...excludeIds]);
 
     useEffect(() => {
         if (query.trim().length < 2) { setResults([]); return; }
@@ -57,12 +59,12 @@ function MeetingParticipantPicker({ participants, onChange }) {
             setLoading(true);
             try {
                 const r = await searchChatUsers(query.trim());
-                setResults((r.data || []).filter(u => !participants.some(p => p.id === u.id)));
+                setResults((r.data || []).filter(u => !allExcluded.has(u.id)));
             } catch { setResults([]); }
             finally { setLoading(false); }
         }, 300);
         return () => clearTimeout(timerRef.current);
-    }, [query, participants]);
+    }, [query, participants, excludeIds]);
 
     const add = (user) => {
         onChange([...participants, user]);
@@ -106,17 +108,30 @@ function MeetingParticipantPicker({ participants, onChange }) {
 
 export default function EventFormModal({ modal, form, setForm, nowMin, tasks, onSave, onDelete, onClose, onStartChange, existingMeetingCode }) {
     const [addMeeting, setAddMeeting] = useState(false);
-    const [meetingParticipants, setMeetingParticipants] = useState([]);
+    const [requiredParticipants, setRequiredParticipants] = useState([]);
+    const [optionalParticipants, setOptionalParticipants] = useState([]);
     const [meetingSettings, setMeetingSettings] = useState({ muteOnJoin: false, allowScreenShare: true });
+    const [meetingInfo, setMeetingInfo] = useState(null);
 
     // Reset meeting state when modal opens/closes
     useEffect(() => {
         if (modal === null) {
             setAddMeeting(false);
-            setMeetingParticipants([]);
+            setRequiredParticipants([]);
+            setOptionalParticipants([]);
             setMeetingSettings({ muteOnJoin: false, allowScreenShare: true });
+            setMeetingInfo(null);
         }
     }, [modal]);
+
+    // Fetch meeting participants when viewing an existing meeting event
+    useEffect(() => {
+        if (modal !== null && modal !== 'create' && existingMeetingCode) {
+            getMeeting(existingMeetingCode)
+                .then(r => setMeetingInfo(r.data))
+                .catch(() => {});
+        }
+    }, [modal, existingMeetingCode]);
 
     if (modal === null) return null;
 
@@ -125,7 +140,7 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
 
     const handleSave = () => {
         if (addMeeting && !isEditing) {
-            onSave({ participants: meetingParticipants, settings: meetingSettings });
+            onSave({ required: requiredParticipants, optional: optionalParticipants, settings: meetingSettings });
         } else {
             onSave(null);
         }
@@ -270,6 +285,33 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
             >
               Join
             </a>
+            {meetingInfo?.participants?.length > 0 && (
+              <div className={s.meetingParticipantList}>
+                <div className={s.meetingParticipantGroup}>
+                  <span className={s.meetingParticipantGroupLabel}>Required</span>
+                  {meetingInfo.participants
+                    .filter(p => p.role === 'organizer' || p.participant_type === 'required')
+                    .map(p => (
+                      <span key={p.user_id} className={s.meetingParticipantBadge}>
+                        {p.full_name || p.username}
+                        {p.role === 'organizer' && <span className={s.organizerTag}> (organizer)</span>}
+                      </span>
+                    ))}
+                </div>
+                {meetingInfo.participants.some(p => p.participant_type === 'optional') && (
+                  <div className={s.meetingParticipantGroup}>
+                    <span className={s.meetingParticipantGroupLabel}>Optional</span>
+                    {meetingInfo.participants
+                      .filter(p => p.participant_type === 'optional')
+                      .map(p => (
+                        <span key={p.user_id} className={s.meetingParticipantBadge + ' ' + s.meetingParticipantOptional}>
+                          {p.full_name || p.username}
+                        </span>
+                      ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         ) : modal === 'create' && (
           <div className={s.meetingToggleRow}>
@@ -291,10 +333,19 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
         {modal === 'create' && addMeeting && (
           <div className={s.meetingOptions}>
             <div className={s.formGroup}>
-              <label>Invite participants</label>
+              <label>Required participants</label>
               <MeetingParticipantPicker
-                participants={meetingParticipants}
-                onChange={setMeetingParticipants}
+                participants={requiredParticipants}
+                excludeIds={optionalParticipants.map(p => p.id)}
+                onChange={setRequiredParticipants}
+              />
+            </div>
+            <div className={s.formGroup}>
+              <label>Optional participants</label>
+              <MeetingParticipantPicker
+                participants={optionalParticipants}
+                excludeIds={requiredParticipants.map(p => p.id)}
+                onChange={setOptionalParticipants}
               />
             </div>
             <div className={s.meetingSettingsRow}>

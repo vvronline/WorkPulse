@@ -126,16 +126,24 @@ router.get('/:code', async (req, res) => {
 // ─── Create meeting ─────────────────────────────────────────────────────────
 router.post('/', async (req, res) => {
     try {
-        const { title, description, participant_ids, calendar_event_id, settings } = req.body;
+        const { title, description, required_participant_ids, optional_participant_ids, participant_ids, calendar_event_id, settings } = req.body;
         if (!title || !title.trim()) return res.status(400).json({ error: 'title is required' });
         if (title.trim().length > 200) return res.status(400).json({ error: 'Title too long (max 200 chars)' });
 
         const code = await generateMeetingCode();
 
-        // Ensure participant_ids are org members
-        const inviteeIds = Array.isArray(participant_ids)
+        // Support both new (required/optional) and legacy (participant_ids) formats
+        const requiredIds = Array.isArray(required_participant_ids)
+            ? required_participant_ids.map(Number).filter(n => n > 0 && n !== req.userId)
+            : [];
+        const optionalIds = Array.isArray(optional_participant_ids)
+            ? optional_participant_ids.map(Number).filter(n => n > 0 && n !== req.userId && !requiredIds.includes(n))
+            : [];
+        // Legacy fallback
+        const legacyIds = (!required_participant_ids && !optional_participant_ids && Array.isArray(participant_ids))
             ? participant_ids.map(Number).filter(n => n > 0 && n !== req.userId)
             : [];
+        const inviteeIds = legacyIds.length > 0 ? legacyIds : [...requiredIds, ...optionalIds];
 
         const result = await transaction(async (client) => {
             // 1. Create group conversation for the meeting
@@ -168,10 +176,16 @@ router.post('/', async (req, res) => {
                 [meeting.id, req.userId]
             );
 
-            // 5. Add invitees
-            for (const uid of inviteeIds) {
+            // 5. Add invitees with their participant_type
+            for (const uid of requiredIds.length > 0 || optionalIds.length > 0 ? requiredIds : legacyIds) {
                 await client.query(
-                    `INSERT INTO meeting_participants (meeting_id, user_id, role, status) VALUES ($1, $2, 'participant', 'invited')`,
+                    `INSERT INTO meeting_participants (meeting_id, user_id, role, status, participant_type) VALUES ($1, $2, 'participant', 'invited', 'required')`,
+                    [meeting.id, uid]
+                );
+            }
+            for (const uid of optionalIds) {
+                await client.query(
+                    `INSERT INTO meeting_participants (meeting_id, user_id, role, status, participant_type) VALUES ($1, $2, 'participant', 'invited', 'optional')`,
                     [meeting.id, uid]
                 );
             }
