@@ -1,4 +1,4 @@
-import ConfirmDialog from '../components/ConfirmDialog';
+import { useState } from 'react';\nimport ConfirmDialog from '../components/ConfirmDialog';
 import {
     MessageSearch, ForwardModal, GroupModal,
     StarredMessages, PollCreator, CallOverlay
@@ -7,6 +7,7 @@ import ChatSidebar from './chat/ChatSidebar';
 import ChatHeader from './chat/ChatHeader';
 import ChatMessages from './chat/ChatMessages';
 import ChatInputBar from './chat/ChatInputBar';
+import CallHistory from './chat/CallHistory';
 import useChatState from './chat/useChatState';
 import useChatActions from './chat/useChatActions';
 import { getConvName } from './chat/chatUtils';
@@ -45,6 +46,8 @@ export default function Chat() {
         openGroupEdit, handleTyping,
         handleVoiceCall, handleVideoCall, handleEndCall,
     } = actions;
+
+    const [showCallHistory, setShowCallHistory] = useState(false);
 
     const jumpTo = (msgId) => handleJumpTo(msgId, msgStyles.highlight);
 
@@ -101,6 +104,8 @@ export default function Chat() {
                             showSharedFiles={showSharedFiles}
                             onToggleStarred={() => setShowStarred(!showStarred)}
                             showStarred={showStarred}
+                            onToggleCallHistory={() => setShowCallHistory(v => !v)}
+                            showCallHistory={showCallHistory}
                             onVoiceCall={handleVoiceCall}
                             onVideoCall={handleVideoCall}
                         />
@@ -216,6 +221,17 @@ export default function Chat() {
                     wsSend={wsSend}
                     onEnd={handleEndCall}
                 />
+            )}
+
+            {/* ─── Call History Panel ─── */}
+            {showCallHistory && activeConv && (
+                <div className={s.sidePanel}>
+                    <CallHistory
+                        convId={activeConv.id}
+                        currentUserId={user.id}
+                        onClose={() => setShowCallHistory(false)}
+                    />
+                </div>
             )}
         </div>
     );

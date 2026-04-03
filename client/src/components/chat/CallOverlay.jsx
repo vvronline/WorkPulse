@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { ChatAvatar } from './';
+import { searchChatUsers } from '../../api';
 import s from './CallOverlay.module.css';
 
 const ICE_SERVERS = [
@@ -79,6 +80,13 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     const [activeVideoDevice, setActiveVideoDevice] = useState('');
     const [showAudioDevices, setShowAudioDevices] = useState(false);
     const [showVideoDevices, setShowVideoDevices] = useState(false);
+
+    // Add participant
+    const [showAddParticipant, setShowAddParticipant] = useState(false);
+    const [addPartQuery, setAddPartQuery] = useState('');
+    const [addPartResults, setAddPartResults] = useState([]);
+    const [addPartSearching, setAddPartSearching] = useState(false);
+    const addPartTimerRef = useRef(null);
 
     // Refs
     const pcRef = useRef(null);
@@ -537,7 +545,27 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     const isConnected = status === 'connected';
     const isVideoCall = callType === 'video';
 
-    // ─── Render ───
+    // ─── Add Participant search handler ───
+    const handleAddPartSearch = (val) => {
+        setAddPartQuery(val);
+        clearTimeout(addPartTimerRef.current);
+        if (val.trim().length < 2) { setAddPartResults([]); return; }
+        addPartTimerRef.current = setTimeout(async () => {
+            setAddPartSearching(true);
+            try {
+                const r = await searchChatUsers(val.trim());
+                setAddPartResults(r.data || []);
+            } catch { setAddPartResults([]); }
+            finally { setAddPartSearching(false); }
+        }, 300);
+    };
+
+    const handleAddPartInvite = (targetUserId) => {
+        wsSend({ type: 'call_add_participant', callId, conversationId, targetUserId });
+        setShowAddParticipant(false);
+        setAddPartQuery('');
+        setAddPartResults([]);
+    };
     return (
         <div
             ref={overlayRef}
@@ -606,6 +634,37 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
                     onClose={() => setShowVideoDevices(false)}
                     label="Select Camera"
                 />
+            )}
+
+            {/* ─── Add Participant popup ─── */}
+            {showAddParticipant && (
+                <div className={s.addPartPopup}>
+                    <div className={s.addPartHeader}>
+                        <span>Add to call</span>
+                        <button className={s.addPartClose} onClick={() => { setShowAddParticipant(false); setAddPartQuery(''); setAddPartResults([]); }}>×</button>
+                    </div>
+                    <input
+                        className={s.addPartInput}
+                        value={addPartQuery}
+                        onChange={e => handleAddPartSearch(e.target.value)}
+                        placeholder="Search people…"
+                        autoFocus
+                    />
+                    {addPartSearching && <div className={s.addPartLoading}>Searching…</div>}
+                    {addPartResults.length > 0 && (
+                        <ul className={s.addPartResults}>
+                            {addPartResults.map(u => (
+                                <li key={u.id} className={s.addPartResult} onClick={() => handleAddPartInvite(u.id)}>
+                                    {u.name || u.full_name || u.username}
+                                    {u.email && <span className={s.addPartEmail}>{u.email}</span>}
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                    {addPartQuery.trim().length >= 2 && !addPartSearching && addPartResults.length === 0 && (
+                        <div className={s.addPartLoading}>No results found</div>
+                    )}
+                </div>
             )}
 
             {/* ─── Controls ─── */}
@@ -700,6 +759,17 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
                                 title="Picture-in-Picture"
                             >
                                 <PipIcon />
+                            </button>
+                        )}
+
+                        {/* Add Participant */}
+                        {isConnected && (
+                            <button
+                                className={`${s.controlBtn} ${showAddParticipant ? s.active : ''}`}
+                                onClick={() => setShowAddParticipant(v => !v)}
+                                title="Add participant"
+                            >
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M16 11c1.66 0 3-1.34 3-3s-1.34-3-3-3M20 20c0-2.21-1.79-4-4-4M12 12c2.21 0 4-1.79 4-4S14.21 4 12 4 8 5.79 8 8s1.79 4 4 4M4 20c0-2.21 1.79-4 4-4h8c2.21 0 4 1.79 4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/><path d="M19 8h4M21 6v4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
                             </button>
                         )}
 

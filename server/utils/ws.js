@@ -246,6 +246,13 @@ async function handleChatMessage(senderId, msg) {
 
         const caller = (await query('SELECT full_name, avatar FROM users WHERE id = $1', [senderId])).rows[0];
 
+        // System message: call started
+        const sysMsg = (await query(
+            `INSERT INTO messages (conversation_id, sender_id, content, format_type, metadata)
+             VALUES ($1, $2, '', 'system', $3) RETURNING id, created_at`,
+            [conversationId, senderId, JSON.stringify({ type: 'call_started', callId: callLog.id, callType, callerName: caller?.full_name })]
+        )).rows[0];
+
         // Notify all other participants about incoming call
         const participants = (await query(
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2',
@@ -265,6 +272,12 @@ async function handleChatMessage(senderId, msg) {
                 callType,
                 isGroup: conv?.is_group || false,
                 groupName: conv?.name
+            });
+            // Broadcast system message to all
+            sendToUser(p.user_id, 'chat_message', {
+                id: sysMsg.id, conversationId, senderId, content: '', formatType: 'system',
+                metadata: { type: 'call_started', callId: callLog.id, callType, callerName: caller?.full_name },
+                createdAt: sysMsg.created_at
             });
         }
 
@@ -361,18 +374,36 @@ async function handleChatMessage(senderId, msg) {
             [callId, duration]
         );
 
+        const finalStatus = callLog.status === 'ringing' ? 'missed' : 'ended';
+        const caller2 = (await query('SELECT full_name FROM users WHERE id = $1', [callLog.caller_id])).rows[0];
+
+        // System message: call ended/missed
+        const sysEndMsg = (await query(
+            `INSERT INTO messages (conversation_id, sender_id, content, format_type, metadata)
+             VALUES ($1, $2, '', 'system', $3) RETURNING id, created_at`,
+            [conversationId, senderId, JSON.stringify({
+                type: finalStatus === 'missed' ? 'call_missed' : 'call_ended',
+                callId, callType: callLog.call_type, duration, callerName: caller2?.full_name
+            })]
+        )).rows[0];
+
         // Notify all participants
-        const participants = (await query(
-            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2',
-            [conversationId, senderId]
+        const allParticipants = (await query(
+            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
+            [conversationId]
         )).rows;
 
-        for (const p of participants) {
-            sendToUser(p.user_id, 'call_ended', {
-                callId,
-                conversationId,
-                endedBy: senderId,
-                duration
+        for (const p of allParticipants) {
+            if (p.user_id !== senderId) {
+                sendToUser(p.user_id, 'call_ended', { callId, conversationId, endedBy: senderId, duration });
+            }
+            sendToUser(p.user_id, 'chat_message', {
+                id: sysEndMsg.id, conversationId, senderId, content: '', formatType: 'system',
+                metadata: {
+                    type: finalStatus === 'missed' ? 'call_missed' : 'call_ended',
+                    callId, callType: callLog.call_type, duration, callerName: caller2?.full_name
+                },
+                createdAt: sysEndMsg.created_at
             });
         }
 
@@ -397,6 +428,275 @@ async function handleChatMessage(senderId, msg) {
             conversationId,
             fromUserId: senderId,
             signal
+        });
+
+        // ═══════════════════════════════════════════════════════
+        //  MEETING HANDLERS
+        // ═══════════════════════════════════════════════════════
+    } else if (msg.type === 'meeting_join') {
+        const { meetingId } = msg.data || {};
+        if (!meetingId) return;
+
+        const meeting = (await query('SELECT * FROM meetings WHERE id = $1', [meetingId])).rows[0];
+        if (!meeting) return;
+        if (meeting.status === 'ended') return;
+
+        // Verify participant is allowed
+        const mp = (await query(
+            'SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2',
+            [meetingId, senderId]
+        )).rows[0];
+        const isOrgMember = meeting.org_id
+            ? (await query('SELECT 1 FROM users WHERE id = $1 AND org_id = $2', [senderId, meeting.org_id])).rows[0]
+            : true;
+        if (!mp && !isOrgMember) return;
+
+        // Upsert participant
+        await query(
+            `INSERT INTO meeting_participants (meeting_id, user_id, role, status, joined_at)
+             VALUES ($1, $2, 'participant', 'joined', NOW())
+             ON CONFLICT (meeting_id, user_id) DO UPDATE SET status = 'joined', joined_at = NOW(), left_at = NULL`,
+            [meetingId, senderId]
+        );
+
+        // Mark meeting as active on first join
+        if (meeting.status === 'scheduled') {
+            await query(`UPDATE meetings SET status = 'active', started_at = NOW() WHERE id = $1`, [meetingId]);
+        }
+
+        const joiner = (await query('SELECT full_name, avatar, username FROM users WHERE id = $1', [senderId])).rows[0];
+
+        // Get all current participants to notify + send system message
+        const allParticipants = (await query(
+            'SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = $2',
+            [meetingId, 'joined']
+        )).rows;
+
+        // Get existing participants to signal new peer (mesh)
+        const existingPeers = allParticipants.filter(p => p.user_id !== senderId).map(p => p.user_id);
+
+        for (const p of allParticipants) {
+            sendToUser(p.user_id, 'meeting_participant_joined', {
+                meetingId,
+                userId: senderId,
+                fullName: joiner?.full_name,
+                avatar: joiner?.avatar,
+                username: joiner?.username,
+                existingPeers: p.user_id === senderId ? existingPeers : undefined
+            });
+        }
+
+        // System message in conversation
+        if (meeting.conversation_id) {
+            const sysMsg = (await query(
+                `INSERT INTO messages (conversation_id, sender_id, content, format_type, metadata)
+                 VALUES ($1, $2, '', 'system', $3) RETURNING id, created_at`,
+                [meeting.conversation_id, senderId, JSON.stringify({
+                    type: 'meeting_joined', meetingId, name: joiner?.full_name
+                })]
+            )).rows[0];
+            const convParticipants = (await query(
+                'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
+                [meeting.conversation_id]
+            )).rows;
+            for (const p of convParticipants) {
+                sendToUser(p.user_id, 'chat_message', {
+                    id: sysMsg.id, conversationId: meeting.conversation_id, senderId,
+                    content: '', formatType: 'system',
+                    metadata: { type: 'meeting_joined', meetingId, name: joiner?.full_name },
+                    createdAt: sysMsg.created_at
+                });
+            }
+        }
+
+    } else if (msg.type === 'meeting_leave') {
+        const { meetingId } = msg.data || {};
+        if (!meetingId) return;
+
+        await query(
+            `UPDATE meeting_participants SET status = 'left', left_at = NOW() WHERE meeting_id = $1 AND user_id = $2`,
+            [meetingId, senderId]
+        );
+
+        const activeParticipants = (await query(
+            `SELECT mp.user_id FROM meeting_participants mp WHERE mp.meeting_id = $1 AND mp.status = 'joined'`,
+            [meetingId]
+        )).rows;
+
+        for (const p of activeParticipants) {
+            sendToUser(p.user_id, 'meeting_participant_left', { meetingId, userId: senderId });
+        }
+
+        // If no active participants, mark meeting ended
+        if (activeParticipants.length === 0) {
+            await query(`UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1`, [meetingId]);
+        }
+
+    } else if (msg.type === 'meeting_end') {
+        const { meetingId } = msg.data || {};
+        if (!meetingId) return;
+
+        const meeting = (await query(
+            'SELECT * FROM meetings WHERE id = $1 AND created_by = $2',
+            [meetingId, senderId]
+        )).rows[0];
+        if (!meeting) return;
+
+        const startedAt = meeting.started_at ? new Date(meeting.started_at) : null;
+        const durationSecs = startedAt ? Math.round((Date.now() - startedAt.getTime()) / 1000) : null;
+
+        await query(
+            `UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1`,
+            [meetingId]
+        );
+        await query(
+            `UPDATE meeting_participants SET status = 'left', left_at = NOW() WHERE meeting_id = $1`,
+            [meetingId]
+        );
+
+        const activeParticipants = (await query(
+            'SELECT user_id FROM meeting_participants WHERE meeting_id = $1',
+            [meetingId]
+        )).rows;
+
+        for (const p of activeParticipants) {
+            sendToUser(p.user_id, 'meeting_ended', { meetingId, endedBy: senderId, duration: durationSecs });
+        }
+
+        // System message in conversation
+        if (meeting.conversation_id) {
+            const sysMsg = (await query(
+                `INSERT INTO messages (conversation_id, sender_id, content, format_type, metadata)
+                 VALUES ($1, $2, '', 'system', $3) RETURNING id, created_at`,
+                [meeting.conversation_id, senderId, JSON.stringify({
+                    type: 'meeting_ended', meetingId, duration: durationSecs
+                })]
+            )).rows[0];
+            const convParticipants = (await query(
+                'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
+                [meeting.conversation_id]
+            )).rows;
+            for (const p of convParticipants) {
+                sendToUser(p.user_id, 'chat_message', {
+                    id: sysMsg.id, conversationId: meeting.conversation_id, senderId,
+                    content: '', formatType: 'system',
+                    metadata: { type: 'meeting_ended', meetingId, duration: durationSecs },
+                    createdAt: sysMsg.created_at
+                });
+            }
+        }
+
+    } else if (msg.type === 'meeting_signal') {
+        // WebRTC mesh signaling between meeting participants
+        const { meetingId, targetUserId, signal } = msg.data || {};
+        if (!meetingId || !targetUserId || !signal) return;
+
+        // Verify both are active participants
+        const senderOk = (await query(
+            `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
+            [meetingId, senderId]
+        )).rows[0];
+        if (!senderOk) return;
+
+        sendToUser(targetUserId, 'meeting_signal', {
+            meetingId,
+            fromUserId: senderId,
+            signal
+        });
+
+    } else if (msg.type === 'meeting_add_participant') {
+        // Organizer adds someone to an active meeting
+        const { meetingId, targetUserId } = msg.data || {};
+        if (!meetingId || !targetUserId) return;
+
+        const meeting = (await query(
+            'SELECT * FROM meetings WHERE id = $1 AND created_by = $2',
+            [meetingId, senderId]
+        )).rows[0];
+        if (!meeting || meeting.status === 'ended') return;
+
+        const targetUser = (await query('SELECT full_name, avatar FROM users WHERE id = $1', [targetUserId])).rows[0];
+        if (!targetUser) return;
+
+        await query(
+            `INSERT INTO meeting_participants (meeting_id, user_id, role, status)
+             VALUES ($1, $2, 'participant', 'invited') ON CONFLICT (meeting_id, user_id) DO NOTHING`,
+            [meetingId, targetUserId]
+        );
+        if (meeting.conversation_id) {
+            await query(
+                `INSERT INTO conversation_participants (conversation_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+                [meeting.conversation_id, targetUserId]
+            );
+        }
+
+        const organizer = (await query('SELECT full_name FROM users WHERE id = $1', [senderId])).rows[0];
+        sendToUser(targetUserId, 'meeting_invite', {
+            meetingId,
+            meetingCode: meeting.meeting_code,
+            title: meeting.title,
+            organizerName: organizer?.full_name,
+            conversationId: meeting.conversation_id,
+            isOngoing: true
+        });
+
+    } else if (msg.type === 'meeting_mute_participant') {
+        // Organizer mutes a participant
+        const { meetingId, targetUserId, muted } = msg.data || {};
+        if (!meetingId || !targetUserId) return;
+
+        const meeting = (await query('SELECT * FROM meetings WHERE id = $1 AND created_by = $2', [meetingId, senderId])).rows[0];
+        if (!meeting) return;
+
+        sendToUser(targetUserId, 'meeting_muted', { meetingId, muted: !!muted, byUserId: senderId });
+
+    } else if (msg.type === 'meeting_raise_hand') {
+        const { meetingId, raised } = msg.data || {};
+        if (!meetingId) return;
+
+        const participants = (await query(
+            `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined'`,
+            [meetingId]
+        )).rows;
+
+        const raiser = (await query('SELECT full_name FROM users WHERE id = $1', [senderId])).rows[0];
+        for (const p of participants) {
+            sendToUser(p.user_id, 'meeting_hand_raised', { meetingId, userId: senderId, name: raiser?.full_name, raised: !!raised });
+        }
+
+    } else if (msg.type === 'call_add_participant') {
+        // Add a participant to an ongoing 1:1 call (upgrade to group)
+        const { callId, conversationId, targetUserId } = msg.data || {};
+        if (!callId || !conversationId || !targetUserId) return;
+
+        const callLog = (await query('SELECT * FROM call_logs WHERE id = $1 AND status = $2', [callId, 'answered'])).rows[0];
+        if (!callLog) return;
+
+        // Verify sender is in the call conversation
+        const senderOk = (await query(
+            'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
+            [conversationId, senderId]
+        )).rows[0];
+        if (!senderOk) return;
+
+        // Add target to conversation
+        await query(
+            `INSERT INTO conversation_participants (conversation_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+            [conversationId, targetUserId]
+        );
+
+        const caller = (await query('SELECT full_name, avatar FROM users WHERE id = $1', [senderId])).rows[0];
+
+        // Notify target as incoming call
+        sendToUser(targetUserId, 'call_incoming', {
+            callId,
+            conversationId,
+            callerId: senderId,
+            callerName: caller?.full_name,
+            callerAvatar: caller?.avatar,
+            callType: callLog.call_type,
+            isGroup: true,
+            isJoining: true
         });
     }
 }

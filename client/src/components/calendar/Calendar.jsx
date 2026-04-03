@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { getCalendarEvents, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent } from '../../api';
+import { useNavigate } from 'react-router-dom';
+import { getCalendarEvents, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent, createMeeting } from '../../api';
 import EventFormModal from './EventFormModal';
 import s from './Calendar.module.css';
 
@@ -37,11 +38,13 @@ const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 export default function Calendar({ tasks = [] }) {
+    const navigate = useNavigate();
     const [events, setEvents] = useState([]);
     const [view, setView] = useState('week');
     const [baseDate, setBaseDate] = useState(() => new Date());
     const [modal, setModal] = useState(null);
     const [form, setForm] = useState({ title: '', description: '', start_time: '', end_time: '', all_day: false, color: '#6366f1', task_id: '' });
+    const [editingMeetingCode, setEditingMeetingCode] = useState(null);
     const gridRef = useRef(null);
     const today = new Date();
 
@@ -97,6 +100,7 @@ export default function Calendar({ tasks = [] }) {
             title: evt.title, description: evt.description || '', color: evt.color || '#6366f1', task_id: evt.task_id || '',
             start_time: toLocalISO(new Date(evt.start_time)), end_time: toLocalISO(new Date(evt.end_time)), all_day: evt.all_day,
         });
+        setEditingMeetingCode(evt.meeting_code || null);
         setModal(evt.id);
     };
 
@@ -111,7 +115,7 @@ export default function Calendar({ tasks = [] }) {
         }
     };
 
-    const handleSave = async () => {
+    const handleSave = async (meetingOptions) => {
         if (!form.title.trim() || !form.start_time || !form.end_time) return;
         if (modal === 'create' && new Date(form.start_time) < new Date()) return;
         const payload = { ...form, task_id: form.task_id || null,
@@ -119,9 +123,22 @@ export default function Calendar({ tasks = [] }) {
             end_time: new Date(form.end_time).toISOString(),
         };
         try {
-            if (modal === 'create') await createCalendarEvent(payload);
-            else await updateCalendarEvent(modal, payload);
+            if (modal === 'create') {
+                if (meetingOptions) {
+                    // Create meeting first, then calendar event linked to it
+                    const mtgRes = await createMeeting({
+                        title: form.title.trim(),
+                        participant_ids: meetingOptions.participants.map(p => p.id),
+                        settings: meetingOptions.settings,
+                    });
+                    payload.meeting_id = mtgRes.data.id;
+                }
+                await createCalendarEvent(payload);
+            } else {
+                await updateCalendarEvent(modal, payload);
+            }
             setModal(null);
+            setEditingMeetingCode(null);
             fetchEvents();
         } catch (e) { console.error(e); }
     };
@@ -131,6 +148,7 @@ export default function Calendar({ tasks = [] }) {
         try {
             await deleteCalendarEvent(modal);
             setModal(null);
+            setEditingMeetingCode(null);
             fetchEvents();
         } catch (e) { console.error(e); }
     };
@@ -211,7 +229,10 @@ export default function Calendar({ tasks = [] }) {
                                         <div key={ev.id} className={s.event}
                                             style={evStyle}
                                             onClick={(e) => { e.stopPropagation(); openEdit(ev); }}>
-                                            <span className={s.eventTitle}>{ev.title}</span>
+                                            <span className={s.eventTitle}>
+                                                {ev.meeting_code && <span className={s.eventMeetingBadge}>📹</span>}
+                                                {ev.title}
+                                            </span>
                                             {height >= 40 && <span className={s.eventTime}>
                                                 {pad(evStart.getHours())}:{pad(evStart.getMinutes())} – {pad(evEnd.getHours())}:{pad(evEnd.getMinutes())}
                                             </span>}
@@ -332,8 +353,9 @@ export default function Calendar({ tasks = [] }) {
                 tasks={tasks}
                 onSave={handleSave}
                 onDelete={handleDelete}
-                onClose={() => setModal(null)}
+                onClose={() => { setModal(null); setEditingMeetingCode(null); }}
                 onStartChange={handleStartChange}
+                existingMeetingCode={editingMeetingCode}
             />
         </div>
     );

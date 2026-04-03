@@ -25,6 +25,8 @@ const Tasks = lazy(() => import('./pages/Tasks'));
 const CalendarPage = lazy(() => import('./pages/CalendarPage'));
 const NotesPage = lazy(() => import('./pages/NotesPage'));
 const Chat = lazy(() => import('./pages/Chat'));
+const MeetingJoin = lazy(() => import('./pages/MeetingJoin'));
+const MeetingRoom = lazy(() => import('./pages/MeetingRoom'));
 
 // Enterprise pages
 const Admin = lazy(() => import('./pages/Admin'));
@@ -74,6 +76,8 @@ function AppRoutes() {
           <Route path="/calendar" element={<ProtectedRoute><CalendarPage /></ProtectedRoute>} />
           <Route path="/notes" element={<ProtectedRoute><NotesPage /></ProtectedRoute>} />
           <Route path="/chat" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
+          <Route path="/meeting/:code" element={<ProtectedRoute><MeetingJoin /></ProtectedRoute>} />
+          <Route path="/meeting/:code/room" element={<ProtectedRoute><MeetingRoom /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute minRole="hr_admin"><Admin /></ProtectedRoute>} />
           <Route path="/manager" element={<ProtectedRoute minRole="team_lead"><ManagerDashboard /></ProtectedRoute>} />
           <Route path="/leave-policy" element={<ProtectedRoute><LeavePolicy /></ProtectedRoute>} />

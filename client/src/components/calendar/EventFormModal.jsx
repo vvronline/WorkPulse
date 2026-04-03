@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { searchChatUsers } from '../../api';
 import s from './Calendar.module.css';
 
 const COLORS = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#ef4444', '#8b5cf6', '#14b8a6'];
@@ -37,15 +38,100 @@ function getTimeOptions(timePart) {
  *   setForm      – form state setter
  *   nowMin       – ISO local datetime string for min-date validation on new events
  *   tasks        – array of linkable tasks
- *   onSave       – async () => void
+ *   onSave       – async (meetingOptions?: {participants,settings}) => void
  *   onDelete     – async () => void
  *   onClose      – () => void
  *   onStartChange – (val: string) => void — handles start time changes with end-time adjustment
+ *   existingMeetingCode – meeting_code if editing an event that has a meeting
  */
-export default function EventFormModal({ modal, form, setForm, nowMin, tasks, onSave, onDelete, onClose, onStartChange }) {
-  if (modal === null) return null;
+function MeetingParticipantPicker({ participants, onChange }) {
+    const [query, setQuery] = useState('');
+    const [results, setResults] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const timerRef = useRef(null);
 
-  return (
+    useEffect(() => {
+        if (query.trim().length < 2) { setResults([]); return; }
+        clearTimeout(timerRef.current);
+        timerRef.current = setTimeout(async () => {
+            setLoading(true);
+            try {
+                const r = await searchChatUsers(query.trim());
+                setResults((r.data || []).filter(u => !participants.some(p => p.id === u.id)));
+            } catch { setResults([]); }
+            finally { setLoading(false); }
+        }, 300);
+        return () => clearTimeout(timerRef.current);
+    }, [query, participants]);
+
+    const add = (user) => {
+        onChange([...participants, user]);
+        setQuery('');
+        setResults([]);
+    };
+    const remove = (id) => onChange(participants.filter(p => p.id !== id));
+
+    return (
+        <div className={s.participantPicker}>
+            <div className={s.participantChips}>
+                {participants.map(p => (
+                    <span key={p.id} className={s.participantChip}>
+                        {p.name || p.full_name || p.username}
+                        <button type="button" onClick={() => remove(p.id)}>×</button>
+                    </span>
+                ))}
+            </div>
+            <div className={s.participantSearch}>
+                <input
+                    value={query}
+                    onChange={e => setQuery(e.target.value)}
+                    placeholder="Search people to invite…"
+                    className={s.participantInput}
+                />
+                {loading && <span className={s.participantLoading}>…</span>}
+                {results.length > 0 && (
+                    <ul className={s.participantResults}>
+                        {results.map(u => (
+                            <li key={u.id} onClick={() => add(u)}>
+                                {u.name || u.full_name || u.username}
+                                {u.email && <span className={s.participantEmail}> — {u.email}</span>}
+                            </li>
+                        ))}
+                    </ul>
+                )}
+            </div>
+        </div>
+    );
+}
+
+export default function EventFormModal({ modal, form, setForm, nowMin, tasks, onSave, onDelete, onClose, onStartChange, existingMeetingCode }) {
+    const [addMeeting, setAddMeeting] = useState(false);
+    const [meetingParticipants, setMeetingParticipants] = useState([]);
+    const [meetingSettings, setMeetingSettings] = useState({ muteOnJoin: false, allowScreenShare: true });
+
+    // Reset meeting state when modal opens/closes
+    useEffect(() => {
+        if (modal === null) {
+            setAddMeeting(false);
+            setMeetingParticipants([]);
+            setMeetingSettings({ muteOnJoin: false, allowScreenShare: true });
+        }
+    }, [modal]);
+
+    if (modal === null) return null;
+
+    const isEditing = modal !== 'create';
+    const hasMeeting = isEditing && !!existingMeetingCode;
+
+    const handleSave = () => {
+        if (addMeeting && !isEditing) {
+            onSave({ participants: meetingParticipants, settings: meetingSettings });
+        } else {
+            onSave(null);
+        }
+    };
+
+    return (
     <div className={s.modalOverlay} onClick={onClose}>
       <div className={s.modal} onClick={e => e.stopPropagation()}>
         <h3>{modal === 'create' ? 'New Event' : 'Edit Event'}</h3>
@@ -164,13 +250,81 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
           </div>
         )}
 
+        {/* Meeting section */}
+        {hasMeeting ? (
+          <div className={s.meetingBanner}>
+            <span className={s.meetingIcon}>📹</span>
+            <span>Online meeting</span>
+            <a
+              href={`${window.location.origin}/meeting/${existingMeetingCode}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={s.meetingLink}
+            >
+              {`${window.location.origin}/meeting/${existingMeetingCode}`}
+            </a>
+            <a
+              href={`/meeting/${existingMeetingCode}`}
+              className={s.joinMeetingBtn}
+              onClick={e => { e.preventDefault(); onClose(); window.location.href = `/meeting/${existingMeetingCode}`; }}
+            >
+              Join
+            </a>
+          </div>
+        ) : modal === 'create' && (
+          <div className={s.meetingToggleRow}>
+            <label className={s.toggleLabel}>
+              <span className={s.meetingIcon}>📹</span>
+              Add online meeting
+            </label>
+            <button
+              type="button"
+              className={`${s.toggleSwitch} ${addMeeting ? s.toggleSwitchOn : ''}`}
+              onClick={() => setAddMeeting(v => !v)}
+              aria-pressed={addMeeting}
+            >
+              <span className={s.toggleThumb} />
+            </button>
+          </div>
+        )}
+
+        {modal === 'create' && addMeeting && (
+          <div className={s.meetingOptions}>
+            <div className={s.formGroup}>
+              <label>Invite participants</label>
+              <MeetingParticipantPicker
+                participants={meetingParticipants}
+                onChange={setMeetingParticipants}
+              />
+            </div>
+            <div className={s.meetingSettingsRow}>
+              <label className={s.checkbox}>
+                <input
+                  type="checkbox"
+                  checked={meetingSettings.muteOnJoin}
+                  onChange={e => setMeetingSettings(p => ({ ...p, muteOnJoin: e.target.checked }))}
+                />
+                Mute participants on join
+              </label>
+              <label className={s.checkbox}>
+                <input
+                  type="checkbox"
+                  checked={meetingSettings.allowScreenShare}
+                  onChange={e => setMeetingSettings(p => ({ ...p, allowScreenShare: e.target.checked }))}
+                />
+                Allow screen sharing
+              </label>
+            </div>
+          </div>
+        )}
+
         <div className={s.formActions}>
           {modal !== 'create' && (
             <button className={s.deleteBtn} onClick={onDelete}>Delete</button>
           )}
           <div className={s.formActionsRight}>
             <button className={s.cancelBtn} onClick={onClose}>Cancel</button>
-            <button className={s.saveBtn} onClick={onSave}>Save</button>
+            <button className={s.saveBtn} onClick={handleSave}>Save</button>
           </div>
         </div>
       </div>

@@ -658,6 +658,45 @@ async function initDB() {
     `);
     await query(`CREATE INDEX IF NOT EXISTS idx_call_logs_conv ON call_logs(conversation_id, created_at DESC)`);
 
+    // ---- Meetings ----
+    await query(`
+        CREATE TABLE IF NOT EXISTS meetings (
+            id                  SERIAL PRIMARY KEY,
+            org_id              INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
+            title               TEXT NOT NULL,
+            description         TEXT,
+            meeting_code        VARCHAR(20) NOT NULL UNIQUE,
+            created_by          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            conversation_id     INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+            calendar_event_id   INTEGER REFERENCES calendar_events(id) ON DELETE SET NULL,
+            status              VARCHAR(20) NOT NULL DEFAULT 'scheduled',
+            started_at          TIMESTAMPTZ,
+            ended_at            TIMESTAMPTZ,
+            max_participants    INTEGER NOT NULL DEFAULT 20,
+            settings            JSONB NOT NULL DEFAULT '{"muteOnJoin":false,"allowScreenShare":true}',
+            created_at          TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_meetings_org ON meetings(org_id, created_at DESC)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_meetings_code ON meetings(meeting_code)`);
+
+    await query(`
+        CREATE TABLE IF NOT EXISTS meeting_participants (
+            id          SERIAL PRIMARY KEY,
+            meeting_id  INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            role        VARCHAR(20) NOT NULL DEFAULT 'participant',
+            status      VARCHAR(20) NOT NULL DEFAULT 'invited',
+            joined_at   TIMESTAMPTZ,
+            left_at     TIMESTAMPTZ,
+            UNIQUE(meeting_id, user_id)
+        )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_meeting_participants ON meeting_participants(meeting_id, user_id)`);
+
+    // ---- Extend calendar_events with meeting_id ----
+    await query(`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS meeting_id INTEGER REFERENCES meetings(id) ON DELETE SET NULL`);
+
     // ---- Delivery status on messages ----
     await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivered_to JSONB DEFAULT '[]'`);
 

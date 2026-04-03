@@ -2,7 +2,7 @@ import { ChatAvatar } from '../../components/chat';
 import { getConvName, getConvAvatar, isUserOnline } from './chatUtils';
 import s from './ChatHeader.module.css';
 
-export default function ChatHeader({ activeConv, onlineUsers, onBack, onGroupEdit, onToggleSearch, onTogglePinned, showPinned, onToggleSharedFiles, showSharedFiles, onToggleStarred, showStarred, onVoiceCall, onVideoCall }) {
+export default function ChatHeader({ activeConv, onlineUsers, onBack, onGroupEdit, onToggleSearch, onTogglePinned, showPinned, onToggleSharedFiles, showSharedFiles, onToggleStarred, showStarred, onToggleCallHistory, showCallHistory, onVoiceCall, onVideoCall }) {
     return (
         <div className={s.chatHeader}>
             <button className={s.backBtn} onClick={onBack}>←</button>
@@ -36,6 +36,7 @@ export default function ChatHeader({ activeConv, onlineUsers, onBack, onGroupEdi
                 <button onClick={onTogglePinned} title="Pinned messages">📌</button>
                 <button onClick={onToggleSharedFiles} title="Shared files">📁</button>
                 <button onClick={onToggleStarred} title="Saved messages">⭐</button>
+                <button onClick={onToggleCallHistory} title="Call history" style={showCallHistory ? { color: 'var(--accent)' } : undefined}>📋</button>
                 {activeConv.is_group && <button onClick={onGroupEdit} title="Group settings">⚙️</button>}
             </div>
         </div>

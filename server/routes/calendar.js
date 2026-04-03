@@ -13,9 +13,11 @@ router.get('/', async (req, res) => {
         const { from, to } = req.query;
         if (!from || !to) return res.status(400).json({ error: 'from and to query params required' });
         const result = await query(
-            `SELECT ce.*, t.title AS task_title, t.status AS task_status, t.priority AS task_priority
+            `SELECT ce.*, t.title AS task_title, t.status AS task_status, t.priority AS task_priority,
+                    m.meeting_code, m.status AS meeting_status, m.conversation_id AS meeting_conversation_id
              FROM calendar_events ce
              LEFT JOIN tasks t ON t.id = ce.task_id
+             LEFT JOIN meetings m ON m.id = ce.meeting_id
              WHERE ce.user_id = $1 AND (ce.org_id = $2 OR ce.org_id IS NULL)
                AND ce.start_time < $4::timestamptz AND ce.end_time > $3::timestamptz
              ORDER BY ce.start_time`,
@@ -31,7 +33,7 @@ router.get('/', async (req, res) => {
 // Create event
 router.post('/', async (req, res) => {
     try {
-        const { title, description, start_time, end_time, all_day, color, task_id } = req.body;
+        const { title, description, start_time, end_time, all_day, color, task_id, meeting_id } = req.body;
         if (!title || !start_time || !end_time) return res.status(400).json({ error: 'title, start_time, end_time required' });
         if (title.trim().length > 200) return res.status(400).json({ error: 'Title must be 200 characters or less' });
         if (description && description.length > 2000) return res.status(400).json({ error: 'Description must be 2000 characters or less' });
@@ -44,9 +46,9 @@ router.post('/', async (req, res) => {
         }
 
         const result = await query(
-            `INSERT INTO calendar_events (user_id, org_id, title, description, start_time, end_time, all_day, color, task_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-            [req.userId, req.userOrgId || null, title.trim(), description || null, start_time, end_time, all_day || false, color || '#6366f1', task_id || null]
+            `INSERT INTO calendar_events (user_id, org_id, title, description, start_time, end_time, all_day, color, task_id, meeting_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+            [req.userId, req.userOrgId || null, title.trim(), description || null, start_time, end_time, all_day || false, color || '#6366f1', task_id || null, meeting_id || null]
         );
         res.json(result.rows[0]);
     } catch (err) {

@@ -1,4 +1,6 @@
 import { ChatAvatar, MessageBubble, PinnedMessages, SharedFilesPanel } from '../../components/chat';
+import SystemMessage from '../../components/chat/SystemMessage';
+import MeetingCard from '../../components/chat/MeetingCard';
 import s from './ChatMessages.module.css';
 
 export default function ChatMessages({
@@ -35,6 +37,37 @@ export default function ChatMessages({
                     const prev = messages[i - 1];
                     const isNewGroup = !prev || prev.sender_id !== m.sender_id || showDate
                         || (new Date(m.created_at) - new Date(prev.created_at)) > 120000;
+
+                    // System messages (call events, meeting events)
+                    if (m.format_type === 'system') {
+                        return (
+                            <div key={m.id} id={`msg-${m.id}`}>
+                                {showDate && (
+                                    <div className={s.dateDivider}>
+                                        <span>{new Date(m.created_at).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+                                    </div>
+                                )}
+                                <SystemMessage msg={m} />
+                            </div>
+                        );
+                    }
+
+                    // Meeting invite cards
+                    if (m.format_type === 'meeting' && m.metadata?.meetingCode) {
+                        return (
+                            <div key={m.id} id={`msg-${m.id}`}>
+                                {showDate && (
+                                    <div className={s.dateDivider}>
+                                        <span>{new Date(m.created_at).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+                                    </div>
+                                )}
+                                <div style={{ padding: '0 0.5rem' }}>
+                                    <MeetingCard msg={m} />
+                                </div>
+                            </div>
+                        );
+                    }
+
                     return (
                         <div key={m.id} id={`msg-${m.id}`}>
                             {showDate && (
