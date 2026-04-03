@@ -305,4 +305,14 @@ export const togglePinConversation = (convId) => API.post(`/chat/conversations/$
 export const toggleFavouriteConversation = (convId) => API.post(`/chat/conversations/${convId}/favourite`);
 export const getCallHistory = (convId) => API.get(`/chat/conversations/${convId}/calls`);
 
+// Meetings
+export const createMeeting = (data) => API.post('/meetings', data);
+export const getMyMeetings = (params) => API.get('/meetings', { params });
+export const getMeeting = (code) => API.get(`/meetings/${code}`);
+export const updateMeeting = (id, data) => API.put(`/meetings/${id}`, data);
+export const cancelMeeting = (id) => API.delete(`/meetings/${id}`);
+export const getMeetingParticipants = (id) => API.get(`/meetings/${id}/participants`);
+export const addMeetingParticipant = (id, userId) => API.post(`/meetings/${id}/participants`, { user_id: userId });
+export const removeMeetingParticipant = (id, userId) => API.delete(`/meetings/${id}/participants/${userId}`);
+
 export default API;
