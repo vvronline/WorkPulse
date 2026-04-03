@@ -17,9 +17,70 @@
     background: #000;
 }
 
+.overlay.holdMode {
+    background: linear-gradient(135deg, #2d1b3d 0%, #1a1a2e 50%, #16213e 100%);
+}
+
 @keyframes fadeIn {
     from { opacity: 0; }
     to { opacity: 1; }
+}
+
+/* ── Top bar (quality + badges) ── */
+.topBar {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.qualityBadge {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: blur(6px);
+    padding: 0.3rem 0.65rem;
+    border-radius: 20px;
+    font-size: 0.75rem;
+}
+
+.qualityDot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+}
+
+.qualityLabel {
+    opacity: 0.9;
+}
+
+.sharingBadge,
+.holdBadge {
+    background: rgba(244, 67, 54, 0.25);
+    border: 1px solid rgba(244, 67, 54, 0.5);
+    padding: 0.25rem 0.6rem;
+    border-radius: 20px;
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    animation: badgePulse 2s ease-in-out infinite;
+}
+
+.holdBadge {
+    background: rgba(255, 152, 0, 0.25);
+    border-color: rgba(255, 152, 0, 0.5);
+}
+
+@keyframes badgePulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
 }
 
 /* ── Remote video (full screen) ── */
@@ -38,13 +99,19 @@
     position: absolute;
     top: 1rem;
     right: 1rem;
-    width: 160px;
-    height: 120px;
+    width: 180px;
+    height: 135px;
     object-fit: cover;
     border-radius: 12px;
     border: 2px solid rgba(255,255,255,0.3);
     z-index: 10;
     box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    cursor: grab;
+    transition: box-shadow 0.2s;
+}
+
+.localVideo:hover {
+    box-shadow: 0 6px 28px rgba(0,0,0,0.6);
 }
 
 /* ── Call info (avatar, name, status) ── */
@@ -116,32 +183,65 @@
     position: absolute;
     bottom: 3rem;
     display: flex;
-    gap: 1.25rem;
+    gap: 0.75rem;
     align-items: center;
     z-index: 10;
     padding: 0.75rem 1.5rem;
     border-radius: 40px;
-    background: rgba(0,0,0,0.3);
-    backdrop-filter: blur(10px);
+    background: rgba(0,0,0,0.35);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.08);
 }
 
+/* ── Control group (button + device arrow) ── */
+.controlGroup {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+}
+
+.deviceToggle {
+    width: 24px;
+    height: 14px;
+    margin-top: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255,255,255,0.12);
+    border: none;
+    border-radius: 8px;
+    color: #fff;
+    font-size: 10px;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: all 0.15s;
+    line-height: 1;
+}
+
+.deviceToggle:hover {
+    opacity: 1;
+    background: rgba(255,255,255,0.2);
+}
+
+/* ── Control button ── */
 .controlBtn {
-    width: 54px;
-    height: 54px;
+    width: 50px;
+    height: 50px;
     border-radius: 50%;
     border: none;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.12);
     color: #fff;
     transition: all 0.2s ease;
 }
 
 .controlBtn:hover {
-    background: rgba(255,255,255,0.25);
-    transform: scale(1.05);
+    background: rgba(255,255,255,0.22);
+    transform: scale(1.06);
 }
 
 .controlBtn.active {
@@ -149,11 +249,16 @@
     color: #333;
 }
 
+.controlBtn.holdActive {
+    background: rgba(255, 152, 0, 0.6);
+    color: #fff;
+}
+
 .controlBtn.endBtn,
 .controlBtn.rejectBtn {
     background: #e53935;
-    width: 62px;
-    height: 62px;
+    width: 58px;
+    height: 58px;
 }
 
 .controlBtn.endBtn:hover,
@@ -163,41 +268,134 @@
 
 .controlBtn.acceptBtn {
     background: #4caf50;
-    width: 62px;
-    height: 62px;
+    width: 58px;
+    height: 58px;
 }
 
 .controlBtn.acceptBtn:hover {
     background: #388e3c;
 }
 
+/* ── Device selector dropdown ── */
+.deviceSelector {
+    position: absolute;
+    bottom: 8rem;
+    z-index: 30;
+    min-width: 260px;
+    max-width: 340px;
+    background: rgba(22, 33, 62, 0.96);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    overflow: hidden;
+    animation: slideUp 0.2s ease;
+}
+
+@keyframes slideUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.deviceSelectorHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.65rem 0.9rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    opacity: 0.7;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.deviceSelectorClose {
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 1.1rem;
+    cursor: pointer;
+    opacity: 0.6;
+    padding: 0 0.25rem;
+}
+
+.deviceSelectorClose:hover { opacity: 1; }
+
+.deviceOption {
+    width: 100%;
+    display: block;
+    padding: 0.6rem 0.9rem;
+    background: none;
+    border: none;
+    color: #fff;
+    text-align: left;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: background 0.15s;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.deviceOption:hover {
+    background: rgba(255,255,255,0.08);
+}
+
+.deviceOptionActive {
+    background: rgba(76, 175, 80, 0.2);
+    font-weight: 600;
+}
+
+.deviceOptionActive::before {
+    content: '✓ ';
+    color: #4caf50;
+    font-weight: 700;
+}
+
 /* ── Mobile ── */
 @media (max-width: 768px) {
     .localVideo {
-        width: 100px;
-        height: 75px;
+        width: 110px;
+        height: 82px;
         top: 0.5rem;
         right: 0.5rem;
     }
 
     .controls {
         bottom: 2rem;
-        gap: 1rem;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem;
+        flex-wrap: wrap;
+        max-width: 90vw;
+        justify-content: center;
     }
 
     .controlBtn {
-        width: 48px;
-        height: 48px;
+        width: 44px;
+        height: 44px;
     }
 
     .controlBtn.endBtn,
     .controlBtn.rejectBtn,
     .controlBtn.acceptBtn {
-        width: 56px;
-        height: 56px;
+        width: 52px;
+        height: 52px;
     }
 
     .callerName {
         font-size: 1.25rem;
+    }
+
+    .topBar {
+        top: 0.5rem;
+        right: 0.5rem;
+    }
+
+    .deviceSelector {
+        left: 50%;
+        transform: translateX(-50%);
+        bottom: 7rem;
+        min-width: 220px;
     }
 }
