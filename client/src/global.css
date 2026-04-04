@@ -1048,6 +1048,17 @@ h5 { font-size: 0.88rem; font-weight: 600; }
   overflow: hidden;
 }
 
+@media (max-width: 768px) {
+  .notif-dropdown {
+    position: fixed;
+    top: 64px;
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-height: calc(100vh - 80px);
+  }
+}
+
 .notif-header {
   display: flex;
   align-items: center;
