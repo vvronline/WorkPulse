@@ -15,6 +15,7 @@
     flex-direction: column;
     gap: 0;
     position: relative;
+    overscroll-behavior-y: contain;
 }
 .loadMore {
     align-self: center;

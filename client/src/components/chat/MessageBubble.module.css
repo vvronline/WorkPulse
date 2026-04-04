@@ -51,11 +51,11 @@
     color: var(--primary);
 }
 
-/* ─── Bubble – Teams flat style ─── */
+/* ─── Bubble – WhatsApp style ─── */
 .bubble {
     position: relative;
-    padding: 6px 10px;
-    border-radius: 4px;
+    padding: 7px 11px;
+    border-radius: 18px;
     word-break: break-word;
     line-height: 1.5;
     font-size: 0.875rem;
@@ -64,19 +64,32 @@
     background: transparent;
     color: var(--text);
 }
-/* Teams: sender messages get a very subtle tinted background */
+/* WhatsApp-style: sender = primary accent, receiver = secondary bg */
 .myBubble {
-    background: rgba(99,102,241,.08);
-    color: var(--text);
-    border-radius: 4px;
+    background: var(--primary);
+    color: #fff;
+    border-radius: 18px 4px 18px 18px;
 }
 .theirBubble {
-    background: transparent;
+    background: var(--bg-secondary);
     color: var(--text);
-    border-radius: 4px;
+    border-radius: 4px 18px 18px 18px;
 }
-.grouped .myBubble { border-radius: 4px; }
-.grouped .theirBubble { border-radius: 4px; }
+/* Consecutive messages — strip effect on sender’s side, no tail */
+.grouped .myBubble { border-radius: 18px 4px 4px 18px; }
+.grouped .theirBubble { border-radius: 4px 18px 18px 4px; }
+
+/* ─ Color overrides for content inside colored mine bubble ─ */
+.myBubble .time { color: rgba(255,255,255,0.72); }
+.myBubble .edited { color: rgba(255,255,255,0.6); }
+.myBubble .link { color: rgba(255,255,255,0.92); text-decoration: underline; }
+.myBubble .mention { color: #fff; font-weight: 700; }
+.myBubble .inlineCode { background: rgba(0,0,0,0.2); border-color: rgba(255,255,255,0.15); color: rgba(255,255,255,0.95); }
+.myBubble .pinnedBadge { color: rgba(255,255,255,0.85); }
+.myBubble .forwarded { color: rgba(255,255,255,0.72); }
+.myBubble .deliverySent { color: rgba(255,255,255,0.6); opacity: 1; }
+.myBubble .deliveryPartial { color: rgba(255,255,255,0.75); opacity: 1; }
+.myBubble .deliveryRead { color: rgba(255,255,255,0.95); }
 
 .pinned { border-left: 2px solid #f59e0b; padding-left: 8px; }
 .deleted {
@@ -348,9 +361,8 @@
     .bubble:hover .hoverActions {
         display: none;
     }
-    /* Show toolbar on active/focus for touch devices */
-    .bubble:active .hoverActions,
-    .bubble:focus-within .hoverActions {
+    /* Show toolbar when mobileActions state is active */
+    .showActions .hoverActions {
         display: flex;
     }
     .quickEmoji {
