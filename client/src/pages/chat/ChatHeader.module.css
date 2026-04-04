@@ -28,6 +28,9 @@
     font-size: 0.9rem;
     color: var(--text);
     letter-spacing: -0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .chatHeaderMeta {
     font-size: 0.72rem;
@@ -61,6 +64,94 @@
     color: var(--accent, #4caf50) !important;
 }
 
+/* ─── Desktop actions (search, pin, files, starred, etc.) ─── */
+.desktopActions {
+    display: contents;
+}
+
+/* ─── Mobile overflow menu wrapper ─── */
+.moreWrapper {
+    display: none;
+    position: relative;
+}
+.moreBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease;
+}
+.moreBtn:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+}
+
+/* ─── Overflow dropdown ─── */
+.moreDropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 180px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--glass-border);
+    border-radius: 10px;
+    padding: 4px;
+    z-index: 300;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.28), 0 0 0 1px rgba(255,255,255,0.04);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    animation: overflowDropIn 0.2s cubic-bezier(.2,0,.38,0.9);
+    transform-origin: top right;
+}
+@keyframes overflowDropIn {
+    from { opacity: 0; transform: scale(0.92) translateY(-4px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+.moreItem {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    width: 100%;
+    padding: 0.5rem 0.7rem;
+    background: none;
+    border: none;
+    border-radius: 7px;
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+    white-space: nowrap;
+}
+.moreItem:hover {
+    background: rgba(99,102,241,0.1);
+    color: var(--text);
+}
+.moreItem svg {
+    flex-shrink: 0;
+    opacity: 0.7;
+}
+.moreItem:hover svg {
+    opacity: 1;
+}
+
+/* Light theme overrides */
+:global([data-theme="light"]) .moreDropdown {
+    background: #fff;
+    border-color: rgba(0,0,0,0.1);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+}
+:global([data-theme="light"]) .moreItem:hover {
+    background: rgba(99,102,241,0.08);
+}
+
 /* ─── Tablet ─── */
 @media (max-width: 1024px) {
     .headerActions button {
@@ -74,31 +165,58 @@
 /* ─── Mobile ─── */
 @media (max-width: 768px) {
     .backBtn {
-        display: block;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border-radius: 8px;
+        flex-shrink: 0;
     }
     .chatHeader {
-        padding: 0 0.6rem;
-        gap: 0.5rem;
-        height: 44px;
+        padding: 0 0.5rem;
+        gap: 0.35rem;
+        height: 48px;
     }
     .chatHeaderName {
-        font-size: 0.85rem;
+        font-size: 0.88rem;
     }
     .chatHeaderMeta {
-        font-size: 0.68rem;
+        font-size: 0.7rem;
+    }
+    .headerActions {
+        gap: 2px;
+        flex-shrink: 0;
     }
     .headerActions button {
-        padding: 0.35rem;
+        padding: 0;
         font-size: 0.9rem;
+    }
+    /* Call buttons: consistent touch targets on mobile */
+    .callBtn {
+        display: flex !important;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+    }
+    /* Hide desktop inline actions, show overflow menu */
+    .desktopActions {
+        display: none;
+    }
+    .moreWrapper {
+        display: block;
     }
 }
 
-/* ─── Small mobile (≤480px): collapse less important header buttons ─── */
+/* ─── Small mobile (≤480px) ─── */
 @media (max-width: 480px) {
-    .headerActions {
-        gap: 0;
+    .chatHeader {
+        gap: 0.25rem;
     }
-    .headerActions button {
-        padding: 0.25rem;
+    .chatHeaderName {
+        font-size: 0.84rem;
     }
 }

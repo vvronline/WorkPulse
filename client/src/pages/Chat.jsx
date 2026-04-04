@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import ConfirmDialog from '../components/ConfirmDialog';
 import {
     MessageSearch, ForwardModal, GroupModal,
@@ -49,6 +49,17 @@ export default function Chat() {
     } = actions;
 
     const [showCallHistory, setShowCallHistory] = useState(false);
+
+    // Hide navbar & bottom tab bar on mobile when a chat conversation is active
+    useEffect(() => {
+        const isMobileChat = mobileView === 'chat' && activeConv;
+        if (isMobileChat) {
+            document.body.setAttribute('data-chat-active', '');
+        } else {
+            document.body.removeAttribute('data-chat-active');
+        }
+        return () => document.body.removeAttribute('data-chat-active');
+    }, [mobileView, activeConv]);
 
     const jumpTo = (msgId) => handleJumpTo(msgId, msgStyles.highlight);
 
