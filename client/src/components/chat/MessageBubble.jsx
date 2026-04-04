@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { Pin, Star, Pencil, Trash2 } from 'lucide-react';
 import s from './MessageBubble.module.css';
 import ChatAvatar from './ChatAvatar';
@@ -59,41 +59,11 @@ export default function MessageBubble({
     const [showFullPicker, setShowFullPicker] = useState(false);
     const [ctxMenu, setCtxMenu] = useState(null);
     const bubbleRef = useRef(null);
-    const longPressTimer = useRef(null);
-    const [mobileActions, setMobileActions] = useState(false);
-
-    const handleTouchStart = useCallback(() => {
-        longPressTimer.current = setTimeout(() => setMobileActions(true), 400);
-    }, []);
-
-    const clearLongPress = useCallback(() => {
-        if (longPressTimer.current) {
-            clearTimeout(longPressTimer.current);
-            longPressTimer.current = null;
-        }
-    }, []);
-
-    useEffect(() => {
-        if (!mobileActions) return;
-        const close = (e) => {
-            if (bubbleRef.current && !bubbleRef.current.contains(e.target)) {
-                setMobileActions(false);
-            }
-        };
-        document.addEventListener('touchstart', close, { passive: true });
-        document.addEventListener('mousedown', close);
-        return () => {
-            document.removeEventListener('touchstart', close);
-            document.removeEventListener('mousedown', close);
-        };
-    }, [mobileActions]);
 
     const handleContext = useCallback((e) => {
         e.preventDefault();
-        clearLongPress();
-        setMobileActions(false);
         setCtxMenu({ x: e.clientX, y: e.clientY });
-    }, [clearLongPress]);
+    }, []);
 
     if (msg.deleted_at) {
         return (
@@ -174,11 +144,8 @@ export default function MessageBubble({
 
                 <div
                     ref={bubbleRef}
-                    className={`${s.bubble} ${isMine ? s.myBubble : s.theirBubble} ${msg.pinned_at ? s.pinned : ''} ${msg.starred ? s.starredBubble : ''} ${mobileActions ? s.showActions : ''}`}
+                    className={`${s.bubble} ${isMine ? s.myBubble : s.theirBubble} ${msg.pinned_at ? s.pinned : ''} ${msg.starred ? s.starredBubble : ''}`}
                     onContextMenu={handleContext}
-                    onTouchStart={handleTouchStart}
-                    onTouchEnd={clearLongPress}
-                    onTouchMove={clearLongPress}
                 >
                     {msg.pinned_at && <div className={s.pinnedBadge}><Pin size={11} style={{marginRight:4}} />Pinned</div>}
                     {msg.starred && <div className={s.starBadge}><Star size={11} /></div>}
@@ -224,16 +191,16 @@ export default function MessageBubble({
                     <div className={s.hoverActions}>
                         <div className={s.quickReactions}>
                             {QUICK_EMOJIS.map(emoji => (
-                                <button key={emoji} className={s.quickEmoji} onClick={() => { onReact?.(msg.id, emoji); setMobileActions(false); }} title={emoji}>
+                                <button key={emoji} className={s.quickEmoji} onClick={() => onReact?.(msg.id, emoji)} title={emoji}>
                                     {emoji}
                                 </button>
                             ))}
-                            <button className={s.moreEmoji} onClick={() => { setShowReactions(true); }} title="More reactions">
+                            <button className={s.moreEmoji} onClick={() => setShowReactions(true)} title="More reactions">
                                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.3"/><circle cx="5.2" cy="6.5" r="0.9" fill="currentColor"/><circle cx="10.8" cy="6.5" r="0.9" fill="currentColor"/><path d="M5 10a3.5 3.5 0 006 0" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
                             </button>
                         </div>
                         <div className={s.toolbarDivider} />
-                        <button className={s.toolbarBtn} onClick={() => { onReply?.(msg); setMobileActions(false); }} title="Reply">
+                        <button className={s.toolbarBtn} onClick={() => onReply?.(msg)} title="Reply">
                             <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L2 7l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 7h7a5 5 0 010 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
                         </button>
                         <button className={s.toolbarBtn} onClick={handleContext} title="More options">
