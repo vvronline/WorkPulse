@@ -113,6 +113,9 @@
     -webkit-backdrop-filter: blur(20px);
     animation: overflowDropIn 0.2s cubic-bezier(.2,0,.38,0.9);
     transform-origin: top right;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
 }
 @keyframes overflowDropIn {
     from { opacity: 0; transform: scale(0.92) translateY(-4px); }
@@ -123,8 +126,8 @@
     align-items: center;
     gap: 0.85rem;
     width: 100%;
-    padding: 0.65rem 1rem;
-    margin-bottom: 2px;
+    padding: 0.72rem 1rem;
+    margin-bottom: 0;
     background: none;
     border: none;
     border-radius: 8px;
@@ -153,7 +156,7 @@
 .moreDivider {
     height: 1px;
     background: var(--glass-border);
-    margin: 4px 10px 6px;
+    margin: 5px 10px;
 }
 .moreItemDanger {
     color: var(--danger, #ef4444);
@@ -217,6 +220,20 @@
         padding: 0;
         font-size: 0.9rem;
     }
+    .moreWrapper {
+        flex-shrink: 0;
+    }
+    .moreBtn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 34px;
+        height: 34px;
+        border-radius: 9px;
+        border: 1px solid var(--glass-border);
+        background: var(--surface-hover);
+        color: var(--text);
+    }
     /* Call buttons: consistent touch targets on mobile */
     .callBtn {
         display: flex !important;
@@ -235,15 +252,18 @@
         display: flex;
     }
     .moreItem {
-        padding: 0.75rem 1rem;
-        margin-bottom: 3px;
-        font-size: 0.88rem;
+        padding: 0.88rem 1.05rem;
+        font-size: 0.9rem;
+        gap: 0.95rem;
     }
     .moreDropdown {
-        padding: 8px;
+        min-width: 220px;
+        right: -4px;
+        padding: 10px 8px;
+        gap: 4px;
     }
     .moreDivider {
-        margin: 6px 10px 8px;
+        margin: 7px 10px;
     }
 }
 
