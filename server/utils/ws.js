@@ -278,13 +278,6 @@ async function handleChatMessage(senderId, msg) {
 
         const caller = (await query('SELECT full_name, avatar FROM users WHERE id = $1', [senderId])).rows[0];
 
-        // System message: call started
-        const sysMsg = (await query(
-            `INSERT INTO messages (conversation_id, sender_id, content, format_type, metadata)
-             VALUES ($1, $2, '', 'system', $3) RETURNING id, created_at`,
-            [conversationId, senderId, JSON.stringify({ type: 'call_started', callId: callLog.id, callType, callerName: caller?.full_name })]
-        )).rows[0];
-
         // Notify all other participants about incoming call
         const participants = (await query(
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2',
@@ -304,12 +297,6 @@ async function handleChatMessage(senderId, msg) {
                 callType,
                 isGroup: conv?.is_group || false,
                 groupName: conv?.name
-            });
-            // Broadcast system message to all
-            sendToUser(p.user_id, 'chat_message', {
-                id: sysMsg.id, conversationId, senderId, content: '', formatType: 'system',
-                metadata: { type: 'call_started', callId: callLog.id, callType, callerName: caller?.full_name },
-                createdAt: sysMsg.created_at
             });
         }
 
@@ -407,19 +394,8 @@ async function handleChatMessage(senderId, msg) {
         );
 
         const finalStatus = callLog.status === 'ringing' ? 'missed' : 'ended';
-        const caller2 = (await query('SELECT full_name FROM users WHERE id = $1', [callLog.caller_id])).rows[0];
 
-        // System message: call ended/missed
-        const sysEndMsg = (await query(
-            `INSERT INTO messages (conversation_id, sender_id, content, format_type, metadata)
-             VALUES ($1, $2, '', 'system', $3) RETURNING id, created_at`,
-            [conversationId, senderId, JSON.stringify({
-                type: finalStatus === 'missed' ? 'call_missed' : 'call_ended',
-                callId, callType: callLog.call_type, duration, callerName: caller2?.full_name
-            })]
-        )).rows[0];
-
-        // Notify all participants
+        // Notify all participants about call end
         const allParticipants = (await query(
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
             [conversationId]
@@ -429,14 +405,6 @@ async function handleChatMessage(senderId, msg) {
             if (p.user_id !== senderId) {
                 sendToUser(p.user_id, 'call_ended', { callId, conversationId, endedBy: senderId, duration });
             }
-            sendToUser(p.user_id, 'chat_message', {
-                id: sysEndMsg.id, conversationId, senderId, content: '', formatType: 'system',
-                metadata: {
-                    type: finalStatus === 'missed' ? 'call_missed' : 'call_ended',
-                    callId, callType: callLog.call_type, duration, callerName: caller2?.full_name
-                },
-                createdAt: sysEndMsg.created_at
-            });
         }
 
     } else if (msg.type === 'call_signal') {

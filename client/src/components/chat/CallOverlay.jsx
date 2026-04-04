@@ -22,10 +22,6 @@ const HoldIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="non
 const ResumeIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><polygon points="5,3 19,12 5,21" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" fill="currentColor"/></svg>;
 const SwitchCamIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M16 3h5v5M8 21H3v-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M21 3l-7 7M3 21l7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>;
 const PipIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2"/><rect x="12" y="9" width="8" height="6" rx="1" fill="currentColor" opacity="0.5" stroke="currentColor" strokeWidth="1.5"/><path d="M8 21h8" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>;
-const SpeakerIcon = ({ on }) => on
-    ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M11 5L6 9H2v6h4l5 4V5z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/><path d="M15.54 8.46a5 5 0 010 7.07M19.07 4.93a10 10 0 010 14.14" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
-    : <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M11 5L6 9H2v6h4l5 4V5z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/><path d="M15 9l6 6M21 9l-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>;
-
 /* ── Quality badge (colored dot) ── */
 function QualityBadge({ quality }) {
     const color = quality === 'good' ? '#4caf50' : quality === 'fair' ? '#ff9800' : quality === 'poor' ? '#f44336' : '#666';
@@ -76,7 +72,6 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     const [onHold, setOnHold] = useState(false);
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [connectionQuality, setConnectionQuality] = useState('unknown');
-    const [speakerOn, setSpeakerOn] = useState(false);
     const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
     // Device switching
@@ -102,7 +97,7 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     const localVideoRef = useRef(null);
     const remoteVideoRef = useRef(null);
     const remoteAudioRef = useRef(null);
-    const speakerAudioRef = useRef(null);
+
     const overlayRef = useRef(null);
     const timerRef = useRef(null);
     const ringtoneRef = useRef(null);
@@ -447,7 +442,6 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
             localStreamRef.current = null;
         }
         if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
-        if (speakerAudioRef.current) { speakerAudioRef.current.pause(); speakerAudioRef.current.srcObject = null; }
         if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
         pendingSignalsRef.current = [];
         clearInterval(timerRef.current);
@@ -550,41 +544,6 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     };
 
     // ═══════════════════════════════════
-    //  FEATURE: Speaker / Earpiece Toggle (mobile)
-    // ═══════════════════════════════════
-    const toggleSpeaker = useCallback(() => {
-        const next = !speakerOn;
-        setSpeakerOn(next);
-        const audioEl = remoteAudioRef.current;
-        const speakerEl = speakerAudioRef.current;
-        if (!audioEl) return;
-
-        if (next) {
-            // Switch to loudspeaker:
-            // Route audio through <video> element which uses loudspeaker on mobile
-            if (speakerEl && remoteStreamRef.current) {
-                speakerEl.srcObject = remoteStreamRef.current;
-                speakerEl.volume = 1.0;
-                speakerEl.play().catch(() => {});
-            }
-            audioEl.muted = true;
-            // Unmute remote video element if video call
-            if (remoteVideoRef.current) remoteVideoRef.current.muted = false;
-        } else {
-            // Switch to earpiece:
-            // Stop <video> loudspeaker element, play through <audio> (earpiece route)
-            if (speakerEl) {
-                speakerEl.pause();
-                speakerEl.srcObject = null;
-            }
-            audioEl.muted = false;
-            audioEl.volume = 1.0;
-            // Re-mute remote video element on mobile to prevent loudspeaker
-            if (remoteVideoRef.current) remoteVideoRef.current.muted = true;
-        }
-    }, [speakerOn]);
-
-    // ═══════════════════════════════════
     //  FEATURE: Fullscreen
     // ═══════════════════════════════════
     const toggleFullscreen = async () => {
@@ -685,10 +644,8 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
             ref={overlayRef}
             className={`${s.overlay} ${isVideoCall && isConnected ? s.videoMode : ''} ${onHold ? s.holdMode : ''}`}
         >
-            {/* Audio element — earpiece route on mobile by default */}
+            {/* Audio element for remote stream */}
             <audio ref={remoteAudioRef} autoPlay />
-            {/* Hidden video element for loudspeaker routing on mobile (no display:none — breaks playback) */}
-            <video ref={speakerAudioRef} style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }} playsInline />
 
             {/* Video elements */}
             {isVideoCall && (
@@ -854,17 +811,6 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
                                 title={onHold ? 'Resume' : 'Hold'}
                             >
                                 {onHold ? <ResumeIcon /> : <HoldIcon />}
-                            </button>
-                        )}
-
-                        {/* Speaker / Earpiece toggle (mobile) */}
-                        {isMobile && isConnected && (
-                            <button
-                                className={`${s.controlBtn} ${speakerOn ? s.active : ''}`}
-                                onClick={toggleSpeaker}
-                                title={speakerOn ? 'Switch to earpiece' : 'Switch to speaker'}
-                            >
-                                <SpeakerIcon on={speakerOn} />
                             </button>
                         )}
 
