@@ -1,0 +1,171 @@
+/* ── Global Incoming Call PiP (Teams-style) ── */
+.pip {
+  position: fixed;
+  z-index: 10000;
+  width: 300px;
+  background: #1a1a2e;
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+  animation: pipSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.pip:active { cursor: grabbing; }
+.pip:hover { box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(76, 175, 80, 0.35); }
+
+@keyframes pipSlideIn {
+  from { opacity: 0; transform: translateX(40px) scale(0.92); }
+  to   { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+/* ── Top call bar with pulse indicator ── */
+.callBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: linear-gradient(90deg, rgba(76, 175, 80, 0.15), rgba(76, 175, 80, 0.05));
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.pulseRing {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4caf50;
+  flex-shrink: 0;
+  animation: ringPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes ringPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5); }
+  50%      { box-shadow: 0 0 0 6px rgba(76, 175, 80, 0); }
+}
+
+.callLabel {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+/* ── Caller info row ── */
+.callerInfo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 14px 10px;
+}
+
+.avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  flex-shrink: 0;
+}
+
+.avatarPlaceholder {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #fff;
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  flex-shrink: 0;
+}
+
+.callerText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.callerName {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.callerStatus {
+  font-size: 0.73rem;
+  color: rgba(255, 255, 255, 0.4);
+  margin-top: 2px;
+}
+
+/* ── Action buttons ── */
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 14px 14px;
+}
+
+.btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.12s, background 0.12s;
+  color: #fff;
+}
+
+.btn:hover { transform: scale(1.12); }
+.btn:active { transform: scale(0.95); }
+
+.rejectBtn {
+  background: #ef4444;
+  box-shadow: 0 3px 12px rgba(239, 68, 68, 0.35);
+  transform: rotate(135deg);
+}
+
+.rejectBtn:hover {
+  background: #dc2626;
+  box-shadow: 0 4px 18px rgba(239, 68, 68, 0.45);
+  transform: rotate(135deg) scale(1.12);
+}
+
+.rejectBtn:active { transform: rotate(135deg) scale(0.95); }
+
+.acceptBtn {
+  background: #4caf50;
+  box-shadow: 0 3px 12px rgba(76, 175, 80, 0.35);
+}
+
+.acceptBtn:hover {
+  background: #43a047;
+  box-shadow: 0 4px 18px rgba(76, 175, 80, 0.45);
+}
+
+/* ── Responsive ── */
+@media (max-width: 480px) {
+  .pip {
+    width: 260px;
+  }
+
+  .callerInfo {
+    padding: 10px 12px 8px;
+  }
+
+  .btn {
+    width: 38px;
+    height: 38px;
+  }
+}

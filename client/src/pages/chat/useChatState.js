@@ -6,11 +6,13 @@ import {
 } from '../../api';
 import { useAuth } from '../../AuthContext';
 import { useChatUnread } from '../../ChatContext';
+import { useGlobalCall } from '../../CallContext';
 import useWebSocket from '../../hooks/useWebSocket';
 
 export default function useChatState() {
     const { user } = useAuth();
     const { refreshUnread } = useChatUnread();
+    const { setChatPageActive, pendingAcceptedCall, consumePendingCall } = useGlobalCall();
 
     // Core state
     const [conversations, setConversations] = useState([]);
@@ -253,6 +255,35 @@ export default function useChatState() {
     }, [user?.id]);
 
     const { sendMessage: wsSend } = useWebSocket(onWsMessage);
+
+    // ─── Register chat page as active for CallContext ───
+    useEffect(() => {
+        setChatPageActive(true);
+        return () => setChatPageActive(false);
+    }, [setChatPageActive]);
+
+    // ─── Pick up a pending accepted call from global notification ───
+    useEffect(() => {
+        if (pendingAcceptedCall) {
+            const call = consumePendingCall();
+            if (call && !callActiveRef.current) {
+                setCallState({
+                    callId: call.callId,
+                    conversationId: call.conversationId,
+                    callType: call.callType,
+                    isIncoming: true,
+                    callerId: call.callerId,
+                    remoteName: call.callerName,
+                    remoteAvatar: call.callerAvatar,
+                    isGroup: call.isGroup,
+                    accepted: false,
+                    acceptedBy: null,
+                    onSignal: callSignalRef,
+                    onEndExternal: callEndRef
+                });
+            }
+        }
+    }, [pendingAcceptedCall]);
 
     // ─── Effects ───
 

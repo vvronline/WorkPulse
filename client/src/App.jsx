@@ -15,8 +15,10 @@ import AxiosInterceptor from './components/AxiosInterceptor';
 import ErrorBoundary from './components/ErrorBoundary';
 import { ToastProvider } from './components/Toast';
 import { ChatProvider } from './ChatContext';
+import { CallProvider } from './CallContext';
 import { MeetingProvider } from './MeetingContext';
 import MeetingPiP from './components/MeetingPiP';
+import GlobalIncomingCall from './components/GlobalIncomingCall';
 import PageSkeleton from './components/PageSkeleton';
 
 // Lazy-load non-critical pages for smaller initial bundle
@@ -102,10 +104,13 @@ export default function App() {
             <BrowserRouter>
               <AxiosInterceptor>
                 <ChatProvider>
-                  <MeetingProvider>
-                    <AppRoutes />
-                    <MeetingPiP />
-                  </MeetingProvider>
+                  <CallProvider>
+                    <MeetingProvider>
+                      <AppRoutes />
+                      <MeetingPiP />
+                      <GlobalIncomingCall />
+                    </MeetingProvider>
+                  </CallProvider>
                 </ChatProvider>
               </AxiosInterceptor>
             </BrowserRouter>
