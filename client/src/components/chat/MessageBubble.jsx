@@ -5,6 +5,7 @@ import ChatAvatar from './ChatAvatar';
 import FilePreview from './FilePreview';
 import ReplyPreview from './ReplyPreview';
 import ReactionPicker from './ReactionPicker';
+import EmojiGifPicker from './EmojiGifPicker';
 import ContextMenu from './ContextMenu';
 import CodeBlock from './CodeBlock';
 import PollDisplay from './PollDisplay';
@@ -55,6 +56,7 @@ export default function MessageBubble({
     participantCount, readReceipts
 }) {
     const [showReactions, setShowReactions] = useState(false);
+    const [showFullPicker, setShowFullPicker] = useState(false);
     const [ctxMenu, setCtxMenu] = useState(null);
     const bubbleRef = useRef(null);
 
@@ -83,7 +85,7 @@ export default function MessageBubble({
         reactionGroups[r.emoji].push(r);
     }
 
-    const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮'];
+    const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '🔥', '🎉'];
 
     // Delivery status for own messages
     const deliveryIcon = (() => {
@@ -217,18 +219,37 @@ export default function MessageBubble({
                                 onClick={() => onReact?.(msg.id, emoji)}
                                 title={users.map(u => u.fullName).join(', ')}
                             >
-                                {emoji} {users.length}
+                                <span className={s.reactionEmoji}>{emoji}</span>
+                                <span className={s.reactionCount}>{users.length}</span>
                             </button>
                         ))}
+                        <button
+                            className={s.addReactionBtn}
+                            onClick={() => setShowFullPicker(p => !p)}
+                            title="Add reaction"
+                        >
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                        </button>
                     </div>
                 )}
 
-                {/* Reaction picker popup */}
+                {/* Reaction picker popup (10 emoji quick-pick) */}
                 {showReactions && (
                     <div className={s.pickerWrap}>
                         <ReactionPicker
                             onSelect={(emoji) => onReact?.(msg.id, emoji)}
                             onClose={() => setShowReactions(false)}
+                            onOpenFull={() => setShowFullPicker(true)}
+                        />
+                    </div>
+                )}
+
+                {/* Full emoji picker for reactions */}
+                {showFullPicker && (
+                    <div className={s.pickerWrap}>
+                        <EmojiGifPicker
+                            onSelectEmoji={(emoji) => onReact?.(msg.id, emoji)}
+                            onClose={() => setShowFullPicker(false)}
                         />
                     </div>
                 )}

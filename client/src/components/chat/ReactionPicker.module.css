@@ -1,28 +1,60 @@
 .picker {
     display: flex;
-    gap: 2px;
-    padding: 6px 8px;
+    flex-direction: column;
+    gap: 0;
+    padding: 6px;
     background: var(--bg-secondary);
     border: 1px solid var(--glass-border);
-    border-radius: 20px;
-    box-shadow: 0 4px 16px rgba(0,0,0,.2);
-    animation: pop 0.15s ease;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.1);
+    animation: pop 0.18s ease-out;
 }
-@keyframes pop { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+@keyframes pop { from { opacity: 0; transform: scale(0.9) translateY(4px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+
+.emojiRow {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+}
 .emoji {
-    width: 32px;
-    height: 32px;
+    width: 34px;
+    height: 34px;
     display: flex;
     align-items: center;
     justify-content: center;
     border: none;
     background: none;
-    font-size: 1.15rem;
+    font-size: 1.2rem;
     cursor: pointer;
-    border-radius: 6px;
-    transition: background var(--transition-fast), transform 0.1s;
+    border-radius: 8px;
+    transition: background var(--transition-fast), transform 0.12s;
 }
 .emoji:hover {
     background: var(--surface-hover);
-    transform: scale(1.2);
+    transform: scale(1.25);
+}
+.emoji:active {
+    transform: scale(0.9);
+}
+
+.openFull {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 4px 8px;
+    margin-top: 2px;
+    border: none;
+    border-top: 1px solid var(--glass-border);
+    background: none;
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 0 0 6px 6px;
+    transition: background var(--transition-fast), color 0.15s;
+}
+.openFull:hover {
+    background: var(--surface-hover);
+    color: var(--text);
 }

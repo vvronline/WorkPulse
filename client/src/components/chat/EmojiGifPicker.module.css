@@ -1,10 +1,10 @@
 .picker {
     width: 340px;
-    max-height: 380px;
+    max-height: 400px;
     background: var(--bg-secondary);
     border: 1px solid var(--glass-border);
-    border-radius: 10px;
-    box-shadow: 0 4px 24px rgba(0,0,0,.25);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,.28), 0 2px 8px rgba(0,0,0,.12);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -13,45 +13,56 @@
     bottom: 100%;
     right: 0;
     margin-bottom: 8px;
+    animation: pickerSlideIn 0.18s ease-out;
+}
+@keyframes pickerSlideIn {
+    from { opacity: 0; transform: translateY(8px) scale(0.96); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
 }
 .search {
-    margin: 8px;
-    padding: 6px 10px;
-    border-radius: 6px;
-    border: 1px solid var(--glass-border);
+    margin: 8px 8px 4px;
+    padding: 7px 12px;
+    border-radius: 8px;
+    border: 1.5px solid var(--glass-border);
     background: var(--input-bg);
     color: var(--text);
-    font-size: 0.8rem;
+    font-size: 0.82rem;
     outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
 }
-.search:focus { border-color: var(--primary); }
+.search:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(99,102,241,.15);
+}
 
 .catTabs {
     display: flex;
     gap: 2px;
-    padding: 0 8px 6px;
+    padding: 2px 8px 6px;
     overflow-x: auto;
+    border-bottom: 1px solid var(--glass-border);
 }
 .catTab {
-    padding: 3px 6px;
+    padding: 4px 7px;
     border: none;
     background: none;
     font-size: 1rem;
     cursor: pointer;
     border-radius: 6px;
-    opacity: 0.6;
-    transition: opacity 0.15s, background 0.15s;
+    opacity: 0.5;
+    transition: opacity 0.15s, background 0.15s, transform 0.1s;
 }
-.catTab:hover { background: var(--surface-hover); opacity: 0.9; }
+.catTab:hover { background: var(--surface-hover); opacity: 0.85; transform: scale(1.08); }
 .activeCat { opacity: 1; background: var(--surface-hover); }
 
 .emojiGrid {
     display: grid;
     grid-template-columns: repeat(8, 1fr);
     gap: 2px;
-    padding: 4px 8px;
+    padding: 4px 8px 8px;
     overflow-y: auto;
-    max-height: 260px;
+    max-height: 280px;
+    scroll-behavior: smooth;
 }
 .emojiBtn {
     width: 36px;
@@ -61,14 +72,42 @@
     justify-content: center;
     border: none;
     background: none;
-    font-size: 1.2rem;
+    font-size: 1.25rem;
     cursor: pointer;
-    border-radius: 6px;
-    transition: background 0.1s, transform 0.1s;
+    border-radius: 8px;
+    transition: background 0.12s, transform 0.12s;
 }
 .emojiBtn:hover {
     background: var(--surface-hover);
-    transform: scale(1.15);
+    transform: scale(1.25);
+}
+.emojiBtn:active {
+    transform: scale(0.95);
+}
+
+.catLabel {
+    grid-column: 1 / -1;
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 6px 2px 2px;
+}
+
+.noResults {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 2.5rem 1rem;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+}
+.noResultsEmoji {
+    font-size: 2rem;
+    opacity: 0.5;
 }
 
 .hint {
@@ -83,7 +122,7 @@
 @media (max-width: 1024px) {
     .picker {
         width: 310px;
-        max-height: 340px;
+        max-height: 360px;
     }
     .emojiGrid {
         grid-template-columns: repeat(7, 1fr);
@@ -98,7 +137,7 @@
         right: 0;
         left: auto;
         max-height: 50vh;
-        border-radius: 12px 12px 0 0;
+        border-radius: 14px 14px 0 0;
     }
     .emojiGrid {
         grid-template-columns: repeat(8, 1fr);
@@ -107,11 +146,11 @@
     .emojiBtn {
         width: 40px;
         height: 40px;
-        font-size: 1.3rem;
+        font-size: 1.35rem;
     }
     .catTab {
         font-size: 1.1rem;
-        padding: 4px 8px;
+        padding: 5px 8px;
     }
 }
 
@@ -125,8 +164,13 @@
         left: 0;
         right: 0;
         margin-bottom: 0;
-        border-radius: 14px 14px 0 0;
+        border-radius: 16px 16px 0 0;
         max-height: 55vh;
+        animation: pickerSlideUp 0.22s ease-out;
+    }
+    @keyframes pickerSlideUp {
+        from { opacity: 0; transform: translateY(100%); }
+        to { opacity: 1; transform: translateY(0); }
     }
     .emojiGrid {
         grid-template-columns: repeat(7, 1fr);

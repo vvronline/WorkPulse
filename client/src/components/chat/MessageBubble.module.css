@@ -141,9 +141,14 @@
     padding: 2px 3px;
     background: var(--bg-secondary);
     border: 1px solid var(--glass-border);
-    border-radius: 4px;
-    box-shadow: 0 2px 6px rgba(0,0,0,.18);
+    border-radius: 6px;
+    box-shadow: 0 2px 12px rgba(0,0,0,.18);
     z-index: 10;
+    animation: toolbarFade 0.12s ease-out;
+}
+@keyframes toolbarFade {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 .bubble:hover .hoverActions { display: flex; }
 /* Mine (right-side): toolbar anchors to the right edge of the bubble */
@@ -172,7 +177,10 @@
 }
 .quickEmoji:hover {
     background: var(--surface-hover);
-    transform: scale(1.2);
+    transform: scale(1.25);
+}
+.quickEmoji:active {
+    transform: scale(0.9);
 }
 .moreEmoji {
     width: 28px;
@@ -224,26 +232,85 @@
 .reactions {
     display: flex;
     flex-wrap: wrap;
-    gap: 3px;
-    margin-top: 3px;
+    gap: 4px;
+    margin-top: 4px;
     padding-left: 0;
+    align-items: center;
 }
 .reactionChip {
     display: inline-flex;
     align-items: center;
-    gap: 3px;
-    padding: 1px 6px;
-    font-size: 0.68rem;
+    gap: 4px;
+    padding: 2px 8px;
+    font-size: 0.72rem;
     background: var(--surface-hover);
-    border: 1px solid var(--glass-border);
-    border-radius: 10px;
+    border: 1.5px solid var(--glass-border);
+    border-radius: 12px;
     cursor: pointer;
-    transition: background var(--transition-fast);
+    transition: background 0.15s, transform 0.12s, border-color 0.15s, box-shadow 0.15s;
+    animation: chipPop 0.2s ease-out;
 }
-.reactionChip:hover { background: var(--glass-border); }
+@keyframes chipPop {
+    0% { transform: scale(0); opacity: 0; }
+    60% { transform: scale(1.15); }
+    100% { transform: scale(1); opacity: 1; }
+}
+.reactionChip:hover {
+    background: var(--glass-border);
+    transform: scale(1.08);
+    box-shadow: 0 2px 8px rgba(0,0,0,.1);
+}
+.reactionChip:active {
+    transform: scale(0.95);
+}
+.reactionEmoji {
+    font-size: 0.85rem;
+    line-height: 1;
+}
+.reactionCount {
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    min-width: 8px;
+    text-align: center;
+}
 .myReaction {
     border-color: var(--primary);
     background: rgba(99,102,241,.12);
+    box-shadow: 0 0 0 1px rgba(99,102,241,.08);
+}
+.myReaction .reactionCount {
+    color: var(--primary);
+}
+.myReaction:hover {
+    background: rgba(99,102,241,.18);
+    border-color: var(--primary);
+}
+
+.addReactionBtn {
+    width: 26px;
+    height: 26px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1.5px dashed var(--glass-border);
+    background: none;
+    border-radius: 12px;
+    cursor: pointer;
+    color: var(--text-muted);
+    transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.1s;
+    opacity: 0;
+    animation: none;
+}
+.reactions:hover .addReactionBtn,
+.addReactionBtn:focus {
+    opacity: 1;
+}
+.addReactionBtn:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+    border-color: var(--text-muted);
+    transform: scale(1.1);
 }
 
 .pickerWrap {
