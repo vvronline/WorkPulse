@@ -70,7 +70,7 @@ export default function VoiceRecorder({ onSend, onCancel }) {
             rafRef.current = requestAnimationFrame(drawWaveform);
         } catch (err) {
             const msg = err?.name === 'NotAllowedError'
-                ? 'Microphone blocked — click the 🔒 icon in the address bar and allow microphone'
+                ? 'Microphone blocked — click the lock/tune icon in the address bar to allow microphone. If the setting is locked, your organization may be blocking it.'
                 : err?.name === 'NotFoundError'
                 ? 'No microphone found'
                 : 'Could not access microphone';

@@ -206,7 +206,14 @@ export default function useChatActions(state) {
             });
         } catch (err) {
             console.error('Failed to get media:', err);
-            alert('Could not access microphone' + (callType === 'video' ? '/camera' : '') + '. Please allow permissions and try again.');
+            const device = callType === 'video' ? 'camera/microphone' : 'microphone';
+            if (err?.name === 'NotAllowedError') {
+                alert(`${device} access is blocked.\n\n1. Click the lock/tune icon in the address bar → allow ${device}\n2. If the setting is locked, your organization may be blocking it — contact your IT admin to whitelist this site`);
+            } else if (err?.name === 'NotFoundError') {
+                alert(`No ${device} found. Please connect a ${device} and try again.`);
+            } else {
+                alert(`Could not access ${device}. Please check your device settings and try again.`);
+            }
             return;
         }
 

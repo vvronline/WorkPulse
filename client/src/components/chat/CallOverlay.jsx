@@ -220,6 +220,10 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
             return stream;
         } catch (err) {
             console.error('Failed to get media:', err);
+            const device = callType === 'video' ? 'camera/microphone' : 'microphone';
+            if (err?.name === 'NotAllowedError') {
+                alert(`${device} access is blocked.\n\n1. Click the lock/tune icon in the address bar → allow ${device}\n2. If the setting is locked, your organization may be blocking it — contact your IT admin to whitelist this site`);
+            }
             return null;
         }
     }, [callType]);

@@ -60,12 +60,13 @@ app.use(helmet({
     },
     crossOriginOpenerPolicy: false,
     originAgentCluster: false,
-    permissionsPolicy: {
-        features: {
-            microphone: ['self'],
-        }
-    }
 }));
+
+// Helmet 8.x does not support permissionsPolicy — set the header manually
+app.use((req, res, next) => {
+    res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), display-capture=(self)');
+    next();
+});
 
 // Serve React static files BEFORE cors/auth — assets don't need CORS
 const clientDist = path.join(__dirname, '..', 'client', 'dist');

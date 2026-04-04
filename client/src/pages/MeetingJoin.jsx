@@ -69,9 +69,12 @@ export default function MeetingJoin() {
                             speaker: devs.filter(d => d.kind === 'audiooutput'),
                         });
                     })
-                    .catch(() => {
+                    .catch(err => {
                         setVideoOff(true);
                         setAudioMuted(true);
+                        if (err?.name === 'NotAllowedError') {
+                            setError('Camera/microphone access is blocked. Click the lock/tune icon in the address bar to allow access. If the setting is locked, your organization may be blocking it — contact your IT admin to whitelist this site.');
+                        }
                     });
             });
         return () => { if (s) s.getTracks().forEach(t => t.stop()); };

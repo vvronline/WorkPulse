@@ -84,9 +84,12 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                         setLocalStream(st);
                         setVideoOff(true);
                     })
-                    .catch(() => {
+                    .catch(err => {
                         setMuted(true);
                         setVideoOff(true);
+                        if (err?.name === 'NotAllowedError') {
+                            alert('Camera/microphone access is blocked.\n\n1. Click the lock/tune icon in the address bar → allow camera & microphone\n2. If the setting is locked, your organization may be blocking it — contact your IT admin to whitelist this site');
+                        }
                     });
             });
         return () => {
