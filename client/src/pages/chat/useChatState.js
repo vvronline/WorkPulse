@@ -163,6 +163,15 @@ export default function useChatState() {
                 }
                 break;
             }
+            case 'chat_cleared': {
+                if (activeConvRef.current?.id === d.conversationId) {
+                    setMessages([]);
+                }
+                setConversations(prev => prev.map(c =>
+                    c.id === d.conversationId ? { ...c, last_message: null, last_sender_id: null } : c
+                ));
+                break;
+            }
             case 'chat_pin': {
                 if (activeConvRef.current?.id === d.conversationId) {
                     setMessages(prev => prev.map(m =>

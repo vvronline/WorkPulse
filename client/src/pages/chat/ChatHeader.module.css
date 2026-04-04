@@ -64,14 +64,19 @@
     color: var(--accent, #4caf50) !important;
 }
 
-/* ─── Desktop actions (search, pin, files, starred, etc.) ─── */
+/* Hide 'Search messages' inside 3-dot on desktop (it's inline) */
+.mobileOnlyItem {
+    display: none;
+}
+
+/* ─── Desktop actions (search, group settings) ─── */
 .desktopActions {
     display: contents;
 }
 
 /* ─── Mobile overflow menu wrapper ─── */
 .moreWrapper {
-    display: none;
+    display: block;
     position: relative;
 }
 .moreBtn {
@@ -97,11 +102,11 @@
     position: absolute;
     top: calc(100% + 6px);
     right: 0;
-    min-width: 180px;
+    min-width: 200px;
     background: var(--bg-secondary);
     border: 1px solid var(--glass-border);
-    border-radius: 10px;
-    padding: 4px;
+    border-radius: 12px;
+    padding: 6px;
     z-index: 300;
     box-shadow: 0 8px 32px rgba(0,0,0,0.28), 0 0 0 1px rgba(255,255,255,0.04);
     backdrop-filter: blur(20px);
@@ -116,19 +121,23 @@
 .moreItem {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.85rem;
     width: 100%;
-    padding: 0.7rem 0.9rem;
+    padding: 0.65rem 1rem;
+    margin-bottom: 2px;
     background: none;
     border: none;
-    border-radius: 7px;
+    border-radius: 8px;
     color: var(--text-secondary);
-    font-size: 0.82rem;
+    font-size: 0.84rem;
     font-weight: 500;
     font-family: inherit;
     cursor: pointer;
     transition: background 0.15s ease, color 0.15s ease;
     white-space: nowrap;
+}
+.moreItem:last-child {
+    margin-bottom: 0;
 }
 .moreItem:hover {
     background: rgba(99,102,241,0.1);
@@ -140,6 +149,21 @@
 }
 .moreItem:hover svg {
     opacity: 1;
+}
+.moreDivider {
+    height: 1px;
+    background: var(--glass-border);
+    margin: 4px 10px 6px;
+}
+.moreItemDanger {
+    color: var(--danger, #ef4444);
+}
+.moreItemDanger:hover {
+    background: rgba(239,68,68,0.1);
+    color: var(--danger, #ef4444);
+}
+.moreItemDanger svg {
+    opacity: 0.85;
 }
 
 /* Light theme overrides */
@@ -206,12 +230,9 @@
     .desktopActions {
         display: none;
     }
-    .moreWrapper {
-        display: block;
-    }
-    .moreItem {
-        padding: 0.85rem 0.9rem;
-        font-size: 0.88rem;
+    /* Show search item inside 3-dot on mobile */
+    .mobileOnlyItem {
+        display: flex;
     }
 }
 

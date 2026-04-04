@@ -1,6 +1,6 @@
 import {
     uploadChatFile, toggleReaction, editMessage, deleteMessage, togglePin,
-    toggleStar, createPoll, deleteConversation,
+    toggleStar, createPoll, deleteConversation, clearChat,
     togglePinConversation, toggleFavouriteConversation, getMembers
 } from '../../api';
 
@@ -155,6 +155,16 @@ export default function useChatActions(state) {
         setDeleteConfirm(null);
     };
 
+    const handleClearChat = async (convId) => {
+        try {
+            await clearChat(convId);
+            if (activeConv?.id === convId) setMessages([]);
+            setConversations(prev => prev.map(c =>
+                c.id === convId ? { ...c, last_message: null, last_sender_id: null } : c
+            ));
+        } catch { /* ignore */ }
+    };
+
     const handlePinConv = async (convId) => {
         try {
             const { data } = await togglePinConversation(convId);
@@ -253,7 +263,7 @@ export default function useChatActions(state) {
         handleReply, handleEdit, handleDelete, handlePin, handleReact,
         handleForward, handleStar, handleCreatePoll, handleEmojiInsert,
         handleJumpTo, handleUnpin,
-        handleDeleteConv, handlePinConv, handleFavConv,
+        handleDeleteConv, handlePinConv, handleFavConv, handleClearChat,
         openGroupEdit, handleTyping,
         handleVoiceCall, handleVideoCall, handleEndCall,
     };

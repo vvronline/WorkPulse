@@ -301,9 +301,11 @@ export const getPoll = (pollId) => API.get(`/chat/polls/${pollId}`);
 export const getSharedFiles = (convId) => API.get(`/chat/conversations/${convId}/files`);
 export const ackDelivered = (msgId) => API.post(`/chat/messages/${msgId}/delivered`);
 export const deleteConversation = (convId) => API.delete(`/chat/conversations/${convId}`);
+export const clearChat = (convId) => API.delete(`/chat/conversations/${convId}/messages`);
 export const togglePinConversation = (convId) => API.post(`/chat/conversations/${convId}/pin`);
 export const toggleFavouriteConversation = (convId) => API.post(`/chat/conversations/${convId}/favourite`);
 export const getCallHistory = (convId) => API.get(`/chat/conversations/${convId}/calls`);
+export const getAllCallHistory = () => API.get('/chat/calls');
 
 // Meetings
 export const createMeeting = (data) => API.post('/meetings', data);

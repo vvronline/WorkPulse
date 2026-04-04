@@ -5,10 +5,6 @@ import {
     StarredMessages, PollCreator, CallOverlay
 } from '../components/chat';
 import ChatSidebar from './chat/ChatSidebar';
-import ChatHeader from './chat/ChatHeader';
-import ChatMessages from './chat/ChatMessages';
-import ChatInputBar from './chat/ChatInputBar';
-import CallHistory from './chat/CallHistory';
 import useChatState from './chat/useChatState';
 import useChatActions from './chat/useChatActions';
 import { getConvName } from './chat/chatUtils';
@@ -43,12 +39,12 @@ export default function Chat() {
         handleReply, handleEdit, handleDelete, handlePin, handleReact,
         handleForward, handleStar, handleCreatePoll, handleEmojiInsert,
         handleJumpTo, handleUnpin,
-        handleDeleteConv, handlePinConv, handleFavConv,
+        handleDeleteConv, handlePinConv, handleFavConv, handleClearChat,
         openGroupEdit, handleTyping,
         handleVoiceCall, handleVideoCall, handleEndCall,
     } = actions;
 
-    const [showCallHistory, setShowCallHistory] = useState(false);
+    const [clearConfirm, setClearConfirm] = useState(null);
 
     // Hide navbar & bottom tab bar on mobile when a chat conversation is active
     useEffect(() => {
@@ -87,6 +83,7 @@ export default function Chat() {
                     name: c.name,
                     member_count: c.member_count
                 })}
+                userId={user.id}
                 onMenuToggle={(id) => setConvMenu(convMenu === id ? null : id)}
                 onPinConv={handlePinConv}
                 onFavConv={handleFavConv}
@@ -116,10 +113,9 @@ export default function Chat() {
                             showSharedFiles={showSharedFiles}
                             onToggleStarred={() => setShowStarred(!showStarred)}
                             showStarred={showStarred}
-                            onToggleCallHistory={() => setShowCallHistory(v => !v)}
-                            showCallHistory={showCallHistory}
                             onVoiceCall={handleVoiceCall}
                             onVideoCall={handleVideoCall}
+                            onClearChat={(convId) => setClearConfirm(convId)}
                         />
 
                         <ChatMessages
@@ -226,6 +222,15 @@ export default function Chat() {
                 onCancel={() => setDeleteConfirm(null)}
             />
 
+            <ConfirmDialog
+                isOpen={!!clearConfirm}
+                title="Clear Chat"
+                message="Clear all messages in this conversation? This cannot be undone."
+                confirmText="Clear"
+                onConfirm={() => { handleClearChat(clearConfirm); setClearConfirm(null); }}
+                onCancel={() => setClearConfirm(null)}
+            />
+
             {/* ─── Call Overlay ─── */}
             {callState && (
                 <CallOverlay
@@ -234,17 +239,6 @@ export default function Chat() {
                     wsSend={wsSend}
                     onEnd={handleEndCall}
                 />
-            )}
-
-            {/* ─── Call History Panel ─── */}
-            {showCallHistory && activeConv && (
-                <div className={s.sidePanel}>
-                    <CallHistory
-                        convId={activeConv.id}
-                        currentUserId={user.id}
-                        onClose={() => setShowCallHistory(false)}
-                    />
-                </div>
             )}
         </div>
     );

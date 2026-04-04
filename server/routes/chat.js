@@ -1259,6 +1259,46 @@ router.post('/conversations/:id/favourite', auth, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
+// CLEAR CHAT (delete all messages, keep conversation)
+// ─────────────────────────────────────────────
+
+/**
+ * DELETE /api/chat/conversations/:id/messages
+ * Removes all messages in a conversation for everyone.
+ */
+router.delete('/conversations/:id/messages', auth, async (req, res) => {
+    try {
+        const convId = parseInt(req.params.id, 10);
+        if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
+
+        if (!(await verifyParticipant(convId, req.userId))) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        await query('DELETE FROM messages WHERE conversation_id = $1', [convId]);
+        await query(
+            "UPDATE conversations SET last_message = NULL, last_sender_id = NULL, last_message_at = NOW() WHERE id = $1",
+            [convId]
+        );
+
+        // Notify all participants
+        const participants = (await query(
+            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
+            [convId]
+        )).rows;
+
+        for (const p of participants) {
+            sendToUser(p.user_id, 'chat_cleared', { conversationId: convId });
+        }
+
+        res.json({ ok: true });
+    } catch (err) {
+        req.log.error({ err }, 'Clear chat error');
+        res.status(500).json({ error: 'Failed to clear chat' });
+    }
+});
+
+// ─────────────────────────────────────────────
 // DELETE CONVERSATION
 // ─────────────────────────────────────────────
 
@@ -1325,6 +1365,49 @@ router.post('/messages/:id/delivered', auth, async (req, res) => {
 // ─────────────────────────────────────────────
 // CALL HISTORY
 // ─────────────────────────────────────────────
+
+/**
+ * GET /api/chat/calls
+ * Returns all calls the current user participated in (across all conversations).
+ */
+router.get('/calls', auth, async (req, res) => {
+    try {
+        const userId = req.userId;
+        const rows = (await query(`
+            SELECT * FROM (
+                SELECT DISTINCT ON (cl.id)
+                    cl.id, cl.caller_id, cl.call_type, cl.status,
+                    cl.started_at, cl.ended_at, cl.duration, cl.created_at,
+                    caller.full_name AS caller_name, caller.avatar AS caller_avatar,
+                    other_u.id AS other_user_id,
+                    other_u.full_name AS other_name,
+                    other_u.avatar AS other_avatar,
+                    c.is_group, c.group_name
+                FROM call_logs cl
+                JOIN conversations c ON c.id = cl.conversation_id
+                JOIN users caller ON caller.id = cl.caller_id
+                JOIN conversation_participants cp_me
+                    ON cp_me.conversation_id = cl.conversation_id AND cp_me.user_id = $1
+                LEFT JOIN LATERAL (
+                    SELECT u.id, u.full_name, u.avatar
+                    FROM conversation_participants cp2
+                    JOIN users u ON u.id = cp2.user_id
+                    WHERE cp2.conversation_id = cl.conversation_id
+                      AND cp2.user_id != $1
+                      AND NOT c.is_group
+                    LIMIT 1
+                ) other_u ON true
+                ORDER BY cl.id, cl.created_at DESC
+            ) sub
+            ORDER BY created_at DESC
+            LIMIT 100
+        `, [userId])).rows;
+        res.json(rows);
+    } catch (err) {
+        req.log.error({ err }, 'Get all call history error');
+        res.status(500).json({ error: 'Failed to get call history' });
+    }
+});
 
 /**
  * GET /api/chat/conversations/:id/calls
