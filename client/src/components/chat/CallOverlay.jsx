@@ -228,7 +228,11 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     const startMedia = useCallback(async () => {
         try {
             const constraints = {
-                audio: true,
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                },
                 video: callType === 'video' ? { width: 1280, height: 720, facingMode: 'user' } : false
             };
             const stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -263,10 +267,14 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
             remoteStreamRef.current = remoteStream;
             if (remoteAudioRef.current) {
                 remoteAudioRef.current.srcObject = remoteStream;
+                remoteAudioRef.current.volume = 1.0;
                 remoteAudioRef.current.play().catch(() => {});
             }
             if (remoteVideoRef.current) {
                 remoteVideoRef.current.srcObject = remoteStream;
+                // On mobile, mute video element audio to prevent loudspeaker bypass;
+                // audio routes through the <audio> element for earpiece control
+                if (isMobile) remoteVideoRef.current.muted = true;
             }
         };
 
@@ -552,31 +560,27 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
         if (!audioEl) return;
 
         if (next) {
-            // Switch to loudspeaker
-            // Method 1: setSinkId (Chrome Android supports 'speaker')
-            if (typeof audioEl.setSinkId === 'function') {
-                audioEl.setSinkId('default').catch(() => {});
-            }
-            // Method 2: Route audio through a <video> element (plays through speaker on mobile)
+            // Switch to loudspeaker:
+            // Route audio through <video> element which uses loudspeaker on mobile
             if (speakerEl && remoteStreamRef.current) {
                 speakerEl.srcObject = remoteStreamRef.current;
+                speakerEl.volume = 1.0;
                 speakerEl.play().catch(() => {});
-                audioEl.muted = true;
             }
+            audioEl.muted = true;
+            // Unmute remote video element if video call
+            if (remoteVideoRef.current) remoteVideoRef.current.muted = false;
         } else {
-            // Switch to earpiece
-            if (typeof audioEl.setSinkId === 'function') {
-                // 'communications' is earpiece hint on some devices
-                audioEl.setSinkId('communications').catch(() => {
-                    audioEl.setSinkId('default').catch(() => {});
-                });
-            }
-            // Mute the speaker <video> fallback, unmute the <audio>
+            // Switch to earpiece:
+            // Stop <video> loudspeaker element, play through <audio> (earpiece route)
             if (speakerEl) {
                 speakerEl.pause();
                 speakerEl.srcObject = null;
             }
             audioEl.muted = false;
+            audioEl.volume = 1.0;
+            // Re-mute remote video element on mobile to prevent loudspeaker
+            if (remoteVideoRef.current) remoteVideoRef.current.muted = true;
         }
     }, [speakerOn]);
 
@@ -681,10 +685,10 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
             ref={overlayRef}
             className={`${s.overlay} ${isVideoCall && isConnected ? s.videoMode : ''} ${onHold ? s.holdMode : ''}`}
         >
-            {/* Hidden audio — earpiece by default; speaker fallback via <video> */}
-            <audio ref={remoteAudioRef} autoPlay playsInline />
-            {/* Hidden video element for loudspeaker routing on mobile */}
-            <video ref={speakerAudioRef} style={{ display: 'none' }} autoPlay playsInline />
+            {/* Audio element — earpiece route on mobile by default */}
+            <audio ref={remoteAudioRef} autoPlay />
+            {/* Hidden video element for loudspeaker routing on mobile (no display:none — breaks playback) */}
+            <video ref={speakerAudioRef} style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }} playsInline />
 
             {/* Video elements */}
             {isVideoCall && (
