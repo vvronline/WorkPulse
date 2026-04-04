@@ -1277,7 +1277,7 @@ router.delete('/conversations/:id/messages', auth, async (req, res) => {
 
         await query('DELETE FROM messages WHERE conversation_id = $1', [convId]);
         await query(
-            "UPDATE conversations SET last_message = NULL, last_sender_id = NULL, last_message_at = NOW() WHERE id = $1",
+            "UPDATE conversations SET updated_at = NOW() WHERE id = $1",
             [convId]
         );
 
