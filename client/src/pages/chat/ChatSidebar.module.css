@@ -209,7 +209,7 @@
     line-height: 1;
 }
 .convMenuBtn:hover {
-    background: var(--surface);
+    background: var(--bg);
     color: var(--text);
 }
 .convItem:hover .convMenuBtn,
@@ -219,7 +219,7 @@
 /* Keep button visible when dropdown is open */
 .convMenuWrap:has(.convMenuDropdown) .convMenuBtn {
     display: flex;
-    background: var(--surface);
+    background: var(--bg);
     color: var(--text);
 }
 
