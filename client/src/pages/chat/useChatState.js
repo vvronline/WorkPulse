@@ -8,11 +8,13 @@ import { useAuth } from '../../AuthContext';
 import { useChatUnread } from '../../ChatContext';
 import { useGlobalCall } from '../../CallContext';
 import useWebSocket from '../../hooks/useWebSocket';
+import useChatNotification from '../../hooks/useChatNotification';
 
 export default function useChatState() {
     const { user } = useAuth();
     const { refreshUnread } = useChatUnread();
     const { setChatPageActive, pendingAcceptedCall, consumePendingCall } = useGlobalCall();
+    const { notifyMessage, notifyMention, notifyReaction } = useChatNotification();
 
     // Core state
     const [conversations, setConversations] = useState([]);
@@ -99,6 +101,10 @@ export default function useChatState() {
                         ackDelivered(d.id).catch(() => { });
                     }
                 }
+                // Play notification sound for messages from others
+                if (d.senderId !== user?.id) {
+                    notifyMessage(d.senderName, d.content, d.conversationId);
+                }
                 setConversations(prev => {
                     const isActive = activeConvRef.current?.id === d.conversationId;
                     const preview = d.content || (d.fileName ? `📎 ${d.fileName}` : '🎤 Voice');
@@ -123,6 +129,11 @@ export default function useChatState() {
             }
             case 'chat_reaction': {
                 if (activeConvRef.current?.id === d.conversationId) {
+                    // Notify when someone reacts to our message
+                    if (d.action === 'added' && d.userId !== user?.id) {
+                        const target = messagesRef.current.find(m => m.id === d.messageId);
+                        if (target && target.sender_id === user?.id) notifyReaction();
+                    }
                     setMessages(prev => prev.map(m => {
                         if (m.id !== d.messageId) return m;
                         let reactions = [...(m.reactions || [])];
@@ -199,7 +210,12 @@ export default function useChatState() {
                 window.dispatchEvent(new CustomEvent('poll_vote_update', { detail: d }));
                 break;
             }
-            case 'chat_mention': break;
+            case 'chat_mention': {
+                if (d.senderId !== user?.id) {
+                    notifyMention(d.senderName, d.content, d.conversationId);
+                }
+                break;
+            }
             // ─── Call events ───
             case 'call_incoming': {
                 // Someone is calling us

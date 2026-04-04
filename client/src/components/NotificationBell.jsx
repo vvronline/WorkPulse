@@ -3,6 +3,7 @@ import { Bell, AtSign, ClipboardList, FileText, CheckCircle2, Video, X } from 'l
 import { useNavigate } from 'react-router-dom';
 import { getNotifications, markNotificationRead, markAllNotificationsRead, deleteNotification } from '../api';
 import useWebSocket from '../hooks/useWebSocket';
+import useChatNotification from '../hooks/useChatNotification';
 import { useChatUnread } from '../ChatContext';
 
 import { NOTIFICATION_POLL_INTERVAL } from '../constants';
@@ -43,16 +44,21 @@ export default function NotificationBell() {
   }, [fetchNotifs]);
 
   const { refreshUnread: refreshChatUnread } = useChatUnread();
+  const { notifyGeneral, requestPermission } = useChatNotification();
 
   // WebSocket: refresh notifications on real-time events
   useWebSocket(useCallback((msg) => {
     if (['notification', 'leave_update', 'task_assigned', 'approval_update', 'meeting_invite'].includes(msg.type)) {
       fetchNotifs();
+      notifyGeneral(
+        msg.data?.title || msg.type.replace(/_/g, ' '),
+        msg.data?.body
+      );
     }
     if (msg.type === 'chat_message') {
       refreshChatUnread();
     }
-  }, [fetchNotifs, refreshChatUnread]));
+  }, [fetchNotifs, refreshChatUnread, notifyGeneral]));
 
   // Close on outside click / Escape
   useEffect(() => {
@@ -72,6 +78,7 @@ export default function NotificationBell() {
   const handleOpen = () => {
     setOpen(prev => !prev);
     if (!open) fetchNotifs(); // refresh on open
+    requestPermission(); // ask for browser notification permission on user gesture
   };
 
   const handleMarkAll = async () => {
