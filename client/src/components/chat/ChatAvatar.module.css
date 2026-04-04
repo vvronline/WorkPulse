@@ -6,6 +6,7 @@
 .sm { width: 28px; height: 28px; font-size: 0.65rem; }
 .md { width: 40px; height: 40px; font-size: 0.8rem; }
 .lg { width: 48px; height: 48px; font-size: 1rem; }
+.xl { width: 110px; height: 110px; font-size: 2.4rem; }
 .img {
     width: 100%;
     height: 100%;
