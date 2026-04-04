@@ -152,6 +152,7 @@ export default function Chat() {
                             convMembers={convMembers}
                             mentionInputRef={mentionInputRef}
                             fileInputRef={fileInputRef}
+                            isGroup={!!activeConv?.is_group}
                             onSend={handleSend}
                             onFileUpload={handleFileUpload}
                             onVoiceSend={handleVoiceSend}
