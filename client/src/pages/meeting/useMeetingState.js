@@ -247,11 +247,29 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         switch (type) {
             case 'meeting_participant_joined': {
                 // Server sends: { userId, fullName, avatar, username, existingPeers? }
+                // existingPeers is an array of { userId, fullName, avatar, username } objects
                 if (data.existingPeers) {
                     // We are the new joiner — existingPeers is sent only to us
-                    data.existingPeers.forEach(peerId => {
+                    data.existingPeers.forEach(peer => {
+                        const peerId = peer.userId || peer;
                         const pc = createPeerConnection(peerId, false);
                         pcsRef.current.set(peerId, pc);
+                        // Add existing participants with their names
+                        if (peerId !== user?.id) {
+                            setParticipants(prev => {
+                                const next = new Map(prev);
+                                const existing = next.get(peerId) || {};
+                                next.set(peerId, {
+                                    userId: peerId,
+                                    stream: null, muted: false, videoOff: false,
+                                    raisedHand: false, role: 'participant',
+                                    screenSharing: false,
+                                    ...existing,
+                                    name: peer.fullName || peer.username || existing.name || 'Participant',
+                                });
+                                return next;
+                            });
+                        }
                     });
                     setStatus(data.existingPeers.length > 0 ? 'connecting' : 'connected');
                 }
@@ -259,15 +277,15 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 if (data.userId !== user?.id) {
                     setParticipants(prev => {
                         const next = new Map(prev);
-                        if (!next.has(data.userId)) {
-                            next.set(data.userId, {
-                                userId: data.userId,
-                                name: data.fullName || data.username || 'Participant',
-                                stream: null, muted: false, videoOff: false,
-                                raisedHand: false, role: data.role || 'participant',
-                                screenSharing: false,
-                            });
-                        }
+                        const existing = next.get(data.userId) || {};
+                        next.set(data.userId, {
+                            userId: data.userId,
+                            stream: null, muted: false, videoOff: false,
+                            raisedHand: false, role: data.role || 'participant',
+                            screenSharing: false,
+                            ...existing,
+                            name: data.fullName || data.username || existing.name || 'Participant',
+                        });
                         return next;
                     });
                     // If we're an existing participant, initiate connection to the new joiner
@@ -345,11 +363,20 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         }
     }, [user, createPeerConnection, handleSignal, presenterId]);
 
-    // Send WS join on mount
+    // Send WS join on mount — wait for socket to be open before sending
     useEffect(() => {
         if (!ws || !meetingId) return;
-        wsSend('meeting_join', { meetingId });
+
+        const sendJoin = () => wsSend('meeting_join', { meetingId });
+
+        if (ws.readyState === WebSocket.OPEN) {
+            sendJoin();
+        } else if (ws.readyState === WebSocket.CONNECTING) {
+            ws.addEventListener('open', sendJoin);
+        }
+
         return () => {
+            ws.removeEventListener('open', sendJoin);
             // If keepAliveOnUnmount (PiP mode), don't leave — the meeting stays active
             if (!keepAliveOnUnmount) {
                 wsSend('meeting_leave', { meetingId });

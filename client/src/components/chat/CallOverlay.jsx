@@ -415,7 +415,7 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
         if (!pcRef.current) return;
 
         if (screenSharing) {
-            // Stop screen share → revert to camera
+            // Stop screen share → revert to camera (or remove video track for audio calls)
             if (screenStreamRef.current) {
                 screenStreamRef.current.getTracks().forEach(t => t.stop());
                 screenStreamRef.current = null;
@@ -423,6 +423,10 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
             const camTrack = localStreamRef.current?.getVideoTracks()[0];
             if (camTrack && screenSenderRef.current) {
                 await screenSenderRef.current.replaceTrack(camTrack);
+            } else if (screenSenderRef.current && !camTrack) {
+                // Audio-only call: remove the screen share track we added
+                pcRef.current.removeTrack(screenSenderRef.current);
+                screenSenderRef.current = null;
             }
             if (localVideoRef.current && localStreamRef.current) {
                 localVideoRef.current.srcObject = localStreamRef.current;
@@ -436,9 +440,13 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
                 screenStreamRef.current = screenStream;
                 const screenTrack = screenStream.getVideoTracks()[0];
 
-                // Replace the video sender's track with screen track
                 if (screenSenderRef.current) {
+                    // Video call: replace camera track with screen track
                     await screenSenderRef.current.replaceTrack(screenTrack);
+                } else {
+                    // Audio-only call: add screen track as a new video sender
+                    const sender = pcRef.current.addTrack(screenTrack, screenStream);
+                    screenSenderRef.current = sender;
                 }
 
                 // Show screen share in local preview
@@ -718,8 +726,8 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
                             </div>
                         )}
 
-                        {/* Screen share (video calls only, when connected) */}
-                        {isVideoCall && isConnected && (
+                        {/* Screen share (available for all call types when connected) */}
+                        {isConnected && (
                             <button
                                 className={`${s.controlBtn} ${screenSharing ? s.active : ''}`}
                                 onClick={toggleScreenShare}

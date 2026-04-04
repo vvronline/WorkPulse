@@ -505,14 +505,18 @@ async function handleChatMessage(senderId, msg) {
 
         const joiner = (await query('SELECT full_name, avatar, username FROM users WHERE id = $1', [senderId])).rows[0];
 
-        // Get all current participants to notify + send system message
+        // Get all current participants with user info (for sending to the new joiner)
         const allParticipants = (await query(
-            'SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = $2',
+            `SELECT mp.user_id, u.full_name, u.avatar, u.username
+             FROM meeting_participants mp JOIN users u ON u.id = mp.user_id
+             WHERE mp.meeting_id = $1 AND mp.status = $2`,
             [meetingId, 'joined']
         )).rows;
 
-        // Get existing participants to signal new peer (mesh)
-        const existingPeers = allParticipants.filter(p => p.user_id !== senderId).map(p => p.user_id);
+        // Build existingPeers with full user info so the joiner can display names
+        const existingPeers = allParticipants
+            .filter(p => p.user_id !== senderId)
+            .map(p => ({ userId: p.user_id, fullName: p.full_name, avatar: p.avatar, username: p.username }));
 
         for (const p of allParticipants) {
             sendToUser(p.user_id, 'meeting_participant_joined', {
