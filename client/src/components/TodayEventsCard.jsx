@@ -1,4 +1,5 @@
 import React, { memo } from 'react';
+import { CalendarDays } from 'lucide-react';
 import s from './TodayEventsCard.module.css';
 
 function formatEventTime(isoString) {
@@ -24,7 +25,7 @@ const TodayEventsCard = memo(function TodayEventsCard({ events }) {
   return (
     <div className={`status-card ${s.card}`}>
       <h3 className={s.title}>
-        <span className="page-icon">📅</span> Today's Events
+        <span className="page-icon"><CalendarDays size={18} /></span> Today's Events
         {sorted.length > 0 && <span className={s.count}>{sorted.length}</span>}
       </h3>
 

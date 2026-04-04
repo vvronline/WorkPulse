@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { getTeamAnalytics, exportTeamAnalytics, getLocalDate, getLocalToday } from '../../api';
 import { ROLE_LABELS, formatMin } from './constants';
+import { Users, Timer, ClipboardList, Target, AlarmClock } from 'lucide-react';
 import TodayStatusBadge from './TodayStatusBadge';
 import PercentBar from './PercentBar';
 import MiniTrend from './MiniTrend';
@@ -102,12 +103,12 @@ export default function TeamAnalytics({ onSelectMember }) {
             </div>
 
             <div className={m.summaryGrid}>
-                <div className={m.summaryCard}><div className={m.summaryIcon}>👥</div><div className={m.summaryValue}>{data.totalMembers}</div><div className={m.summaryLabel}>Team Members</div></div>
-                <div className={m.summaryCard}><div className={m.summaryIcon}>⏱</div><div className={m.summaryValue}>{data.avgHours?.toFixed(1) || 0}h</div><div className={m.summaryLabel}>Avg Hours/Day</div></div>
-                <div className={m.summaryCard}><div className={m.summaryIcon}>📋</div><div className={m.summaryValue}>{data.totalTasksDone || 0}</div><div className={m.summaryLabel}>Planner Completed</div></div>
-                <div className={m.summaryCard}><div className={m.summaryIcon}>🎯</div><div className={m.summaryValue}>{data.avgTargetMet || 0}%</div><div className={m.summaryLabel}>Avg Target Met</div></div>
-                <div className={m.summaryCard}><div className={m.summaryIcon}>⏰</div><div className={m.summaryValue}>{data.avgPunctuality || 0}%</div><div className={m.summaryLabel}>Avg Punctuality</div></div>
-                <div className={m.summaryCard}><div className={m.summaryIcon}>📋</div><div className={`${m.summaryValue} ${m.colorAmber}`}>{data.pendingApprovals || 0}</div><div className={m.summaryLabel}>Pending Approvals</div></div>
+                <div className={m.summaryCard}><div className={m.summaryIcon}><Users size={22} /></div><div className={m.summaryValue}>{data.totalMembers}</div><div className={m.summaryLabel}>Team Members</div></div>
+                <div className={m.summaryCard}><div className={m.summaryIcon}><Timer size={22} /></div><div className={m.summaryValue}>{data.avgHours?.toFixed(1) || 0}h</div><div className={m.summaryLabel}>Avg Hours/Day</div></div>
+                <div className={m.summaryCard}><div className={m.summaryIcon}><ClipboardList size={22} /></div><div className={m.summaryValue}>{data.totalTasksDone || 0}</div><div className={m.summaryLabel}>Planner Completed</div></div>
+                <div className={m.summaryCard}><div className={m.summaryIcon}><Target size={22} /></div><div className={m.summaryValue}>{data.avgTargetMet || 0}%</div><div className={m.summaryLabel}>Avg Target Met</div></div>
+                <div className={m.summaryCard}><div className={m.summaryIcon}><AlarmClock size={22} /></div><div className={m.summaryValue}>{data.avgPunctuality || 0}%</div><div className={m.summaryLabel}>Avg Punctuality</div></div>
+                <div className={m.summaryCard}><div className={m.summaryIcon}><ClipboardList size={22} /></div><div className={`${m.summaryValue} ${m.colorAmber}`}>{data.pendingApprovals || 0}</div><div className={m.summaryLabel}>Pending Approvals</div></div>
             </div>
 
             <h3 className={m.sectionTitle}>Member Performance — {rangeLabel} <span className={m.memberCount}>({filteredMembers.length})</span></h3>

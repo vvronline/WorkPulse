@@ -1,5 +1,6 @@
 /* PageSwitcher — inline header dropdown for picking/renaming pages */
 import React from 'react';
+import { Pin } from 'lucide-react';
 import { formatDate } from '../notesUtils';
 import s from './PageSwitcher.module.css';
 
@@ -24,7 +25,7 @@ export default function PageSwitcher({
         onClick={() => setMenuOpen(o => !o)}
         title="Switch page"
       >
-        {activePage?.pinned && <span className={s.pinSmall}>📌</span>}
+        {activePage?.pinned && <span className={s.pinSmall}><Pin size={11} /></span>}
         <span className={s.switcherName}>{activePage?.title || 'Untitled'}</span>
         <svg
           className={`${s.switcherChevron} ${menuOpen ? s.switcherChevronOpen : ''}`}
@@ -78,7 +79,7 @@ export default function PageSwitcher({
                     className={s.menuItemBtn}
                     onClick={() => { onSelectPage(page.id); setMenuOpen(false); }}
                   >
-                    {page.pinned && <span className={s.pinSmall}>📌</span>}
+                    {page.pinned && <span className={s.pinSmall}><Pin size={11} /></span>}
                     <span className={s.menuItemName}>{page.title || 'Untitled'}</span>
                     <span className={s.menuItemDate}>{formatDate(page.updatedAt)}</span>
                   </button>

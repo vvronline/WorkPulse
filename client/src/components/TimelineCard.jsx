@@ -1,4 +1,5 @@
 import React, { memo } from 'react';
+import { ClipboardList } from 'lucide-react';
 import s from './TimelineCard.module.css';
 
 const TIMELINE_ICONS = {
@@ -21,7 +22,7 @@ const TimelineCard = memo(function TimelineCard({ entries }) {
   return (
     <div className={`status-card ${s['timeline-card']}`}>
       <h3 className={s['timeline-title']}>
-        <span className="page-icon">📋</span> Today's Timeline
+        <span className="page-icon"><ClipboardList size={18} /></span> Today's Timeline
       </h3>
       <div className={s['enhanced-timeline']}>
         {entries.map((entry, i) => {

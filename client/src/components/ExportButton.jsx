@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { FileSpreadsheet, FileText } from 'lucide-react';
 
 /**
  * Generic export button — downloads a blob as CSV or PDF.
@@ -42,7 +43,7 @@ export default function ExportButton({ fetchFn, params, label = 'Export' }) {
                 disabled={loading}
                 title={`${label} CSV`}
             >
-                📄 CSV
+                <FileSpreadsheet size={14} style={{marginRight:4,verticalAlign:'middle'}} /> CSV
             </button>
             <button
                 className="btn btn-sm btn-outline"
@@ -50,7 +51,7 @@ export default function ExportButton({ fetchFn, params, label = 'Export' }) {
                 disabled={loading}
                 title={`${label} PDF`}
             >
-                📑 PDF
+                <FileText size={14} style={{marginRight:4,verticalAlign:'middle'}} /> PDF
             </button>
         </span>
     );

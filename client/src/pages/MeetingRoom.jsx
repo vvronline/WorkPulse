@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Phone, HandMetal, Check, ClipboardList, Users } from 'lucide-react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { useMeeting } from '../MeetingContext';
@@ -140,7 +141,7 @@ export default function MeetingRoom() {
         return (
             <div className="mr-root">
                 <div className="mr-leave-screen">
-                    <div className="mr-leave-icon">{status === 'ended' ? '📞' : '👋'}</div>
+                    <div className="mr-leave-icon">{status === 'ended' ? <Phone size={36} strokeWidth={1.5} /> : <HandMetal size={36} strokeWidth={1.5} />}</div>
                     <h2>{status === 'ended' ? 'Meeting has ended' : 'You left the meeting'}</h2>
                     {meetingTimer > 0 && <p className="mr-leave-duration">Duration: {formatTimer(meetingTimer)}</p>}
                     <div className="mr-leave-actions">
@@ -163,9 +164,9 @@ export default function MeetingRoom() {
                 <div className="mr-header-info">
                     <button className="mr-code-btn" onClick={copyMeetingId} title="Copy meeting code">
                         <span className="mr-code">{code}</span>
-                        <span className="mr-copy-icon">{copied ? '✓' : '📋'}</span>
+                        <span className="mr-copy-icon">{copied ? <Check size={14} /> : <ClipboardList size={14} />}</span>
                     </button>
-                    <span>👥 {totalCount}</span>
+                    <span><Users size={14} style={{marginRight:4,verticalAlign:'middle'}} />{totalCount}</span>
                 </div>
             </div>
 

@@ -1,9 +1,10 @@
-/* ModalEditor — right panel of the maximized modal */
+﻿/* ModalEditor — right panel of the maximized modal */
 import React, { useState } from 'react';
 import { formatDate, buildFolderTree } from '../notesUtils';
 import QuillEditor from './QuillEditor';
 import TagEditor from './TagEditor';
 import VersionHistory from './VersionHistory';
+import { Pin, Copy, ArchiveRestore, Archive, Trash2 } from 'lucide-react';
 import s from './ModalEditor.module.css';
 
 export default function ModalEditor({
@@ -54,14 +55,14 @@ export default function ModalEditor({
             className={`${s.actBtn} ${activePage.pinned ? s.actBtnActive : ''}`}
             onClick={() => onTogglePin(activePage.id)}
             title={activePage.pinned ? 'Unpin' : 'Pin to top'}
-          >📌</button>
-          <button className={s.actBtn} onClick={() => onDuplicate(activePage.id)} title="Duplicate">📋</button>
+          ><Pin size={13} /></button>
+          <button className={s.actBtn} onClick={() => onDuplicate(activePage.id)} title="Duplicate"><Copy size={13} /></button>
           <button
             className={s.actBtn}
             onClick={() => onToggleArchive(activePage.id)}
             title={activePage.archived ? 'Unarchive' : 'Archive'}
           >
-            {activePage.archived ? '📤' : '📦'}
+            {activePage.archived ? <ArchiveRestore size={13} /> : <Archive size={13} />}
           </button>
           <button
             className={`${s.actBtn} ${showHistory ? s.actBtnActive : ''}`}
@@ -72,7 +73,7 @@ export default function ModalEditor({
               <path d="M8 1a7 7 0 100 14A7 7 0 008 1zM0 8a8 8 0 1116 0A8 8 0 010 8zm8-4a.75.75 0 01.75.75v3.69l2.28 1.32a.75.75 0 01-.75 1.3l-2.5-1.44A.75.75 0 017.25 9V4.75A.75.75 0 018 4z"/>
             </svg>
           </button>
-          <button className={`${s.actBtn} ${s.actBtnDanger}`} onClick={onDeletePage} title="Delete">🗑️</button>
+          <button className={`${s.actBtn} ${s.actBtnDanger}`} onClick={onDeletePage} title="Delete"><Trash2 size={13} /></button>
         </div>
       </div>
 
@@ -85,7 +86,7 @@ export default function ModalEditor({
         >
           <option value="">No folder</option>
           {buildFolderTree(folders).map(f => (
-            <option key={f.id} value={f.id}>{'\u00A0\u00A0'.repeat(f.depth)}📁 {f.name}</option>
+            <option key={f.id} value={f.id}>{'\u00A0\u00A0'.repeat(f.depth)}{f.name}</option>
           ))}
         </select>
         <TagEditor

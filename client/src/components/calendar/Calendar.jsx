@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Video } from 'lucide-react';
 import { getCalendarEvents, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent, createMeeting } from '../../api';
 import EventFormModal from './EventFormModal';
 import s from './Calendar.module.css';
@@ -234,7 +235,7 @@ export default function Calendar({ tasks = [] }) {
                                             style={evStyle}
                                             onClick={(e) => { e.stopPropagation(); openEdit(ev); }}>
                                             <span className={s.eventTitle}>
-                                                {ev.meeting_code && <span className={s.eventMeetingBadge}>📹</span>}
+                                                {ev.meeting_code && <span className={s.eventMeetingBadge}><Video size={11} /></span>}
                                                 {ev.title}
                                             </span>
                                             {height >= 40 && <span className={s.eventTime}>

@@ -1,5 +1,6 @@
 import React from 'react';
 import { PRIORITIES } from './constants.js';
+import { User, CalendarDays, Check, X, Package } from 'lucide-react';
 import s from './SprintImportPanel.module.css';
 
 function getPriority(p) {
@@ -27,9 +28,9 @@ export default function SprintImportPanel({
   return (
     <div className={s['sprint-import-panel']}>
       <div className={s['sprint-import-header']}>
-        <span>📦 Import tickets from Backlog into this sprint</span>
+        <span><Package size={14} style={{marginRight:4,verticalAlign:'middle'}} />Import tickets from Backlog into this sprint</span>
         <button className={s['close-form-btn']} onClick={onClose}>
-          ✕
+          <X size={14} />
         </button>
       </div>
 
@@ -89,7 +90,7 @@ export default function SprintImportPanel({
                   {configuring && (
                     <div className={s['sprint-import-config']}>
                       <div className={s['sprint-import-config-row']}>
-                        <label>👤 Assign to</label>
+                        <label><User size={13} style={{marginRight:4,verticalAlign:'middle'}} />Assign to</label>
                         <select
                           value={importAssignedTo}
                           onChange={(e) => onSetImportAssignedTo(e.target.value)}
@@ -102,7 +103,7 @@ export default function SprintImportPanel({
                             </option>
                           ))}
                         </select>
-                        <label>📅 Due date</label>
+                        <label><CalendarDays size={13} style={{marginRight:4,verticalAlign:'middle'}} />Due date</label>
                         <input
                           type="date"
                           value={importDueDate}
@@ -115,7 +116,7 @@ export default function SprintImportPanel({
                           className="btn btn-primary btn-sm"
                           onClick={onImportToSprint}
                         >
-                          ✓ Confirm Import
+                          <Check size={14} style={{marginRight:4,verticalAlign:'middle'}} />Confirm Import
                         </button>
                         <button
                           className="btn btn-secondary btn-sm"

@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
+import { MicOff, Mic, CameraOff, Camera, PhoneOff } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useMeeting } from '../MeetingContext';
 import './MeetingPiP.css';
@@ -182,21 +183,21 @@ export default function MeetingPiP() {
                     onClick={handleToggleMute}
                     title={muted ? 'Unmute' : 'Mute'}
                 >
-                    {muted ? '🔇' : '🎙️'}
+                    {muted ? <MicOff size={16} /> : <Mic size={16} />}
                 </button>
                 <button
                     className={`pip-btn ${videoOff ? 'pip-btn-off' : ''}`}
                     onClick={handleToggleVideo}
                     title={videoOff ? 'Start video' : 'Stop video'}
                 >
-                    {videoOff ? '📷' : '🎥'}
+                    {videoOff ? <CameraOff size={16} /> : <Camera size={16} />}
                 </button>
                 <button
                     className="pip-btn pip-btn-hangup"
                     onClick={handleHangup}
                     title="Leave meeting"
                 >
-                    📞
+                    <PhoneOff size={16} />
                 </button>
             </div>
         </div>

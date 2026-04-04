@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { X } from 'lucide-react';
 import { forwardMessage } from '../../api';
 import ChatAvatar from './ChatAvatar';
 import s from './ForwardModal.module.css';
@@ -27,7 +28,7 @@ export default function ForwardModal({ msgId, conversations, onClose, onSuccess 
             <div className={s.modal}>
                 <div className={s.header}>
                     <h3>Forward Message</h3>
-                    <button className={s.closeBtn} onClick={onClose}>✕</button>
+                    <button className={s.closeBtn} onClick={onClose}><X size={16} /></button>
                 </div>
                 <div className={s.list}>
                     {conversations.map(c => {

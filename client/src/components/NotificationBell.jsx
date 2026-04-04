@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Bell, AtSign, ClipboardList, FileText, CheckCircle2, Video, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getNotifications, markNotificationRead, markAllNotificationsRead, deleteNotification } from '../api';
 import useWebSocket from '../hooks/useWebSocket';
@@ -16,8 +17,8 @@ function timeAgo(dateStr) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-const TYPE_ICON = { mention: '@', leave: '📋', task: '📝', approval: '✅', meeting_invite: '📹' };
-const DEFAULT_ICON = '🔔';
+const TYPE_ICON = { mention: <AtSign size={14}/>, leave: <ClipboardList size={14}/>, task: <FileText size={14}/>, approval: <CheckCircle2 size={14}/>, meeting_invite: <Video size={14}/> };
+const DEFAULT_ICON = <Bell size={14}/>;
 
 export default function NotificationBell() {
   const [notifications, setNotifications] = useState([]);
@@ -162,7 +163,7 @@ export default function NotificationBell() {
                     onClick={e => handleDelete(e, n.id)}
                     title="Dismiss"
                     aria-label="Dismiss notification"
-                  >✕</button>
+                  ><X size={14} /></button>
                 </div>
               ))
             )}

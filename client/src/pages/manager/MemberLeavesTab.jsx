@@ -28,7 +28,7 @@ export default function MemberLeavesTab({ userId }) {
                     {leaves.map(l => (
                         <tr key={l.id}>
                             <td>{new Date(l.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</td>
-                            <td>{LEAVE_ICONS[l.leave_type] || ''} {l.leave_type}</td>
+                            <td style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>{(() => { const Ic = LEAVE_ICONS[l.leave_type]; return Ic ? <Ic size={14} /> : null; })()} {l.leave_type}</td>
                             <td>{l.duration || 'full'}</td>
                             <td><ApprovalBadge status={l.status} /></td>
                             <td className={m['text-muted-sm']}>{l.reason || '—'}</td>

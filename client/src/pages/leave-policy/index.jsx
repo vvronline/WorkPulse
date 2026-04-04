@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../AuthContext';
 import { useSearchParams } from 'react-router-dom';
+import { BarChart3, Palmtree, ClipboardList, Users } from 'lucide-react';
 import PoliciesTab from './PoliciesTab';
 import MyBalances from './MyBalances';
 import HolidaysTab from './HolidaysTab';
@@ -8,10 +9,10 @@ import AllBalances from './AllBalances';
 import s from '../LeavePolicy.module.css';
 
 const TABS = [
-    { id: 'balances',   label: 'My Balances', icon: '📊', hrOnly: false },
-    { id: 'holidays',   label: 'Holidays',    icon: '🏖️', hrOnly: false },
-    { id: 'policies',   label: 'Policies',    icon: '📋', hrOnly: true  },
-    { id: 'allBalances',label: 'All Balances',icon: '👥', hrOnly: true  },
+    { id: 'balances',   label: 'My Balances', icon: BarChart3,     hrOnly: false },
+    { id: 'holidays',   label: 'Holidays',    icon: Palmtree,      hrOnly: false },
+    { id: 'policies',   label: 'Policies',    icon: ClipboardList, hrOnly: true  },
+    { id: 'allBalances',label: 'All Balances',icon: Users,         hrOnly: true  },
 ];
 
 export default function LeavePolicy() {
@@ -46,7 +47,7 @@ export default function LeavePolicy() {
                         className={`${s.tabBtn} ${tab === t.id ? s.tabBtnActive : ''}`}
                         onClick={() => setTab(t.id)}
                     >
-                        <span className={s.tabIcon}>{t.icon}</span>
+                        <span className={s.tabIcon}>{t.icon && React.createElement(t.icon, { size: 14 })}</span>
                         {t.label}
                     </button>
                 ))}

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Bell } from 'lucide-react';
 import s from './EventReminderToast.module.css';
 
 const AUTO_CLOSE_MS = 15000;
@@ -29,7 +30,7 @@ function ReminderItem({ reminder, onDismiss }) {
     <div className={s.toast} role="alert" aria-live="assertive">
       <div className={s.body}>
         <div className={s.header}>
-          <span className={s.icon}>🔔</span>
+          <span className={s.icon}><Bell size={16} /></span>
           <span className={s.label}>Upcoming Event</span>
           <button className={s.close} onClick={() => onDismiss(reminder.id)} aria-label="Dismiss">
             <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ClipboardList, Users, UserCheck, Building, Info } from 'lucide-react';
 import { useAutoDismiss } from '../../hooks/useAutoDismiss';
 import {
     createAdminUser, getAdminOrganizations, getCurrentOrg, getOrgDepartments, getOrgTeams, getAdminUsers
@@ -83,7 +84,7 @@ export default function CreateUser({ userRole, onCreated }) {
                 {success && <div className={s.success}>{success}</div>}
 
                 <div className={sf.formSection}>
-                    <h3 className={sf.sectionTitle}>📋 Basic Information</h3>
+                    <h3 className={sf.sectionTitle}><ClipboardList size={15} style={{marginRight:6,verticalAlign:'middle'}} />Basic Information</h3>
                     <div className={sf.formGroup}>
                         <label>Full Name</label>
                         <input required value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} placeholder="e.g. John Doe" />
@@ -99,12 +100,12 @@ export default function CreateUser({ userRole, onCreated }) {
                     <div className={sf.formGroup}>
                         <label>Initial Password</label>
                         <input type="password" required minLength={8} value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="Minimum 8 characters" />
-                        <small className={sf.hint}>💡 User will be required to change this on first login</small>
+                        <small className={sf.hint}><Info size={13} style={{marginRight:4,verticalAlign:'middle'}} />User will be required to change this on first login</small>
                     </div>
                 </div>
 
                 <div className={sf.formSection}>
-                    <h3 className={sf.sectionTitle}>👥 Role & Organization</h3>
+                    <h3 className={sf.sectionTitle}><Users size={15} style={{marginRight:6,verticalAlign:'middle'}} />Role & Organization</h3>
                     <div className={sf.formGroup}>
                         <label>Role</label>
                         <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}>
@@ -128,7 +129,7 @@ export default function CreateUser({ userRole, onCreated }) {
                 </div>
 
                 <div className={sf.formSection}>
-                    <h3 className={sf.sectionTitle}>🏛️ Assignment</h3>
+                    <h3 className={sf.sectionTitle}><Building size={15} style={{marginRight:6,verticalAlign:'middle'}} />Assignment</h3>
                     <div className={sf.formGroup}>
                         <label>Department</label>
                         <select value={form.department_id} onChange={e => setForm({ ...form, department_id: e.target.value, team_id: '' })}>
@@ -154,7 +155,7 @@ export default function CreateUser({ userRole, onCreated }) {
 
                 <div className={su['form-footer']}>
                     <button type="submit" className={`${s.btnPrimary} ${su['btn-submit']}`}>
-                        ✅ Create User Account
+                        <UserCheck size={15} style={{marginRight:6,verticalAlign:'middle'}} />Create User Account
                     </button>
                 </div>
             </form>

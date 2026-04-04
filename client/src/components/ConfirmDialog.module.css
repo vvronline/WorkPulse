@@ -140,3 +140,58 @@
 [data-theme="light"] .modal {
     background: rgba(255, 255, 255, 0.98);
 }
+
+/* ============= RESPONSIVE ============= */
+@media (max-width: 520px) {
+    .overlay {
+        align-items: flex-end;
+        padding: 0;
+    }
+
+    .modal {
+        width: 100%;
+        max-width: 100%;
+        border-radius: 20px 20px 0 0;
+        animation: modalInMobile 0.25s cubic-bezier(.4, 0, .2, 1);
+    }
+
+    @keyframes modalInMobile {
+        from {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .footer {
+        padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+        flex-wrap: wrap;
+    }
+
+    .cancelBtn,
+    .confirmBtn {
+        flex: 1;
+        text-align: center;
+        justify-content: center;
+    }
+}
+
+@media (max-width: 360px) {
+    .header {
+        padding: 1rem 1.1rem 0.85rem;
+    }
+
+    .body {
+        padding: 1.1rem;
+        font-size: 0.88rem;
+    }
+
+    .footer {
+        padding: 0.85rem 1.1rem;
+        padding-bottom: calc(0.85rem + env(safe-area-inset-bottom, 0px));
+    }
+}

@@ -119,3 +119,18 @@
 }
 .saveBtn:disabled { opacity: 0.5; cursor: default; }
 .saveBtn:not(:disabled):hover { opacity: 0.9; }
+
+/* ─── Mobile ─── */
+@media (max-width: 768px) {
+    .modal {
+        width: 95%;
+        max-height: 85vh;
+    }
+    .body {
+        padding: 12px;
+    }
+    .saveBtn {
+        width: 100%;
+        padding: 10px;
+    }
+}

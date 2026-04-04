@@ -1,3 +1,5 @@
+import { Thermometer, Palmtree, CalendarDays, User, FileEdit } from 'lucide-react';
+
 export const ROLE_LABELS = {
     employee: 'Employee',
     team_lead: 'Team Lead',
@@ -13,11 +15,11 @@ export const STATUS_COLORS = {
 };
 
 export const LEAVE_ICONS = {
-    sick: '🤒',
-    holiday: '🎉',
-    planned: '📅',
-    personal: '👤',
-    other: '📝',
+    sick: Thermometer,
+    holiday: Palmtree,
+    planned: CalendarDays,
+    personal: User,
+    other: FileEdit,
 };
 
 export function formatMin(totalMin) {

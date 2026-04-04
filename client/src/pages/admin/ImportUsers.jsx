@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { Table2, FolderOpen, AlertTriangle, CheckCircle2, XCircle, Download } from 'lucide-react';
 import { importUsers } from '../../api';
 import s from './AdminPages.module.css';
 
@@ -93,7 +94,7 @@ export default function ImportUsers() {
                         {FIELDS.map(f => (
                             <tr key={f.name}>
                                 <td><code>{f.name}</code></td>
-                                <td style={{ textAlign: 'center' }}>{f.required ? '✅' : '—'}</td>
+                                <td style={{ textAlign: 'center' }}>{f.required ? <CheckCircle2 size={14} style={{color:'var(--success)',verticalAlign:'middle'}} /> : '—'}</td>
                                 <td className={s.muted}>{f.note}</td>
                             </tr>
                         ))}
@@ -123,13 +124,13 @@ export default function ImportUsers() {
                     />
                     {file ? (
                         <>
-                            <span className={s.dropIcon}>{file.name.endsWith('.json') ? '{ }' : '📊'}</span>
+                            <span className={s.dropIcon}>{file.name.endsWith('.json') ? '{ }' : <Table2 size={32} />}</span>
                             <span className={s.dropFileName}>{file.name}</span>
                             <span className={s.dropHint}>Click or drop to replace</span>
                         </>
                     ) : (
                         <>
-                            <span className={s.dropIcon}>📂</span>
+                            <span className={s.dropIcon}><FolderOpen size={32} /></span>
                             <span className={s.dropPrimary}>Drop your CSV or JSON file here</span>
                             <span className={s.dropHint}>or click to browse</span>
                         </>
@@ -147,9 +148,9 @@ export default function ImportUsers() {
             {result && (
                 <div className={s.resultBox}>
                     <h4 className={s.resultTitle}>
-                        {result.imported > 0 ? `✅ ${result.imported} user${result.imported !== 1 ? 's' : ''} imported` : ''}
+                        {result.imported > 0 ? <><CheckCircle2 size={14} style={{marginRight:4,verticalAlign:'middle',color:'var(--success)'}} />{result.imported} user{result.imported !== 1 ? 's' : ''} imported</> : ''}
                         {result.imported > 0 && result.failed?.length > 0 ? ' · ' : ''}
-                        {result.failed?.length > 0 ? `❌ ${result.failed.length} failed` : ''}
+                        {result.failed?.length > 0 ? <><XCircle size={14} style={{marginRight:4,verticalAlign:'middle',color:'var(--danger)'}} />{result.failed.length} failed</> : ''}
                     </h4>
 
                     {result.failed?.length > 0 && (
@@ -178,7 +179,7 @@ export default function ImportUsers() {
                                     className={s.secondaryBtn}
                                     onClick={() => downloadCredentialsCSV(result.details)}
                                 >
-                                    ⬇ Download credentials CSV
+                                <Download size={14} style={{marginRight:5,verticalAlign:'middle'}} />Download credentials CSV
                                 </button>
                             </div>
                             <table className={s.table}>
@@ -211,7 +212,7 @@ export default function ImportUsers() {
                                 </tbody>
                             </table>
                             <p className={s.hint} style={{ marginTop: 8 }}>
-                                ⚠️ Save or download these passwords now — they cannot be retrieved after you leave this page.
+                                <AlertTriangle size={13} style={{marginRight:5,verticalAlign:'middle',color:'var(--warning)'}} />Save or download these passwords now — they cannot be retrieved after you leave this page.
                             </p>
                         </div>
                     )}

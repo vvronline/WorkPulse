@@ -1,4 +1,4 @@
-import React, { Suspense, lazy } from 'react';
+import React, { Suspense, lazy, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext';
 import { ROLE_LEVEL } from './constants';
@@ -96,6 +96,94 @@ function AppRoutes() {
 }
 
 export default function App() {
+  useEffect(() => {
+    // Create a single fixed tooltip div attached to body — escapes all overflow/stacking contexts
+    const tip = document.createElement('div');
+    tip.id = '__app-tooltip';
+    Object.assign(tip.style, {
+      position: 'fixed',
+      zIndex: '2147483647',
+      padding: '5px 10px',
+      borderRadius: '6px',
+      fontSize: '0.75rem',
+      lineHeight: '1.4',
+      whiteSpace: 'nowrap',
+      pointerEvents: 'none',
+      opacity: '0',
+      transition: 'opacity 0.15s',
+      background: 'var(--bg-secondary, #12121a)',
+      color: 'var(--text, #f0f0f5)',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+      border: 'none',
+    });
+    document.body.appendChild(tip);
+
+    let hideTimer = null;
+
+    const show = (e) => {
+      const el = e.currentTarget;
+      const text = el.getAttribute('data-tooltip');
+      if (!text) return;
+      clearTimeout(hideTimer);
+      tip.textContent = text;
+      tip.style.opacity = '0';
+      tip.style.display = 'block';
+
+      const rect = el.getBoundingClientRect();
+      const tipW = tip.offsetWidth;
+      const tipH = tip.offsetHeight;
+      const gap = 6;
+
+      // Prefer above, fall back to below if not enough space
+      let top = rect.top - tipH - gap;
+      if (top < 4) top = rect.bottom + gap;
+
+      let left = rect.left + rect.width / 2 - tipW / 2;
+      left = Math.max(6, Math.min(left, window.innerWidth - tipW - 6));
+
+      tip.style.top = `${top}px`;
+      tip.style.left = `${left}px`;
+      tip.style.opacity = '1';
+    };
+
+    const hide = () => {
+      hideTimer = setTimeout(() => { tip.style.opacity = '0'; }, 50);
+    };
+
+    const swap = (el) => {
+      if (el.getAttribute('title')) {
+        el.setAttribute('data-tooltip', el.getAttribute('title'));
+        el.removeAttribute('title');
+        el.addEventListener('mouseenter', show);
+        el.addEventListener('mouseleave', hide);
+      }
+    };
+
+    document.querySelectorAll('[title]').forEach(swap);
+
+    const obs = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.type === 'attributes' && m.attributeName === 'title' && m.target.getAttribute('title')) {
+          swap(m.target);
+        }
+        if (m.type === 'childList') {
+          m.addedNodes.forEach((n) => {
+            if (n.nodeType === 1) {
+              if (n.getAttribute('title')) swap(n);
+              n.querySelectorAll?.('[title]').forEach(swap);
+            }
+          });
+        }
+      }
+    });
+    obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['title'] });
+
+    return () => {
+      obs.disconnect();
+      tip.remove();
+    };
+  }, []);
+
   return (
     <AuthProvider>
       <ThemeProvider>

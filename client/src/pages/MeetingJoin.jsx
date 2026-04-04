@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { MicOff, Mic, CameraOff, Camera, Check, ClipboardList, Volume2 } from 'lucide-react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getMeeting } from '../api';
 import { useAuth } from '../AuthContext';
@@ -236,14 +237,14 @@ export default function MeetingJoin() {
                             onClick={() => setAudioMuted(v => !v)}
                             title={audioMuted ? 'Unmute' : 'Mute'}
                         >
-                            {audioMuted ? '🔇' : '🎙️'}
+                            {audioMuted ? <MicOff size={20} /> : <Mic size={20} />}
                         </button>
                         <button
                             className={`mj-ctrl-btn ${videoOff ? 'mj-ctrl-off' : ''}`}
                             onClick={() => setVideoOff(v => !v)}
                             title={videoOff ? 'Start video' : 'Stop video'}
                         >
-                            {videoOff ? '📷' : '🎥'}
+                            {videoOff ? <CameraOff size={20} /> : <Camera size={20} />}
                         </button>
                     </div>
 
@@ -260,7 +261,7 @@ export default function MeetingJoin() {
                     <div className="mj-code-row">
                         <span className="mj-code">Code: {code}</span>
                         <button className="mj-copy-btn" onClick={copyCode} title="Copy code">
-                            {copied ? '✓' : '📋'}
+                            {copied ? <Check size={16} /> : <ClipboardList size={16} />}
                         </button>
                     </div>
                     {meeting?.organizer_name && (
@@ -271,7 +272,7 @@ export default function MeetingJoin() {
                     <div className="mj-devices">
                         {devices.audio.length > 0 && (
                             <div className="mj-device-select">
-                                <label>🎙️ Microphone</label>
+                                <label><Mic size={13} style={{marginRight:5,verticalAlign:'middle'}} />Microphone</label>
                                 <select value={selectedAudio} onChange={e => handleAudioChange(e.target.value)}>
                                     {devices.audio.map(d => <option key={d.deviceId} value={d.deviceId}>{d.label || 'Microphone'}</option>)}
                                 </select>
@@ -279,7 +280,7 @@ export default function MeetingJoin() {
                         )}
                         {devices.video.length > 0 && (
                             <div className="mj-device-select">
-                                <label>🎥 Camera</label>
+                                <label><Camera size={13} style={{marginRight:5,verticalAlign:'middle'}} />Camera</label>
                                 <select value={selectedVideo} onChange={e => handleVideoChange(e.target.value)}>
                                     {devices.video.map(d => <option key={d.deviceId} value={d.deviceId}>{d.label || 'Camera'}</option>)}
                                 </select>
@@ -287,7 +288,7 @@ export default function MeetingJoin() {
                         )}
                         {devices.speaker.length > 0 && (
                             <div className="mj-device-select">
-                                <label>🔊 Speaker</label>
+                                <label><Volume2 size={13} style={{marginRight:5,verticalAlign:'middle'}} />Speaker</label>
                                 <select value={selectedSpeaker} onChange={e => setSelectedSpeaker(e.target.value)}>
                                     {devices.speaker.map(d => <option key={d.deviceId} value={d.deviceId}>{d.label || 'Speaker'}</option>)}
                                 </select>

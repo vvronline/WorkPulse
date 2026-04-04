@@ -5,6 +5,7 @@ import {
   getAssignableUsers, getTaskLabels, addTaskComment, updateTaskComment,
   getLocalToday, getTaskDetail, getTeamSprintConfig, getAvailableSprints,
 } from '../api';
+import { ArrowDownCircle, ClipboardList } from 'lucide-react';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { useAuth } from '../AuthContext';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
@@ -251,7 +252,7 @@ export default function Tasks() {
 
           {carriedCount > 0 && (
             <div className={s['carry-banner']}>
-              📥 {carriedCount} incomplete item{carriedCount > 1 ? 's' : ''} from yesterday carried forward automatically.
+              <ArrowDownCircle size={14} style={{marginRight:5,verticalAlign:'middle'}} />{carriedCount} incomplete item{carriedCount > 1 ? 's' : ''} from yesterday carried forward automatically.
             </div>
           )}
           {error && <div className="error-msg error-msg-mb">{error}</div>}
@@ -293,7 +294,7 @@ export default function Tasks() {
 
           {tasks.length === 0 && !loading && (
             <div className={s['tasks-empty']}>
-              <div className={s['tasks-empty-icon']}>📋</div>
+              <div className={s['tasks-empty-icon']}><ClipboardList size={36} strokeWidth={1.5} /></div>
               <p>No items in this sprint</p>
               <span>Assign tickets from the Backlog to this sprint.</span>
             </div>

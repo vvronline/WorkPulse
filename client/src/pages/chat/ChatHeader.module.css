@@ -61,9 +61,44 @@
     color: var(--accent, #4caf50) !important;
 }
 
+/* ─── Tablet ─── */
+@media (max-width: 1024px) {
+    .headerActions button {
+        padding: 0.3rem;
+    }
+    .headerActions {
+        gap: 1px;
+    }
+}
+
 /* ─── Mobile ─── */
 @media (max-width: 768px) {
     .backBtn {
         display: block;
+    }
+    .chatHeader {
+        padding: 0 0.6rem;
+        gap: 0.5rem;
+        height: 44px;
+    }
+    .chatHeaderName {
+        font-size: 0.85rem;
+    }
+    .chatHeaderMeta {
+        font-size: 0.68rem;
+    }
+    .headerActions button {
+        padding: 0.35rem;
+        font-size: 0.9rem;
+    }
+}
+
+/* ─── Small mobile (≤480px): collapse less important header buttons ─── */
+@media (max-width: 480px) {
+    .headerActions {
+        gap: 0;
+    }
+    .headerActions button {
+        padding: 0.25rem;
     }
 }

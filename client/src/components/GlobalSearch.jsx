@@ -1,4 +1,5 @@
 import DOMPurify from 'dompurify';
+import { Search, X, ClipboardList, FileText, Calendar, Palmtree, Rocket, User, ScrollText, ArrowRight } from 'lucide-react';
 import { useGlobalSearch } from '../hooks/useGlobalSearch';
 import s from './GlobalSearch.module.css';
 
@@ -25,7 +26,7 @@ export default function GlobalSearch({ onClose }) {
         <div className={s.overlay} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
             <div className={s.modal} role="dialog" aria-label="Global search">
                 <div className={s.inputRow}>
-                    <span className={s.icon}>🔍</span>
+                    <span className={s.icon}><Search size={17} /></span>
                     <input
                         ref={inputRef}
                         className={s.input}
@@ -38,7 +39,7 @@ export default function GlobalSearch({ onClose }) {
                         spellCheck={false}
                     />
                     {loading && <span className={s.spinner} aria-label="Searching" />}
-                    <button className={s.closeBtn} onClick={onClose} aria-label="Close search">✕</button>
+                    <button className={s.closeBtn} onClick={onClose} aria-label="Close search"><X size={16} /></button>
                 </div>
 
                 {error && <p className={s.error}>{error}</p>}
@@ -63,12 +64,12 @@ export default function GlobalSearch({ onClose }) {
                                             onClick={() => navigateToItem({ type: 'nav', data: n })}
                                             onMouseEnter={() => setActiveIdx(idx)}
                                         >
-                                            <span className={s.itemIcon}>{n.icon}</span>
+                                            <span className={s.itemIcon}>{n.icon && <n.icon size={16} />}</span>
                                             <div className={s.itemBody}>
                                                 <span className={s.itemTitle}>{n.title}</span>
                                                 <span className={s.snippet}>{n.sub}</span>
                                             </div>
-                                            <span className={s.badgeDefault}>Go →</span>
+                                            <span className={s.badgeDefault} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }}>Go <ArrowRight size={12} /></span>
                                         </button>
                                     );
                                 })}
@@ -88,7 +89,7 @@ export default function GlobalSearch({ onClose }) {
                                             onClick={() => navigateToItem({ type: 'task', data: t })}
                                             onMouseEnter={() => setActiveIdx(idx)}
                                         >
-                                            <span className={s.itemIcon}>📋</span>
+                                            <span className={s.itemIcon}><ClipboardList size={16} /></span>
                                             <div className={s.itemBody}>
                                                 <span className={s.itemTitle}>{t.title}</span>
                                                 {t.snippet && (
@@ -117,7 +118,7 @@ export default function GlobalSearch({ onClose }) {
                                             onClick={() => navigateToItem({ type: 'note', data: n })}
                                             onMouseEnter={() => setActiveIdx(idx)}
                                         >
-                                            <span className={s.itemIcon}>📝</span>
+                                            <span className={s.itemIcon}><FileText size={16} /></span>
                                             <div className={s.itemBody}>
                                                 <span className={s.itemTitle}>{n.title}</span>
                                                 {n.snippet && <span className={s.snippet}>{n.snippet}</span>}
@@ -144,7 +145,7 @@ export default function GlobalSearch({ onClose }) {
                                             onClick={() => navigateToItem({ type: 'event', data: e })}
                                             onMouseEnter={() => setActiveIdx(idx)}
                                         >
-                                            <span className={s.itemIcon}>📅</span>
+                                            <span className={s.itemIcon}><Calendar size={16} /></span>
                                             <div className={s.itemBody}>
                                                 <span className={s.itemTitle}>{e.title}</span>
                                                 <span className={s.snippet}>{dateStr}{e.description ? ` · ${e.description.slice(0, 60)}` : ''}</span>
@@ -168,7 +169,7 @@ export default function GlobalSearch({ onClose }) {
                                             onClick={() => navigateToItem({ type: 'leave', data: l })}
                                             onMouseEnter={() => setActiveIdx(idx)}
                                         >
-                                            <span className={s.itemIcon}>🏖️</span>
+                                            <span className={s.itemIcon}><Palmtree size={16} /></span>
                                             <div className={s.itemBody}>
                                                 <span className={s.itemTitle}>{l.leave_type.charAt(0).toUpperCase() + l.leave_type.slice(1)} leave — {l.date}</span>
                                                 <span className={s.snippet}>{l.duration} day{l.reason ? ` · ${l.reason.slice(0, 60)}` : ''}</span>
@@ -193,7 +194,7 @@ export default function GlobalSearch({ onClose }) {
                                             onClick={() => navigateToItem({ type: 'sprint', data: sp })}
                                             onMouseEnter={() => setActiveIdx(idx)}
                                         >
-                                            <span className={s.itemIcon}>🚀</span>
+                                            <span className={s.itemIcon}><Rocket size={16} /></span>
                                             <div className={s.itemBody}>
                                                 <span className={s.itemTitle}>{sp.name}</span>
                                                 <span className={s.snippet}>{sp.start_date} → {sp.end_date}{sp.goal ? ` · ${sp.goal.slice(0, 60)}` : ''}</span>
@@ -220,7 +221,7 @@ export default function GlobalSearch({ onClose }) {
                                         >
                                             {u.avatar
                                                 ? <img src={`/uploads/avatars/${u.avatar}`} alt="" className={s.avatar} />
-                                                : <span className={s.itemIcon}>👤</span>
+                                                : <span className={s.itemIcon}><User size={16} /></span>
                                             }
                                             <div className={s.itemBody}>
                                                 <span className={s.itemTitle}>{u.full_name}</span>
@@ -246,7 +247,7 @@ export default function GlobalSearch({ onClose }) {
                                             onClick={() => navigateToItem({ type: 'log', data: l })}
                                             onMouseEnter={() => setActiveIdx(idx)}
                                         >
-                                            <span className={s.itemIcon}>📜</span>
+                                            <span className={s.itemIcon}><ScrollText size={16} /></span>
                                             <div className={s.itemBody}>
                                                 <span className={s.itemTitle}>{l.action} — {l.entity_type}</span>
                                                 <span className={s.snippet}>

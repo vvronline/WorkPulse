@@ -1,6 +1,7 @@
 import React from 'react';
 import { HighlightedHtml, formatDueDate, isDueOverdue } from './utils.jsx';
 import { PRIORITIES } from './constants.js';
+import { User, CalendarDays, PenLine } from 'lucide-react';
 import s from './TaskCard.module.css';
 
 function getPriority(p) {
@@ -79,7 +80,7 @@ export default function TaskCard({ task, sprintMode, onOpenDetail, onOpenComment
               className={s['task-assignee']}
               title={`Assigned to ${task.assignee.full_name || task.assignee.username}`}
             >
-              👤 {task.assignee.full_name || task.assignee.username}
+              <User size={12} style={{marginRight:3,verticalAlign:'middle'}} />{task.assignee.full_name || task.assignee.username}
             </span>
           )}
           {task.creator && task.assigned_to && task.user_id !== task.assigned_to && (
@@ -87,12 +88,12 @@ export default function TaskCard({ task, sprintMode, onOpenDetail, onOpenComment
               className={s['task-creator']}
               title={`Created by ${task.creator.full_name || task.creator.username}`}
             >
-              ✍️ {task.creator.full_name || task.creator.username}
+              <PenLine size={12} style={{marginRight:3,verticalAlign:'middle'}} />{task.creator.full_name || task.creator.username}
             </span>
           )}
           {dueFmt && (
             <span className={`${s['task-due']} ${overdue ? s['overdue'] : ''}`}>
-              📅 {dueFmt}
+              <CalendarDays size={12} style={{marginRight:3,verticalAlign:'middle'}} />{dueFmt}
             </span>
           )}
         </div>

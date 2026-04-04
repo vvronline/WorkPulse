@@ -3,33 +3,38 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { globalSearch } from '../api';
 import { ROLE_LEVEL } from '../constants';
+import {
+    Home, Calendar, CheckSquare, FileText, MessageSquare, Palmtree,
+    BarChart3, FileEdit, Building2, ClipboardList, Wallet, Rocket,
+    Users, Settings, User, UserPlus, Download, ScrollText, RefreshCw, Building,
+} from 'lucide-react';
 
 // Static navigation index — defines all pages/features visible through the command palette.
 // minRole: the minimum role level required to see the item.
 const NAV_INDEX = [
-    { icon: '🏠', title: 'Dashboard',         sub: 'Home overview & time tracker',          path: '/',                           keywords: 'home overview clock tracker' },
-    { icon: '📅', title: 'Calendar',           sub: 'Events, reminders & schedules',         path: '/calendar',                   keywords: 'events reminders schedule' },
-    { icon: '✅', title: 'Tasks',              sub: 'My tasks & assignments',                path: '/tasks',                      keywords: 'todo assignments work tickets' },
-    { icon: '📝', title: 'Notes',              sub: 'Personal notebook',                     path: '/notes',                      keywords: 'notebook journal writing pages' },
-    { icon: '💬', title: 'Chat',               sub: 'Team messaging',                        path: '/chat',                       keywords: 'messages messaging team direct' },
-    { icon: '🏖️', title: 'Leaves',             sub: 'Leave requests & history',              path: '/leaves',                     keywords: 'vacation time off absence sick holiday request' },
-    { icon: '📊', title: 'Analytics',          sub: 'Work hours & productivity stats',       path: '/analytics',                  keywords: 'reports hours productivity stats charts' },
-    { icon: '✏️', title: 'Manual Entry',       sub: 'Log work hours manually',               path: '/manual-entry',               keywords: 'clock time log entry hours manual' },
-    { icon: '🏢', title: 'Organization',       sub: 'Org profile & settings',                path: '/organization',               keywords: 'company settings profile org details' },
-    { icon: '📋', title: 'Leave Policy',       sub: 'Leave balances & public holidays',      path: '/leave-policy',               keywords: 'balance quota leave entitlement policy' },
-    { icon: '💰', title: 'Leave Balances',     sub: 'My leave balances & quotas',            path: '/leave-policy?tab=balances',  keywords: 'quota remaining sick planned balance' },
-    { icon: '🎉', title: 'Holidays',           sub: 'Company public holidays',               path: '/leave-policy?tab=holidays',  keywords: 'public holiday national bank calendar' },
-    { icon: '👥', title: 'Manager Dashboard',  sub: 'Team approvals & reports',              path: '/manager',                    keywords: 'approve team overtime manual reports pending',  minRole: 'team_lead' },
-    { icon: '🔧', title: 'Admin Panel',        sub: 'User & org management',                 path: '/admin',                      keywords: 'admin manage settings panel',                   minRole: 'hr_admin' },
-    { icon: '👤', title: 'User Management',    sub: 'View & edit user accounts',             path: '/admin?tab=users',            keywords: 'users employees accounts manage',                minRole: 'hr_admin' },
-    { icon: '➕', title: 'Create User',        sub: 'Add a new user account',                path: '/admin?tab=create',           keywords: 'new user create add register',                   minRole: 'hr_admin' },
-    { icon: '📥', title: 'Import Users',       sub: 'Bulk import from CSV / JSON',           path: '/admin?tab=import',           keywords: 'bulk import csv json users batch',               minRole: 'hr_admin' },
-    { icon: '📜', title: 'Audit Logs',         sub: 'System activity history',               path: '/admin?tab=audit',            keywords: 'logs history activity events actions audit',     minRole: 'hr_admin' },
-    { icon: '🔄', title: 'Role Requests',      sub: 'Pending role change requests',          path: '/admin?tab=role-requests',    keywords: 'role promotion request pending',                 minRole: 'hr_admin' },
-    { icon: '💰', title: 'Payroll',            sub: 'Pay periods & payroll export',          path: '/admin?tab=payroll',          keywords: 'pay salary export hours period payroll',         minRole: 'hr_admin' },
-    { icon: '🏛️', title: 'Organizations',      sub: 'Manage all organizations / tenants',    path: '/admin?tab=organizations',    keywords: 'org tenant company organizations',               minRole: 'super_admin' },
-    { icon: '📋', title: 'Leave Policies',     sub: 'Configure leave quotas & accrual',      path: '/leave-policy?tab=policies',  keywords: 'policy accrual quota configure sick',           minRole: 'hr_admin' },
-    { icon: '👥', title: 'All Leave Balances', sub: "View all employees' leave balances",    path: '/leave-policy?tab=allBalances', keywords: 'all balances employees leave',                 minRole: 'hr_admin' },
+    { icon: Home, title: 'Dashboard', sub: 'Home overview & time tracker', path: '/', keywords: 'home overview clock tracker' },
+    { icon: Calendar, title: 'Calendar', sub: 'Events, reminders & schedules', path: '/calendar', keywords: 'events reminders schedule' },
+    { icon: CheckSquare, title: 'Tasks', sub: 'My tasks & assignments', path: '/tasks', keywords: 'todo assignments work tickets' },
+    { icon: FileText, title: 'Notes', sub: 'Personal notebook', path: '/notes', keywords: 'notebook journal writing pages' },
+    { icon: MessageSquare, title: 'Chat', sub: 'Team messaging', path: '/chat', keywords: 'messages messaging team direct' },
+    { icon: Palmtree, title: 'Leaves', sub: 'Leave requests & history', path: '/leaves', keywords: 'vacation time off absence sick holiday request' },
+    { icon: BarChart3, title: 'Analytics', sub: 'Work hours & productivity stats', path: '/analytics', keywords: 'reports hours productivity stats charts' },
+    { icon: FileEdit, title: 'Manual Entry', sub: 'Log work hours manually', path: '/manual-entry', keywords: 'clock time log entry hours manual' },
+    { icon: Building2, title: 'Organization', sub: 'Org profile & settings', path: '/organization', keywords: 'company settings profile org details' },
+    { icon: ClipboardList, title: 'Leave Policy', sub: 'Leave balances & public holidays', path: '/leave-policy', keywords: 'balance quota leave entitlement policy' },
+    { icon: Wallet, title: 'Leave Balances', sub: 'My leave balances & quotas', path: '/leave-policy?tab=balances', keywords: 'quota remaining sick planned balance' },
+    { icon: Palmtree, title: 'Holidays', sub: 'Company public holidays', path: '/leave-policy?tab=holidays', keywords: 'public holiday national bank calendar' },
+    { icon: Users, title: 'Manager Dashboard', sub: 'Team approvals & reports', path: '/manager', keywords: 'approve team overtime manual reports pending', minRole: 'team_lead' },
+    { icon: Settings, title: 'Admin Panel', sub: 'User & org management', path: '/admin', keywords: 'admin manage settings panel', minRole: 'hr_admin' },
+    { icon: User, title: 'User Management', sub: 'View & edit user accounts', path: '/admin?tab=users', keywords: 'users employees accounts manage', minRole: 'hr_admin' },
+    { icon: UserPlus, title: 'Create User', sub: 'Add a new user account', path: '/admin?tab=create', keywords: 'new user create add register', minRole: 'hr_admin' },
+    { icon: Download, title: 'Import Users', sub: 'Bulk import from CSV / JSON', path: '/admin?tab=import', keywords: 'bulk import csv json users batch', minRole: 'hr_admin' },
+    { icon: ScrollText, title: 'Audit Logs', sub: 'System activity history', path: '/admin?tab=audit', keywords: 'logs history activity events actions audit', minRole: 'hr_admin' },
+    { icon: RefreshCw, title: 'Role Requests', sub: 'Pending role change requests', path: '/admin?tab=role-requests', keywords: 'role promotion request pending', minRole: 'hr_admin' },
+    { icon: Wallet, title: 'Payroll', sub: 'Pay periods & payroll export', path: '/admin?tab=payroll', keywords: 'pay salary export hours period payroll', minRole: 'hr_admin' },
+    { icon: Building, title: 'Organizations', sub: 'Manage all organizations / tenants', path: '/admin?tab=organizations', keywords: 'org tenant company organizations', minRole: 'super_admin' },
+    { icon: ClipboardList, title: 'Leave Policies', sub: 'Configure leave quotas & accrual', path: '/leave-policy?tab=policies', keywords: 'policy accrual quota configure sick', minRole: 'hr_admin' },
+    { icon: Users, title: 'All Leave Balances', sub: "View all employees' leave balances", path: '/leave-policy?tab=allBalances', keywords: 'all balances employees leave', minRole: 'hr_admin' },
 ];
 
 /**
@@ -72,26 +77,26 @@ export function useGlobalSearch({ onClose }) {
     // Flat ordered list used for keyboard navigation (arrow keys + Enter)
     const flatItems = useMemo(() => [
         ...navResults.map(n => ({ type: 'nav', data: n })),
-        ...(results?.tasks   || []).map(t  => ({ type: 'task',   data: t  })),
-        ...(results?.notes   || []).map(n  => ({ type: 'note',   data: n  })),
-        ...(results?.events  || []).map(e  => ({ type: 'event',  data: e  })),
-        ...(results?.leaves  || []).map(l  => ({ type: 'leave',  data: l  })),
+        ...(results?.tasks || []).map(t => ({ type: 'task', data: t })),
+        ...(results?.notes || []).map(n => ({ type: 'note', data: n })),
+        ...(results?.events || []).map(e => ({ type: 'event', data: e })),
+        ...(results?.leaves || []).map(l => ({ type: 'leave', data: l })),
         ...(results?.sprints || []).map(sp => ({ type: 'sprint', data: sp })),
-        ...(results?.users   || []).map(u  => ({ type: 'user',   data: u  })),
-        ...(results?.logs    || []).map(l  => ({ type: 'log',    data: l  })),
+        ...(results?.users || []).map(u => ({ type: 'user', data: u })),
+        ...(results?.logs || []).map(l => ({ type: 'log', data: l })),
     ], [navResults, results]);
 
     // Pre-computed starting index for each result section — eliminates the mutable
     // flatIdx counter pattern in render, making section rendering purely declarative.
     const sectionOffsets = useMemo(() => ({
-        nav:    0,
-        task:   navResults.length,
-        note:   navResults.length + (results?.tasks?.length   || 0),
-        event:  navResults.length + (results?.tasks?.length   || 0) + (results?.notes?.length  || 0),
-        leave:  navResults.length + (results?.tasks?.length   || 0) + (results?.notes?.length  || 0) + (results?.events?.length  || 0),
-        sprint: navResults.length + (results?.tasks?.length   || 0) + (results?.notes?.length  || 0) + (results?.events?.length  || 0) + (results?.leaves?.length  || 0),
-        user:   navResults.length + (results?.tasks?.length   || 0) + (results?.notes?.length  || 0) + (results?.events?.length  || 0) + (results?.leaves?.length  || 0) + (results?.sprints?.length || 0),
-        log:    navResults.length + (results?.tasks?.length   || 0) + (results?.notes?.length  || 0) + (results?.events?.length  || 0) + (results?.leaves?.length  || 0) + (results?.sprints?.length || 0) + (results?.users?.length   || 0),
+        nav: 0,
+        task: navResults.length,
+        note: navResults.length + (results?.tasks?.length || 0),
+        event: navResults.length + (results?.tasks?.length || 0) + (results?.notes?.length || 0),
+        leave: navResults.length + (results?.tasks?.length || 0) + (results?.notes?.length || 0) + (results?.events?.length || 0),
+        sprint: navResults.length + (results?.tasks?.length || 0) + (results?.notes?.length || 0) + (results?.events?.length || 0) + (results?.leaves?.length || 0),
+        user: navResults.length + (results?.tasks?.length || 0) + (results?.notes?.length || 0) + (results?.events?.length || 0) + (results?.leaves?.length || 0) + (results?.sprints?.length || 0),
+        log: navResults.length + (results?.tasks?.length || 0) + (results?.notes?.length || 0) + (results?.events?.length || 0) + (results?.leaves?.length || 0) + (results?.sprints?.length || 0) + (results?.users?.length || 0),
     }), [navResults.length, results]);
 
     // Focus input on mount
@@ -140,14 +145,14 @@ export function useGlobalSearch({ onClose }) {
     const navigateToItem = useCallback(({ type, data }) => {
         onClose();
         switch (type) {
-            case 'nav':    navigate(data.path); break;
-            case 'task':   navigate(`/tasks?taskId=${data.id}`); break;
-            case 'note':   navigate(`/notes?pageId=${data.id}`); break;
-            case 'event':  navigate('/calendar'); break;
-            case 'leave':  navigate('/leaves'); break;
+            case 'nav': navigate(data.path); break;
+            case 'task': navigate(`/tasks?taskId=${data.id}`); break;
+            case 'note': navigate(`/notes?pageId=${data.id}`); break;
+            case 'event': navigate('/calendar'); break;
+            case 'leave': navigate('/leaves'); break;
             case 'sprint': navigate('/manager'); break;
-            case 'user':   navigate(`/admin?tab=users&userId=${data.id}`); break;
-            case 'log':    navigate('/admin?tab=audit'); break;
+            case 'user': navigate(`/admin?tab=users&userId=${data.id}`); break;
+            case 'log': navigate('/admin?tab=audit'); break;
         }
     }, [navigate, onClose]);
 

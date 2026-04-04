@@ -1,3 +1,4 @@
+import { Building2, House, Palmtree, Clock, Timer, Coffee, Hourglass, PartyPopper, Target, Zap } from 'lucide-react';
 import WeeklyChart from '../../components/WeeklyChart';
 import { formatTime, formatTimeSec } from '../../utils/time';
 import s from '../Dashboard.module.css';
@@ -30,11 +31,12 @@ export default function TimerCard({
             {/* Status + work-mode badges */}
             <div className={s['dash-badges-row']}>
                 <span className={`${s['status-badge']} ${s[isWeekend && state === 'logged_out' ? 'weekend' : state]}`}>
-                    {isWeekend && state === 'logged_out' ? '🏖 Weekend Holiday' : getStateLabel(state, workMode)}
+                    {isWeekend && state === 'logged_out' ? <><Palmtree size={13} /> Weekend Holiday</> : getStateLabel(state, workMode)}
                 </span>
                 {state !== 'logged_out' && (
-                    <span className={`${s['work-mode-badge']} ${s[workMode]}`}>
-                        {workMode === 'office' ? '🏢 Office' : '🏠 Remote'}
+                    <span className={`${s['work-mode-badge']} ${s[workMode]}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                        {workMode === 'office' ? <Building2 size={13} /> : <House size={13} />}
+                        {workMode === 'office' ? 'Office' : 'Remote'}
                     </span>
                 )}
             </div>
@@ -78,7 +80,7 @@ export default function TimerCard({
                             )}
                             {state === 'logged_out' && isWeekend && (
                                 <>
-                                    <div className={`${s['circular-time']} ${s['weekend-text']}`}>🌴</div>
+                                    <div className={`${s['circular-time']} ${s['weekend-text']}`}><Palmtree size={36} /></div>
                                     <div className={s['circular-label']}>Weekend</div>
                                 </>
                             )}
@@ -88,12 +90,12 @@ export default function TimerCard({
                     <div className={s['timer-under-badges']}>
                         {estimatedClockOut && (
                             <div className={s['eta-banner']}>
-                                <span className="page-icon">🕐</span> {Math.round(targetMinutes / 60)}hr by <strong>{estimatedClockOut}</strong>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}><Clock size={14} /> {Math.round(targetMinutes / 60)}hr by <strong>{estimatedClockOut}</strong></span>
                             </div>
                         )}
                         {overtimeMinutes > 0 && (
                             <div className={s['overtime-banner']}>
-                                <span className={s['overtime-icon']}>⚡</span>
+                                <span className={s['overtime-icon']}><Zap size={14} /></span>
                                 <span>Overtime: <strong>{formatTime(overtimeMinutes)}</strong></span>
                             </div>
                         )}
@@ -105,7 +107,7 @@ export default function TimerCard({
                     {state !== 'logged_out' && (
                         <div className={s['inline-stats']}>
                             <div className={s['inline-stat']}>
-                                <span className={`${s['inline-stat-icon']} ${s['work-icon']}`}>⏱</span>
+                                <span className={`${s['inline-stat-icon']} ${s['work-icon']}`}><Timer size={18} /></span>
                                 <div>
                                     <div className={s['inline-stat-label']}>Work</div>
                                     <div className={`${s['inline-stat-value']} ${s.floor}`}>{formatTime(floorMinutes)}</div>
@@ -113,7 +115,7 @@ export default function TimerCard({
                             </div>
                             <div className={s['inline-stat']}>
                                 <span className={`${s['inline-stat-icon']} ${s['break-icon']}`}>
-                                    ☕
+                                    <Coffee size={18} />
                                     {breakCount > 0 && <span className={s['break-count-badge']}>{breakCount}</span>}
                                 </span>
                                 <div>
@@ -122,7 +124,7 @@ export default function TimerCard({
                                 </div>
                             </div>
                             <div className={s['inline-stat']}>
-                                <span className={`${s['inline-stat-icon']} ${s['total-icon']}`}>⏳</span>
+                                <span className={`${s['inline-stat-icon']} ${s['total-icon']}`}><Hourglass size={18} /></span>
                                 <div>
                                     <div className={s['inline-stat-label']}>Total</div>
                                     <div className={`${s['inline-stat-value']} ${s.total}`}>{formatTime(Math.floor(liveFloorSec / 60) + Math.floor(liveBreakSec / 60))}</div>
@@ -138,7 +140,7 @@ export default function TimerCard({
 
             {completedTarget && (
                 <div className={s['go-home-banner']}>
-                    🎉 Daily target complete! Great work today.
+                    <PartyPopper size={18} style={{ flexShrink: 0 }} /> Daily target complete! Great work today.
                 </div>
             )}
 
@@ -148,7 +150,7 @@ export default function TimerCard({
             <div className={s['action-buttons']}>
                 {state === 'logged_out' && !isWeekend && dailyTargetMet && (
                     <div className={s['daily-target-met-state']}>
-                        <p className={s['daily-target-met-msg']}>🎯 Daily target complete! Need to keep working?</p>
+                        <p className={s['daily-target-met-msg']}><Target size={16} style={{ display: 'inline', verticalAlign: 'middle' }} /> Daily target complete! Need to keep working?</p>
                         <button className="btn btn-warning" onClick={onOvertimeRequest}>
                             ⚡ Apply for Overtime
                         </button>
@@ -161,13 +163,13 @@ export default function TimerCard({
                                 className={`${s['mode-btn']} ${workMode === 'office' ? s.active : ''}`}
                                 onClick={() => setWorkMode('office')}
                             >
-                                🏢 Office
+                                <Building2 size={15} /> Office
                             </button>
                             <button
                                 className={`${s['mode-btn']} ${workMode === 'remote' ? s.active : ''}`}
                                 onClick={() => setWorkMode('remote')}
                             >
-                                🏠 Remote
+                                <House size={15} /> Remote
                             </button>
                         </div>
                         <button className="btn btn-success" onClick={handleClockIn} disabled={!!actionLoading}>

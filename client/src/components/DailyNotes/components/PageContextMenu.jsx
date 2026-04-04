@@ -1,5 +1,6 @@
 /* PageContextMenu — ⋯ dropdown for a single page item in the sidebar */
 import React from 'react';
+import { Pin, Copy, Archive, ArchiveRestore, FolderOpen, Trash2, Pencil } from 'lucide-react';
 import { buildFolderTree } from '../notesUtils';
 import s from './PageContextMenu.module.css';
 
@@ -18,16 +19,16 @@ export default function PageContextMenu({
   return (
     <div className={s.ctxMenu} ref={pageMenuRef}>
       <button className={s.ctxItem} onClick={() => { onRename(page); setPageMenu(null); }}>
-        ✏️ Rename
+        <Pencil size={13} style={{marginRight:6}} />Rename
       </button>
       <button className={s.ctxItem} onClick={() => onTogglePin(page.id)}>
-        {page.pinned ? '📌 Unpin' : '📌 Pin to top'}
+        {page.pinned ? <><Pin size={13} style={{marginRight:6}} />Unpin</> : <><Pin size={13} style={{marginRight:6}} />Pin to top</>}
       </button>
       <button className={s.ctxItem} onClick={() => onDuplicate(page.id)}>
-        📋 Duplicate
+        <Copy size={13} style={{marginRight:6}} />Duplicate
       </button>
       <button className={s.ctxItem} onClick={() => onToggleArchive(page.id)}>
-        {page.archived ? '📤 Unarchive' : '📦 Archive'}
+        {page.archived ? <><ArchiveRestore size={13} style={{marginRight:6}} />Unarchive</> : <><Archive size={13} style={{marginRight:6}} />Archive</>}
       </button>
 
       {folders.length > 0 && (
@@ -46,7 +47,7 @@ export default function PageContextMenu({
               onClick={() => onMoveToFolder(page.id, f.id)}
               style={{ paddingLeft: `${1.5 + f.depth * 0.75}rem` }}
             >
-              📁 {f.name}
+              <FolderOpen size={12} style={{marginRight:5}} />{f.name}
             </button>
           ))}
         </div>
@@ -57,7 +58,7 @@ export default function PageContextMenu({
         className={`${s.ctxItem} ${s.ctxDanger}`}
         onClick={() => { setPageMenu(null); onDelete(); }}
       >
-        🗑️ Delete
+        <Trash2 size={13} style={{marginRight:6}} />Delete
       </button>
     </div>
   );

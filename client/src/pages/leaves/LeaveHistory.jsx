@@ -98,7 +98,7 @@ export default function LeaveHistory({ leaves, loading, onWithdraw }) {
                             return (
                                 <div key={leave.id} className={s.leaveItem}>
                                     <div className={s.leaveItemLeft}>
-                                        <div className={s.leaveTypeIcon} style={{ background: type.bg, color: type.color }}>{type.icon}</div>
+                                        <div className={s.leaveTypeIcon} style={{ background: type.bg, color: type.color, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{type.Icon && <type.Icon size={16} />}</div>
                                         <div className={s.leaveItemBody}>
                                             <div className={s.leaveItemRow}>
                                                 <span className={s.leaveTypeName}>{type.label}</span>

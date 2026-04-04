@@ -1,4 +1,5 @@
 import React from 'react';
+import { Video } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import s from './MeetingCard.module.css';
 
@@ -19,7 +20,7 @@ export default function MeetingCard({ msg }) {
     return (
         <div className={s.card}>
             <div className={s.cardHeader}>
-                <span className={s.icon}>📹</span>
+                <span className={s.icon}><Video size={18} /></span>
                 <div className={s.info}>
                     <div className={s.title}>{meetingTitle || 'Meeting'}</div>
                     {hostName && <div className={s.host}>Hosted by {hostName}</div>}

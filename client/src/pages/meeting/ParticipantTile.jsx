@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
+import { Hand, MonitorUp, MicOff, Volume2 } from 'lucide-react';
 import './MeetingRoom.css';
 
 /**
@@ -77,12 +78,12 @@ export default function ParticipantTile({ participant, isLocal, localStream, scr
 
             <div className="pt-overlay">
                 <div className="pt-name-row">
-                    {raisedHand && <span className="pt-hand">✋</span>}
-                    {isScreenSharing && <span className="pt-screen-icon" title="Screen sharing">🖥️</span>}
+                    {raisedHand && <span className="pt-hand"><Hand size={14} /></span>}
+                    {isScreenSharing && <span className="pt-screen-icon" title="Screen sharing"><MonitorUp size={14} /></span>}
                     <span className="pt-name">{name}{isLocal ? ' (You)' : ''}</span>
-                    {muted && <span className="pt-muted-icon">🔇</span>}
+                    {muted && <span className="pt-muted-icon"><MicOff size={12} /></span>}
                     {!muted && audioLevel > 0.1 && (
-                        <span className="pt-speaking-icon" title="Speaking">🔊</span>
+                        <span className="pt-speaking-icon" title="Speaking"><Volume2 size={12} /></span>
                     )}
                     {quality && (
                         <span className="pt-quality-dot" style={{ background: qualityColor[quality] || '#6366f1' }} title={`Connection: ${quality}`} />

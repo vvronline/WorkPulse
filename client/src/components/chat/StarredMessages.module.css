@@ -92,3 +92,18 @@
 .actionBtn:hover { background: var(--surface-hover); }
 .danger { color: #ef4444; border-color: rgba(239,68,68,.3); }
 .danger:hover { background: rgba(239,68,68,.1); }
+
+/* ─── Tablet ─── */
+@media (max-width: 1024px) {
+    .panel {
+        width: 320px;
+    }
+}
+
+/* ─── Mobile: full-width ─── */
+@media (max-width: 768px) {
+    .panel {
+        width: 100%;
+        left: 0;
+    }
+}

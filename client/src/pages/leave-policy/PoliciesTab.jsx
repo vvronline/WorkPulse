@@ -1,15 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Pencil, Trash2, ClipboardList } from 'lucide-react';
 import { getLeavePolicies, deleteLeavePolicyAPI } from '../../api';
 import PolicyForm from './PolicyForm';
 import s from '../LeavePolicy.module.css';
+import { LEAVE_TYPE_MAP } from '../../constants/leaves';
 
-const TYPE_META = {
-    sick:     { icon: '🤒', color: '#ef4444', bg: 'rgba(239,68,68,0.10)',     label: 'Sick Leave'    },
-    holiday:  { icon: '🏖️', color: '#f59e0b', bg: 'rgba(245,158,11,0.10)',   label: 'Holiday'       },
-    planned:  { icon: '📅', color: '#6366f1', bg: 'rgba(99,102,241,0.10)',    label: 'Planned Leave' },
-    personal: { icon: '👤', color: '#10b981', bg: 'rgba(16,185,129,0.10)',    label: 'Personal'      },
-    other:    { icon: '📝', color: '#64748b', bg: 'rgba(100,116,139,0.10)',   label: 'Other'         },
-};
+const TYPE_META = LEAVE_TYPE_MAP;
 
 const emptyPolicy = {
     leave_type: 'sick',
@@ -51,7 +47,7 @@ export default function PoliciesTab() {
 
             {policies.length === 0 ? (
                 <div className={s.emptyState}>
-                    <div className={s.emptyIcon}>📋</div>
+                    <ClipboardList size={32} strokeWidth={1.5} />
                     <p className={s.emptyTitle}>No policies defined yet</p>
                     <p className={s.emptyText}>Create leave policies to control how employees request time off</p>
                     <button className={s.primaryBtn} onClick={openAdd}>Create First Policy</button>
@@ -64,11 +60,11 @@ export default function PoliciesTab() {
                             <div key={p.id} className={s.policyCard} style={{ '--pc': meta.color, '--pb': meta.bg }}>
                                 <div className={s.policyCardTop}>
                                     <div className={s.policyTypeIcon} style={{ background: meta.bg, color: meta.color }}>
-                                        {meta.icon}
+                                        {meta.Icon && <meta.Icon size={18} />}
                                     </div>
                                     <div className={s.policyCardActions}>
-                                        <button className={s.iconBtn} onClick={() => openEdit(p)} title="Edit">✏️</button>
-                                        <button className={`${s.iconBtn} ${s.iconBtnDanger}`} onClick={() => handleDelete(p.id)} title="Delete">🗑</button>
+                                        <button className={s.iconBtn} onClick={() => openEdit(p)} title="Edit"><Pencil size={14} /></button>
+                                        <button className={`${s.iconBtn} ${s.iconBtnDanger}`} onClick={() => handleDelete(p.id)} title="Delete"><Trash2 size={14} /></button>
                                     </div>
                                 </div>
                                 <div className={s.policyTypeName}>{meta.label}</div>

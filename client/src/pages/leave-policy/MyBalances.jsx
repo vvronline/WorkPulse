@@ -1,14 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { getLeaveBalances } from '../../api';
+import { BarChart3 } from 'lucide-react';
 import s from '../LeavePolicy.module.css';
+import { LEAVE_TYPE_MAP } from '../../constants/leaves';
 
-const TYPE_META = {
-    sick:     { icon: '🤒', color: '#ef4444', bg: 'rgba(239,68,68,0.10)',    label: 'Sick Leave'    },
-    holiday:  { icon: '🏖️', color: '#f59e0b', bg: 'rgba(245,158,11,0.10)',   label: 'Holiday'       },
-    planned:  { icon: '📅', color: '#6366f1', bg: 'rgba(99,102,241,0.10)',   label: 'Planned Leave' },
-    personal: { icon: '👤', color: '#10b981', bg: 'rgba(16,185,129,0.10)',   label: 'Personal'      },
-    other:    { icon: '📝', color: '#64748b', bg: 'rgba(100,116,139,0.10)',  label: 'Other'         },
-};
+const TYPE_META = LEAVE_TYPE_MAP;
 
 export default function MyBalances() {
     const [balances, setBalances] = useState([]);
@@ -44,7 +40,7 @@ export default function MyBalances() {
                 <div className={s.loadingWrap}><div className="spinner" /></div>
             ) : balances.length === 0 ? (
                 <div className={s.emptyState}>
-                    <div className={s.emptyIcon}>📊</div>
+                    <BarChart3 size={32} strokeWidth={1.5} />
                     <p className={s.emptyTitle}>No balances found</p>
                     <p className={s.emptyText}>Contact HR to set up leave policies for your account</p>
                 </div>
@@ -61,7 +57,7 @@ export default function MyBalances() {
                             <div key={b.id || b.leave_type} className={s.balanceDetailCard} style={{ '--bc': meta.color, '--bb': meta.bg }}>
                                 <div className={s.balanceDetailTop}>
                                     <div className={s.balanceDetailIcon} style={{ background: meta.bg, color: meta.color }}>
-                                        {meta.icon}
+                                        {meta.Icon && <meta.Icon size={18} />}
                                     </div>
                                     <div>
                                         <div className={s.balanceDetailType}>{meta.label}</div>

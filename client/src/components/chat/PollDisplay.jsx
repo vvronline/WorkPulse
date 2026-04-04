@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { BarChart3 } from 'lucide-react';
 import s from './PollDisplay.module.css';
 import { getPoll, votePoll } from '../../api';
 
@@ -41,7 +42,7 @@ export default function PollDisplay({ pollId, userId, isMine }) {
 
     return (
         <div className={`${s.poll} ${isMine ? s.pollMine : ''}`}>
-            <div className={s.question}>📊 {poll.question}</div>
+            <div className={s.question}><BarChart3 size={14} style={{marginRight:6,verticalAlign:'middle'}} />{poll.question}</div>
             <div className={s.options}>
                 {options.map((opt, i) => {
                     const voters = votes[i] || [];

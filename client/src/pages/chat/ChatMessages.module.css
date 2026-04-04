@@ -152,3 +152,37 @@
     0% { background: rgba(99,102,241,.2); }
     100% { background: transparent; }
 }
+
+/* ─── Tablet ─── */
+@media (max-width: 1024px) {
+    .messagesContainer {
+        padding: 6px 0 10px;
+    }
+    .dateDivider {
+        padding: 10px 12px 4px;
+    }
+}
+
+/* ─── Mobile ─── */
+@media (max-width: 768px) {
+    .messagesContainer {
+        padding: 4px 0 8px;
+    }
+    .dateDivider {
+        padding: 8px 8px 4px;
+        gap: 8px;
+    }
+    .dateDivider span {
+        font-size: 0.65rem;
+    }
+    .typingRow {
+        padding: 2px 8px;
+    }
+    .bubble {
+        max-width: 90%;
+    }
+    .loadMore {
+        font-size: 0.7rem;
+        padding: 0.35rem 0.8rem;
+    }
+}

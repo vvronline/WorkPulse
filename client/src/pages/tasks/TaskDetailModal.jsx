@@ -7,7 +7,7 @@ import LabelSelector from './LabelSelector.jsx';
 import { PRIORITIES, COLUMNS } from './constants.js';
 import { HighlightedHtml, formatDueDate, isDueOverdue, getAvatarUrl } from './utils.jsx';
 import { useTaskCtx } from './TaskContext.jsx';
-import s from './TaskDetailModal.module.css';
+import { X, Package, CalendarDays, Save, MessageSquare, Clock, Trash2 } from 'lucide-react';
 
 export default function TaskDetailModal({
   detailTask,
@@ -102,9 +102,9 @@ export default function TaskDetailModal({
             >
               {colInfo.icon} {colInfo.label}
             </span>
-            {isBacklogItem && <span className={s['backlog-badge']}>📦 Backlog</span>}
+            {isBacklogItem && <span className={s['backlog-badge']}><Package size={12} style={{marginRight:3,verticalAlign:'middle'}} />Backlog</span>}
             {detailTask.date && (
-              <span className={s['detail-date-badge']}>📅 {detailTask.date}</span>
+              <span className={s['detail-date-badge']}><CalendarDays size={12} style={{marginRight:3,verticalAlign:'middle'}} />{detailTask.date}</span>
             )}
           </div>
           <div className={s['detail-header-actions']}>
@@ -114,20 +114,20 @@ export default function TaskDetailModal({
                   className="btn btn-secondary btn-sm"
                   onClick={onStartEdit}
                 >
-                  ✏️ Edit
+                  <Save size={13} style={{marginRight:4,verticalAlign:'middle'}} />Edit
                 </button>
                 {currentUser?.id === detailTask?.user_id && (
                   <button
                     className="btn btn-danger btn-sm"
                     onClick={() => onDelete(detailTask)}
                   >
-                    🗑 Delete
+                    <Trash2 size={13} style={{marginRight:4,verticalAlign:'middle'}} />Delete
                   </button>
                 )}
               </>
             )}
             <button className={s['close-form-btn']} onClick={onClose}>
-              ✕
+              <X size={16} />
             </button>
           </div>
         </div>
@@ -220,18 +220,18 @@ export default function TaskDetailModal({
                     className="btn btn-secondary btn-sm"
                     onClick={() => onSchedule(detailTask.id, detailTask.title, onClose, editDueDate)}
                   >
-                    📅 Schedule to Day
+                    <CalendarDays size={13} style={{marginRight:4,verticalAlign:'middle'}} />Schedule to Day
                   </button>
                 ) : (
                   <button
                     className="btn btn-secondary btn-sm"
                     onClick={() => onUnschedule(detailTask.id, detailTask.title, onClose)}
                   >
-                    📦 Move to Backlog
+                    <Package size={13} style={{marginRight:4,verticalAlign:'middle'}} />Move to Backlog
                   </button>
                 )}
                 <button className="btn btn-primary btn-sm" onClick={handleSaveEdit}>
-                  💾 Save Changes
+                  <Save size={13} style={{marginRight:4,verticalAlign:'middle'}} />Save Changes
                 </button>
                 <button className="btn btn-secondary btn-sm" onClick={onCancelEdit}>
                   Cancel
@@ -322,7 +322,7 @@ export default function TaskDetailModal({
                     <span
                       className={`${s['detail-meta-value']} ${overdue ? s['overdue'] : ''}`}
                     >
-                      📅 {dueFmt}
+                      <CalendarDays size={12} style={{marginRight:3,verticalAlign:'middle'}} />{dueFmt}
                     </span>
                   </div>
                 )}
@@ -346,7 +346,7 @@ export default function TaskDetailModal({
                   <div className={s['detail-meta-item']}>
                     <span className={s['detail-meta-label']}>Sprint</span>
                     <span className={s['detail-meta-value']}>
-                      🏃{' '}
+                      <span style={{fontWeight:600,fontSize:'0.85em'}}>Sprint</span>{' '}
                       {availableSprints.find((sp) => sp.id === detailTask.sprint_id)?.name ||
                         `Sprint #${detailTask.sprint_id}`}
                     </span>
@@ -381,14 +381,14 @@ export default function TaskDetailModal({
                 className={`${s['detail-tab-btn']} ${detailTab === 'comments' ? s.active : ''}`}
                 onClick={() => setDetailTab('comments')}
               >
-                💬 Comments{' '}
+                <MessageSquare size={13} style={{marginRight:4,verticalAlign:'middle'}} />Comments{' '}
                 <span className={s['detail-tab-count']}>{detailComments.length}</span>
               </button>
               <button
                 className={`${s['detail-tab-btn']} ${detailTab === 'history' ? s.active : ''}`}
                 onClick={() => setDetailTab('history')}
               >
-                📜 History{' '}
+                <Clock size={13} style={{marginRight:4,verticalAlign:'middle'}} />History{' '}
                 <span className={s['detail-tab-count']}>{detailHistory.length}</span>
               </button>
             </div>
@@ -412,13 +412,13 @@ export default function TaskDetailModal({
                 )}
                 {detailHistory.map((h) => {
                   const actionIcons = {
-                    created: '✨',
-                    status_change: '🔄',
-                    updated: '✏️',
-                    scheduled: '📅',
-                    unscheduled: '📦',
-                    comment_added: '💬',
-                    deleted: '🗑️',
+                    created: '+',
+                    status_change: '\u21d4',
+                    updated: '\u270e',
+                    scheduled: '\u25b8',
+                    unscheduled: '\u25a1',
+                    comment_added: '\u2022',
+                    deleted: '\u00d7',
                   };
                   const fieldLabels = {
                     status: 'status',
@@ -476,7 +476,7 @@ export default function TaskDetailModal({
                   return (
                     <div key={h.id} className={s['history-item']}>
                       <span className={s['history-icon']}>
-                        {actionIcons[h.action] || '📝'}
+                        {actionIcons[h.action] || '✎'}
                       </span>
                       <div className={s['history-content']}>
                         <span className={s['history-actor']}>

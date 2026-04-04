@@ -1,4 +1,6 @@
 import React, { useEffect, useRef } from 'react';
+import ReactDOM from 'react-dom';
+import { X } from 'lucide-react';
 import s from './ConfirmDialog.module.css';
 
 export default function ConfirmDialog({
@@ -57,12 +59,12 @@ export default function ConfirmDialog({
 
     if (!isOpen) return null;
 
-    return (
+    return ReactDOM.createPortal(
         <div className={s.overlay} onClick={(e) => e.target === e.currentTarget && onCancel()}>
             <div className={s.modal} ref={modalRef} role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title">
                 <div className={s.header}>
                     <h3 className={s.title} id="confirm-dialog-title">{title}</h3>
-                    <button className={s.closeBtn} onClick={onCancel}>✕</button>
+                    <button className={s.closeBtn} onClick={onCancel}><X size={16} /></button>
                 </div>
                 <div className={s.body}>
                     <p>{message}</p>
@@ -77,6 +79,7 @@ export default function ConfirmDialog({
                     </button>
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 }

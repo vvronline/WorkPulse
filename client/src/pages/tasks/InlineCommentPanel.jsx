@@ -3,6 +3,7 @@ import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { COMMENT_QUILL_MODULES } from './constants.js';
 import { HighlightedHtml, stripHtml, getAvatarUrl } from './utils.jsx';
+import { MessageSquare, X } from 'lucide-react';
 import s from './InlineCommentPanel.module.css';
 
 export default function InlineCommentPanel({
@@ -27,9 +28,9 @@ export default function InlineCommentPanel({
     <div className={s['comment-overlay']} onClick={onClose}>
       <div className={s['comment-panel']} onClick={(e) => e.stopPropagation()}>
         <div className={s['comment-panel-header']}>
-          <h3>💬 Comments — {task.title}</h3>
+          <h3><MessageSquare size={16} style={{marginRight:6,verticalAlign:'middle'}} />Comments — {task.title}</h3>
           <button className={s['close-form-btn']} onClick={onClose}>
-            ✕
+            <X size={16} />
           </button>
         </div>
 

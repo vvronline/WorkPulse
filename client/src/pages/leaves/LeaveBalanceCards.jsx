@@ -15,7 +15,7 @@ export default function LeaveBalanceCards({ balances }) {
                 const pct = total > 0 ? Math.min(Math.round((used / total) * 100), 100) : 0;
                 return (
                     <div key={`${b.leave_type}-${b.year}`} className={s.balanceCard} style={{ '--lc': type.color, '--lb': type.bg }}>
-                        <div className={s.balanceIcon}>{type.icon}</div>
+                        <div className={s.balanceIcon} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{type.Icon && <type.Icon size={20} />}</div>
                         <div className={s.balanceInfo}>
                             <div className={s.balanceType}>{type.label}</div>
                             <div className={s.balanceNumbers}>

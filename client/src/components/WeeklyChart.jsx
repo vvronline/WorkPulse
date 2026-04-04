@@ -1,4 +1,5 @@
 import React, { memo } from 'react';
+import { BarChart3 } from 'lucide-react';
 import s from './WeeklyChart.module.css';
 
 const WeeklyChart = memo(function WeeklyChart({ weeklyData }) {
@@ -6,7 +7,7 @@ const WeeklyChart = memo(function WeeklyChart({ weeklyData }) {
 
   return (
     <div className={s['weekly-chart-card']}>
-      <span className={`${s['inline-stat-icon']} ${s['chart-icon']}`}>📊</span>
+      <span className={`${s['inline-stat-icon']} ${s['chart-icon']}`}><BarChart3 size={18} /></span>
       <div className={s['chart-info-col']}>
         <div className={s['inline-stat-label']}>This Week</div>
         <div className={s['weekly-chart']}>

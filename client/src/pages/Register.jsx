@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { register as registerApi, getRegistrationMode } from '../api';
+import { Lock, Briefcase } from 'lucide-react';
 import PasswordInput from '../components/PasswordInput';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import s from './Auth.module.css';
@@ -47,7 +48,7 @@ export default function Register() {
     return (
       <div className={s['auth-container']}>
         <div className={s['auth-card']}>
-          <div className={s['auth-icon']}>🔒</div>
+          <div className={s['auth-icon']}><Lock size={28} strokeWidth={1.5} /></div>
           <h2>Registration Closed</h2>
           <p>New registrations are currently not being accepted. Contact your administrator for access.</p>
           <div className={s['auth-switch']}>
@@ -61,7 +62,7 @@ export default function Register() {
   return (
     <div className={s['auth-container']}>
       <div className={s['auth-card']}>
-        <div className={s['auth-icon']}>💼</div>
+        <div className={s['auth-icon']}><Briefcase size={28} strokeWidth={1.5} /></div>
         <h2>Create Account</h2>
         <p>Register to get started with WorkPulse</p>
         {error && <div className="error-msg">{error}</div>}

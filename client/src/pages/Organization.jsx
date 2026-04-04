@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Settings, Building2, Users, GitBranch, Tag } from 'lucide-react';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import { useAuth } from '../AuthContext';
 import { createOrg, getCurrentOrg } from '../api';
@@ -62,12 +63,12 @@ export default function Organization() {
             )}
 
             <div className={s.tabs}>
-                {isAdmin && <button className={`${s.tab} ${tab === 'overview' ? s.active : ''}`} onClick={() => setTab('overview')}><span>⚙️</span> Settings</button>}
-                <button className={`${s.tab} ${tab === 'departments' ? s.active : ''}`} onClick={() => setTab('departments')}><span>🏢</span> {isAdmin ? 'Departments' : 'My Department'}</button>
-                <button className={`${s.tab} ${tab === 'teams' ? s.active : ''}`} onClick={() => setTab('teams')}><span>👥</span> {isAdmin ? 'Teams' : 'My Team'}</button>
-                <button className={`${s.tab} ${tab === 'chart' ? s.active : ''}`} onClick={() => setTab('chart')}><span>📈</span> Org Chart</button>
+                {isAdmin && <button className={`${s.tab} ${tab === 'overview' ? s.active : ''}`} onClick={() => setTab('overview')}><span><Settings size={14} /></span> Settings</button>}
+                <button className={`${s.tab} ${tab === 'departments' ? s.active : ''}`} onClick={() => setTab('departments')}><span><Building2 size={14} /></span> {isAdmin ? 'Departments' : 'My Department'}</button>
+                <button className={`${s.tab} ${tab === 'teams' ? s.active : ''}`} onClick={() => setTab('teams')}><span><Users size={14} /></span> {isAdmin ? 'Teams' : 'My Team'}</button>
+                <button className={`${s.tab} ${tab === 'chart' ? s.active : ''}`} onClick={() => setTab('chart')}><span><GitBranch size={14} /></span> Org Chart</button>
                 {isAdmin && (
-                    <button className={`${s.tab} ${tab === 'labels' ? s.active : ''}`} onClick={() => setTab('labels')}><span>🏷️</span> Task Labels</button>
+                    <button className={`${s.tab} ${tab === 'labels' ? s.active : ''}`} onClick={() => setTab('labels')}><span><Tag size={14} /></span> Task Labels</button>
                 )}
             </div>
 

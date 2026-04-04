@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
+import { Plus, X, User, CalendarDays, MessageSquare, Package } from 'lucide-react';
 import SprintSelector from '../../components/SprintSelector';
 import LabelSelector from './LabelSelector.jsx';
 import { PRIORITIES, COLUMNS } from './constants.js';
@@ -121,13 +122,13 @@ export default function BacklogTab({
       {backlogFormOpen && (
         <div className={s['tasks-form-card']}>
           <div className={s['form-card-header']}>
-            <h3>➕ New Backlog Ticket</h3>
+            <h3><Plus size={16} style={{marginRight:5,verticalAlign:'middle'}} />New Backlog Ticket</h3>
             <button
               className={s['close-form-btn']}
               onClick={() => setBacklogFormOpen(false)}
               title="Close"
             >
-              ✕
+              <X size={14} />
             </button>
           </div>
           <form onSubmit={onHandleAddBacklog} className={s['add-form']}>
@@ -151,7 +152,7 @@ export default function BacklogTab({
             </div>
             <div className={s['form-extras']}>
               <div className={s['form-extra-group']}>
-                <label>👤 Assign to</label>
+                <label><User size={13} style={{marginRight:4,verticalAlign:'middle'}} />Assign to</label>
                 <select
                   value={backlogAssignedTo}
                   onChange={(e) => setBacklogAssignedTo(e.target.value)}
@@ -165,7 +166,7 @@ export default function BacklogTab({
                 </select>
               </div>
               <div className={s['form-extra-group']}>
-                <label>📅 Due date</label>
+                <label><CalendarDays size={13} style={{marginRight:4,verticalAlign:'middle'}} />Due date</label>
                 <input
                   type="date"
                   value={backlogDueDate}
@@ -224,7 +225,7 @@ export default function BacklogTab({
         <div className={s['backlog-list']}>
           {backlogTasks.length === 0 && (
             <div className={s['tasks-empty']}>
-              <div className={s['tasks-empty-icon']}>📦</div>
+              <div className={s['tasks-empty-icon']}><Package size={36} strokeWidth={1.5} /></div>
               <p>Backlog is empty</p>
               <span>
                 Create a ticket to organize work that doesn't have a scheduled date yet.
@@ -313,12 +314,12 @@ export default function BacklogTab({
                       <span
                         className={`${s['backlog-meta-chip']} ${overdue ? s['overdue'] : ''}`}
                       >
-                        📅 {dueFmt}
+                        <CalendarDays size={11} style={{marginRight:3,verticalAlign:'middle'}} />{dueFmt}
                       </span>
                     )}
                     {task.comment_count > 0 && (
                       <span className={s['backlog-meta-chip']}>
-                        💬 {task.comment_count}
+                        <MessageSquare size={11} style={{marginRight:3,verticalAlign:'middle'}} />{task.comment_count}
                       </span>
                     )}
                     <span className={s['backlog-meta-time']}>
@@ -343,19 +344,18 @@ export default function BacklogTab({
                             className="btn btn-secondary btn-sm"
                             onClick={() => setScheduleTaskId(null)}
                           >
-                            ✕
+                            <X size={14} />
                           </button>
                         </div>
                       ) : (
                         <button
-                          className={s['backlog-action-btn']}
                           onClick={() => {
                             setScheduleTaskId(task.id);
                             setScheduleDate(getLocalToday());
                           }}
                           title="Schedule to a day"
                         >
-                          📅 Schedule
+                          <CalendarDays size={13} style={{marginRight:4,verticalAlign:'middle'}} />Schedule
                         </button>
                       )}
                     </div>

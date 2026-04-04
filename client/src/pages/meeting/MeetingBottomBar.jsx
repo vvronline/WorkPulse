@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { MicOff, Mic, CameraOff, Camera, MonitorUp, Hand, MessageSquare, Users, X } from 'lucide-react';
 import './MeetingRoom.css';
 
 /**
@@ -18,7 +19,7 @@ export default function MeetingBottomBar({
         <>
             <div className="mb-bar">
                 <div className="mb-left">
-                    <span className="mb-participant-count">👥 {participantCount}</span>
+                    <span className="mb-participant-count"><Users size={14} style={{marginRight:4,verticalAlign:'middle'}} />{participantCount}</span>
                 </div>
 
                 <div className="mb-center">
@@ -27,7 +28,7 @@ export default function MeetingBottomBar({
                         onClick={onToggleMute}
                         title={muted ? 'Unmute' : 'Mute'}
                     >
-                        {muted ? '🔇' : '🎙️'}
+                        {muted ? <MicOff size={20} /> : <Mic size={20} />}
                         <span className="mb-label">{muted ? 'Unmute' : 'Mute'}</span>
                     </button>
 
@@ -36,7 +37,7 @@ export default function MeetingBottomBar({
                         onClick={onToggleVideo}
                         title={videoOff ? 'Start video' : 'Stop video'}
                     >
-                        {videoOff ? '📷' : '🎥'}
+                        {videoOff ? <CameraOff size={20} /> : <Camera size={20} />}
                         <span className="mb-label">Video</span>
                     </button>
 
@@ -46,7 +47,7 @@ export default function MeetingBottomBar({
                         onClick={onScreenShare}
                         title={screenSharing ? 'Stop sharing' : 'Share screen'}
                     >
-                        🖥️
+                        <MonitorUp size={20} />
                         <span className="mb-label">{screenSharing ? 'Stop' : 'Share'}</span>
                     </button>
 
@@ -55,7 +56,7 @@ export default function MeetingBottomBar({
                         onClick={onRaiseHand}
                         title={raisedHand ? 'Lower hand' : 'Raise hand'}
                     >
-                        ✋
+                        <Hand size={20} />
                         <span className="mb-label">Hand</span>
                     </button>
 
@@ -64,7 +65,7 @@ export default function MeetingBottomBar({
                         onClick={onToggleChat}
                         title="Meeting chat"
                     >
-                        💬
+                        <MessageSquare size={20} />
                         <span className="mb-label">Chat</span>
                     </button>
 
@@ -73,7 +74,7 @@ export default function MeetingBottomBar({
                         onClick={onToggleParticipants}
                         title="Participants"
                     >
-                        👥
+                        <Users size={20} />
                         <span className="mb-label">People</span>
                     </button>
 
@@ -106,32 +107,32 @@ export default function MeetingBottomBar({
                     <div className="mb-drawer" onClick={e => e.stopPropagation()}>
                         <div className="mb-drawer-header">
                             <span>More Options</span>
-                            <button className="mb-drawer-close" onClick={() => setMoreOpen(false)}>✕</button>
+                            <button className="mb-drawer-close" onClick={() => setMoreOpen(false)}><X size={16} /></button>
                         </div>
                         <div className="mb-drawer-grid">
                             <button
                                 className={`mb-drawer-btn ${screenSharing ? 'mb-btn-active' : ''}`}
                                 onClick={() => { onScreenShare(); setMoreOpen(false); }}
                             >
-                                🖥️ {screenSharing ? 'Stop Share' : 'Share Screen'}
+                                <MonitorUp size={16} style={{marginRight:6,verticalAlign:'middle'}} />{screenSharing ? 'Stop Share' : 'Share Screen'}
                             </button>
                             <button
                                 className={`mb-drawer-btn ${raisedHand ? 'mb-btn-active' : ''}`}
                                 onClick={() => { onRaiseHand(); setMoreOpen(false); }}
                             >
-                                ✋ {raisedHand ? 'Lower Hand' : 'Raise Hand'}
+                                <Hand size={16} style={{marginRight:6,verticalAlign:'middle'}} />{raisedHand ? 'Lower Hand' : 'Raise Hand'}
                             </button>
                             <button
                                 className={`mb-drawer-btn ${activePanel === 'chat' ? 'mb-btn-active' : ''}`}
                                 onClick={() => { onToggleChat(); setMoreOpen(false); }}
                             >
-                                💬 Chat
+                                <MessageSquare size={16} style={{marginRight:6,verticalAlign:'middle'}} />Chat
                             </button>
                             <button
                                 className={`mb-drawer-btn ${activePanel === 'participants' ? 'mb-btn-active' : ''}`}
                                 onClick={() => { onToggleParticipants(); setMoreOpen(false); }}
                             >
-                                👥 Participants
+                                <Users size={16} style={{marginRight:6,verticalAlign:'middle'}} />Participants
                             </button>
                         </div>
                     </div>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { Building2, Users, Search } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { getOrgChart } from '../../api';
 import { ROLE_LABELS } from '../../pages/admin/constants';
@@ -90,7 +91,7 @@ function DeptCard({ dept, teams, members, highlight }) {
     return (
         <div className={oc['card-panel']}>
             <div className={oc['dept-header']} style={{ cursor: 'pointer' }} onClick={() => setOpen(o => !o)}>
-                <span className={oc['dept-icon']}>🏢</span>
+                <span className={oc['dept-icon']}><Building2 size={18} /></span>
                 <div style={{ flex: 1 }}>
                     <div className={oc['dept-name']}>
                         {open ? '▾' : '▸'} {dept.name}
@@ -106,7 +107,7 @@ function DeptCard({ dept, teams, members, highlight }) {
                         return (
                             <div key={team.id} className={oc['team-card']}>
                                 <div className={oc['team-title']}>
-                                    👥 {team.name}
+                                    <Users size={13} style={{marginRight:5,verticalAlign:'middle'}} />{team.name}
                                     <span className={oc['headcount-badge']}>{tMembers.length}</span>
                                     {team.lead_name && <span className={oc['team-lead-label']}> · Lead: {team.lead_name}</span>}
                                 </div>
@@ -188,14 +189,14 @@ export default function OrgChartView({ orgId }) {
                     <button
                         className={`${oc['view-btn']} ${viewMode === 'dept' ? oc['view-btn-active'] : ''}`}
                         onClick={() => setViewMode('dept')}
-                    >🏢 By Department</button>
+                    ><Building2 size={14} style={{marginRight:5,verticalAlign:'middle'}} />By Department</button>
                     <button
                         className={`${oc['view-btn']} ${viewMode === 'tree' ? oc['view-btn-active'] : ''}`}
                         onClick={() => setViewMode('tree')}
-                    >👥 Reporting Lines</button>
+                    ><Users size={14} style={{marginRight:5,verticalAlign:'middle'}} />Reporting Lines</button>
                 </div>
                 <div className={oc['search-box']}>
-                    <span className={oc['search-icon']}>🔍</span>
+                    <span className={oc['search-icon']}><Search size={14} /></span>
                     <input
                         type="text"
                         placeholder="Filter by name, role, or manager…"

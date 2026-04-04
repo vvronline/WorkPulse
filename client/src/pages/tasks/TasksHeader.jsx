@@ -3,6 +3,7 @@ import { PRIORITIES, COLUMNS } from './constants.js';
 import { formatDate } from './utils.jsx';
 import { getLocalToday } from '../../api';
 import { useTaskCtx } from './TaskContext.jsx';
+import { CalendarDays, Package, Search } from 'lucide-react';
 import s from './TasksHeader.module.css';
 
 export default function TasksHeader({
@@ -80,7 +81,7 @@ export default function TasksHeader({
           ) : (
             <>
               <h2>
-                <span className="page-icon">📦</span> Backlog
+                <span className="page-icon"><Package size={18} style={{verticalAlign:'middle'}} /></span> Backlog
               </h2>
               <p>Unscheduled items waiting to be planned</p>
             </>
@@ -101,14 +102,14 @@ export default function TasksHeader({
                   }
                 }}
               >
-                🏃 Sprint
+                Sprint
               </button>
             )}
             <button
               className={`${s['tab-btn']} ${activeTab === 'backlog' ? s['tab-active'] : ''}`}
               onClick={() => setActiveTab('backlog')}
             >
-              📦 Backlog{' '}
+              <Package size={14} style={{verticalAlign:'middle',marginRight:4}} />Backlog{' '}
               {backlogTasks.length > 0 && (
                 <span className={s['tab-badge']}>{backlogTasks.length}</span>
               )}
@@ -134,7 +135,7 @@ export default function TasksHeader({
             className={`btn btn-secondary ${s['filter-toggle-btn']} ${filterCount > 0 ? s['has-filters'] : ''}`}
             onClick={() => setFiltersOpen((o) => !o)}
           >
-            🔍 {filterCount > 0 ? `Filters (${filterCount})` : 'Filters'}
+            <Search size={14} style={{verticalAlign:'middle',marginRight:4}} />{filterCount > 0 ? `Filters (${filterCount})` : 'Filters'}
           </button>
 
           {activeTab === 'backlog' && (
@@ -154,7 +155,7 @@ export default function TasksHeader({
                 if (!backlogTasks.length) fetchBacklog();
               }}
             >
-              📦 Import from Backlog
+              <Package size={14} style={{verticalAlign:'middle',marginRight:4}} />Import from Backlog
             </button>
           )}
         </div>
@@ -163,7 +164,7 @@ export default function TasksHeader({
       {/* Global Search */}
       <div className={s['global-search-wrapper']} ref={globalSearchRef}>
         <div className={s['global-search-input-row']}>
-          <span className={s['global-search-icon']}>🔍</span>
+          <span className={s['global-search-icon']}><Search size={15} /></span>
           <input
             type="text"
             value={globalSearch}
@@ -230,9 +231,9 @@ export default function TasksHeader({
                         {pri.icon} {pri.label}
                       </span>
                       {task.date ? (
-                        <span className={s['global-search-date']}>📅 {task.date}</span>
+                        <span className={s['global-search-date']}><CalendarDays size={11} style={{marginRight:3,verticalAlign:'middle'}} />{task.date}</span>
                       ) : (
-                        <span className={s['global-search-date']}>📦 Backlog</span>
+                        <span className={s['global-search-date']}><Package size={11} style={{marginRight:3,verticalAlign:'middle'}} />Backlog</span>
                       )}
                       {task.labels &&
                         task.labels.map((l) => (

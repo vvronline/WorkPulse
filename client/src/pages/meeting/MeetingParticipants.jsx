@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { Hand, MicOff } from 'lucide-react';
 import { searchChatUsers } from '../../api';
 import './MeetingRoom.css';
 
@@ -74,11 +75,11 @@ export default function MeetingParticipants({ participants, localUserId, isOrgan
                             {p.name || 'Participant'}
                             {p.userId === localUserId && <span className="mp-you"> (you)</span>}
                         </span>
-                        {p.raisedHand && <span className="mp-hand">✋</span>}
-                        {p.muted && <span className="mp-muted">🔇</span>}
+                        {p.raisedHand && <span className="mp-hand"><Hand size={14} /></span>}
+                        {p.muted && <span className="mp-muted"><MicOff size={13} /></span>}
                         {isOrganizer && p.userId !== localUserId && (
                             <button className="mp-mute-btn" onClick={() => onMute(p.userId)} title="Mute participant">
-                                🔇
+                                <MicOff size={13} />
                             </button>
                         )}
                     </div>

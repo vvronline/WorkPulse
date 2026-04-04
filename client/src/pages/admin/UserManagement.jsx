@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Pencil, Ban, CheckCircle2, KeyRound, Trash2, AlertTriangle } from 'lucide-react';
 import { useAutoDismiss } from '../../hooks/useAutoDismiss';
 import {
     getAdminUsers, updateUserRole, updateUserAssignment, toggleUserActive, deleteAdminUser,
@@ -224,18 +225,18 @@ export default function UserManagement({ userRole }) {
                             <td>
                                 <div className={s.actions}>
                                     <button className={`${s.btnSmall} ${s.btnAccent}`} onClick={() => setEditingUser(u)} title="Assign to organization/department/team">
-                                        ✏️ Assign
+                                        <Pencil size={13} style={{marginRight:4,verticalAlign:'middle'}} />Assign
                                     </button>
                                     <button className={`${s.btnSmall} ${u.is_active ? s.btnDanger : s.btnSuccess}`} onClick={() => handleToggleActive(u.id)} title={u.is_active ? 'Deactivate user' : 'Activate user'}>
-                                        {u.is_active ? '🚫 Deactivate' : '✅ Activate'}
+                                        {u.is_active ? <><Ban size={13} style={{marginRight:4,verticalAlign:'middle'}} />Deactivate</> : <><CheckCircle2 size={13} style={{marginRight:4,verticalAlign:'middle'}} />Activate</>}
                                     </button>
                                     <button className={`${s.btnSmall} ${s.btnWarning}`} onClick={() => setResetPwUser(u)} title="Reset user password">
-                                        🔑 Reset
+                                        <KeyRound size={13} style={{marginRight:4,verticalAlign:'middle'}} />Reset
                                     </button>
                                     {(userRole === 'super_admin' || userRole === 'platform_admin') &&
                                         (u.role !== 'super_admin' || userRole === 'platform_admin') && (
                                         <button className={`${s.btnSmall} ${s.btnDanger}`} onClick={() => setDeletingUser(u)} title="Permanently delete user">
-                                            🗑️ Delete
+                                            <Trash2 size={13} style={{marginRight:4,verticalAlign:'middle'}} />Delete
                                         </button>
                                     )}
                                 </div>
@@ -259,7 +260,7 @@ export default function UserManagement({ userRole }) {
                     <div className={sf.modal} onClick={e => e.stopPropagation()}>
                         <h2>Delete User</h2>
                         <p>Are you sure you want to permanently delete <strong>{deletingUser.full_name}</strong> (@{deletingUser.username})?</p>
-                        <p className={su['delete-warning']}>⚠️ This will remove all their time entries, leaves, planner items, and other data. This action cannot be undone.</p>
+                        <p className={su['delete-warning']}><AlertTriangle size={14} style={{marginRight:5,verticalAlign:'middle'}} />This will remove all their time entries, leaves, planner items, and other data. This action cannot be undone.</p>
                         <div className={sf.formActions}>
                             <button className={sf.btnCancel} onClick={() => setDeletingUser(null)}>Cancel</button>
                             <button className={`${s.btnPrimary} ${s.btnDanger}`} onClick={async () => {

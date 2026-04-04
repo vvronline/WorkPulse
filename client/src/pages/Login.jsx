@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { login as loginApi } from '../api';
+import { ShieldCheck, ArrowRight } from 'lucide-react';
 import PasswordInput from '../components/PasswordInput';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import s from './Auth.module.css';
@@ -31,7 +32,7 @@ export default function Login() {
     <div className={s['auth-container']}>
       <div className={s['auth-card']}>
 
-        <div className={s['auth-icon']}>🔐</div>
+        <div className={s['auth-icon']}><ShieldCheck size={28} strokeWidth={1.5} /></div>
         <h2>Welcome Back</h2>
         <p>Sign in to WorkPulse</p>
         {location.state?.message && <div className="success-msg">{location.state.message}</div>}
@@ -62,7 +63,7 @@ export default function Login() {
             <Link to="/forgot-password">Forgot password?</Link>
           </div>
           <button type="submit" className="btn btn-primary btn-fullwidth" disabled={loading}>
-            {loading ? 'Signing in...' : '→ Sign In'}
+            {loading ? 'Signing in...' : <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>Sign In <ArrowRight size={16} /></span>}
           </button>
         </form>
         <div className={s['auth-switch']}>

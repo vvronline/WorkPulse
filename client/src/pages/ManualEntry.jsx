@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { FileEdit, Ban, AlertCircle, Building2, House, ArrowRight, ClipboardList, Timer } from 'lucide-react';
 import { addManualEntry, updateManualEntry, getEntries, getLeaves, getStatus, getLocalToday, getManualEntryRequests, getOvertimeRequests } from '../api';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import { tsToLocalTime, parseEntries, entryTypeLabels, entryTypeIcons } from './manualEntry/manualEntryUtils';
@@ -184,7 +185,7 @@ export default function ManualEntry() {
   return (
     <div className={s['manual-entry-page']}>
       <div className={s['manual-entry-header']}>
-        <h2><span className="page-icon">📝</span> Manual Time Entry</h2>
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><FileEdit size={22} /> Manual Time Entry</h2>
         <p>Add or edit time entries for days when you forgot to use the tracker</p>
       </div>
 
@@ -228,7 +229,7 @@ export default function ManualEntry() {
             {/* Leave warning */}
             {leaveOnDate && (
               <div className={`${s['existing-entries-warning']} ${s['leave-warning']}`}>
-                <div className={s['warning-header']}>🚫 Leave recorded on this date</div>
+                <div className={s['warning-header']} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><Ban size={15} /> Leave recorded on this date</div>
                 <p className={s['warning-helper-text']}>
                   You have a <strong>{leaveOnDate.leave_type}</strong> leave on {date}.
                   Remove the leave from the Leaves page first to add a manual entry.
@@ -239,7 +240,7 @@ export default function ManualEntry() {
             {/* Clocked-in-today warning */}
             {currentlyClocked && (
               <div className={`${s['existing-entries-warning']} ${s['clocked-in-warning']}`}>
-                <div className={s['warning-header']}>🔴 You're currently clocked in</div>
+                <div className={s['warning-header']} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><AlertCircle size={15} /> You're currently clocked in</div>
                 <p className={s['warning-helper-text']}>
                   Manual entry for today is only allowed after you've clocked out.
                   Please logout from the Dashboard first.
@@ -250,7 +251,7 @@ export default function ManualEntry() {
             {/* Existing entries panel (only shown when NOT in edit mode) */}
             {existingEntries && existingEntries.length > 0 && !isEditMode && !currentlyClocked && (
               <div className={s['existing-entries-warning']}>
-                <div className={s['warning-header']}>⚠️ Entries already exist for this date</div>
+                <div className={s['warning-header']}><AlertCircle size={14} style={{marginRight:4,verticalAlign:'middle'}} />Entries already exist for this date</div>
                 <div className={s['existing-list']}>
                   {existingEntries.map((entry, i) => (
                     <div key={i} className={s['existing-item']}>
@@ -285,14 +286,14 @@ export default function ManualEntry() {
                       className={`${s['mode-btn']} ${workMode === 'office' ? s.active : ''}`}
                       onClick={() => setWorkMode('office')}
                     >
-                      🏢 Office
+                      <Building2 size={14} /> Office
                     </button>
                     <button
                       type="button"
                       className={`${s['mode-btn']} ${workMode === 'remote' ? s.active : ''}`}
                       onClick={() => setWorkMode('remote')}
                     >
-                      🏠 Remote
+                      <House size={14} /> Remote
                     </button>
                   </div>
                 </div>
@@ -308,7 +309,7 @@ export default function ManualEntry() {
                       required
                     />
                   </div>
-                  <div className={s['time-arrow']}>→</div>
+                  <div className={s['time-arrow']}><ArrowRight size={16} /></div>
                   <div className="form-group">
                     <label>Logout Time</label>
                     <input
@@ -349,7 +350,7 @@ export default function ManualEntry() {
                           onChange={(e) => updateBreak(i, 'start', e.target.value)}
                           placeholder="Start"
                         />
-                        <span className={s['break-dash']}>→</span>
+                        <span className={s['break-dash']}><ArrowRight size={12} /></span>
                         <input
                           type="time"
                           value={brk.end}
@@ -385,7 +386,7 @@ export default function ManualEntry() {
 
         {/* Requests Card */}
         <div className={`${s['manual-entry-card']} ${s['info-card']}`}>
-          <h3>📋 Your Requests</h3>
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><ClipboardList size={17} /> Your Requests</h3>
           <PendingRequestsList
             requests={pendingRequests}
             keyField="request_id"
@@ -398,7 +399,7 @@ export default function ManualEntry() {
 
       {/* Overtime Request Section */}
       <div className={s['overtime-section']}>
-        <h2><span className="page-icon">⏱️</span> Overtime Request</h2>
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Timer size={22} /> Overtime Request</h2>
         <div className={s['manual-entry-grid']}>
           <div className={s['manual-entry-card']}>
             <h3>➕ Request Overtime</h3>
@@ -406,7 +407,7 @@ export default function ManualEntry() {
           </div>
 
           <div className={`${s['manual-entry-card']} ${s['info-card']}`}>
-            <h3>📋 Overtime Requests</h3>
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><ClipboardList size={17} /> Overtime Requests</h3>
             <PendingRequestsList
               requests={overtimeRequests}
               keyField="id"

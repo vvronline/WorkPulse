@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { BarChart3, X } from 'lucide-react';
 import s from './PollCreator.module.css';
 
 export default function PollCreator({ onSubmit, onClose }) {
@@ -32,8 +33,8 @@ export default function PollCreator({ onSubmit, onClose }) {
         <div className={s.overlay}>
             <form className={s.modal} onSubmit={handleSubmit}>
                 <div className={s.header}>
-                    <h3>📊 Create Poll</h3>
-                    <button type="button" className={s.close} onClick={onClose}>✕</button>
+                    <h3><BarChart3 size={14} style={{marginRight:4,verticalAlign:'middle'}} />Create Poll</h3>
+                    <button type="button" className={s.close} onClick={onClose}><X size={16} /></button>
                 </div>
                 <div className={s.body}>
                     <input
@@ -55,7 +56,7 @@ export default function PollCreator({ onSubmit, onClose }) {
                                     maxLength={200}
                                 />
                                 {options.length > 2 && (
-                                    <button type="button" className={s.removeBtn} onClick={() => removeOption(opt.id)}>✕</button>
+                                    <button type="button" className={s.removeBtn} onClick={() => removeOption(opt.id)}><X size={14} /></button>
                                 )}
                             </div>
                         ))}

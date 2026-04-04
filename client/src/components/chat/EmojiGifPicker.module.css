@@ -78,3 +78,57 @@
     font-size: 0.8rem;
     grid-column: 1 / -1;
 }
+
+/* ─── Tablet ─── */
+@media (max-width: 1024px) {
+    .picker {
+        width: 310px;
+        max-height: 340px;
+    }
+    .emojiGrid {
+        grid-template-columns: repeat(7, 1fr);
+    }
+}
+
+/* ─── Mobile ─── */
+@media (max-width: 768px) {
+    .picker {
+        width: calc(100vw - 2rem);
+        max-width: 340px;
+        right: 0;
+        left: auto;
+        max-height: 50vh;
+        border-radius: 12px 12px 0 0;
+    }
+    .emojiGrid {
+        grid-template-columns: repeat(8, 1fr);
+        max-height: 40vh;
+    }
+    .emojiBtn {
+        width: 40px;
+        height: 40px;
+        font-size: 1.3rem;
+    }
+    .catTab {
+        font-size: 1.1rem;
+        padding: 4px 8px;
+    }
+}
+
+/* ─── Small mobile ─── */
+@media (max-width: 480px) {
+    .picker {
+        width: 100%;
+        max-width: none;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        margin-bottom: 0;
+        border-radius: 14px 14px 0 0;
+        max-height: 55vh;
+    }
+    .emojiGrid {
+        grid-template-columns: repeat(7, 1fr);
+    }
+}

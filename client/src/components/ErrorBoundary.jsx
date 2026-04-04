@@ -1,4 +1,5 @@
 import React from 'react';
+import { AlertTriangle } from 'lucide-react';
 
 export default class ErrorBoundary extends React.Component {
     constructor(props) {
@@ -43,7 +44,7 @@ export default class ErrorBoundary extends React.Component {
                     textAlign: 'center',
                     color: 'var(--text-primary)'
                 }}>
-                    <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>⚠️</div>
+                    <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}><AlertTriangle size={40} strokeWidth={1.5} style={{color:'var(--warning,#f59e0b)'}} /></div>
                     <h2 style={{ marginBottom: '0.5rem' }}>Something went wrong</h2>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
                         An unexpected error occurred. You can try again or reload the page.

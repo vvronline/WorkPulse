@@ -27,3 +27,15 @@
 .item:hover { background: var(--surface-hover); }
 .danger { color: var(--danger); }
 .icon { font-size: 1rem; width: 20px; text-align: center; }
+
+/* ─── Mobile: larger tap targets ─── */
+@media (max-width: 768px) {
+    .menu {
+        min-width: 180px;
+    }
+    .item {
+        padding: 10px 16px;
+        font-size: 0.9rem;
+        gap: 10px;
+    }
+}

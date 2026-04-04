@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { getLeaveBalances, updateLeaveBalance } from '../../api';
+import { Users, Search } from 'lucide-react';
 import s from '../LeavePolicy.module.css';
+import { LEAVE_TYPE_MAP } from '../../constants/leaves';
 
 const TYPE_META = {
-    sick:     { icon: '🤒', color: '#ef4444', label: 'Sick'    },
-    holiday:  { icon: '🏖️', color: '#f59e0b', label: 'Holiday' },
-    planned:  { icon: '📅', color: '#6366f1', label: 'Planned' },
-    personal: { icon: '👤', color: '#10b981', label: 'Personal'},
-    other:    { icon: '📝', color: '#64748b', label: 'Other'   },
+    sick:     { ...LEAVE_TYPE_MAP.sick,     label: 'Sick'    },
+    holiday:  { ...LEAVE_TYPE_MAP.holiday,  label: 'Holiday' },
+    planned:  { ...LEAVE_TYPE_MAP.planned,  label: 'Planned' },
+    personal: { ...LEAVE_TYPE_MAP.personal, label: 'Personal'},
+    other:    { ...LEAVE_TYPE_MAP.other,    label: 'Other'   },
 };
 
 export default function AllBalances() {
@@ -56,7 +58,7 @@ export default function AllBalances() {
 
             <div className={s.tableToolbar}>
                 <div className={s.searchBox}>
-                    <span className={s.searchIcon}>🔍</span>
+                    <span className={s.searchIcon}><Search size={15} /></span>
                     <input
                         className={s.searchInput}
                         placeholder="Search by employee name…"
@@ -70,7 +72,7 @@ export default function AllBalances() {
                 <div className={s.loadingWrap}><div className="spinner" /></div>
             ) : filtered.length === 0 ? (
                 <div className={s.emptyState}>
-                    <div className={s.emptyIcon}>👥</div>
+                    <Users size={32} strokeWidth={1.5} />
                     <p className={s.emptyTitle}>No balances found</p>
                 </div>
             ) : (
@@ -98,8 +100,8 @@ export default function AllBalances() {
                                     <tr key={i}>
                                         <td className={s.tdName}>{b.full_name}</td>
                                         <td>
-                                            <span className={s.typeTag} style={{ color: meta.color, background: `${meta.color}18` }}>
-                                                {meta.icon} {meta.label}
+                                            <span className={s.typeTag} style={{ color: meta.color, background: `${meta.color}18`, display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                                                {meta.Icon && <meta.Icon size={13} />} {meta.label}
                                             </span>
                                         </td>
                                         <td className={s.tdNum}>{b.total_days}</td>

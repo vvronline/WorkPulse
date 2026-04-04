@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAutoDismiss } from '../../hooks/useAutoDismiss';
+import { CalendarDays } from 'lucide-react';
 import {
     getOrgTeams, getOrgDepartments, getOrgMembers, createTeam, updateTeam, deleteTeam,
     getTeamSprintConfig, updateTeamSprintConfig
@@ -156,7 +157,7 @@ export default function Teams({ orgId, userRole }) {
                                                 <small className={tc['field-hint']}>Length of each sprint (1-8 weeks)</small>
                                             </div>
                                             <div className={tc['sprint-field']}>
-                                                <label className={tc['field-label']}>📅 Sprint Start Date</label>
+                                                <label className={tc['field-label']}><CalendarDays size={13} style={{marginRight:4,verticalAlign:'middle'}} />Sprint Start Date</label>
                                                 <input
                                                     type="date"
                                                     value={editForm.sprint_start_date || ''}

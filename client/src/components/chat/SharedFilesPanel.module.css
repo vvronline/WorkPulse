@@ -54,3 +54,30 @@
     color: var(--text-muted);
 }
 .sender { font-weight: 500; }
+
+/* ─── Tablet: overlay ─── */
+@media (max-width: 1024px) {
+    .panel {
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 50;
+        box-shadow: -4px 0 24px rgba(0,0,0,.18);
+    }
+}
+
+/* ─── Mobile: full-width ─── */
+@media (max-width: 768px) {
+    .panel {
+        position: fixed;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        min-width: 0;
+        z-index: 200;
+        border-left: none;
+    }
+}

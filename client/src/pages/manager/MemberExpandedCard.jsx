@@ -1,5 +1,6 @@
 import React from 'react';
 import { formatMin, LEAVE_ICONS } from './constants';
+import { Building2, House } from 'lucide-react';
 import m from '../ManagerDashboard.module.css';
 
 export default function MemberExpandedCard({ member: mem, targetMinutes, expectedWeekdays }) {
@@ -36,7 +37,7 @@ export default function MemberExpandedCard({ member: mem, targetMinutes, expecte
                 </div>
                 <div className={m.expandedStat}>
                     <span className={m.expandedStatLabel}>Work Mode</span>
-                    <span className={m.expandedStatValue}>🏢 {mem.officeDays} · 🏠 {mem.remoteDays}</span>
+                    <span className={m.expandedStatValue}><Building2 size={13} style={{marginRight:3,verticalAlign:'middle'}} />{mem.officeDays} · <House size={13} style={{marginRight:3,marginLeft:4,verticalAlign:'middle'}} />{mem.remoteDays}</span>
                 </div>
                 <div className={m.expandedStat}>
                     <span className={m.expandedStatLabel}>Utilization</span>
@@ -57,7 +58,7 @@ export default function MemberExpandedCard({ member: mem, targetMinutes, expecte
                         {mem.leavesByType && Object.keys(mem.leavesByType).length > 0 && (
                             <span className={m.leaveBreakdown}>
                                 {Object.entries(mem.leavesByType).map(([type, count]) => (
-                                    <span key={type} className={m.leaveChip}>{LEAVE_ICONS[type] || '📋'} {count}</span>
+                                    <span key={type} className={m.leaveChip} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>{(() => { const Ic = LEAVE_ICONS[type]; return Ic ? <Ic size={12} /> : null; })()} {count}</span>
                                 ))}
                             </span>
                         )}

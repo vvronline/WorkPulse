@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import ReactDOM from 'react-dom';
+import { X, User, Mail, Lock, AlertTriangle, Trash2 } from 'lucide-react';
 import { useAuth } from '../AuthContext';
 import { updateProfile, updateEmail, updatePassword, deleteAccount } from '../api';
 import PasswordInput from './PasswordInput';
@@ -107,19 +109,19 @@ export default function EditProfileModal({ onClose }) {
         });
     };
 
-    return (
+    return ReactDOM.createPortal(
         <div className={s.overlay} onClick={(e) => e.target === e.currentTarget && onClose()}>
             <div className={s.modal} ref={modalRef} role="dialog" aria-modal="true" aria-labelledby="edit-profile-title">
                 {/* Header */}
                 <div className={s.header}>
                     <h2 className={s.title} id="edit-profile-title">Edit Profile</h2>
-                    <button className={s.closeBtn} onClick={onClose} aria-label="Close">✕</button>
+                    <button className={s.closeBtn} onClick={onClose} aria-label="Close"><X size={16} /></button>
                 </div>
 
                 <div className={s.body}>
                     {/* ── Name & Username ── */}
                     <section className={s.section}>
-                        <h3 className={s.sectionTitle}>👤 Name & Username</h3>
+                        <h3 className={s.sectionTitle}><User size={15} style={{verticalAlign:'middle',marginRight:6}} />Name & Username</h3>
                         <form onSubmit={handleProfileSave} className={s.form}>
                             <div className={s.field}>
                                 <label>Full Name</label>
@@ -155,7 +157,7 @@ export default function EditProfileModal({ onClose }) {
 
                     {/* ── Email ── */}
                     <section className={s.section}>
-                        <h3 className={s.sectionTitle}>✉️ Email Address</h3>
+                        <h3 className={s.sectionTitle}><Mail size={15} style={{verticalAlign:'middle',marginRight:6}} />Email Address</h3>
                         <form onSubmit={handleEmailSave} className={s.form}>
                             <div className={s.field}>
                                 <label>Email</label>
@@ -178,7 +180,7 @@ export default function EditProfileModal({ onClose }) {
 
                     {/* ── Password ── */}
                     <section className={s.section}>
-                        <h3 className={s.sectionTitle}>🔒 Change Password</h3>
+                        <h3 className={s.sectionTitle}><Lock size={15} style={{verticalAlign:'middle',marginRight:6}} />Change Password</h3>
                         <form onSubmit={handlePasswordSave} className={s.form}>
                             <div className={s.field}>
                                 <label>Current Password</label>
@@ -218,7 +220,7 @@ export default function EditProfileModal({ onClose }) {
 
                     {/* ── Danger Zone ── */}
                     <section className={`${s.section} ${s.dangerSection}`}>
-                        <h3 className={`${s.sectionTitle} ${s.dangerTitle}`}>⚠️ Danger Zone</h3>
+                        <h3 className={`${s.sectionTitle} ${s.dangerTitle}`}><AlertTriangle size={15} style={{verticalAlign:'middle',marginRight:6}} />Danger Zone</h3>
                         <p className={s.dangerDesc}>
                             Permanently delete your account and all associated data. This action cannot be undone.
                         </p>
@@ -242,11 +244,11 @@ export default function EditProfileModal({ onClose }) {
                                         onClick={handleDeleteAccount}
                                         disabled={deleteAction.loading}
                                     >
-                                        {deleteAction.loading ? 'Deleting…' : '🗑 Yes, Delete Forever'}
+                                        {deleteAction.loading ? 'Deleting…' : <><Trash2 size={14} style={{marginRight:5,verticalAlign:'middle'}} />Yes, Delete Forever</>}
                                     </button>
                                     <button
                                         className={s.cancelBtn}
-                                        onClick={() => { setDeleteConfirm(false); setDeletePw(''); setDeleteMsg(null); }}
+                                        onClick={() => { setDeleteConfirm(false); setDeletePw(''); }}
                                     >
                                         Cancel
                                     </button>
@@ -256,6 +258,7 @@ export default function EditProfileModal({ onClose }) {
                     </section>
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 }

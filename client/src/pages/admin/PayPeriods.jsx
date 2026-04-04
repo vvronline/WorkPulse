@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Lock, Unlock } from 'lucide-react';
 import {
     getPayPeriods, createPayPeriod, deletePayPeriod,
     exportPayrollHours,
@@ -173,7 +174,7 @@ export default function PayPeriods() {
                     </div>
                     {formError && <p className={s.errorMsg}>{formError}</p>}
                     <button type="submit" className={s.primaryBtn} disabled={submitting}>
-                        {submitting ? 'Locking…' : '🔒 Lock Period'}
+                        {submitting ? 'Locking…' : <><Lock size={14} style={{marginRight:5,verticalAlign:'middle'}} />Lock Period</>}
                     </button>
                 </form>
                 <p className={s.hint}>
@@ -216,7 +217,7 @@ export default function PayPeriods() {
                                             onClick={() => handleDelete(p.id, p.label)}
                                             title="Unlock this period"
                                         >
-                                            🔓 Unlock
+                                            <Unlock size={14} style={{marginRight:4,verticalAlign:'middle'}} />Unlock
                                         </button>
                                     </td>
                                 </tr>

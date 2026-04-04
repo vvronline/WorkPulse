@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { forgotPassword } from '../api';
+import { KeyRound } from 'lucide-react';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import s from './Auth.module.css';
 
@@ -28,7 +29,7 @@ export default function ForgotPassword() {
   return (
     <div className={s['auth-container']}>
       <div className={s['auth-card']}>
-        <div className={s['auth-icon']}>🔑</div>
+        <div className={s['auth-icon']}><KeyRound size={28} strokeWidth={1.5} /></div>
         <h2>Forgot Password</h2>
         <p>Enter your email and we'll send you a reset link</p>
 

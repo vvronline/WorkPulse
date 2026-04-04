@@ -3,6 +3,7 @@ import { useAuth } from '../../AuthContext';
 import { useTheme } from '../../ThemeContext';
 import { useWorkState } from '../../WorkStateContext';
 import { clockOut as apiClockOut, uploadAvatar, removeAvatar, baseURL } from '../../api';
+import { Camera, Building2, House } from 'lucide-react';
 import EditProfileModal from '../EditProfileModal';
 import ConfirmDialog from '../ConfirmDialog';
 import { useClickOutside } from '../../hooks/useClickOutside';
@@ -36,8 +37,8 @@ export default function ProfileMenu() {
         : workState === 'on_break' ? s['dot-away'] : s['dot-offline'];
 
     const statusLabel = workState === 'on_floor'
-        ? (workMode === 'remote' ? '🟢 Working Remotely' : '🟢 Working')
-        : workState === 'on_break' ? '🟡 Away (On Break)' : '⚫ Offline';
+        ? (workMode === 'remote' ? '\u25CF Working Remotely' : '\u25CF Working')
+        : workState === 'on_break' ? '\u25CF Away (On Break)' : '\u25CF Offline';
 
     const handleAvatarUpload = async (e) => {
         const file = e.target.files?.[0];
@@ -112,7 +113,7 @@ export default function ProfileMenu() {
                                 onClick={() => fileInputRef.current?.click()}
                                 title="Change photo"
                             >
-                                {uploading ? '⏳' : '📷'}
+                                {uploading ? '\u22EF' : <Camera size={13} />}
                             </button>
                             <input
                                 ref={fileInputRef}
@@ -129,8 +130,9 @@ export default function ProfileMenu() {
                             <div className={s['profile-dropdown-badges']}>
                                 <span className={`${s['dd-status-badge']} ${s[workState] || ''}`}>{statusLabel}</span>
                                 {workState !== 'logged_out' && (
-                                    <span className={`${s['dd-mode-badge']} ${s[`dd-mode-${workMode}`] || ''}`}>
-                                        {workMode === 'office' ? '🏢 Office' : '🏠 Remote'}
+                                    <span className={`${s['dd-mode-badge']} ${s[`dd-mode-${workMode}`] || ''}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                                        {workMode === 'office' ? <Building2 size={12} /> : <House size={12} />}
+                                        {workMode === 'office' ? 'Office' : 'Remote'}
                                     </span>
                                 )}
                             </div>

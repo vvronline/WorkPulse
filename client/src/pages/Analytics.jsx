@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import { formatTime } from '../utils/time';
+import { BarChart3, TrendingUp, PieChart, Building2, House, ClipboardList, Check, X } from 'lucide-react';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -232,7 +233,7 @@ export default function Analytics() {
 
   return (
     <div className={s.analytics}>
-      <h2><span className="page-icon">📊</span> Analytics & History</h2>
+      <h2><BarChart3 size={22} style={{marginRight:8,verticalAlign:'middle'}} /> Analytics & History</h2>
 
       {/* Date filter + Export */}
       <div className={s.toolbar}>
@@ -290,34 +291,34 @@ export default function Analytics() {
             </div>
             <div className="stat-card">
               <div className="stat-label">Office Days</div>
-              <div className={`stat-value ${s['text-primary-fill']}`}>🏢 {officeDays}</div>
+              <div className={`stat-value ${s['text-primary-fill']}`} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}><Building2 size={18} /> {officeDays}</div>
             </div>
             <div className="stat-card">
               <div className="stat-label">Remote Days</div>
-              <div className={`stat-value ${s['text-success-fill']}`}>🏠 {remoteDays}</div>
+              <div className={`stat-value ${s['text-success-fill']}`} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}><House size={18} /> {remoteDays}</div>
             </div>
           </div>
 
           {/* Charts Row */}
           <div className={s['analytics-charts-row']}>
             <div className={s['chart-card']}>
-              <h3>📊 Daily Work vs Break Time</h3>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><BarChart3 size={17} /> Daily Work vs Break Time</h3>
               <Bar data={barData} options={barOptions} />
             </div>
             <div className={s['chart-card']}>
-              <h3>📈 Work Time Trend</h3>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><TrendingUp size={17} /> Work Time Trend</h3>
               <Line data={lineData} options={lineOptions} />
             </div>
           </div>
 
           <div className={s['analytics-detail-grid']}>
             <div className={s['chart-card']}>
-              <h3>🍩 Time Distribution</h3>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><PieChart size={17} /> Time Distribution</h3>
               <Doughnut data={doughnutData} options={doughnutOptions} />
             </div>
 
             <div className={s['chart-card']}>
-              <h3>🏢 Office vs Remote</h3>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><Building2 size={17} /> Office vs Remote</h3>
               <Doughnut data={{
                 labels: ['Office', 'Remote'],
                 datasets: [{
@@ -349,7 +350,7 @@ export default function Analytics() {
 
             {/* History Table */}
             <div className={`${s['chart-card']} ${s['history-full']}`}>
-              <h3>📋 Daily Log</h3>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><ClipboardList size={17} /> Daily Log</h3>
               <div className={s['table-scroll-wrapper']}>
                 <table className={s['history-table']}>
                   <thead>
@@ -380,8 +381,8 @@ export default function Analytics() {
                               })}
                             </td>
                             <td>
-                              <span className={`${s['mode-badge']} ${day.workMode === 'remote' ? s['mode-remote'] : s['mode-office']}`}>
-                                {day.workMode === 'remote' ? '🏠' : '🏢'} {day.workMode === 'remote' ? 'Remote' : 'Office'}
+                              <span className={`${s['mode-badge']} ${day.workMode === 'remote' ? s['mode-remote'] : s['mode-office']}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                                {day.workMode === 'remote' ? <House size={13} /> : <Building2 size={13} />} {day.workMode === 'remote' ? 'Remote' : 'Office'}
                               </span>
                             </td>
                             <td className={s['work-cell']}>
@@ -392,8 +393,8 @@ export default function Analytics() {
                             </td>
                             <td>{formatTime(day.floorMinutes + day.breakMinutes)}</td>
                             <td>
-                              <span className={`${s['target-badge']} ${met ? s.met : s['not-met']}`}>
-                                {met ? '✓ Met' : '✗ Not Met'}
+                                <span className={`${s['target-badge']} ${met ? s.met : s['not-met']}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                                {met ? <><Check size={12} /> Met</> : <><X size={12} /> Not Met</>}
                               </span>
                             </td>
                           </tr>

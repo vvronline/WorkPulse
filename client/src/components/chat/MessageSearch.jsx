@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
+import { X } from 'lucide-react';
 import { searchMessages as apiSearch } from '../../api';
 import s from './MessageSearch.module.css';
 
@@ -30,7 +31,7 @@ export default function MessageSearch({ convId, onJumpTo, onClose }) {
             <div className={s.modal}>
                 <div className={s.header}>
                     <h3>Search Messages</h3>
-                    <button className={s.closeBtn} onClick={onClose}>✕</button>
+                    <button className={s.closeBtn} onClick={onClose}><X size={16} /></button>
                 </div>
                 <input
                     className={s.input}

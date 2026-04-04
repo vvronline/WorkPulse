@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Pin, X } from 'lucide-react';
 import { getPinnedMessages } from '../../api';
 import ChatAvatar from './ChatAvatar';
 import s from './PinnedMessages.module.css';
@@ -18,8 +19,8 @@ export default function PinnedMessages({ convId, currentUserId, onClose, onJumpT
     return (
         <div className={s.panel}>
             <div className={s.header}>
-                <span>📌 Pinned Messages</span>
-                <button className={s.closeBtn} onClick={onClose}>✕</button>
+                <span><Pin size={15} style={{verticalAlign:'middle',marginRight:5}} />Pinned Messages</span>
+                <button className={s.closeBtn} onClick={onClose}><X size={15} /></button>
             </div>
             <div className={s.list}>
                 {loading && <p className={s.empty}>Loading…</p>}
@@ -33,7 +34,7 @@ export default function PinnedMessages({ convId, currentUserId, onClose, onJumpT
                             <span className={s.date}>{new Date(p.pinned_at).toLocaleDateString()}</span>
                         </div>
                         {onUnpin && (
-                            <button className={s.unpinBtn} onClick={e => { e.stopPropagation(); onUnpin(p.id); }} title="Unpin">✕</button>
+                            <button className={s.unpinBtn} onClick={e => { e.stopPropagation(); onUnpin(p.id); }} title="Unpin"><X size={14} /></button>
                         )}
                     </div>
                 ))}

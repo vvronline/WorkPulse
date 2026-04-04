@@ -76,3 +76,18 @@
 }
 .sendBtn:disabled { opacity: 0.5; cursor: default; }
 .sendBtn:not(:disabled):hover { opacity: 0.9; }
+
+/* ─── Mobile ─── */
+@media (max-width: 768px) {
+    .modal {
+        width: 95%;
+        max-height: 80vh;
+    }
+    .item {
+        padding: 10px 12px;
+    }
+    .sendBtn {
+        width: 100%;
+        padding: 10px;
+    }
+}

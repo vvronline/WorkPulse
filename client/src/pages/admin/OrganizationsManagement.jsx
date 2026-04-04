@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Building2, Plus, Hammer, Pencil, Trash2 } from 'lucide-react';
 import { useAutoDismiss } from '../../hooks/useAutoDismiss';
 import {
     getAdminOrganizations, createAdminOrganization, updateAdminOrganization, deleteAdminOrganization
@@ -53,11 +54,11 @@ export default function OrganizationsManagement({ onOrgChange, onManageOrg }) {
 
     return (
         <>
-            <h2 className={su.sectionHeading}>🏢 All Organizations</h2>
+            <h2 className={su.sectionHeading}><Building2 size={20} style={{marginRight:7,verticalAlign:'middle'}} />All Organizations</h2>
             <p className={su.sectionDesc}>Manage all organizations in the system</p>
             {msg && <div className={s.success}>{msg}</div>}
             <div className={s.toolbar}>
-                <button className={s.btnPrimary} onClick={() => setCreating(true)}>➕ Create Organization</button>
+                <button className={s.btnPrimary} onClick={() => setCreating(true)}><Plus size={14} style={{marginRight:4,verticalAlign:'middle'}} />Create Organization</button>
             </div>
 
             <table className={s.table}>
@@ -77,9 +78,9 @@ export default function OrganizationsManagement({ onOrgChange, onManageOrg }) {
                             <td>{o.member_count}</td>
                             <td>
                                 <div className={s.actions}>
-                                    <button className={`${s.btnSmall} ${s.btnPrimary}`} onClick={() => onManageOrg?.(o)}>🏗️ Manage</button>
-                                    <button className={`${s.btnSmall} ${s.btnAccent}`} onClick={() => setEditing(o)}>✏️ Edit</button>
-                                    <button className={`${s.btnSmall} ${s.btnDanger}`} onClick={() => setDeleting(o)}>🗑️ Delete</button>
+                                    <button className={`${s.btnSmall} ${s.btnPrimary}`} onClick={() => onManageOrg?.(o)}><Hammer size={13} style={{marginRight:4,verticalAlign:'middle'}} />Manage</button>
+                                    <button className={`${s.btnSmall} ${s.btnAccent}`} onClick={() => setEditing(o)}><Pencil size={13} style={{marginRight:4,verticalAlign:'middle'}} />Edit</button>
+                                    <button className={`${s.btnSmall} ${s.btnDanger}`} onClick={() => setDeleting(o)}><Trash2 size={13} style={{marginRight:4,verticalAlign:'middle'}} />Delete</button>
                                 </div>
                             </td>
                         </tr>

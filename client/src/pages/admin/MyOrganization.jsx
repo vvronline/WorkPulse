@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Building, Users, UsersRound, AlarmClock, GitBranch, Settings } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
 import { getCurrentOrg } from '../../api';
 import OrgSettings from '../../components/organization/OrgSettings';
@@ -34,27 +35,27 @@ export default function MyOrganization({ userRole, refreshKey }) {
 
     return (
         <>
-            <h2 className={su.sectionHeading}>🏛️ My Organization</h2>
+            <h2 className={su.sectionHeading}><Building size={20} style={{marginRight:8,verticalAlign:'middle'}} />My Organization</h2>
             <h3 className={su['org-subtitle']}>{org.name}</h3>
 
             <div className={`${s.statsGrid} ${su['stats-compact']}`}>
                 <div className={s.statCard}>
-                    <div className={s.statIcon}>👥</div>
+                    <div className={s.statIcon}><Users size={22} /></div>
                     <div className={s.value}>{org.memberCount}</div>
                     <div className={s.label}>Members</div>
                 </div>
                 <div className={s.statCard}>
-                    <div className={s.statIcon}>🏛️</div>
+                    <div className={s.statIcon}><Building size={22} /></div>
                     <div className={s.value}>{org.deptCount}</div>
                     <div className={s.label}>Departments</div>
                 </div>
                 <div className={s.statCard}>
-                    <div className={s.statIcon}>👨‍👩‍👧‍👦</div>
+                    <div className={s.statIcon}><UsersRound size={22} /></div>
                     <div className={s.value}>{org.teamCount}</div>
                     <div className={s.label}>Teams</div>
                 </div>
                 <div className={s.statCard}>
-                    <div className={s.statIcon}>⏰</div>
+                    <div className={s.statIcon}><AlarmClock size={22} /></div>
                     <div className={s.value}>{org.work_hours_per_day}h</div>
                     <div className={s.label}>Work Hours/Day</div>
                 </div>
@@ -62,16 +63,16 @@ export default function MyOrganization({ userRole, refreshKey }) {
 
             <div className={s.tabs}>
                 <button className={`${s.tab} ${tab === 'departments' ? s.active : ''}`} onClick={() => setTab('departments')}>
-                    <span>🏛️</span> Departments
+                    <span><Building size={14} style={{marginRight:4,verticalAlign:'middle'}} /></span> Departments
                 </button>
                 <button className={`${s.tab} ${tab === 'teams' ? s.active : ''}`} onClick={() => setTab('teams')}>
-                    <span>👨‍👩‍👧‍👦</span> Teams
+                    <span><UsersRound size={14} style={{marginRight:4,verticalAlign:'middle'}} /></span> Teams
                 </button>
                 <button className={`${s.tab} ${tab === 'chart' ? s.active : ''}`} onClick={() => setTab('chart')}>
-                    <span>🌳</span> Org Chart
+                    <span><GitBranch size={14} style={{marginRight:4,verticalAlign:'middle'}} /></span> Org Chart
                 </button>
                 <button className={`${s.tab} ${tab === 'overview' ? s.active : ''}`} onClick={() => setTab('overview')}>
-                    <span>⚙️</span> Settings
+                    <span><Settings size={14} style={{marginRight:4,verticalAlign:'middle'}} /></span> Settings
                 </button>
             </div>
 

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Tag } from 'lucide-react';
 import { useAutoDismiss } from '../../hooks/useAutoDismiss';
 import {
     getAdminTaskLabels, createAdminTaskLabel, updateAdminTaskLabel, deleteAdminTaskLabel
@@ -78,7 +79,7 @@ export default function TaskLabelsTab() {
 
     return (
         <div className={s.section}>
-            <h3 className={sf.sectionTitle}>🏷️ Task Labels</h3>
+            <h3 className={sf.sectionTitle}><Tag size={15} style={{marginRight:6,verticalAlign:'middle'}} />Task Labels</h3>
             <p className={su['section-desc-muted']}>
                 Create labels that members of your organization can use to categorize tasks.
             </p>

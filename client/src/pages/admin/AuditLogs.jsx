@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { ScrollText } from 'lucide-react';
 import { getAuditLogs } from '../../api';
 import s from '../Admin.module.css';
 import al from './AuditLogs.module.css';
@@ -24,7 +25,7 @@ export default function AuditLogs() {
 
     return (
         <>
-            <h2 className={su['section-heading']}>📋 Audit Logs</h2>
+            <h2 className={su['section-heading']}><ScrollText size={20} style={{marginRight:8,verticalAlign:'middle'}} />Audit Logs</h2>
             <p className={su['section-desc']}>Track all administrative actions and system events</p>
             <div className={s.toolbar}>
                 <select value={filters.entity_type} onChange={e => { setFilters({ ...filters, entity_type: e.target.value }); setPage(0); }}>

@@ -261,9 +261,56 @@
     justify-content: flex-start;
 }
 
+/* ─── Tablet ─── */
+@media (max-width: 1024px) {
+    .bubbleWrap { max-width: 80%; }
+    .row { padding: 2px 12px; }
+    .hoverActions {
+        display: none;
+    }
+    .bubble:hover .hoverActions { display: flex; }
+}
+
 @media (max-width: 768px) {
     .bubbleWrap { max-width: 90%; }
     .row { padding: 2px 8px; }
+    /* On touch devices, long-press triggers context menu instead of hover */
+    .hoverActions {
+        display: none;
+    }
+    .bubble:hover .hoverActions {
+        display: none;
+    }
+    /* Show toolbar on active/focus for touch devices */
+    .bubble:active .hoverActions,
+    .bubble:focus-within .hoverActions {
+        display: flex;
+    }
+    .quickEmoji {
+        width: 32px;
+        height: 32px;
+    }
+    .toolbarBtn {
+        width: 32px;
+        height: 32px;
+    }
+    .moreEmoji {
+        width: 32px;
+        height: 32px;
+    }
+    .avatarCol {
+        width: 30px;
+    }
+}
+
+/* ─── Small mobile ─── */
+@media (max-width: 480px) {
+    .bubbleWrap { max-width: 92%; }
+    .row { padding: 2px 6px; }
+    .bubble {
+        font-size: 0.84rem;
+        padding: 5px 8px;
+    }
 }
 
 /* ─── Delivery receipts ─── */

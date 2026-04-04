@@ -1,4 +1,4 @@
-/* ModalSidebar — left panel of the maximized modal */
+﻿/* ModalSidebar — left panel of the maximized modal */
 import React from 'react';
 import PageItem from './PageItem';
 import FolderManager from './FolderManager';
@@ -71,7 +71,7 @@ export default function ModalSidebar({
           <option value="all">All folders</option>
           <option value="none">Uncategorized</option>
           {buildFolderTree(folders).map(f => (
-            <option key={f.id} value={f.id}>{'\u00A0\u00A0'.repeat(f.depth)}📁 {f.name}</option>
+            <option key={f.id} value={f.id}>{'\u00A0\u00A0'.repeat(f.depth)}{f.name}</option>
           ))}
         </select>
       </div>
@@ -96,7 +96,7 @@ export default function ModalSidebar({
 
       {/* Page list */}
       <div className={s.list}>
-        {processedPages.map(page => (
+        {(processedPages ?? []).map(page => (
           <PageItem
             key={page.id}
             page={page}
@@ -128,7 +128,7 @@ export default function ModalSidebar({
             setActivePageId={setActivePageId}
           />
         ))}
-        {processedPages.length === 0 && (
+        {(processedPages ?? []).length === 0 && (
           <div className={s.empty}>
             {searchQuery ? 'No pages match your search'
               : showArchived ? 'No archived pages'

@@ -1,4 +1,5 @@
 import React from 'react';
+import { Clock, Coffee, ClipboardList, Calendar, House, Building2 } from 'lucide-react';
 import { LEAVE_ICONS, formatMin } from './constants';
 import ApprovalBadge from './ApprovalBadge';
 import PriorityBadge from './PriorityBadge';
@@ -6,6 +7,11 @@ import StatusBadge from './StatusBadge';
 import RequestDetails from './RequestDetails';
 import s from '../Admin.module.css';
 import m from '../ManagerDashboard.module.css';
+
+function LeaveIconFor({ type }) {
+    const Ic = LEAVE_ICONS[type];
+    return Ic ? <Ic size={13} /> : null;
+}
 
 export default function MemberOverview({ data }) {
     const stats = data.stats30d || {};
@@ -16,27 +22,27 @@ export default function MemberOverview({ data }) {
             {/* Quick Stats */}
             <div className={m.summaryGrid}>
                 <div className={m.summaryCard}>
-                    <div className={m.summaryIcon}>⏱</div>
+                    <div className={m.summaryIcon}><Clock size={20} /></div>
                     <div className={m.summaryValue}>{data.todayHours}h</div>
                     <div className={m.summaryLabel}>Today's Hours</div>
                 </div>
                 <div className={m.summaryCard}>
-                    <div className={m.summaryIcon}>☕</div>
+                    <div className={m.summaryIcon}><Coffee size={20} /></div>
                     <div className={m.summaryValue}>{formatMin(data.todayBreakMin || 0)}</div>
                     <div className={m.summaryLabel}>Today's Break</div>
                 </div>
                 <div className={m.summaryCard}>
-                    <div className={m.summaryIcon}>📋</div>
+                    <div className={m.summaryIcon}><ClipboardList size={20} /></div>
                     <div className={`${m.summaryValue} ${m.colorAmber}`}>{data.pendingRequests}</div>
                     <div className={m.summaryLabel}>Pending Requests</div>
                 </div>
                 <div className={m.summaryCard}>
-                    <div className={m.summaryIcon}>🗓</div>
+                    <div className={m.summaryIcon}><Calendar size={20} /></div>
                     <div className={m.summaryValue}>{data.monthLeaves}</div>
                     <div className={m.summaryLabel}>Leaves This Month</div>
                 </div>
                 <div className={m.summaryCard}>
-                    <div className={m.summaryIcon}>📋</div>
+                    <div className={m.summaryIcon}><ClipboardList size={20} /></div>
                     <div className={m.summaryValue}>{data.todayTasks?.length || 0}</div>
                     <div className={m.summaryLabel}>Today's Planner</div>
                 </div>
@@ -57,7 +63,7 @@ export default function MemberOverview({ data }) {
                                     </div>
                                     <div className={m.weeklyDayLabel}>{day.dayLabel}</div>
                                     <div className={m.weeklyDayHours}>{formatMin(day.floorMinutes)}</div>
-                                    {day.workMode && <div className={m.weeklyDayMode}>{day.workMode === 'remote' ? '🏠' : '🏢'}</div>}
+                                    {day.workMode && <div className={m.weeklyDayMode}>{day.workMode === 'remote' ? <House size={12} /> : <Building2 size={12} />}</div>}
                                 </div>
                             );
                         })}
@@ -105,7 +111,7 @@ export default function MemberOverview({ data }) {
                                 return (
                                     <div key={i} className={m.leaveBalanceRow}>
                                         <div className={m.lbInfo}>
-                                            <span className={m.lbName}>{LEAVE_ICONS[lb.leave_type] || '📋'} {lb.policy_name || lb.leave_type}</span>
+                                            <span className={m.lbName} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}><LeaveIconFor type={lb.leave_type} /> {lb.policy_name || lb.leave_type}</span>
                                             <span className={m.lbCount}>{used}/{total} used</span>
                                         </div>
                                         <div className={m.lbBarTrack}>
@@ -148,7 +154,11 @@ export default function MemberOverview({ data }) {
                             {data.recentLeaves.map(l => (
                                 <tr key={l.id}>
                                     <td>{new Date(l.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</td>
-                                    <td>{LEAVE_ICONS[l.leave_type] || ''} {l.leave_type}</td>
+                                    <td style={{ display: 'table-cell' }}>
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                                            <LeaveIconFor type={l.leave_type} /> {l.leave_type}
+                                        </span>
+                                    </td>
                                     <td><ApprovalBadge status={l.status} /></td>
                                     <td className={m['text-muted-sm']}>{l.reason || '—'}</td>
                                 </tr>

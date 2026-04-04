@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
+import { Pin, Star, Pencil, Trash2 } from 'lucide-react';
 import s from './MessageBubble.module.css';
 import ChatAvatar from './ChatAvatar';
 import FilePreview from './FilePreview';
@@ -116,11 +117,11 @@ export default function MessageBubble({
     const isPoll = msg.format_type === 'poll' && msg.metadata?.pollId;
 
     const menuItems = [
-        isMine && !msg.file_url && !isPoll && { icon: '✏️', label: 'Edit', onClick: () => onEdit?.(msg) },
-        { icon: '📌', label: msg.pinned_at ? 'Unpin' : 'Pin', onClick: () => onPin?.(msg) },
-        { icon: msg.starred ? '★' : '☆', label: msg.starred ? 'Unsave' : 'Save', onClick: () => onStar?.(msg) },
+        isMine && !msg.file_url && !isPoll && { icon: <Pencil size={14} />, label: 'Edit', onClick: () => onEdit?.(msg) },
+        { icon: <Pin size={14} />, label: msg.pinned_at ? 'Unpin' : 'Pin', onClick: () => onPin?.(msg) },
+        { icon: <Star size={14} />, label: msg.starred ? 'Unsave' : 'Save', onClick: () => onStar?.(msg) },
         { icon: <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M14 7H7a5 5 0 000 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>, label: 'Forward', onClick: () => onForward?.(msg) },
-        isMine && { icon: '🗑️', label: 'Delete', onClick: () => onDelete?.(msg), danger: true },
+        isMine && { icon: <Trash2 size={14} />, label: 'Delete', onClick: () => onDelete?.(msg), danger: true },
     ];
 
     return (
@@ -144,8 +145,8 @@ export default function MessageBubble({
                     className={`${s.bubble} ${isMine ? s.myBubble : s.theirBubble} ${msg.pinned_at ? s.pinned : ''} ${msg.starred ? s.starredBubble : ''}`}
                     onContextMenu={handleContext}
                 >
-                    {msg.pinned_at && <div className={s.pinnedBadge}>📌 Pinned</div>}
-                    {msg.starred && <div className={s.starBadge}>⭐</div>}
+                    {msg.pinned_at && <div className={s.pinnedBadge}><Pin size={11} style={{marginRight:4}} />Pinned</div>}
+                    {msg.starred && <div className={s.starBadge}><Star size={11} /></div>}
 
                     {msg.forwarded_from_id && (
                         <div className={s.forwarded}>↗ Forwarded</div>

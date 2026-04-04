@@ -98,3 +98,54 @@
 .sendBtn:not(:disabled):hover {
     background: var(--primary-dark);
 }
+
+/* ─── Tablet ─── */
+@media (max-width: 1024px) {
+    .inputArea {
+        padding: 0.4rem 0.75rem 0.55rem;
+    }
+}
+
+/* ─── Mobile ─── */
+@media (max-width: 768px) {
+    .inputArea {
+        padding: 0.35rem 0.5rem 0.5rem;
+    }
+    .inputBar {
+        gap: 0.35rem;
+    }
+    .inputBoxWrap {
+        border-radius: 8px;
+    }
+    .msgInput {
+        font-size: 1rem;
+        padding: 0.5rem 0.6rem 0.2rem;
+        /* Prevent iOS zoom on focus */
+    }
+    .inputIcon {
+        width: 32px;
+        height: 32px;
+    }
+    .sendBtn {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+    }
+    .inputTools {
+        padding: 0 0.3rem 0.25rem;
+        gap: 0;
+    }
+    .replyBar {
+        padding: 0 0.5rem;
+    }
+}
+
+/* ─── Small mobile ─── */
+@media (max-width: 480px) {
+    .inputArea {
+        padding: 0.3rem 0.4rem 0.4rem;
+    }
+    .msgInput {
+        font-size: 1rem;
+    }
+}

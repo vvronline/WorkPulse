@@ -1,5 +1,6 @@
 /* FolderManager — nested folder tree with create-subfolder + create-page actions */
 import React, { useState } from 'react';
+import { Folder } from 'lucide-react';
 import { buildFolderTree } from '../notesUtils';
 import s from './FolderManager.module.css';
 
@@ -29,7 +30,7 @@ function FolderNode({ folder, folders, onNewPageInFolder, onDeleteFolder, onNewF
         <button className={s.expandBtn} onClick={() => setExpanded(p => !p)} title={expanded ? 'Collapse' : 'Expand'}>
           {hasChildren ? (expanded ? '▾' : '▸') : '·'}
         </button>
-        <span className={s.folderItemName} onClick={() => setExpanded(p => !p)}>📁 {folder.name}</span>
+        <span className={s.folderItemName} onClick={() => setExpanded(p => !p)}><Folder size={13} style={{marginRight:5,verticalAlign:'middle'}} />{folder.name}</span>
         <div className={s.folderItemActions}>
           <button className={s.folderAddBtn} onClick={() => { setCreating('folder'); setExpanded(true); }} title="New subfolder">
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">

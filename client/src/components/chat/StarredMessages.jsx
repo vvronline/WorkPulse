@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Star, X } from 'lucide-react';
 import s from './StarredMessages.module.css';
 import { getStarredMessages, toggleStar } from '../../api';
 
@@ -24,8 +25,8 @@ export default function StarredMessages({ onJumpTo, onClose }) {
     return (
         <div className={s.panel}>
             <div className={s.header}>
-                <h4>⭐ Saved Messages</h4>
-                <button className={s.close} onClick={onClose}>✕</button>
+                <h4><Star size={15} style={{verticalAlign:'middle',marginRight:5}} />Saved Messages</h4>
+                <button className={s.close} onClick={onClose}><X size={15} /></button>
             </div>
             <div className={s.list}>
                 {loading && <div className={s.hint}>Loading...</div>}

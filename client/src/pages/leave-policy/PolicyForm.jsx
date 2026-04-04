@@ -1,15 +1,9 @@
 import React, { useState } from 'react';
+import { X } from 'lucide-react';
 import { useAutoDismiss } from '../../hooks/useAutoDismiss';
 import { saveLeavePolicyAPI } from '../../api';
+import { LEAVE_TYPES } from '../../constants/leaves';
 import s from '../LeavePolicy.module.css';
-
-const LEAVE_TYPES = [
-    { value: 'sick',     label: 'Sick Leave',    icon: '🤒' },
-    { value: 'holiday',  label: 'Holiday',        icon: '🏖️' },
-    { value: 'planned',  label: 'Planned Leave',  icon: '📅' },
-    { value: 'personal', label: 'Personal',       icon: '👤' },
-    { value: 'other',    label: 'Other',           icon: '📝' },
-];
 
 const defaults = {
     leave_type: 'sick',
@@ -46,7 +40,7 @@ export default function PolicyForm({ initial, onClose, onSaved }) {
             <div className={s.modalBox} onClick={e => e.stopPropagation()}>
                 <div className={s.modalHeader}>
                     <h3 className={s.modalTitle}>{form.id ? 'Edit Policy' : 'New Leave Policy'}</h3>
-                    <button className={s.modalClose} onClick={onClose}>×</button>
+                <button className={s.modalClose} onClick={onClose} aria-label="Close"><X size={18} /></button>
                 </div>
 
                 {error && <div className={s.formError}>{error}</div>}
@@ -63,7 +57,7 @@ export default function PolicyForm({ initial, onClose, onSaved }) {
                                     className={`${s.typeChipOption} ${form.leave_type === t.value ? s.typeChipOptionActive : ''}`}
                                     onClick={() => set('leave_type', t.value)}
                                 >
-                                    <span>{t.icon}</span>
+                                    <span>{t.Icon && <t.Icon size={15} />}</span>
                                     <span>{t.label}</span>
                                 </button>
                             ))}

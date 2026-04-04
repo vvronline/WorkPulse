@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import { useAuth } from '../AuthContext';
 import { updatePassword as changePasswordApi } from '../api';
+import { KeyRound, ArrowRight } from 'lucide-react';
 import PasswordInput from '../components/PasswordInput';
 import s from './Auth.module.css';
 
@@ -40,7 +41,7 @@ export default function ChangePassword() {
   return (
     <div className={s['auth-container']}>
       <div className={s['auth-card']}>
-        <div className={s['auth-icon']}>🔑</div>
+        <div className={s['auth-icon']}><KeyRound size={28} strokeWidth={1.5} /></div>
         <h2>Change Your Password</h2>
         <p>Welcome, <strong>{user?.full_name}</strong>! Your account was created by an administrator. Please set a new password to continue.</p>
         {error && <div className="error-msg">{error}</div>}
@@ -78,7 +79,7 @@ export default function ChangePassword() {
             />
           </div>
           <button type="submit" className="btn btn-primary btn-fullwidth" disabled={loading}>
-            {loading ? 'Updating...' : '→ Set New Password'}
+            {loading ? 'Updating...' : <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>Set New Password <ArrowRight size={16} /></span>}
           </button>
         </form>
         <div className={s['auth-switch']}>

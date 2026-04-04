@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { X } from 'lucide-react';
 import { searchChatUsers, createGroup, updateGroup } from '../../api';
 import ChatAvatar from './ChatAvatar';
 import s from './GroupModal.module.css';
@@ -53,7 +54,7 @@ export default function GroupModal({ existingGroup, members: existingMembers, on
             <div className={s.modal}>
                 <div className={s.header}>
                     <h3>{isEdit ? 'Edit Group' : 'New Group'}</h3>
-                    <button className={s.closeBtn} onClick={onClose}>✕</button>
+                    <button className={s.closeBtn} onClick={onClose}><X size={16} /></button>
                 </div>
                 <div className={s.body}>
                     <input
@@ -84,7 +85,7 @@ export default function GroupModal({ existingGroup, members: existingMembers, on
                             {selected.map(u => (
                                 <span key={u.id} className={s.chip}>
                                     {u.full_name}
-                                    <button onClick={() => removeUser(u.id)}>✕</button>
+                                    <button onClick={() => removeUser(u.id)}><X size={12} /></button>
                                 </span>
                             ))}
                         </div>

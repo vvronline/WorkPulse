@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Check, X, Clock } from 'lucide-react';
 import { useAutoDismiss } from '../../hooks/useAutoDismiss';
 import { getRoleChangeRequests, approveRoleChange, rejectRoleChange, cancelRoleChange } from '../../api';
 import { ROLE_LABELS } from './constants';
@@ -58,7 +59,7 @@ export default function RoleRequests({ userRole }) {
                 background: info.status === 'approved' ? 'var(--bg-success, #d1fae5)' : 'var(--bg-warning, #fef3c7)',
                 color: info.status === 'approved' ? 'var(--success, #059669)' : 'var(--warning, #d97706)',
             }}>
-                {ROLE_LABELS[role] || role}: {info.status === 'approved' ? '✓' : '⏳'}
+                {ROLE_LABELS[role] || role}: {info.status === 'approved' ? <Check size={12} /> : <Clock size={12} />}
             </span>
         ));
     };
@@ -109,10 +110,10 @@ export default function RoleRequests({ userRole }) {
                                 {r.status === 'pending' && (
                                     <div className={s.actions}>
                                         {r.approvals?.[userRole]?.status === 'pending' && (
-                                            <button className={`${s.btnSmall} ${s.btnSuccess}`} onClick={() => handleApprove(r.id)}>✓ Approve</button>
+                                            <button className={`${s.btnSmall} ${s.btnSuccess}`} onClick={() => handleApprove(r.id)}><Check size={13} style={{marginRight:4,verticalAlign:'middle'}} />Approve</button>
                                         )}
                                         {(r.approvals?.[userRole] || userRole === 'super_admin') && (
-                                            <button className={`${s.btnSmall} ${s.btnDanger}`} onClick={() => setRejectModal(r.id)}>✗ Reject</button>
+                                            <button className={`${s.btnSmall} ${s.btnDanger}`} onClick={() => setRejectModal(r.id)}><X size={13} style={{marginRight:4,verticalAlign:'middle'}} />Reject</button>
                                         )}
                                         <button className={`${s.btnSmall} ${s.btnAccent}`} onClick={() => handleCancel(r.id)}>Cancel</button>
                                     </div>

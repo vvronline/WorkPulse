@@ -1,4 +1,5 @@
 import React, { useRef, useEffect } from 'react';
+import { MonitorUp } from 'lucide-react';
 import './MeetingRoom.css';
 
 /**
@@ -24,7 +25,7 @@ export default function PresenterView({ presenterStream, presenterName, isLocal,
     return (
         <div className="pv-root">
             <div className="pv-label">
-                <span className="pv-icon">🖥️</span>
+                <span className="pv-icon"><MonitorUp size={18} /></span>
                 <span>{presenterName || 'Participant'} is presenting</span>
             </div>
             <div className="pv-screen-wrap">

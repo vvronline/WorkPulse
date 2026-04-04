@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { AlertTriangle, Video, X } from 'lucide-react';
 import { searchChatUsers, getMeeting, checkMeetingConflicts } from '../../api';
 import s from './Calendar.module.css';
 
@@ -83,11 +84,11 @@ function MeetingParticipantPicker({ participants, excludeIds = [], onChange, con
                         <span
                             key={p.id}
                             className={`${s.participantChip} ${hasConflict ? s.participantChipConflict : ''}`}
-                            title={hasConflict ? `⚠️ Conflicts with "${conflictEvt?.title}"` : undefined}
+                            title={hasConflict ? `Conflicts with "${conflictEvt?.title}"` : undefined}
                         >
-                            {hasConflict && <span className={s.conflictChipIcon} aria-label="conflict">⚠️</span>}
+                            {hasConflict && <span className={s.conflictChipIcon} aria-label="conflict"><AlertTriangle size={12} /></span>}
                             {p.name || p.full_name || p.username}
-                            <button type="button" onClick={() => remove(p.id)}>×</button>
+                            <button type="button" onClick={() => remove(p.id)} aria-label="Remove"><X size={12} /></button>
                         </span>
                     );
                 })}
@@ -306,7 +307,7 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
         {/* Meeting section */}
         {hasMeeting ? (
           <div className={s.meetingBanner}>
-            <span className={s.meetingIcon}>📹</span>
+            <span className={s.meetingIcon}><Video size={16} /></span>
             <span>Online meeting</span>
             <a
               href={`${window.location.origin}/meeting/${existingMeetingCode}`}
@@ -354,7 +355,7 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
         ) : modal === 'create' && (
           <div className={s.meetingToggleRow}>
             <label className={s.toggleLabel}>
-              <span className={s.meetingIcon}>📹</span>
+              <span className={s.meetingIcon}><Video size={16} /></span>
               Add online meeting
             </label>
             <button
@@ -390,7 +391,7 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
             </div>
             {Object.keys(conflicts).length > 0 && (
               <div className={s.conflictWarning} role="alert">
-                <span className={s.conflictWarningIcon}>⚠️</span>
+                <span className={s.conflictWarningIcon}><AlertTriangle size={16} /></span>
                 <div>
                   {Object.values(conflicts).map((c, i) => (
                     <div key={i}>

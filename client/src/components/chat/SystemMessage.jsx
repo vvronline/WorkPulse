@@ -1,15 +1,16 @@
 import React from 'react';
+import { Phone, PhoneOff, PhoneMissed, Video, VideoOff, UserPlus, Info } from 'lucide-react';
 import s from './SystemMessage.module.css';
 
-const ICONS = {
-    call_started: '📞',
-    call_ended: '📵',
-    call_missed: '📵',
-    meeting_started: '📹',
-    meeting_ended: '🔴',
-    meeting_joined: '➕',
-    meeting_left: '➖',
-    participant_added: '👤',
+const ICON_MAP = {
+    call_started: <Phone size={14} />,
+    call_ended: <PhoneOff size={14} />,
+    call_missed: <PhoneMissed size={14} />,
+    meeting_started: <Video size={14} />,
+    meeting_ended: <VideoOff size={14} />,
+    meeting_joined: <UserPlus size={14} />,
+    meeting_left: <PhoneOff size={14} />,
+    participant_added: <UserPlus size={14} />,
 };
 
 function formatDuration(secs) {
@@ -27,7 +28,7 @@ function formatDuration(secs) {
 export default function SystemMessage({ msg }) {
     const meta = msg.metadata || {};
     const type = meta.type || 'system';
-    const icon = ICONS[type] || 'ℹ️';
+    const icon = ICON_MAP[type] || <Info size={14} />;
 
     let text = meta.text || msg.content || 'System event';
 

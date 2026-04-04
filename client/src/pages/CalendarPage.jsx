@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Calendar as CalendarIcon } from 'lucide-react';
 import Calendar from '../components/calendar/Calendar';
 import { getTasks, getLocalToday } from '../api';
 import { useAuth } from '../AuthContext';
@@ -20,7 +21,7 @@ export default function CalendarPage() {
   return (
     <div className={s.page}>
       <div className={s.header}>
-        <h2><span className="page-icon">📅</span> Calendar</h2>
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CalendarIcon size={22} /> Calendar</h2>
         <p>Schedule events and manage your time</p>
       </div>
       <div className={s.calendarWrap}>

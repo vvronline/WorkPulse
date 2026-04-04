@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { resetPassword } from '../api';
+import { Lock, ArrowLeft, CheckCircle2 } from 'lucide-react';
 import PasswordInput from '../components/PasswordInput';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import s from './Auth.module.css';
@@ -48,7 +49,7 @@ export default function ResetPassword() {
   return (
     <div className={s['auth-container']}>
       <div className={s['auth-card']}>
-        <div className={s['auth-icon']}>🔒</div>
+        <div className={s['auth-icon']}><Lock size={28} strokeWidth={1.5} /></div>
         <h2>Reset Password</h2>
         <p>Enter your new password below</p>
 
@@ -85,14 +86,14 @@ export default function ResetPassword() {
           </form>
         ) : (
           <div className={s['reset-sent']}>
-            <div className={s['reset-sent-icon']}>✅</div>
+            <div className={s['reset-sent-icon']}><CheckCircle2 size={48} strokeWidth={1.5} color="var(--success)" /></div>
             <p>{success}</p>
             <p className={s['redirect-text']}>Redirecting to login...</p>
           </div>
         )}
 
         <div className={s['auth-switch']}>
-          <Link to="/login">← Back to Sign in</Link>
+          <Link to="/login" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}><ArrowLeft size={14} /> Back to Sign in</Link>
         </div>
       </div>
     </div>

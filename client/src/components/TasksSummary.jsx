@@ -1,5 +1,6 @@
 import React, { memo, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ClipboardList } from 'lucide-react';
 import s from './TasksSummary.module.css';
 
 const TasksSummary = memo(function TasksSummary({ taskSummary }) {
@@ -31,7 +32,7 @@ const TasksSummary = memo(function TasksSummary({ taskSummary }) {
       onKeyDown={e => e.key === 'Enter' && navigate('/tasks')}
     >
       <h3 className={s['timeline-title']}>
-        <span className="page-icon">📋</span> Today's Planner
+        <span className="page-icon"><ClipboardList size={18} /></span> Today's Planner
         <span className={s['title-arrow']}>›</span>
       </h3>
       <div className={s['tasks-summary-stats']}>

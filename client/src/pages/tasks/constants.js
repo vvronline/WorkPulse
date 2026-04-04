@@ -1,9 +1,9 @@
 import hljs from '../../hljs-setup';
 
 export const PRIORITIES = [
-    { value: 'high', label: 'High', icon: '🔴', color: 'var(--danger)' },
-    { value: 'medium', label: 'Medium', icon: '🟡', color: 'var(--warning)' },
-    { value: 'low', label: 'Low', icon: '🟢', color: 'var(--success)' },
+    { value: 'high', label: 'High', icon: '●', color: 'var(--danger)' },
+    { value: 'medium', label: 'Medium', icon: '●', color: 'var(--warning)' },
+    { value: 'low', label: 'Low', icon: '●', color: 'var(--success)' },
 ];
 
 export const COLUMNS = [
