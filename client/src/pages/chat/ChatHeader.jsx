@@ -13,6 +13,7 @@ export default function ChatHeader({ activeConv, onlineUsers, onBack, onGroupEdi
     const handleMoreAction = (fn) => () => { setMoreOpen(false); fn(); };
 
     const overflowItems = [
+        { label: 'Search messages', icon: Search, action: onToggleSearch, mobileOnly: true },
         { label: 'Pinned messages', icon: Pin, action: onTogglePinned },
         { label: 'Shared files', icon: FolderOpen, action: onToggleSharedFiles },
         { label: 'Saved messages', icon: Star, action: onToggleStarred },
@@ -68,7 +69,7 @@ export default function ChatHeader({ activeConv, onlineUsers, onBack, onGroupEdi
                                 ) : (
                                     <button
                                         key={item.label}
-                                        className={`${s.moreItem} ${item.danger ? s.moreItemDanger : ''}`}
+                                        className={`${s.moreItem} ${item.mobileOnly ? s.mobileOnlyItem : ''} ${item.danger ? s.moreItemDanger : ''}`}
                                         onClick={handleMoreAction(item.action)}
                                     >
                                         <item.icon size={15} />
