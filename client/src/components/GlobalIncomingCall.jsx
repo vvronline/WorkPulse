@@ -98,7 +98,7 @@ export default function GlobalIncomingCall() {
   const { callerName, callerAvatar, callType, isGroup, groupName } = globalIncomingCall;
   const displayName = isGroup ? (groupName || 'Group Call') : (callerName || 'Unknown');
   const initial = displayName.charAt(0).toUpperCase();
-  const avatarUrl = callerAvatar ? `/uploads/avatars/${callerAvatar}` : null;
+  const avatarUrl = callerAvatar || null;
 
   const handleAccept = () => {
     acceptGlobalCall();
