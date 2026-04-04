@@ -22,6 +22,9 @@ const HoldIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="non
 const ResumeIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><polygon points="5,3 19,12 5,21" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" fill="currentColor"/></svg>;
 const SwitchCamIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M16 3h5v5M8 21H3v-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M21 3l-7 7M3 21l7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>;
 const PipIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2"/><rect x="12" y="9" width="8" height="6" rx="1" fill="currentColor" opacity="0.5" stroke="currentColor" strokeWidth="1.5"/><path d="M8 21h8" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>;
+const SpeakerIcon = ({ on }) => on
+    ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M11 5L6 9H2v6h4l5 4V5z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/><path d="M15.54 8.46a5 5 0 010 7.07M19.07 4.93a10 10 0 010 14.14" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+    : <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M11 5L6 9H2v6h4l5 4V5z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/><path d="M15 9l6 6M21 9l-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>;
 
 /* ── Quality badge (colored dot) ── */
 function QualityBadge({ quality }) {
@@ -62,7 +65,8 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
         remoteName, remoteAvatar, isGroup
     } = callState;
 
-    const [status, setStatus] = useState(isIncoming ? 'incoming' : 'ringing');
+    const isReconnect = !!callState.isReconnect;
+    const [status, setStatus] = useState(isReconnect ? 'reconnecting' : (isIncoming ? 'incoming' : 'ringing'));
     const [duration, setDuration] = useState(0);
 
     // Controls state
@@ -72,6 +76,8 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     const [onHold, setOnHold] = useState(false);
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [connectionQuality, setConnectionQuality] = useState('unknown');
+    const [speakerOn, setSpeakerOn] = useState(false);
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
     // Device switching
     const [audioDevices, setAudioDevices] = useState([]);
@@ -96,12 +102,25 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     const localVideoRef = useRef(null);
     const remoteVideoRef = useRef(null);
     const remoteAudioRef = useRef(null);
+    const speakerAudioRef = useRef(null);
     const overlayRef = useRef(null);
     const timerRef = useRef(null);
     const ringtoneRef = useRef(null);
     const pendingSignalsRef = useRef([]);
     const statsIntervalRef = useRef(null);
     const screenSenderRef = useRef(null);
+    const connectionTimeoutRef = useRef(null);
+    const handleEndRef = useRef(null);
+
+    // ─── Connection timeout: auto-end if stuck in ringing/connecting/reconnecting ───
+    useEffect(() => {
+        if (status === 'ringing' || status === 'connecting' || status === 'reconnecting') {
+            connectionTimeoutRef.current = setTimeout(() => {
+                if (handleEndRef.current) handleEndRef.current();
+            }, status === 'ringing' ? 60000 : 30000); // 60s for ringing, 30s for connecting/reconnecting
+        }
+        return () => clearTimeout(connectionTimeoutRef.current);
+    }, [status]);
 
     // ─── Duration timer ───
     useEffect(() => {
@@ -299,12 +318,17 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     }, [conversationId, wsSend]);
 
     const handleSignal = useCallback((signal, fromUserId) => {
+        // During reconnect, create PC on first offer received
+        if (!pcRef.current && signal.type === 'offer' && localStreamRef.current) {
+            createPeerConnection(localStreamRef.current, fromUserId);
+            flushPendingSignals();
+        }
         if (!pcRef.current) {
             pendingSignalsRef.current.push({ signal, fromUserId });
             return;
         }
         handleSignalInternal(signal, fromUserId);
-    }, [handleSignalInternal]);
+    }, [handleSignalInternal, createPeerConnection, flushPendingSignals]);
 
     useEffect(() => {
         if (callState.onSignal) callState.onSignal.current = handleSignal;
@@ -312,13 +336,43 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
 
     // ─── Outgoing call: use pre-acquired stream ───
     useEffect(() => {
-        if (!isIncoming && callState.localStream && !localStreamRef.current) {
+        if (!isIncoming && !isReconnect && callState.localStream && !localStreamRef.current) {
             localStreamRef.current = callState.localStream;
             if (localVideoRef.current && callType === 'video') {
                 localVideoRef.current.srcObject = callState.localStream;
             }
         }
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // ─── Reconnect: acquire media and wait for peer to re-offer ───
+    useEffect(() => {
+        if (!isReconnect) return;
+        (async () => {
+            const stream = await startMedia();
+            if (!stream) { handleEnd(); return; }
+            // PC will be created when we receive a signal (offer) from the other peer
+            setStatus('reconnecting');
+        })();
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // ─── Handle reconnectTo: other peer refreshed, we need to re-offer ───
+    useEffect(() => {
+        if (!callState.reconnectTo) return;
+        const targetUserId = callState.reconnectTo;
+        (async () => {
+            // Close old PC if exists
+            if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
+            const stream = localStreamRef.current;
+            if (!stream) return;
+            const pc = createPeerConnection(stream, targetUserId);
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            wsSend('call_signal', {
+                conversationId, targetUserId,
+                signal: { type: 'offer', sdp: offer.sdp }
+            });
+        })().catch(console.error);
+    }, [callState.reconnectTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ─── Accept incoming call ───
     const handleAccept = useCallback(async () => {
@@ -365,6 +419,8 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
         onEnd();
     }, [callId, conversationId, wsSend, onEnd, stopRingtone]);
 
+    handleEndRef.current = handleEnd;
+
     useEffect(() => {
         if (callState.onEndExternal) callState.onEndExternal.current = () => {
             stopRingtone();
@@ -383,10 +439,13 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
             localStreamRef.current = null;
         }
         if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
+        if (speakerAudioRef.current) { speakerAudioRef.current.pause(); speakerAudioRef.current.srcObject = null; }
         if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
         pendingSignalsRef.current = [];
         clearInterval(timerRef.current);
         clearInterval(statsIntervalRef.current);
+        clearTimeout(addPartTimerRef.current);
+        clearTimeout(connectionTimeoutRef.current);
         if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     };
 
@@ -483,6 +542,45 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     };
 
     // ═══════════════════════════════════
+    //  FEATURE: Speaker / Earpiece Toggle (mobile)
+    // ═══════════════════════════════════
+    const toggleSpeaker = useCallback(() => {
+        const next = !speakerOn;
+        setSpeakerOn(next);
+        const audioEl = remoteAudioRef.current;
+        const speakerEl = speakerAudioRef.current;
+        if (!audioEl) return;
+
+        if (next) {
+            // Switch to loudspeaker
+            // Method 1: setSinkId (Chrome Android supports 'speaker')
+            if (typeof audioEl.setSinkId === 'function') {
+                audioEl.setSinkId('default').catch(() => {});
+            }
+            // Method 2: Route audio through a <video> element (plays through speaker on mobile)
+            if (speakerEl && remoteStreamRef.current) {
+                speakerEl.srcObject = remoteStreamRef.current;
+                speakerEl.play().catch(() => {});
+                audioEl.muted = true;
+            }
+        } else {
+            // Switch to earpiece
+            if (typeof audioEl.setSinkId === 'function') {
+                // 'communications' is earpiece hint on some devices
+                audioEl.setSinkId('communications').catch(() => {
+                    audioEl.setSinkId('default').catch(() => {});
+                });
+            }
+            // Mute the speaker <video> fallback, unmute the <audio>
+            if (speakerEl) {
+                speakerEl.pause();
+                speakerEl.srcObject = null;
+            }
+            audioEl.muted = false;
+        }
+    }, [speakerOn]);
+
+    // ═══════════════════════════════════
     //  FEATURE: Fullscreen
     // ═══════════════════════════════════
     const toggleFullscreen = async () => {
@@ -573,7 +671,7 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     };
 
     const handleAddPartInvite = (targetUserId) => {
-        wsSend({ type: 'call_add_participant', callId, conversationId, targetUserId });
+        wsSend('call_add_participant', { callId, conversationId, targetUserId });
         setShowAddParticipant(false);
         setAddPartQuery('');
         setAddPartResults([]);
@@ -583,8 +681,10 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
             ref={overlayRef}
             className={`${s.overlay} ${isVideoCall && isConnected ? s.videoMode : ''} ${onHold ? s.holdMode : ''}`}
         >
-            {/* Hidden audio — always present */}
+            {/* Hidden audio — earpiece by default; speaker fallback via <video> */}
             <audio ref={remoteAudioRef} autoPlay playsInline />
+            {/* Hidden video element for loudspeaker routing on mobile */}
+            <video ref={speakerAudioRef} style={{ display: 'none' }} autoPlay playsInline />
 
             {/* Video elements */}
             {isVideoCall && (
@@ -604,7 +704,7 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
             )}
 
             {/* Avatar / info */}
-            {(!isVideoCall || !isConnected || onHold) && (
+            {(!isVideoCall || !isConnected || onHold || status === 'reconnecting') && (
                 <div className={s.callInfo}>
                     <div className={`${s.avatarContainer} ${status === 'incoming' || status === 'ringing' ? s.pulsing : ''}`}>
                         <ChatAvatar name={remoteName || 'User'} avatar={remoteAvatar} size="xl" />
@@ -614,6 +714,7 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
                         {status === 'incoming' && `Incoming ${callType} call...`}
                         {status === 'ringing' && 'Ringing...'}
                         {status === 'connecting' && 'Connecting...'}
+                        {status === 'reconnecting' && 'Reconnecting...'}
                         {isConnected && !onHold && formatDuration(duration)}
                         {isConnected && onHold && `On Hold · ${formatDuration(duration)}`}
                     </p>
@@ -749,6 +850,17 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
                                 title={onHold ? 'Resume' : 'Hold'}
                             >
                                 {onHold ? <ResumeIcon /> : <HoldIcon />}
+                            </button>
+                        )}
+
+                        {/* Speaker / Earpiece toggle (mobile) */}
+                        {isMobile && isConnected && (
+                            <button
+                                className={`${s.controlBtn} ${speakerOn ? s.active : ''}`}
+                                onClick={toggleSpeaker}
+                                title={speakerOn ? 'Switch to earpiece' : 'Switch to speaker'}
+                            >
+                                <SpeakerIcon on={speakerOn} />
                             </button>
                         )}
 

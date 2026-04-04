@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
     searchChatUsers, getConversations, createConversation, getMessages,
     markConversationRead, getPresence, getMembers, getReadStatus,
-    ackDelivered
+    ackDelivered, getActiveCall
 } from '../../api';
 import { useAuth } from '../../AuthContext';
 import { useChatUnread } from '../../ChatContext';
@@ -54,7 +54,26 @@ export default function useChatState() {
     const callSignalRef = useRef(null);
     const callEndRef = useRef(null);
     const callActiveRef = useRef(false);
-    useEffect(() => { callActiveRef.current = !!callState; }, [callState]);
+    useEffect(() => {
+        callActiveRef.current = !!callState;
+        // Persist active call metadata in sessionStorage for refresh recovery
+        if (callState && callState.callId) {
+            try {
+                sessionStorage.setItem('wp_active_call', JSON.stringify({
+                    callId: callState.callId,
+                    conversationId: callState.conversationId,
+                    callType: callState.callType,
+                    remoteName: callState.remoteName,
+                    remoteAvatar: callState.remoteAvatar,
+                    isGroup: callState.isGroup,
+                    callerId: callState.callerId,
+                    isIncoming: callState.isIncoming,
+                }));
+            } catch { /* ignore */ }
+        } else if (!callState) {
+            try { sessionStorage.removeItem('wp_active_call'); } catch { /* ignore */ }
+        }
+    }, [callState]);
 
     // Refs
     const messagesEndRef = useRef(null);
@@ -76,6 +95,16 @@ export default function useChatState() {
         switch (msg.type) {
             case 'chat_message': {
                 if (activeConvRef.current?.id === d.conversationId) {
+                    // Clear typing indicator for this sender
+                    if (d.senderId !== user?.id) {
+                        setTypingUsers(prev => {
+                            if (prev[d.conversationId] === d.senderId) {
+                                const n = { ...prev }; delete n[d.conversationId]; return n;
+                            }
+                            return prev;
+                        });
+                        clearTimeout(typingTimeouts.current[d.conversationId]);
+                    }
                     const msgFields = {
                         id: d.id, sender_id: d.senderId, sender_name: d.senderName,
                         sender_avatar: d.senderAvatar, content: d.content, created_at: d.createdAt,
@@ -275,6 +304,12 @@ export default function useChatState() {
                 }
                 break;
             }
+            case 'call_reconnect': {
+                // Remote peer refreshed — they need us to re-offer
+                // Set a flag on callState so CallOverlay initiates a new offer
+                setCallState(prev => prev ? { ...prev, reconnectTo: d.userId } : prev);
+                break;
+            }
             default: break;
         }
     }, [user?.id]);
@@ -310,6 +345,44 @@ export default function useChatState() {
         }
     }, [pendingAcceptedCall]);
 
+    // ─── Restore active call after page refresh ───
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const saved = sessionStorage.getItem('wp_active_call');
+                if (!saved) return;
+                const callData = JSON.parse(saved);
+                if (!callData?.callId) return;
+                // Verify the call is still active on the server
+                const { data: activeCall } = await getActiveCall();
+                if (cancelled || !activeCall || activeCall.id !== callData.callId) {
+                    sessionStorage.removeItem('wp_active_call');
+                    return;
+                }
+                // Restore call state and trigger reconnection
+                setCallState({
+                    callId: callData.callId,
+                    conversationId: callData.conversationId,
+                    callType: callData.callType,
+                    isIncoming: callData.isIncoming,
+                    callerId: callData.callerId,
+                    remoteName: callData.remoteName,
+                    remoteAvatar: callData.remoteAvatar,
+                    isGroup: callData.isGroup,
+                    accepted: true,
+                    acceptedBy: null,
+                    onSignal: callSignalRef,
+                    onEndExternal: callEndRef,
+                    isReconnect: true, // signals CallOverlay to reconnect
+                });
+                // Tell the server to notify the other party
+                wsSend('call_reconnect', { callId: callData.callId, conversationId: callData.conversationId });
+            } catch { /* ignore — no active call */ }
+        })();
+        return () => { cancelled = true; };
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
     // ─── Effects ───
 
     // Close conv menu on outside click
@@ -325,6 +398,7 @@ export default function useChatState() {
         return () => {
             clearTimeout(typingTimerRef.current);
             Object.values(typingTimeouts.current).forEach(clearTimeout);
+            typingTimeouts.current = {};
         };
     }, []);
 

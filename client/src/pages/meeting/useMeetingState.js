@@ -135,6 +135,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             }
             setConnectionQualities(new Map(qMap));
         }, 5000);
+        // Always clean up the interval (including in PiP mode)
         return () => clearInterval(qualityTimerRef.current);
     }, []);
 
@@ -142,7 +143,13 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     const createPeerConnection = useCallback((remoteUserId, isInitiator) => {
         if (pcsRef.current.has(remoteUserId)) return pcsRef.current.get(remoteUserId);
 
-        const pc = new RTCPeerConnection(ICE_CONFIG);
+        let pc;
+        try {
+            pc = new RTCPeerConnection(ICE_CONFIG);
+        } catch (err) {
+            console.error('Failed to create RTCPeerConnection:', err);
+            return null;
+        }
         pcsRef.current.set(remoteUserId, pc);
 
         // Add local tracks
@@ -251,11 +258,13 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             case 'meeting_participant_joined': {
                 // Server sends: { userId, fullName, avatar, username, existingPeers? }
                 // existingPeers is an array of { userId, fullName, avatar, username } objects
-                if (data.existingPeers) {
+                if (data.existingPeers && Array.isArray(data.existingPeers)) {
                     // We are the new joiner — existingPeers is sent only to us
                     data.existingPeers.forEach(peer => {
-                        const peerId = peer.userId || peer;
+                        if (!peer || !peer.userId) return;
+                        const peerId = peer.userId;
                         const pc = createPeerConnection(peerId, false);
+                        if (!pc) return;
                         pcsRef.current.set(peerId, pc);
                         // Add existing participants with their names
                         if (peerId !== user?.id) {
@@ -294,7 +303,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                     // If we're an existing participant, initiate connection to the new joiner
                     if (!data.existingPeers) {
                         const pc = createPeerConnection(data.userId, true);
-                        pcsRef.current.set(data.userId, pc);
+                        if (pc) pcsRef.current.set(data.userId, pc);
                     }
                 }
                 setStatus('connected');
@@ -305,6 +314,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 let pc = pcsRef.current.get(fromUserId);
                 if (!pc) {
                     pc = createPeerConnection(fromUserId, false);
+                    if (!pc) break;
                     pcsRef.current.set(fromUserId, pc);
                 }
                 handleSignal(fromUserId, pc, signal).catch(console.error);

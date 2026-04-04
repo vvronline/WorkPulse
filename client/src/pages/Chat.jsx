@@ -5,6 +5,9 @@ import {
     StarredMessages, PollCreator, CallOverlay
 } from '../components/chat';
 import ChatSidebar from './chat/ChatSidebar';
+import ChatHeader from './chat/ChatHeader';
+import ChatMessages from './chat/ChatMessages';
+import ChatInputBar from './chat/ChatInputBar';
 import useChatState from './chat/useChatState';
 import useChatActions from './chat/useChatActions';
 import { getConvName } from './chat/chatUtils';
@@ -45,6 +48,14 @@ export default function Chat() {
     } = actions;
 
     const [clearConfirm, setClearConfirm] = useState(null);
+
+    // Warn before closing/refreshing during an active call
+    useEffect(() => {
+        if (!callState) return;
+        const handler = (e) => { e.preventDefault(); e.returnValue = ''; };
+        window.addEventListener('beforeunload', handler);
+        return () => window.removeEventListener('beforeunload', handler);
+    }, [callState]);
 
     // Hide navbar & bottom tab bar on mobile when a chat conversation is active
     useEffect(() => {

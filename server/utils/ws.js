@@ -81,7 +81,7 @@ function setupWebSocket(server) {
         // Presence: mark online
         if (wasOffline) {
             redis.setPresence(userId, redis.TTL.PRESENCE);
-            query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId]).catch(() => { });
+            query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId]).catch(err => { logger.warn({ err: err.message, userId }, 'Failed to update last_seen_at on connect'); });
             broadcastPresence(userId, 'online');
         }
 
@@ -100,7 +100,7 @@ function setupWebSocket(server) {
                     clients.delete(userId);
                     // Presence: mark offline
                     redis.removePresence(userId);
-                    query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId]).catch(() => { });
+                    query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId]).catch(err => { logger.warn({ err: err.message, userId }, 'Failed to update last_seen_at on disconnect'); });
                     broadcastPresence(userId, 'offline');
                 }
             }
@@ -462,6 +462,38 @@ async function handleChatMessage(senderId, msg) {
             signal
         });
 
+    } else if (msg.type === 'call_reconnect') {
+        // User refreshed the page during an active call — notify the other party to re-offer
+        const { callId, conversationId } = msg.data || {};
+        if (!callId || !conversationId) return;
+
+        const callLog = (await query(
+            `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2 AND status = 'answered'`,
+            [callId, conversationId]
+        )).rows[0];
+        if (!callLog) return;
+
+        // Verify sender is in the conversation
+        const participant = (await query(
+            'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
+            [conversationId, senderId]
+        )).rows[0];
+        if (!participant) return;
+
+        // Find the other participant(s) and tell them to re-offer
+        const others = (await query(
+            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2',
+            [conversationId, senderId]
+        )).rows;
+
+        for (const p of others) {
+            sendToUser(p.user_id, 'call_reconnect', {
+                callId,
+                conversationId,
+                userId: senderId
+            });
+        }
+
         // ═══════════════════════════════════════════════════════
         //  MEETING HANDLERS
         // ═══════════════════════════════════════════════════════
@@ -570,9 +602,9 @@ async function handleChatMessage(senderId, msg) {
             sendToUser(p.user_id, 'meeting_participant_left', { meetingId, userId: senderId });
         }
 
-        // If no active participants, mark meeting ended
+        // If no active participants, mark meeting ended (use WHERE to prevent double-update race)
         if (activeParticipants.length === 0) {
-            await query(`UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1`, [meetingId]);
+            await query(`UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1 AND status != 'ended'`, [meetingId]);
         }
 
     } else if (msg.type === 'meeting_end') {
@@ -697,6 +729,13 @@ async function handleChatMessage(senderId, msg) {
         const { meetingId, raised } = msg.data || {};
         if (!meetingId) return;
 
+        // Verify sender is an active participant
+        const senderOk = (await query(
+            `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
+            [meetingId, senderId]
+        )).rows[0];
+        if (!senderOk) return;
+
         const participants = (await query(
             `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined'`,
             [meetingId]
@@ -712,6 +751,13 @@ async function handleChatMessage(senderId, msg) {
         const { meetingId, muted, videoOff, screenSharing } = msg.data || {};
         if (!meetingId) return;
 
+        // Verify sender is an active participant
+        const senderOk = (await query(
+            `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
+            [meetingId, senderId]
+        )).rows[0];
+        if (!senderOk) return;
+
         const participants = (await query(
             `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined'`,
             [meetingId]
@@ -726,7 +772,14 @@ async function handleChatMessage(senderId, msg) {
     } else if (msg.type === 'meeting_chat') {
         // In-meeting chat message relay
         const { meetingId, text } = msg.data || {};
-        if (!meetingId || !text || !text.trim()) return;
+        if (!meetingId || !text || typeof text !== 'string' || !text.trim() || text.length > 5000) return;
+
+        // Verify sender is an active participant
+        const senderOk = (await query(
+            `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
+            [meetingId, senderId]
+        )).rows[0];
+        if (!senderOk) return;
 
         const sender = (await query('SELECT full_name FROM users WHERE id = $1', [senderId])).rows[0];
         const participants = (await query(

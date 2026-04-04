@@ -55,6 +55,8 @@ export default function MeetingJoin() {
                 });
             })
             .catch(() => {
+                // Stop first stream's tracks before trying audio-only fallback
+                if (s) { s.getTracks().forEach(t => t.stop()); s = null; }
                 // Try audio only
                 navigator.mediaDevices.getUserMedia({ audio: true })
                     .then(st => {

@@ -1382,7 +1382,7 @@ router.get('/calls', auth, async (req, res) => {
                     other_u.id AS other_user_id,
                     other_u.full_name AS other_name,
                     other_u.avatar AS other_avatar,
-                    c.is_group, c.group_name
+                    c.is_group, c.name AS group_name
                 FROM call_logs cl
                 JOIN conversations c ON c.id = cl.conversation_id
                 JOIN users caller ON caller.id = cl.caller_id
@@ -1406,6 +1406,45 @@ router.get('/calls', auth, async (req, res) => {
     } catch (err) {
         req.log.error({ err }, 'Get all call history error');
         res.status(500).json({ error: 'Failed to get call history' });
+    }
+});
+
+/**
+ * GET /api/chat/calls/active
+ * Returns the user's currently active call (status = 'answered'), if any.
+ */
+router.get('/calls/active', auth, async (req, res) => {
+    try {
+        const userId = req.userId;
+        const row = (await query(`
+            SELECT cl.id, cl.conversation_id, cl.caller_id, cl.call_type, cl.status, cl.started_at,
+                   caller.full_name AS caller_name, caller.avatar AS caller_avatar,
+                   c.is_group, c.name AS group_name,
+                   other_u.id AS other_user_id,
+                   other_u.full_name AS other_name,
+                   other_u.avatar AS other_avatar
+            FROM call_logs cl
+            JOIN conversations c ON c.id = cl.conversation_id
+            JOIN users caller ON caller.id = cl.caller_id
+            JOIN conversation_participants cp_me
+                ON cp_me.conversation_id = cl.conversation_id AND cp_me.user_id = $1
+            LEFT JOIN LATERAL (
+                SELECT u.id, u.full_name, u.avatar
+                FROM conversation_participants cp2
+                JOIN users u ON u.id = cp2.user_id
+                WHERE cp2.conversation_id = cl.conversation_id
+                  AND cp2.user_id != $1
+                  AND NOT c.is_group
+                LIMIT 1
+            ) other_u ON true
+            WHERE cl.status = 'answered'
+            ORDER BY cl.started_at DESC
+            LIMIT 1
+        `, [userId])).rows[0];
+        res.json(row || null);
+    } catch (err) {
+        req.log.error({ err }, 'Get active call error');
+        res.status(500).json({ error: 'Failed to get active call' });
     }
 });
 
