@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Pin, Star, Pencil, Trash2 } from 'lucide-react';
 import s from './MessageBubble.module.css';
 import ChatAvatar from './ChatAvatar';
@@ -58,12 +58,37 @@ export default function MessageBubble({
     const [showReactions, setShowReactions] = useState(false);
     const [showFullPicker, setShowFullPicker] = useState(false);
     const [ctxMenu, setCtxMenu] = useState(null);
+    const [toolbarOpen, setToolbarOpen] = useState(false);
     const bubbleRef = useRef(null);
+    const rowRef = useRef(null);
 
     const handleContext = useCallback((e) => {
         e.preventDefault();
         setCtxMenu({ x: e.clientX, y: e.clientY });
     }, []);
+
+    // Mobile: tap bubble to toggle the action toolbar
+    const handleTouchEnd = useCallback((e) => {
+        // Ignore if touching inside toolbar, pickers, or reaction chips
+        if (e.target.closest && (
+            e.target.closest('[data-toolbar]') ||
+            e.target.closest('[data-picker]') ||
+            e.target.closest('[data-reaction]')
+        )) return;
+        setToolbarOpen(t => !t);
+    }, []);
+
+    // Close toolbar when tapping outside the message row
+    useEffect(() => {
+        if (!toolbarOpen) return;
+        const handler = (e) => {
+            if (rowRef.current && !rowRef.current.contains(e.target)) {
+                setToolbarOpen(false);
+            }
+        };
+        document.addEventListener('touchstart', handler, { passive: true });
+        return () => document.removeEventListener('touchstart', handler);
+    }, [toolbarOpen]);
 
     if (msg.deleted_at) {
         return (
@@ -127,7 +152,7 @@ export default function MessageBubble({
     ];
 
     return (
-        <div className={`${s.row} ${isMine ? s.mine : s.theirs} ${!showAvatar ? s.grouped : s.groupStart}`}>
+        <div ref={rowRef} className={`${s.row} ${isMine ? s.mine : s.theirs} ${!showAvatar ? s.grouped : s.groupStart}`}>
             {/* Avatar – always on the left (Teams style) */}
             <div className={s.avatarCol}>
                 {showAvatar && <ChatAvatar name={msg.sender_name} avatar={msg.sender_avatar} size="sm" />}
@@ -144,8 +169,9 @@ export default function MessageBubble({
 
                 <div
                     ref={bubbleRef}
-                    className={`${s.bubble} ${isMine ? s.myBubble : s.theirBubble} ${msg.pinned_at ? s.pinned : ''} ${msg.starred ? s.starredBubble : ''}`}
+                    className={`${s.bubble} ${isMine ? s.myBubble : s.theirBubble} ${msg.pinned_at ? s.pinned : ''} ${msg.starred ? s.starredBubble : ''} ${toolbarOpen ? s.toolbarActive : ''}`}
                     onContextMenu={handleContext}
+                    onTouchEnd={handleTouchEnd}
                 >
                     {msg.pinned_at && <div className={s.pinnedBadge}><Pin size={11} style={{marginRight:4}} />Pinned</div>}
                     {msg.starred && <div className={s.starBadge}><Star size={11} /></div>}
@@ -188,10 +214,10 @@ export default function MessageBubble({
                     </div>
 
                     {/* Hover toolbar – Teams style */}
-                    <div className={s.hoverActions}>
+                    <div className={s.hoverActions} data-toolbar>
                         <div className={s.quickReactions}>
                             {QUICK_EMOJIS.map(emoji => (
-                                <button key={emoji} className={s.quickEmoji} onClick={() => onReact?.(msg.id, emoji)} title={emoji}>
+                                <button key={emoji} className={s.quickEmoji} onClick={() => { onReact?.(msg.id, emoji); setToolbarOpen(false); }} title={emoji}>
                                     {emoji}
                                 </button>
                             ))}
@@ -200,7 +226,7 @@ export default function MessageBubble({
                             </button>
                         </div>
                         <div className={s.toolbarDivider} />
-                        <button className={s.toolbarBtn} onClick={() => onReply?.(msg)} title="Reply">
+                        <button className={s.toolbarBtn} onClick={() => { onReply?.(msg); setToolbarOpen(false); }} title="Reply">
                             <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L2 7l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 7h7a5 5 0 010 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
                         </button>
                         <button className={s.toolbarBtn} onClick={handleContext} title="More options">
@@ -211,7 +237,7 @@ export default function MessageBubble({
 
                 {/* Reactions display – outside bubble, left-bottom */}
                 {Object.keys(reactionGroups).length > 0 && (
-                    <div className={s.reactions}>
+                    <div className={s.reactions} data-reaction>
                         {Object.entries(reactionGroups).map(([emoji, users]) => (
                             <button
                                 key={emoji}
@@ -235,18 +261,18 @@ export default function MessageBubble({
 
                 {/* Reaction picker popup (10 emoji quick-pick) */}
                 {showReactions && (
-                    <div className={s.pickerWrap}>
+                    <div className={s.pickerWrap} data-picker>
                         <ReactionPicker
-                            onSelect={(emoji) => onReact?.(msg.id, emoji)}
+                            onSelect={(emoji) => { onReact?.(msg.id, emoji); setShowReactions(false); setToolbarOpen(false); }}
                             onClose={() => setShowReactions(false)}
-                            onOpenFull={() => setShowFullPicker(true)}
+                            onOpenFull={() => { setShowReactions(false); setShowFullPicker(true); }}
                         />
                     </div>
                 )}
 
                 {/* Full emoji picker for reactions */}
                 {showFullPicker && (
-                    <div className={s.pickerWrap}>
+                    <div className={s.pickerWrap} data-picker>
                         <EmojiGifPicker
                             onSelectEmoji={(emoji) => onReact?.(msg.id, emoji)}
                             onClose={() => setShowFullPicker(false)}

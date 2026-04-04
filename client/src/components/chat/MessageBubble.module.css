@@ -51,11 +51,11 @@
     color: var(--primary);
 }
 
-/* ─── Bubble – Teams flat style ─── */
+/* ─── Bubble – WhatsApp style ─── */
 .bubble {
     position: relative;
-    padding: 6px 10px;
-    border-radius: 4px;
+    padding: 7px 10px 5px;
+    border-radius: 18px;
     word-break: break-word;
     line-height: 1.5;
     font-size: 0.875rem;
@@ -64,19 +64,22 @@
     background: transparent;
     color: var(--text);
 }
-/* Teams: sender messages get a very subtle tinted background */
+/* Mine – solid primary, white text, tail on bottom-right */
 .myBubble {
-    background: rgba(99,102,241,.08);
-    color: var(--text);
-    border-radius: 4px;
+    background: var(--primary, #6366f1);
+    color: #fff;
+    border-radius: 18px 18px 4px 18px;
 }
+/* Theirs – elevated surface with border, tail on bottom-left */
 .theirBubble {
-    background: transparent;
+    background: var(--bg-secondary);
+    border: 1px solid var(--glass-border);
     color: var(--text);
-    border-radius: 4px;
+    border-radius: 18px 18px 18px 4px;
 }
-.grouped .myBubble { border-radius: 4px; }
-.grouped .theirBubble { border-radius: 4px; }
+/* Grouped continuation – no tail, flat on connecting corner */
+.mine.grouped .myBubble   { border-radius: 18px 4px 4px 18px; }
+.theirs.grouped .theirBubble { border-radius: 4px 18px 18px 4px; }
 
 .pinned { border-left: 2px solid #f59e0b; padding-left: 8px; }
 .deleted {
@@ -108,7 +111,6 @@
     text-decoration: none;
 }
 .link:hover { text-decoration: underline; }
-.myBubble .link { color: var(--primary-light); }
 
 /* ─── Meta: time + edited ─── */
 .meta {
@@ -341,18 +343,18 @@
 @media (max-width: 768px) {
     .bubbleWrap { max-width: 90%; }
     .row { padding: 2px 8px; }
-    /* On touch devices, long-press triggers context menu instead of hover */
+    /* On touch devices, toolbar is toggled via tap (toolbarActive state) */
     .hoverActions {
         display: none;
     }
     .bubble:hover .hoverActions {
         display: none;
     }
-    /* Show toolbar on active/focus for touch devices */
-    .bubble:active .hoverActions,
-    .bubble:focus-within .hoverActions {
+    /* State-driven: show when user taps the bubble */
+    .toolbarActive .hoverActions {
         display: flex;
     }
+    /* Call buttons: consistent touch targets on mobile */
     .quickEmoji {
         width: 32px;
         height: 32px;
@@ -380,15 +382,24 @@
     }
 }
 
+/* ─── myBubble inner element overrides (white on colored bg) ─── */
+.myBubble .link { color: rgba(255,255,255,0.9); text-decoration: underline; }
+.myBubble .mention { color: rgba(255,255,255,0.95); font-weight: 700; }
+.myBubble .inlineCode { background: rgba(0,0,0,0.2); border-color: rgba(255,255,255,0.15); color: #fff; }
+.myBubble .time { color: rgba(255,255,255,0.65); }
+.myBubble .edited { color: rgba(255,255,255,0.55); }
+.myBubble .forwarded { color: rgba(255,255,255,0.7); }
+.myBubble .pinnedBadge { color: #fde68a; }
+
 /* ─── Delivery receipts ─── */
 .deliverySent, .deliveryPartial, .deliveryRead {
     font-size: 0.6rem;
     margin-left: 2px;
     letter-spacing: -1px;
 }
-.deliverySent { color: var(--text-muted); opacity: 0.6; }
-.deliveryPartial { color: var(--text-muted); opacity: 0.7; }
-.deliveryRead { color: #60a5fa; }
+.deliverySent { color: rgba(255,255,255,0.55); }
+.deliveryPartial { color: rgba(255,255,255,0.8); }
+.deliveryRead { color: #93c5fd; }
 
 /* ─── Starred badge ─── */
 .starBadge {
@@ -408,7 +419,6 @@
     font-weight: 600;
     cursor: pointer;
 }
-.myBubble .mention { color: var(--primary-light); }
 
 /* ─── Inline code ─── */
 .inlineCode {

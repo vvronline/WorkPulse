@@ -10,8 +10,14 @@ export default function ReactionPicker({ onSelect, onClose, onOpenFull }) {
         const handler = (e) => {
             if (ref.current && !ref.current.contains(e.target)) onClose();
         };
-        document.addEventListener('mousedown', handler);
-        return () => document.removeEventListener('mousedown', handler);
+        // Defer listener so the tap/click that opened the picker doesn't immediately close it
+        const timerId = setTimeout(() => {
+            document.addEventListener('pointerdown', handler);
+        }, 80);
+        return () => {
+            clearTimeout(timerId);
+            document.removeEventListener('pointerdown', handler);
+        };
     }, [onClose]);
 
     return (
