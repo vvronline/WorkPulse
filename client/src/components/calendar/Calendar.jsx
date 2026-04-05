@@ -13,6 +13,21 @@ function toLocalISO(d) {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 function isSameDay(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
+function isBeforeToday(d, now = new Date()) {
+    const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return day < today;
+}
+function getMondayStart(d) {
+    const date = new Date(d);
+    const day = (date.getDay() + 6) % 7; // Mon=0...Sun=6
+    date.setDate(date.getDate() - day);
+    date.setHours(0, 0, 0, 0);
+    return date;
+}
+function toMonDayIndex(date) {
+    return (date.getDay() + 6) % 7; // Mon=0...Sun=6
+}
 
 function getWeekDays(baseDate) {
     const d = new Date(baseDate);
@@ -44,7 +59,17 @@ export default function Calendar({ tasks = [] }) {
     const [view, setView] = useState('week');
     const [baseDate, setBaseDate] = useState(() => new Date());
     const [modal, setModal] = useState(null);
-    const [form, setForm] = useState({ title: '', description: '', start_time: '', end_time: '', all_day: false, color: '#6366f1', task_id: '' });
+    const [form, setForm] = useState({
+        title: '',
+        description: '',
+        start_time: '',
+        end_time: '',
+        all_day: false,
+        color: '#6366f1',
+        task_id: '',
+        schedule_mode: 'single',
+        weekdays: [],
+    });
     const [editingMeetingCode, setEditingMeetingCode] = useState(null);
     const gridRef = useRef(null);
     const today = new Date();
@@ -87,12 +112,34 @@ export default function Calendar({ tasks = [] }) {
     const openCreate = (startDate, hour) => {
         const now = new Date();
         let start = new Date(startDate);
-        start.setHours(hour ?? now.getHours(), hour != null ? 0 : now.getMinutes(), 0, 0);
-        if (start < now) { start = new Date(now); start.setSeconds(0, 0); }
+
+        // Do not allow opening the create modal for a past day.
+        if (hour == null && isBeforeToday(start, now)) return;
+
+        if (hour == null) {
+            // Button path: default to current time on selected day.
+            start.setHours(now.getHours(), now.getMinutes(), 0, 0);
+        } else {
+            start.setHours(hour, 0, 0, 0);
+        }
+
+        // Do not allow selecting past times in the calendar grid.
+        if (hour != null && start < now) return;
+
         const rem = start.getMinutes() % 15;
         if (rem > 0) start.setMinutes(start.getMinutes() + (15 - rem), 0, 0);
         const end = new Date(start); end.setHours(start.getHours() + 1);
-        setForm({ title: '', description: '', start_time: toLocalISO(start), end_time: toLocalISO(end), all_day: false, color: '#6366f1', task_id: '' });
+        setForm({
+            title: '',
+            description: '',
+            start_time: toLocalISO(start),
+            end_time: toLocalISO(end),
+            all_day: false,
+            color: '#6366f1',
+            task_id: '',
+            schedule_mode: 'single',
+            weekdays: [toMonDayIndex(start)],
+        });
         setModal('create');
     };
 
@@ -100,6 +147,7 @@ export default function Calendar({ tasks = [] }) {
         setForm({
             title: evt.title, description: evt.description || '', color: evt.color || '#6366f1', task_id: evt.task_id || '',
             start_time: toLocalISO(new Date(evt.start_time)), end_time: toLocalISO(new Date(evt.end_time)), all_day: evt.all_day,
+            schedule_mode: 'single', weekdays: [],
         });
         setEditingMeetingCode(evt.meeting_code || null);
         setModal(evt.id);
@@ -118,29 +166,77 @@ export default function Calendar({ tasks = [] }) {
 
     const handleSave = async (meetingOptions) => {
         if (!form.title.trim() || !form.start_time || !form.end_time) return;
-        if (modal === 'create' && new Date(form.start_time) < new Date()) return;
-        const payload = { ...form, task_id: form.task_id || null,
-            start_time: new Date(form.start_time).toISOString(),
-            end_time: new Date(form.end_time).toISOString(),
-        };
+        if (modal === 'create') {
+            const now = new Date();
+            const start = new Date(form.start_time);
+            if (form.all_day) {
+                const todayLocal = toLocalISO(now).slice(0, 10);
+                const startLocal = form.start_time.slice(0, 10);
+                if (startLocal < todayLocal) return;
+            } else if (start < now) {
+                return;
+            }
+        }
+        const baseStart = new Date(form.start_time);
+        const baseEnd = new Date(form.end_time);
+        const durationMs = baseEnd.getTime() - baseStart.getTime();
+        const makePayload = (startDate, endDate, meetingId = null) => ({
+            title: form.title,
+            description: form.description,
+            all_day: form.all_day,
+            color: form.color,
+            task_id: form.task_id || null,
+            meeting_id: meetingId,
+            start_time: startDate.toISOString(),
+            end_time: endDate.toISOString(),
+        });
+
         try {
             if (modal === 'create') {
-                if (meetingOptions) {
-                    // Create meeting first, then calendar event linked to it
-                    const mtgRes = await createMeeting({
-                        title: form.title.trim(),
-                        description: form.description || undefined,
-                        required_participant_ids: meetingOptions.required.map(p => p.id),
-                        optional_participant_ids: meetingOptions.optional.map(p => p.id),
-                        settings: meetingOptions.settings,
-                        start_time: new Date(form.start_time).toISOString(),
-                        end_time: new Date(form.end_time).toISOString(),
+                const now = new Date();
+                const todayLocal = toLocalISO(now).slice(0, 10);
+                const datesToCreate = (() => {
+                    if (form.schedule_mode !== 'multi' || !Array.isArray(form.weekdays) || form.weekdays.length === 0) {
+                        return [new Date(baseStart)];
+                    }
+                    const weekStart = getMondayStart(baseStart);
+                    const unique = [...new Set(form.weekdays.filter(d => d >= 0 && d <= 6))].sort((a, b) => a - b);
+                    return unique.map(dayIdx => {
+                        const d = new Date(weekStart);
+                        d.setDate(weekStart.getDate() + dayIdx);
+                        d.setHours(baseStart.getHours(), baseStart.getMinutes(), 0, 0);
+                        return d;
                     });
-                    payload.meeting_id = mtgRes.data.id;
+                })();
+                if (!datesToCreate.length) return;
+
+                for (const eventStart of datesToCreate) {
+                    const eventEnd = new Date(eventStart.getTime() + durationMs);
+                    if (form.all_day) {
+                        const dateLocal = toLocalISO(eventStart).slice(0, 10);
+                        if (dateLocal < todayLocal) continue;
+                    } else if (eventStart < now) {
+                        continue;
+                    }
+
+                    let meetingId = null;
+                    if (meetingOptions) {
+                        // Create a corresponding meeting for each generated event occurrence.
+                        const mtgRes = await createMeeting({
+                            title: form.title.trim(),
+                            description: form.description || undefined,
+                            required_participant_ids: meetingOptions.required.map(p => p.id),
+                            optional_participant_ids: meetingOptions.optional.map(p => p.id),
+                            settings: meetingOptions.settings,
+                            start_time: eventStart.toISOString(),
+                            end_time: eventEnd.toISOString(),
+                        });
+                        meetingId = mtgRes.data.id;
+                    }
+                    await createCalendarEvent(makePayload(eventStart, eventEnd, meetingId));
                 }
-                await createCalendarEvent(payload);
             } else {
-                await updateCalendarEvent(modal, payload);
+                await updateCalendarEvent(modal, makePayload(baseStart, baseEnd));
             }
             setModal(null);
             setEditingMeetingCode(null);
@@ -217,7 +313,15 @@ export default function Calendar({ tasks = [] }) {
                         return (
                             <div key={di} className={`${s.dayColumn} ${isToday ? s.todayCol : ''}`}>
                                 {HOURS.map(h => (
-                                    <div key={h} className={s.hourSlot} onClick={() => openCreate(day, h)} />
+                                    <div
+                                        key={h}
+                                        className={`${s.hourSlot} ${(new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, 0, 0, 0) < new Date()) ? s.hourSlotDisabled : ''}`}
+                                        onClick={() => {
+                                            const slotStart = new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, 0, 0, 0);
+                                            if (slotStart < new Date()) return;
+                                            openCreate(day, h);
+                                        }}
+                                    />
                                 ))}
                                 {layoutEvents(dayEvents, day).map(({ ev, startMin, endMin, col, total }) => {
                                     const evStart = new Date(ev.start_time);
@@ -310,7 +414,12 @@ export default function Calendar({ tasks = [] }) {
                     <h2 className={s.title}>{getTitle()}</h2>
                 </div>
                 <div className={s.toolbarRight}>
-                    <button className={s.addBtn} onClick={() => openCreate(baseDate)}>New Event</button>
+                    <button
+                        className={s.addBtn}
+                        onClick={() => openCreate(isBeforeToday(baseDate) ? new Date() : baseDate)}
+                    >
+                        New Event
+                    </button>
                     <div className={s.viewToggle}>
                         {['day', 'week', 'month'].map(v => (
                             <button key={v} className={`${s.viewBtn} ${view === v ? s.activeView : ''}`} onClick={() => setView(v)}>

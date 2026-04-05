@@ -35,6 +35,8 @@
 .todayCol { background: var(--bg-hover, rgba(99,102,241,0.04)); }
 .hourSlot { height: 60px; border-bottom: 1px solid var(--border-light, rgba(255,255,255,0.04)); cursor: pointer; transition: background 0.1s; }
 .hourSlot:hover { background: var(--bg-hover, rgba(99,102,241,0.06)); }
+.hourSlotDisabled { cursor: not-allowed; opacity: 0.55; }
+.hourSlotDisabled:hover { background: transparent; }
 
 /* Events */
 .event { position: absolute; background-color: var(--ev-color, #6366f1); border-radius: 4px; padding: 2px 6px; cursor: pointer; overflow: hidden; z-index: 2; border-left: 3px solid rgba(0,0,0,0.3); transition: transform 0.1s, z-index 0s; box-shadow: 0 1px 3px rgba(0,0,0,0.25); }
@@ -65,29 +67,31 @@
 .monthMore { font-size: 0.62rem; color: var(--text-muted); cursor: pointer; }
 
 /* Modal */
-.modalOverlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
-.modal { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; width: min(540px, 92vw); max-height: 85vh; overflow-y: auto; }
-.modal h3 { margin: 0 0 1rem; font-size: 1.1rem; color: var(--text-primary); }
-.formGroup { margin-bottom: 0.75rem; }
-.formGroup label { display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 0.25rem; }
-.formGroup input, .formGroup textarea, .formGroup select { width: 100%; padding: 0.45rem 0.6rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-primary); font-size: 0.85rem; }
-.formGroup textarea { resize: vertical; }
-.formRow { display: flex; gap: 0.75rem; }
+.modalOverlay { position: fixed; inset: 0; background: rgba(12, 17, 29, 0.6); backdrop-filter: blur(5px); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.modal { position: relative; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 16px; padding: 1.15rem 1.15rem 1rem; width: min(620px, 96vw); max-height: 88vh; overflow-y: auto; box-shadow: 0 24px 44px rgba(0, 0, 0, 0.26), 0 2px 8px rgba(0, 0, 0, 0.18); }
+.modalHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.9rem; padding-right: 0.15rem; }
+.modal h3 { margin: 0; font-size: 1.18rem; color: var(--text-primary); line-height: 1.2; }
+.modalSubtitle { margin: 0.35rem 0 0; color: var(--text-muted); font-size: 0.82rem; line-height: 1.45; }
+.modalCloseBtn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 9px; border: 1px solid var(--border); background: var(--bg); color: var(--text-secondary); cursor: pointer; transition: background 0.16s, color 0.16s, border-color 0.16s; }
+.modalCloseBtn:hover { background: var(--bg-hover, rgba(255,255,255,0.06)); color: var(--text-primary); border-color: color-mix(in srgb, var(--border) 55%, var(--accent)); }
+.formGroup { margin-bottom: 0.8rem; }
+.formGroup label { display: block; font-size: 0.74rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.035em; color: var(--text-secondary); margin-bottom: 0.3rem; }
+.formGroup input, .formGroup textarea, .formGroup select { width: 100%; padding: 0.52rem 0.65rem; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); color: var(--text-primary); font-size: 0.84rem; transition: border-color 0.14s, box-shadow 0.14s, background 0.14s; }
+.formGroup input:focus, .formGroup textarea:focus, .formGroup select:focus, .participantInput:focus { outline: none; border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.formGroup textarea { resize: vertical; min-height: 78px; }
+.formRow { display: flex; gap: 0.85rem; }
 .formRow .formGroup { flex: 1; }
-.datetimePicker { display: flex; gap: 0.4rem; }
+.datetimePicker { display: flex; gap: 0.45rem; }
 .datetimePicker input[type="date"] { flex: 1; min-width: 0; }
-.datetimePicker select { width: 110px; }
-.colorPicker { display: flex; gap: 6px; flex-wrap: wrap; }
-.colorDot { width: 24px; height: 24px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; transition: transform 0.15s; }
-.colorDot:hover { transform: scale(1.15); }
-.colorDotActive { border-color: var(--text-primary); transform: scale(1.15); }
-.checkbox { display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: var(--text-secondary); cursor: pointer; align-self: flex-end; padding-bottom: 0.75rem; }
+.datetimePicker select { width: 118px; }
+.checkbox { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.79rem; color: var(--text-secondary); cursor: pointer; align-self: flex-end; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); }
 .checkbox input { accent-color: var(--accent); }
-.formActions { display: flex; justify-content: space-between; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--border); }
+.formActions { display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid var(--border); }
 .formActionsRight { display: flex; gap: 0.5rem; }
-.deleteBtn { background: var(--danger, #ef4444); color: #fff; border: none; border-radius: 6px; padding: 0.4rem 0.85rem; cursor: pointer; font-size: 0.82rem; font-weight: 600; }
-.cancelBtn { background: none; border: 1px solid var(--border); color: var(--text-secondary); border-radius: 6px; padding: 0.4rem 0.85rem; cursor: pointer; font-size: 0.82rem; }
-.saveBtn { background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 0.4rem 0.85rem; cursor: pointer; font-size: 0.82rem; font-weight: 600; }
+.deleteBtn, .cancelBtn, .saveBtn { height: 34px; border-radius: 9px; padding: 0 0.92rem; cursor: pointer; font-size: 0.8rem; font-weight: 600; transition: opacity 0.15s, background 0.15s, border-color 0.15s; }
+.deleteBtn { background: var(--danger, #ef4444); color: #fff; border: none; }
+.cancelBtn { background: none; border: 1px solid var(--border); color: var(--text-secondary); }
+.saveBtn { background: var(--accent); color: #fff; border: none; }
 .saveBtn:hover, .deleteBtn:hover { opacity: 0.85; }
 .cancelBtn:hover { background: var(--bg-hover, rgba(255,255,255,0.06)); }
 
@@ -140,6 +144,16 @@
 .participantResults li:hover { background: var(--bg-hover, rgba(255,255,255,0.06)); }
 .participantEmail { color: var(--text-muted); font-size: 0.75rem; }
 
+.scheduleModeRow { display: flex; gap: 0.45rem; margin-top: 0.15rem; }
+.scheduleModeBtn { flex: 1; height: 34px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); color: var(--text-secondary); cursor: pointer; font-size: 0.79rem; font-weight: 600; transition: border-color 0.15s, background 0.15s, color 0.15s; }
+.scheduleModeBtn:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); color: var(--text-primary); }
+.scheduleModeBtnActive { background: color-mix(in srgb, var(--accent) 12%, var(--bg)); border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); color: var(--text-primary); }
+
+.weekdayPicker { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.55rem; }
+.weekdayBtn { min-width: 52px; height: 32px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--text-secondary); cursor: pointer; font-size: 0.76rem; font-weight: 700; letter-spacing: 0.01em; transition: background 0.15s, border-color 0.15s, color 0.15s; }
+.weekdayBtn:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); color: var(--text-primary); }
+.weekdayBtnActive { background: var(--accent); color: #fff; border-color: var(--accent); }
+
 .meetingBanner { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); margin-bottom: 0.75rem; flex-wrap: wrap; }
 .meetingBanner span { font-size: 0.84rem; font-weight: 600; color: var(--text-primary); }
 .meetingLink { font-size: 0.75rem; color: var(--accent); word-break: break-all; text-decoration: none; }
@@ -159,3 +173,25 @@
 .meetingParticipantBadge { display: inline-flex; align-items: center; gap: 3px; font-size: 0.75rem; font-weight: 500; color: var(--text-primary); background: var(--bg-secondary, #f3f4f6); border: 1px solid var(--border); border-radius: 10px; padding: 2px 9px; }
 .meetingParticipantOptional { opacity: 0.75; font-style: italic; }
 .organizerTag { font-size: 0.7rem; font-weight: 400; color: var(--text-secondary); }
+
+@supports not (color: color-mix(in srgb, black, white)) {
+    .modalCloseBtn:hover { border-color: var(--accent); }
+    .formGroup input:focus, .formGroup textarea:focus, .formGroup select:focus, .participantInput:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2); }
+    .scheduleModeBtn:hover { border-color: var(--accent); }
+    .scheduleModeBtnActive { background: rgba(99, 102, 241, 0.14); border-color: var(--accent); }
+}
+
+@media (max-width: 640px) {
+    .modal { width: 100%; max-height: calc(100vh - 16px); padding: 0.95rem 0.85rem 0.85rem; border-radius: 14px; }
+    .modalHeader { margin-bottom: 0.75rem; }
+    .modal h3 { font-size: 1.05rem; }
+    .modalSubtitle { font-size: 0.76rem; margin-top: 0.25rem; }
+    .formRow { flex-direction: column; gap: 0.45rem; }
+    .datetimePicker select { width: 100px; }
+    .formActions { flex-direction: column; align-items: stretch; gap: 0.55rem; }
+    .formActionsRight { width: 100%; }
+    .formActionsRight .cancelBtn,
+    .formActionsRight .saveBtn,
+    .deleteBtn { flex: 1; }
+    .checkbox { align-self: stretch; }
+}

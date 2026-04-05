@@ -61,6 +61,15 @@ function setupAuth(role = 'employee', extra = {}) {
         }); // loadUserContext
 }
 
+function makeFutureRange(hoursFromNow = 2, durationHours = 1) {
+    const start = new Date(Date.now() + hoursFromNow * 3600000);
+    const end = new Date(start.getTime() + durationHours * 3600000);
+    return {
+        start: start.toISOString(),
+        end: end.toISOString(),
+    };
+}
+
 // ─── GET /api/calendar ────────────────────────────────────────────────────────
 describe('GET /api/calendar', () => {
     beforeEach(() => {
@@ -192,7 +201,8 @@ describe('POST /api/calendar', () => {
 
     test('creates event with valid data', async () => {
         setupAuth();
-        const created = { id: 42, title: 'Team sync', start_time: '2026-03-04T09:00:00Z', end_time: '2026-03-04T10:00:00Z', color: '#6366f1', user_id: 1 };
+        const range = makeFutureRange();
+        const created = { id: 42, title: 'Team sync', start_time: range.start, end_time: range.end, color: '#6366f1', user_id: 1 };
         // First mock: event count check; second mock: INSERT
         mockQuery.mockResolvedValueOnce({ rows: [{ c: '5' }], rowCount: 1 });
         mockQuery.mockResolvedValueOnce({ rows: [created], rowCount: 1 });
@@ -201,7 +211,7 @@ describe('POST /api/calendar', () => {
             .post('/api/calendar')
             .set(CSRF)
             .set('Cookie', authCookie())
-            .send({ title: 'Team sync', start_time: '2026-03-04T09:00:00Z', end_time: '2026-03-04T10:00:00Z' });
+            .send({ title: 'Team sync', start_time: range.start, end_time: range.end });
         expect(res.status).toBe(200);
         expect(res.body.id).toBe(42);
         expect(res.body.title).toBe('Team sync');
@@ -209,7 +219,8 @@ describe('POST /api/calendar', () => {
 
     test('creates event with optional fields (color, description, task_id)', async () => {
         setupAuth();
-        const created = { id: 7, title: 'Review', description: 'PR review', color: '#10b981', task_id: 5, start_time: '2026-03-04T14:00:00Z', end_time: '2026-03-04T15:00:00Z' };
+        const range = makeFutureRange(4, 1);
+        const created = { id: 7, title: 'Review', description: 'PR review', color: '#10b981', task_id: 5, start_time: range.start, end_time: range.end };
         // First mock: event count check; second mock: INSERT
         mockQuery.mockResolvedValueOnce({ rows: [{ c: '5' }], rowCount: 1 });
         mockQuery.mockResolvedValueOnce({ rows: [created], rowCount: 1 });
@@ -218,9 +229,40 @@ describe('POST /api/calendar', () => {
             .post('/api/calendar')
             .set(CSRF)
             .set('Cookie', authCookie())
-            .send({ title: 'Review', description: 'PR review', color: '#10b981', task_id: 5, start_time: '2026-03-04T14:00:00Z', end_time: '2026-03-04T15:00:00Z' });
+            .send({ title: 'Review', description: 'PR review', color: '#10b981', task_id: 5, start_time: range.start, end_time: range.end });
         expect(res.status).toBe(200);
         expect(res.body.color).toBe('#10b981');
+    });
+
+    test('returns 400 when creating a timed event in the past', async () => {
+        setupAuth();
+        const start = new Date(Date.now() - 2 * 3600000).toISOString();
+        const end = new Date(Date.now() - 3600000).toISOString();
+
+        const res = await request(app)
+            .post('/api/calendar')
+            .set(CSRF)
+            .set('Cookie', authCookie())
+            .send({ title: 'Past event', start_time: start, end_time: end, all_day: false });
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/past/i);
+    });
+
+    test('returns 400 when creating an all-day event in a past local date', async () => {
+        setupAuth();
+        const start = '2020-01-01T00:00:00.000Z';
+        const end = '2020-01-01T23:59:59.000Z';
+
+        const res = await request(app)
+            .post('/api/calendar')
+            .set(CSRF)
+            .set('Cookie', authCookie())
+            .set('X-Timezone-Offset', '-330')
+            .send({ title: 'Past all-day', start_time: start, end_time: end, all_day: true });
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/past/i);
     });
 });
 

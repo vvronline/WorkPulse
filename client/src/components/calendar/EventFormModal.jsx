@@ -3,11 +3,18 @@ import { AlertTriangle, Video, X } from 'lucide-react';
 import { searchChatUsers, getMeeting, checkMeetingConflicts } from '../../api';
 import s from './Calendar.module.css';
 
-const COLORS = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#ef4444', '#8b5cf6', '#14b8a6'];
-
 function pad(n) { return String(n).padStart(2, '0'); }
 
 const TIME_OPTIONS = [];
+const WEEKDAY_OPTIONS = [
+  { value: 0, label: 'Mon' },
+  { value: 1, label: 'Tue' },
+  { value: 2, label: 'Wed' },
+  { value: 3, label: 'Thu' },
+  { value: 4, label: 'Fri' },
+  { value: 5, label: 'Sat' },
+  { value: 6, label: 'Sun' },
+];
 for (let h = 0; h < 24; h++) {
   for (let m = 0; m < 60; m += 15) {
     const ampm = h < 12 ? 'AM' : 'PM';
@@ -19,6 +26,25 @@ for (let h = 0; h < 24; h++) {
 function getDatePart(iso) { return iso ? iso.slice(0, 10) : ''; }
 function getTimePart(iso) { return iso ? iso.slice(11, 16) : ''; }
 function combineDatetime(date, time) { return date && time ? `${date}T${time}` : ''; }
+function toMonDayIndex(iso) {
+  if (!iso) return 0;
+  return (new Date(iso).getDay() + 6) % 7;
+}
+function isPastLocalSlot(datePart, timePart, nowMin) {
+  if (!datePart || !timePart || !nowMin) return false;
+  return `${datePart}T${timePart}` < nowMin;
+}
+function getFirstValidEndTime({ datePart, startDatePart, startTimePart, nowMin, isCreating, preferredTimePart }) {
+  const options = getTimeOptions(preferredTimePart || '00:00');
+  const nowDatePart = getDatePart(nowMin);
+  const nowTimePart = getTimePart(nowMin);
+  const first = options.find(o => {
+    if (isCreating && datePart === nowDatePart && o.value < nowTimePart) return false;
+    if (datePart === startDatePart && o.value <= startTimePart) return false;
+    return true;
+  });
+  return first?.value || preferredTimePart || '23:59';
+}
 function getTimeOptions(timePart) {
   if (!timePart) return TIME_OPTIONS;
   const [, m] = timePart.split(':').map(Number);
@@ -172,10 +198,30 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
         }
     }, [modal, existingMeetingCode]);
 
+    useEffect(() => {
+      if (modal !== 'create' || !form.start_time) return;
+      const currentDays = Array.isArray(form.weekdays) ? form.weekdays : [];
+      if (form.schedule_mode === 'multi' && currentDays.length > 0) return;
+      const startDay = toMonDayIndex(form.start_time);
+      if (form.schedule_mode === 'single' && currentDays.length === 1 && currentDays[0] === startDay) return;
+      setForm(prev => ({
+        ...prev,
+        schedule_mode: prev.schedule_mode || 'single',
+        weekdays: [startDay],
+      }));
+    }, [modal, form.start_time, form.schedule_mode, form.weekdays, setForm]);
+
     if (modal === null) return null;
 
     const isEditing = modal !== 'create';
     const hasMeeting = isEditing && !!existingMeetingCode;
+    const isCreating = modal === 'create';
+    const nowDatePart = getDatePart(nowMin);
+    const nowTimePart = getTimePart(nowMin);
+    const startDatePart = getDatePart(form.start_time);
+    const startTimePart = getTimePart(form.start_time);
+    const endDatePart = getDatePart(form.end_time);
+    const endTimePart = getTimePart(form.end_time);
 
     const handleSave = () => {
         if (addMeeting && !isEditing) {
@@ -188,7 +234,22 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
     return (
     <div className={s.modalOverlay} onClick={onClose}>
       <div className={s.modal} onClick={e => e.stopPropagation()}>
-        <h3>{modal === 'create' ? 'New Event' : 'Edit Event'}</h3>
+        <div className={s.modalHeader}>
+          <div>
+            <h3>{modal === 'create' ? 'New Event' : 'Edit Event'}</h3>
+            <p className={s.modalSubtitle}>
+              {modal === 'create' ? 'Capture the details and keep your schedule in sync.' : 'Update details for this scheduled item.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            className={s.modalCloseBtn}
+            onClick={onClose}
+            aria-label="Close event form"
+          >
+            <X size={16} />
+          </button>
+        </div>
 
         <div className={s.formGroup}>
           <label>Title</label>
@@ -216,7 +277,7 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
             {form.all_day ? (
               <input
                 type="date"
-                value={getDatePart(form.start_time)}
+                  value={startDatePart}
                 min={modal === 'create' ? getDatePart(nowMin) : undefined}
                 onChange={e => onStartChange(combineDatetime(e.target.value, '00:00'))}
               />
@@ -224,16 +285,36 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
               <div className={s.datetimePicker}>
                 <input
                   type="date"
-                  value={getDatePart(form.start_time)}
+                  value={startDatePart}
                   min={modal === 'create' ? getDatePart(nowMin) : undefined}
-                  onChange={e => onStartChange(combineDatetime(e.target.value, getTimePart(form.start_time)))}
+                  onChange={e => {
+                    const nextDate = e.target.value;
+                    const currentTime = getTimePart(form.start_time);
+                    const nextTime = isCreating && isPastLocalSlot(nextDate, currentTime, nowMin)
+                      ? getFirstValidEndTime({
+                          datePart: nextDate,
+                          startDatePart: nextDate,
+                          startTimePart: nowTimePart,
+                          nowMin,
+                          isCreating,
+                          preferredTimePart: currentTime,
+                        })
+                      : currentTime;
+                    onStartChange(combineDatetime(nextDate, nextTime));
+                  }}
                 />
                 <select
-                  value={getTimePart(form.start_time)}
-                  onChange={e => onStartChange(combineDatetime(getDatePart(form.start_time), e.target.value))}
+                  value={startTimePart}
+                  onChange={e => onStartChange(combineDatetime(startDatePart, e.target.value))}
                 >
-                  {getTimeOptions(getTimePart(form.start_time)).map(o => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
+                  {getTimeOptions(startTimePart).map(o => (
+                    <option
+                      key={o.value}
+                      value={o.value}
+                      disabled={isCreating && startDatePart === nowDatePart && o.value < nowTimePart}
+                    >
+                      {o.label}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -245,24 +326,44 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
             {form.all_day ? (
               <input
                 type="date"
-                value={getDatePart(form.end_time)}
-                min={getDatePart(form.start_time)}
+                  value={endDatePart}
+                  min={startDatePart}
                 onChange={e => setForm({ ...form, end_time: combineDatetime(e.target.value, '00:00') })}
               />
             ) : (
               <div className={s.datetimePicker}>
                 <input
                   type="date"
-                  value={getDatePart(form.end_time)}
-                  min={getDatePart(form.start_time)}
-                  onChange={e => setForm({ ...form, end_time: combineDatetime(e.target.value, getTimePart(form.end_time)) })}
+                  value={endDatePart}
+                  min={startDatePart}
+                  onChange={e => {
+                    const nextDate = e.target.value;
+                    const nextTime = getFirstValidEndTime({
+                      datePart: nextDate,
+                      startDatePart,
+                      startTimePart,
+                      nowMin,
+                      isCreating,
+                      preferredTimePart: endTimePart,
+                    });
+                    setForm({ ...form, end_time: combineDatetime(nextDate, nextTime) });
+                  }}
                 />
                 <select
-                  value={getTimePart(form.end_time)}
-                  onChange={e => setForm({ ...form, end_time: combineDatetime(getDatePart(form.end_time), e.target.value) })}
+                  value={endTimePart}
+                  onChange={e => setForm({ ...form, end_time: combineDatetime(endDatePart, e.target.value) })}
                 >
-                  {getTimeOptions(getTimePart(form.end_time)).map(o => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
+                  {getTimeOptions(endTimePart).map(o => (
+                    <option
+                      key={o.value}
+                      value={o.value}
+                      disabled={
+                        (isCreating && endDatePart === nowDatePart && o.value < nowTimePart) ||
+                        (endDatePart === startDatePart && o.value <= startTimePart)
+                      }
+                    >
+                      {o.label}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -271,19 +372,6 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
         </div>
 
         <div className={s.formRow}>
-          <div className={s.formGroup}>
-            <label>Color</label>
-            <div className={s.colorPicker}>
-              {COLORS.map(c => (
-                <button
-                  key={c}
-                  className={`${s.colorDot} ${form.color === c ? s.colorDotActive : ''}`}
-                  style={{ background: c }}
-                  onClick={() => setForm({ ...form, color: c })}
-                />
-              ))}
-            </div>
-          </div>
           <label className={s.checkbox}>
             <input
               type="checkbox"
@@ -293,6 +381,53 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
             All day
           </label>
         </div>
+
+        {isCreating && (
+          <div className={s.formGroup}>
+            <label>Schedule</label>
+            <div className={s.scheduleModeRow}>
+              <button
+                type="button"
+                className={`${s.scheduleModeBtn} ${form.schedule_mode !== 'multi' ? s.scheduleModeBtnActive : ''}`}
+                onClick={() => setForm({ ...form, schedule_mode: 'single', weekdays: [toMonDayIndex(form.start_time)] })}
+              >
+                Single day
+              </button>
+              <button
+                type="button"
+                className={`${s.scheduleModeBtn} ${form.schedule_mode === 'multi' ? s.scheduleModeBtnActive : ''}`}
+                onClick={() => setForm({ ...form, schedule_mode: 'multi', weekdays: (form.weekdays?.length ? form.weekdays : [toMonDayIndex(form.start_time)]) })}
+              >
+                Custom days this week
+              </button>
+            </div>
+
+            {form.schedule_mode === 'multi' && (
+              <div className={s.weekdayPicker}>
+                {WEEKDAY_OPTIONS.map(day => {
+                  const selected = (form.weekdays || []).includes(day.value);
+                  return (
+                    <button
+                      type="button"
+                      key={day.value}
+                      className={`${s.weekdayBtn} ${selected ? s.weekdayBtnActive : ''}`}
+                      onClick={() => {
+                        const current = Array.isArray(form.weekdays) ? form.weekdays : [];
+                        if (selected && current.length === 1) return;
+                        const next = selected
+                          ? current.filter(d => d !== day.value)
+                          : [...current, day.value].sort((a, b) => a - b);
+                        setForm({ ...form, weekdays: next });
+                      }}
+                    >
+                      {day.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {tasks.length > 0 && (
           <div className={s.formGroup}>

@@ -2,6 +2,7 @@ const express = require('express');
 const { query } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext } = require('../middleware/rbac');
+const { getOffsetMin } = require('../utils/timezone');
 
 const router = express.Router();
 router.use(auth);
@@ -37,7 +38,24 @@ router.post('/', async (req, res) => {
         if (!title || !start_time || !end_time) return res.status(400).json({ error: 'title, start_time, end_time required' });
         if (title.trim().length > 200) return res.status(400).json({ error: 'Title must be 200 characters or less' });
         if (description && description.length > 2000) return res.status(400).json({ error: 'Description must be 2000 characters or less' });
-        if (new Date(end_time) <= new Date(start_time)) return res.status(400).json({ error: 'end_time must be after start_time' });
+        const startDate = new Date(start_time);
+        const endDate = new Date(end_time);
+        if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+            return res.status(400).json({ error: 'Invalid start_time or end_time' });
+        }
+        if (endDate <= startDate) return res.status(400).json({ error: 'end_time must be after start_time' });
+
+        const now = new Date();
+        if (all_day) {
+            // Compare local dates for all-day events so "today" remains valid.
+            const offsetMin = getOffsetMin(req);
+            const toLocalDate = (d) => new Date(d.getTime() - offsetMin * 60000).toISOString().slice(0, 10);
+            if (toLocalDate(startDate) < toLocalDate(now)) {
+                return res.status(400).json({ error: 'Cannot create events in the past' });
+            }
+        } else if (startDate < now) {
+            return res.status(400).json({ error: 'Cannot create events in the past' });
+        }
 
         // Rate limit: max 100 events per user
         const countRes = await query('SELECT COUNT(*) AS c FROM calendar_events WHERE user_id = $1', [req.userId]);
