@@ -69,11 +69,13 @@ describe('Leaves page - rendering', () => {
     test('renders the page title', async () => {
         renderLeaves();
         expect(screen.getByText('Leave Management')).toBeInTheDocument();
+        await waitFor(() => expect(mockGetLeaves).toHaveBeenCalled());
     });
 
     test('renders the leave request form', async () => {
         renderLeaves();
         expect(screen.getByRole('button', { name: /submit|request/i })).toBeInTheDocument();
+        await waitFor(() => expect(mockGetLeaves).toHaveBeenCalled());
     });
 
     test('loads leave data on mount', async () => {

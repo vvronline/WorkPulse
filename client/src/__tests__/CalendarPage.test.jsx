@@ -37,22 +37,25 @@ describe('CalendarPage', () => {
         mockGetTasks.mockReset();
     });
 
-    test('renders page heading', () => {
+    test('renders page heading', async () => {
         mockGetTasks.mockResolvedValue({ data: { tasks: [] } });
         renderPage();
         expect(screen.getByText(/calendar/i)).toBeInTheDocument();
+        await waitFor(() => expect(mockGetTasks).toHaveBeenCalled());
     });
 
-    test('renders subheading text', () => {
+    test('renders subheading text', async () => {
         mockGetTasks.mockResolvedValue({ data: { tasks: [] } });
         renderPage();
         expect(screen.getByText(/schedule events/i)).toBeInTheDocument();
+        await waitFor(() => expect(mockGetTasks).toHaveBeenCalled());
     });
 
-    test('renders Calendar component', () => {
+    test('renders Calendar component', async () => {
         mockGetTasks.mockResolvedValue({ data: { tasks: [] } });
         renderPage();
         expect(screen.getByTestId('calendar-stub')).toBeInTheDocument();
+        await waitFor(() => expect(mockGetTasks).toHaveBeenCalled());
     });
 
     test('fetches tasks on mount and passes them to Calendar', async () => {

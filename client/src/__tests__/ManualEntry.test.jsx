@@ -58,23 +58,27 @@ describe('ManualEntry page - rendering', () => {
         // Multiple date inputs exist (main form + overtime form)
         const dateInputs = container.querySelectorAll('input[type="date"]');
         expect(dateInputs.length).toBeGreaterThan(0);
+        await waitFor(() => expect(mockGetManualEntryRequests).toHaveBeenCalled());
     });
 
     test('renders clock-in time field', async () => {
         renderManualEntry();
         // The clock-in field defaults to 09:00
         expect(screen.getByDisplayValue('09:00')).toBeInTheDocument();
+        await waitFor(() => expect(mockGetManualEntryRequests).toHaveBeenCalled());
     });
 
     test('renders work mode selector', async () => {
         renderManualEntry();
         // Work mode options appear (office, remote, etc.)
         expect(screen.getByText(/office/i)).toBeInTheDocument();
+        await waitFor(() => expect(mockGetManualEntryRequests).toHaveBeenCalled());
     });
 
     test('renders submit button', async () => {
         renderManualEntry();
         expect(screen.getByRole('button', { name: /save manual entry/i })).toBeInTheDocument();
+        await waitFor(() => expect(mockGetManualEntryRequests).toHaveBeenCalled());
     });
 
     test('loads pending requests on mount', async () => {

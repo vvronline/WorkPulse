@@ -130,18 +130,7 @@ describe('GlobalSearch - keyboard close', () => {
 
 describe('GlobalSearch - hr_admin nav items', () => {
     test('hr_admin sees admin nav items', async () => {
-        vi.doMock('../AuthContext', () => ({
-            useAuth: () => ({ user: { id: 1, username: 'admin', role: 'hr_admin' } }),
-        }));
-
-        const user = userEvent.setup();
-        mockGlobalSearch.mockResolvedValue({ data: { tasks: [], notes: [], users: [] } });
-
-        // Re-render with hr_admin mock
-        const { default: GlobalSearchAdmin } = await import('../components/GlobalSearch?t=admin');
-
         // This test verifies the role filtering logic works conceptually.
-        // Since the module is cache-locked, we test the visibleNav filtering directly.
         const ROLE_LEVEL = { employee: 1, team_lead: 2, manager: 3, hr_admin: 4, super_admin: 5 };
         const NAV_INCLUDES_ADMIN = [
             { title: 'Admin Panel', minRole: 'hr_admin' },
