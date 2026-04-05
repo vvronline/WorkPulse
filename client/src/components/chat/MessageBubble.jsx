@@ -4,51 +4,12 @@ import s from './MessageBubble.module.css';
 import ChatAvatar from './ChatAvatar';
 import FilePreview from './FilePreview';
 import ReplyPreview from './ReplyPreview';
-import ReactionPicker from './ReactionPicker';
-import EmojiGifPicker from './EmojiGifPicker';
 import ContextMenu from './ContextMenu';
-import CodeBlock from './CodeBlock';
 import PollDisplay from './PollDisplay';
-
-/** Parse markdown-style text: **bold**, *italic*, ~~strike~~, `code`, @mentions, URLs */
-function renderContent(text, isMine) {
-    if (!text) return null;
-    const tokens = [];
-    // Regex: code blocks, inline code, bold, italic (*word*), strikethrough, mentions, URLs
-    const regex = /```(\w*)\n([\s\S]*?)```|`([^`]+)`|\*\*(.+?)\*\*|\*(?!\s)(.+?)(?<!\s)\*|~~(.+?)~~|(@\w[\w\s]*?)(?=\s|$)|(https?:\/\/[^\s<]+)/g;
-    let last = 0;
-    let match;
-    let key = 0;
-
-    while ((match = regex.exec(text)) !== null) {
-        if (match.index > last) {
-            tokens.push(text.slice(last, match.index));
-        }
-        if (match[2] !== undefined) {
-            // Code block ```lang\ncode```
-            tokens.push(<CodeBlock key={key++} language={match[1] || ''} code={match[2]} />);
-        } else if (match[3]) {
-            tokens.push(<code key={key++} className={s.inlineCode}>{match[3]}</code>);
-        } else if (match[4]) {
-            tokens.push(<strong key={key++}>{match[4]}</strong>);
-        } else if (match[5]) {
-            tokens.push(<em key={key++}>{match[5]}</em>);
-        } else if (match[6]) {
-            tokens.push(<del key={key++}>{match[6]}</del>);
-        } else if (match[7]) {
-            tokens.push(<span key={key++} className={s.mention}>{match[7]}</span>);
-        } else if (match[8]) {
-            tokens.push(
-                <a key={key++} href={match[8]} target="_blank" rel="noopener noreferrer"
-                   className={s.link}>{match[8]}</a>
-            );
-        }
-        last = match.index + match[0].length;
-    }
-    if (last < text.length) tokens.push(text.slice(last));
-
-    return tokens.length > 0 ? tokens : text;
-}
+import MessageContent from './MessageContent';
+import DeliveryStatus from './DeliveryStatus';
+import MessageToolbar from './MessageToolbar';
+import ReactionBar from './ReactionBar';
 
 export default function MessageBubble({
     msg, isMine, userId, showAvatar, showName,
@@ -56,7 +17,6 @@ export default function MessageBubble({
     participantCount, readReceipts
 }) {
     const [showReactions, setShowReactions] = useState(false);
-    const [showFullPicker, setShowFullPicker] = useState(false);
     const [ctxMenu, setCtxMenu] = useState(null);
     const [toolbarOpen, setToolbarOpen] = useState(false);
     const bubbleRef = useRef(null);
@@ -67,9 +27,7 @@ export default function MessageBubble({
         setCtxMenu({ x: e.clientX, y: e.clientY });
     }, []);
 
-    // Mobile: tap bubble to toggle the action toolbar
     const handleTouchEnd = useCallback((e) => {
-        // Ignore if touching inside toolbar, pickers, or reaction chips
         if (e.target.closest && (
             e.target.closest('[data-toolbar]') ||
             e.target.closest('[data-picker]') ||
@@ -78,7 +36,6 @@ export default function MessageBubble({
         setToolbarOpen(t => !t);
     }, []);
 
-    // Close toolbar when tapping outside the message row
     useEffect(() => {
         if (!toolbarOpen) return;
         const handler = (e) => {
@@ -103,44 +60,6 @@ export default function MessageBubble({
         );
     }
 
-    // Group reactions by emoji
-    const reactionGroups = {};
-    for (const r of msg.reactions || []) {
-        if (!reactionGroups[r.emoji]) reactionGroups[r.emoji] = [];
-        reactionGroups[r.emoji].push(r);
-    }
-
-    const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '🔥', '🎉'];
-
-    // Delivery status for own messages
-    const deliveryIcon = (() => {
-        if (!isMine) return null;
-        const delivered = msg.delivered_to || [];
-        const others = (participantCount || 2) - 1;
-        if (others <= 0) return null;
-
-        // Check if all other participants have read this message
-        const msgTime = new Date(msg.created_at).getTime();
-        const receipts = readReceipts || {};
-        const otherReaders = Object.entries(receipts).filter(
-            ([uid, readAt]) => Number(uid) !== userId && new Date(readAt).getTime() >= msgTime
-        );
-        if (otherReaders.length >= others) {
-            return <span className={s.deliveryRead} title="Read">✓✓</span>;
-        }
-        if (otherReaders.length > 0 && delivered.length >= others) {
-            return <span className={s.deliveryRead} title="Read">✓✓</span>;
-        }
-
-        if (delivered.length >= others) {
-            return <span className={s.deliveryPartial} title="Delivered to all">✓✓</span>;
-        }
-        if (delivered.length > 0) {
-            return <span className={s.deliveryPartial} title="Delivered">✓✓</span>;
-        }
-        return <span className={s.deliverySent} title="Sent">✓</span>;
-    })();
-
     const isPoll = msg.format_type === 'poll' && msg.metadata?.pollId;
 
     const menuItems = [
@@ -153,13 +72,11 @@ export default function MessageBubble({
 
     return (
         <div ref={rowRef} className={`${s.row} ${isMine ? s.mine : s.theirs} ${!showAvatar ? s.grouped : s.groupStart}`}>
-            {/* Avatar – always on the left (Teams style) */}
             <div className={s.avatarCol}>
                 {showAvatar && <ChatAvatar name={msg.sender_name} avatar={msg.sender_avatar} size="sm" />}
             </div>
 
             <div className={s.bubbleWrap}>
-                {/* Sender name above bubble */}
                 {showName && !isMine && msg.sender_name && (
                     <div className={s.senderName}>{msg.sender_name}</div>
                 )}
@@ -197,12 +114,10 @@ export default function MessageBubble({
                         />
                     )}
 
-                    {/* Poll display */}
                     {isPoll && <PollDisplay pollId={msg.metadata.pollId} userId={userId} isMine={isMine} />}
 
-                    {/* Text content with rich formatting */}
                     {msg.content && !isPoll && (
-                        <div className={s.text}>{renderContent(msg.content, isMine)}</div>
+                        <MessageContent text={msg.content} isMine={isMine} />
                     )}
 
                     <div className={s.meta}>
@@ -210,78 +125,33 @@ export default function MessageBubble({
                             {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </span>
                         {msg.edited_at && <span className={s.edited}>(edited)</span>}
-                        {deliveryIcon}
+                        <DeliveryStatus
+                            isMine={isMine}
+                            msg={msg}
+                            participantCount={participantCount}
+                            readReceipts={readReceipts}
+                            userId={userId}
+                        />
                     </div>
 
-                    {/* Hover toolbar – Teams style */}
-                    <div className={s.hoverActions} data-toolbar>
-                        <div className={s.quickReactions}>
-                            {QUICK_EMOJIS.map(emoji => (
-                                <button key={emoji} className={s.quickEmoji} onClick={() => { onReact?.(msg.id, emoji); setToolbarOpen(false); }} title={emoji}>
-                                    {emoji}
-                                </button>
-                            ))}
-                            <button className={s.moreEmoji} onClick={() => setShowReactions(true)} title="More reactions">
-                                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.3"/><circle cx="5.2" cy="6.5" r="0.9" fill="currentColor"/><circle cx="10.8" cy="6.5" r="0.9" fill="currentColor"/><path d="M5 10a3.5 3.5 0 006 0" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
-                            </button>
-                        </div>
-                        <div className={s.toolbarDivider} />
-                        <button className={s.toolbarBtn} onClick={() => { onReply?.(msg); setToolbarOpen(false); }} title="Reply">
-                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L2 7l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 7h7a5 5 0 010 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                        </button>
-                        <button className={s.toolbarBtn} onClick={handleContext} title="More options">
-                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="4" cy="8" r="1.2" fill="currentColor"/><circle cx="8" cy="8" r="1.2" fill="currentColor"/><circle cx="12" cy="8" r="1.2" fill="currentColor"/></svg>
-                        </button>
-                    </div>
+                    <MessageToolbar
+                        msg={msg}
+                        isMine={isMine}
+                        onReply={onReply}
+                        onReact={onReact}
+                        onOpenReactions={() => setShowReactions(true)}
+                        onOpenContextMenu={handleContext}
+                        onCloseToolbar={() => setToolbarOpen(false)}
+                    />
                 </div>
 
-                {/* Reactions display – outside bubble, left-bottom */}
-                {Object.keys(reactionGroups).length > 0 && (
-                    <div className={s.reactions} data-reaction>
-                        {Object.entries(reactionGroups).map(([emoji, users]) => (
-                            <button
-                                key={emoji}
-                                className={`${s.reactionChip} ${users.some(u => u.userId === userId) ? s.myReaction : ''}`}
-                                onClick={() => onReact?.(msg.id, emoji)}
-                                title={users.map(u => u.fullName).join(', ')}
-                            >
-                                <span className={s.reactionEmoji}>{emoji}</span>
-                                <span className={s.reactionCount}>{users.length}</span>
-                            </button>
-                        ))}
-                        <button
-                            className={s.addReactionBtn}
-                            onClick={() => setShowFullPicker(p => !p)}
-                            title="Add reaction"
-                        >
-                            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                        </button>
-                    </div>
-                )}
-
-                {/* Reaction picker popup (10 emoji quick-pick) */}
-                {showReactions && (
-                    <div className={s.pickerWrap} data-picker>
-                        <ReactionPicker
-                            onSelect={(emoji) => { onReact?.(msg.id, emoji); setShowReactions(false); setToolbarOpen(false); }}
-                            onClose={() => setShowReactions(false)}
-                            onOpenFull={() => { setShowReactions(false); setShowFullPicker(true); }}
-                        />
-                    </div>
-                )}
-
-                {/* Full emoji picker for reactions */}
-                {showFullPicker && (
-                    <div className={s.pickerWrap} data-picker>
-                        <EmojiGifPicker
-                            onSelectEmoji={(emoji) => onReact?.(msg.id, emoji)}
-                            onClose={() => setShowFullPicker(false)}
-                        />
-                    </div>
-                )}
+                <ReactionBar
+                    msg={msg}
+                    userId={userId}
+                    onReact={onReact}
+                />
             </div>
 
-            {/* Context menu */}
             {ctxMenu && (
                 <ContextMenu
                     x={ctxMenu.x}

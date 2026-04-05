@@ -2,19 +2,28 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
     searchChatUsers, getConversations, createConversation, getMessages,
     markConversationRead, getPresence, getMembers, getReadStatus,
-    ackDelivered, getActiveCall
+    ackDelivered
 } from '../../api';
 import { useAuth } from '../../AuthContext';
 import { useChatUnread } from '../../ChatContext';
-import { useGlobalCall } from '../../CallContext';
 import useWebSocket from '../../hooks/useWebSocket';
 import useChatNotification from '../../hooks/useChatNotification';
+import useCallState from './useCallState';
 
 export default function useChatState() {
     const { user } = useAuth();
     const { refreshUnread } = useChatUnread();
-    const { setChatPageActive, pendingAcceptedCall, consumePendingCall } = useGlobalCall();
     const { notifyMessage, notifyMention, notifyReaction } = useChatNotification();
+
+    // Ref for wsSend (allows useCallState to access it before WS is initialized)
+    const wsSendRef = useRef(null);
+
+    // Call state (extracted hook)
+    const {
+        callState, setCallState,
+        callSignalRef, callEndRef, callActiveRef,
+        handleCallWsEvent,
+    } = useCallState(wsSendRef);
 
     // Core state
     const [conversations, setConversations] = useState([]);
@@ -48,32 +57,6 @@ export default function useChatState() {
     const [convMembers, setConvMembers] = useState([]);
     const [deleteConfirm, setDeleteConfirm] = useState(null);
     const [convMenu, setConvMenu] = useState(null);
-
-    // Call state
-    const [callState, setCallState] = useState(null);
-    const callSignalRef = useRef(null);
-    const callEndRef = useRef(null);
-    const callActiveRef = useRef(false);
-    useEffect(() => {
-        callActiveRef.current = !!callState;
-        // Persist active call metadata in sessionStorage for refresh recovery
-        if (callState && callState.callId) {
-            try {
-                sessionStorage.setItem('wp_active_call', JSON.stringify({
-                    callId: callState.callId,
-                    conversationId: callState.conversationId,
-                    callType: callState.callType,
-                    remoteName: callState.remoteName,
-                    remoteAvatar: callState.remoteAvatar,
-                    isGroup: callState.isGroup,
-                    callerId: callState.callerId,
-                    isIncoming: callState.isIncoming,
-                }));
-            } catch { /* ignore */ }
-        } else if (!callState) {
-            try { sessionStorage.removeItem('wp_active_call'); } catch { /* ignore */ }
-        }
-    }, [callState]);
 
     // Refs
     const messagesEndRef = useRef(null);
@@ -254,60 +237,15 @@ export default function useChatState() {
                 }
                 break;
             }
-            // ─── Call events ───
-            case 'call_incoming': {
-                // Someone is calling us
-                if (!callActiveRef.current) {
-                    setCallState({
-                        callId: d.callId,
-                        conversationId: d.conversationId,
-                        callType: d.callType,
-                        isIncoming: true,
-                        callerId: d.callerId,
-                        remoteName: d.callerName,
-                        remoteAvatar: d.callerAvatar,
-                        isGroup: d.isGroup,
-                        accepted: false,
-                        acceptedBy: null,
-                        onSignal: callSignalRef,
-                        onEndExternal: callEndRef
-                    });
-                }
-                break;
-            }
-            case 'call_started': {
-                // Confirmation that our outgoing call was registered
-                setCallState(prev => prev ? { ...prev, callId: d.callId } : prev);
-                break;
-            }
-            case 'call_accepted': {
-                // Remote peer accepted our call → trigger offer creation
-                setCallState(prev => prev ? { ...prev, accepted: true, acceptedBy: d.userId } : prev);
-                break;
-            }
-            case 'call_rejected': {
-                // Remote peer rejected
-                if (callEndRef.current) callEndRef.current();
-                else setCallState(null);
-                break;
-            }
-            case 'call_ended': {
-                // Remote peer ended the call
-                if (callEndRef.current) callEndRef.current();
-                else setCallState(null);
-                break;
-            }
-            case 'call_signal': {
-                // WebRTC signaling data
-                if (callSignalRef.current) {
-                    callSignalRef.current(d.signal, d.fromUserId);
-                }
-                break;
-            }
+            // ─── Call events (delegated to useCallState) ───
+            case 'call_incoming':
+            case 'call_started':
+            case 'call_accepted':
+            case 'call_rejected':
+            case 'call_ended':
+            case 'call_signal':
             case 'call_reconnect': {
-                // Remote peer refreshed — they need us to re-offer
-                // Set a flag on callState so CallOverlay initiates a new offer
-                setCallState(prev => prev ? { ...prev, reconnectTo: d.userId } : prev);
+                handleCallWsEvent(msg.type, d);
                 break;
             }
             default: break;
@@ -316,72 +254,8 @@ export default function useChatState() {
 
     const { sendMessage: wsSend } = useWebSocket(onWsMessage);
 
-    // ─── Register chat page as active for CallContext ───
-    useEffect(() => {
-        setChatPageActive(true);
-        return () => setChatPageActive(false);
-    }, [setChatPageActive]);
-
-    // ─── Pick up a pending accepted call from global notification ───
-    useEffect(() => {
-        if (pendingAcceptedCall) {
-            const call = consumePendingCall();
-            if (call && !callActiveRef.current) {
-                setCallState({
-                    callId: call.callId,
-                    conversationId: call.conversationId,
-                    callType: call.callType,
-                    isIncoming: true,
-                    callerId: call.callerId,
-                    remoteName: call.callerName,
-                    remoteAvatar: call.callerAvatar,
-                    isGroup: call.isGroup,
-                    accepted: false,
-                    acceptedBy: null,
-                    onSignal: callSignalRef,
-                    onEndExternal: callEndRef
-                });
-            }
-        }
-    }, [pendingAcceptedCall]);
-
-    // ─── Restore active call after page refresh ───
-    useEffect(() => {
-        let cancelled = false;
-        (async () => {
-            try {
-                const saved = sessionStorage.getItem('wp_active_call');
-                if (!saved) return;
-                const callData = JSON.parse(saved);
-                if (!callData?.callId) return;
-                // Verify the call is still active on the server
-                const { data: activeCall } = await getActiveCall();
-                if (cancelled || !activeCall || activeCall.id !== callData.callId) {
-                    sessionStorage.removeItem('wp_active_call');
-                    return;
-                }
-                // Restore call state and trigger reconnection
-                setCallState({
-                    callId: callData.callId,
-                    conversationId: callData.conversationId,
-                    callType: callData.callType,
-                    isIncoming: callData.isIncoming,
-                    callerId: callData.callerId,
-                    remoteName: callData.remoteName,
-                    remoteAvatar: callData.remoteAvatar,
-                    isGroup: callData.isGroup,
-                    accepted: true,
-                    acceptedBy: null,
-                    onSignal: callSignalRef,
-                    onEndExternal: callEndRef,
-                    isReconnect: true, // signals CallOverlay to reconnect
-                });
-                // Tell the server to notify the other party
-                wsSend('call_reconnect', { callId: callData.callId, conversationId: callData.conversationId });
-            } catch { /* ignore — no active call */ }
-        })();
-        return () => { cancelled = true; };
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    // Keep wsSendRef in sync for useCallState
+    useEffect(() => { wsSendRef.current = wsSend; }, [wsSend]);
 
     // ─── Effects ───
 
