@@ -17,7 +17,7 @@ import {
 } from 'chart.js';
 import { Bar, Line, Doughnut } from 'react-chartjs-2';
 import { getAnalytics, getHistory, getLocalDate, getLocalToday, exportMyAnalytics } from '../api';
-import ExportButton from '../components/ExportButton';
+import ExportButton from '../components/common/ExportButton';
 import s from './Analytics.module.css';
 
 ChartJS.register(

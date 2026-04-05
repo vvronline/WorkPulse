@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { getLeaves, withdrawLeave, getLeaveBalances, exportMyLeaves } from '../api';
-import ConfirmDialog from '../components/ConfirmDialog';
-import ExportButton from '../components/ExportButton';
-import { useToast } from '../components/Toast';
+import ConfirmDialog from '../components/common/ConfirmDialog';
+import ExportButton from '../components/common/ExportButton';
+import { useToast } from '../components/common/Toast';
 import LeaveBalanceCards from './leaves/LeaveBalanceCards';
 import LeaveRequestForm from './leaves/LeaveRequestForm';
 import LeaveHistory from './leaves/LeaveHistory';

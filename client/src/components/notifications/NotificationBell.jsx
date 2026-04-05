@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Bell, AtSign, ClipboardList, FileText, CheckCircle2, Video, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getNotifications, markNotificationRead, markAllNotificationsRead, deleteNotification } from '../api';
-import useWebSocket from '../hooks/useWebSocket';
-import useChatNotification from '../hooks/useChatNotification';
-import { useChatUnread } from '../ChatContext';
+import { getNotifications, markNotificationRead, markAllNotificationsRead, deleteNotification } from '../../api';
+import useWebSocket from '../../hooks/useWebSocket';
+import useChatNotification from '../../hooks/useChatNotification';
+import { useChatUnread } from '../../ChatContext';
 
-import { NOTIFICATION_POLL_INTERVAL } from '../constants';
+import { NOTIFICATION_POLL_INTERVAL } from '../../constants';
 
 function timeAgo(dateStr) {
   // SQLite CURRENT_TIMESTAMP is UTC but has no 'Z'; append it so JS parses correctly

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { register as registerApi, getRegistrationMode } from '../api';
 import { Lock, Briefcase } from 'lucide-react';
-import PasswordInput from '../components/PasswordInput';
+import PasswordInput from '../components/common/PasswordInput';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import s from './Auth.module.css';
 

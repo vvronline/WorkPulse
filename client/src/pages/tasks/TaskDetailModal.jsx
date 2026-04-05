@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
-import CommentSection from '../../components/CommentSection';
-import SprintSelector from '../../components/SprintSelector';
+import CommentSection from '../../components/profile/CommentSection';
+import SprintSelector from '../../components/common/SprintSelector';
 import LabelSelector from './LabelSelector.jsx';
 import { PRIORITIES, COLUMNS } from './constants.js';
 import { HighlightedHtml, formatDueDate, isDueOverdue, getAvatarUrl } from './utils.jsx';

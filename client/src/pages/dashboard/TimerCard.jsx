@@ -1,5 +1,5 @@
 import { Building2, House, Palmtree, Clock, Timer, Coffee, Hourglass, PartyPopper, Target, Zap } from 'lucide-react';
-import WeeklyChart from '../../components/WeeklyChart';
+import WeeklyChart from '../../components/dashboard/WeeklyChart';
 import { formatTime, formatTimeSec } from '../../utils/time';
 import s from '../Dashboard.module.css';
 

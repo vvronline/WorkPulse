@@ -1,273 +1,1086 @@
-# WorkPulse — Architecture & Component Flow
+# WorkPulse — Architecture & Developer Guide
 
-## Folder Structure
+> **WorkPulse** is a full-stack employee productivity platform with time tracking, task management,
+> real-time chat, WebRTC video/voice calls, meeting rooms, leave management, calendar, notes, and
+> enterprise admin features. Built with React + Vite (client) and Express + PostgreSQL (server),
+> with optional Redis caching, BullMQ job scheduling, and WebSocket-based real-time communication.
+
+---
+
+## Table of Contents
+
+1. [Tech Stack](#tech-stack)
+2. [Repository Layout](#repository-layout)
+3. [Client Architecture](#client-architecture)
+   - [Entry Point & Provider Tree](#entry-point--provider-tree)
+   - [Route Map](#route-map)
+   - [Folder Structure — Full Tree](#client-folder-structure)
+   - [Contexts & Global State](#contexts--global-state)
+   - [Hooks](#hooks)
+   - [Constants & Utils](#constants--utils)
+   - [Component Hierarchy](#component-hierarchy)
+4. [Server Architecture](#server-architecture)
+   - [Entry Point & Middleware Stack](#entry-point--middleware-stack)
+   - [Folder Structure](#server-folder-structure)
+   - [Database Schema](#database-schema)
+   - [Authentication & Authorization](#authentication--authorization)
+   - [Rate Limiting](#rate-limiting)
+   - [Background Jobs](#background-jobs)
+   - [Redis Caching Layer](#redis-caching-layer)
+5. [Real-Time Communication](#real-time-communication)
+   - [WebSocket Architecture](#websocket-architecture)
+   - [Chat Events](#chat-websocket-events)
+   - [Call Events (WebRTC)](#call-websocket-events-webrtc)
+   - [Meeting Events (WebRTC Mesh)](#meeting-websocket-events-webrtc-mesh)
+   - [Presence](#presence)
+6. [API Layer (Client)](#api-layer-client)
+7. [Data Flow Diagrams](#data-flow-diagrams)
+8. [CSS Architecture](#css-architecture)
+9. [Shared Component Reuse](#shared-component-reuse)
+10. [Testing](#testing)
+11. [Build & Deployment](#build--deployment)
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| **Frontend** | React 18, Vite 7, React Router v6, CSS Modules, Recharts, Quill (rich text), highlight.js |
+| **Backend** | Node.js, Express, PostgreSQL (pg), JWT (HttpOnly cookies), Helmet, express-rate-limit |
+| **Real-time** | Native `ws` WebSocket server (WS library), WebRTC (peer-to-peer calls & mesh meetings) |
+| **Caching** | Redis (ioredis) — optional, graceful degradation to in-memory |
+| **Jobs** | BullMQ (Redis-backed) — falls back to `setInterval` without Redis |
+| **Logging** | Pino (structured JSON via `utils/logger.js`) |
+| **File uploads** | Multer → `server/uploads/` (authenticated static serving) |
+| **Email** | Nodemailer (`utils/mailer.js`) — password resets, invites |
+| **PWA** | Service worker (`public/sw.js`), Web Manifest |
+| **Testing** | Vitest + React Testing Library (client), Jest + Supertest (server) |
+| **Deployment** | Docker / Railway, Caddy reverse proxy (see `Caddyfile`, `Dockerfile`) |
+
+---
+
+## Repository Layout
+
+```
+WorkPulse/
+├── client/                        # React SPA (Vite)
+│   ├── index.html                 # HTML entry point
+│   ├── package.json               # Client dependencies and scripts
+│   ├── vite.config.js             # Vite config (proxy, build, test)
+│   ├── public/
+│   │   ├── manifest.json          # PWA manifest
+│   │   └── sw.js                  # Service worker
+│   └── src/                       # Source code (see full tree below)
+├── server/                        # Express API server
+│   ├── index.js                   # Entry point (Express + HTTP + WS setup)
+│   ├── db.js                      # PostgreSQL pool + schema migration
+│   ├── redis.js                   # Redis client + cache helpers
+│   ├── jobs.js                    # BullMQ / setInterval background jobs
+│   ├── package.json               # Server dependencies and scripts
+│   ├── middleware/                 # auth.js, rbac.js
+│   ├── routes/                    # 17 route modules
+│   ├── utils/                     # 9 utility modules
+│   ├── uploads/                   # User-uploaded files (avatars, chat files)
+│   └── __tests__/                 # 20 test suites
+├── ARCHITECTURE.md                # This file
+├── API_DOCUMENTATION.md           # Full REST + WebSocket API reference
+├── docker-compose.yml             # Dev: Postgres + Redis containers
+├── Dockerfile                     # Production multi-stage build
+├── Caddyfile                      # Reverse proxy config
+├── entrypoint.sh                  # Docker entrypoint
+├── start-local.sh                 # Local build & run (Linux/macOS)
+└── start-local.ps1                # Local build & run (Windows)
+```
+
+---
+
+## Client Architecture
+
+### Entry Point & Provider Tree
+
+```
+main.jsx
+└── <React.StrictMode>
+    └── <App />
+        └── <BrowserRouter>
+            └── <AuthProvider>                  ← JWT session, user profile, token refresh
+                └── <ThemeProvider>              ← dark/light theme toggle
+                    └── <WorkStateProvider>      ← clock-in/out/break state
+                        └── <ChatProvider>       ← global unread count
+                            └── <CallProvider>   ← incoming call detection (non-chat pages)
+                                └── <MeetingProvider>  ← active meeting session (survives navigation)
+                                    └── <ToastProvider> ← global toast notifications
+                                        ├── <AxiosInterceptor /> ← 401 handling, auto-logout
+                                        ├── <GlobalIncomingCall /> ← call overlay on non-chat pages
+                                        ├── <MeetingPiP />  ← picture-in-picture when navigating away
+                                        └── <AppRoutes />   ← protected + public routes
+```
+
+### Route Map
+
+```
+App.jsx (lazy-loaded pages wrapped in Suspense → PageSkeleton fallback)
+│
+├── PUBLIC ROUTES (redirect to / if authenticated)
+│   ├── /login                   → Login.jsx
+│   ├── /register                → Register.jsx
+│   ├── /forgot-password         → ForgotPassword.jsx
+│   └── /reset-password/:token   → ResetPassword.jsx
+│
+├── AUTHENTICATED ROUTES (redirect to /login if not authenticated)
+│   ├── /change-password         → ChangePassword.jsx  (forced if must_change_password)
+│   ├── /set-email               → SetEmail.jsx
+│   ├── / (dashboard)            → Dashboard.jsx        (eagerly loaded)
+│   ├── /analytics               → analytics/index.jsx  (lazy)
+│   ├── /tasks                   → Tasks.jsx            (lazy)
+│   ├── /leaves                  → Leaves.jsx           (lazy)
+│   ├── /manual-entry            → ManualEntry.jsx       (lazy)
+│   ├── /calendar                → CalendarPage.jsx      (lazy)
+│   ├── /notes                   → NotesPage.jsx         (lazy)
+│   ├── /chat                    → Chat.jsx              (lazy)
+│   ├── /meeting/:code           → MeetingJoin.jsx       (lazy)
+│   ├── /meeting/:code/room      → MeetingRoom.jsx       (lazy, hides Navbar)
+│   ├── /organization            → Organization.jsx      (lazy)
+│   └── /leave-policy            → LeavePolicy.jsx       (lazy)
+│
+├── ROLE-GATED ROUTES
+│   ├── /admin                   → Admin.jsx  (minRole: hr_admin)
+│   └── /manager                 → ManagerDashboard.jsx  (minRole: team_lead, or has_reports)
+│
+└── /* catch-all                 → Navigate to /
+```
+
+### Client Folder Structure
 
 ```
 client/src/
-├── api.js                         # All API calls (~80+ functions)
-├── AuthContext.jsx                 # Auth state (user, login, logout, updateUser)
-├── ThemeContext.jsx                # Dark/light theme
-├── WorkStateContext.jsx            # Work clock state
-├── App.jsx                        # Router with lazy-loaded pages
+├── main.jsx                       # React 18 entry, service worker registration
+├── App.jsx                        # Router, providers, lazy loading
+├── api.js                         # Axios instance + ~120 API functions
+├── global.css                     # CSS variables, resets, theme, animations
+├── hljs-setup.js                  # highlight.js language registration
+├── test-setup.js                  # Vitest setup (jsdom)
+│
+├── ── CONTEXTS ──
+├── AuthContext.jsx                 # JWT auth state, profile, token refresh
+├── ThemeContext.jsx                # Dark/light theme persistence
+├── WorkStateContext.jsx            # Work clock state (logged_out/working/break)
+├── ChatContext.jsx                 # Global unread message count
+├── CallContext.jsx                 # Incoming call detection + global overlay
+├── MeetingContext.jsx              # Active meeting session (WebSocket + stream refs)
+│
 ├── hooks/
+│   ├── useAsyncAction.js          # Loading/error wrapper for async ops
 │   ├── useAutoDismiss.js          # Auto-clearing state (errors/messages)
-│   └── useLiveTimer.js            # Live clock
+│   ├── useChatNotification.js     # Browser push notifications for chat
+│   ├── useClickOutside.js         # Detect clicks outside a ref
+│   ├── useDashboardData.js        # All dashboard state + side-effects
+│   ├── useEventReminder.js        # Calendar event reminders (10 min before)
+│   ├── useGlobalSearch.js         # Debounced search hook for GlobalSearch component
+│   ├── useLiveTimer.js            # Live elapsed-time counter
+│   └── useWebSocket.js            # WebSocket connection with auto-reconnect
+│
+├── constants/
+│   ├── index.js                   # ROLE_LEVEL, timing constants (refresh, poll intervals)
+│   ├── icons.js                   # Central Lucide React icon registry
+│   └── leaves.js                  # LEAVE_TYPES, STATUS_CONFIG, getLeaveType()
+│
+├── utils/
+│   ├── date.js                    # Date formatting helpers
+│   └── time.js                    # Time/duration formatting helpers
+│
 ├── components/
-│   ├── Navbar.jsx                 # Top navigation bar
-│   ├── Toast.jsx                  # Global toast notifications
-│   ├── ConfirmDialog.jsx          # Confirmation modal
-│   ├── SprintSelector.jsx         # Sprint picker widget
-│   ├── TasksSummary.jsx           # Tasks summary widget
-│   ├── WeeklyChart.jsx            # Weekly hours chart
-│   ├── WidgetsGrid.jsx            # Dashboard widget grid
-│   ├── TimelineCard.jsx           # Activity timeline card
-│   ├── CommentSection.jsx         # Task comments
-│   ├── EditProfileModal.jsx       # Profile editor
-│   ├── ImageResizer.jsx           # Avatar uploader
-│   ├── PasswordInput.jsx          # Password field with toggle
-│   ├── ErrorBoundary.jsx          # React error boundary
-│   ├── AxiosInterceptor.jsx       # Auth token injector
-│   ├── DailyNotes/                # Rich-text daily notes module
-│   │   ├── index.jsx              # Entry point
-│   │   ├── useNotesStore.js       # Notes state management
-│   │   ├── notesUtils.js          # Helpers
-│   │   ├── quillConfig.js         # Quill editor config
+│   ├── common/                    # Shared UI primitives (barrel: index.js)
+│   │   ├── AxiosInterceptor.jsx   # 401 auto-logout, token refresh
+│   │   ├── ConfirmDialog.jsx      # Modal confirmation dialog
+│   │   ├── ErrorBoundary.jsx      # React error boundary with reset
+│   │   ├── ExportButton.jsx       # CSV/XLSX export trigger
+│   │   ├── ImageResizer.jsx       # Avatar upload + client-side resize
+│   │   ├── MentionInput.jsx       # @mention autocomplete input
+│   │   ├── PageSkeleton.jsx       # Lazy-load placeholder skeleton
+│   │   ├── PasswordInput.jsx      # Password field with visibility toggle
+│   │   ├── SprintSelector.jsx     # Sprint picker dropdown
+│   │   └── Toast.jsx              # Toast notification system (ToastProvider + useToast)
+│   │
+│   ├── navbar/                    # Top navigation (barrel: index.js)
+│   │   ├── Navbar.jsx             # Main nav bar
+│   │   ├── NavLinks.jsx           # Desktop navigation links
+│   │   ├── ProfileMenu.jsx        # User avatar dropdown + profile modal
+│   │   └── MobileTabBar.jsx       # Bottom tab bar for mobile
+│   │
+│   ├── search/                    # Global search (barrel: index.js)
+│   │   └── GlobalSearch.jsx       # Spotlight-style search overlay
+│   │
+│   ├── dashboard/                 # Dashboard widgets (barrel: index.js)
+│   │   ├── TasksSummary.jsx       # Today's task status breakdown
+│   │   ├── TimelineCard.jsx       # Activity timeline (clock events)
+│   │   ├── TodayEventsCard.jsx    # Upcoming calendar events widget
+│   │   ├── WeeklyChart.jsx        # Weekly work hours bar chart
+│   │   └── WidgetsGrid.jsx        # Responsive widget grid layout
+│   │
+│   ├── notifications/             # Notification components (barrel: index.js)
+│   │   ├── NotificationBell.jsx   # Notification dropdown bell
+│   │   ├── EventReminderToast.jsx # Calendar event reminder toast
+│   │   └── GlobalIncomingCall.jsx # Incoming call overlay (non-chat pages)
+│   │
+│   ├── profile/                   # Profile components (barrel: index.js)
+│   │   ├── EditProfileModal.jsx   # Profile editor modal
+│   │   └── CommentSection.jsx     # Task comment thread
+│   │
+│   ├── meeting/                   # Meeting components (barrel: index.js)
+│   │   └── MeetingPiP.jsx         # Floating PiP when user leaves meeting room
+│   │
+│   ├── calendar/                  # Calendar reusable components
+│   │   ├── Calendar.jsx           # Calendar grid view
+│   │   └── EventFormModal.jsx     # Event create/edit modal
+│   │
+│   ├── chat/                      # Chat UI components (barrel: index.js)
+│   │   ├── CallOverlay.jsx        # Voice/video call full-screen overlay
+│   │   ├── ChatAvatar.jsx         # User avatar with presence dot
+│   │   ├── CodeBlock.jsx          # Syntax-highlighted code blocks
+│   │   ├── ContextMenu.jsx        # Right-click context menu
+│   │   ├── DeliveryStatus.jsx     # Sent/delivered/read ticks
+│   │   ├── EmojiGifPicker.jsx     # Emoji & GIF picker panel
+│   │   ├── FilePreview.jsx        # Image/file preview in messages
+│   │   ├── FormatToolbar.jsx      # Message format toolbar (bold, code, etc.)
+│   │   ├── ForwardModal.jsx       # Forward message to conversations
+│   │   ├── GroupModal.jsx         # Create/edit group chat modal
+│   │   ├── MeetingCard.jsx        # Meeting card embedded in chat
+│   │   ├── MentionInput.jsx       # @mention input (chat variant)
+│   │   ├── MessageBubble.jsx      # Single message container
+│   │   ├── MessageContent.jsx     # Message content renderer (text/code/system)
+│   │   ├── MessageSearch.jsx      # In-conversation message search
+│   │   ├── MessageToolbar.jsx     # Hover toolbar (reply, react, pin, etc.)
+│   │   ├── PinnedMessages.jsx     # Pinned messages panel
+│   │   ├── PollCreator.jsx        # Create poll form
+│   │   ├── PollDisplay.jsx        # Poll results visualization
+│   │   ├── ReactionBar.jsx        # Emoji reactions row under messages
+│   │   ├── ReactionPicker.jsx     # Reaction emoji selector
+│   │   ├── ReplyPreview.jsx       # Reply-to preview banner
+│   │   ├── SharedFilesPanel.jsx   # Shared files in conversation
+│   │   ├── StarredMessages.jsx    # Starred messages panel
+│   │   ├── SystemMessage.jsx      # System messages (joined, left, etc.)
+│   │   ├── VoiceRecorder.jsx      # Voice message recorder
+│   │   └── call/                  # Modularized call overlay
+│   │       ├── index.jsx          # CallOverlay orchestrator
+│   │       ├── useWebRTC.js       # WebRTC peer connection + signaling
+│   │       ├── useCallControls.js # Mute, video, screen share, hold, PiP
+│   │       ├── CallIcons.jsx      # 14 SVG icon components
+│   │       ├── CallWidgets.jsx    # QualityBadge, DeviceSelector
+│   │       └── AddParticipantPopup.jsx # Add user to active call
+│   │
+│   ├── DailyNotes/                # Rich-text notebook module
+│   │   ├── index.jsx              # Entry point + layout
+│   │   ├── useNotesStore.js       # Notes CRUD state management
+│   │   ├── useNotesPersistence.js # Auto-save + server sync
+│   │   ├── useNotesFilters.js     # Tag/folder filtering logic
+│   │   ├── notesUtils.js          # Formatting helpers
+│   │   ├── quillConfig.js         # Quill editor config + toolbar
 │   │   └── components/
-│   │       ├── FolderManager.jsx  # Note folder management
-│   │       ├── InlineEditor.jsx   # Inline rich-text editor
-│   │       └── ModalEditor.jsx    # Full-screen modal editor
-│   └── organization/              # Shared org components (used by Admin & Organization pages)
+│   │       ├── FolderManager.jsx  # Folder tree management
+│   │       ├── InlineEditor.jsx   # Inline Quill editor
+│   │       ├── ModalEditor.jsx    # Full-screen modal editor
+│   │       ├── ModalSidebar.jsx   # Modal sidebar navigation
+│   │       ├── NotesHeader.jsx    # Notes toolbar header
+│   │       ├── NotesModal.jsx     # Notes modal wrapper
+│   │       ├── PageContextMenu.jsx # Right-click page menu
+│   │       ├── PageItem.jsx       # Single page list item
+│   │       ├── PageSwitcher.jsx   # Page/tab navigation
+│   │       ├── QuillEditor.jsx    # Quill wrapper component
+│   │       ├── TagDots.jsx        # Tag color dots
+│   │       ├── TagEditor.jsx      # Tag CRUD editor
+│   │       └── VersionHistory.jsx # Page version history viewer
+│   │
+│   └── organization/              # Shared org components (used by Admin & Organization page)
 │       ├── OrgSettings.jsx        # Organization settings form
 │       ├── Departments.jsx        # Departments CRUD
 │       ├── Teams.jsx              # Teams CRUD + sprint config
-│       ├── OrgChartView.jsx       # Visual org chart
-│       ├── OrgChart.module.css    # OrgChart-specific styles (cards, chips, badges)
-│       └── TeamsConfig.module.css # Sprint config form styles
+│       └── OrgChartView.jsx       # Visual org chart
+│
 ├── pages/
+│   ├── Login.jsx                  # Login form
+│   ├── Register.jsx               # Registration form
+│   ├── ForgotPassword.jsx         # Forgot password flow
+│   ├── ResetPassword.jsx          # Reset password (via email token)
+│   ├── SetEmail.jsx               # Set email for OAuth users
+│   ├── ChangePassword.jsx         # Forced/voluntary password change
+│   │
+│   ├── Dashboard.jsx              # Employee dashboard (eagerly loaded)
+│   ├── dashboard/
+│   │   ├── TimerCard.jsx          # Clock-in/out timer widget
+│   │   └── DashboardSkeleton.jsx  # Loading skeleton
+│   │
+│   ├── Analytics.jsx              # Re-export → analytics/index
+│   ├── analytics/
+│   │   ├── index.jsx              # Analytics page shell
+│   │   ├── SummaryStats.jsx       # Work/break hours summary cards
+│   │   ├── WorkBreakChart.jsx     # Stacked work/break area chart
+│   │   ├── TrendChart.jsx         # Daily hours trend line chart
+│   │   ├── DistributionCharts.jsx # Pie charts (work mode, leave type)
+│   │   ├── HistoryTable.jsx       # Day-by-day log table
+│   │   └── chartConfig.js         # Recharts theme + tooltip config
+│   │
+│   ├── Tasks.jsx                  # Task planner page
+│   ├── tasks/
+│   │   ├── TaskContext.jsx        # Tasks page local state context
+│   │   ├── TasksHeader.jsx        # Toolbar (filters, sprint selector, search)
+│   │   ├── KanbanBoard.jsx        # Drag-and-drop kanban columns
+│   │   ├── TaskCard.jsx           # Individual task card
+│   │   ├── TaskDetailModal.jsx    # Task detail/edit modal
+│   │   ├── InlineCommentPanel.jsx # Slide-in comment panel
+│   │   ├── BacklogTab.jsx         # Backlog items list
+│   │   ├── SprintImportPanel.jsx  # Import tasks between sprints
+│   │   ├── LabelSelector.jsx      # Multi-select label picker
+│   │   ├── constants.js           # Status/priority display config
+│   │   ├── utils.jsx              # Task helpers
+│   │   └── hooks/
+│   │       ├── useBacklog.js      # Backlog CRUD
+│   │       ├── useComments.js     # Task comments
+│   │       ├── useConfirmDialog.js # Confirmation hook
+│   │       ├── useDragDrop.js     # Kanban drag-and-drop logic
+│   │       ├── useFilters.js      # Filter state management
+│   │       ├── useGlobalSearch.js # Task search
+│   │       └── useTaskDetail.js   # Task detail modal logic
+│   │
+│   ├── Chat.jsx                   # Chat page (main chat UI)
+│   ├── chat/
+│   │   ├── ChatSidebar.jsx        # Conversation list sidebar
+│   │   ├── ConversationItem.jsx   # Single conversation list item
+│   │   ├── ChatHeader.jsx         # Active chat header (call buttons, search)
+│   │   ├── ChatMessages.jsx       # Message list with infinite scroll
+│   │   ├── ChatInputBar.jsx       # Message composer (text, file, voice, poll)
+│   │   ├── CallHistory.jsx        # Call log viewer for conversations
+│   │   ├── CallsTab.jsx           # All calls history tab
+│   │   ├── chatUtils.js           # Message formatting helpers
+│   │   ├── useChatState.js        # Chat page state management
+│   │   ├── useChatActions.js      # Message send/edit/delete actions
+│   │   ├── useConversationActions.js # Conversation CRUD + navigation
+│   │   ├── useMessageActions.js   # Pin, star, forward, react actions
+│   │   ├── useCallState.js        # Active call state
+│   │   └── useCallActions.js      # Call initiate/accept/reject actions
+│   │
+│   ├── Leaves.jsx                 # Leave management page
+│   ├── leaves/
+│   │   ├── LeaveRequestForm.jsx   # New leave request form
+│   │   ├── LeaveHistory.jsx       # Leave history table
+│   │   └── LeaveBalanceCards.jsx  # Leave balance summary cards
+│   │
+│   ├── ManualEntry.jsx            # Manual time entry page
+│   ├── manualEntry/
+│   │   ├── OvertimeRequestForm.jsx # Overtime request form
+│   │   ├── PendingRequestsList.jsx # Pending requests display
+│   │   └── manualEntryUtils.js    # Manual entry helpers
+│   │
+│   ├── CalendarPage.jsx           # Calendar page (events + meetings)
+│   ├── NotesPage.jsx              # Notes page (DailyNotes wrapper)
+│   ├── Organization.jsx           # Organization page (settings, depts, teams, chart)
+│   │
+│   ├── MeetingJoin.jsx            # Meeting join/lobby page
+│   ├── MeetingRoom.jsx            # Full meeting room page
+│   ├── meeting/
+│   │   ├── MeetingBottomBar.jsx   # Meeting controls bar
+│   │   ├── MeetingChat.jsx        # In-meeting chat panel
+│   │   ├── MeetingParticipants.jsx # Participants panel
+│   │   ├── ParticipantTile.jsx    # Individual participant video tile
+│   │   ├── PresenterView.jsx      # Screen share / presenter layout
+│   │   └── useMeetingState.js     # Meeting room state management
+│   │
 │   ├── Admin.jsx                  # Re-export → admin/index
-│   ├── Admin.module.css           # Core shared styles (layout, tabs, table, badges, buttons) — 481 lines
-│   ├── ManagerDashboard.jsx       # Re-export → manager/index
-│   ├── LeavePolicy.jsx            # Re-export → leave-policy/index
-│   ├── Organization.jsx           # Organization page (uses shared org components)
-│   ├── Dashboard.jsx              # Employee dashboard
-│   ├── Analytics.jsx              # Personal analytics
-│   ├── Tasks.jsx                  # Task planner
-│   ├── Leaves.jsx                 # Leave requests
-│   ├── ManualEntry.jsx            # Manual time entry
-│   ├── Login.jsx                  # Login page
-│   ├── Register.jsx               # Registration page
-│   ├── ForgotPassword.jsx         # Forgot password
-│   ├── ResetPassword.jsx          # Reset password
-│   ├── SetEmail.jsx               # Set email (OAuth users)
-│   ├── ChangePassword.jsx         # Change password
-│   ├── admin/                     # Admin panel (split from 1403-line Admin.jsx)
-│   │   ├── index.jsx              # AdminPanel shell + stats
+│   ├── admin/
+│   │   ├── index.jsx              # Admin panel shell + stats
 │   │   ├── constants.js           # ROLES, ROLE_LABELS
-│   │   ├── UserManagement.jsx     # Users table with filters + actions
+│   │   ├── UserManagement.jsx     # Users table with search, filter, pagination
 │   │   ├── AssignmentModal.jsx    # Assign user to org/dept/team
 │   │   ├── ResetPasswordModal.jsx # Admin password reset
 │   │   ├── CreateUser.jsx         # Create new user form
+│   │   ├── ImportUsers.jsx        # Bulk user import (CSV/JSON)
+│   │   ├── RoleRequests.jsx       # Role change request queue
+│   │   ├── PayPeriods.jsx         # Pay period locking management
 │   │   ├── AuditLogs.jsx          # Paginated audit log viewer
 │   │   ├── TaskLabelsTab.jsx      # Task labels CRUD
 │   │   ├── OrgModal.jsx           # Create/edit organization modal
 │   │   ├── OrganizationsManagement.jsx  # All orgs (super_admin only)
 │   │   ├── MyOrganization.jsx     # Current org with sub-tabs
-│   │   ├── OrganizationsTab.jsx   # Org tab selector
-│   │   ├── AdminForms.module.css  # Modal, formGroup, formActions, btnCancel, inlineInput etc.
-│   │   ├── AdminUtils.module.css  # Text utilities, layout containers, section headings, inline inputs
-│   │   ├── TaskLabels.module.css  # Color picker + label form/badge styles
-│   │   └── AuditLogs.module.css   # Audit log table cell styles
-│   ├── manager/                   # Manager dashboard (split from 964-line ManagerDashboard.jsx)
-│   │   ├── index.jsx              # ManagerDashboard shell
-│   │   ├── constants.js           # ROLE_LABELS, STATUS_COLORS, LEAVE_ICONS, formatMin
-│   │   ├── TeamAttendance.jsx     # Team attendance tab
+│   │   └── OrganizationsTab.jsx   # Org tab selector
+│   │
+│   ├── ManagerDashboard.jsx       # Re-export → manager/index
+│   ├── manager/
+│   │   ├── index.jsx              # Manager dashboard shell
+│   │   ├── constants.js           # ROLE_LABELS, STATUS_COLORS, formatMin
+│   │   ├── TeamAttendance.jsx     # Team attendance grid
 │   │   ├── MemberCard.jsx         # Team member card
-│   │   ├── ApprovalsTab.jsx       # Approval management
+│   │   ├── ApprovalsTab.jsx       # Approval queue (leaves, overtime, manual)
 │   │   ├── TeamAnalytics.jsx      # Team analytics with sorting/filtering
-│   │   ├── TodayStatusBadge.jsx   # Today status badge (pure UI)
-│   │   ├── PercentBar.jsx         # Progress bar (pure UI)
-│   │   ├── MiniTrend.jsx          # Mini bar chart (pure UI)
-│   │   ├── MemberExpandedCard.jsx # Expanded member details row
-│   │   ├── MyRequests.jsx         # Manager's own requests
 │   │   ├── EmployeeDashboard.jsx  # Employee drill-down view
 │   │   ├── MemberOverview.jsx     # Employee overview tab
 │   │   ├── MemberLeavesTab.jsx    # Employee leave history
 │   │   ├── MemberRequestsTab.jsx  # Employee request history
 │   │   ├── MemberHoursTab.jsx     # Employee hours log
-│   │   ├── ApprovalBadge.jsx      # Approval status badge (pure UI)
-│   │   ├── PriorityBadge.jsx      # Task priority badge (pure UI)
-│   │   ├── StatusBadge.jsx        # Task status badge (pure UI)
+│   │   ├── MyRequests.jsx         # Manager's own requests
+│   │   ├── MemberExpandedCard.jsx # Expanded member details row
+│   │   ├── ApprovalBadge.jsx      # Approval status badge
+│   │   ├── PriorityBadge.jsx      # Task priority badge
+│   │   ├── StatusBadge.jsx        # Task status badge
+│   │   ├── TodayStatusBadge.jsx   # Today status badge
+│   │   ├── PercentBar.jsx         # Progress bar
+│   │   ├── MiniTrend.jsx          # Mini bar chart
 │   │   └── RequestDetails.jsx     # Request metadata renderer
-│   └── leave-policy/              # Leave policy management (split from 401-line LeavePolicy.jsx)
-│       ├── index.jsx              # LeavePolicy shell
-│       ├── PoliciesTab.jsx        # Leave policies CRUD
+│   │
+│   ├── LeavePolicy.jsx            # Re-export → leave-policy/index
+│   └── leave-policy/
+│       ├── index.jsx              # Leave policy shell
+│       ├── PoliciesTab.jsx        # Leave policies CRUD (HR only)
 │       ├── PolicyForm.jsx         # Create/edit policy modal
 │       ├── MyBalances.jsx         # My leave balances view
 │       ├── HolidaysTab.jsx        # Holiday calendar management
-│       ├── HolidayCard.jsx        # Single holiday card (pure UI)
+│       ├── HolidayCard.jsx        # Single holiday card
 │       └── AllBalances.jsx        # All employees' balances (HR view)
+│
+└── __tests__/                     # Integration tests (Vitest + React Testing Library)
+    ├── AuthContext.test.jsx
+    ├── CalendarPage.test.jsx
+    ├── ConfirmDialog.test.jsx
+    ├── GlobalSearch.test.jsx
+    ├── Leaves.test.jsx
+    ├── Login.test.jsx
+    ├── ManualEntry.test.jsx
+    ├── Navbar.test.jsx
+    ├── NotesPage.test.jsx
+    ├── TimerCard.test.jsx
+    └── Toast.test.jsx
+```
+
+### Contexts & Global State
+
+| Context | File | State | Purpose |
+|---------|------|-------|---------|
+| **AuthContext** | `AuthContext.jsx` | `user`, `isAuthenticated`, `isInitializing` | JWT session management. Verifies profile on load via `getProfile()`. Caches only display-safe fields (no role/permissions) in localStorage. Auto-refreshes token every 30min. |
+| **ThemeContext** | `ThemeContext.jsx` | `theme` (dark/light) | Persists user theme preference to server (`PUT /tracker/theme`). |
+| **WorkStateContext** | `WorkStateContext.jsx` | `workState`, `workMode` | Bootstraps clock state from server on load. Values: `logged_out`, `working`, `on_break`. Work modes: `office`, `remote`, `hybrid`. |
+| **ChatContext** | `ChatContext.jsx` | `unreadCount` | Maintains global unread message count for Navbar badge. |
+| **CallContext** | `CallContext.jsx` | `globalIncomingCall`, `pendingAcceptedCall` | Listens to WebSocket for `call_incoming` events when NOT on the Chat page. Shows `GlobalIncomingCall` overlay. On accept, stores call data and navigates to Chat. |
+| **MeetingContext** | `MeetingContext.jsx` | `session`, `wsRef`, `localStreamRef` | Keeps an active meeting alive across route changes. Manages the meeting WebSocket, local media stream, and peer connections. Enables PiP overlay when user navigates away from `/meeting/:code/room`. |
+
+### Hooks
+
+| Hook | Purpose |
+|------|---------|
+| `useAsyncAction` | Wraps async operations with loading/error state |
+| `useAutoDismiss(ms)` | State that auto-clears after `ms` (default 5s) — used for flash messages |
+| `useChatNotification` | Browser push notification for incoming chat messages |
+| `useClickOutside(ref, cb)` | Triggers callback when clicking outside a referenced element |
+| `useDashboardData` | All Dashboard state: timer, widgets, weekly chart, tasks summary, calendar events, quotes rotation, confetti |
+| `useEventReminder(events)` | Fires reminder toasts 10 minutes before calendar events |
+| `useGlobalSearch` | Debounced search with API calls for GlobalSearch component |
+| `useLiveTimer(startTime)` | Ticking elapsed-time display (HH:MM:SS) |
+| `useWebSocket(onMessage)` | Auto-reconnecting WebSocket client. Auth via HttpOnly cookie. Reconnects after 3s on disconnect (except auth failure 4001). |
+
+### Constants & Utils
+
+**`constants/index.js`:**
+```js
+ROLE_LEVEL = { employee: 1, team_lead: 2, manager: 3, hr_admin: 4, super_admin: 5, platform_admin: 6 }
+REFRESH_TOKEN_INTERVAL = 30 min
+QUOTE_ROTATION_INTERVAL = 20 sec
+STATUS_POLL_INTERVAL = 2 min
+NOTIFICATION_POLL_INTERVAL = 30 sec
+```
+
+**`constants/leaves.js`:** `LEAVE_TYPES` array (sick, holiday, planned, personal, other), `STATUS_CONFIG` map.
+
+**`constants/icons.js`:** Central Lucide React icon registry (single import point for all icons).
+
+**`utils/date.js`:** Date formatting helpers. **`utils/time.js`:** Duration/time formatting.
+
+---
+
+## Server Architecture
+
+### Entry Point & Middleware Stack
+
+```
+server/index.js
+  │
+  ├── dotenv → load .env
+  ├── JWT_SECRET check (fatal if missing)
+  │
+  ├── MIDDLEWARE PIPELINE (in order):
+  │   1. helmet()                  ← Security headers (CSP, etc.)
+  │   2. Permissions-Policy header ← camera, microphone, display-capture
+  │   3. express.static(client/dist) ← Serve built React SPA (before CORS/auth)
+  │   4. CORS (manual)            ← Same-origin auto-allow, env CORS_ORIGIN, dev origins
+  │   5. cookieParser()
+  │   6. express.json()           ← 100kb default, 5mb for /notes, 10mb for /avatar
+  │   7. requestLogger (pino)     ← Structured request logging with request IDs
+  │   8. CSRF check               ← X-Requested-With: 'WorkPulse' on mutations
+  │   9. Auth-gated /uploads      ← authMiddleware + path traversal guard + static
+  │
+  ├── RATE LIMITERS (Redis-backed or MemoryStore fallback):
+  │   ├── authLimiter     (15/15min) → /api/auth
+  │   ├── registerLimiter (10/15min) → /api/auth/register
+  │   ├── forgotPwLimiter  (5/15min) → /api/auth/forgot-password
+  │   ├── passwordLimiter (10/15min) → /api/profile/password
+  │   └── apiLimiter    (5000/15min) → all other /api/* routes
+  │
+  ├── ROUTE MODULES (all prefixed /api):
+  │   ├── /api/auth          → routes/auth.js
+  │   ├── /api/tracker       → routes/tracker.js
+  │   ├── /api/leaves        → routes/leaves.js
+  │   ├── /api/tasks         → routes/tasks.js
+  │   ├── /api/sprints       → routes/sprints.js
+  │   ├── /api/profile       → routes/profile.js
+  │   ├── /api/org           → routes/organization.js
+  │   ├── /api/admin         → routes/admin.js
+  │   ├── /api/manager       → routes/manager.js
+  │   ├── /api/leave-policy  → routes/leavePolicy.js
+  │   ├── /api/notes         → routes/notes.js
+  │   ├── /api/calendar      → routes/calendar.js
+  │   ├── /api/meetings      → routes/meetings.js
+  │   ├── /api/notifications → routes/notifications.js
+  │   ├── /api/export        → routes/export.js
+  │   ├── /api/chat          → routes/chat.js
+  │   ├── /api/search        → routes/search.js
+  │   └── /api/health        → DB ping health check
+  │
+  ├── SPA FALLBACK           ← Serves index.html for non-file routes
+  ├── ERROR HANDLER          ← 500 catch-all with structured logging
+  │
+  └── SERVER STARTUP:
+      1. initDB()            ← Create/migrate all tables
+      2. initRedis()         ← Connect Redis (optional)
+      3. http.createServer() + setupWebSocket()
+      4. httpServer.listen(PORT)
+      5. initJobs()          ← Start background job schedulers
+      6. Graceful shutdown handler (SIGINT/SIGTERM)
+```
+
+### Server Folder Structure
+
+```
+server/
+├── index.js                       # Express app + HTTP server + startup
+├── db.js                          # PostgreSQL pool + schema migration (30+ tables)
+├── redis.js                       # Redis client, cache helpers, TTLs
+├── jobs.js                        # BullMQ queues / setInterval fallback
+├── jest.setup.js                  # Jest test setup
+├── package.json
+│
+├── middleware/
+│   ├── auth.js                    # JWT verification (HttpOnly cookie + token_version)
+│   └── rbac.js                    # Role-based access control:
+│                                  #   loadUserContext → req.userRole, req.userOrgId, etc.
+│                                  #   requireRole(minRole) → 403 if insufficient
+│                                  #   requireOrg → 403 if no org_id
+│                                  #   sameTenant → checks org isolation
+│
+├── routes/
+│   ├── auth.js                    # Register, login, logout, refresh, forgot/reset password
+│   ├── tracker.js                 # Clock in/out, break, status, history, analytics, widgets, manual entries, overtime
+│   ├── leaves.js                  # CRUD leaves, withdraw, summary
+│   ├── tasks.js                   # CRUD tasks, kanban, backlog, comments, history, labels, search, sprints
+│   ├── sprints.js                 # CRUD sprints, sprint tasks
+│   ├── profile.js                 # Get/update profile, avatar upload/remove, password change, email update, delete account
+│   ├── organization.js            # CRUD org, departments, teams, members, chart, sprint config
+│   ├── admin.js                   # User management, orgs, task labels, audit logs, stats, invite codes, registration settings, pay periods, bulk import, role requests
+│   ├── manager.js                 # Team attendance, analytics, approvals (single + bulk), member drill-down
+│   ├── leavePolicy.js             # Policies CRUD, balances, holidays (single + batch)
+│   ├── notes.js                   # Notebook save/load, version history
+│   ├── calendar.js                # CRUD calendar events
+│   ├── meetings.js                # CRUD meetings, participants, conflict check
+│   ├── notifications.js           # Get, mark read, mark all read, delete notifications
+│   ├── export.js                  # Export analytics, leaves, tasks, team data, payroll hours (CSV/XLSX)
+│   ├── chat.js                    # Conversations CRUD, messages, reactions, pins, stars, polls, files, call history, presence
+│   └── search.js                  # Global full-text search (tasks + messages)
+│
+├── utils/
+│   ├── ws.js                      # WebSocket server (chat, calls, meetings, presence)
+│   ├── logger.js                  # Pino structured logging + request logger
+│   ├── audit.js                   # Audit log insertion helper
+│   ├── approver.js                # Resolve approval chain (manager → dept head → HR)
+│   ├── export.js                  # CSV/XLSX generation utilities
+│   ├── mailer.js                  # Nodemailer email sending
+│   ├── password.js                # bcrypt hash + verify, strength validation
+│   ├── timeCalc.js                # Work hours calculation from time entries
+│   └── timezone.js                # Timezone offset handling
+│
+├── uploads/                       # User-uploaded files (authenticated access)
+└── __tests__/                     # 20 test suites (Jest + Supertest)
+    ├── api.test.js                ├── auth.routes.test.js
+    ├── admin.routes.test.js       ├── calendar.routes.test.js
+    ├── chat.routes.test.js        ├── export.routes.test.js
+    ├── export.test.js             ├── leavePolicy.routes.test.js
+    ├── leaves.routes.test.js      ├── manager.routes.test.js
+    ├── middleware.test.js          ├── notes.routes.test.js
+    ├── notifications.routes.test.js ├── organization.routes.test.js
+    ├── password.test.js           ├── profile.routes.test.js
+    ├── search.routes.test.js      ├── sprints.routes.test.js
+    ├── tasks.routes.test.js       ├── timeCalc.test.js
+    ├── timezone.test.js           └── tracker.routes.test.js
+    └── approver.test.js
+```
+
+### Database Schema
+
+All tables are created/migrated in `db.js → initDB()`. The schema uses a migration-tracking table (`_migrations`) and incremental `ALTER TABLE ADD COLUMN IF NOT EXISTS` for safe upgrades.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  CORE ENTITIES                                                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  organizations ──┬── departments ──── teams                                 │
+│       │          │        │            │                                     │
+│       │          │        └── head_id ─┘── lead_id                         │
+│       │          │                     │                                     │
+│       └──────────┴─── users ───────────┘                                   │
+│                        │  (org_id, team_id, department_id, manager_id)      │
+│                        │                                                    │
+├────────────────────────┼────────────────────────────────────────────────────┤
+│  TIME TRACKING         │                                                    │
+│  time_entries ─────────┘ (clock_in, break_start, break_end, clock_out)     │
+│    └── approval_status: pending/approved/rejected                          │
+│    └── work_mode: office/remote/hybrid                                     │
+│                                                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  TASK MANAGEMENT                                                            │
+│  tasks ───── task_labels (via task_label_map M:N)                          │
+│    ├── task_comments                                                        │
+│    ├── task_history (field-level change audit)                              │
+│    └── sprints (team_id, planned/active/completed)                         │
+│                                                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  LEAVE MANAGEMENT                                                           │
+│  leaves (per-day records, status: pending/approved/rejected/revoked)       │
+│  leave_policies (org-level: annual_quota, accrual, carry-forward)          │
+│  leave_balances (user × leave_type × year)                                 │
+│  holidays (org-level holiday calendar)                                     │
+│                                                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  APPROVALS                                                                  │
+│  approval_requests (type: leave/manual_entry/overtime/leave_withdraw)      │
+│  role_change_requests (multi-approver JSON, pending/approved/rejected)     │
+│                                                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  CHAT & MESSAGING                                                           │
+│  conversations ──── conversation_participants (is_pinned, is_favourite)    │
+│       │                                                                     │
+│       ├── messages (content, file attachments, reply_to, forwarded_from,   │
+│       │            pinned, edited, deleted, format_type, delivered_to,      │
+│       │            metadata)                                                │
+│       ├── message_reads (per-user read cursor)                              │
+│       ├── message_reactions (emoji toggle)                                  │
+│       ├── starred_messages                                                  │
+│       └── polls → poll_votes                                               │
+│                                                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  CALLS & MEETINGS                                                           │
+│  call_logs (conversation-based: voice/video, ringing→answered→ended)      │
+│  meetings (org-level: code, title, status, settings JSON, max_participants)│
+│  meeting_participants (role, status: invited/joined/left)                   │
+│                                                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  OTHER                                                                      │
+│  calendar_events (user events, linked tasks/meetings)                      │
+│  notebooks (per-user JSON blob)                                             │
+│  notebook_history (page-level version snapshots)                           │
+│  notifications (type, title, body, link_task_id, is_read)                  │
+│  audit_logs (actor, action, entity, IP, user-agent)                        │
+│  password_reset_tokens (expiry + used flag)                                │
+│  app_settings (key-value: registration_mode, etc.)                         │
+│  invite_codes (code, org, role, max_uses, expiry)                          │
+│  task_labels (org-level color-coded labels)                                │
+│  pay_periods (payroll locking by date range)                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key relationships:**
+- `users` → `organizations`, `departments`, `teams` (tenant isolation via `org_id`)
+- `tasks` → `users` (owner + assignee), `sprints`, `task_labels` (M:N)
+- `conversations` → `organizations` (tenant-scoped), `messages`, `polls`, `call_logs`
+- `meetings` → `organizations`, `conversations` (optional linked chat), `calendar_events`
+
+### Authentication & Authorization
+
+```
+CLIENT                          SERVER
+──────                          ──────
+POST /api/auth/login     →      Verify credentials (bcrypt)
+                                 Check account lockout (5 failed attempts → 15min lock)
+                         ←      Set HttpOnly cookie: "token" (JWT, 24h expiry)
+                                 JWT payload: { id, username, tv (token_version) }
+
+Every request:
+  Cookie "token"         →      middleware/auth.js:
+                                   jwt.verify(token, JWT_SECRET)
+                                   Check token_version vs DB (Redis-cached)
+                                   Set req.userId, req.username
+
+                         →      middleware/rbac.js:
+                                   loadUserContext: req.userRole, req.userOrgId, req.userTeamId, etc.
+                                   (Redis-cached user context, 1hr TTL)
+                                   requireRole(minRole): check ROLE_LEVEL hierarchy
+                                   requireOrg: verify user has org_id
+                                   sameTenant: verify target resource matches user's org
+
+CSRF protection:
+  Header "X-Requested-With: WorkPulse" required on all mutation requests
+
+Token refresh:
+  POST /api/auth/refresh →      Issue new JWT cookie (sliding window)
+  Client auto-refreshes every 30 minutes via AuthContext
+
+Password change/admin reset:
+  Increments user.token_version → invalidates all existing JWTs + WebSockets
+```
+
+**Role hierarchy:**
+```
+employee(1) < team_lead(2) < manager(3) < hr_admin(4) < super_admin(5) < platform_admin(6)
+```
+
+| Route | Minimum Role | Special Rules |
+|-------|-------------|---------------|
+| `/api/admin/*` | hr_admin | super_admin for org management |
+| `/api/manager/*` | team_lead | Or `has_reports` flag (any role with direct reports) |
+| `/api/leave-policy/policies` | hr_admin | Read: all; Write: hr_admin+ |
+| `/api/org/*` | employee | Write ops: hr_admin+ |
+| All others | employee (authenticated) | Tenant-isolated via org_id |
+
+### Rate Limiting
+
+| Endpoint | Window | Max Requests | Store |
+|----------|--------|-------------|-------|
+| `/api/auth` | 15 min | 15 | Redis / Memory |
+| `/api/auth/register` | 15 min | 10 | Redis / Memory |
+| `/api/auth/forgot-password` | 15 min | 5 | Redis / Memory |
+| `/api/profile/password` | 15 min | 10 | Redis / Memory |
+| All other `/api/*` | 15 min | 5000 | Redis / Memory |
+
+### Background Jobs
+
+| Job | Interval | Purpose |
+|-----|----------|---------|
+| **autoClockOut** | 5 min | Finds users whose last entry is not `clock_out` from the previous day (per user timezone) and inserts `clock_out` at 23:59:59 local time |
+| **cleanupTokens** | 1 hour | Deletes expired/used password reset tokens |
+
+When Redis + BullMQ are available: jobs run as distributed BullMQ scheduled jobs (safe for multi-instance).
+When Redis is unavailable: falls back to `setInterval` (single-instance mode).
+
+### Redis Caching Layer
+
+| Cache Key | TTL | Purpose |
+|-----------|-----|---------|
+| Token version | 5 min | Avoid DB lookups on every authenticated request |
+| User context | 1 hour | Role, org_id, team_id cached for RBAC middleware |
+| Org config | 24 hours | Organization settings |
+| Search results | 2 min | Global search cache |
+| Presence | 90 sec | User online/offline status |
+| Sprint data | 5 min | Sprint configuration |
+| Meeting participants | 30 min | Active meeting participant list |
+| Unread counts | — | Per-user per-conversation unread message counters |
+
+All cache operations **gracefully degrade** — if Redis is unavailable, the app falls back to direct DB queries.
+
+---
+
+## Real-Time Communication
+
+### WebSocket Architecture
+
+```
+CLIENT (useWebSocket hook)          SERVER (utils/ws.js)
+─────────────────────              ────────────────────
+WebSocket connect              →   wss.on('connection')
+  ws://host/ws                     │
+  Auth via cookie JWT              ├── jwt.verify (cookie "token")
+                                   ├── Check token_version
+                                   ├── Register: clients.set(userId, Set<ws>)
+                                   ├── Presence: mark online (Redis + DB.last_seen_at)
+                                   └── broadcastPresence(userId, 'online')
+
+ws.send(JSON)                  →   handleChatMessage(senderId, msg)
+                                     switch(msg.type) → dispatch to handler
+
+sendToUser(userId, type, data) ←   Delivers to all local WS connections for that user
+                                   │
+                                   └── Redis Pub/Sub: publish to 'ws:broadcast'
+                                       (for multi-instance: other instances deliver locally)
+
+Heartbeat: ping/pong every 30s     Auto-terminates dead connections
+
+On disconnect:                 →   Remove from clients map
+                                   Update last_seen_at
+                                   broadcastPresence(userId, 'offline')
+```
+
+### Chat WebSocket Events
+
+| Client → Server | Server → Client | Description |
+|-----------------|-----------------|-------------|
+| `chat_message` | `chat_message` | Send/receive messages. Server persists to `messages` table, broadcasts to all conversation participants, increments unread counts. |
+| `chat_typing` | `chat_typing` | Typing indicator. Relayed to other conversation participants. |
+| `chat_read` | — | Mark conversation as read. Updates `message_reads`, resets Redis unread counter. |
+| — | `chat_mention` | Notification when @mentioned in a message. |
+
+### Call WebSocket Events (WebRTC)
+
+1:1 and small group voice/video calls. WebRTC signaling relayed via WebSocket.
+
+| Client → Server | Server → Client | Description |
+|-----------------|-----------------|-------------|
+| `call_initiate` | `call_incoming` / `call_started` | Caller starts a call → creates `call_logs` entry (status: ringing). Participants receive `call_incoming`, caller receives `call_started`. |
+| `call_accept` | `call_accepted` | Callee accepts → status changes to `answered`. Caller receives `call_accepted` (triggers WebRTC offer). |
+| `call_reject` | `call_rejected` | Callee declines → status: `declined`. All participants notified. |
+| `call_end` | `call_ended` | Either party ends → status: `ended` (or `missed` if was `ringing`). Duration calculated and stored. |
+| `call_signal` | `call_signal` | WebRTC signaling relay (SDP offers/answers, ICE candidates). Server verifies both parties are in conversation, then forwards. |
+| `call_reconnect` | `call_reconnect` | Page refresh during active call → other party prompted to re-offer. |
+| `call_add_participant` | `call_incoming` | Add user to ongoing call (upgrade 1:1 to group). |
+
+### Meeting WebSocket Events (WebRTC Mesh)
+
+Multi-participant meeting rooms with WebRTC mesh topology.
+
+| Client → Server | Server → Client | Description |
+|-----------------|-----------------|-------------|
+| `meeting_join` | `meeting_participant_joined` | Join meeting → upsert `meeting_participants`, activate meeting if scheduled. New joiner receives `existingPeers` list. All participants notified. |
+| `meeting_leave` | `meeting_participant_left` | Leave meeting → status: `left`. If no active participants remain, meeting auto-ends. |
+| `meeting_end` | `meeting_ended` | Organizer ends meeting → all participants receive `meeting_ended`, all marked as `left`. Duration calculated. |
+| `meeting_signal` | `meeting_signal` | WebRTC mesh signaling (offer/answer/ICE) between meeting participants. |
+| `meeting_chat` | `meeting_message` | In-meeting chat message (ephemeral, relayed to active participants). |
+| `meeting_raise_hand` | `meeting_hand_raised` | Hand raise toggle → broadcast to all active participants. |
+| `meeting_track_state` | `meeting_track_state` | Broadcast muted/videoOff/screenSharing state to other participants. |
+| `meeting_mute_participant` | `meeting_muted` | Organizer remotely mutes a participant. |
+| `meeting_add_participant` | `meeting_invite` | Organizer adds user → target receives `meeting_invite` with meeting code. |
+
+### Presence
+
+- **Online detection**: Set on WebSocket connect, removed on disconnect.
+- **Redis key**: per-user presence flag with 90s TTL (heartbeat-refreshed).
+- **DB fallback**: `users.last_seen_at` updated on connect/disconnect.
+- **Broadcast**: `presence_update` event sent to all connected clients when a user's status changes.
+
+---
+
+## API Layer (Client)
+
+`api.js` exports ~120 functions organized by domain. All requests include:
+- `withCredentials: true` (sends HttpOnly JWT cookie)
+- `X-Requested-With: WorkPulse` header (CSRF protection)
+- `x-timezone-offset` header (user's local timezone offset)
+- NProgress loading bar (auto start/done on request/response)
+
+```
+api.js function groups:
+│
+├── Auth (7)
+│   register, login, logoutUser, refreshToken, forgotPassword, resetPassword, getRegistrationMode
+│
+├── Tracker (14)
+│   getStatus, clockIn, breakStart, breakEnd, clockOut,
+│   getHistory, getAnalytics, getWidgets, getWeeklyChart, getTaskSummary,
+│   addManualEntry, updateManualEntry, deleteEntries, getEntries,
+│   getManualEntryRequests, submitOvertimeRequest, getOvertimeRequests
+│
+├── Theme (2)
+│   getTheme, updateTheme
+│
+├── Leaves (5)
+│   getLeaves, addLeave, addLeavesBatch, deleteLeave, withdrawLeave, getLeaveSummary
+│
+├── Tasks (18)
+│   getTasks, addTask, updateTaskStatus, updateTask, deleteTask,
+│   carryForwardTasks, getAssignableUsers, getTaskLabels,
+│   getTaskComments, addTaskComment, updateTaskComment, deleteTaskComment,
+│   getBacklog, addBacklogTask, scheduleTask, unscheduleTask,
+│   getTaskDetail, getTaskHistory, searchTasks,
+│   getAvailableSprints, assignTaskToSprint
+│
+├── Sprints (5)
+│   getSprints, getActiveSprint, createSprint, updateSprint, deleteSprint, getSprintTasks
+│
+├── Profile (7)
+│   getProfile, updateProfile, updateEmail, updatePassword,
+│   deleteAccount, uploadAvatar, removeAvatar
+│
+├── Organization (15)
+│   createOrg, getCurrentOrg, updateOrgSettings,
+│   getOrgMembers, inviteToOrg, removeMember,
+│   getOrgDepartments, createDepartment, updateDepartment, deleteDepartment,
+│   getOrgTeams, createTeam, updateTeam, deleteTeam,
+│   getTeamSprintConfig, updateTeamSprintConfig, getOrgChart
+│
+├── Admin (24)
+│   getAdminOrganizations, getAdminOrganization, createAdminOrganization,
+│   updateAdminOrganization, deleteAdminOrganization,
+│   getAdminUsers, getAdminUser, createAdminUser, updateUserRole,
+│   updateUserAssignment, toggleUserActive, deleteAdminUser, adminResetPassword,
+│   getRoleChangeRequests, approveRoleChange, rejectRoleChange, cancelRoleChange,
+│   getAuditLogs, getAdminStats,
+│   getRegistrationSettings, updateRegistrationSettings,
+│   getInviteCodes, createInviteCode, deactivateInviteCode,
+│   getAdminTaskLabels, createAdminTaskLabel, updateAdminTaskLabel, deleteAdminTaskLabel,
+│   importUsers, getPayPeriods, createPayPeriod, deletePayPeriod
+│
+├── Manager (11)
+│   getTeamAttendance, getTeamAnalytics,
+│   getApprovals, approveRequest, rejectRequest, bulkApproval,
+│   getMyRequests,
+│   getMemberHours, getMemberTasks, getMemberLeaves, getMemberRequests, getMemberOverview
+│
+├── Leave Policy (10)
+│   getLeavePolicies, saveLeavePolicyAPI, deleteLeavePolicyAPI,
+│   getLeaveBalances, getUserLeaveBalances, updateLeaveBalance,
+│   getHolidays, addHoliday, addHolidaysBatch, deleteHoliday
+│
+├── Notes (4)
+│   getNotes, saveNotes, getPageHistory, getHistorySnapshot
+│
+├── Calendar (4)
+│   getCalendarEvents, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent
+│
+├── Notifications (4)
+│   getNotifications, markNotificationRead, markAllNotificationsRead, deleteNotification
+│
+├── Export (6)
+│   exportMyAnalytics, exportMyLeaves, exportMyTasks,
+│   exportTeamAnalytics, exportTeamLeaves, exportPayrollHours
+│
+├── Search (1)
+│   globalSearch
+│
+├── Chat (27)
+│   searchChatUsers, getPresence, getConversations, createConversation,
+│   createGroup, updateGroup, getMembers, getMessages, markConversationRead,
+│   getReadStatus, uploadChatFile, toggleReaction, editMessage, deleteMessage,
+│   togglePin, getPinnedMessages, searchMessages, forwardMessage,
+│   toggleStar, getStarredMessages, createPoll, votePoll, getPoll,
+│   getSharedFiles, ackDelivered, deleteConversation, clearChat,
+│   togglePinConversation, toggleFavouriteConversation,
+│   getCallHistory, getAllCallHistory, getActiveCall
+│
+└── Meetings (9)
+    createMeeting, checkMeetingConflicts, getMyMeetings, getMeeting,
+    updateMeeting, cancelMeeting,
+    getMeetingParticipants, addMeetingParticipant, removeMeetingParticipant
 ```
 
 ---
 
-## Route Map
+## Data Flow Diagrams
+
+### Authentication Flow
 
 ```
-App.jsx (lazy loaded)
-├── /login                   → Login.jsx
-├── /register                → Register.jsx
-├── /forgot-password         → ForgotPassword.jsx
-├── /reset-password          → ResetPassword.jsx
-├── /set-email               → SetEmail.jsx
-├── /change-password         → ChangePassword.jsx
-├── / (dashboard)            → Dashboard.jsx
-├── /analytics               → Analytics.jsx
-├── /tasks                   → Tasks.jsx
-├── /leaves                  → Leaves.jsx
-├── /manual-entry            → ManualEntry.jsx
-├── /organization            → Organization.jsx
-├── /leave-policy            → LeavePolicy.jsx  (→ leave-policy/index.jsx)
-├── /admin                   → Admin.jsx         (→ admin/index.jsx)
-└── /manager                 → ManagerDashboard.jsx (→ manager/index.jsx)
+┌──────────┐     POST /auth/login     ┌──────────┐     HttpOnly Cookie     ┌──────────┐
+│  Login   │  ──────────────────────> │  Server  │  ─────────────────────> │  Browser │
+│  Page    │  { username, password }   │  auth.js │  Set-Cookie: token=JWT │  Cookie  │
+└──────────┘                          └──────────┘                         └──────────┘
+     │                                                                          │
+     └── AuthContext.saveAuth(user) ──> localStorage (display-safe fields only) │
+                                                                                │
+     Every API call:  Cookie auto-sent ────────────────────────────────────────┘
+                      + X-Requested-With: WorkPulse (CSRF)
+                      + x-timezone-offset (TZ)
 ```
 
----
-
-## Component Hierarchy
-
-### Admin Panel
+### Real-Time Call Flow
 
 ```
-Admin.jsx (re-export)
-└── admin/index.jsx (AdminPanel)
-    ├── Stats grid (getAdminStats)
-    ├── Tab: Users
-    │   └── UserManagement.jsx
-    │       ├── AssignmentModal.jsx
-    │       └── ResetPasswordModal.jsx
-    ├── Tab: Create User
-    │   └── CreateUser.jsx
-    ├── Tab: Organizations
-    │   └── OrganizationsTab.jsx
-    │       ├── OrganizationsManagement.jsx (super_admin only)
-    │       │   └── OrgModal.jsx
-    │       └── MyOrganization.jsx (if has org_id)
-    │           ├── OrgSettings.jsx        ← shared from components/organization/
-    │           ├── Departments.jsx        ← shared from components/organization/
-    │           ├── Teams.jsx              ← shared from components/organization/
-    │           └── OrgChartView.jsx       ← shared from components/organization/
-    ├── Tab: Task Labels
-    │   └── TaskLabelsTab.jsx
-    └── Tab: Audit Logs
-        └── AuditLogs.jsx
+Caller                          Server (ws.js)                     Callee
+──────                          ──────────────                     ──────
+call_initiate          →        Create call_log (ringing)
+                                │
+                                ├── call_incoming            →     GlobalIncomingCall overlay
+                                └── call_started             →     (to caller)
+                                
+                                                                   User accepts →
+                       ←        call_accepted                ←     call_accept
+                                Update call_log (answered)
+
+WebRTC SDP Offer       →        call_signal (relay)          →     Process offer
+                       ←        call_signal (relay)          ←     WebRTC SDP Answer
+ICE candidates         ↔        call_signal (relay)          ↔     ICE candidates
+
+                                ── peer-to-peer stream active ──
+
+call_end               →        Update call_log (ended)
+                                Calculate duration
+                                └── call_ended               →     Close peer connection
 ```
 
-### Manager Dashboard
+### Meeting Room Flow
 
 ```
-ManagerDashboard.jsx (re-export)
-└── manager/index.jsx (ManagerDashboard)
-    ├── If selectedMember → EmployeeDashboard.jsx
-    │   ├── Member profile header
-    │   ├── Tab: Overview → MemberOverview.jsx
-    │   │   ├── ApprovalBadge.jsx
-    │   │   ├── PriorityBadge.jsx
-    │   │   ├── StatusBadge.jsx
-    │   │   └── RequestDetails.jsx
-    │   ├── Tab: Leaves → MemberLeavesTab.jsx
-    │   │   └── ApprovalBadge.jsx
-    │   ├── Tab: Requests → MemberRequestsTab.jsx
-    │   │   ├── ApprovalBadge.jsx
-    │   │   └── RequestDetails.jsx
-    │   └── Tab: Hours → MemberHoursTab.jsx
-    ├── Tab: Team Attendance → TeamAttendance.jsx
-    │   └── MemberCard.jsx (clickable → sets selectedMember)
-    ├── Tab: Approvals → ApprovalsTab.jsx
-    │   ├── ApprovalBadge.jsx
-    │   └── RequestDetails.jsx
-    ├── Tab: Analytics → TeamAnalytics.jsx
-    │   ├── TodayStatusBadge.jsx
-    │   ├── PercentBar.jsx
-    │   ├── MiniTrend.jsx
-    │   └── MemberExpandedCard.jsx
-    └── Tab: My Requests → MyRequests.jsx
-        ├── ApprovalBadge.jsx
-        └── RequestDetails.jsx
-```
+                                 Server (ws.js)
+Participant A                    ────────────────                  Participant B, C...
+─────────────                                                      ───────────────
+meeting_join           →         Upsert participant (joined)
+                                 Activate meeting (if scheduled)
+                       ←         meeting_participant_joined
+                                   + existingPeers list           ← meeting_participant_joined
+                                                                      (notification only)
 
-### Leave Policy
+For each existing peer:          
+  meeting_signal (offer) →       Relay                     →      Process SDP offer
+                         ←       Relay                     ←      meeting_signal (answer)
+  ICE candidates         ↔       Relay                     ↔      ICE candidates
 
-```
-LeavePolicy.jsx (re-export)
-└── leave-policy/index.jsx (LeavePolicy)
-    ├── Tab: Policies (HR only) → PoliciesTab.jsx
-    │   └── PolicyForm.jsx (create/edit modal)
-    ├── Tab: My Balances → MyBalances.jsx
-    ├── Tab: Holidays → HolidaysTab.jsx
-    │   └── HolidayCard.jsx
-    └── Tab: All Balances (HR only) → AllBalances.jsx
-```
+                                 ── WebRTC mesh: every peer connected to every other ──
 
-### Organization Page
-
-```
-Organization.jsx
-├── If no org + super_admin → CreateOrgView (inline)
-├── If no org + regular user → "not assigned" message
-└── If has org →
-    ├── Stats (memberCount, deptCount, teamCount, work hours)
-    ├── Tab: Settings → OrgSettings.jsx     ← shared
-    ├── Tab: Departments → Departments.jsx  ← shared
-    ├── Tab: Teams → Teams.jsx              ← shared
-    └── Tab: Org Chart → OrgChartView.jsx   ← shared
+meeting_track_state    →         Broadcast muted/video/screen      → (to all others)
+meeting_raise_hand     →         Broadcast hand status              → (to all)
+meeting_chat           →         Relay to active participants       → meeting_message
+meeting_end            →         End meeting, mark all left         → meeting_ended
 ```
 
 ---
 
-## Data Flow
+## CSS Architecture
+
+The project uses **CSS Modules** for component-scoped styles (`.module.css` files) alongside a **global CSS** file (`global.css`) that defines CSS custom properties for theming.
+
+### Global Theme Variables (`global.css`)
+
+```css
+:root (dark theme default)    |   [data-theme="light"]
+──────────────────────────    |   ─────────────────────
+--bg-primary: #0a0a12         |   --bg-primary: #f5f5f7
+--bg-secondary: #12121a       |   --bg-secondary: #ffffff
+--text: #f0f0f5               |   --text: #1a1a2e
+--accent: #6366f1             |   --accent: #4f46e5
+...                           |   ...
+```
+
+### CSS Module Organization
+
+Each component/page has a co-located `.module.css` file. Admin styles use a shared hierarchy:
 
 ```
-AuthContext
-  ├── user (id, role, org_id, full_name, avatar, email)
-  ├── isAuthenticated
-  ├── login(credentials)
-  ├── logout()
-  └── updateUser(partial)
-
-API Layer (api.js)
-  ├── Auth: login, register, logout, refreshToken, forgotPassword, resetPassword
-  ├── Profile: getProfile, updateProfile, uploadAvatar
-  ├── Tracker: clockIn, clockOut, startBreak, endBreak, getStatus, getTodayLog
-  ├── Admin: getAdminUsers, createAdminUser, updateUserRole, toggleUserActive, deleteAdminUser
-  │          getAdminOrganizations, createAdminOrganization, updateAdminOrganization
-  │          getAdminTaskLabels, createAdminTaskLabel, updateAdminTaskLabel
-  │          getAuditLogs, getAdminStats
-  ├── Organization: getCurrentOrg, createOrg, updateOrgSettings
-  │                 getOrgDepartments, createDepartment, updateDepartment, deleteDepartment
-  │                 getOrgTeams, createTeam, updateTeam, deleteTeam
-  │                 getOrgMembers, getOrgChart
-  │                 getTeamSprintConfig, updateTeamSprintConfig
-  ├── Manager: getTeamAttendance, getTeamAnalytics
-  │            getApprovals, approveRequest, rejectRequest, bulkApproval
-  │            getMemberOverview, getMemberLeaves, getMemberRequests, getMemberHours
-  │            getMyRequests
-  ├── Tasks: getTasks, createTask, updateTask, deleteTask, getSprintTasks
-  ├── Leaves: getLeaves, createLeave, cancelLeave, withdrawLeave
-  ├── LeavePolicy: getLeavePolicies, saveLeavePolicyAPI, deleteLeavePolicyAPI
-  │               getLeaveBalances, getUserLeaveBalances, updateLeaveBalance
-  │               getHolidays, addHoliday, deleteHoliday
-  └── Notes: getNotes, createNote, updateNote, deleteNote (and folder ops)
-
-Role Hierarchy
-  employee(1) → team_lead(2) → manager(3) → hr_admin(4) → super_admin(5)
-  
-  Page access:
-  - /admin       → hr_admin, super_admin
-  - /manager     → team_lead, manager, hr_admin, super_admin
-  - /leave-policy → all (with HR-only tabs)
-  - /organization → all (with HR/admin-only actions)
-  - /tasks, /leaves, /manual-entry → all
+Admin.module.css (shared core)     ← layout, tabs, toolbar, table, badges, buttons
+  │
+  ├── AdminForms.module.css        ← modal, form groups, sections, inline inputs
+  ├── AdminPages.module.css        ← page-specific admin layouts
+  ├── AdminUtils.module.css        ← text utilities, layout containers
+  ├── TaskLabels.module.css        ← label color picker + badge styles
+  ├── AuditLogs.module.css         ← audit log table cell styles
+  │
+  ├── OrgChart.module.css          ← org chart cards, chips, badges
+  └── TeamsConfig.module.css       ← sprint config form styles
 ```
+
+**Import alias convention:**
+
+| Alias | Module | Usage |
+|-------|--------|-------|
+| `s` | `Admin.module.css` | Shared admin styles |
+| `sf` | `AdminForms.module.css` | Form/modal styles |
+| `su` | `AdminUtils.module.css` | Utility classes |
+| `tl` | `TaskLabels.module.css` | Label management |
+| `al` | `AuditLogs.module.css` | Audit log table |
+| `oc` | `OrgChart.module.css` | Org chart view |
+| `tc` | `TeamsConfig.module.css` | Sprint config |
+| `m` | `ManagerDashboard.module.css` | Manager dashboard |
 
 ---
 
@@ -281,68 +1094,75 @@ Role Hierarchy
 | `OrgChartView` | `admin/MyOrganization`, `Organization` |
 | `ApprovalBadge` | `ApprovalsTab`, `MemberOverview`, `MemberLeavesTab`, `MemberRequestsTab`, `MyRequests` |
 | `RequestDetails` | `ApprovalsTab`, `MemberOverview`, `MemberRequestsTab`, `MyRequests` |
-| `PriorityBadge` | `MemberOverview` |
-| `StatusBadge` | `MemberOverview` |
-| `TodayStatusBadge` | `TeamAnalytics` |
-| `PercentBar` | `TeamAnalytics` |
-| `MiniTrend` | `TeamAnalytics` |
-| `MemberExpandedCard` | `TeamAnalytics` |
+| `Toast` | Any component via `useToast()` |
+| `ConfirmDialog` | Tasks, Admin, Organization, Leaves |
+| `SprintSelector` | Tasks, BacklogTab |
+| `ExportButton` | Analytics, ManagerDashboard, Leaves |
+| `MentionInput` | ChatInputBar, CommentSection |
+| `ErrorBoundary` | App.jsx (wraps all routes) |
 
 ---
 
-## Code Size Before vs After Refactoring
+## Testing
 
-| File | Before | After |
-|------|--------|-------|
-| `Admin.jsx` | 1403 lines | 1 line (re-export) |
-| `ManagerDashboard.jsx` | 964 lines | 1 line (re-export) |
-| `LeavePolicy.jsx` | 401 lines | 1 line (re-export) |
-| `Organization.jsx` | 503 lines | ~93 lines |
-| `Admin.module.css` | 819 lines | 481 lines |
-| New component files | — | ~49 files, avg ~60 lines each |
-| New CSS modules | — | 6 files (AdminForms, AdminUtils, TaskLabels, AuditLogs, OrgChart, TeamsConfig) |
-| Duplicate org code eliminated | ~600 lines | 0 (shared components) |
+### Client Tests (Vitest + React Testing Library)
+
+```bash
+cd client && npm test          # vitest run
+```
+
+11 test suites covering: AuthContext, Login, Navbar, Toast, ConfirmDialog, GlobalSearch, CalendarPage, Leaves, ManualEntry, TimerCard, NotesPage.
+
+### Server Tests (Jest + Supertest)
+
+```bash
+cd server && npm test          # jest
+```
+
+20 test suites covering all route modules, middleware, utilities (password, timeCalc, timezone, approver, export).
 
 ---
 
-## CSS Module Structure
+## Build & Deployment
 
-All shared styling flows from `Admin.module.css`. Component-specific styles are extracted into co-located modules:
+### Local Development
 
-```
-Admin.module.css (481 lines)        ← layout, tabs, toolbar, table, badges, buttons, avatars
-  │
-  ├── admin/AdminForms.module.css   ← modalOverlay, modal, formGroup, formSection,
-  │                                    createUserForm, sectionTitle, formActions,
-  │                                    btnCancel, hint, inlineInput, inlineSelect
-  │
-  ├── admin/AdminUtils.module.css   ← text utilities (text-xs, text-muted-sm…),
-  │                                    section headings, layout containers (form-container,
-  │                                    tab-content, overflow-auto…), inline-form,
-  │                                    actions-row, form/edit-inline-input, delete-warning
-  │
-  ├── admin/TaskLabels.module.css   ← color-picker-row, color-swatch (circle), color-input
-  │                                    (circle, cross-browser), label-form, label-badge
-  │
-  ├── admin/AuditLogs.module.css    ← audit-time, audit-details, badge-accent
-  │
-  ├── organization/OrgChart.module.css   ← card-panel, dept-header, team-card,
-  │                                         member-chip, mini-avatar-sm, badge-sm,
-  │                                         unassigned-section, bold-heading, flex-wrap
-  │
-  └── organization/TeamsConfig.module.css ← sprint-edit-row, sprint-config-form,
-                                             sprint-field, field-label, field-hint
+```bash
+# Option 1: Separate terminals
+cd client && npm run dev       # Vite dev server on :3000 (proxies /api → :5000)
+cd server && npm run dev       # nodemon on :5000
+
+# Option 2: Build script (production-like)
+.\start-local.ps1              # Windows PowerShell
+./start-local.sh               # Linux/macOS
 ```
 
-**Import alias convention:**
+### Production Build
 
-| Alias | Module |
-|-------|--------|
-| `s` | `Admin.module.css` (shared core) |
-| `sf` | `AdminForms.module.css` |
-| `su` | `AdminUtils.module.css` |
-| `tl` | `TaskLabels.module.css` |
-| `al` | `AuditLogs.module.css` |
-| `oc` | `OrgChart.module.css` |
-| `tc` | `TeamsConfig.module.css` |
-| `m` | `ManagerDashboard.module.css` |
+```bash
+cd client && npm run build     # → client/dist/ (Vite production build)
+cd server && node index.js     # Serves API + static client/dist on :5000
+```
+
+The Express server serves `client/dist/` via `express.static` and has an SPA fallback that serves `index.html` for all non-file routes.
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DATABASE_URL` | Yes | — | PostgreSQL connection string |
+| `JWT_SECRET` | Yes | — | JWT signing secret |
+| `PORT` | No | `5000` | Server port |
+| `NODE_ENV` | No | — | `production` for production mode |
+| `REDIS_URL` | No | — | Redis connection URL (optional) |
+| `CORS_ORIGIN` | No | — | Comma-separated allowed origins |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | No | — | Email sending config |
+| `SMTP_FROM` | No | — | From address for emails |
+
+### Docker
+
+```bash
+docker compose up              # Starts: app + postgres + redis
+```
+
+The `Dockerfile` uses a multi-stage build (install deps → build client → production image). The `Caddyfile` provides reverse proxy with automatic HTTPS for production deployment.

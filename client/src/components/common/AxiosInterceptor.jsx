@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import API from '../api';
-import { useAuth } from '../AuthContext';
+import API from '../../api';
+import { useAuth } from '../../AuthContext';
 import { useToast } from './Toast';
 
 export default function AxiosInterceptor({ children }) {

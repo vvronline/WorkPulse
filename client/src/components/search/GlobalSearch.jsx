@@ -1,6 +1,6 @@
 import DOMPurify from 'dompurify';
 import { Search, X, ClipboardList, FileText, Calendar, Palmtree, Rocket, User, ScrollText, ArrowRight } from 'lucide-react';
-import { useGlobalSearch } from '../hooks/useGlobalSearch';
+import { useGlobalSearch } from '../../hooks/useGlobalSearch';
 import s from './GlobalSearch.module.css';
 
 const LEAVE_STATUS_COLOR = { approved: '#16a34a', pending: '#d97706', rejected: '#dc2626', withdraw_pending: '#7c3aed' };

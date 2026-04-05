@@ -1,5 +1,5 @@
 export { default as ChatAvatar } from './ChatAvatar';
-export { default as CallOverlay } from './CallOverlay';
+export { default as CallOverlay } from './call';
 export { default as ContextMenu } from './ContextMenu';
 export { default as ReactionPicker } from './ReactionPicker';
 export { default as VoiceRecorder } from './VoiceRecorder';

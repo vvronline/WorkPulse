@@ -55,11 +55,12 @@
 
 @media (max-width: 768px) {
   .tasks-header { flex-direction: column; gap: 0.75rem; align-items: stretch; }
-  .tasks-header-actions { flex-wrap: wrap; gap: 0.5rem; width: 100%; }
+  .tasks-header-actions { flex-wrap: nowrap; gap: 0.5rem; width: 100%; }
   .date-input { flex: 1; min-width: 0; }
-  .filter-toggle-btn { flex: 1; min-width: 0; text-align: center; }
-  .tab-switcher { order: -1; width: 100%; border-radius: var(--radius-sm); }
-  .tab-btn { flex: 1; justify-content: center; padding: 0.6rem 0.5rem; font-size: 0.82rem; }
+  .filter-toggle-btn { min-width: 0; text-align: center; white-space: nowrap; }
+  .add-task-toggle { min-width: 0; white-space: nowrap; }
+  .tab-switcher { border-radius: var(--radius-sm); }
+  .tab-btn { justify-content: center; padding: 0.6rem 0.5rem; font-size: 0.82rem; }
   .filter-bar { padding: 0.75rem; }
   .filter-row { flex-direction: column; gap: 0.6rem; }
   .filter-group { min-width: 0; width: 100%; flex: unset; }
@@ -69,8 +70,10 @@
 @media (max-width: 480px) {
   .tasks-header h2 { font-size: 1.25rem; }
   .tasks-header p { font-size: 0.8rem; }
-  .tab-btn { font-size: 0.78rem; padding: 0.5rem 0.35rem; gap: 0.25rem; }
+  .tab-btn { font-size: 0.72rem; padding: 0.45rem 0.3rem; gap: 0.2rem; }
   .tab-badge { font-size: 0.62rem; padding: 0.05rem 0.35rem; }
+  .filter-toggle-btn { font-size: 0.75rem; padding: 0.45rem 0.5rem; }
+  .add-task-toggle { font-size: 0.75rem; padding: 0.45rem 0.5rem; }
   .filter-bar { padding: 0.6rem; }
   .filter-row { gap: 0.45rem; }
   .filter-group label { font-size: 0.62rem; }

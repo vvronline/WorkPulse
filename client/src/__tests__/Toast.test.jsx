@@ -1,6 +1,6 @@
 import { render, screen, act } from '@testing-library/react';
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ToastProvider, useToast } from '../components/Toast';
+import { ToastProvider, useToast } from '../components/common/Toast';
 
 // Test component that exposes toast functions
 function TestConsumer() {

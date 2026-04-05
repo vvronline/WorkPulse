@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { useAuth } from '../AuthContext';
-import ConfirmDialog from '../components/ConfirmDialog';
+import ConfirmDialog from '../components/common/ConfirmDialog';
 import { useNotesStore } from '../components/DailyNotes/useNotesStore';
 import NotesModal from '../components/DailyNotes/components/NotesModal';
 import s from './NotesPage.module.css';

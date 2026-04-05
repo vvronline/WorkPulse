@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import ConfirmDialog from '../components/ConfirmDialog';
+import ConfirmDialog from '../components/common/ConfirmDialog';
 import {
     MessageSearch, ForwardModal, GroupModal,
     StarredMessages, PollCreator, CallOverlay

@@ -3,11 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { useDashboardData, CONFETTI_PIECES } from '../hooks/useDashboardData';
 import TimerCard from './dashboard/TimerCard';
 import DashboardSkeleton from './dashboard/DashboardSkeleton';
-import WidgetsGrid from '../components/WidgetsGrid';
-import TodayEventsCard from '../components/TodayEventsCard';
-import EventReminderToast from '../components/EventReminderToast';
-import TasksSummary from '../components/TasksSummary';
-import ConfirmDialog from '../components/ConfirmDialog';
+import WidgetsGrid from '../components/dashboard/WidgetsGrid';
+import TodayEventsCard from '../components/dashboard/TodayEventsCard';
+import EventReminderToast from '../components/notifications/EventReminderToast';
+import TasksSummary from '../components/dashboard/TasksSummary';
+import ConfirmDialog from '../components/common/ConfirmDialog';
 import { formatTime } from '../utils/time';
 import s from './Dashboard.module.css';
 

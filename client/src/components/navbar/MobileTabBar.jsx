@@ -4,7 +4,7 @@ import { useAuth } from '../../AuthContext';
 import { useChatUnread } from '../../ChatContext';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { Home, Calendar, ClipboardList, MessageSquare, FileEdit, Palmtree, BarChart3, FileText, Building2, Users, Settings } from 'lucide-react';
-import s from '../Navbar.module.css';
+import s from './Navbar.module.css';
 
 const ROLE_LEVELS = { employee: 1, team_lead: 2, manager: 3, hr_admin: 4, super_admin: 5, platform_admin: 6 };
 

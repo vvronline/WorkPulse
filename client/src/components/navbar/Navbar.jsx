@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
-import { useAuth } from '../AuthContext';
-import NavLinks from './navbar/NavLinks';
-import ProfileMenu from './navbar/ProfileMenu';
-import MobileTabBar from './navbar/MobileTabBar';
-import NotificationBell from './NotificationBell';
-import GlobalSearch from './GlobalSearch';
+import { useAuth } from '../../AuthContext';
+import NavLinks from './NavLinks';
+import ProfileMenu from './ProfileMenu';
+import MobileTabBar from './MobileTabBar';
+import NotificationBell from '../notifications/NotificationBell';
+import GlobalSearch from '../search/GlobalSearch';
 import s from './Navbar.module.css';
 
 export default function Navbar() {

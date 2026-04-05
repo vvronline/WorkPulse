@@ -56,7 +56,7 @@ vi.mock('../components/navbar/MobileTabBar', () => ({
     ),
 }));
 
-import Navbar from '../components/Navbar';
+import Navbar from '../components/navbar/Navbar';
 
 function renderNavbar(path = '/') {
     return render(

@@ -6,7 +6,7 @@ import {
   getLocalToday, getTaskDetail, getTeamSprintConfig, getAvailableSprints,
 } from '../api';
 import { ArrowDownCircle, ClipboardList } from 'lucide-react';
-import ConfirmDialog from '../components/ConfirmDialog';
+import ConfirmDialog from '../components/common/ConfirmDialog';
 import { useAuth } from '../AuthContext';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import 'highlight.js/styles/github-dark.css';

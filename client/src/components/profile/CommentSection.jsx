@@ -1,8 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import ReactQuill from 'react-quill-new';
 import DOMPurify from 'dompurify';
-import hljs from '../hljs-setup';
-import MentionInput from './MentionInput';
+import hljs from '../../hljs-setup';
+import MentionInput from '../common/MentionInput';
 import s from './CommentSection.module.css';
 
 const COMMENT_QUILL_MODULES = {

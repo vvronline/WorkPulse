@@ -6,7 +6,7 @@ import TodayStatusBadge from './TodayStatusBadge';
 import PercentBar from './PercentBar';
 import MiniTrend from './MiniTrend';
 import MemberExpandedCard from './MemberExpandedCard';
-import ExportButton from '../../components/ExportButton';
+import ExportButton from '../../components/common/ExportButton';
 import s from '../Admin.module.css';
 import m from '../ManagerDashboard.module.css';
 

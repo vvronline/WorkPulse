@@ -4,7 +4,7 @@ import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import { useAuth } from '../AuthContext';
 import { updatePassword as changePasswordApi } from '../api';
 import { KeyRound, ArrowRight } from 'lucide-react';
-import PasswordInput from '../components/PasswordInput';
+import PasswordInput from '../components/common/PasswordInput';
 import s from './Auth.module.css';
 
 export default function ChangePassword() {

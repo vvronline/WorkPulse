@@ -4,10 +4,10 @@ import { useTheme } from '../../ThemeContext';
 import { useWorkState } from '../../WorkStateContext';
 import { clockOut as apiClockOut, uploadAvatar, removeAvatar, baseURL } from '../../api';
 import { Camera, Building2, House } from 'lucide-react';
-import EditProfileModal from '../EditProfileModal';
-import ConfirmDialog from '../ConfirmDialog';
+import EditProfileModal from '../profile/EditProfileModal';
+import ConfirmDialog from '../common/ConfirmDialog';
 import { useClickOutside } from '../../hooks/useClickOutside';
-import s from '../Navbar.module.css';
+import s from './Navbar.module.css';
 
 export default function ProfileMenu() {
     const { user, logout, updateUser } = useAuth();

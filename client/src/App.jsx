@@ -10,19 +10,19 @@ import ChangePassword from './pages/ChangePassword';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import Dashboard from './pages/Dashboard';
-import Navbar from './components/Navbar';
-import AxiosInterceptor from './components/AxiosInterceptor';
-import ErrorBoundary from './components/ErrorBoundary';
-import { ToastProvider } from './components/Toast';
+import Navbar from './components/navbar/Navbar';
+import AxiosInterceptor from './components/common/AxiosInterceptor';
+import ErrorBoundary from './components/common/ErrorBoundary';
+import { ToastProvider } from './components/common/Toast';
 import { ChatProvider } from './ChatContext';
 import { CallProvider } from './CallContext';
 import { MeetingProvider } from './MeetingContext';
-import MeetingPiP from './components/MeetingPiP';
-import GlobalIncomingCall from './components/GlobalIncomingCall';
-import PageSkeleton from './components/PageSkeleton';
+import MeetingPiP from './components/meeting/MeetingPiP';
+import GlobalIncomingCall from './components/notifications/GlobalIncomingCall';
+import PageSkeleton from './components/common/PageSkeleton';
 
 // Lazy-load non-critical pages for smaller initial bundle
-const Analytics = lazy(() => import('./pages/Analytics'));
+const Analytics = lazy(() => import('./pages/analytics'));
 const ManualEntry = lazy(() => import('./pages/ManualEntry'));
 const Leaves = lazy(() => import('./pages/Leaves'));
 const Tasks = lazy(() => import('./pages/Tasks'));

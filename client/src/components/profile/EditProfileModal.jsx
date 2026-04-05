@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { X, User, Mail, Lock, AlertTriangle, Trash2 } from 'lucide-react';
-import { useAuth } from '../AuthContext';
-import { updateProfile, updateEmail, updatePassword, deleteAccount } from '../api';
-import PasswordInput from './PasswordInput';
-import { useAsyncAction } from '../hooks/useAsyncAction';
+import { useAuth } from '../../AuthContext';
+import { updateProfile, updateEmail, updatePassword, deleteAccount } from '../../api';
+import PasswordInput from '../common/PasswordInput';
+import { useAsyncAction } from '../../hooks/useAsyncAction';
 import s from './EditProfileModal.module.css';
 
 export default function EditProfileModal({ onClose }) {

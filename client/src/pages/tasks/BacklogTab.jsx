@@ -2,7 +2,7 @@ import React from 'react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { Plus, X, User, CalendarDays, MessageSquare, Package } from 'lucide-react';
-import SprintSelector from '../../components/SprintSelector';
+import SprintSelector from '../../components/common/SprintSelector';
 import LabelSelector from './LabelSelector.jsx';
 import { PRIORITIES, COLUMNS } from './constants.js';
 import { formatDueDate, formatRelativeTime, isDueOverdue, stripHtml, getAvatarUrl } from './utils.jsx';

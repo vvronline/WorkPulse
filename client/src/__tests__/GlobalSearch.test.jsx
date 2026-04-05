@@ -22,7 +22,7 @@ vi.mock('react-router-dom', async () => {
     return { ...actual, useNavigate: () => mockNavigate };
 });
 
-import GlobalSearch from '../components/GlobalSearch';
+import GlobalSearch from '../components/search/GlobalSearch';
 
 function renderGlobalSearch(onClose = vi.fn()) {
     return render(

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useGlobalCall } from '../CallContext';
+import { useGlobalCall } from '../../CallContext';
 import s from './GlobalIncomingCall.module.css';
 
 const PhoneIcon = ({ size = 18 }) => (
