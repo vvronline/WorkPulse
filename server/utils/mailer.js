@@ -138,6 +138,41 @@ const templates = {
             ${reason ? `<p><em>Reason: ${esc(reason)}</em></p>` : ''}
         </div>`,
     }),
+    meetingScheduled: (user, meeting, organizerName) => ({
+        to: user.email,
+        subject: `WorkPulse — Meeting Scheduled: ${esc(meeting.title)}`,
+        html: `<div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;">
+            <h2 style="color:#6366f1;">📹 Meeting Scheduled</h2>
+            <p>Hi <strong>${esc(user.full_name)}</strong>,</p>
+            <p><strong>${esc(organizerName)}</strong> has scheduled a meeting:</p>
+            <p style="background:#f3f4f6;padding:12px;border-radius:8px;"><strong>${esc(meeting.title)}</strong></p>
+            ${meeting.start_time ? `<p>Start: <strong>${esc(new Date(meeting.start_time).toLocaleString())}</strong></p>` : ''}
+            ${meeting.end_time ? `<p>End: <strong>${esc(new Date(meeting.end_time).toLocaleString())}</strong></p>` : ''}
+            ${meeting.meeting_code ? `<p>Meeting code: <strong>${esc(meeting.meeting_code)}</strong></p>` : ''}
+        </div>`,
+    }),
+    meetingUpdated: (user, meeting, organizerName) => ({
+        to: user.email,
+        subject: `WorkPulse — Meeting Updated: ${esc(meeting.title)}`,
+        html: `<div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;">
+            <h2 style="color:#f59e0b;">📹 Meeting Updated</h2>
+            <p>Hi <strong>${esc(user.full_name)}</strong>,</p>
+            <p><strong>${esc(organizerName)}</strong> has updated the meeting:</p>
+            <p style="background:#f3f4f6;padding:12px;border-radius:8px;"><strong>${esc(meeting.title)}</strong></p>
+            ${meeting.meeting_code ? `<p>Meeting code: <strong>${esc(meeting.meeting_code)}</strong></p>` : ''}
+        </div>`,
+    }),
+    meetingCancelled: (user, meeting, organizerName) => ({
+        to: user.email,
+        subject: `WorkPulse — Meeting Cancelled: ${esc(meeting.title)}`,
+        html: `<div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;">
+            <h2 style="color:#ef4444;">📹 Meeting Cancelled</h2>
+            <p>Hi <strong>${esc(user.full_name)}</strong>,</p>
+            <p><strong>${esc(organizerName)}</strong> has cancelled the meeting:</p>
+            <p style="background:#f3f4f6;padding:12px;border-radius:8px;"><strong>${esc(meeting.title)}</strong></p>
+            <p>This meeting has been removed from your calendar.</p>
+        </div>`,
+    }),
 };
 
 function notifyByEmail(templateName, ...args) {

@@ -3,6 +3,7 @@ const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext } = require('../middleware/rbac');
 const { sendToUser } = require('../utils/ws');
+const { notifyByEmail } = require('../utils/mailer');
 const redis = require('../redis');
 
 const router = express.Router();
@@ -307,6 +308,12 @@ router.post('/', async (req, res) => {
                 hasConflict,
                 conflictTitle,
             });
+
+            // Send email notification to participant
+            const inviteeUser = (await query('SELECT id, full_name, email, username FROM users WHERE id = $1', [uid])).rows[0];
+            if (inviteeUser) {
+                notifyByEmail('meetingScheduled', inviteeUser, { title: meeting.title, meeting_code: code, start_time, end_time }, organizer?.full_name || 'Someone');
+            }
         }
 
         res.json({ ...meeting, conversation_id: conversationId });
@@ -335,7 +342,32 @@ router.put('/:id', async (req, res) => {
              WHERE id = $4 RETURNING *`,
             [title?.trim() || null, description ?? null, JSON.stringify(newSettings), meetingId]
         );
-        res.json(result.rows[0]);
+
+        const updatedMeeting = result.rows[0];
+
+        // Notify participants about meeting update via WS and email
+        const organizer = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
+        const participants = (await query(
+            `SELECT mp.user_id, u.full_name, u.email, u.username
+             FROM meeting_participants mp JOIN users u ON u.id = mp.user_id
+             WHERE mp.meeting_id = $1 AND mp.user_id != $2`,
+            [meetingId, req.userId]
+        )).rows;
+
+        for (const p of participants) {
+            sendToUser(p.user_id, 'meeting_updated', { meetingId, title: updatedMeeting.title });
+            notifyByEmail('meetingUpdated', p, { title: updatedMeeting.title, meeting_code: updatedMeeting.meeting_code }, organizer?.full_name || 'Someone');
+        }
+
+        if (meeting.conversation_id) {
+            await insertSystemMessage(meeting.conversation_id, req.userId, {
+                type: 'meeting_updated',
+                meetingId,
+                text: `📹 Meeting "${updatedMeeting.title}" was updated`
+            });
+        }
+
+        res.json(updatedMeeting);
     } catch (err) {
         req.log.error({ err }, 'Update meeting error');
         res.status(500).json({ error: 'Failed to update meeting' });
@@ -351,13 +383,22 @@ router.delete('/:id', async (req, res) => {
 
         await query(`UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1`, [meetingId]);
 
-        // Notify participants
+        // Delete calendar events for ALL participants (including organizer)
+        await query('DELETE FROM calendar_events WHERE meeting_id = $1', [meetingId]);
+
+        // Get organizer info for email
+        const organizer = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
+
+        // Notify participants via WS and email
         const participants = (await query(
-            'SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND user_id != $2',
+            `SELECT mp.user_id, u.full_name, u.email, u.username
+             FROM meeting_participants mp JOIN users u ON u.id = mp.user_id
+             WHERE mp.meeting_id = $1 AND mp.user_id != $2`,
             [meetingId, req.userId]
         )).rows;
         for (const p of participants) {
             sendToUser(p.user_id, 'meeting_cancelled', { meetingId, title: meeting.title });
+            notifyByEmail('meetingCancelled', p, { title: meeting.title, meeting_code: meeting.meeting_code }, organizer?.full_name || 'Someone');
         }
 
         if (meeting.conversation_id) {

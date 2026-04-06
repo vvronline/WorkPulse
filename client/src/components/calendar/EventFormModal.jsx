@@ -142,7 +142,7 @@ function MeetingParticipantPicker({ participants, excludeIds = [], onChange, con
     );
 }
 
-export default function EventFormModal({ modal, form, setForm, nowMin, tasks, onSave, onDelete, onClose, onStartChange, existingMeetingCode }) {
+export default function EventFormModal({ modal, form, setForm, nowMin, tasks, onSave, onDelete, onClose, onStartChange, existingMeetingCode, isOrganizer = true }) {
     const [addMeeting, setAddMeeting] = useState(false);
     const [requiredParticipants, setRequiredParticipants] = useState([]);
     const [optionalParticipants, setOptionalParticipants] = useState([]);
@@ -216,6 +216,7 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
     const isEditing = modal !== 'create';
     const hasMeeting = isEditing && !!existingMeetingCode;
     const isCreating = modal === 'create';
+    const readOnly = isEditing && hasMeeting && !isOrganizer;
     const nowDatePart = getDatePart(nowMin);
     const nowTimePart = getTimePart(nowMin);
     const startDatePart = getDatePart(form.start_time);
@@ -236,9 +237,11 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
       <div className={s.modal} onClick={e => e.stopPropagation()}>
         <div className={s.modalHeader}>
           <div>
-            <h3>{modal === 'create' ? 'New Event' : 'Edit Event'}</h3>
+            <h3>{modal === 'create' ? 'New Event' : readOnly ? 'Event Details' : 'Edit Event'}</h3>
             <p className={s.modalSubtitle}>
-              {modal === 'create' ? 'Capture the details and keep your schedule in sync.' : 'Update details for this scheduled item.'}
+              {modal === 'create' ? 'Capture the details and keep your schedule in sync.'
+                : readOnly ? 'Only the meeting organizer can edit or cancel this event.'
+                : 'Update details for this scheduled item.'}
             </p>
           </div>
           <button
@@ -258,6 +261,7 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
             onChange={e => setForm({ ...form, title: e.target.value })}
             placeholder="Event title"
             autoFocus
+            disabled={readOnly}
           />
         </div>
 
@@ -268,6 +272,7 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
             onChange={e => setForm({ ...form, description: e.target.value })}
             placeholder="Optional description"
             rows={2}
+            disabled={readOnly}
           />
         </div>
 
@@ -558,12 +563,12 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
         )}
 
         <div className={s.formActions}>
-          {modal !== 'create' && (
-            <button className={s.deleteBtn} onClick={onDelete}>Delete</button>
+          {modal !== 'create' && isOrganizer && (
+            <button className={s.deleteBtn} onClick={onDelete}>{hasMeeting ? 'Cancel Event' : 'Delete'}</button>
           )}
           <div className={s.formActionsRight}>
-            <button className={s.cancelBtn} onClick={onClose}>Cancel</button>
-            <button className={s.saveBtn} onClick={handleSave}>Save</button>
+            <button className={s.cancelBtn} onClick={onClose}>Close</button>
+            {isOrganizer && <button className={s.saveBtn} onClick={handleSave}>Save</button>}
           </div>
         </div>
       </div>

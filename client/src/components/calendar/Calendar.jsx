@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Video } from 'lucide-react';
-import { getCalendarEvents, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent, createMeeting } from '../../api';
+import { getCalendarEvents, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent, createMeeting, cancelMeeting } from '../../api';
+import { useAuth } from '../../AuthContext';
 import EventFormModal from './EventFormModal';
 import s from './Calendar.module.css';
 
@@ -55,6 +56,7 @@ const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'Ju
 
 export default function Calendar({ tasks = [] }) {
     const navigate = useNavigate();
+    const { user } = useAuth();
     const [events, setEvents] = useState([]);
     const [view, setView] = useState('week');
     const [baseDate, setBaseDate] = useState(() => new Date());
@@ -71,6 +73,7 @@ export default function Calendar({ tasks = [] }) {
         weekdays: [],
     });
     const [editingMeetingCode, setEditingMeetingCode] = useState(null);
+    const [editingMeetingCreatedBy, setEditingMeetingCreatedBy] = useState(null);
     const gridRef = useRef(null);
     const today = new Date();
 
@@ -150,6 +153,7 @@ export default function Calendar({ tasks = [] }) {
             schedule_mode: 'single', weekdays: [],
         });
         setEditingMeetingCode(evt.meeting_code || null);
+        setEditingMeetingCreatedBy(evt.meeting_created_by || null);
         setModal(evt.id);
     };
 
@@ -240,6 +244,7 @@ export default function Calendar({ tasks = [] }) {
             }
             setModal(null);
             setEditingMeetingCode(null);
+            setEditingMeetingCreatedBy(null);
             fetchEvents();
         } catch (e) { console.error(e); }
     };
@@ -250,6 +255,7 @@ export default function Calendar({ tasks = [] }) {
             await deleteCalendarEvent(modal);
             setModal(null);
             setEditingMeetingCode(null);
+            setEditingMeetingCreatedBy(null);
             fetchEvents();
         } catch (e) { console.error(e); }
     };
@@ -467,9 +473,10 @@ export default function Calendar({ tasks = [] }) {
                 tasks={tasks}
                 onSave={handleSave}
                 onDelete={handleDelete}
-                onClose={() => { setModal(null); setEditingMeetingCode(null); }}
+                onClose={() => { setModal(null); setEditingMeetingCode(null); setEditingMeetingCreatedBy(null); }}
                 onStartChange={handleStartChange}
                 existingMeetingCode={editingMeetingCode}
+                isOrganizer={!editingMeetingCode || (editingMeetingCreatedBy === user?.id)}
             />
         </div>
     );
