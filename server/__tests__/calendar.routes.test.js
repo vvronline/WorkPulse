@@ -359,6 +359,6 @@ describe('DELETE /api/calendar/:id', () => {
             .set(CSRF)
             .set('Cookie', authCookie());
         expect(res.status).toBe(200);
-        expect(res.body.message).toMatch(/deleted/i);
+        expect(res.body.message).toMatch(/cancelled/i);
     });
 });
