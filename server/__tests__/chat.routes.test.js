@@ -151,8 +151,8 @@ describe('GET /api/chat/presence', () => {
             .set('Cookie', authCookie());
 
         expect(res.status).toBe(200);
-        expect(res.body[2]).toBe('online');
-        expect(res.body[3]).toBe('offline');
+        expect(res.body[2].presence).toBe('online');
+        expect(res.body[3].presence).toBe('offline');
     });
 });
 
