@@ -151,6 +151,11 @@ export default function App() {
       hideTimer = setTimeout(() => { tip.style.opacity = '0'; }, 50);
     };
 
+    const hideImmediately = () => {
+      clearTimeout(hideTimer);
+      tip.style.opacity = '0';
+    };
+
     const swap = (el) => {
       if (el.getAttribute('title')) {
         el.setAttribute('data-tooltip', el.getAttribute('title'));
@@ -161,6 +166,10 @@ export default function App() {
     };
 
     document.querySelectorAll('[title]').forEach(swap);
+
+    // Hide immediately on press/click so tooltips do not linger after UI state changes
+    document.addEventListener('pointerdown', hideImmediately, true);
+    document.addEventListener('click', hideImmediately, true);
 
     const obs = new MutationObserver((mutations) => {
       for (const m of mutations) {
@@ -180,6 +189,9 @@ export default function App() {
     obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['title'] });
 
     return () => {
+      clearTimeout(hideTimer);
+      document.removeEventListener('pointerdown', hideImmediately, true);
+      document.removeEventListener('click', hideImmediately, true);
       obs.disconnect();
       tip.remove();
     };
