@@ -96,10 +96,11 @@ export function useFloatingTimer() {
         await handleAction(breakEnd, 'breakEnd');
         setManualStatus('available');
     }, [handleAction, setManualStatus]);
-    const handleConfirmClockOut = useCallback(() => {
+    const handleConfirmClockOut = useCallback(async () => {
         setShowClockOutConfirm(false);
-        handleAction(clockOut, 'clockOut');
-    }, [handleAction]);
+        await handleAction(clockOut, 'clockOut');
+        setManualStatus('offline');
+    }, [handleAction, setManualStatus]);
 
     const radius = 38;
     const circumference = 2 * Math.PI * radius;
