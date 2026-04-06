@@ -24,8 +24,9 @@ function Warn  ($msg) { Write-Host "[warn]  $msg" -ForegroundColor Yellow }
 function Abort ($msg) { Write-Host "[error] $msg" -ForegroundColor Red; exit 1 }
 
 # ── check prereqs ──
-if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Abort "node is not installed" }
-if (-not (Get-Command npm  -ErrorAction SilentlyContinue)) { Abort "npm is not installed" }
+if (-not (Get-Command node   -ErrorAction SilentlyContinue)) { Abort "node is not installed" }
+if (-not (Get-Command npm    -ErrorAction SilentlyContinue)) { Abort "npm is not installed" }
+if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { Abort "docker is not installed" }
 
 # ── install deps if needed ──
 function Install-Deps($dir) {
@@ -39,6 +40,23 @@ function Install-Deps($dir) {
 
 Install-Deps $Client
 Install-Deps $Server
+
+# ── start postgres + redis via docker compose (dev overlay) ──
+Log "Starting Postgres and Redis via Docker…"
+$ComposeFiles = '-f', (Join-Path $Root 'docker-compose.yml'), '-f', (Join-Path $Root 'docker-compose.dev.yml')
+& docker compose @ComposeFiles up -d postgres redis
+if ($LASTEXITCODE -ne 0) { Abort "docker compose failed to start services" }
+
+# wait until postgres is healthy (up to 60 s)
+Log "Waiting for Postgres to be ready…"
+$deadline = (Get-Date).AddSeconds(60)
+do {
+    $health = & docker inspect --format='{{.State.Health.Status}}' workpulse-postgres 2>$null
+    if ($health -eq 'healthy') { break }
+    if ((Get-Date) -ge $deadline) { Abort "Postgres did not become healthy within 60 s" }
+    Start-Sleep -Seconds 2
+} while ($true)
+Log "Postgres is ready."
 
 # ── build client ──
 if (-not $SkipBuild) {

@@ -6,8 +6,9 @@ import {
     CategoryScale, LinearScale, BarElement, LineElement,
     PointElement, Title, Tooltip, Legend, Filler, ArcElement,
 } from 'chart.js';
-import { getAnalytics, getHistory, getLocalDate, getLocalToday, exportMyAnalytics } from '../../api';
+import { getAnalytics, getHistory, getWidgets, getLocalDate, getLocalToday, exportMyAnalytics } from '../../api';
 import ExportButton from '../../components/common/ExportButton';
+import WidgetsGrid from '../../components/dashboard/WidgetsGrid';
 import SummaryStats from './SummaryStats';
 import WorkBreakChart from './WorkBreakChart';
 import TrendChart from './TrendChart';
@@ -24,6 +25,7 @@ export default function Analytics() {
     const [days, setDays] = useState(7);
     const [data, setData] = useState([]);
     const [history, setHistory] = useState([]);
+    const [widgets, setWidgets] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useAutoDismiss('');
 
@@ -32,15 +34,17 @@ export default function Analytics() {
         const fetchData = async () => {
             setLoading(true);
             try {
-                const [analyticsRes, historyRes] = await Promise.allSettled([
+                const [analyticsRes, historyRes, widgetsRes] = await Promise.allSettled([
                     getAnalytics(days),
-                    getHistory(getLocalDate(days), getLocalToday())
+                    getHistory(getLocalDate(days), getLocalToday()),
+                    getWidgets()
                 ]);
                 if (cancelled) return;
                 if (analyticsRes.status === 'fulfilled') setData(analyticsRes.value.data);
                 else setError('Failed to load analytics chart data.');
                 if (historyRes.status === 'fulfilled') setHistory(historyRes.value.data);
                 else if (analyticsRes.status === 'fulfilled') setError('Failed to load history data.');
+                if (widgetsRes.status === 'fulfilled') setWidgets(widgetsRes.value.data);
             } catch (err) {
                 if (cancelled) return;
                 console.error('Failed to load analytics', err);
@@ -101,6 +105,8 @@ export default function Analytics() {
                 <div className={`error-msg ${s['section-divider']}`}>{error}</div>
             ) : (
                 <>
+                    <WidgetsGrid widgets={widgets} />
+
                     <SummaryStats data={data} />
 
                     <div className={s['analytics-charts-row']}>

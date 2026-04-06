@@ -1,14 +1,16 @@
-import React from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useDashboardData, CONFETTI_PIECES } from '../hooks/useDashboardData';
-import TimerCard from './dashboard/TimerCard';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useAuth } from '../AuthContext';
+import { useWorkState } from '../WorkStateContext';
+import { getTaskSummary, getCalendarEvents } from '../api';
+import { QUOTE_ROTATION_INTERVAL } from '../constants';
+import { QUOTES, CONFETTI_PIECES } from '../hooks/useDashboardData';
 import DashboardSkeleton from './dashboard/DashboardSkeleton';
-import WidgetsGrid from '../components/dashboard/WidgetsGrid';
 import TodayEventsCard from '../components/dashboard/TodayEventsCard';
 import EventReminderToast from '../components/notifications/EventReminderToast';
 import TasksSummary from '../components/dashboard/TasksSummary';
-import ConfirmDialog from '../components/common/ConfirmDialog';
-import { formatTime } from '../utils/time';
+import PendingApprovalsCard from '../components/dashboard/PendingApprovalsCard';
+import { useEventReminder } from '../hooks/useEventReminder';
+import { ROLE_LEVEL } from '../constants';
 import s from './Dashboard.module.css';
 
 function getGreeting() {
@@ -19,37 +21,55 @@ function getGreeting() {
 }
 
 export default function Dashboard() {
-  const navigate = useNavigate();
-  const {
-    user, state, loading, actionLoading, error,
-    workMode, setWorkMode,
-    widgets, weeklyData, taskSummary, todayEvents,
-    liveFloorSec, liveBreakSec, showConfetti,
-    reminders, dismissReminder,
-    floorMinutes, progressPercent, progressColor,
-    completedTarget, completedMandatory,
-    remaining, mandatoryRemaining,
-    breakCount, estimatedClockOut, overtimeMinutes,
-    isWeekend, clockInTime,
-    quote, quoteIndex,
-    showClockOutConfirm, setShowClockOutConfirm,
-    handleClockIn, handleBreakStart, handleBreakEnd, handleConfirmClockOut,
-    radius, circumference, strokeDashoffset,
-    dailyTargetMet, targetMinutes,
-  } = useDashboardData();
+  const { user } = useAuth();
+  const { workState } = useWorkState();
+
+  const [taskSummary, setTaskSummary] = useState(null);
+  const [todayEvents, setTodayEvents] = useState([]);
+  const [tomorrowEvents, setTomorrowEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [quoteIndex, setQuoteIndex] = useState(() => Math.floor(Math.random() * QUOTES.length));
+  const quoteTimerRef = useRef(null);
+  const quote = QUOTES[quoteIndex];
+
+  const isManager = (ROLE_LEVEL[user?.role] || 1) >= ROLE_LEVEL.team_lead || user?.has_reports;
+
+  const { reminders, dismiss: dismissReminder } = useEventReminder(todayEvents);
+
+  // Rotate quotes
+  useEffect(() => {
+    quoteTimerRef.current = setInterval(() => {
+      setQuoteIndex(prev => (prev + 1) % QUOTES.length);
+    }, QUOTE_ROTATION_INTERVAL);
+    return () => clearInterval(quoteTimerRef.current);
+  }, []);
+
+  // Fetch tasks + events
+  const fetchData = useCallback(async () => {
+    try {
+      const now = new Date();
+      const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      const dayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString();
+      const tomorrowEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2).toISOString();
+      const [taskRes, eventsRes, tomorrowRes] = await Promise.allSettled([
+        getTaskSummary(),
+        getCalendarEvents(dayStart, dayEnd),
+        getCalendarEvents(dayEnd, tomorrowEnd),
+      ]);
+      if (taskRes.status === 'fulfilled') setTaskSummary(taskRes.value.data);
+      if (eventsRes.status === 'fulfilled') setTodayEvents(eventsRes.value.data || []);
+      if (tomorrowRes.status === 'fulfilled') setTomorrowEvents(tomorrowRes.value.data || []);
+    } catch { /* silent */ } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   if (loading) return <DashboardSkeleton />;
 
   return (
     <div className={s.dashboard}>
-      {showConfetti && (
-        <div className={s['confetti-container']}>
-          {CONFETTI_PIECES.map((style, i) => (
-            <div key={i} className={s['confetti-piece']} style={style} />
-          ))}
-        </div>
-      )}
-
       {/* Greeting Banner */}
       <div className={s['greeting-banner']}>
         <div className={s['greeting-left']}>
@@ -57,9 +77,6 @@ export default function Dashboard() {
           <p className={s['greeting-date']}>
             {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
           </p>
-          {clockInTime && state !== 'logged_out' && (
-            <p className={s['greeting-clockin']}>Logged in at <strong>{clockInTime}</strong></p>
-          )}
         </div>
         <div className={s['greeting-quote']} key={quoteIndex}>
           <p className={s['quote-text']}>"{quote.text}"</p>
@@ -67,58 +84,12 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Row 1: Timer card + events/tasks column */}
-      <div className={s['dashboard-row-1']}>
-        <TimerCard
-          state={state}
-          isWeekend={isWeekend}
-          workMode={workMode}
-          setWorkMode={setWorkMode}
-          liveFloorSec={liveFloorSec}
-          liveBreakSec={liveBreakSec}
-          breakCount={breakCount}
-          floorMinutes={floorMinutes}
-          progressPercent={progressPercent}
-          progressColor={progressColor}
-          radius={radius}
-          circumference={circumference}
-          strokeDashoffset={strokeDashoffset}
-          completedTarget={completedTarget}
-          completedMandatory={completedMandatory}
-          remaining={remaining}
-          mandatoryRemaining={mandatoryRemaining}
-          estimatedClockOut={estimatedClockOut}
-          overtimeMinutes={overtimeMinutes}
-          targetMinutes={targetMinutes}
-          dailyTargetMet={dailyTargetMet}
-          onOvertimeRequest={() => navigate('/manual-entry')}
-          weeklyData={weeklyData}
-          actionLoading={actionLoading}
-          error={error}
-          handleClockIn={handleClockIn}
-          handleBreakStart={handleBreakStart}
-          handleBreakEnd={handleBreakEnd}
-          onClockOut={() => setShowClockOutConfirm(true)}
-        />
-        <div className={s['dash-right-col']}>
-          <TodayEventsCard events={todayEvents} />
-          <TasksSummary taskSummary={taskSummary} />
-        </div>
+      {/* Main content — events + tasks side by side */}
+      <div className={s['dashboard-content']}>
+        <TodayEventsCard events={todayEvents} tomorrowEvents={tomorrowEvents} />
+        <TasksSummary taskSummary={taskSummary} />
+        {isManager && <PendingApprovalsCard />}
       </div>
-
-      {/* Row 2: Widgets */}
-      <div className={s['dashboard-row-2']}>
-        <WidgetsGrid widgets={widgets} />
-      </div>
-
-      <ConfirmDialog
-        isOpen={showClockOutConfirm}
-        title="Logout"
-        message={`You've worked ${formatTime(floorMinutes)} today${!completedMandatory ? ` (${formatTime(mandatoryRemaining)} short of the daily target)` : ''}. Are you sure you want to logout?`}
-        confirmText={actionLoading === 'clockOut' ? 'Logging out...' : 'Logout'}
-        onConfirm={handleConfirmClockOut}
-        onCancel={() => setShowClockOutConfirm(false)}
-      />
 
       <EventReminderToast reminders={reminders} onDismiss={dismissReminder} />
     </div>

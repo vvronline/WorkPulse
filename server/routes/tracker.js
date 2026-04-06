@@ -59,7 +59,7 @@ router.get('/status', auth, async (req, res) => {
         const result = await query(
             `SELECT * FROM time_entries
              WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
-             ORDER BY timestamp ASC`,
+             ORDER BY timestamp ASC, id ASC`,
             [req.userId, today],
         );
         let entries = result.rows;
@@ -79,7 +79,7 @@ router.get('/status', auth, async (req, res) => {
             const refreshed = await query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
-                 ORDER BY timestamp ASC`,
+                 ORDER BY timestamp ASC, id ASC`,
                 [req.userId, today],
             );
             entries = refreshed.rows;
@@ -124,7 +124,7 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
             const todayEntries = (await query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
-                 ORDER BY timestamp ASC`,
+                 ORDER BY timestamp ASC, id ASC`,
                 [req.userId, today],
             )).rows;
             const todayStatus = computeStatus(todayEntries);
@@ -159,7 +159,7 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
             const lastRes = await client.query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
-                 ORDER BY timestamp DESC LIMIT 1`,
+                 ORDER BY timestamp DESC, id DESC LIMIT 1`,
                 [req.userId, today],
             );
             const lastEntry = lastRes.rows[0];
@@ -194,7 +194,7 @@ router.post('/break-start', auth, async (req, res) => {
             const lastRes = await client.query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
-                 ORDER BY timestamp DESC LIMIT 1`,
+                 ORDER BY timestamp DESC, id DESC LIMIT 1`,
                 [req.userId, today],
             );
             const lastEntry = lastRes.rows[0];
@@ -226,7 +226,7 @@ router.post('/break-end', auth, async (req, res) => {
             const lastRes = await client.query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
-                 ORDER BY timestamp DESC LIMIT 1`,
+                 ORDER BY timestamp DESC, id DESC LIMIT 1`,
                 [req.userId, today],
             );
             const lastEntry = lastRes.rows[0];
@@ -257,13 +257,17 @@ router.post('/clock-out', auth, async (req, res) => {
             const lastRes = await client.query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
-                 ORDER BY timestamp DESC LIMIT 1`,
+                 ORDER BY timestamp DESC, id DESC LIMIT 1`,
                 [req.userId, today],
             );
             const lastEntry = lastRes.rows[0];
             if (!lastEntry || lastEntry.entry_type === 'clock_out') return { error: 'You are not logged in' };
+            // Auto-end break if user is on break, then clock out
             if (lastEntry.entry_type === 'break_start') {
-                return { error: 'You are still on break. End your break before clocking out.' };
+                await client.query(
+                    'INSERT INTO time_entries (user_id, entry_type) VALUES ($1, $2)',
+                    [req.userId, 'break_end'],
+                );
             }
             await client.query(
                 'INSERT INTO time_entries (user_id, entry_type) VALUES ($1, $2)',

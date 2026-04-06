@@ -19,6 +19,7 @@ import { CallProvider } from './CallContext';
 import { MeetingProvider } from './MeetingContext';
 import MeetingPiP from './components/meeting/MeetingPiP';
 import GlobalIncomingCall from './components/notifications/GlobalIncomingCall';
+import FloatingTimer from './components/FloatingTimer/FloatingTimer';
 import PageSkeleton from './components/common/PageSkeleton';
 
 // Lazy-load non-critical pages for smaller initial bundle
@@ -195,6 +196,7 @@ export default function App() {
                   <CallProvider>
                     <MeetingProvider>
                       <AppRoutes />
+                      <FloatingTimer />
                       <MeetingPiP />
                       <GlobalIncomingCall />
                     </MeetingProvider>

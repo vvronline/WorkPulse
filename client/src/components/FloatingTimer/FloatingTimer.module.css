@@ -1,0 +1,409 @@
+/* ============= FLOATING TIMER — GLOBAL WIDGET ============= */
+/* Persists in the bottom-right corner on every authenticated page. */
+
+/* ---------- minimized pill ---------- */
+.pill {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 9000;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-radius: 100px;
+    border: 1px solid var(--glass-border);
+    background: var(--glass);
+    backdrop-filter: blur(16px);
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--text);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.pill:hover {
+    transform: scale(1.05);
+    box-shadow: 0 6px 28px rgba(0, 0, 0, 0.35);
+}
+
+.pill-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.pill.on_floor .pill-dot {
+    background: var(--success);
+    box-shadow: 0 0 6px var(--success);
+}
+
+.pill.on_break .pill-dot {
+    background: var(--warning);
+    box-shadow: 0 0 6px var(--warning);
+}
+
+.pill.logged_out .pill-dot {
+    background: var(--text-muted);
+}
+
+.pill-time {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---------- main floating container ---------- */
+.floating {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 9000;
+    width: 320px;
+    border-radius: 16px;
+    background: var(--glass);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+    transition: box-shadow 0.25s;
+}
+
+.floating.expanded {
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
+}
+
+/* ---------- compact bar ---------- */
+.compact {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    cursor: pointer;
+    user-select: none;
+}
+
+/* mini progress ring */
+.ring-wrap {
+    position: relative;
+    width: 42px;
+    height: 42px;
+    flex-shrink: 0;
+}
+
+.ring {
+    width: 100%;
+    height: 100%;
+    transform: rotate(-90deg);
+}
+
+.ring-bg {
+    fill: none;
+    stroke: var(--surface);
+    stroke-width: 5;
+}
+
+.ring-fill {
+    fill: none;
+    stroke-width: 5;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 0.8s ease;
+}
+
+.ring-icon {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+}
+
+/* timer info */
+.info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+}
+
+.time {
+    font-size: 1.05rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+}
+
+.time.on_floor {
+    color: var(--success);
+}
+
+.time.on_break {
+    color: var(--warning);
+}
+
+.time.logged_out {
+    color: var(--text-muted);
+}
+
+.label {
+    font-size: 0.68rem;
+    color: var(--text-muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+/* quick actions */
+.compact-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.icon-btn {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, transform 0.1s;
+    color: #fff;
+}
+
+.icon-btn:hover {
+    transform: scale(1.1);
+}
+
+.icon-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.icon-btn.success {
+    background: var(--success);
+}
+
+.icon-btn.warning {
+    background: var(--warning);
+}
+
+.icon-btn.danger {
+    background: var(--danger);
+}
+
+/* toggle buttons */
+.toggle-btns {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-left: 2px;
+}
+
+.toggle-btn {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+}
+
+.toggle-btn:hover {
+    background: var(--surface);
+    color: var(--text);
+}
+
+/* ---------- expanded details ---------- */
+.details {
+    padding: 0 14px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border-top: 1px solid var(--glass-border);
+    animation: slideDown 0.2s ease;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-6px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.detail-error {
+    color: var(--danger);
+    font-size: 0.75rem;
+    padding: 6px 0;
+}
+
+.detail-stats {
+    display: flex;
+    gap: 12px;
+    padding-top: 10px;
+}
+
+.detail-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.detail-stat-label {
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+}
+
+.detail-stat-value {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+
+/* progress bar */
+.detail-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.progress-track {
+    height: 5px;
+    border-radius: 3px;
+    background: var(--surface);
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.8s ease;
+}
+
+.progress-label {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+/* ETA / overtime */
+.detail-eta,
+.detail-overtime {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.detail-eta strong {
+    color: var(--primary);
+}
+
+.detail-overtime strong {
+    color: var(--warning);
+}
+
+/* login section (when logged out) */
+.login-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 4px;
+}
+
+.mode-toggle {
+    display: flex;
+    gap: 6px;
+}
+
+.mode-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 6px;
+    border-radius: 8px;
+    border: 1px solid var(--glass-border);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.mode-btn.active {
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+}
+
+.action-btn {
+    padding: 8px;
+    border-radius: 10px;
+    border: none;
+    font-weight: 700;
+    font-size: 0.8rem;
+    cursor: pointer;
+    color: #fff;
+    transition: opacity 0.15s;
+}
+
+.action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.action-btn.success {
+    background: var(--success);
+}
+
+.target-done {
+    text-align: center;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--success);
+    padding: 6px 0;
+}
+
+/* ---------- responsive ---------- */
+@media (max-width: 768px) {
+    .floating {
+        bottom: 80px;
+        right: 12px;
+        width: 290px;
+    }
+
+    .pill {
+        bottom: 80px;
+        right: 12px;
+    }
+}
+
+@media (max-width: 480px) {
+    .floating {
+        width: calc(100vw - 24px);
+        right: 12px;
+    }
+}

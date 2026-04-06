@@ -1,0 +1,126 @@
+.card {
+  text-align: left !important;
+  padding: 1.2rem !important;
+  margin-bottom: 0;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.card:hover {
+  border-color: var(--primary);
+}
+
+.title {
+  margin-bottom: 0.35rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.count {
+  margin-left: auto;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--danger, #ef4444);
+  border-radius: 20px;
+  padding: 0.1rem 0.5rem;
+}
+
+.breakdown {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin: 0 0 0.5rem;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.item:last-child {
+  border-bottom: none;
+}
+
+.itemInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.08rem;
+  min-width: 0;
+}
+
+.itemName {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.itemType {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
+
+.actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.actionBtn {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s, transform 0.1s;
+  color: #fff;
+}
+
+.actionBtn:hover {
+  transform: scale(1.1);
+}
+
+.actionBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.actionBtn.approve {
+  background: var(--success, #22c55e);
+}
+
+.actionBtn.reject {
+  background: var(--danger, #ef4444);
+}
+
+.viewAll {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--primary);
+  text-align: center;
+  margin: 0.5rem 0 0;
+  cursor: pointer;
+}
+
+[data-theme="light"] .item {
+  border-color: rgba(0, 0, 0, 0.07);
+}
