@@ -204,6 +204,10 @@ export const getAdminTaskLabels = () => API.get('/admin/task-labels');
 export const createAdminTaskLabel = (data) => API.post('/admin/task-labels', data);
 export const updateAdminTaskLabel = (id, data) => API.put(`/admin/task-labels/${id}`, data);
 export const deleteAdminTaskLabel = (id) => API.delete(`/admin/task-labels/${id}`);
+export const getAdminAnnouncements = () => API.get('/admin/announcements');
+export const createAnnouncement = (data) => API.post('/admin/announcements', data);
+export const updateAnnouncement = (id, data) => API.put(`/admin/announcements/${id}`, data);
+export const deleteAnnouncement = (id) => API.delete(`/admin/announcements/${id}`);
 
 // Manager Dashboard
 export const getTeamAttendance = (date) => API.get('/manager/team-attendance', { params: { date } });
@@ -248,6 +252,7 @@ export const getNotifications = () => API.get('/notifications');
 export const markNotificationRead = (id) => API.post(`/notifications/${id}/read`);
 export const markAllNotificationsRead = () => API.post('/notifications/read-all');
 export const deleteNotification = (id) => API.delete(`/notifications/${id}`);
+export const getActiveAnnouncements = () => API.get('/notifications/announcements');
 
 // Export
 export const exportMyAnalytics = (params) => API.get('/export/my-analytics', { params, responseType: 'blob' });

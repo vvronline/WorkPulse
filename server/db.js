@@ -728,6 +728,24 @@ async function initDB() {
         CREATE INDEX IF NOT EXISTS idx_pay_periods_org ON pay_periods(org_id, start_date)
     `);
 
+    // ---- Announcements ----
+    await query(`
+        CREATE TABLE IF NOT EXISTS announcements (
+            id           SERIAL PRIMARY KEY,
+            org_id       INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
+            created_by   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            message      TEXT NOT NULL,
+            type         TEXT NOT NULL DEFAULT 'info',
+            is_active    BOOLEAN NOT NULL DEFAULT TRUE,
+            expires_at   TIMESTAMPTZ,
+            created_at   TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    await query(`
+        CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements(org_id, is_active, created_at DESC)
+    `);
+    await query(`ALTER TABLE announcements ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`);
+
     // Seed defaults
     await query(`
         INSERT INTO app_settings (key, value) VALUES ('registration_mode', 'open')

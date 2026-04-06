@@ -40,7 +40,7 @@ function ReminderItem({ reminder, onDismiss }) {
         </div>
         <div className={s.title}>{event.title}</div>
         <div className={s.time}>
-          Starts at <strong>{formatTime(event.start_time)}</strong> · in ~10 min
+          Starts at <strong>{formatTime(event.start_time)}</strong> · in {reminder.timeLabel || '~10 min'}
         </div>
         {event.description && (
           <div className={s.desc}>{event.description}</div>

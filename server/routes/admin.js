@@ -1094,4 +1094,136 @@ router.post('/users/import', requireRole('hr_admin'), importUpload.single('file'
     }
 });
 
+// ==================== ANNOUNCEMENTS ====================
+
+router.get('/announcements', requireRole('super_admin'), async (req, res) => {
+    try {
+        let sql, params;
+        if (req.userRole === 'platform_admin') {
+            sql = `SELECT a.*, u.full_name AS created_by_name, o.name AS org_name
+                   FROM announcements a
+                   LEFT JOIN users u ON u.id = a.created_by
+                   LEFT JOIN organizations o ON o.id = a.org_id
+                   ORDER BY a.created_at DESC LIMIT 100`;
+            params = [];
+        } else {
+            sql = `SELECT a.*, u.full_name AS created_by_name
+                   FROM announcements a
+                   LEFT JOIN users u ON u.id = a.created_by
+                   WHERE a.org_id = $1
+                   ORDER BY a.created_at DESC LIMIT 100`;
+            params = [req.userOrgId];
+        }
+        const rows = (await query(sql, params)).rows;
+        res.json({ data: rows });
+    } catch (err) {
+        req.log.error({ err }, 'GET /announcements error');
+        res.status(500).json({ error: 'Failed to fetch announcements' });
+    }
+});
+
+router.post('/announcements', requireRole('super_admin'), async (req, res) => {
+    try {
+        const { message, type, duration } = req.body;
+        if (!message || typeof message !== 'string' || !message.trim()) {
+            return res.status(400).json({ error: 'Message is required' });
+        }
+        const trimmed = message.trim().slice(0, 500);
+        const announcementType = ['info', 'warning', 'success', 'urgent', 'quote'].includes(type) ? type : 'info';
+        const orgId = req.userRole === 'platform_admin' ? null : req.userOrgId;
+
+        // duration in hours; null = never expires
+        let expiresAt = null;
+        if (duration && Number.isFinite(Number(duration)) && Number(duration) > 0) {
+            expiresAt = new Date(Date.now() + Number(duration) * 3600000).toISOString();
+        }
+
+        const row = (await query(
+            `INSERT INTO announcements (org_id, created_by, message, type, expires_at) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+            [orgId, req.userId, trimmed, announcementType, expiresAt]
+        )).rows[0];
+
+        logAction(req, 'create_announcement', 'announcements', row.id, { message: trimmed, type: announcementType, duration });
+        res.json({ data: row });
+    } catch (err) {
+        req.log.error({ err }, 'POST /announcements error');
+        res.status(500).json({ error: 'Failed to create announcement' });
+    }
+});
+
+router.put('/announcements/:id', requireRole('super_admin'), async (req, res) => {
+    try {
+        const { message, type, is_active } = req.body;
+        const updates = [];
+        const params = [];
+        let idx = 1;
+
+        if (message !== undefined) {
+            if (typeof message !== 'string' || !message.trim()) return res.status(400).json({ error: 'Message cannot be empty' });
+            updates.push(`message = $${idx++}`);
+            params.push(message.trim().slice(0, 500));
+        }
+        if (type !== undefined && ['info', 'warning', 'success', 'urgent', 'quote'].includes(type)) {
+            updates.push(`type = $${idx++}`);
+            params.push(type);
+        }
+        if (is_active !== undefined) {
+            updates.push(`is_active = $${idx++}`);
+            params.push(!!is_active);
+        }
+        if (req.body.duration !== undefined) {
+            const dur = Number(req.body.duration);
+            if (dur > 0 && Number.isFinite(dur)) {
+                updates.push(`expires_at = $${idx++}`);
+                params.push(new Date(Date.now() + dur * 3600000).toISOString());
+            } else {
+                updates.push(`expires_at = $${idx++}`);
+                params.push(null);
+            }
+        }
+        if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+
+        // Scope check: super_admin can only edit own org's announcements
+        let scopeSql = '';
+        if (req.userRole !== 'platform_admin') {
+            scopeSql = ` AND org_id = $${idx++}`;
+            params.push(req.userOrgId);
+        }
+        params.push(req.params.id);
+
+        const row = (await query(
+            `UPDATE announcements SET ${updates.join(', ')} WHERE id = $${idx}${scopeSql} RETURNING *`,
+            params
+        )).rows[0];
+        if (!row) return res.status(404).json({ error: 'Announcement not found' });
+
+        logAction(req, 'update_announcement', 'announcements', row.id);
+        res.json({ data: row });
+    } catch (err) {
+        req.log.error({ err }, 'PUT /announcements/:id error');
+        res.status(500).json({ error: 'Failed to update announcement' });
+    }
+});
+
+router.delete('/announcements/:id', requireRole('super_admin'), async (req, res) => {
+    try {
+        let sql, params;
+        if (req.userRole === 'platform_admin') {
+            sql = 'DELETE FROM announcements WHERE id = $1 RETURNING id';
+            params = [req.params.id];
+        } else {
+            sql = 'DELETE FROM announcements WHERE id = $1 AND org_id = $2 RETURNING id';
+            params = [req.params.id, req.userOrgId];
+        }
+        const row = (await query(sql, params)).rows[0];
+        if (!row) return res.status(404).json({ error: 'Announcement not found' });
+
+        logAction(req, 'delete_announcement', 'announcements', row.id);
+        res.json({ ok: true });
+    } catch (err) {
+        req.log.error({ err }, 'DELETE /announcements/:id error');
+        res.status(500).json({ error: 'Failed to delete announcement' });
+    }
+});
+
 module.exports = router;

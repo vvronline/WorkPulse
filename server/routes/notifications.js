@@ -54,4 +54,21 @@ router.delete('/:id', async (req, res) => {
     }
 });
 
+router.get('/announcements', async (req, res) => {
+    try {
+        const rows = (await query(`
+            SELECT a.id, a.message, a.type, a.created_at, u.full_name AS author
+            FROM announcements a
+            LEFT JOIN users u ON u.id = a.created_by
+            WHERE a.is_active = TRUE AND (a.org_id IS NULL OR a.org_id = $1)
+              AND (a.expires_at IS NULL OR a.expires_at > NOW())
+            ORDER BY a.created_at DESC LIMIT 20
+        `, [req.userOrgId])).rows;
+        res.json({ data: rows });
+    } catch (err) {
+        req.log.error({ err }, 'Error fetching announcements');
+        res.status(500).json({ error: 'Failed to fetch announcements' });
+    }
+});
+
 module.exports = router;

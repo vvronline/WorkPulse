@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle2, Users, Building, UsersRound, Clock, AlarmClock, UserPlus, Building2, ScrollText, RefreshCw, Download, DollarSign } from 'lucide-react';
+import { CheckCircle2, Users, Building, UsersRound, Clock, AlarmClock, UserPlus, Building2, ScrollText, RefreshCw, Download, DollarSign, Megaphone } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
 import { useSearchParams } from 'react-router-dom';
 import { getAdminStats } from '../../api';
@@ -10,6 +10,7 @@ import AuditLogs from './AuditLogs';
 import RoleRequests from './RoleRequests';
 import ImportUsers from './ImportUsers';
 import PayPeriods from './PayPeriods';
+import AnnouncementsTab from './AnnouncementsTab';
 import s from '../Admin.module.css';
 
 export default function AdminPanel() {
@@ -95,6 +96,11 @@ export default function AdminPanel() {
                 <button className={`${s.tab} ${tab === 'payroll' ? s.active : ''}`} onClick={() => setTab('payroll')}>
                     <span><DollarSign size={14} style={{marginRight:4,verticalAlign:'middle'}} /></span> Payroll
                 </button>
+                {(user.role === 'super_admin' || user.role === 'platform_admin') && (
+                    <button className={`${s.tab} ${tab === 'announcements' ? s.active : ''}`} onClick={() => setTab('announcements')}>
+                        <span><Megaphone size={14} style={{marginRight:4,verticalAlign:'middle'}} /></span> Announcements
+                    </button>
+                )}
             </div>
 
             {tab === 'users' && <UserManagement userRole={user.role} />}
@@ -104,6 +110,7 @@ export default function AdminPanel() {
             {tab === 'role-requests' && <RoleRequests userRole={user.role} />}
             {tab === 'import' && <ImportUsers />}
             {tab === 'payroll' && <PayPeriods />}
+            {tab === 'announcements' && (user.role === 'super_admin' || user.role === 'platform_admin') && <AnnouncementsTab userRole={user.role} />}
         </div>
     );
 }

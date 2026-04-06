@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import React, { memo, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CalendarDays, Video } from 'lucide-react';
 import s from './TodayEventsCard.module.css';
@@ -24,14 +24,57 @@ function isStartingSoon(start) {
   return startMs > now && startMs - now <= 30 * 60 * 1000;
 }
 
-function EventItem({ ev, onJoinMeeting }) {
-  const past = isNowOrPast(ev.end_time);
+function getMinutesUntil(isoString) {
+  return Math.max(0, Math.round((new Date(isoString).getTime() - Date.now()) / 60000));
+}
+
+function MeetingItem({ ev, onJoinMeeting }) {
   const active = isHappeningNow(ev.start_time, ev.end_time);
-  const soon = !past && !active && isStartingSoon(ev.start_time);
-  const hasMeeting = !!ev.meeting_code;
+  const soon = !active && isStartingSoon(ev.start_time);
+  const minsLeft = !active ? getMinutesUntil(ev.start_time) : 0;
 
   return (
-    <div className={`${s.item} ${past ? s.past : ''} ${active ? s.active : ''} ${soon ? s.soon : ''}`}>
+    <div className={`${s['meeting-item']} ${active ? s['meeting-live'] : ''} ${soon ? s['meeting-soon'] : ''}`}>
+      <div className={s['meeting-left']}>
+        <div className={s['meeting-time-col']}>
+          <span className={s['meeting-start']}>{formatEventTime(ev.start_time)}</span>
+          <span className={s['meeting-end']}>{formatEventTime(ev.end_time)}</span>
+        </div>
+        <div className={s['meeting-info']}>
+          <span className={s['meeting-name']}>{ev.title}</span>
+          <div className={s['meeting-meta']}>
+            {active && (
+              <span className={s.liveBadge}>
+                <span className={s.liveDot} /> Live
+              </span>
+            )}
+            {soon && (
+              <span className={s.soonBadge}>Soon · {minsLeft}m</span>
+            )}
+            {!active && !soon && (
+              <span className={s['meeting-in']}>in {minsLeft < 60 ? `${minsLeft}m` : `${Math.floor(minsLeft / 60)}h ${minsLeft % 60}m`}</span>
+            )}
+          </div>
+        </div>
+      </div>
+      {ev.meeting_code && (
+        <button
+          className={`${s.joinBtn} ${active ? s['joinBtn-live'] : ''}`}
+          onClick={(e) => { e.stopPropagation(); onJoinMeeting(ev.meeting_code); }}
+          title="Join Meeting"
+        >
+          <Video size={13} /> Join
+        </button>
+      )}
+    </div>
+  );
+}
+
+function EventItem({ ev }) {
+  const past = isNowOrPast(ev.end_time);
+
+  return (
+    <div className={`${s.item} ${past ? s.past : ''}`}>
       <div className={s.colorDot} style={{ background: ev.color || '#6366f1' }} />
       <div className={s.body}>
         <span className={s.name}>{ev.title}</span>
@@ -39,13 +82,6 @@ function EventItem({ ev, onJoinMeeting }) {
           {ev.all_day ? 'All day' : `${formatEventTime(ev.start_time)} – ${formatEventTime(ev.end_time)}`}
         </span>
       </div>
-      {active && <span className={s.nowBadge}>Now</span>}
-      {soon && !active && <span className={s.soonBadge}>Soon</span>}
-      {hasMeeting && (active || soon) && (
-        <button className={s.joinBtn} onClick={() => onJoinMeeting(ev.meeting_code)} title="Join Meeting">
-          <Video size={13} /> Join
-        </button>
-      )}
     </div>
   );
 }
@@ -55,13 +91,30 @@ const TodayEventsCard = memo(function TodayEventsCard({ events, tomorrowEvents }
 
   const onJoinMeeting = (code) => navigate(`/meeting/${code}`);
 
-  const todaySorted = events
-    ? [...events].sort((a, b) => new Date(a.start_time) - new Date(b.start_time))
-    : [];
+  const todaySorted = useMemo(() =>
+    events ? [...events].sort((a, b) => new Date(a.start_time) - new Date(b.start_time)) : [],
+    [events]
+  );
 
-  const tomorrowSorted = tomorrowEvents
-    ? [...tomorrowEvents].sort((a, b) => new Date(a.start_time) - new Date(b.start_time))
-    : [];
+  const tomorrowSorted = useMemo(() =>
+    tomorrowEvents ? [...tomorrowEvents].sort((a, b) => new Date(a.start_time) - new Date(b.start_time)) : [],
+    [tomorrowEvents]
+  );
+
+  // Upcoming meetings: live + not-yet-ended meetings with meeting_code, capped at 4
+  const upcomingMeetings = useMemo(() => {
+    const now = new Date();
+    return todaySorted
+      .filter(ev => ev.meeting_code && new Date(ev.end_time) > now)
+      .slice(0, 4);
+  }, [todaySorted]);
+
+  // Remaining non-meeting events for today
+  const meetingIds = useMemo(() => new Set(upcomingMeetings.map(m => m.id)), [upcomingMeetings]);
+  const otherEvents = useMemo(
+    () => todaySorted.filter(ev => !meetingIds.has(ev.id)),
+    [todaySorted, meetingIds]
+  );
 
   return (
     <div className={`status-card ${s.card}`}>
@@ -70,14 +123,34 @@ const TodayEventsCard = memo(function TodayEventsCard({ events, tomorrowEvents }
         {todaySorted.length > 0 && <span className={s.count}>{todaySorted.length}</span>}
       </h3>
 
-      {todaySorted.length === 0 ? (
-        <p className={s.empty}>No events scheduled for today.</p>
-      ) : (
-        <div className={s.list}>
-          {todaySorted.map((ev) => (
-            <EventItem key={ev.id} ev={ev} onJoinMeeting={onJoinMeeting} />
-          ))}
+      {/* Upcoming meetings section */}
+      {upcomingMeetings.length > 0 && (
+        <div className={s['meetings-section']}>
+          <h4 className={s['section-label']}>
+            <Video size={14} /> Upcoming Meetings
+          </h4>
+          <div className={s['meetings-list']}>
+            {upcomingMeetings.map(ev => (
+              <MeetingItem key={ev.id} ev={ev} onJoinMeeting={onJoinMeeting} />
+            ))}
+          </div>
         </div>
+      )}
+
+      {/* Other events */}
+      {otherEvents.length > 0 && (
+        <>
+          {upcomingMeetings.length > 0 && <h4 className={s['section-label']}>Other Events</h4>}
+          <div className={s.list}>
+            {otherEvents.map(ev => (
+              <EventItem key={ev.id} ev={ev} />
+            ))}
+          </div>
+        </>
+      )}
+
+      {todaySorted.length === 0 && (
+        <p className={s.empty}>No events scheduled for today.</p>
       )}
 
       {/* Tomorrow preview */}
