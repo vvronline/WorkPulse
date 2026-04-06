@@ -3,7 +3,7 @@ import { useRef, useEffect } from 'react';
 
 const EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥', '👏', '🎉', '👎', '💯'];
 
-export default function ReactionPicker({ onSelect, onClose, onOpenFull }) {
+export default function ReactionPicker({ onSelect, onClose, onOpenFull, style }) {
     const ref = useRef(null);
 
     useEffect(() => {
@@ -21,7 +21,7 @@ export default function ReactionPicker({ onSelect, onClose, onOpenFull }) {
     }, [onClose]);
 
     return (
-        <div ref={ref} className={s.picker}>
+        <div ref={ref} className={s.picker} style={style}>
             <div className={s.emojiRow}>
                 {EMOJIS.map(e => (
                     <button key={e} className={s.emoji} onClick={() => { onSelect(e); onClose(); }}>

@@ -39,7 +39,7 @@ function addRecent(emoji) {
     } catch { /* ignore */ }
 }
 
-export default function EmojiGifPicker({ onSelectEmoji, onClose }) {
+export default function EmojiGifPicker({ onSelectEmoji, onClose, style }) {
     const [catIdx, setCatIdx] = useState(() => {
         const recent = getRecent();
         return recent.length > 0 ? 0 : 1; // Show Recent if available, else Smileys
@@ -108,7 +108,7 @@ export default function EmojiGifPicker({ onSelectEmoji, onClose }) {
     const actualCatIdx = categories[0].emojis.length === 0 && catIdx === 0 ? 1 : catIdx;
 
     return (
-        <div className={s.picker} ref={ref}>
+        <div className={s.picker} ref={ref} style={style}>
             <input
                 className={s.search}
                 placeholder="Search emoji..."

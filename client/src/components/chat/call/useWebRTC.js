@@ -12,6 +12,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     } = callState;
 
     const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const [remoteVideoOff, setRemoteVideoOff] = useState(false);
 
     const pcRef = useRef(null);
     const localStreamRef = useRef(null);
@@ -96,6 +97,11 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
             if (remoteVideoRef.current) {
                 remoteVideoRef.current.srcObject = remoteStream;
                 if (isMobile) remoteVideoRef.current.muted = true;
+            }
+            if (e.track.kind === 'video') {
+                setRemoteVideoOff(e.track.muted);
+                e.track.onmute = () => setRemoteVideoOff(true);
+                e.track.onunmute = () => setRemoteVideoOff(false);
             }
         };
 
@@ -270,6 +276,6 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         screenSenderRef, connectionTimeoutRef, ringtoneRef,
         handleAccept, handleReject, handleEnd,
         stopRingtone, startMedia, createPeerConnection,
-        isMobile
+        isMobile, remoteVideoOff
     };
 }

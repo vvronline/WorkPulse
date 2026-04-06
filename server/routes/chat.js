@@ -878,6 +878,7 @@ router.get('/search-messages', auth, async (req, res) => {
         const orgId = await getUserOrg(req.userId);
         if (!orgId) return res.json([]);
 
+        const searchPattern = `%${q.trim()}%`;
         let sql, params;
 
         if (convId) {
@@ -894,11 +895,11 @@ router.get('/search-messages', auth, async (req, res) => {
                 FROM messages m
                 JOIN users u ON u.id = m.sender_id
                 WHERE m.conversation_id = $1 AND m.deleted_at IS NULL
-                  AND to_tsvector('english', COALESCE(m.content, '')) @@ plainto_tsquery('english', $2)
+                  AND COALESCE(m.content, '') ILIKE $2
                 ORDER BY m.created_at DESC
                 LIMIT 50
             `;
-            params = [cId, q.trim()];
+            params = [cId, searchPattern];
         } else {
             sql = `
                 SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at,
@@ -910,11 +911,11 @@ router.get('/search-messages', auth, async (req, res) => {
                 JOIN conversations c ON c.id = m.conversation_id
                 JOIN conversation_participants cp ON cp.conversation_id = c.id AND cp.user_id = $1
                 WHERE m.deleted_at IS NULL
-                  AND to_tsvector('english', COALESCE(m.content, '')) @@ plainto_tsquery('english', $2)
+                  AND COALESCE(m.content, '') ILIKE $2
                 ORDER BY m.created_at DESC
                 LIMIT 50
             `;
-            params = [req.userId, q.trim()];
+            params = [req.userId, searchPattern];
         }
 
         const rows = (await query(sql, params)).rows;

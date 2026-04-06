@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import ReactionPicker from './ReactionPicker';
 import EmojiGifPicker from './EmojiGifPicker';
 import s from './MessageBubble.module.css';
@@ -6,6 +7,7 @@ import s from './MessageBubble.module.css';
 export default function ReactionBar({ msg, userId, onReact }) {
     const [showReactions, setShowReactions] = useState(false);
     const [showFullPicker, setShowFullPicker] = useState(false);
+    const addBtnRef = useRef(null);
 
     // Group reactions by emoji
     const reactionGroups = {};
@@ -32,6 +34,7 @@ export default function ReactionBar({ msg, userId, onReact }) {
                         </button>
                     ))}
                     <button
+                        ref={addBtnRef}
                         className={s.addReactionBtn}
                         onClick={() => setShowFullPicker(p => !p)}
                         title="Add reaction"
@@ -41,23 +44,49 @@ export default function ReactionBar({ msg, userId, onReact }) {
                 </div>
             )}
 
-            {showReactions && (
-                <div className={s.pickerWrap} data-picker>
-                    <ReactionPicker
-                        onSelect={(emoji) => { onReact?.(msg.id, emoji); setShowReactions(false); }}
-                        onClose={() => setShowReactions(false)}
-                        onOpenFull={() => { setShowReactions(false); setShowFullPicker(true); }}
-                    />
-                </div>
+            {showReactions && createPortal(
+                <ReactionPicker
+                    onSelect={(emoji) => { onReact?.(msg.id, emoji); setShowReactions(false); }}
+                    onClose={() => setShowReactions(false)}
+                    onOpenFull={() => { setShowReactions(false); setShowFullPicker(true); }}
+                    style={(() => {
+                        const rect = addBtnRef.current?.getBoundingClientRect();
+                        if (!rect) return { position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 10000 };
+                        const pickerWidth = 370;
+                        let left = rect.left + rect.width / 2 - pickerWidth / 2;
+                        left = Math.max(8, Math.min(left, window.innerWidth - pickerWidth - 8));
+                        let top = rect.top - 54;
+                        if (top < 8) top = rect.bottom + 4;
+                        return { position: 'fixed', top: `${top}px`, left: `${left}px`, zIndex: 10000 };
+                    })()}
+                />,
+                document.body
             )}
 
-            {showFullPicker && (
-                <div className={s.pickerWrap} data-picker>
-                    <EmojiGifPicker
-                        onSelectEmoji={(emoji) => onReact?.(msg.id, emoji)}
-                        onClose={() => setShowFullPicker(false)}
-                    />
-                </div>
+            {showFullPicker && createPortal(
+                <EmojiGifPicker
+                    onSelectEmoji={(emoji) => onReact?.(msg.id, emoji)}
+                    onClose={() => setShowFullPicker(false)}
+                    style={(() => {
+                        const rect = addBtnRef.current?.getBoundingClientRect();
+                        if (!rect) return {};
+                        const pickerWidth = 340;
+                        let left = rect.left + rect.width / 2 - pickerWidth / 2;
+                        left = Math.max(8, Math.min(left, window.innerWidth - pickerWidth - 8));
+                        let top = rect.top - 408;
+                        if (top < 8) top = rect.bottom + 4;
+                        return {
+                            position: 'fixed',
+                            top: `${top}px`,
+                            left: `${left}px`,
+                            bottom: 'auto',
+                            right: 'auto',
+                            marginBottom: 0,
+                            zIndex: 10000,
+                        };
+                    })()}
+                />,
+                document.body
             )}
         </>
     );

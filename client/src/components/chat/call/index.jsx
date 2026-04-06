@@ -123,7 +123,12 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
             {isVideoCall && (
                 <>
                     <video ref={webrtc.remoteVideoRef} className={s.remoteVideo} autoPlay playsInline />
-                    <video ref={webrtc.localVideoRef} className={s.localVideo} autoPlay playsInline muted />
+                    <video ref={webrtc.localVideoRef} className={`${s.localVideo} ${controls.videoOff ? s.localVideoHidden : ''}`} autoPlay playsInline muted />
+                    {controls.videoOff && (
+                        <div className={s.localVideoAvatar}>
+                            <ChatAvatar name={user?.fullName || 'You'} avatar={user?.avatar} size="md" />
+                        </div>
+                    )}
                 </>
             )}
 
@@ -135,7 +140,7 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
                 </div>
             )}
 
-            {(!isVideoCall || !isConnected || controls.onHold || status === 'reconnecting') && (
+            {(!isVideoCall || !isConnected || controls.onHold || status === 'reconnecting' || (isVideoCall && isConnected && webrtc.remoteVideoOff)) && (
                 <div className={s.callInfo}>
                     <div className={`${s.avatarContainer} ${status === 'incoming' || status === 'ringing' ? s.pulsing : ''}`}>
                         <ChatAvatar name={remoteName || 'User'} avatar={remoteAvatar} size="xl" />

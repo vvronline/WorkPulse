@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Pin, Star, Pencil, Trash2 } from 'lucide-react';
 import s from './MessageBubble.module.css';
 import ChatAvatar from './ChatAvatar';
@@ -10,6 +11,7 @@ import MessageContent from './MessageContent';
 import DeliveryStatus from './DeliveryStatus';
 import MessageToolbar from './MessageToolbar';
 import ReactionBar from './ReactionBar';
+import EmojiGifPicker from './EmojiGifPicker';
 
 export default function MessageBubble({
     msg, isMine, userId, showAvatar, showName,
@@ -27,12 +29,27 @@ export default function MessageBubble({
         setCtxMenu({ x: e.clientX, y: e.clientY });
     }, []);
 
+    const touchStartRef = useRef(null);
+
+    const handleTouchStart = useCallback((e) => {
+        touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, time: Date.now() };
+    }, []);
+
     const handleTouchEnd = useCallback((e) => {
+        if (!touchStartRef.current) return;
+        const dx = Math.abs(e.changedTouches[0].clientX - touchStartRef.current.x);
+        const dy = Math.abs(e.changedTouches[0].clientY - touchStartRef.current.y);
+        const dt = Date.now() - touchStartRef.current.time;
+        touchStartRef.current = null;
+        // Ignore if it was a scroll gesture or long press
+        if (dx > 10 || dy > 10 || dt > 500) return;
         if (e.target.closest && (
             e.target.closest('[data-toolbar]') ||
             e.target.closest('[data-picker]') ||
-            e.target.closest('[data-reaction]')
+            e.target.closest('[data-reaction]') ||
+            e.target.closest('a')
         )) return;
+        e.preventDefault();
         setToolbarOpen(t => !t);
     }, []);
 
@@ -88,6 +105,7 @@ export default function MessageBubble({
                     ref={bubbleRef}
                     className={`${s.bubble} ${isMine ? s.myBubble : s.theirBubble} ${msg.pinned_at ? s.pinned : ''} ${msg.starred ? s.starredBubble : ''} ${toolbarOpen ? s.toolbarActive : ''}`}
                     onContextMenu={handleContext}
+                    onTouchStart={handleTouchStart}
                     onTouchEnd={handleTouchEnd}
                 >
                     {msg.pinned_at && <div className={s.pinnedBadge}><Pin size={11} style={{marginRight:4}} />Pinned</div>}
@@ -139,7 +157,7 @@ export default function MessageBubble({
                         isMine={isMine}
                         onReply={onReply}
                         onReact={onReact}
-                        onOpenReactions={() => setShowReactions(true)}
+                        onOpenReactions={() => { setShowReactions(true); setToolbarOpen(false); }}
                         onOpenContextMenu={handleContext}
                         onCloseToolbar={() => setToolbarOpen(false)}
                     />
@@ -151,6 +169,26 @@ export default function MessageBubble({
                     onReact={onReact}
                 />
             </div>
+
+            {showReactions && createPortal(
+                <EmojiGifPicker
+                    onSelectEmoji={(emoji) => { onReact?.(msg.id, emoji); setShowReactions(false); }}
+                    onClose={() => setShowReactions(false)}
+                    style={(() => {
+                        const rect = bubbleRef.current?.getBoundingClientRect();
+                        if (!rect) return { position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 10000 };
+                        const pickerWidth = 340;
+                        const pickerHeight = 400;
+                        let left = isMine ? rect.right - pickerWidth : rect.left;
+                        left = Math.max(8, Math.min(left, window.innerWidth - pickerWidth - 8));
+                        let top = rect.top - pickerHeight - 8;
+                        if (top < 8) top = rect.bottom + 4;
+                        if (top + pickerHeight > window.innerHeight - 8) top = window.innerHeight - pickerHeight - 8;
+                        return { position: 'fixed', top: `${top}px`, left: `${left}px`, bottom: 'auto', right: 'auto', marginBottom: 0, zIndex: 10000 };
+                    })()}
+                />,
+                document.body
+            )}
 
             {ctxMenu && (
                 <ContextMenu
