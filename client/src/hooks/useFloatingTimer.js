@@ -87,7 +87,10 @@ export function useFloatingTimer() {
         }
     }, [fetchStatus, resetTimer]);
 
-    const handleClockIn = useCallback(() => handleAction(() => clockIn(workMode), 'clockIn'), [handleAction, workMode]);
+    const handleClockIn = useCallback(async () => {
+        await handleAction(() => clockIn(workMode), 'clockIn');
+        setManualStatus('available');
+    }, [handleAction, workMode, setManualStatus]);
     const handleBreakStart = useCallback(async () => {
         await handleAction(breakStart, 'breakStart');
         setManualStatus('away');
