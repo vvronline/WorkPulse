@@ -291,6 +291,16 @@
   box-shadow: 0 0 6px var(--success-glow);
 }
 
+.dot-busy {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.4);
+}
+
+.dot-dnd {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.4);
+}
+
 .dot-away {
   background: var(--warning);
   box-shadow: 0 0 6px var(--warning-glow);
@@ -299,6 +309,21 @@
 .dot-offline {
   background: #64748b;
   box-shadow: none;
+}
+
+.dot-in-call {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.4);
+}
+
+.dot-in-meeting {
+  background: #8b5cf6;
+  box-shadow: 0 0 6px rgba(139, 92, 246, 0.4);
+}
+
+.profile-dropdown-status-picker {
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--border);
 }
 
 .profile-name {
@@ -326,13 +351,14 @@
   top: 74px;
   right: 2rem;
   width: 280px;
+  max-height: calc(100vh - 84px);
+  overflow-y: auto;
   background: var(--bg);
   border: 1px solid var(--glass-border);
   border-radius: 18px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.04), 0 0 40px rgba(99, 102, 241, 0.06);
   z-index: 9999;
   animation: profileDropIn 0.25s cubic-bezier(.4, 0, .2, 1);
-  overflow: hidden;
 }
 
 @keyframes profileDropIn {
@@ -485,6 +511,38 @@
   background: rgba(148, 163, 184, 0.1);
   color: var(--text-muted);
   border: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.dd-status-badge.status-available {
+  background: rgba(34, 197, 94, 0.12);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.dd-status-badge.status-busy,
+.dd-status-badge.status-dnd,
+.dd-status-badge.status-in_call {
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.dd-status-badge.status-away {
+  background: rgba(245, 158, 11, 0.12);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+.dd-status-badge.status-offline {
+  background: rgba(148, 163, 184, 0.1);
+  color: var(--text-muted);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.dd-status-badge.status-in_meeting {
+  background: rgba(139, 92, 246, 0.12);
+  color: #a78bfa;
+  border: 1px solid rgba(139, 92, 246, 0.2);
 }
 
 .dd-mode-badge {

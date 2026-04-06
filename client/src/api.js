@@ -282,6 +282,8 @@ export const importUsers = (payload, isFile = false) => {
 // Chat
 export const searchChatUsers = (q) => API.get('/chat/search', { params: { q } });
 export const getPresence = (userIds) => API.get('/chat/presence', { params: { userIds: userIds.join(',') } });
+export const getUserStatus = () => API.get('/chat/status');
+export const updateUserStatus = (status, statusText) => API.put('/chat/status', { status, statusText });
 export const getConversations = () => API.get('/chat/conversations');
 export const createConversation = (userId) => API.post('/chat/conversations', { userId });
 export const createGroup = (name, userIds) => API.post('/chat/conversations/group', { name, userIds });

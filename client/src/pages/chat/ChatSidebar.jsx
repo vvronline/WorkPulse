@@ -8,7 +8,7 @@ import s from './ChatSidebar.module.css';
 
 export default function ChatSidebar({
     conversations, activeConvId, search, setSearch, searchResults, searching,
-    typingUsers, onlineUsers, convMenu, mobileView, userId,
+    typingUsers, onlineUsers, userStatusMap = {}, convMenu, mobileView, userId,
     onSearchUser, onOpenConv, onMenuToggle, onPinConv, onFavConv, onDeleteConv,
     onNewGroup, searchInputRef
 }) {
@@ -19,7 +19,7 @@ export default function ChatSidebar({
     const favourites = conversations.filter(c => c.is_favourite && !c.is_pinned);
     const others = conversations.filter(c => !c.is_pinned && !c.is_favourite);
 
-    const convProps = { activeConvId, typingUsers, onlineUsers, convMenu, onMenuToggle, onPin: onPinConv, onFav: onFavConv, onDelete: onDeleteConv };
+    const convProps = { activeConvId, typingUsers, onlineUsers, userStatusMap, convMenu, onMenuToggle, onPin: onPinConv, onFav: onFavConv, onDelete: onDeleteConv };
     const [showSearch, setShowSearch] = useState(false);
 
     const openSearch = () => { setShowSearch(true); setTimeout(() => searchInputRef.current?.focus(), 50); };
@@ -79,7 +79,7 @@ export default function ChatSidebar({
                         {!searching && searchResults.length === 0 && <div className={s.hint}>No users found</div>}
                         {searchResults.map(u => (
                             <div key={u.id} className={s.searchItem} onClick={() => onSearchUser(u)}>
-                                <ChatAvatar name={u.full_name} avatar={u.avatar} size="md" online={onlineUsers.has(u.id)} />
+                                <ChatAvatar name={u.full_name} avatar={u.avatar} size="md" online={onlineUsers.has(u.id)} userStatus={userStatusMap[u.id]} />
                                 <div className={s.userInfo}>
                                     <div className={s.userName}>{u.full_name}</div>
                                     <div className={s.userMeta}>@{u.username}{u.email ? ` · ${u.email}` : ''}</div>

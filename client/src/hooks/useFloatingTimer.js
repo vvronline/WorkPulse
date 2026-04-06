@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../AuthContext';
 import { useWorkState } from '../WorkStateContext';
+import { useUserStatus } from '../UserStatusContext';
 import { getStatus, clockIn, breakStart, breakEnd, clockOut } from '../api';
 import { useLiveTimer } from './useLiveTimer';
 import { useAutoDismiss } from './useAutoDismiss';
@@ -16,6 +17,7 @@ const TARGET_MINUTES = 9 * 60;
 export function useFloatingTimer() {
     const { isAuthenticated, user } = useAuth();
     const { setWorkState, setWorkMode: setContextWorkMode } = useWorkState();
+    const { setManualStatus } = useUserStatus();
 
     const [status, setStatus] = useState(null);
     const [workMode, setWorkMode] = useState('office');
@@ -86,8 +88,14 @@ export function useFloatingTimer() {
     }, [fetchStatus, resetTimer]);
 
     const handleClockIn = useCallback(() => handleAction(() => clockIn(workMode), 'clockIn'), [handleAction, workMode]);
-    const handleBreakStart = useCallback(() => handleAction(breakStart, 'breakStart'), [handleAction]);
-    const handleBreakEnd = useCallback(() => handleAction(breakEnd, 'breakEnd'), [handleAction]);
+    const handleBreakStart = useCallback(async () => {
+        await handleAction(breakStart, 'breakStart');
+        setManualStatus('away');
+    }, [handleAction, setManualStatus]);
+    const handleBreakEnd = useCallback(async () => {
+        await handleAction(breakEnd, 'breakEnd');
+        setManualStatus('available');
+    }, [handleAction, setManualStatus]);
     const handleConfirmClockOut = useCallback(() => {
         setShowClockOutConfirm(false);
         handleAction(clockOut, 'clockOut');

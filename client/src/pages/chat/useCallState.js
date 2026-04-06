@@ -1,19 +1,27 @@
 import { useState, useEffect, useRef } from 'react';
 import { useGlobalCall } from '../../CallContext';
 import { getActiveCall } from '../../api';
+import { useUserStatus } from '../../UserStatusContext';
 
 export default function useCallState(wsSendRef) {
     const { setChatPageActive, pendingAcceptedCall, consumePendingCall } = useGlobalCall();
+    const { setAutoStatus, clearAutoStatus } = useUserStatus();
+    const statusSetRef = useRef(false);
 
     const [callState, setCallState] = useState(null);
     const callSignalRef = useRef(null);
     const callEndRef = useRef(null);
     const callActiveRef = useRef(false);
 
-    // Persist active call metadata in sessionStorage
+    // Persist active call metadata in sessionStorage + manage auto-status
     useEffect(() => {
         callActiveRef.current = !!callState;
         if (callState && callState.callId) {
+            // Set auto-status to "in_call" when call is accepted or outgoing (only once)
+            if ((callState.accepted || !callState.isIncoming) && !statusSetRef.current) {
+                statusSetRef.current = true;
+                setAutoStatus('in_call');
+            }
             try {
                 sessionStorage.setItem('wp_active_call', JSON.stringify({
                     callId: callState.callId,
@@ -27,6 +35,10 @@ export default function useCallState(wsSendRef) {
                 }));
             } catch { /* ignore */ }
         } else if (!callState) {
+            if (statusSetRef.current) {
+                statusSetRef.current = false;
+                clearAutoStatus('in_call');
+            }
             try { sessionStorage.removeItem('wp_active_call'); } catch { /* ignore */ }
         }
     }, [callState]);

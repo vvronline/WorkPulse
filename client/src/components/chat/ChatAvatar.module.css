@@ -32,7 +32,23 @@
     height: 10px;
     border-radius: 50%;
     border: 2px solid var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 .sm .dot { width: 8px; height: 8px; }
-.online { background: #22c55e; }
+.lg .dot { width: 12px; height: 12px; }
+.xl .dot { width: 18px; height: 18px; }
+.dotIcon {
+    width: 100%;
+    height: 100%;
+}
+
+/* Status colors — Teams-like */
+.available { background: #22c55e; }
+.busy { background: #ef4444; }
+.dnd { background: #ef4444; }
+.away { background: #f59e0b; }
 .offline { background: var(--text-muted); }
+.inCall { background: #ef4444; }
+.inMeeting { background: #8b5cf6; }

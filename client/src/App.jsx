@@ -17,6 +17,7 @@ import { ToastProvider } from './components/common/Toast';
 import { ChatProvider } from './ChatContext';
 import { CallProvider } from './CallContext';
 import { MeetingProvider } from './MeetingContext';
+import { UserStatusProvider } from './UserStatusContext';
 import MeetingPiP from './components/meeting/MeetingPiP';
 import GlobalIncomingCall from './components/notifications/GlobalIncomingCall';
 import FloatingTimer from './components/FloatingTimer/FloatingTimer';
@@ -205,6 +206,7 @@ export default function App() {
             <BrowserRouter>
               <AxiosInterceptor>
                 <ChatProvider>
+                  <UserStatusProvider>
                   <CallProvider>
                     <MeetingProvider>
                       <AppRoutes />
@@ -213,6 +215,7 @@ export default function App() {
                       <GlobalIncomingCall />
                     </MeetingProvider>
                   </CallProvider>
+                  </UserStatusProvider>
                 </ChatProvider>
               </AxiosInterceptor>
             </BrowserRouter>

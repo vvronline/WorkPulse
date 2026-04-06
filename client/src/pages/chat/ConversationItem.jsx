@@ -3,14 +3,15 @@ import { ChatAvatar } from '../../components/chat';
 import { fmtTime, getConvName, getConvAvatar, isUserOnline } from './chatUtils';
 import s from './ChatSidebar.module.css';
 
-export default function ConversationItem({ conv, activeConvId, typingUsers, onlineUsers, convMenu, onOpen, onMenuToggle, onPin, onFav, onDelete }) {
+export default function ConversationItem({ conv, activeConvId, typingUsers, onlineUsers, userStatusMap = {}, convMenu, onOpen, onMenuToggle, onPin, onFav, onDelete }) {
     const c = conv;
+    const otherStatus = !c.is_group && c.other_user_id ? userStatusMap[c.other_user_id] : undefined;
     return (
         <div
             className={`${s.convItem} ${activeConvId === c.id ? s.active : ''}`}
             onClick={() => onOpen(c)}
         >
-            <ChatAvatar name={getConvName(c)} avatar={getConvAvatar(c)} size="md" online={isUserOnline(c, onlineUsers)} />
+            <ChatAvatar name={getConvName(c)} avatar={getConvAvatar(c)} size="md" online={isUserOnline(c, onlineUsers)} userStatus={otherStatus} />
             <div className={s.convInfo}>
                 <div className={s.convTop}>
                     <span className={s.convName}>

@@ -5,7 +5,17 @@ import { useClickOutside } from '../../hooks/useClickOutside';
 import { getConvName, getConvAvatar, isUserOnline } from './chatUtils';
 import s from './ChatHeader.module.css';
 
-export default function ChatHeader({ activeConv, onlineUsers, onBack, onGroupEdit, onToggleSearch, onTogglePinned, showPinned, onToggleSharedFiles, showSharedFiles, onToggleStarred, showStarred, onVoiceCall, onVideoCall, onClearChat }) {
+const STATUS_LABEL = {
+    available: 'Available',
+    busy: 'Busy',
+    dnd: 'Do Not Disturb',
+    away: 'Away',
+    offline: 'Offline',
+    in_call: 'In a Call',
+    in_meeting: 'In a Meeting',
+};
+
+export default function ChatHeader({ activeConv, onlineUsers, userStatusMap = {}, onBack, onGroupEdit, onToggleSearch, onTogglePinned, showPinned, onToggleSharedFiles, showSharedFiles, onToggleStarred, showStarred, onVoiceCall, onVideoCall, onClearChat }) {
     const [moreOpen, setMoreOpen] = useState(false);
     const moreRef = useRef(null);
     useClickOutside(moreRef, () => setMoreOpen(false), moreOpen);
@@ -22,6 +32,8 @@ export default function ChatHeader({ activeConv, onlineUsers, onBack, onGroupEdi
         { label: 'Clear chat', icon: Trash2, action: () => onClearChat?.(activeConv.id), danger: true },
     ];
 
+    const otherStatus = !activeConv.is_group && activeConv.other_user_id ? userStatusMap[activeConv.other_user_id] : undefined;
+
     return (
         <div className={s.chatHeader}>
             <button className={s.backBtn} onClick={onBack} aria-label="Back"><ArrowLeft size={18} /></button>
@@ -30,6 +42,7 @@ export default function ChatHeader({ activeConv, onlineUsers, onBack, onGroupEdi
                 avatar={getConvAvatar(activeConv)}
                 size="md"
                 online={isUserOnline(activeConv, onlineUsers)}
+                userStatus={otherStatus}
             />
             <div className={s.chatHeaderInfo} onClick={activeConv.is_group ? onGroupEdit : undefined}
                  style={activeConv.is_group ? { cursor: 'pointer' } : undefined}>
@@ -39,7 +52,9 @@ export default function ChatHeader({ activeConv, onlineUsers, onBack, onGroupEdi
                 <div className={s.chatHeaderMeta}>
                     {activeConv.is_group
                         ? `${activeConv.member_count || ''} members`
-                        : isUserOnline(activeConv, onlineUsers) ? 'Online' : `@${activeConv.other_username}`}
+                        : otherStatus && otherStatus !== 'available'
+                            ? STATUS_LABEL[otherStatus] || otherStatus
+                            : isUserOnline(activeConv, onlineUsers) ? 'Online' : `@${activeConv.other_username}`}
                 </div>
             </div>
             <div className={s.headerActions}>

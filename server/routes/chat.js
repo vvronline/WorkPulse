@@ -97,6 +97,7 @@ router.get('/search', auth, async (req, res) => {
 
 /**
  * GET /api/chat/presence?userIds=1,2,3
+ * Returns both online/offline presence AND user status for each user.
  */
 router.get('/presence', auth, async (req, res) => {
     try {
@@ -111,23 +112,72 @@ router.get('/presence', auth, async (req, res) => {
 
         // Try Redis presence first
         const redisPresence = await redis.getOnlineUsers(ids);
-        if (redisPresence) return res.json(redisPresence);
+        const redisStatuses = await redis.getUserStatuses(ids);
+
+        if (redisPresence) {
+            // Merge presence with status
+            const result = {};
+            for (const id of ids) {
+                result[id] = {
+                    presence: redisPresence[id] || 'offline',
+                    userStatus: redisStatuses?.[id] || 'available'
+                };
+            }
+            return res.json(result);
+        }
 
         // Fallback to DB
         const rows = (await query(
-            'SELECT id, last_seen_at FROM users WHERE id = ANY($1) AND org_id = $2',
+            'SELECT id, last_seen_at, user_status FROM users WHERE id = ANY($1) AND org_id = $2',
             [ids, orgId]
         )).rows;
 
         const result = {};
         const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
         for (const r of rows) {
-            result[r.id] = r.last_seen_at && new Date(r.last_seen_at) > fiveMinAgo ? 'online' : 'offline';
+            result[r.id] = {
+                presence: r.last_seen_at && new Date(r.last_seen_at) > fiveMinAgo ? 'online' : 'offline',
+                userStatus: r.user_status || 'available'
+            };
         }
         res.json(result);
     } catch (err) {
         req.log.error({ err }, 'Presence error');
         res.status(500).json({ error: 'Failed to get presence' });
+    }
+});
+
+/**
+ * GET /api/chat/status  — get current user's status
+ */
+router.get('/status', auth, async (req, res) => {
+    try {
+        const row = (await query('SELECT user_status, user_status_text FROM users WHERE id = $1', [req.userId])).rows[0];
+        if (!row) return res.status(404).json({ error: 'User not found' });
+        res.json({ status: row.user_status, statusText: row.user_status_text });
+    } catch (err) {
+        req.log.error({ err }, 'Get status error');
+        res.status(500).json({ error: 'Failed to get status' });
+    }
+});
+
+/**
+ * PUT /api/chat/status  — set current user's status manually
+ */
+router.put('/status', auth, async (req, res) => {
+    try {
+        const { status, statusText } = req.body;
+        const validStatuses = ['available', 'busy', 'dnd', 'away', 'offline'];
+        if (!status || !validStatuses.includes(status)) {
+            return res.status(400).json({ error: 'Invalid status' });
+        }
+        const safeText = typeof statusText === 'string' ? statusText.trim().slice(0, 100) : null;
+        await query('UPDATE users SET user_status = $1, user_status_text = $2 WHERE id = $3', [status, safeText, req.userId]);
+        await redis.setUserStatus(req.userId, status);
+        res.json({ status, statusText: safeText });
+    } catch (err) {
+        req.log.error({ err }, 'Update status error');
+        res.status(500).json({ error: 'Failed to update status' });
     }
 });
 

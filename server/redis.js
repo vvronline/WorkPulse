@@ -133,6 +133,36 @@ async function getOnlineUsers(userIds) {
     } catch { return null; }
 }
 
+// -- User status helpers --
+
+async function setUserStatus(userId, status) {
+    if (!isReady) return;
+    try {
+        await client.set(`user_status:${userId}`, status, 'EX', TTL.USER_CONTEXT);
+    } catch { /* ignore */ }
+}
+
+async function getUserStatus(userId) {
+    if (!isReady) return null;
+    try {
+        return await client.get(`user_status:${userId}`);
+    } catch { return null; }
+}
+
+async function getUserStatuses(userIds) {
+    if (!isReady || !userIds.length) return null;
+    try {
+        const pipeline = client.pipeline();
+        for (const id of userIds) pipeline.get(`user_status:${id}`);
+        const results = await pipeline.exec();
+        const map = {};
+        for (let i = 0; i < userIds.length; i++) {
+            map[userIds[i]] = results[i][1] || 'available';
+        }
+        return map;
+    } catch { return null; }
+}
+
 // -- Unread counter helpers --
 
 async function incrUnread(userId, conversationId) {
@@ -289,6 +319,10 @@ module.exports = {
     removePresence,
     isOnline,
     getOnlineUsers,
+    // User status
+    setUserStatus,
+    getUserStatus,
+    getUserStatuses,
     // Unread counters
     incrUnread,
     resetUnread,

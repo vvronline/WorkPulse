@@ -766,6 +766,18 @@ async function handleChatMessage(senderId, msg) {
             sendToUser(p.user_id, 'meeting_message', { meetingId, message });
         }
 
+    } else if (msg.type === 'status_change') {
+        // User manually sets their status or auto-status from client
+        const { status, statusText } = msg.data || {};
+        const validStatuses = ['available', 'busy', 'dnd', 'away', 'offline', 'in_call', 'in_meeting'];
+        if (!status || !validStatuses.includes(status)) return;
+        const safeText = typeof statusText === 'string' ? statusText.trim().slice(0, 100) : null;
+        // Persist to DB + Redis
+        await query('UPDATE users SET user_status = $1, user_status_text = $2 WHERE id = $3', [status, safeText, senderId]);
+        redis.setUserStatus(senderId, status);
+        // Broadcast to org members
+        broadcastStatus(senderId, status, safeText);
+
     } else if (msg.type === 'call_add_participant') {
         // Add a participant to an ongoing 1:1 call (upgrade to group)
         const { callId, conversationId, targetUserId } = msg.data || {};
@@ -842,7 +854,7 @@ function broadcast(type, data) {
  */
 async function broadcastPresence(userId, status) {
     try {
-        const user = (await query('SELECT org_id, full_name FROM users WHERE id = $1', [userId])).rows[0];
+        const user = (await query('SELECT org_id, full_name, user_status FROM users WHERE id = $1', [userId])).rows[0];
         if (!user?.org_id) return;
 
         // Only notify online org users
@@ -852,7 +864,26 @@ async function broadcastPresence(userId, status) {
         )).rows;
 
         for (const u of orgUsers) {
-            sendToUser(u.id, 'presence_change', { userId, status, fullName: user.full_name });
+            sendToUser(u.id, 'presence_change', { userId, status, fullName: user.full_name, userStatus: user.user_status });
+        }
+    } catch { /* ignore */ }
+}
+
+/**
+ * Broadcast user status change (available/busy/dnd/away/in_call/in_meeting/offline) to org members.
+ */
+async function broadcastStatus(userId, userStatus, statusText) {
+    try {
+        const user = (await query('SELECT org_id, full_name FROM users WHERE id = $1', [userId])).rows[0];
+        if (!user?.org_id) return;
+
+        const orgUsers = (await query(
+            'SELECT id FROM users WHERE org_id = $1 AND id != $2 AND is_active = TRUE',
+            [user.org_id, userId]
+        )).rows;
+
+        for (const u of orgUsers) {
+            sendToUser(u.id, 'status_change', { userId, userStatus, statusText, fullName: user.full_name });
         }
     } catch { /* ignore */ }
 }

@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react';
+import { useUserStatus } from './UserStatusContext';
 
 const MeetingCtx = createContext(null);
 
@@ -20,6 +21,20 @@ export function MeetingProvider({ children }) {
     const localStreamRef = useRef(null);
 
     const leaveMeetingRef = useRef(null);
+
+    const { setAutoStatus, clearAutoStatus } = useUserStatus();
+    const meetingStatusRef = useRef(false);
+
+    // Auto-status: set "in_meeting" when session is active
+    useEffect(() => {
+        if (session) {
+            meetingStatusRef.current = true;
+            setAutoStatus('in_meeting');
+        } else if (meetingStatusRef.current) {
+            meetingStatusRef.current = false;
+            clearAutoStatus('in_meeting');
+        }
+    }, [session, setAutoStatus, clearAutoStatus]);
 
     const joinMeeting = useCallback(({ meetingId, code, meeting, initialMuted, initialVideoOff }) => {
         // If we already have a WS for this meeting, reuse it

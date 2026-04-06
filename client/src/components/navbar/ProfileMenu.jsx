@@ -2,10 +2,12 @@ import { useState, useRef } from 'react';
 import { useAuth } from '../../AuthContext';
 import { useTheme } from '../../ThemeContext';
 import { useWorkState } from '../../WorkStateContext';
+import { useUserStatus } from '../../UserStatusContext';
 import { clockOut as apiClockOut, uploadAvatar, removeAvatar, baseURL } from '../../api';
 import { Camera, Building2, House } from 'lucide-react';
 import EditProfileModal from '../profile/EditProfileModal';
 import ConfirmDialog from '../common/ConfirmDialog';
+import StatusPicker from '../common/StatusPicker';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import s from './Navbar.module.css';
 
@@ -13,6 +15,7 @@ export default function ProfileMenu() {
     const { user, logout, updateUser } = useAuth();
     const { theme, toggleTheme } = useTheme();
     const { workState, workMode } = useWorkState();
+    const { myStatus } = useUserStatus();
 
     const [profileOpen, setProfileOpen] = useState(false);
     const [uploading, setUploading] = useState(false);
@@ -33,12 +36,27 @@ export default function ProfileMenu() {
         ? user.full_name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
         : '?';
 
-    const statusDotClass = workState === 'on_floor' ? s['dot-online']
-        : workState === 'on_break' ? s['dot-away'] : s['dot-offline'];
+    const STATUS_DOT_MAP = {
+        available: s['dot-online'],
+        busy: s['dot-busy'],
+        dnd: s['dot-dnd'],
+        away: s['dot-away'],
+        offline: s['dot-offline'],
+        in_call: s['dot-in-call'],
+        in_meeting: s['dot-in-meeting'],
+    };
+    const statusDotClass = STATUS_DOT_MAP[myStatus] || s['dot-offline'];
 
-    const statusLabel = workState === 'on_floor'
-        ? (workMode === 'remote' ? '\u25CF Working Remotely' : '\u25CF Working')
-        : workState === 'on_break' ? '\u25CF Away (On Break)' : '\u25CF Offline';
+    const STATUS_LABEL_MAP = {
+        available: workState === 'on_floor' ? (workMode === 'remote' ? '\u25CF Working Remotely' : '\u25CF Working') : '\u25CF Available',
+        busy: '\u25CF Busy',
+        dnd: '\u25CF Do Not Disturb',
+        away: '\u25CF Away',
+        offline: '\u25CF Offline',
+        in_call: '\u25CF In a Call',
+        in_meeting: '\u25CF In a Meeting',
+    };
+    const statusLabel = STATUS_LABEL_MAP[myStatus] || '\u25CF Available';
 
     const handleAvatarUpload = async (e) => {
         const file = e.target.files?.[0];
@@ -128,7 +146,7 @@ export default function ProfileMenu() {
                             <div className={s['profile-dropdown-user']}>@{user?.username}</div>
                             {user?.email && <div className={s['profile-dropdown-email']}>{user.email}</div>}
                             <div className={s['profile-dropdown-badges']}>
-                                <span className={`${s['dd-status-badge']} ${s[workState] || ''}`}>{statusLabel}</span>
+                                <span className={`${s['dd-status-badge']} ${s[`status-${myStatus}`] || ''}`}>{statusLabel}</span>
                                 {workState !== 'logged_out' && (
                                     <span className={`${s['dd-mode-badge']} ${s[`dd-mode-${workMode}`] || ''}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
                                         {workMode === 'office' ? <Building2 size={12} /> : <House size={12} />}
@@ -137,6 +155,10 @@ export default function ProfileMenu() {
                                 )}
                             </div>
                         </div>
+                    </div>
+
+                    <div className={s['profile-dropdown-status-picker']}>
+                        <StatusPicker />
                     </div>
 
                     <div className={s['profile-dropdown-body']}>

@@ -746,6 +746,10 @@ async function initDB() {
     `);
     await query(`ALTER TABLE announcements ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`);
 
+    // Migration: add user_status and user_status_text to users
+    await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS user_status TEXT NOT NULL DEFAULT 'available' CHECK(user_status IN ('available','busy','dnd','away','offline','in_call','in_meeting'))`);
+    await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS user_status_text TEXT`);
+
     // Seed defaults
     await query(`
         INSERT INTO app_settings (key, value) VALUES ('registration_mode', 'open')

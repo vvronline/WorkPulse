@@ -40,6 +40,7 @@ export default function useChatState() {
 
     // Feature state
     const [onlineUsers, setOnlineUsers] = useState(new Set());
+    const [userStatusMap, setUserStatusMap] = useState({});
     const [replyTo, setReplyTo] = useState(null);
     const [editingMsg, setEditingMsg] = useState(null);
     const [showSearch, setShowSearch] = useState(false);
@@ -204,6 +205,13 @@ export default function useChatState() {
                     d.status === 'online' ? next.add(d.userId) : next.delete(d.userId);
                     return next;
                 });
+                if (d.userStatus) {
+                    setUserStatusMap(prev => ({ ...prev, [d.userId]: d.userStatus }));
+                }
+                break;
+            }
+            case 'status_change': {
+                setUserStatusMap(prev => ({ ...prev, [d.userId]: d.userStatus }));
                 break;
             }
             case 'chat_group_created':
@@ -324,9 +332,21 @@ export default function useChatState() {
             if (uids.size > 0) {
                 try {
                     const { data: pres } = await getPresence([...uids]);
-                    setOnlineUsers(new Set(
-                        Object.entries(pres).filter(([, v]) => v === 'online').map(([k]) => Number(k))
-                    ));
+                    const onlineSet = new Set();
+                    const statusMap = {};
+                    for (const [k, v] of Object.entries(pres)) {
+                        const uid = Number(k);
+                        if (typeof v === 'object' && v !== null) {
+                            // New format: { presence, userStatus }
+                            if (v.presence === 'online') onlineSet.add(uid);
+                            statusMap[uid] = v.userStatus || 'available';
+                        } else {
+                            // Legacy format: 'online' | 'offline'
+                            if (v === 'online') onlineSet.add(uid);
+                        }
+                    }
+                    setOnlineUsers(onlineSet);
+                    setUserStatusMap(prev => ({ ...prev, ...statusMap }));
                 } catch { /* ignore */ }
             }
         } catch { /* ignore */ }
@@ -406,6 +426,7 @@ export default function useChatState() {
         typingUsers,
         mobileView, setMobileView,
         onlineUsers,
+        userStatusMap,
         replyTo, setReplyTo,
         editingMsg, setEditingMsg,
         showSearch, setShowSearch,
