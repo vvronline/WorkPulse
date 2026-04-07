@@ -59,7 +59,7 @@
     flex-shrink: 0;
   }
   .sidebarMobileOpen {
-    max-height: 320px;
+    max-height: 60vh;
     overflow-y: auto;
     overflow-x: hidden;
   }
