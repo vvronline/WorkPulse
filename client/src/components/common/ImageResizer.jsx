@@ -121,6 +121,73 @@ export default function ImageResizer({ quillRef }) {
     document.addEventListener('mouseup', onUp);
   }, [sel, quillRef, syncRect]);
 
+  /* ── Touch drag for mobile ── */
+  const onHandleTouchStart = useCallback((e, dir) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!sel || !e.touches[0]) return;
+
+    const { img } = sel;
+    const touch = e.touches[0];
+    drag.current = {
+      dir,
+      startX:     touch.clientX,
+      startY:     touch.clientY,
+      startW:     img.getBoundingClientRect().width,
+      startH:     img.getBoundingClientRect().height,
+      aspect:     img.getBoundingClientRect().width / img.getBoundingClientRect().height,
+      img,
+    };
+
+    const onTouchMove = (te) => {
+      if (!drag.current || !te.touches[0]) return;
+      const { dir, startX, startY, startW, startH, aspect, img } = drag.current;
+      const t = te.touches[0];
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+
+      let newW = startW;
+      if (dir === 'e' || dir === 'se')          newW = startW + dx;
+      else if (dir === 'w' || dir === 'sw')     newW = startW - dx;
+      else if (dir === 'ne')                    newW = startW + dx;
+      else if (dir === 'nw')                    newW = startW - dx;
+      else if (dir === 's')                     newW = startW + dy * aspect;
+      else if (dir === 'n')                     newW = startW - dy * aspect;
+
+      newW = Math.max(40, Math.round(newW));
+      img.style.width  = newW + 'px';
+      img.style.height = 'auto';
+      syncRect(img);
+    };
+
+    const onTouchEnd = () => {
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('touchend', onTouchEnd);
+      if (!drag.current) return;
+      const { img } = drag.current;
+      drag.current = null;
+      commitToQuill(quillRef, img);
+      syncRect(img);
+    };
+
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.addEventListener('touchend', onTouchEnd);
+  }, [sel, quillRef, syncRect]);
+
+  /* ── Remove image ── */
+  const handleRemove = useCallback(() => {
+    if (!sel) return;
+    try {
+      const q = quillRef?.current?.getEditor?.();
+      if (!q) return;
+      const blot = QuillLib?.find?.(sel.img);
+      if (!blot) return;
+      const idx = q.getIndex(blot);
+      q.deleteText(idx, 1, 'user');
+    } catch (_) { /* non-fatal */ }
+    setSel(null);
+  }, [sel, quillRef]);
+
   if (!sel) return null;
 
   const { rect } = sel;
@@ -136,11 +203,20 @@ export default function ImageResizer({ quillRef }) {
       <div className={s.sizeBadge}>
         {Math.round(rect.width)} × {Math.round(rect.height)} px
       </div>
+      <button
+        className={s.removeBtn}
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleRemove(); }}
+        title="Remove image"
+        aria-label="Remove image"
+      >
+        ×
+      </button>
       {HANDLES.map(h => (
         <div
           key={h}
           className={`${s.handle} ${s[h]}`}
           onMouseDown={(e) => onHandleMouseDown(e, h)}
+          onTouchStart={(e) => onHandleTouchStart(e, h)}
         />
       ))}
     </div>,

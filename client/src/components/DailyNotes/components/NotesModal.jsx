@@ -68,6 +68,18 @@ export default function NotesModal({ store, embedded = false }) {
               </svg>
               <span>Pages</span>
             </button>
+            <button
+              className={s.mobileFolderBtn}
+              onClick={() => { setNewFolderOpen(true); setMobileSidebarOpen(true); }}
+              title="New Folder"
+              aria-label="New Folder"
+            >
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M2 5h5l1.5-2H14a1 1 0 011 1v7a1 1 0 01-1 1H2a1 1 0 01-1-1V4"/>
+                <path d="M8 7v4M6 9h4"/>
+              </svg>
+              <span>Folder</span>
+            </button>
             <button className={s.newBtn} onClick={handleNewPage}>
               <svg viewBox="0 0 14 14" fill="currentColor">
                 <path d="M7 1a1 1 0 011 1v4h4a1 1 0 010 2H8v4a1 1 0 01-2 0V8H2a1 1 0 010-2h4V2a1 1 0 011-1z"/>

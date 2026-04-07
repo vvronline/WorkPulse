@@ -30,6 +30,34 @@
   line-height: 1.5;
 }
 
+/* ── Remove button ── */
+.removeBtn {
+  position: absolute;
+  top: -12px;
+  right: -12px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid #ef4444;
+  background: #ef4444;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  pointer-events: all;
+  z-index: 10001;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.4);
+  transition: transform 0.15s, background 0.15s;
+}
+.removeBtn:hover {
+  transform: scale(1.15);
+  background: #dc2626;
+}
+
 /* ── Handles ── */
 .handle {
   position: absolute;
@@ -54,3 +82,27 @@
 .s  { bottom: -5px; left: 50%; transform: translateX(-50%); cursor: s-resize; }
 .e  { right: -5px;  top: 50%;  transform: translateY(-50%); cursor: e-resize; }
 .w  { left: -5px;   top: 50%;  transform: translateY(-50%); cursor: w-resize; }
+
+/* ── Touch: larger handles for mobile ── */
+@media (hover: none) {
+  .handle {
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+  }
+  .nw { top: -9px;    left: -9px; }
+  .ne { top: -9px;    right: -9px; }
+  .se { bottom: -9px; right: -9px; }
+  .sw { bottom: -9px; left: -9px; }
+  .n  { top: -9px; }
+  .s  { bottom: -9px; }
+  .e  { right: -9px; }
+  .w  { left: -9px; }
+  .removeBtn {
+    width: 30px;
+    height: 30px;
+    top: -15px;
+    right: -15px;
+    font-size: 1.2rem;
+  }
+}

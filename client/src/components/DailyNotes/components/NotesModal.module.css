@@ -87,6 +87,9 @@
 .mobileToggleBtn {
   display: none;
 }
+.mobileFolderBtn {
+  display: none;
+}
 
 /* ── Mobile responsive ── */
 @media (max-width: 640px) {
@@ -138,6 +141,30 @@
     background: var(--primary-dim, rgba(99,102,241,0.12));
     border-color: rgba(99,102,241,0.35);
     color: var(--primary);
+  }
+  .mobileFolderBtn {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 0.32rem 0.55rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .mobileFolderBtn svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+  }
+  .mobileFolderBtn:hover {
+    background: rgba(245,158,11,0.1);
+    border-color: rgba(245,158,11,0.4);
+    color: var(--warning, #f59e0b);
   }
   .body {
     flex-direction: column;
