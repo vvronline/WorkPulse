@@ -162,7 +162,7 @@
     from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
 }
-.bubble:hover .hoverActions { display: flex; }
+.bubbleWrap:hover .hoverActions { display: flex; }
 /* Mine (right-side): toolbar anchors to the right edge of the bubble */
 .mine .hoverActions { right: 0; left: auto; }
 /* Theirs (left-side): toolbar anchors to left edge of the bubble, not the right */
@@ -352,7 +352,7 @@
     .hoverActions {
         display: none;
     }
-    .bubble:hover .hoverActions { display: flex; }
+    .bubbleWrap:hover .hoverActions { display: flex; }
 }
 
 @media (max-width: 768px) {
@@ -362,7 +362,7 @@
     .hoverActions {
         display: none;
     }
-    .bubble:hover .hoverActions {
+    .bubbleWrap:hover .hoverActions {
         display: none;
     }
     /* State-driven: show when user taps the bubble */

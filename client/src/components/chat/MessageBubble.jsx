@@ -93,7 +93,11 @@ export default function MessageBubble({
                 {showAvatar && <ChatAvatar name={msg.sender_name} avatar={msg.sender_avatar} size="sm" />}
             </div>
 
-            <div className={s.bubbleWrap}>
+            <div
+                className={s.bubbleWrap}
+                onTouchStart={handleTouchStart}
+                onTouchEnd={handleTouchEnd}
+            >
                 {showName && !isMine && msg.sender_name && (
                     <div className={s.senderName}>{msg.sender_name}</div>
                 )}
@@ -105,8 +109,6 @@ export default function MessageBubble({
                     ref={bubbleRef}
                     className={`${s.bubble} ${isMine ? s.myBubble : s.theirBubble} ${msg.pinned_at ? s.pinned : ''} ${msg.starred ? s.starredBubble : ''} ${toolbarOpen ? s.toolbarActive : ''}`}
                     onContextMenu={handleContext}
-                    onTouchStart={handleTouchStart}
-                    onTouchEnd={handleTouchEnd}
                 >
                     {msg.pinned_at && <div className={s.pinnedBadge}><Pin size={11} style={{marginRight:4}} />Pinned</div>}
                     {msg.starred && <div className={s.starBadge}><Star size={11} /></div>}
