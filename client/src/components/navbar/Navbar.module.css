@@ -86,7 +86,7 @@
   background: var(--primary);
   color: white;
   font-weight: 600;
-  box-shadow: 0 0 20px var(--primary-glow), inset 0 1px 0 rgba(255,255,255,0.15), 0 2px 0 rgba(14, 165, 233, 0.5);
+  box-shadow: 0 0 20px var(--primary-glow), inset 0 1px 0 rgba(255,255,255,0.15);
   letter-spacing: -0.01em;
 }
 
