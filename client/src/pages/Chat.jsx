@@ -23,7 +23,7 @@ export default function Chat() {
         search, setSearch, searchResults, searching,
         typingUsers, mobileView, setMobileView, onlineUsers,
         userStatusMap,
-        replyTo, editingMsg, showSearch, setShowSearch,
+        replyTo, setReplyTo, editingMsg, setEditingMsg, showSearch, setShowSearch,
         showPinned, setShowPinned, showGroupModal, setShowGroupModal,
         groupEditData, setGroupEditData, forwardMsg, setForwardMsg,
         recording, setRecording, dragOver, setDragOver, readReceipts,

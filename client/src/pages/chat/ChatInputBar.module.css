@@ -3,6 +3,8 @@
     padding: 0 1rem;
     border-top: 1px solid var(--glass-border);
     background: var(--bg-secondary);
+    position: relative;
+    z-index: 2;
 }
 .voiceBar {
     padding: 0.5rem 1rem;

@@ -37,9 +37,22 @@
     border: none;
     color: var(--text-muted);
     cursor: pointer;
-    padding: 0 4px;
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
     font-size: 0.9rem;
     align-self: center;
-    transition: color var(--transition-fast);
+    border-radius: 6px;
+    transition: color var(--transition-fast), background var(--transition-fast);
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    position: relative;
+    z-index: 2;
 }
-.close:hover { color: var(--text); }
+.close:hover { color: var(--text); background: var(--surface-hover); }
+.close:active { transform: scale(0.9); }
