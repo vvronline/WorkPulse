@@ -12,6 +12,7 @@ export function fmtTime(ts) {
 
 export function getConvName(c) {
     if (c.is_group) return c.group_name || c.name || 'Group';
+    if (c.is_self_chat) return `${c.other_full_name || 'You'} (You)`;
     return c.other_full_name || 'Unknown';
 }
 

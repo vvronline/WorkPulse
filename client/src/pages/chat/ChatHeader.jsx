@@ -58,12 +58,16 @@ export default function ChatHeader({ activeConv, onlineUsers, userStatusMap = {}
                 </div>
             </div>
             <div className={s.headerActions}>
-                <button onClick={onVoiceCall} title="Voice call" className={s.callBtn}>
-                    <Phone size={16} />
-                </button>
-                <button onClick={onVideoCall} title="Video call" className={s.callBtn}>
-                    <Video size={16} />
-                </button>
+                {!activeConv.is_self_chat && (
+                    <>
+                        <button onClick={onVoiceCall} title="Voice call" className={s.callBtn}>
+                            <Phone size={16} />
+                        </button>
+                        <button onClick={onVideoCall} title="Video call" className={s.callBtn}>
+                            <Video size={16} />
+                        </button>
+                    </>
+                )}
                 {/* Desktop-only: search button inline */}
                 <span className={s.desktopActions}>
                     <button onClick={onToggleSearch} title="Search messages">

@@ -173,8 +173,13 @@ describe('POST /api/chat/conversations', () => {
         expect(res.status).toBe(401);
     });
 
-    test('returns 400 when userId is self', async () => {
+    test('creates self-chat conversation when userId is self', async () => {
         setupAuth();
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 1, org_id: 1 }], rowCount: 1 }); // self user lookup
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // no existing self-conversation
+        mockTxClient.query
+            .mockResolvedValueOnce({ rows: [{ id: 50 }], rowCount: 1 }) // INSERT conversation
+            .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // INSERT participant
 
         const res = await request(app)
             .post('/api/chat/conversations')
@@ -182,8 +187,23 @@ describe('POST /api/chat/conversations', () => {
             .set(CSRF)
             .send({ userId: 1 });
 
-        expect(res.status).toBe(400);
-        expect(res.body.error).toMatch(/invalid user/i);
+        expect(res.status).toBe(201);
+        expect(res.body.conversationId).toBe(50);
+    });
+
+    test('returns existing self-chat if already exists', async () => {
+        setupAuth();
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 1, org_id: 1 }], rowCount: 1 }); // self user lookup
+        mockQuery.mockResolvedValueOnce({ rows: [{ conversation_id: 99 }], rowCount: 1 }); // existing self-conv
+
+        const res = await request(app)
+            .post('/api/chat/conversations')
+            .set('Cookie', authCookie(1))
+            .set(CSRF)
+            .send({ userId: 1 });
+
+        expect(res.status).toBe(200);
+        expect(res.body.conversationId).toBe(99);
     });
 
     test('returns 400 when one user not found', async () => {

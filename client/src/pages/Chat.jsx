@@ -92,6 +92,7 @@ export default function Chat() {
                     other_full_name: c.other_full_name,
                     other_avatar: c.other_avatar,
                     is_group: c.is_group,
+                    is_self_chat: c.is_self_chat,
                     group_name: c.group_name,
                     name: c.name,
                     member_count: c.member_count

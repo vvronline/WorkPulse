@@ -81,8 +81,8 @@ export default function ChatSidebar({
                             <div key={u.id} className={s.searchItem} onClick={() => onSearchUser(u)}>
                                 <ChatAvatar name={u.full_name} avatar={u.avatar} size="md" online={onlineUsers.has(u.id)} userStatus={userStatusMap[u.id]} />
                                 <div className={s.userInfo}>
-                                    <div className={s.userName}>{u.full_name}</div>
-                                    <div className={s.userMeta}>@{u.username}{u.email ? ` · ${u.email}` : ''}</div>
+                                    <div className={s.userName}>{u.full_name}{u.id === userId ? ' (You)' : ''}</div>
+                                    <div className={s.userMeta}>@{u.username}{u.id === userId ? ' · Message yourself' : u.email ? ` · ${u.email}` : ''}</div>
                                 </div>
                             </div>
                         ))}

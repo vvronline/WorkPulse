@@ -362,7 +362,8 @@ export default function useChatState() {
                 other_user_id: otherUser.id,
                 other_username: otherUser.username,
                 other_full_name: otherUser.full_name,
-                other_avatar: otherUser.avatar
+                other_avatar: otherUser.avatar,
+                is_self_chat: otherUser.id === user.id
             });
         } catch { /* ignore */ }
     };

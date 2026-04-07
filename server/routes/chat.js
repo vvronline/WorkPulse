@@ -82,11 +82,13 @@ router.get('/search', auth, async (req, res) => {
         const rows = (await query(`
             SELECT id, username, full_name, email, avatar, last_seen_at
             FROM users
-            WHERE org_id = $1 AND id != $2 AND is_active = TRUE
-              AND (username ILIKE $3 OR full_name ILIKE $3 OR email ILIKE $3)
-            ORDER BY full_name ASC
+            WHERE org_id = $1 AND is_active = TRUE
+              AND (username ILIKE $2 OR full_name ILIKE $2 OR email ILIKE $2)
+            ORDER BY
+              CASE WHEN id = $3 THEN 0 ELSE 1 END,
+              full_name ASC
             LIMIT 20
-        `, [orgId, req.userId, term])).rows;
+        `, [orgId, term, req.userId])).rows;
 
         res.json(rows);
     } catch (err) {
@@ -187,8 +189,49 @@ router.put('/status', auth, async (req, res) => {
 router.post('/conversations', auth, async (req, res) => {
     try {
         const { userId: otherUserId } = req.body;
-        if (!otherUserId || otherUserId === req.userId) {
+        if (!otherUserId) {
             return res.status(400).json({ error: 'Invalid user' });
+        }
+
+        const isSelfChat = otherUserId === req.userId;
+
+        if (isSelfChat) {
+            // Self-chat: verify current user exists and is active
+            const selfUser = (await query(
+                'SELECT id, org_id FROM users WHERE id = $1 AND is_active = TRUE',
+                [req.userId]
+            )).rows[0];
+            if (!selfUser) return res.status(400).json({ error: 'User not found' });
+            const orgId = selfUser.org_id;
+
+            // Check for existing self-conversation (only 1 participant)
+            const existing = (await query(`
+                SELECT cp.conversation_id
+                FROM conversation_participants cp
+                JOIN conversations c ON c.id = cp.conversation_id
+                WHERE cp.user_id = $1
+                  AND c.is_group = FALSE
+                  AND (SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = cp.conversation_id) = 1
+                LIMIT 1
+            `, [req.userId])).rows[0];
+
+            if (existing) {
+                return res.json({ conversationId: existing.conversation_id });
+            }
+
+            const conv = await transaction(async (client) => {
+                const c = (await client.query(
+                    'INSERT INTO conversations (org_id) VALUES ($1) RETURNING id',
+                    [orgId]
+                )).rows[0];
+                await client.query(
+                    'INSERT INTO conversation_participants (conversation_id, user_id) VALUES ($1, $2)',
+                    [c.id, req.userId]
+                );
+                return c;
+            });
+
+            return res.status(201).json({ conversationId: conv.id });
         }
 
         const users = (await query(
@@ -381,11 +424,12 @@ router.get('/conversations', auth, async (req, res) => {
                 c.updated_at,
                 c.name AS group_name,
                 c.is_group,
-                CASE WHEN c.is_group = FALSE THEN u.id END        AS other_user_id,
-                CASE WHEN c.is_group = FALSE THEN u.username END   AS other_username,
-                CASE WHEN c.is_group = FALSE THEN u.full_name END  AS other_full_name,
-                CASE WHEN c.is_group = FALSE THEN u.avatar END     AS other_avatar,
-                CASE WHEN c.is_group = FALSE THEN u.last_seen_at END AS other_last_seen,
+                CASE WHEN c.is_group = FALSE THEN COALESCE(u.id, self_u.id) END        AS other_user_id,
+                CASE WHEN c.is_group = FALSE THEN COALESCE(u.username, self_u.username) END   AS other_username,
+                CASE WHEN c.is_group = FALSE THEN COALESCE(u.full_name, self_u.full_name) END  AS other_full_name,
+                CASE WHEN c.is_group = FALSE THEN COALESCE(u.avatar, self_u.avatar) END     AS other_avatar,
+                CASE WHEN c.is_group = FALSE THEN COALESCE(u.last_seen_at, self_u.last_seen_at) END AS other_last_seen,
+                CASE WHEN c.is_group = FALSE AND u.id IS NULL THEN TRUE ELSE FALSE END AS is_self_chat,
                 m.content   AS last_message,
                 m.sender_id AS last_sender_id,
                 m.sender_name AS last_sender_name,
@@ -409,6 +453,7 @@ router.get('/conversations', auth, async (req, res) => {
             LEFT JOIN conversation_participants cp2
                 ON cp2.conversation_id = c.id AND cp2.user_id != $1 AND c.is_group = FALSE
             LEFT JOIN users u ON u.id = cp2.user_id AND c.is_group = FALSE
+            LEFT JOIN users self_u ON self_u.id = $1 AND c.is_group = FALSE AND cp2.user_id IS NULL
             LEFT JOIN LATERAL (
                 SELECT lm.content, lm.sender_id, lm.created_at, lm.file_url, lm.deleted_at, usr.full_name AS sender_name
                 FROM messages lm
