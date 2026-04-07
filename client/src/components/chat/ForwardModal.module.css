@@ -51,7 +51,7 @@
     transition: background var(--transition-fast);
 }
 .item:hover { background: var(--surface-hover); }
-.checked { background: rgba(99,102,241,.1); }
+.checked { background: rgba(14, 165, 233, .1); }
 .cb { accent-color: var(--primary); }
 .name {
     font-size: 0.85rem;

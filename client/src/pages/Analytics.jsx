@@ -69,8 +69,14 @@ export default function Analytics() {
   const floorHours = useMemo(() => data.map(d => +(d.floorMinutes / 60).toFixed(2)), [data]);
   const breakHours = useMemo(() => data.map(d => +(d.breakMinutes / 60).toFixed(2)), [data]);
 
-  const chartTextColor = '#94a3b8';
-  const chartGridColor = 'rgba(255,255,255,0.05)';
+  const rootStyle = typeof window !== 'undefined'
+    ? window.getComputedStyle(document.documentElement)
+    : null;
+  const themeValue = (token, fallback) => rootStyle?.getPropertyValue(token)?.trim() || fallback;
+  const chartTextColor = themeValue('--text-secondary', '#a1a1b5');
+  const chartTitleColor = themeValue('--text-primary', '#f0f0f5');
+  const chartGridColor = themeValue('--border', 'rgba(255,255,255,0.08)');
+  const chartTooltipBg = themeValue('--modal-bg', 'rgba(0,0,0,0.96)');
 
   // Bar Chart: Floor vs Break time daily
   const barData = useMemo(() => ({
@@ -79,8 +85,8 @@ export default function Analytics() {
       {
         label: 'Work Time (hrs)',
         data: floorHours,
-        backgroundColor: 'rgba(99, 102, 241, 0.7)',
-        hoverBackgroundColor: 'rgba(99, 102, 241, 0.9)',
+        backgroundColor: 'rgba(14, 165, 233, 0.7)',
+        hoverBackgroundColor: 'rgba(14, 165, 233, 0.9)',
         borderRadius: 8,
         borderSkipped: false,
       },
@@ -100,10 +106,10 @@ export default function Analytics() {
     plugins: {
       legend: { position: 'top', labels: { color: chartTextColor, usePointStyle: true, pointStyle: 'circle', padding: 20 } },
       tooltip: {
-        backgroundColor: 'rgba(15,15,26,0.9)',
-        titleColor: '#f1f5f9',
-        bodyColor: '#94a3b8',
-        borderColor: 'rgba(255,255,255,0.1)',
+        backgroundColor: chartTooltipBg,
+        titleColor: chartTitleColor,
+        bodyColor: chartTextColor,
+        borderColor: chartGridColor,
         borderWidth: 1,
         cornerRadius: 10,
         padding: 12,
@@ -133,13 +139,13 @@ export default function Analytics() {
       {
         label: 'Work Time (hrs)',
         data: floorHours,
-        borderColor: '#818cf8',
-        backgroundColor: 'rgba(99, 102, 241, 0.08)',
+        borderColor: '#38bdf8',
+        backgroundColor: 'rgba(14, 165, 233, 0.08)',
         fill: true,
         tension: 0.4,
         pointRadius: 5,
-        pointBackgroundColor: '#818cf8',
-        pointBorderColor: '#818cf8',
+        pointBackgroundColor: '#38bdf8',
+        pointBorderColor: '#38bdf8',
         pointHoverRadius: 7,
         borderWidth: 2.5,
       },
@@ -160,10 +166,10 @@ export default function Analytics() {
     plugins: {
       legend: { position: 'top', labels: { color: chartTextColor, usePointStyle: true, pointStyle: 'circle', padding: 20 } },
       tooltip: {
-        backgroundColor: 'rgba(15,15,26,0.9)',
-        titleColor: '#f1f5f9',
-        bodyColor: '#94a3b8',
-        borderColor: 'rgba(255,255,255,0.1)',
+        backgroundColor: chartTooltipBg,
+        titleColor: chartTitleColor,
+        bodyColor: chartTextColor,
+        borderColor: chartGridColor,
         borderWidth: 1,
         cornerRadius: 10,
         padding: 12,
@@ -192,8 +198,8 @@ export default function Analytics() {
     datasets: [
       {
         data: [totalFloor, totalBreak],
-        backgroundColor: ['rgba(99, 102, 241, 0.8)', 'rgba(245, 158, 11, 0.8)'],
-        hoverBackgroundColor: ['rgba(99, 102, 241, 1)', 'rgba(245, 158, 11, 1)'],
+        backgroundColor: ['rgba(14, 165, 233, 0.8)', 'rgba(245, 158, 11, 0.8)'],
+        hoverBackgroundColor: ['rgba(14, 165, 233, 1)', 'rgba(245, 158, 11, 1)'],
         borderWidth: 0,
         hoverOffset: 10,
         spacing: 4,
@@ -207,10 +213,10 @@ export default function Analytics() {
     plugins: {
       legend: { position: 'bottom', labels: { color: chartTextColor, usePointStyle: true, pointStyle: 'circle', padding: 16 } },
       tooltip: {
-        backgroundColor: 'rgba(15,15,26,0.9)',
-        titleColor: '#f1f5f9',
-        bodyColor: '#94a3b8',
-        borderColor: 'rgba(255,255,255,0.1)',
+        backgroundColor: chartTooltipBg,
+        titleColor: chartTitleColor,
+        bodyColor: chartTextColor,
+        borderColor: chartGridColor,
         borderWidth: 1,
         cornerRadius: 10,
         padding: 12,
@@ -323,8 +329,8 @@ export default function Analytics() {
                 labels: ['Office', 'Remote'],
                 datasets: [{
                   data: [officeDays, remoteDays],
-                  backgroundColor: ['rgba(99, 102, 241, 0.8)', 'rgba(34, 197, 94, 0.8)'],
-                  hoverBackgroundColor: ['rgba(99, 102, 241, 1)', 'rgba(34, 197, 94, 1)'],
+                  backgroundColor: ['rgba(14, 165, 233, 0.8)', 'rgba(34, 197, 94, 0.8)'],
+                  hoverBackgroundColor: ['rgba(14, 165, 233, 1)', 'rgba(34, 197, 94, 1)'],
                   borderWidth: 0,
                   hoverOffset: 10,
                   spacing: 4,

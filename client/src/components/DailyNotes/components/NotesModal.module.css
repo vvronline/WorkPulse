@@ -58,12 +58,12 @@
 }
 .newBtn {
   display: flex; align-items: center; gap: 0.35rem;
-  background: var(--primary-dim, rgba(99,102,241,0.1));
-  border: 1px solid rgba(99,102,241,0.25); color: var(--primary);
+  background: var(--primary-dim, rgba(14, 165, 233, 0.1));
+  border: 1px solid rgba(14, 165, 233, 0.25); color: var(--primary);
   border-radius: 7px; padding: 0.28rem 0.65rem;
   font-size: 0.78rem; font-weight: 600; cursor: pointer; transition: background 0.15s;
 }
-.newBtn:hover { background: var(--primary-dim, rgba(99,102,241,0.18)); }
+.newBtn:hover { background: var(--primary-dim, rgba(14, 165, 233, 0.18)); }
 .newBtn svg   { width: 13px; height: 13px; }
 .closeBtn {
   display: flex; align-items: center; justify-content: center;
@@ -138,8 +138,8 @@
   }
   .mobileToggleBtn:hover,
   .mobileToggleBtnActive {
-    background: var(--primary-dim, rgba(99,102,241,0.12));
-    border-color: rgba(99,102,241,0.35);
+    background: var(--primary-dim, rgba(14, 165, 233, 0.12));
+    border-color: rgba(14, 165, 233, 0.35);
     color: var(--primary);
   }
   .mobileFolderBtn {

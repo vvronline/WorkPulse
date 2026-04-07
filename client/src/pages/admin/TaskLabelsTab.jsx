@@ -9,16 +9,16 @@ import tl from './TaskLabels.module.css';
 import sf from './AdminForms.module.css';
 import su from './AdminUtils.module.css';
 
-const PRESET_COLORS = ['#6366f1', '#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#64748b'];
+const PRESET_COLORS = ['#0ea5e9', '#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#0ea5e9', '#ec4899', '#14b8a6', '#f97316', '#64748b'];
 
 export default function TaskLabelsTab() {
     const [labels, setLabels] = useState([]);
     const [loading, setLoading] = useState(true);
     const [name, setName] = useState('');
-    const [color, setColor] = useState('#6366f1');
+    const [color, setColor] = useState('#0ea5e9');
     const [editId, setEditId] = useState(null);
     const [editName, setEditName] = useState('');
-    const [editColor, setEditColor] = useState('#6366f1');
+    const [editColor, setEditColor] = useState('#0ea5e9');
     const [error, setError] = useAutoDismiss('');
     const [success, setSuccess] = useAutoDismiss('');
 
@@ -38,7 +38,7 @@ export default function TaskLabelsTab() {
         try {
             await createAdminTaskLabel({ name, color });
             setName('');
-            setColor('#6366f1');
+            setColor('#0ea5e9');
             setSuccess('Label created');
             fetchLabels();
         } catch (err) {

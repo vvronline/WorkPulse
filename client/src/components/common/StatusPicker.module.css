@@ -22,10 +22,18 @@
 }
 
 .statusDot {
-    width: 8px;
-    height: 8px;
+    width: 14px;
+    height: 14px;
     border-radius: 50%;
     flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid transparent;
+}
+
+.ring {
+    border-color: currentColor;
 }
 
 .statusLabel {
@@ -100,8 +108,8 @@
 }
 
 .optionDot {
-    width: 10px;
-    height: 10px;
+    width: 14px;
+    height: 14px;
     border-radius: 50%;
     display: flex;
     align-items: center;
@@ -110,6 +118,21 @@
     color: white;
     flex-shrink: 0;
     line-height: 1;
+    border: 1px solid transparent;
+}
+
+.dotGlyph {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #fff;
+}
+
+.ringGlyph {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 1.8px solid currentColor;
 }
 
 .optionLabel {

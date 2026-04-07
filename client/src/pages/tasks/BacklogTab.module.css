@@ -89,7 +89,7 @@
 
 /* Shared */
 .task-priority-badge { padding: 0.2rem 0.5rem; border-radius: 6px; font-size: 0.7rem; font-weight: 600; white-space: nowrap; flex-shrink: 0; background: var(--badge-bg); color: var(--badge-color); }
-.label-pill { display: inline-flex; align-items: center; padding: 0.15rem 0.5rem; border-radius: 99px; font-size: 0.65rem; font-weight: 600; background: var(--label-color, #6366f1); color: #fff; white-space: nowrap; }
+.label-pill { display: inline-flex; align-items: center; padding: 0.15rem 0.5rem; border-radius: 99px; font-size: 0.65rem; font-weight: 600; background: var(--label-color, #0ea5e9); color: #fff; white-space: nowrap; }
 .overdue { color: var(--danger); font-weight: 600; }
 
 [data-theme="light"] .tasks-form-card { background: rgba(255,255,255,0.75); border-color: rgba(0,0,0,0.06); }

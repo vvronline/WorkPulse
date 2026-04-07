@@ -72,7 +72,7 @@
 }
 .inlineWrap :global(.ql-editor img:hover),
 .modalWrap  :global(.ql-editor img:hover) {
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.5);
+  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.5);
 }
 
 /* ── Toolbar icon colours ───────────────────────────────── */

@@ -141,8 +141,8 @@
 .mr-waiting-spinner {
     width: 48px;
     height: 48px;
-    border: 3px solid rgba(99,102,241,0.2);
-    border-top-color: #6366f1;
+    border: 3px solid rgba(14, 165, 233, 0.2);
+    border-top-color: #0ea5e9;
     border-radius: 50%;
     animation: mr-spin 0.8s linear infinite;
 }
@@ -167,7 +167,7 @@
 
 .mr-rejoin-btn {
     padding: 0.55rem 1.5rem;
-    background: #6366f1;
+    background: #0ea5e9;
     border: none;
     border-radius: 8px;
     color: #fff;
@@ -177,7 +177,7 @@
     transition: background 0.15s;
 }
 
-.mr-rejoin-btn:hover { background: #4f46e5; }
+.mr-rejoin-btn:hover { background: #0284c7; }
 
 .mr-back-btn {
     padding: 0.5rem 1.25rem;
@@ -204,7 +204,7 @@
     transition: box-shadow 0.2s;
 }
 
-.pt-local { border: 2px solid rgba(99,102,241,0.4); }
+.pt-local { border: 2px solid rgba(14, 165, 233, 0.4); }
 
 .pt-video {
     width: 100%;
@@ -229,7 +229,7 @@
     width: 68px;
     height: 68px;
     border-radius: 50%;
-    background: #6366f1;
+    background: #0ea5e9;
     color: #fff;
     font-size: 1.8rem;
     font-weight: 700;
@@ -289,11 +289,11 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.4rem 0.75rem;
-    background: rgba(99,102,241,0.15);
-    border-bottom: 1px solid rgba(99,102,241,0.2);
+    background: rgba(14, 165, 233, 0.15);
+    border-bottom: 1px solid rgba(14, 165, 233, 0.2);
     font-size: 0.78rem;
     font-weight: 600;
-    color: #a5b4fc;
+    color: #7dd3fc;
 }
 
 .pv-icon { font-size: 0.9rem; }
@@ -327,7 +327,7 @@
     height: 120px;
     border-radius: 10px;
     overflow: hidden;
-    border: 2px solid rgba(99,102,241,0.4);
+    border: 2px solid rgba(14, 165, 233, 0.4);
     box-shadow: 0 4px 12px rgba(0,0,0,0.5);
 }
 
@@ -374,7 +374,7 @@
 
 .mb-btn:hover { background: rgba(255,255,255,0.15); }
 .mb-btn-off { background: rgba(239,68,68,0.25) !important; border-color: rgba(239,68,68,0.4) !important; }
-.mb-btn-active { background: rgba(99,102,241,0.3) !important; border-color: rgba(99,102,241,0.5) !important; }
+.mb-btn-active { background: rgba(14, 165, 233, 0.3) !important; border-color: rgba(14, 165, 233, 0.5) !important; }
 
 .mb-label { font-size: 0.58rem; color: rgba(255,255,255,0.6); }
 
@@ -520,7 +520,7 @@
     gap: 2px;
 }
 
-.mc-sender { font-size: 0.72rem; font-weight: 700; color: #6366f1; }
+.mc-sender { font-size: 0.72rem; font-weight: 700; color: #0ea5e9; }
 .mc-text { font-size: 0.83rem; color: rgba(255,255,255,0.9); }
 .mc-time { font-size: 0.65rem; color: rgba(255,255,255,0.3); }
 
@@ -547,7 +547,7 @@
 
 .mc-send-btn {
     padding: 0.4rem 0.7rem;
-    background: #6366f1;
+    background: #0ea5e9;
     border: none;
     border-radius: 8px;
     color: #fff;
@@ -579,9 +579,9 @@
 }
 
 .mp-add-btn {
-    background: rgba(99,102,241,0.2);
-    border: 1px solid rgba(99,102,241,0.4);
-    color: #6366f1;
+    background: rgba(14, 165, 233, 0.2);
+    border: 1px solid rgba(14, 165, 233, 0.4);
+    color: #0ea5e9;
     border-radius: 6px;
     padding: 0.2rem 0.6rem;
     font-size: 0.75rem;
@@ -589,7 +589,7 @@
     transition: background 0.15s;
 }
 
-.mp-add-btn:hover { background: rgba(99,102,241,0.3); }
+.mp-add-btn:hover { background: rgba(14, 165, 233, 0.3); }
 
 .mp-add-wrap { padding: 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.06); }
 
@@ -627,7 +627,7 @@
 }
 
 .mp-invite-btn {
-    background: #6366f1;
+    background: #0ea5e9;
     border: none;
     border-radius: 5px;
     color: #fff;
@@ -651,7 +651,7 @@
     width: 32px;
     height: 32px;
     border-radius: 50%;
-    background: #6366f1;
+    background: #0ea5e9;
     color: #fff;
     font-size: 0.85rem;
     font-weight: 700;

@@ -47,16 +47,49 @@ export default function ProfileMenu() {
     };
     const statusDotClass = STATUS_DOT_MAP[myStatus] || s['dot-offline'];
 
-    const STATUS_LABEL_MAP = {
-        available: workState === 'on_floor' ? (workMode === 'remote' ? '\u25CF Working Remotely' : '\u25CF Working') : '\u25CF Available',
-        busy: '\u25CF Busy',
-        dnd: '\u25CF Do Not Disturb',
-        away: '\u25CF Away',
-        offline: '\u25CF Offline',
-        in_call: '\u25CF In a Call',
-        in_meeting: '\u25CF In a Meeting',
+    const STATUS_META_MAP = {
+        available: { label: workState === 'on_floor' ? (workMode === 'remote' ? 'Working Remotely' : 'Working') : 'Available', glyph: 'check' },
+        busy: { label: 'Busy', glyph: 'dot' },
+        dnd: { label: 'Do Not Disturb', glyph: 'minus' },
+        away: { label: 'Away', glyph: 'clock' },
+        offline: { label: 'Offline', glyph: 'ring' },
+        in_call: { label: 'In a Call', glyph: 'dot' },
+        in_meeting: { label: 'In a Meeting', glyph: 'dot' },
     };
-    const statusLabel = STATUS_LABEL_MAP[myStatus] || '\u25CF Available';
+    const statusMeta = STATUS_META_MAP[myStatus] || STATUS_META_MAP.available;
+
+    const renderStatusGlyph = (glyph, className) => {
+        if (glyph === 'check') {
+            return (
+                <svg className={className} viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                    <path d="M2.1 5.1L4.2 7L7.9 3.3" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+            );
+        }
+        if (glyph === 'minus') {
+            return (
+                <svg className={className} viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                    <line x1="2.6" y1="5" x2="7.4" y2="5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                </svg>
+            );
+        }
+        if (glyph === 'clock') {
+            return (
+                <svg className={className} viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                    <circle cx="5" cy="5" r="3.1" stroke="currentColor" strokeWidth="1.3" />
+                    <path d="M5 3.2V5.1L6.4 6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+            );
+        }
+        if (glyph === 'ring') {
+            return (
+                <svg className={className} viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                    <circle cx="5" cy="5" r="3" stroke="currentColor" strokeWidth="1.5" />
+                </svg>
+            );
+        }
+        return <span className={s['status-glyph-dot']} aria-hidden="true" />;
+    };
 
     const handleAvatarUpload = async (e) => {
         const file = e.target.files?.[0];
@@ -109,7 +142,9 @@ export default function ProfileMenu() {
                         ? <img src={avatarUrl} alt="" className={s['profile-avatar-img']} />
                         : <span className={s['profile-avatar-initials']}>{initials}</span>
                     }
-                    <span className={`${s['profile-status-dot']} ${statusDotClass}`} />
+                    <span className={`${s['profile-status-dot']} ${statusDotClass}`}>
+                        {renderStatusGlyph(statusMeta.glyph, s['status-glyph'])}
+                    </span>
                 </div>
                 <span className={s['profile-name']}>{user?.full_name}</span>
                 <svg className={`${s['profile-chevron-icon']} ${profileOpen ? s.open : ''}`} width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -125,7 +160,9 @@ export default function ProfileMenu() {
                                 ? <img src={avatarUrl} alt="" className={s['profile-avatar-lg-img']} />
                                 : <span className={s['profile-avatar-lg-initials']}>{initials}</span>
                             }
-                            <span className={`${s['profile-avatar-lg-status']} ${statusDotClass}`} />
+                            <span className={`${s['profile-avatar-lg-status']} ${statusDotClass}`}>
+                                {renderStatusGlyph(statusMeta.glyph, s['status-glyph'])}
+                            </span>
                             <button
                                 className={s['profile-avatar-edit']}
                                 onClick={() => fileInputRef.current?.click()}
@@ -146,7 +183,12 @@ export default function ProfileMenu() {
                             <div className={s['profile-dropdown-user']}>@{user?.username}</div>
                             {user?.email && <div className={s['profile-dropdown-email']}>{user.email}</div>}
                             <div className={s['profile-dropdown-badges']}>
-                                <span className={`${s['dd-status-badge']} ${s[`status-${myStatus}`] || ''}`}>{statusLabel}</span>
+                                <span className={`${s['dd-status-badge']} ${s[`status-${myStatus}`] || ''}`}>
+                                    <span className={s['dd-status-glyph']}>
+                                        {renderStatusGlyph(statusMeta.glyph, s['status-glyph-badge'])}
+                                    </span>
+                                    {statusMeta.label}
+                                </span>
                                 {workState !== 'logged_out' && (
                                     <span className={`${s['dd-mode-badge']} ${s[`dd-mode-${workMode}`] || ''}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
                                         {workMode === 'office' ? <Building2 size={12} /> : <House size={12} />}

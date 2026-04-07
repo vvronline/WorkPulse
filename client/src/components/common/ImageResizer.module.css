@@ -9,7 +9,7 @@
 .border {
   position: absolute;
   inset: 0;
-  border: 2px solid #6366f1;
+  border: 2px solid #0ea5e9;
   border-radius: 1px;
   pointer-events: none;
 }
@@ -19,7 +19,7 @@
   bottom: calc(100% + 6px);
   left: 50%;
   transform: translateX(-50%);
-  background: #6366f1;
+  background: #0ea5e9;
   color: #fff;
   font-size: 0.68rem;
   font-weight: 600;
@@ -64,7 +64,7 @@
   width: 10px;
   height: 10px;
   background: #fff;
-  border: 2px solid #6366f1;
+  border: 2px solid #0ea5e9;
   border-radius: 2px;
   box-sizing: border-box;
   pointer-events: all;

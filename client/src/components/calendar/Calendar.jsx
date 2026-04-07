@@ -67,7 +67,7 @@ export default function Calendar({ tasks = [] }) {
         start_time: '',
         end_time: '',
         all_day: false,
-        color: '#6366f1',
+        color: '#0ea5e9',
         task_id: '',
         schedule_mode: 'single',
         weekdays: [],
@@ -138,7 +138,7 @@ export default function Calendar({ tasks = [] }) {
             start_time: toLocalISO(start),
             end_time: toLocalISO(end),
             all_day: false,
-            color: '#6366f1',
+            color: '#0ea5e9',
             task_id: '',
             schedule_mode: 'single',
             weekdays: [toMonDayIndex(start)],
@@ -148,7 +148,7 @@ export default function Calendar({ tasks = [] }) {
 
     const openEdit = (evt) => {
         setForm({
-            title: evt.title, description: evt.description || '', color: evt.color || '#6366f1', task_id: evt.task_id || '',
+            title: evt.title, description: evt.description || '', color: evt.color || '#0ea5e9', task_id: evt.task_id || '',
             start_time: toLocalISO(new Date(evt.start_time)), end_time: toLocalISO(new Date(evt.end_time)), all_day: evt.all_day,
             schedule_mode: 'single', weekdays: [],
         });
@@ -338,8 +338,8 @@ export default function Calendar({ tasks = [] }) {
                                     const colW = total === 1 ? undefined : `calc((100% - ${gap * (total + 1)}px) / ${total})`;
                                     const colL = total === 1 ? '2px' : `calc(${col} * ((100% - ${gap * (total + 1)}px) / ${total}) + ${gap * (col + 1)}px)`;
                                     const evStyle = total === 1
-                                        ? { top: `${top}px`, height: `${height}px`, left: '2px', right: '2px', '--ev-color': ev.color || '#6366f1' }
-                                        : { top: `${top}px`, height: `${height}px`, left: colL, width: colW, '--ev-color': ev.color || '#6366f1' };
+                                        ? { top: `${top}px`, height: `${height}px`, left: '2px', right: '2px', '--ev-color': ev.color || '#0ea5e9' }
+                                        : { top: `${top}px`, height: `${height}px`, left: colL, width: colW, '--ev-color': ev.color || '#0ea5e9' };
                                     return (
                                         <div key={ev.id} className={s.event}
                                             style={evStyle}
@@ -372,7 +372,7 @@ export default function Calendar({ tasks = [] }) {
                             return (
                                 <div key={di} className={s.allDayCell}>
                                     {allDayEvts.map(ev => (
-                                        <div key={ev.id} className={s.allDayEvent} style={{ '--ev-color': ev.color || '#6366f1' }}
+                                        <div key={ev.id} className={s.allDayEvent} style={{ '--ev-color': ev.color || '#0ea5e9' }}
                                             onClick={() => openEdit(ev)}>
                                             {ev.title}
                                         </div>
@@ -398,7 +398,7 @@ export default function Calendar({ tasks = [] }) {
                         onClick={() => { setBaseDate(new Date(day)); setView('day'); }}>
                         <span className={s.monthDate}>{day.getDate()}</span>
                         {dayEvts.slice(0, 3).map(ev => (
-                            <div key={ev.id} className={s.monthEvent} style={{ '--ev-color': ev.color || '#6366f1' }}
+                            <div key={ev.id} className={s.monthEvent} style={{ '--ev-color': ev.color || '#0ea5e9' }}
                                 onClick={(e) => { e.stopPropagation(); openEdit(ev); }}>
                                 {ev.title}
                             </div>

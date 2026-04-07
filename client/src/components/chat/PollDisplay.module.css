@@ -41,7 +41,7 @@
     left: 0;
     top: 0;
     bottom: 0;
-    background: rgba(99,102,241,.12);
+    background: rgba(14, 165, 233, .12);
     transition: width 0.3s ease;
     border-radius: 6px;
 }

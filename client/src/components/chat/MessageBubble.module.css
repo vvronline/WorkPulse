@@ -68,7 +68,7 @@
 }
 /* Mine – solid primary, white text, tail on bottom-right */
 .myBubble {
-    background: var(--primary, #6366f1);
+    background: var(--primary, #0ea5e9);
     color: #fff;
     border-radius: 18px 18px 4px 18px;
 }
@@ -317,14 +317,14 @@
 }
 .myReaction {
     border-color: var(--primary);
-    background: rgba(99,102,241,.12);
-    box-shadow: 0 0 0 1px rgba(99,102,241,.08);
+    background: rgba(14, 165, 233, .12);
+    box-shadow: 0 0 0 1px rgba(14, 165, 233, .08);
 }
 .myReaction .reactionCount {
     color: var(--primary);
 }
 .myReaction:hover {
-    background: rgba(99,102,241,.18);
+    background: rgba(14, 165, 233, .18);
     border-color: var(--primary);
 }
 

@@ -147,7 +147,7 @@
     margin-bottom: 0;
 }
 .moreItem:hover {
-    background: rgba(99,102,241,0.1);
+    background: rgba(14, 165, 233, 0.1);
     color: var(--text);
 }
 .moreItem svg {
@@ -180,7 +180,7 @@
     box-shadow: 0 8px 24px rgba(0,0,0,0.12);
 }
 :global([data-theme="light"]) .moreItem:hover {
-    background: rgba(99,102,241,0.08);
+    background: rgba(14, 165, 233, 0.08);
 }
 
 /* ─── Tablet ─── */

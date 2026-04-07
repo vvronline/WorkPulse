@@ -14,7 +14,7 @@
 }
 
 .pip-root:active { cursor: grabbing; }
-.pip-root:hover { box-shadow: 0 8px 40px rgba(0,0,0,0.55), 0 0 0 1px rgba(99,102,241,0.4); }
+.pip-root:hover { box-shadow: 0 8px 40px rgba(0,0,0,0.55), 0 0 0 1px rgba(14, 165, 233, 0.4); }
 
 @keyframes pip-enter {
     from { opacity: 0; transform: translateY(30px) scale(0.9); }
@@ -49,7 +49,7 @@
     font-size: 1.6rem;
     font-weight: 700;
     color: #fff;
-    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    background: linear-gradient(135deg, #0ea5e9 0%, #0ea5e9 100%);
     margin: auto;
 }
 

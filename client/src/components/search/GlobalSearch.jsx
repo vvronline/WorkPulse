@@ -3,7 +3,7 @@ import { Search, X, ClipboardList, FileText, Calendar, Palmtree, Rocket, User, S
 import { useGlobalSearch } from '../../hooks/useGlobalSearch';
 import s from './GlobalSearch.module.css';
 
-const LEAVE_STATUS_COLOR = { approved: '#16a34a', pending: '#d97706', rejected: '#dc2626', withdraw_pending: '#7c3aed' };
+const LEAVE_STATUS_COLOR = { approved: '#16a34a', pending: '#d97706', rejected: '#dc2626', withdraw_pending: '#0284c7' };
 const SPRINT_STATUS_COLOR = { active: '#16a34a', planned: '#2563eb', completed: '#6b7280' };
 const ROLE_LABELS = {
     employee: 'Employee', team_lead: 'Team Lead', manager: 'Manager',

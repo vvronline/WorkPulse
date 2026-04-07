@@ -28,7 +28,7 @@ export const QUOTES = [
 ];
 
 // Confetti pieces are a static decorative asset — generated once per session.
-const _confettiColors = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899'];
+const _confettiColors = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#0ea5e9', '#ec4899'];
 export const CONFETTI_PIECES = [...Array(50)].map(() => ({
     '--confetti-left': `${Math.random() * 100}%`,
     '--confetti-delay': `${Math.random() * 2}s`,

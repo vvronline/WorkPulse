@@ -103,7 +103,7 @@
   background: var(--bg-hover, rgba(0,0,0,0.05));
 }
 .versionRowActive {
-  background: var(--accent-soft, rgba(99,102,241,0.08));
+  background: var(--accent-soft, rgba(14, 165, 233, 0.08));
   border-left-color: var(--accent);
 }
 

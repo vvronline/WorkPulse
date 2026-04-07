@@ -43,18 +43,18 @@ async function queryLogs({ orgId, actorId, entityType, entityId, action, from, t
     const params = [];
     let p = 1;
 
-    if (orgId) { where.push(`org_id = $${p++}`); params.push(orgId); }
-    if (actorId) { where.push(`actor_id = $${p++}`); params.push(actorId); }
-    if (entityType) { where.push(`entity_type = $${p++}`); params.push(entityType); }
-    if (entityId) { where.push(`entity_id = $${p++}`); params.push(entityId); }
-    if (action) { where.push(`action = $${p++}`); params.push(action); }
-    if (from) { where.push(`created_at >= $${p++}`); params.push(from); }
-    if (to) { where.push(`created_at <= $${p++}`); params.push(to); }
+    if (orgId) { where.push(`al.org_id = $${p++}`); params.push(orgId); }
+    if (actorId) { where.push(`al.actor_id = $${p++}`); params.push(actorId); }
+    if (entityType) { where.push(`al.entity_type = $${p++}`); params.push(entityType); }
+    if (entityId) { where.push(`al.entity_id = $${p++}`); params.push(entityId); }
+    if (action) { where.push(`al.action = $${p++}`); params.push(action); }
+    if (from) { where.push(`al.created_at >= $${p++}`); params.push(from); }
+    if (to) { where.push(`al.created_at <= $${p++}`); params.push(to); }
 
     const whereClause = where.length > 0 ? 'WHERE ' + where.join(' AND ') : '';
 
     const countRes = await query(
-        `SELECT COUNT(*) AS count FROM audit_logs ${whereClause}`,
+        `SELECT COUNT(*) AS count FROM audit_logs al ${whereClause}`,
         params,
     );
     const total = parseInt(countRes.rows[0].count, 10);

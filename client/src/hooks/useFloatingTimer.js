@@ -53,7 +53,9 @@ export function useFloatingTimer() {
     useEffect(() => { setWorkState(state); }, [state, setWorkState]);
     useEffect(() => { setContextWorkMode(workMode); }, [workMode, setContextWorkMode]);
 
-    const floorMinutes = Math.floor((state === 'logged_out' ? 0 : liveFloorSec) / 60);
+    const floorMinutes = Math.floor((state === 'logged_out' ? (status?.floorMinutes || 0) * 60 : liveFloorSec) / 60);
+    const breakMinutes = Math.floor((state === 'logged_out' ? (status?.breakMinutes || 0) * 60 : liveBreakSec) / 60);
+    const totalMinutes = floorMinutes + breakMinutes;
     const progressPercent = Math.min((floorMinutes / targetMinutes) * 100, 100);
 
     const breakCount = useMemo(
@@ -122,6 +124,7 @@ export function useFloatingTimer() {
         actionLoading, error,
         liveFloorSec, liveBreakSec, showConfetti,
         floorMinutes, progressPercent, progressColor,
+        breakMinutes, totalMinutes,
         completedTarget, remaining, overtimeMinutes,
         breakCount, estimatedClockOut, targetMinutes,
         showClockOutConfirm, setShowClockOutConfirm,

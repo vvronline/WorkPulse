@@ -17,7 +17,7 @@
   opacity: 0.55; transition: opacity 0.15s, background 0.15s, border-color 0.15s; line-height: 1;
 }
 .actBtn:hover     { opacity: 1; background: var(--bg-hover, rgba(255,255,255,0.06)); border-color: var(--border); }
-.actBtnActive     { opacity: 1; background: var(--primary-dim, rgba(99,102,241,0.12)); border-color: rgba(99,102,241,0.25); }
+.actBtnActive     { opacity: 1; background: var(--primary-dim, rgba(14, 165, 233, 0.12)); border-color: rgba(14, 165, 233, 0.25); }
 .actBtnDanger:hover { background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.25); }
 
 .metaRow {

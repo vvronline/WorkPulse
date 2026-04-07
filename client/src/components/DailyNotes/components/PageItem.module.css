@@ -6,11 +6,11 @@
 .pageItem[draggable="true"]:active  { cursor: grabbing; }
 .pageItem:hover      { background: var(--bg-hover, rgba(255,255,255,0.05)); }
 .pageItemActive {
-  background: var(--primary-dim, rgba(99,102,241,0.1)) !important;
+  background: var(--primary-dim, rgba(14, 165, 233, 0.1)) !important;
   border-left-color: var(--primary);
 }
 .pageItemArchived { opacity: 0.55; }
-.dragOver  { border-top: 2px solid var(--primary) !important; background: var(--primary-dim, rgba(99,102,241,0.08)) !important; }
+.dragOver  { border-top: 2px solid var(--primary) !important; background: var(--primary-dim, rgba(14, 165, 233, 0.08)) !important; }
 .dragging  { opacity: 0.4; }
 
 .pageRow {
@@ -50,7 +50,7 @@
 }
 .pageItem:hover .menuBtn,
 .pageItemActive .menuBtn { opacity: 1; }
-.menuBtn:hover { color: var(--primary); background: var(--primary-dim, rgba(99,102,241,0.1)); }
+.menuBtn:hover { color: var(--primary); background: var(--primary-dim, rgba(14, 165, 233, 0.1)); }
 
 /* ── Touch: always show menu button, bigger tap target ── */
 @media (hover: none) {

@@ -49,6 +49,6 @@
 .busy { background: #ef4444; }
 .dnd { background: #ef4444; }
 .away { background: #f59e0b; }
-.offline { background: var(--text-muted); }
+.offline { background: transparent; color: var(--text-muted); border-color: var(--text-muted); }
 .inCall { background: #ef4444; }
-.inMeeting { background: #8b5cf6; }
+.inMeeting { background: #0ea5e9; }

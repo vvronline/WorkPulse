@@ -58,7 +58,7 @@ export default function ParticipantTile({ participant, isLocal, localStream, scr
     const isScreenSharing = !isLocal && participant?.screenSharing;
 
     const qualityColor = { good: '#10b981', medium: '#f59e0b', poor: '#ef4444' };
-    const borderGlow = audioLevel > 0.15 && !muted ? `0 0 0 2px rgba(99, 102, 241, ${Math.min(audioLevel, 0.8)})` : 'none';
+    const borderGlow = audioLevel > 0.15 && !muted ? `0 0 0 2px rgba(14, 165, 233, ${Math.min(audioLevel, 0.8)})` : 'none';
 
     return (
         <div className={`pt-tile ${isLocal ? 'pt-local' : ''}`} style={{ boxShadow: borderGlow }}>
@@ -86,7 +86,7 @@ export default function ParticipantTile({ participant, isLocal, localStream, scr
                         <span className="pt-speaking-icon" title="Speaking"><Volume2 size={12} /></span>
                     )}
                     {quality && (
-                        <span className="pt-quality-dot" style={{ background: qualityColor[quality] || '#6366f1' }} title={`Connection: ${quality}`} />
+                        <span className="pt-quality-dot" style={{ background: qualityColor[quality] || '#0ea5e9' }} title={`Connection: ${quality}`} />
                     )}
                 </div>
             </div>

@@ -83,7 +83,7 @@
 }
 .date { font-size: 0.7rem; color: var(--text-muted); }
 .highlight {
-    background: rgba(99,102,241,.25);
+    background: rgba(14, 165, 233, .25);
     color: var(--primary);
     border-radius: 2px;
     padding: 0 1px;

@@ -13,7 +13,7 @@ const TYPES = [
     { value: 'success', label: 'Success', color: '#10b981' },
     { value: 'warning', label: 'Warning', color: '#f59e0b' },
     { value: 'urgent', label: 'Urgent', color: '#ef4444' },
-    { value: 'quote', label: 'Quote', color: '#a78bfa' },
+    { value: 'quote', label: 'Quote', color: '#38bdf8' },
 ];
 
 const DURATIONS = [

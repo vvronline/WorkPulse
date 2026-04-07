@@ -16,8 +16,8 @@ function generateId() {
 }
 
 export const TAG_COLORS = [
-  '#6366f1', '#ec4899', '#f59e0b', '#10b981',
-  '#3b82f6', '#8b5cf6', '#ef4444', '#14b8a6',
+  '#0ea5e9', '#ec4899', '#f59e0b', '#10b981',
+  '#3b82f6', '#0ea5e9', '#ef4444', '#14b8a6',
 ];
 
 // ── Factory helpers ──────────────────────────────────────

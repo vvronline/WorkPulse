@@ -43,9 +43,25 @@ export default function ChatAvatar({ avatar, name, size = 'md', online, userStat
                     className={dotClass}
                     title={statusInfo?.label || (online ? 'Online' : 'Offline')}
                 >
+                    {showIcon && userStatus === 'available' && (
+                        <svg className={s.dotIcon} viewBox="0 0 10 10" fill="none">
+                            <path d="M2.2 5.1L4.2 7L7.8 3.4" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                    )}
                     {showIcon && userStatus === 'dnd' && (
                         <svg className={s.dotIcon} viewBox="0 0 10 10" fill="none">
                             <line x1="3" y1="5" x2="7" y2="5" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" />
+                        </svg>
+                    )}
+                    {showIcon && userStatus === 'away' && (
+                        <svg className={s.dotIcon} viewBox="0 0 10 10" fill="none">
+                            <circle cx="5" cy="5" r="3" stroke="#fff" strokeWidth="1.3" />
+                            <path d="M5 3.3V5.3L6.4 6.2" stroke="#fff" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                    )}
+                    {showIcon && userStatus === 'offline' && (
+                        <svg className={s.dotIcon} viewBox="0 0 10 10" fill="none">
+                            <circle cx="5" cy="5" r="3" stroke="currentColor" strokeWidth="1.4" />
                         </svg>
                     )}
                     {showIcon && userStatus === 'in_call' && (

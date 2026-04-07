@@ -10,8 +10,8 @@ export function TimeDistributionChart({ totalFloor, totalBreak }) {
         labels: ['Work Time', 'Break Time'],
         datasets: [{
             data: [totalFloor, totalBreak],
-            backgroundColor: ['rgba(99, 102, 241, 0.8)', 'rgba(245, 158, 11, 0.8)'],
-            hoverBackgroundColor: ['rgba(99, 102, 241, 1)', 'rgba(245, 158, 11, 1)'],
+            backgroundColor: ['rgba(14, 165, 233, 0.8)', 'rgba(245, 158, 11, 0.8)'],
+            hoverBackgroundColor: ['rgba(14, 165, 233, 1)', 'rgba(245, 158, 11, 1)'],
             borderWidth: 0,
             hoverOffset: 10,
             spacing: 4,
@@ -48,8 +48,8 @@ export function WorkModeChart({ officeDays, remoteDays }) {
                 labels: ['Office', 'Remote'],
                 datasets: [{
                     data: [officeDays, remoteDays],
-                    backgroundColor: ['rgba(99, 102, 241, 0.8)', 'rgba(34, 197, 94, 0.8)'],
-                    hoverBackgroundColor: ['rgba(99, 102, 241, 1)', 'rgba(34, 197, 94, 1)'],
+                    backgroundColor: ['rgba(14, 165, 233, 0.8)', 'rgba(34, 197, 94, 0.8)'],
+                    hoverBackgroundColor: ['rgba(14, 165, 233, 1)', 'rgba(34, 197, 94, 1)'],
                     borderWidth: 0,
                     hoverOffset: 10,
                     spacing: 4,

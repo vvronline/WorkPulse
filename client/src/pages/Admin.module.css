@@ -133,7 +133,7 @@
     border: none;
     border-radius: 8px;
     background: var(--accent);
-    color: #fff;
+    color: var(--text-primary);
     font-weight: 600;
     font-family: inherit;
     cursor: pointer;
@@ -160,7 +160,7 @@
     border: none;
     border-radius: 8px;
     background: var(--danger);
-    color: #fff;
+    color: var(--text-primary);
     font-weight: 600;
     font-family: inherit;
     cursor: pointer;
@@ -262,7 +262,7 @@
     font-weight: 600;
 }
 
-.badgeRole[data-role="super_admin"] { background: #7c3aed22; color: #7c3aed; }
+.badgeRole[data-role="super_admin"] { background: #0284c722; color: #0284c7; }
 .badgeRole[data-role="hr_admin"] { background: #ec489922; color: #ec4899; }
 .badgeRole[data-role="manager"] { background: #3b82f622; color: #3b82f6; }
 .badgeRole[data-role="team_lead"] { background: #f59e0b22; color: #f59e0b; }

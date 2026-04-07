@@ -70,7 +70,7 @@
 .balanceIcon {
   width: 42px; height: 42px;
   border-radius: 10px;
-  background: var(--lb, rgba(99,102,241,0.12));
+  background: var(--lb, rgba(14, 165, 233, 0.12));
   display: flex; align-items: center; justify-content: center;
   font-size: 1.3rem; flex-shrink: 0;
 }
@@ -168,7 +168,7 @@
 .rangePreview {
   display: flex; align-items: center; gap: 0.4rem;
   padding: 0.5rem 0.875rem;
-  background: rgba(99,102,241,0.08); border: 1px solid rgba(99,102,241,0.2);
+  background: rgba(14, 165, 233, 0.08); border: 1px solid rgba(14, 165, 233, 0.2);
   border-radius: 8px; font-size: 0.83rem; color: var(--text-secondary);
 }
 .rangeCount { font-size: 1rem; font-weight: 800; color: var(--primary-light); }
@@ -182,9 +182,9 @@
   cursor: pointer; font-family: inherit; color: var(--text-secondary);
   font-size: 0.75rem; font-weight: 500; transition: all 0.18s;
 }
-.typeChip:hover { background: var(--lb, rgba(99,102,241,0.08)); border-color: var(--lc, var(--primary)); color: var(--text); }
+.typeChip:hover { background: var(--lb, rgba(14, 165, 233, 0.08)); border-color: var(--lc, var(--primary)); color: var(--text); }
 .typeChipActive {
-  background: var(--lb, rgba(99,102,241,0.12));
+  background: var(--lb, rgba(14, 165, 233, 0.12));
   border-color: var(--lc, var(--primary));
   color: var(--text);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--lc, var(--primary)) 25%, transparent);

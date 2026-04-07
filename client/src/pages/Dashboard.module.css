@@ -291,7 +291,7 @@
 }
 
 .inline-stat-icon.work-icon {
-  background: rgba(99, 102, 241, 0.15);
+  background: rgba(14, 165, 233, 0.15);
 }
 
 .inline-stat-icon.break-icon {
@@ -420,7 +420,7 @@
 }
 
 .timer-display.floor-timer {
-  background: linear-gradient(135deg, #a5b4fc, var(--primary-light));
+  background: linear-gradient(135deg, #7dd3fc, var(--primary-light));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -578,7 +578,7 @@
 }
 
 .circular-time.floor-timer {
-  background: linear-gradient(135deg, #a5b4fc, var(--primary-light));
+  background: linear-gradient(135deg, #7dd3fc, var(--primary-light));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -639,7 +639,7 @@
 }
 
 .stat-icon-circle.work-icon {
-  background: rgba(99, 102, 241, 0.15);
+  background: rgba(14, 165, 233, 0.15);
 }
 
 .stat-icon-circle.break-icon {
@@ -745,7 +745,7 @@
 }
 
 .mandatory-complete-banner {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.12), rgba(99, 102, 241, 0.08));
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.12), rgba(14, 165, 233, 0.08));
   border: 1px solid rgba(59, 130, 246, 0.2);
   color: #60a5fa;
   padding: 0.6rem 1rem;
@@ -783,8 +783,8 @@
 }
 
 .overtime-banner {
-  background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(236, 72, 153, 0.1));
-  border: 1px solid rgba(139, 92, 246, 0.3);
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.15), rgba(236, 72, 153, 0.1));
+  border: 1px solid rgba(14, 165, 233, 0.3);
   color: #c4b5fd;
   padding: 0.55rem 1.25rem;
   border-radius: var(--radius-full);
@@ -797,7 +797,7 @@
 }
 
 .overtime-banner strong {
-  color: #a78bfa;
+  color: #38bdf8;
   -webkit-text-fill-color: initial;
 }
 
@@ -874,9 +874,9 @@
 }
 
 .work-mode-badge.office {
-  background: rgba(99, 102, 241, 0.12);
-  color: #818cf8;
-  border: 1px solid rgba(99, 102, 241, 0.2);
+  background: rgba(14, 165, 233, 0.12);
+  color: #38bdf8;
+  border: 1px solid rgba(14, 165, 233, 0.2);
 }
 
 .work-mode-badge.remote {
@@ -959,7 +959,7 @@
 .weekend-title {
   font-size: 1.5rem;
   font-weight: 800;
-  background: linear-gradient(135deg, #22d3ee, #6366f1);
+  background: linear-gradient(135deg, #22d3ee, #0ea5e9);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;

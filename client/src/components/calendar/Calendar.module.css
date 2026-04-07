@@ -32,14 +32,14 @@
 .timeGutter { position: relative; }
 .timeLabel { height: 60px; font-size: 0.68rem; color: var(--text-muted); text-align: right; padding-right: 8px; transform: translateY(-0.5em); }
 .dayColumn { position: relative; border-left: 1px solid var(--border); min-height: calc(24 * 60px); }
-.todayCol { background: var(--bg-hover, rgba(99,102,241,0.04)); }
+.todayCol { background: var(--bg-hover, rgba(14, 165, 233, 0.04)); }
 .hourSlot { height: 60px; border-bottom: 1px solid var(--border-light, rgba(255,255,255,0.04)); cursor: pointer; transition: background 0.1s; }
-.hourSlot:hover { background: var(--bg-hover, rgba(99,102,241,0.06)); }
+.hourSlot:hover { background: var(--bg-hover, rgba(14, 165, 233, 0.06)); }
 .hourSlotDisabled { cursor: not-allowed; opacity: 0.55; }
 .hourSlotDisabled:hover { background: transparent; }
 
 /* Events */
-.event { position: absolute; background-color: var(--ev-color, #6366f1); border-radius: 4px; padding: 2px 6px; cursor: pointer; overflow: hidden; z-index: 2; border-left: 3px solid rgba(0,0,0,0.3); transition: transform 0.1s, z-index 0s; box-shadow: 0 1px 3px rgba(0,0,0,0.25); }
+.event { position: absolute; background-color: var(--ev-color, #0ea5e9); border-radius: 4px; padding: 2px 6px; cursor: pointer; overflow: hidden; z-index: 2; border-left: 3px solid rgba(0,0,0,0.3); transition: transform 0.1s, z-index 0s; box-shadow: 0 1px 3px rgba(0,0,0,0.25); }
 .event:hover { transform: scale(1.02); z-index: 5; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
 .eventTitle { display: block; font-size: 0.72rem; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .eventTime { display: block; font-size: 0.62rem; color: rgba(255,255,255,0.8); }
@@ -52,7 +52,7 @@
 .allDayRow { display: grid; grid-template-columns: 52px repeat(var(--day-count, 7), 1fr); border-bottom: 1px solid var(--border); padding: 4px 0; }
 .timeGutterLabel { font-size: 0.65rem; color: var(--text-muted); text-align: right; padding-right: 8px; line-height: 24px; }
 .allDayCell { padding: 0 2px; display: flex; flex-wrap: wrap; gap: 2px; }
-.allDayEvent { background: var(--ev-color, #6366f1); color: #fff; font-size: 0.7rem; padding: 1px 6px; border-radius: 3px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.allDayEvent { background: var(--ev-color, #0ea5e9); color: #fff; font-size: 0.7rem; padding: 1px 6px; border-radius: 3px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Month Grid */
 .monthGrid { display: grid; grid-template-columns: repeat(7, 1fr); flex: 1; min-height: 0; overflow-y: auto; }
@@ -60,10 +60,10 @@
 .monthCell { border: 1px solid var(--border-light, rgba(255,255,255,0.04)); padding: 4px; min-height: 90px; cursor: pointer; transition: background 0.15s; }
 .monthCell:hover { background: var(--bg-hover, rgba(255,255,255,0.04)); }
 .otherMonth { opacity: 0.35; }
-.todayCell { background: var(--bg-hover, rgba(99,102,241,0.06)); }
+.todayCell { background: var(--bg-hover, rgba(14, 165, 233, 0.06)); }
 .todayCell .monthDate { background: var(--accent); color: #fff; border-radius: 50%; width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; }
 .monthDate { font-size: 0.78rem; font-weight: 600; color: var(--text-primary); margin-bottom: 2px; display: inline-block; }
-.monthEvent { background: var(--ev-color, #6366f1); color: #fff; font-size: 0.62rem; padding: 1px 4px; border-radius: 3px; margin-bottom: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.monthEvent { background: var(--ev-color, #0ea5e9); color: #fff; font-size: 0.62rem; padding: 1px 4px; border-radius: 3px; margin-bottom: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .monthMore { font-size: 0.62rem; color: var(--text-muted); cursor: pointer; }
 
 /* Modal */
@@ -98,8 +98,8 @@
 [data-theme="light"] .hourSlot { border-bottom-color: rgba(0,0,0,0.06); }
 [data-theme="light"] .dayColumn { border-left-color: rgba(0,0,0,0.08); }
 [data-theme="light"] .monthCell { border-color: rgba(0,0,0,0.08); }
-[data-theme="light"] .todayCol { background: rgba(99,102,241,0.05); }
-[data-theme="light"] .todayCell { background: rgba(99,102,241,0.06); }
+[data-theme="light"] .todayCol { background: rgba(14, 165, 233, 0.05); }
+[data-theme="light"] .todayCell { background: rgba(14, 165, 233, 0.06); }
 
 @media (max-width: 768px) {
     .toolbar { flex-direction: column; align-items: stretch; }
@@ -123,7 +123,7 @@
 .toggleThumb { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
 .toggleSwitchOn .toggleThumb { transform: translateX(16px); }
 
-.meetingOptions { border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; margin-bottom: 0.75rem; background: var(--bg-hover, rgba(99,102,241,0.04)); }
+.meetingOptions { border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; margin-bottom: 0.75rem; background: var(--bg-hover, rgba(14, 165, 233, 0.04)); }
 .meetingSettingsRow { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.5rem; }
 .meetingSettingsRow .checkbox { padding-bottom: 0; }
 
@@ -176,9 +176,9 @@
 
 @supports not (color: color-mix(in srgb, black, white)) {
     .modalCloseBtn:hover { border-color: var(--accent); }
-    .formGroup input:focus, .formGroup textarea:focus, .formGroup select:focus, .participantInput:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2); }
+    .formGroup input:focus, .formGroup textarea:focus, .formGroup select:focus, .participantInput:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.2); }
     .scheduleModeBtn:hover { border-color: var(--accent); }
-    .scheduleModeBtnActive { background: rgba(99, 102, 241, 0.14); border-color: var(--accent); }
+    .scheduleModeBtnActive { background: rgba(14, 165, 233, 0.14); border-color: var(--accent); }
 }
 
 @media (max-width: 640px) {

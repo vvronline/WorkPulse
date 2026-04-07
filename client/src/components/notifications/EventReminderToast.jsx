@@ -48,7 +48,7 @@ function ReminderItem({ reminder, onDismiss }) {
       </div>
       <div
         className={s.progressBar}
-        style={{ '--progress': `${progress}%`, '--ev-color': event.color || '#6366f1' }}
+        style={{ '--progress': `${progress}%`, '--ev-color': event.color || '#0ea5e9' }}
       />
     </div>
   );

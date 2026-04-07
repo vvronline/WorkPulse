@@ -75,7 +75,7 @@ function EventItem({ ev }) {
 
   return (
     <div className={`${s.item} ${past ? s.past : ''}`}>
-      <div className={s.colorDot} style={{ background: ev.color || '#6366f1' }} />
+      <div className={s.colorDot} style={{ background: ev.color || '#0ea5e9' }} />
       <div className={s.body}>
         <span className={s.name}>{ev.title}</span>
         <span className={s.time}>
@@ -160,7 +160,7 @@ const TodayEventsCard = memo(function TodayEventsCard({ events, tomorrowEvents }
           <div className={s.list}>
             {tomorrowSorted.slice(0, 3).map((ev) => (
               <div key={ev.id} className={`${s.item} ${s.tomorrow}`}>
-                <div className={s.colorDot} style={{ background: ev.color || '#6366f1' }} />
+                <div className={s.colorDot} style={{ background: ev.color || '#0ea5e9' }} />
                 <div className={s.body}>
                   <span className={s.name}>{ev.title}</span>
                   <span className={s.time}>

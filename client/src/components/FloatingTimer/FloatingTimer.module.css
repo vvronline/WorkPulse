@@ -172,7 +172,7 @@
     align-items: center;
     justify-content: center;
     transition: background 0.15s, transform 0.1s;
-    color: #fff;
+    color: var(--text-primary);
 }
 
 .icon-btn:hover {
@@ -355,7 +355,7 @@
 
 .mode-btn.active {
     background: var(--primary);
-    color: #fff;
+    color: var(--text-primary);
     border-color: var(--primary);
 }
 
@@ -366,7 +366,7 @@
     font-weight: 700;
     font-size: 0.8rem;
     cursor: pointer;
-    color: #fff;
+    color: var(--text-primary);
     transition: opacity 0.15s;
 }
 

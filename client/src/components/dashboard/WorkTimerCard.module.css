@@ -217,6 +217,10 @@
     padding: 0.5rem 0.75rem;
 }
 
+.summary {
+    border: 1px solid var(--glass-border);
+}
+
 .stat {
     display: flex;
     flex-direction: column;
@@ -318,6 +322,12 @@
     transition: opacity 0.15s, transform 0.1s;
     font-family: inherit;
     flex: 0 1 auto;
+}
+
+.tallAction {
+    min-height: 42px;
+    padding-top: 10px;
+    padding-bottom: 10px;
 }
 
 .btn:hover { opacity: 0.9; transform: translateY(-1px); }

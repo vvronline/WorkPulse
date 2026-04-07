@@ -11,8 +11,8 @@ export default function WorkBreakChart({ labels, floorHours, breakHours }) {
             {
                 label: 'Work Time (hrs)',
                 data: floorHours,
-                backgroundColor: 'rgba(99, 102, 241, 0.7)',
-                hoverBackgroundColor: 'rgba(99, 102, 241, 0.9)',
+                backgroundColor: 'rgba(14, 165, 233, 0.7)',
+                hoverBackgroundColor: 'rgba(14, 165, 233, 0.9)',
                 borderRadius: 8,
                 borderSkipped: false,
             },

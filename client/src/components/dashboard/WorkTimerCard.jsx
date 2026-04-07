@@ -11,7 +11,7 @@ export default function WorkTimerCard() {
         workMode, setWorkMode,
         actionLoading, error,
         liveFloorSec, liveBreakSec,
-        floorMinutes, progressPercent, progressColor,
+        floorMinutes, breakMinutes, totalMinutes, progressPercent, progressColor,
         completedTarget, remaining, overtimeMinutes,
         breakCount, estimatedClockOut, targetMinutes,
         showClockOutConfirm, setShowClockOutConfirm,
@@ -95,6 +95,25 @@ export default function WorkTimerCard() {
                             </div>
                         )}
 
+                        {state === 'logged_out' && (floorMinutes > 0 || breakMinutes > 0) && (
+                            <div className={`${s.stats} ${s.summary}`}>
+                                <div className={s.stat}>
+                                    <span className={s['stat-label']}>Work</span>
+                                    <span className={s['stat-value']}>{formatTime(floorMinutes)}</span>
+                                </div>
+                                <div className={s['stat-divider']} />
+                                <div className={s.stat}>
+                                    <span className={s['stat-label']}>Break</span>
+                                    <span className={s['stat-value']}>{formatTime(breakMinutes)}</span>
+                                </div>
+                                <div className={s['stat-divider']} />
+                                <div className={s.stat}>
+                                    <span className={s['stat-label']}>Total</span>
+                                    <span className={s['stat-value']}>{formatTime(totalMinutes)}</span>
+                                </div>
+                            </div>
+                        )}
+
                         {/* Progress bar */}
                         {state !== 'logged_out' && (
                             <div className={s.progress}>
@@ -155,7 +174,7 @@ export default function WorkTimerCard() {
                                     <button className={`${s.btn} ${s.warning}`} onClick={handleBreakStart} disabled={!!actionLoading}>
                                         <Pause size={14} /> Break
                                     </button>
-                                    <button className={`${s.btn} ${s.danger}`} onClick={() => setShowClockOutConfirm(true)} disabled={!!actionLoading}>
+                                    <button className={`${s.btn} ${s.danger} ${s.tallAction}`} onClick={() => setShowClockOutConfirm(true)} disabled={!!actionLoading}>
                                         <Square size={14} /> Logout
                                     </button>
                                 </div>
@@ -166,7 +185,7 @@ export default function WorkTimerCard() {
                                     <button className={`${s.btn} ${s.success}`} onClick={handleBreakEnd} disabled={!!actionLoading}>
                                         <Play size={14} /> Resume
                                     </button>
-                                    <button className={`${s.btn} ${s.danger}`} onClick={() => setShowClockOutConfirm(true)} disabled={!!actionLoading}>
+                                    <button className={`${s.btn} ${s.danger} ${s.tallAction}`} onClick={() => setShowClockOutConfirm(true)} disabled={!!actionLoading}>
                                         <Square size={14} /> Logout
                                     </button>
                                 </div>

@@ -72,7 +72,7 @@
 .task-priority-badge { padding: 0.2rem 0.5rem; border-radius: 6px; font-size: 0.7rem; font-weight: 600; white-space: nowrap; flex-shrink: 0; background: var(--badge-bg); color: var(--badge-color); }
 .backlog-status-badge { font-size: 0.68rem; font-weight: 600; padding: 0.15rem 0.5rem; border-radius: 99px; background: var(--badge-bg); color: var(--badge-color); white-space: nowrap; }
 .backlog-ticket-id { font-family: monospace; font-size: 0.78rem; color: var(--text-muted); }
-.label-pill { display: inline-flex; align-items: center; padding: 0.15rem 0.5rem; border-radius: 99px; font-size: 0.65rem; font-weight: 600; background: var(--label-color, #6366f1); color: #fff; white-space: nowrap; }
+.label-pill { display: inline-flex; align-items: center; padding: 0.15rem 0.5rem; border-radius: 99px; font-size: 0.65rem; font-weight: 600; background: var(--label-color, #0ea5e9); color: #fff; white-space: nowrap; }
 .overdue { color: var(--danger); font-weight: 600; }
 .close-form-btn { background: transparent; border: none; color: var(--text-muted); font-size: 1.2rem; cursor: pointer; padding: 4px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease; }
 .close-form-btn:hover { background: var(--surface-hover); color: var(--text); transform: scale(1.1); }
