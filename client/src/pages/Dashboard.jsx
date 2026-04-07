@@ -9,6 +9,7 @@ import EventReminderToast from '../components/notifications/EventReminderToast';
 import TasksSummary from '../components/dashboard/TasksSummary';
 import PendingApprovalsCard from '../components/dashboard/PendingApprovalsCard';
 import SprintProgressCard from '../components/dashboard/SprintProgressCard';
+import WorkTimerCard from '../components/dashboard/WorkTimerCard';
 import { useEventReminder } from '../hooks/useEventReminder';
 import { ROLE_LEVEL } from '../constants';
 import s from './Dashboard.module.css';
@@ -109,6 +110,7 @@ export default function Dashboard() {
 
       {/* Main content — events + tasks side by side */}
       <div className={s['dashboard-content']}>
+        <WorkTimerCard />
         <TodayEventsCard events={todayEvents} tomorrowEvents={tomorrowEvents} />
         <TasksSummary taskSummary={taskSummary} />
         <SprintProgressCard />

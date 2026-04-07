@@ -258,7 +258,7 @@ export default function ManualEntry() {
                       <span>{entryTypeIcons[entry.entry_type]}</span>
                       <span>{entryTypeLabels[entry.entry_type]}</span>
                       <span className={s['existing-time']}>
-                        {new Date(entry.timestamp.replace(' ', 'T') + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {tsToLocalTime(entry.timestamp)}
                       </span>
                     </div>
                   ))}

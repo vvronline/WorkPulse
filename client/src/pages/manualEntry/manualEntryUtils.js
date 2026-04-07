@@ -1,6 +1,10 @@
-// Convert a UTC timestamp string (SQLite format) to local HH:MM
+// Convert a UTC timestamp string (SQLite or ISO format) to local HH:MM
 export function tsToLocalTime(ts) {
-    const d = new Date(ts.replace(' ', 'T') + 'Z');
+    if (!ts) return '--:--';
+    // If already ISO format (has 'T'), use as-is; otherwise convert SQLite space format
+    const normalized = ts.includes('T') ? ts : ts.replace(' ', 'T') + 'Z';
+    const d = new Date(normalized);
+    if (isNaN(d.getTime())) return '--:--';
     const hh = String(d.getHours()).padStart(2, '0');
     const mm = String(d.getMinutes()).padStart(2, '0');
     return `${hh}:${mm}`;
