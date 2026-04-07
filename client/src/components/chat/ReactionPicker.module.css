@@ -58,3 +58,19 @@
     background: var(--surface-hover);
     color: var(--text);
 }
+
+/* ─── Mobile ─── */
+@media (max-width: 480px) {
+    .picker {
+        max-width: calc(100vw - 16px);
+    }
+    .emojiRow {
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+    .emoji {
+        width: 38px;
+        height: 38px;
+        font-size: 1.3rem;
+    }
+}

@@ -9,10 +9,6 @@
     flex-direction: column;
     overflow: hidden;
     z-index: 200;
-    position: absolute;
-    bottom: 100%;
-    right: 0;
-    margin-bottom: 8px;
     animation: pickerSlideIn 0.18s ease-out;
 }
 @keyframes pickerSlideIn {
@@ -126,6 +122,24 @@
     }
     .emojiGrid {
         grid-template-columns: repeat(7, 1fr);
+    }
+}
+
+/* ─── Mobile ─── */
+@media (max-width: 480px) {
+    .picker {
+        width: calc(100vw - 16px);
+        max-width: 340px;
+        max-height: min(360px, 60vh);
+    }
+    .emojiGrid {
+        grid-template-columns: repeat(7, 1fr);
+        max-height: min(240px, 45vh);
+    }
+    .emojiBtn {
+        width: 40px;
+        height: 40px;
+        font-size: 1.3rem;
     }
 }
 

@@ -50,8 +50,12 @@ export default function ReactionBar({ msg, userId, onReact }) {
                     onClose={() => setShowReactions(false)}
                     onOpenFull={() => { setShowReactions(false); setShowFullPicker(true); }}
                     style={(() => {
+                        const isMobile = window.innerWidth <= 480;
                         const rect = addBtnRef.current?.getBoundingClientRect();
                         if (!rect) return { position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 10000 };
+                        if (isMobile) {
+                            return { position: 'fixed', left: '50%', transform: 'translateX(-50%)', top: `${Math.max(8, rect.top - 54)}px`, zIndex: 10000 };
+                        }
                         const pickerWidth = 370;
                         let left = rect.left + rect.width / 2 - pickerWidth / 2;
                         left = Math.max(8, Math.min(left, window.innerWidth - pickerWidth - 8));
@@ -68,13 +72,19 @@ export default function ReactionBar({ msg, userId, onReact }) {
                     onSelectEmoji={(emoji) => onReact?.(msg.id, emoji)}
                     onClose={() => setShowFullPicker(false)}
                     style={(() => {
+                        const isMobile = window.innerWidth <= 480;
+                        if (isMobile) {
+                            return { position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 10000 };
+                        }
                         const rect = addBtnRef.current?.getBoundingClientRect();
-                        if (!rect) return {};
+                        if (!rect) return { position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 10000 };
                         const pickerWidth = 340;
+                        const pickerHeight = 400;
                         let left = rect.left + rect.width / 2 - pickerWidth / 2;
                         left = Math.max(8, Math.min(left, window.innerWidth - pickerWidth - 8));
-                        let top = rect.top - 408;
+                        let top = rect.top - pickerHeight - 8;
                         if (top < 8) top = rect.bottom + 4;
+                        if (top + pickerHeight > window.innerHeight - 8) top = window.innerHeight - pickerHeight - 8;
                         return {
                             position: 'fixed',
                             top: `${top}px`,

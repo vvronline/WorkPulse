@@ -148,6 +148,16 @@
     z-index: 10;
     animation: toolbarFade 0.12s ease-out;
 }
+/* Extend hover hit area so toolbar doesn't vanish when moving mouse to it */
+.hoverActions::before {
+    content: '';
+    position: absolute;
+    bottom: -6px;
+    left: 0;
+    right: 0;
+    height: 24px;
+    pointer-events: auto;
+}
 @keyframes toolbarFade {
     from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
@@ -313,6 +323,11 @@
     color: var(--text);
     border-color: var(--text-muted);
     transform: scale(1.1);
+}
+@media (hover: none), (max-width: 768px) {
+    .addReactionBtn {
+        opacity: 1;
+    }
 }
 
 .pickerWrap {

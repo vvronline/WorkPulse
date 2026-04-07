@@ -54,8 +54,8 @@ export default function EmojiGifPicker({ onSelectEmoji, onClose, style }) {
         const handler = (e) => {
             if (ref.current && !ref.current.contains(e.target)) onClose();
         };
-        document.addEventListener('mousedown', handler);
-        return () => document.removeEventListener('mousedown', handler);
+        document.addEventListener('pointerdown', handler);
+        return () => document.removeEventListener('pointerdown', handler);
     }, [onClose]);
 
     // Close on Escape
@@ -107,6 +107,8 @@ export default function EmojiGifPicker({ onSelectEmoji, onClose, style }) {
     const visibleCategories = categories.filter((c, i) => i !== 0 || c.emojis.length > 0);
     const actualCatIdx = categories[0].emojis.length === 0 && catIdx === 0 ? 1 : catIdx;
 
+    const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
     return (
         <div className={s.picker} ref={ref} style={style}>
             <input
@@ -114,7 +116,7 @@ export default function EmojiGifPicker({ onSelectEmoji, onClose, style }) {
                 placeholder="Search emoji..."
                 value={emojiSearch}
                 onChange={e => setEmojiSearch(e.target.value)}
-                autoFocus
+                autoFocus={!isTouch}
             />
             {!emojiSearch && (
                 <div className={s.catTabs}>

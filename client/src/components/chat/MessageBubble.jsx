@@ -60,8 +60,8 @@ export default function MessageBubble({
                 setToolbarOpen(false);
             }
         };
-        document.addEventListener('touchstart', handler, { passive: true });
-        return () => document.removeEventListener('touchstart', handler);
+        document.addEventListener('pointerdown', handler);
+        return () => document.removeEventListener('pointerdown', handler);
     }, [toolbarOpen]);
 
     if (msg.deleted_at) {
@@ -175,10 +175,13 @@ export default function MessageBubble({
                     onSelectEmoji={(emoji) => { onReact?.(msg.id, emoji); setShowReactions(false); }}
                     onClose={() => setShowReactions(false)}
                     style={(() => {
+                        const isMobile = window.innerWidth <= 480;
                         const rect = bubbleRef.current?.getBoundingClientRect();
-                        if (!rect) return { position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 10000 };
-                        const pickerWidth = 340;
-                        const pickerHeight = 400;
+                        if (!rect || isMobile) {
+                            return { position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 10000 };
+                        }
+                        const pickerWidth = Math.min(340, window.innerWidth - 16);
+                        const pickerHeight = Math.min(400, window.innerHeight - 16);
                         let left = isMine ? rect.right - pickerWidth : rect.left;
                         left = Math.max(8, Math.min(left, window.innerWidth - pickerWidth - 8));
                         let top = rect.top - pickerHeight - 8;
