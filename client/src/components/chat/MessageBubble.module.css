@@ -162,7 +162,12 @@
     from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
 }
-.bubbleWrap:hover .hoverActions { display: flex; }
+/* Hover-capable devices: show toolbar on actual bubble hover (not the full row) */
+@media (hover: hover) {
+    .bubble:hover .hoverActions { display: flex; }
+}
+/* Touch/tap: show when user taps the bubble (works at all screen sizes) */
+.toolbarActive .hoverActions { display: flex; }
 /* Mine (right-side): toolbar anchors to the right edge of the bubble */
 .mine .hoverActions { right: 0; left: auto; }
 /* Theirs (left-side): toolbar anchors to left edge of the bubble, not the right */
@@ -349,27 +354,12 @@
 @media (max-width: 1024px) {
     .bubbleWrap { max-width: 80%; }
     .row { padding: 2px 12px; }
-    .hoverActions {
-        display: none;
-    }
-    .bubbleWrap:hover .hoverActions { display: flex; }
 }
 
 @media (max-width: 768px) {
     .bubbleWrap { max-width: 90%; }
     .row { padding: 2px 8px; }
-    /* On touch devices, toolbar is toggled via tap (toolbarActive state) */
-    .hoverActions {
-        display: none;
-    }
-    .bubbleWrap:hover .hoverActions {
-        display: none;
-    }
-    /* State-driven: show when user taps the bubble */
-    .toolbarActive .hoverActions {
-        display: flex;
-    }
-    /* Call buttons: consistent touch targets on mobile */
+    /* Larger touch targets on mobile */
     .quickEmoji {
         width: 32px;
         height: 32px;
