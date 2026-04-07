@@ -23,25 +23,81 @@ export default function MessageBubble({
     const [toolbarOpen, setToolbarOpen] = useState(false);
     const bubbleRef = useRef(null);
     const rowRef = useRef(null);
+    const wrapRef = useRef(null);
 
     const handleContext = useCallback((e) => {
         e.preventDefault();
         setCtxMenu({ x: e.clientX, y: e.clientY });
     }, []);
 
+    /* ─── Touch: tap-to-toggle toolbar + swipe-to-reply ─── */
     const touchStartRef = useRef(null);
+    const swipeState = useRef({ locked: false, swiping: false });
 
     const handleTouchStart = useCallback((e) => {
         touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, time: Date.now() };
+        swipeState.current = { locked: false, swiping: false };
+    }, []);
+
+    const handleTouchMove = useCallback((e) => {
+        if (!touchStartRef.current || !wrapRef.current) return;
+        const dx = e.touches[0].clientX - touchStartRef.current.x;
+        const dy = e.touches[0].clientY - touchStartRef.current.y;
+
+        // Lock direction after 8px movement
+        if (!swipeState.current.locked) {
+            if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+                swipeState.current.locked = true;
+                swipeState.current.swiping = dx > 0 && Math.abs(dx) > Math.abs(dy);
+            }
+        }
+        if (!swipeState.current.swiping) return;
+
+        const clamped = Math.max(0, Math.min(dx * 0.55, 80));
+        wrapRef.current.style.transition = 'none';
+        wrapRef.current.style.transform = `translateX(${clamped}px)`;
+
+        // Animate swipe reply indicator
+        const indicator = rowRef.current?.querySelector('[data-swipe-reply]');
+        if (indicator) {
+            const progress = Math.min(clamped / 50, 1);
+            indicator.style.opacity = String(progress);
+            indicator.style.transform = `translateY(-50%) scale(${0.5 + progress * 0.5})`;
+        }
     }, []);
 
     const handleTouchEnd = useCallback((e) => {
+        // Handle swipe release
+        if (swipeState.current.swiping && wrapRef.current) {
+            const dx = e.changedTouches[0].clientX - (touchStartRef.current?.x || 0);
+            wrapRef.current.style.transition = 'transform 0.25s cubic-bezier(.2,.9,.3,1)';
+            wrapRef.current.style.transform = '';
+
+            const indicator = rowRef.current?.querySelector('[data-swipe-reply]');
+            if (indicator) {
+                indicator.style.transition = 'opacity 0.2s, transform 0.2s';
+                indicator.style.opacity = '0';
+                indicator.style.transform = 'translateY(-50%) scale(0.5)';
+                // Reset transition after animation
+                setTimeout(() => { if (indicator) indicator.style.transition = ''; }, 220);
+            }
+
+            if (dx * 0.55 >= 50) {
+                onReply?.(msg);
+            }
+            touchStartRef.current = null;
+            swipeState.current = { locked: false, swiping: false };
+            return;
+        }
+
+        swipeState.current = { locked: false, swiping: false };
+
+        // Existing: tap to toggle toolbar
         if (!touchStartRef.current) return;
         const dx = Math.abs(e.changedTouches[0].clientX - touchStartRef.current.x);
         const dy = Math.abs(e.changedTouches[0].clientY - touchStartRef.current.y);
         const dt = Date.now() - touchStartRef.current.time;
         touchStartRef.current = null;
-        // Ignore if it was a scroll gesture or long press
         if (dx > 10 || dy > 10 || dt > 500) return;
         if (e.target.closest && (
             e.target.closest('[data-toolbar]') ||
@@ -51,7 +107,7 @@ export default function MessageBubble({
         )) return;
         e.preventDefault();
         setToolbarOpen(t => !t);
-    }, []);
+    }, [onReply, msg]);
 
     useEffect(() => {
         if (!toolbarOpen) return;
@@ -89,13 +145,20 @@ export default function MessageBubble({
 
     return (
         <div ref={rowRef} className={`${s.row} ${isMine ? s.mine : s.theirs} ${!showAvatar ? s.grouped : s.groupStart}`}>
+            {/* Swipe-to-reply indicator */}
+            <div className={s.swipeReply} data-swipe-reply>
+                <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M6 3L2 7l4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 7h7a5 5 0 010 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
+            </div>
+
             <div className={s.avatarCol}>
                 {showAvatar && <ChatAvatar name={msg.sender_name} avatar={msg.sender_avatar} size="sm" />}
             </div>
 
             <div
+                ref={wrapRef}
                 className={s.bubbleWrap}
                 onTouchStart={handleTouchStart}
+                onTouchMove={handleTouchMove}
                 onTouchEnd={handleTouchEnd}
             >
                 {showName && !isMine && msg.sender_name && (

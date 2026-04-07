@@ -1,10 +1,27 @@
+import { useCallback, useRef } from 'react';
 import s from './MessageBubble.module.css';
 
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '🔥', '🎉'];
 
 export default function MessageToolbar({ msg, isMine, onReply, onReact, onOpenReactions, onOpenContextMenu, onCloseToolbar }) {
+    const moreRef = useRef(null);
+
+    // Open context menu positioned from the "..." button (works on both touch and mouse)
+    const handleMoreOptions = useCallback((e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = moreRef.current?.getBoundingClientRect();
+        if (rect) {
+            onOpenContextMenu({ preventDefault() {}, clientX: rect.left, clientY: rect.bottom + 4 });
+        }
+        onCloseToolbar?.();
+    }, [onOpenContextMenu, onCloseToolbar]);
+
+    // Stop touch events from bubbling to the parent's swipe/tap handler
+    const stopTouch = useCallback((e) => e.stopPropagation(), []);
+
     return (
-        <div className={s.hoverActions} data-toolbar>
+        <div className={s.hoverActions} data-toolbar onTouchStart={stopTouch} onTouchEnd={stopTouch} onTouchMove={stopTouch}>
             <div className={s.quickReactions}>
                 {QUICK_EMOJIS.map(emoji => (
                     <button key={emoji} className={s.quickEmoji} onClick={() => { onReact?.(msg.id, emoji); onCloseToolbar?.(); }} title={emoji}>
@@ -19,7 +36,7 @@ export default function MessageToolbar({ msg, isMine, onReply, onReact, onOpenRe
             <button className={s.toolbarBtn} onClick={() => { onReply?.(msg); onCloseToolbar?.(); }} title="Reply">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L2 7l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 7h7a5 5 0 010 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
             </button>
-            <button className={s.toolbarBtn} onClick={onOpenContextMenu} title="More options">
+            <button ref={moreRef} className={s.toolbarBtn} onClick={handleMoreOptions} title="More options">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="4" cy="8" r="1.2" fill="currentColor"/><circle cx="8" cy="8" r="1.2" fill="currentColor"/><circle cx="12" cy="8" r="1.2" fill="currentColor"/></svg>
             </button>
         </div>

@@ -8,8 +8,8 @@ export default function ContextMenu({ x, y, items, onClose }) {
         const handler = (e) => {
             if (ref.current && !ref.current.contains(e.target)) onClose();
         };
-        document.addEventListener('mousedown', handler);
-        return () => document.removeEventListener('mousedown', handler);
+        document.addEventListener('pointerdown', handler);
+        return () => document.removeEventListener('pointerdown', handler);
     }, [onClose]);
 
     // Adjust position to stay within viewport
