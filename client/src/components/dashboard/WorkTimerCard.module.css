@@ -377,13 +377,36 @@
         font-size: 0.82rem;
     }
 
+    .actions {
+        width: 100%;
+    }
+
     .btn {
-        padding: 3px 6px;
-        font-size: 0.6rem;
+        padding: 10px 18px;
+        font-size: 0.82rem;
+        min-height: 42px;
+        width: 100%;
+    }
+
+    .tallAction {
+        min-height: 42px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+    }
+
+    .btn-row {
+        width: 100%;
+        gap: 8px;
+    }
+
+    .mode-toggle {
+        width: 100%;
     }
 
     .mode-btn {
-        font-size: 0.58rem;
-        padding: 2px 4px;
+        font-size: 0.78rem;
+        padding: 8px 14px;
+        flex: 1;
+        min-height: 38px;
     }
 }

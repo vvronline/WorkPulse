@@ -1168,10 +1168,14 @@
 
   .work-mode-toggle {
     flex-direction: column;
+    width: 100%;
   }
 
   .mode-btn {
     width: 100%;
+    padding: 0.6rem 1rem;
+    font-size: 0.85rem;
+    justify-content: center;
   }
 }
 
