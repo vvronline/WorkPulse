@@ -346,12 +346,18 @@ router.post('/refresh', auth, async (req, res) => {
     }
 });
 
-// Logout
-router.post('/logout', auth, async (req, res) => {
-    if (req.sessionId) {
-        await query('DELETE FROM user_sessions WHERE id = $1', [req.sessionId]);
-        await redis.invalidateUserSessions(req.userId);
-    }
+// Logout — always succeeds even without a valid token
+router.post('/logout', async (req, res) => {
+    try {
+        const token = req.cookies.token;
+        if (token) {
+            const decoded = jwt.verify(token, process.env.JWT_SECRET);
+            if (decoded.sid) {
+                await query('DELETE FROM user_sessions WHERE id = $1', [decoded.sid]);
+                await redis.invalidateUserSessions(decoded.id);
+            }
+        }
+    } catch { /* token may be expired/invalid — still clear cookie */ }
     res.clearCookie('token', { httpOnly: true, secure: useSecureCookie, sameSite: 'strict', path: '/' });
     res.json({ message: 'Logged out successfully' });
 });

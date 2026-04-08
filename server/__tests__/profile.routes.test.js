@@ -324,6 +324,7 @@ describe('PUT /api/profile/password', () => {
         const hash = await bcrypt.hash('OldPass1!', 10);
         mockQuery.mockResolvedValueOnce({ rows: [{ password: hash }], rowCount: 1 }); // fetch pw
         mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 }); // UPDATE
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // DELETE other sessions
         mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 1 }], rowCount: 1 }); // fetch new token_version
 
         const res = await request(app)
