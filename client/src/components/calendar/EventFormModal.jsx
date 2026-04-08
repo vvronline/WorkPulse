@@ -279,14 +279,6 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
         <div className={s.formRow}>
           <div className={s.formGroup}>
             <label>Start</label>
-            {form.all_day ? (
-              <input
-                type="date"
-                  value={startDatePart}
-                min={modal === 'create' ? getDatePart(nowMin) : undefined}
-                onChange={e => onStartChange(combineDatetime(e.target.value, '00:00'))}
-              />
-            ) : (
               <div className={s.datetimePicker}>
                 <input
                   type="date"
@@ -294,7 +286,7 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
                   min={modal === 'create' ? getDatePart(nowMin) : undefined}
                   onChange={e => {
                     const nextDate = e.target.value;
-                    const currentTime = getTimePart(form.start_time);
+                    const currentTime = getTimePart(form.start_time) || '00:00';
                     const nextTime = isCreating && isPastLocalSlot(nextDate, currentTime, nowMin)
                       ? getFirstValidEndTime({
                           datePart: nextDate,
@@ -308,6 +300,7 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
                     onStartChange(combineDatetime(nextDate, nextTime));
                   }}
                 />
+                {(!form.all_day || addMeeting) && (
                 <select
                   value={startTimePart}
                   onChange={e => onStartChange(combineDatetime(startDatePart, e.target.value))}
@@ -322,20 +315,12 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
                     </option>
                   ))}
                 </select>
+                )}
               </div>
-            )}
           </div>
 
           <div className={s.formGroup}>
             <label>End</label>
-            {form.all_day ? (
-              <input
-                type="date"
-                  value={endDatePart}
-                  min={startDatePart}
-                onChange={e => setForm({ ...form, end_time: combineDatetime(e.target.value, '00:00') })}
-              />
-            ) : (
               <div className={s.datetimePicker}>
                 <input
                   type="date"
@@ -354,6 +339,7 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
                     setForm({ ...form, end_time: combineDatetime(nextDate, nextTime) });
                   }}
                 />
+                {(!form.all_day || addMeeting) && (
                 <select
                   value={endTimePart}
                   onChange={e => setForm({ ...form, end_time: combineDatetime(endDatePart, e.target.value) })}
@@ -371,19 +357,20 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
                     </option>
                   ))}
                 </select>
+                )}
               </div>
-            )}
           </div>
         </div>
 
         <div className={s.formRow}>
-          <label className={s.checkbox}>
+          <label className={s.checkbox} title={addMeeting ? 'Meetings require specific times' : undefined}>
             <input
               type="checkbox"
               checked={form.all_day}
+              disabled={addMeeting}
               onChange={e => setForm({ ...form, all_day: e.target.checked })}
             />
-            All day
+            All day {addMeeting && <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>(disabled for meetings)</span>}
           </label>
         </div>
 
@@ -501,7 +488,23 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
             <button
               type="button"
               className={`${s.toggleSwitch} ${addMeeting ? s.toggleSwitchOn : ''}`}
-              onClick={() => setAddMeeting(v => !v)}
+              onClick={() => {
+                const next = !addMeeting;
+                setAddMeeting(next);
+                // Meetings need specific times — turn off all-day when enabling meeting
+                if (next && form.all_day) {
+                  const startDate = getDatePart(form.start_time) || getDatePart(nowMin);
+                  const now = new Date();
+                  const h = now.getHours();
+                  const m = Math.ceil(now.getMinutes() / 15) * 15;
+                  const startTime = `${pad(m >= 60 ? h + 1 : h)}:${pad(m % 60)}`;
+                  const endH = m >= 60 ? h + 2 : h + 1;
+                  const endTime = `${pad(endH)}:${pad(m % 60)}`;
+                  const start = combineDatetime(startDate, startTime);
+                  const end = combineDatetime(startDate, endTime);
+                  setForm(prev => ({ ...prev, all_day: false, start_time: start, end_time: end }));
+                }
+              }}
               aria-pressed={addMeeting}
             >
               <span className={s.toggleThumb} />

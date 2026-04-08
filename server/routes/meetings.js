@@ -277,7 +277,7 @@ router.post('/', async (req, res) => {
             meetingId: meeting.id,
             meetingCode: code,
             title: meeting.title,
-            text: `📹 Meeting "${meeting.title}" created`
+            text: `Meeting "${meeting.title}" created`
         });
 
         // Check conflicts for all invitees if time range provided
@@ -363,7 +363,7 @@ router.put('/:id', async (req, res) => {
             await insertSystemMessage(meeting.conversation_id, req.userId, {
                 type: 'meeting_updated',
                 meetingId,
-                text: `📹 Meeting "${updatedMeeting.title}" was updated`
+                text: `Meeting "${updatedMeeting.title}" was updated`
             });
         }
 
@@ -405,7 +405,7 @@ router.delete('/:id', async (req, res) => {
             await insertSystemMessage(meeting.conversation_id, req.userId, {
                 type: 'meeting_cancelled',
                 meetingId,
-                text: `📹 Meeting "${meeting.title}" was cancelled`
+                text: `Meeting "${meeting.title}" was cancelled`
             });
         }
 

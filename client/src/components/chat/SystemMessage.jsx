@@ -10,6 +10,9 @@ const ICON_MAP = {
     meeting_ended: <VideoOff size={14} />,
     meeting_joined: <UserPlus size={14} />,
     meeting_left: <PhoneOff size={14} />,
+    meeting_created: <Video size={14} />,
+    meeting_updated: <Video size={14} />,
+    meeting_cancelled: <VideoOff size={14} />,
     participant_added: <UserPlus size={14} />,
 };
 

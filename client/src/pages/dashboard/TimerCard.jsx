@@ -1,4 +1,4 @@
-import { Building2, House, Palmtree, Clock, Timer, Coffee, Hourglass, PartyPopper, Target, Zap } from 'lucide-react';
+import { Building2, House, Palmtree, Clock, Timer, Coffee, Hourglass, PartyPopper, Target, Zap, Play, CirclePause, LogOut } from 'lucide-react';
 import WeeklyChart from '../../components/dashboard/WeeklyChart';
 import { formatTime, formatTimeSec } from '../../utils/time';
 import s from '../Dashboard.module.css';
@@ -152,7 +152,7 @@ export default function TimerCard({
                     <div className={s['daily-target-met-state']}>
                         <p className={s['daily-target-met-msg']}><Target size={16} style={{ display: 'inline', verticalAlign: 'middle' }} /> Daily target complete! Need to keep working?</p>
                         <button className="btn btn-warning" onClick={onOvertimeRequest}>
-                            ⚡ Apply for Overtime
+                            <Zap size={14} /> Apply for Overtime
                         </button>
                     </div>
                 )}
@@ -173,27 +173,27 @@ export default function TimerCard({
                             </button>
                         </div>
                         <button className="btn btn-success" onClick={handleClockIn} disabled={!!actionLoading}>
-                            {actionLoading === 'clockIn' ? 'Logging in...' : '▶ Login'}
+                            {actionLoading === 'clockIn' ? 'Logging in...' : <><Play size={14} /> Login</>}
                         </button>
                     </>
                 )}
                 {state === 'on_floor' && (
                     <>
                         <button className="btn btn-warning" onClick={handleBreakStart} disabled={!!actionLoading}>
-                            {actionLoading === 'breakStart' ? 'Starting...' : '☕ Break'}
+                            {actionLoading === 'breakStart' ? 'Starting...' : <><CirclePause size={14} /> Break</>}
                         </button>
                         <button className="btn btn-danger" onClick={onClockOut} disabled={!!actionLoading}>
-                            ⏹ Logout
+                            <LogOut size={14} /> Logout
                         </button>
                     </>
                 )}
                 {state === 'on_break' && (
                     <>
                         <button className="btn btn-success" onClick={handleBreakEnd} disabled={!!actionLoading}>
-                            {actionLoading === 'breakEnd' ? 'Resuming...' : '▶ Resume'}
+                            {actionLoading === 'breakEnd' ? 'Resuming...' : <><Play size={14} /> Resume</>}
                         </button>
                         <button className="btn btn-danger" onClick={onClockOut} disabled={!!actionLoading}>
-                            ⏹ Logout
+                            <LogOut size={14} /> Logout
                         </button>
                     </>
                 )}

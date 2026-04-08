@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useFloatingTimer } from '../../hooks/useFloatingTimer';
 import { formatTimeSec, formatTime } from '../../utils/time';
 import ConfirmDialog from '../common/ConfirmDialog';
-import { Timer, Coffee, Pause, Play, Square, Building2, House, Clock, Zap } from 'lucide-react';
+import { Timer, Coffee, Play, LogOut, Building2, House, Clock, Zap } from 'lucide-react';
 import s from './WorkTimerCard.module.css';
 
 export default function WorkTimerCard() {
@@ -172,10 +172,10 @@ export default function WorkTimerCard() {
                             {state === 'on_floor' && (
                                 <div className={s['btn-row']}>
                                     <button className={`${s.btn} ${s.warning}`} onClick={handleBreakStart} disabled={!!actionLoading}>
-                                        <Pause size={14} /> Break
+                                        <Coffee size={14} /> Break
                                     </button>
                                     <button className={`${s.btn} ${s.danger} ${s.tallAction}`} onClick={() => setShowClockOutConfirm(true)} disabled={!!actionLoading}>
-                                        <Square size={14} /> Logout
+                                        <LogOut size={14} /> Logout
                                     </button>
                                 </div>
                             )}
@@ -186,7 +186,7 @@ export default function WorkTimerCard() {
                                         <Play size={14} /> Resume
                                     </button>
                                     <button className={`${s.btn} ${s.danger} ${s.tallAction}`} onClick={() => setShowClockOutConfirm(true)} disabled={!!actionLoading}>
-                                        <Square size={14} /> Logout
+                                        <LogOut size={14} /> Logout
                                     </button>
                                 </div>
                             )}
