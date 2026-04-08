@@ -501,6 +501,11 @@ router.put('/users/:id/deactivate', async (req, res) => {
         const newActive = !target.is_active;
         await query('UPDATE users SET is_active = $1 WHERE id = $2', [newActive, Number(id)]);
         await redis.invalidateUserContext(Number(id));
+        // Clear sessions when deactivating a user
+        if (!newActive) {
+            await query('DELETE FROM user_sessions WHERE user_id = $1', [Number(id)]);
+            await redis.invalidateUserSessions(Number(id));
+        }
         const action = target.is_active ? 'deactivate' : 'reactivate';
         logAction(req, action, 'user', Number(id), { name: target.full_name });
         res.json({ message: `${target.full_name} has been ${action}d`, is_active: newActive });
@@ -530,6 +535,9 @@ router.post('/users/:id/reset-password', requireRole('hr_admin'), async (req, re
         const hash = await bcrypt.hash(new_password, 10);
         await query('UPDATE users SET password = $1, token_version = COALESCE(token_version, 0) + 1, must_change_password = TRUE WHERE id = $2', [hash, Number(id)]);
         await redis.invalidateTokenVersion(Number(id));
+        // Clear all sessions for the target user
+        await query('DELETE FROM user_sessions WHERE user_id = $1', [Number(id)]);
+        await redis.invalidateUserSessions(Number(id));
         logAction(req, 'admin_reset_password', 'user', Number(id), { name: target.full_name });
         res.json({ message: `Password reset for ${target.full_name}. User will be required to change password on next login.` });
     } catch (err) {

@@ -28,8 +28,22 @@ async function authMiddleware(req, res, next) {
             return res.status(401).json({ error: 'Session expired. Please sign in again.' });
         }
 
+        // Validate session is still active (max-2-device enforcement)
+        if (decoded.sid) {
+            let sessions = await redis.getUserSessions(decoded.id);
+            if (sessions === null) {
+                const sessRes = await query('SELECT id FROM user_sessions WHERE user_id = $1', [decoded.id]);
+                sessions = sessRes.rows.map(r => r.id);
+                await redis.setUserSessions(decoded.id, sessions);
+            }
+            if (!sessions.includes(decoded.sid)) {
+                return res.status(401).json({ error: 'Session ended. You may have signed in on another device.' });
+            }
+        }
+
         req.userId = decoded.id;
         req.username = decoded.username;
+        req.sessionId = decoded.sid || null;
         next();
     } catch (err) {
         if (err.name === 'TokenExpiredError') {

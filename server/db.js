@@ -255,6 +255,17 @@ async function initDB() {
         )
     `);
 
+    // Active sessions – max 2 per user
+    await query(`
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            id         TEXT PRIMARY KEY,
+            user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            device     TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)`);
+
     await query(`
         CREATE TABLE IF NOT EXISTS sprints (
             id         SERIAL PRIMARY KEY,

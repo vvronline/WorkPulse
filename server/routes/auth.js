@@ -27,6 +27,30 @@ function cookieOptions() {
     };
 }
 
+const MAX_SESSIONS = 2;
+
+/**
+ * Create a session for the user, evicting the oldest if exceeding MAX_SESSIONS.
+ * Returns the new session ID.
+ */
+async function createSession(userId, deviceInfo) {
+    const sid = crypto.randomUUID();
+    await query('INSERT INTO user_sessions (id, user_id, device) VALUES ($1, $2, $3)', [sid, userId, deviceInfo || null]);
+
+    // Evict oldest sessions beyond the limit
+    const sessRes = await query(
+        'SELECT id FROM user_sessions WHERE user_id = $1 ORDER BY created_at ASC',
+        [userId],
+    );
+    const sessions = sessRes.rows;
+    if (sessions.length > MAX_SESSIONS) {
+        const toDelete = sessions.slice(0, sessions.length - MAX_SESSIONS).map(s => s.id);
+        await query('DELETE FROM user_sessions WHERE id = ANY($1)', [toDelete]);
+    }
+    await redis.invalidateUserSessions(userId);
+    return sid;
+}
+
 // Registration mode (public — no auth needed)
 router.get('/registration-mode', async (req, res) => {
     try {
@@ -120,8 +144,9 @@ router.post('/register', async (req, res) => {
             return ins.rows[0];
         });
 
+        const sid = await createSession(result.id, req.headers['user-agent']);
         const token = jwt.sign(
-            { id: result.id, username, tv: 0 },
+            { id: result.id, username, tv: 0, sid },
             process.env.JWT_SECRET,
             { expiresIn: '8h' },
         );
@@ -178,8 +203,9 @@ router.post('/login', async (req, res) => {
             await query('UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1', [user.id]);
         }
 
+        const sid = await createSession(user.id, req.headers['user-agent']);
         const token = jwt.sign(
-            { id: user.id, username: user.username, tv: user.token_version || 0 },
+            { id: user.id, username: user.username, tv: user.token_version || 0, sid },
             process.env.JWT_SECRET,
             { expiresIn: '8h' },
         );
@@ -289,6 +315,9 @@ router.post('/reset-password', async (req, res) => {
             [hash, row.user_id],
         );
         await redis.invalidateTokenVersion(row.user_id);
+        // Clear all active sessions on password reset
+        await query('DELETE FROM user_sessions WHERE user_id = $1', [row.user_id]);
+        await redis.invalidateUserSessions(row.user_id);
         await query('UPDATE password_reset_tokens SET used = TRUE WHERE id = $1', [row.id]);
 
         res.json({ message: 'Password has been reset successfully. You can now sign in.' });
@@ -305,7 +334,7 @@ router.post('/refresh', auth, async (req, res) => {
         if (!row) return res.status(401).json({ error: 'User not found' });
 
         const token = jwt.sign(
-            { id: req.userId, username: req.username, tv: row.token_version || 0 },
+            { id: req.userId, username: req.username, tv: row.token_version || 0, sid: req.sessionId },
             process.env.JWT_SECRET,
             { expiresIn: '8h' },
         );
@@ -318,7 +347,11 @@ router.post('/refresh', auth, async (req, res) => {
 });
 
 // Logout
-router.post('/logout', (req, res) => {
+router.post('/logout', auth, async (req, res) => {
+    if (req.sessionId) {
+        await query('DELETE FROM user_sessions WHERE id = $1', [req.sessionId]);
+        await redis.invalidateUserSessions(req.userId);
+    }
     res.clearCookie('token', { httpOnly: true, secure: useSecureCookie, sameSite: 'strict', path: '/' });
     res.json({ message: 'Logged out successfully' });
 });

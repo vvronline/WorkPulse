@@ -167,8 +167,15 @@ router.put('/password', auth, loadUserContext, async (req, res) => {
         const hash = await bcrypt.hash(new_password, 10);
         await query('UPDATE users SET password = $1, token_version = COALESCE(token_version, 0) + 1, must_change_password = FALSE WHERE id = $2', [hash, req.userId]);
         await redis.invalidateTokenVersion(req.userId);
+        // Clear other sessions, keep the current one
+        if (req.sessionId) {
+            await query('DELETE FROM user_sessions WHERE user_id = $1 AND id != $2', [req.userId, req.sessionId]);
+        } else {
+            await query('DELETE FROM user_sessions WHERE user_id = $1', [req.userId]);
+        }
+        await redis.invalidateUserSessions(req.userId);
         const updated = (await query('SELECT token_version FROM users WHERE id = $1', [req.userId])).rows[0];
-        const token = jwt.sign({ id: req.userId, username: req.username, tv: updated.token_version || 0 }, process.env.JWT_SECRET, { expiresIn: '8h' });
+        const token = jwt.sign({ id: req.userId, username: req.username, tv: updated.token_version || 0, sid: req.sessionId }, process.env.JWT_SECRET, { expiresIn: '8h' });
         res.cookie('token', token, cookieOptions());
         logAction(req, 'change_password', 'user', req.userId, {});
         res.json({ message: 'Password updated successfully' });

@@ -243,6 +243,7 @@ const KEYS = {
     tokenVersion: (userId) => `user:${userId}:tv`,
     userContext: (userId) => `user:${userId}:ctx`,
     orgConfig: (orgId) => `org:${orgId}:config`,
+    userSessions: (userId) => `user:${userId}:sessions`,
 };
 
 async function getTokenVersion(userId) {
@@ -281,6 +282,20 @@ async function invalidateOrgConfig(orgId) {
     return del(KEYS.orgConfig(orgId));
 }
 
+// -- Session helpers (max-2-device enforcement) --
+
+async function getUserSessions(userId) {
+    return get(KEYS.userSessions(userId));
+}
+
+async function setUserSessions(userId, sessionIds) {
+    return set(KEYS.userSessions(userId), sessionIds, TTL.USER_CONTEXT);
+}
+
+async function invalidateUserSessions(userId) {
+    return del(KEYS.userSessions(userId));
+}
+
 async function shutdown() {
     if (subscriber) {
         try { await subscriber.quit(); } catch { /* ignore */ }
@@ -314,6 +329,10 @@ module.exports = {
     getOrgConfig,
     setOrgConfig,
     invalidateOrgConfig,
+    // Sessions
+    getUserSessions,
+    setUserSessions,
+    invalidateUserSessions,
     // Presence
     setPresence,
     removePresence,
