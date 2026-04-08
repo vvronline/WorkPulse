@@ -447,13 +447,16 @@ router.get('/conversations', auth, async (req, res) => {
                     (SELECT COUNT(*)::int FROM conversation_participants WHERE conversation_id = c.id)
                 END AS member_count,
                 cp.is_pinned,
-                cp.is_favourite
+                cp.is_favourite,
+                CASE WHEN mtg.id IS NOT NULL THEN TRUE ELSE FALSE END AS is_meeting_chat,
+                mtg.meeting_code
             FROM conversations c
             JOIN conversation_participants cp ON cp.conversation_id = c.id AND cp.user_id = $1
             LEFT JOIN conversation_participants cp2
                 ON cp2.conversation_id = c.id AND cp2.user_id != $1 AND c.is_group = FALSE
             LEFT JOIN users u ON u.id = cp2.user_id AND c.is_group = FALSE
             LEFT JOIN users self_u ON self_u.id = $1 AND c.is_group = FALSE AND cp2.user_id IS NULL
+            LEFT JOIN meetings mtg ON mtg.conversation_id = c.id
             LEFT JOIN LATERAL (
                 SELECT lm.content, lm.sender_id, lm.created_at, lm.file_url, lm.deleted_at, usr.full_name AS sender_name
                 FROM messages lm

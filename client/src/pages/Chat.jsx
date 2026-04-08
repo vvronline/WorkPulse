@@ -10,6 +10,7 @@ import ChatMessages from './chat/ChatMessages';
 import ChatInputBar from './chat/ChatInputBar';
 import useChatState from './chat/useChatState';
 import useChatActions from './chat/useChatActions';
+import { useUserStatus } from '../UserStatusContext';
 import { getConvName } from './chat/chatUtils';
 import s from './Chat.module.css';
 import msgStyles from './chat/ChatMessages.module.css';
@@ -17,12 +18,13 @@ import msgStyles from './chat/ChatMessages.module.css';
 export default function Chat() {
     const state = useChatState();
     const actions = useChatActions(state);
+    const { myStatus } = useUserStatus();
 
     const {
         user, conversations, activeConv, messages, input, setInput,
         search, setSearch, searchResults, searching,
         typingUsers, mobileView, setMobileView, onlineUsers,
-        userStatusMap,
+        userStatusMap: rawStatusMap,
         replyTo, setReplyTo, editingMsg, setEditingMsg, showSearch, setShowSearch,
         showPinned, setShowPinned, showGroupModal, setShowGroupModal,
         groupEditData, setGroupEditData, forwardMsg, setForwardMsg,
@@ -47,6 +49,10 @@ export default function Chat() {
         openGroupEdit, handleTyping,
         handleVoiceCall, handleVideoCall, handleEndCall,
     } = actions;
+
+    // Ensure the current user's own status in the map reflects the local source of truth
+    // (fixes self-chat showing stale server status like "away" when user is actually "available")
+    const userStatusMap = user ? { ...rawStatusMap, [user.id]: myStatus } : rawStatusMap;
 
     const [clearConfirm, setClearConfirm] = useState(null);
 

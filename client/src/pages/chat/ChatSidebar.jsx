@@ -1,4 +1,4 @@
-import { Pin, Star, Users, UserPlus, X, Search, Phone, MessageSquare } from 'lucide-react';
+import { Pin, Star, Users, UserPlus, X, Search, Phone, MessageSquare, Video, BellDot } from 'lucide-react';
 import { useState } from 'react';
 import { ChatAvatar } from '../../components/chat';
 import { isUserOnline } from './chatUtils';
@@ -15,9 +15,14 @@ export default function ChatSidebar({
     const totalUnread = conversations.reduce((sum, c) => sum + (c.unread_count || 0), 0);
     const [sidebarTab, setSidebarTab] = useState('msgs');
 
-    const pinned = conversations.filter(c => c.is_pinned);
-    const favourites = conversations.filter(c => c.is_favourite && !c.is_pinned);
-    const others = conversations.filter(c => !c.is_pinned && !c.is_favourite);
+    // Separate meeting conversations from regular ones
+    const regularConvs = conversations.filter(c => !c.is_meeting_chat);
+    const meetingConvs = conversations.filter(c => c.is_meeting_chat);
+    const unreadConvs = conversations.filter(c => (c.unread_count || 0) > 0);
+
+    const pinned = regularConvs.filter(c => c.is_pinned);
+    const favourites = regularConvs.filter(c => c.is_favourite && !c.is_pinned);
+    const others = regularConvs.filter(c => !c.is_pinned && !c.is_favourite);
 
     const convProps = { activeConvId, typingUsers, onlineUsers, userStatusMap, convMenu, onMenuToggle, onPin: onPinConv, onFav: onFavConv, onDelete: onDeleteConv };
     const [showSearch, setShowSearch] = useState(false);
@@ -25,27 +30,71 @@ export default function ChatSidebar({
     const openSearch = () => { setShowSearch(true); setTimeout(() => searchInputRef.current?.focus(), 50); };
     const closeSearch = () => { setShowSearch(false); setSearch(''); };
 
+    const switchTab = (tab) => { setSidebarTab(tab); setShowSearch(false); setSearch(''); };
+
     return (
         <div className={`${s.sidebar} ${mobileView === 'chat' ? s.hideMobile : ''}`}>
             {/* ── Tabs ── */}
             <div className={s.sidebarTabs}>
                 <button
                     className={`${s.tabBtn} ${sidebarTab === 'msgs' ? s.tabActive : ''}`}
-                    onClick={() => { setSidebarTab('msgs'); setShowSearch(false); setSearch(''); }}
+                    onClick={() => switchTab('msgs')}
                 >
                     <MessageSquare size={14} /> Messages
                     {totalUnread > 0 && <span className={s.totalBadge}>{totalUnread}</span>}
                 </button>
                 <button
+                    className={`${s.tabBtn} ${sidebarTab === 'meetings' ? s.tabActive : ''}`}
+                    onClick={() => switchTab('meetings')}
+                >
+                    <Video size={14} /> Meetings
+                    {meetingConvs.some(c => c.unread_count > 0) && <span className={s.totalBadge}>{meetingConvs.reduce((s, c) => s + (c.unread_count || 0), 0)}</span>}
+                </button>
+                <button
                     className={`${s.tabBtn} ${sidebarTab === 'calls' ? s.tabActive : ''}`}
-                    onClick={() => { setSidebarTab('calls'); setShowSearch(false); setSearch(''); }}
+                    onClick={() => switchTab('calls')}
                 >
                     <Phone size={14} /> Calls
+                </button>
+                <button
+                    className={`${s.tabBtn} ${sidebarTab === 'unread' ? s.tabActive : ''}`}
+                    onClick={() => switchTab('unread')}
+                >
+                    <BellDot size={14} /> Unread
+                    {unreadConvs.length > 0 && <span className={s.totalBadge}>{unreadConvs.length}</span>}
                 </button>
             </div>
 
             {/* ── Calls tab ── */}
             {sidebarTab === 'calls' && <CallsTab userId={userId} />}
+
+            {/* ── Meetings tab ── */}
+            {sidebarTab === 'meetings' && (
+                <div className={s.convList}>
+                    {meetingConvs.length === 0 ? (
+                        <div className={s.empty}>
+                            <Video size={32} strokeWidth={1.2} style={{ margin: '0 auto 0.5rem', display: 'block', opacity: 0.4 }} />
+                            No meeting chats yet
+                        </div>
+                    ) : (
+                        meetingConvs.map(c => <ConversationItem key={c.id} conv={c} onOpen={onOpenConv} {...convProps} />)
+                    )}
+                </div>
+            )}
+
+            {/* ── Unread tab ── */}
+            {sidebarTab === 'unread' && (
+                <div className={s.convList}>
+                    {unreadConvs.length === 0 ? (
+                        <div className={s.empty}>
+                            <BellDot size={32} strokeWidth={1.2} style={{ margin: '0 auto 0.5rem', display: 'block', opacity: 0.4 }} />
+                            You're all caught up!
+                        </div>
+                    ) : (
+                        unreadConvs.map(c => <ConversationItem key={c.id} conv={c} onOpen={onOpenConv} {...convProps} />)
+                    )}
+                </div>
+            )}
 
             {/* ── Messages tab ── */}
             {sidebarTab === 'msgs' && (<>
@@ -91,7 +140,7 @@ export default function ChatSidebar({
 
                 {!search && (
                     <div className={s.convList}>
-                        {conversations.length === 0 && (
+                        {regularConvs.length === 0 && (
                             <div className={s.empty}>No conversations yet. Search for a colleague to start chatting.</div>
                         )}
                         {pinned.length > 0 && (

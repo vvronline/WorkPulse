@@ -400,6 +400,7 @@ export default function Calendar({ tasks = [] }) {
                         {dayEvts.slice(0, 3).map(ev => (
                             <div key={ev.id} className={s.monthEvent} style={{ '--ev-color': ev.color || '#0ea5e9' }}
                                 onClick={(e) => { e.stopPropagation(); openEdit(ev); }}>
+                                {ev.meeting_code && <span className={s.eventMeetingBadge}><Video size={9} /></span>}
                                 {ev.title}
                             </div>
                         ))}
