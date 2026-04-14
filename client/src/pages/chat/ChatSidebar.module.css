@@ -1,7 +1,7 @@
 /* ─── Sidebar ─── */
 .sidebar {
-    width: 320px;
-    min-width: 260px;
+    width: 420px;
+    min-width: 360px;
     border-right: 1px solid var(--glass-border);
     display: flex;
     flex-direction: column;
