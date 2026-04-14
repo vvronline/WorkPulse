@@ -7,7 +7,8 @@ import LabelSelector from './LabelSelector.jsx';
 import { PRIORITIES, COLUMNS } from './constants.js';
 import { HighlightedHtml, formatDueDate, isDueOverdue, getAvatarUrl } from './utils.jsx';
 import { useTaskCtx } from './TaskContext.jsx';
-import { X, Package, CalendarDays, Save, MessageSquare, Clock, Trash2 } from 'lucide-react';
+import { X, Package, CalendarDays, Save, Pencil, MessageSquare, Clock, Trash2 } from 'lucide-react';
+import s from './TaskDetailModal.module.css';
 
 export default function TaskDetailModal({
   detailTask,
@@ -114,7 +115,7 @@ export default function TaskDetailModal({
                   className="btn btn-secondary btn-sm"
                   onClick={onStartEdit}
                 >
-                  <Save size={13} style={{marginRight:4,verticalAlign:'middle'}} />Edit
+                  <Pencil size={13} style={{marginRight:4,verticalAlign:'middle'}} />Edit
                 </button>
                 {currentUser?.id === detailTask?.user_id && (
                   <button
@@ -124,6 +125,16 @@ export default function TaskDetailModal({
                     <Trash2 size={13} style={{marginRight:4,verticalAlign:'middle'}} />Delete
                   </button>
                 )}
+              </>
+            )}
+            {detailEditing && (
+              <>
+                <button className="btn btn-primary btn-sm" onClick={handleSaveEdit}>
+                  <Save size={13} style={{marginRight:4,verticalAlign:'middle'}} />Save Changes
+                </button>
+                <button className="btn btn-secondary btn-sm" onClick={onCancelEdit}>
+                  Cancel Edit
+                </button>
               </>
             )}
             <button className={s['close-form-btn']} onClick={onClose}>
@@ -230,12 +241,6 @@ export default function TaskDetailModal({
                     <Package size={13} style={{marginRight:4,verticalAlign:'middle'}} />Move to Backlog
                   </button>
                 )}
-                <button className="btn btn-primary btn-sm" onClick={handleSaveEdit}>
-                  <Save size={13} style={{marginRight:4,verticalAlign:'middle'}} />Save Changes
-                </button>
-                <button className="btn btn-secondary btn-sm" onClick={onCancelEdit}>
-                  Cancel
-                </button>
               </div>
             </div>
           ) : (

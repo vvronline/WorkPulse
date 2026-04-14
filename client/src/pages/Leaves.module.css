@@ -4,8 +4,9 @@
 
 /* -- Page Shell -- */
 .page {
-  max-width: 1400px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
   padding: 2rem 2rem 5rem;
   animation: fadeInUp 0.35s ease;
 }

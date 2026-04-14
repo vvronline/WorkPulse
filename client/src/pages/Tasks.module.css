@@ -1,6 +1,6 @@
 @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
-.tasks-page { max-width: 1400px; margin: 0 auto; padding: 0.75rem 1rem 3rem; animation: fadeInUp 0.3s ease; }
+.tasks-page { width: 100%; max-width: none; margin: 0; padding: 0.75rem 1rem 3rem; animation: fadeInUp 0.3s ease; }
 
 .tasks-progress-card { background: var(--glass); border: 1px solid var(--glass-border); border-radius: var(--radius); padding: 1rem 1.25rem; margin-bottom: 1rem; }
 .tasks-progress-info { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
