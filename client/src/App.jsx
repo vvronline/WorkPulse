@@ -112,9 +112,9 @@ export default function App() {
       pointerEvents: 'none',
       opacity: '0',
       transition: 'opacity 0.15s',
-      background: 'var(--bg-secondary, #12121a)',
-      color: 'var(--text, #f0f0f5)',
-      boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+      background: 'var(--bg-secondary, #eaf1f9)',
+      color: 'var(--text, #06526d)',
+      boxShadow: '0 8px 24px rgba(15, 23, 42, 0.18)',
       border: 'none',
     });
     document.body.appendChild(tip);

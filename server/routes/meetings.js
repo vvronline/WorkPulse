@@ -125,7 +125,7 @@ router.get('/', async (req, res) => {
              FROM meetings m
              JOIN users u ON u.id = m.created_by
              LEFT JOIN calendar_events ce ON ce.id = m.calendar_event_id
-             WHERE (m.org_id = $2 OR m.org_id IS NULL)
+             WHERE m.org_id = $2
                AND (m.created_by = $1 OR EXISTS (
                    SELECT 1 FROM meeting_participants mp WHERE mp.meeting_id = m.id AND mp.user_id = $1
                ))
@@ -158,8 +158,8 @@ router.get('/:code', async (req, res) => {
 
         const meeting = result.rows[0];
 
-        // Check access: org member or explicit participant
-        if (meeting.org_id && meeting.org_id !== req.userOrgId) {
+        // Check access: must be in the same org or an explicit participant
+        if (!meeting.org_id || meeting.org_id !== req.userOrgId) {
             const isParticipant = (await query(
                 'SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2',
                 [meeting.id, req.userId]
@@ -194,6 +194,7 @@ router.post('/', async (req, res) => {
         const { title, description, required_participant_ids, optional_participant_ids, participant_ids, calendar_event_id, settings, start_time, end_time } = req.body;
         if (!title || !title.trim()) return res.status(400).json({ error: 'title is required' });
         if (title.trim().length > 200) return res.status(400).json({ error: 'Title too long (max 200 chars)' });
+        if (!req.userOrgId) return res.status(403).json({ error: 'You must belong to an organization to create meetings' });
 
         const code = await generateMeetingCode();
 
@@ -215,7 +216,7 @@ router.post('/', async (req, res) => {
             const conv = (await client.query(
                 `INSERT INTO conversations (org_id, name, is_group, created_at, updated_at)
                  VALUES ($1, $2, TRUE, NOW(), NOW()) RETURNING id`,
-                [req.userOrgId || null, `Meeting: ${title.trim()}`]
+                [req.userOrgId, `Meeting: ${title.trim()}`]
             )).rows[0];
 
             // 2. Add creator as participant of conversation
@@ -232,7 +233,7 @@ router.post('/', async (req, res) => {
             const meeting = (await client.query(
                 `INSERT INTO meetings (org_id, title, description, meeting_code, created_by, conversation_id, calendar_event_id, settings)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-                [req.userOrgId || null, title.trim(), description || null, code, req.userId, conv.id, calendar_event_id || null, JSON.stringify(meetingSettings)]
+                [req.userOrgId, title.trim(), description || null, code, req.userId, conv.id, calendar_event_id || null, JSON.stringify(meetingSettings)]
             )).rows[0];
 
             // 4. Add organizer to meeting_participants
@@ -329,6 +330,7 @@ router.put('/:id', async (req, res) => {
         const meetingId = Number(req.params.id);
         const meeting = (await query('SELECT * FROM meetings WHERE id = $1 AND created_by = $2', [meetingId, req.userId])).rows[0];
         if (!meeting) return res.status(404).json({ error: 'Meeting not found or not organizer' });
+        if (meeting.org_id !== req.userOrgId) return res.status(403).json({ error: 'Access denied' });
         if (meeting.status === 'ended') return res.status(400).json({ error: 'Cannot update ended meeting' });
 
         const { title, description, settings } = req.body;
@@ -423,6 +425,11 @@ router.get('/:id/participants', async (req, res) => {
         const meeting = (await query('SELECT * FROM meetings WHERE id = $1', [meetingId])).rows[0];
         if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
 
+        // Verify the meeting belongs to the user's org
+        if (meeting.org_id && meeting.org_id !== req.userOrgId) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+
         // Must be a participant or organizer
         const access = (await query(
             'SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2',
@@ -455,8 +462,9 @@ router.post('/:id/participants', async (req, res) => {
         if (meeting.created_by !== req.userId) return res.status(403).json({ error: 'Only organizer can add participants' });
         if (meeting.status === 'ended') return res.status(400).json({ error: 'Meeting has ended' });
 
-        const targetUser = (await query('SELECT id, full_name, avatar, username FROM users WHERE id = $1', [user_id])).rows[0];
+        const targetUser = (await query('SELECT id, full_name, avatar, username, org_id FROM users WHERE id = $1', [user_id])).rows[0];
         if (!targetUser) return res.status(404).json({ error: 'User not found' });
+        if (meeting.org_id && targetUser.org_id !== meeting.org_id) return res.status(403).json({ error: 'Cannot add participants from a different organization' });
 
         // Add to meeting_participants
         await query(

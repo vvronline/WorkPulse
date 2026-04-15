@@ -81,7 +81,10 @@ router.put('/:id', auth, loadUserContext, requireRole('team_lead'), async (req, 
         const { id } = req.params;
         const { name, start_date, end_date, goal, status } = req.body;
 
-        const sprint = (await query('SELECT * FROM sprints WHERE id = $1', [id])).rows[0];
+        const sprint = (await query(
+            'SELECT s.* FROM sprints s JOIN teams t ON t.id = s.team_id WHERE s.id = $1 AND t.org_id = $2',
+            [id, req.userOrgId]
+        )).rows[0];
         if (!sprint) return res.status(404).json({ error: 'Sprint not found' });
         if (sprint.team_id !== req.userTeamId) return res.status(403).json({ error: 'Access denied' });
 
@@ -121,7 +124,10 @@ router.delete('/:id', auth, loadUserContext, requireRole('team_lead'), async (re
     try {
         const { id } = req.params;
 
-        const sprint = (await query('SELECT * FROM sprints WHERE id = $1', [id])).rows[0];
+        const sprint = (await query(
+            'SELECT s.* FROM sprints s JOIN teams t ON t.id = s.team_id WHERE s.id = $1 AND t.org_id = $2',
+            [id, req.userOrgId]
+        )).rows[0];
         if (!sprint) return res.status(404).json({ error: 'Sprint not found' });
         if (sprint.team_id !== req.userTeamId) return res.status(403).json({ error: 'Access denied' });
 
@@ -139,7 +145,10 @@ router.get('/:id/tasks', auth, loadUserContext, async (req, res) => {
     try {
         const { id } = req.params;
 
-        const sprint = (await query('SELECT * FROM sprints WHERE id = $1', [id])).rows[0];
+        const sprint = (await query(
+            'SELECT s.* FROM sprints s JOIN teams t ON t.id = s.team_id WHERE s.id = $1 AND t.org_id = $2',
+            [id, req.userOrgId]
+        )).rows[0];
         if (!sprint) return res.status(404).json({ error: 'Sprint not found' });
         if (sprint.team_id !== req.userTeamId) return res.status(403).json({ error: 'Access denied' });
 

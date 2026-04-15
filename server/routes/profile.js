@@ -36,7 +36,14 @@ if (!fs.existsSync(uploadDir)) {
 }
 
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
+    destination: (req, file, cb) => {
+        const orgId = req.userOrgId;
+        const dir = orgId
+            ? path.join(__dirname, '..', 'uploads', `org_${orgId}`, 'avatars')
+            : uploadDir;
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+    },
     filename: (req, file, cb) => {
         const ext = path.extname(file.originalname).toLowerCase();
         cb(null, `user_${req.userId}_${Date.now()}${ext}`);
@@ -69,10 +76,11 @@ function safeAvatarPath(avatarRelative) {
     return resolved;
 }
 
-router.post('/avatar', auth, upload.single('avatar'), async (req, res) => {
+router.post('/avatar', auth, loadUserContext, upload.single('avatar'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    const avatarPath = `/uploads/avatars/${req.file.filename}`;
+    const orgDir = req.userOrgId ? `org_${req.userOrgId}/` : '';
+    const avatarPath = `/uploads/${orgDir}avatars/${req.file.filename}`;
 
     let oldAvatarPath = null;
     await transaction(async (client) => {

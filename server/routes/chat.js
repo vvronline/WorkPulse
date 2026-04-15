@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
+const { loadUserContext } = require('../middleware/rbac');
 const { sendToUser } = require('../utils/ws');
 const redis = require('../redis');
 
@@ -33,7 +34,14 @@ const ALLOWED_TYPES = {
 };
 
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
+    destination: (req, file, cb) => {
+        const orgId = req.userOrgId;
+        const dir = orgId
+            ? path.join(__dirname, '..', 'uploads', `org_${orgId}`, 'chat')
+            : uploadDir;
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+    },
     filename: (req, file, cb) => {
         // Use canonical extension from MIME type — never trust originalname extension
         const ext = ALLOWED_TYPES[file.mimetype] || 'bin';
@@ -626,7 +634,7 @@ router.get('/conversations/:id/read-status', auth, async (req, res) => {
 /**
  * POST /api/chat/conversations/:id/files
  */
-router.post('/conversations/:id/files', auth, chatUpload.single('file'), async (req, res) => {
+router.post('/conversations/:id/files', auth, loadUserContext, chatUpload.single('file'), async (req, res) => {
     try {
         const convId = parseInt(req.params.id, 10);
         if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
@@ -643,7 +651,8 @@ router.post('/conversations/:id/files', auth, chatUpload.single('file'), async (
             .replace(/[/\\]/g, '_')                         // no path separators
             .slice(0, 255) || 'file';
 
-        const fileUrl = `/uploads/chat/${req.file.filename}`;
+        const orgDir = req.userOrgId ? `org_${req.userOrgId}/` : '';
+        const fileUrl = `/uploads/${orgDir}chat/${req.file.filename}`;
         const content = req.body.content || null;
         const replyToId = req.body.replyToId ? parseInt(req.body.replyToId, 10) : null;
 

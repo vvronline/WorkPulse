@@ -127,10 +127,20 @@ app.use(express.urlencoded({ limit: '100kb', extended: true }));
 app.use(requestLogger);
 
 const authMiddleware = require('./middleware/auth');
-app.use('/uploads', authMiddleware, (req, res, next) => {
+const { query: dbQuery } = require('./db');
+app.use('/uploads', authMiddleware, async (req, res, next) => {
     const resolved = path.resolve(__dirname, 'uploads', req.path.replace(/^\//, ''));
     if (!resolved.startsWith(path.resolve(__dirname, 'uploads'))) {
         return res.status(403).json({ error: 'Forbidden' });
+    }
+    // Enforce tenant isolation: org-scoped paths like /uploads/org_42/... must match user's org
+    const orgMatch = req.path.match(/^\/org_(\d+)\//);
+    if (orgMatch) {
+        const pathOrgId = parseInt(orgMatch[1], 10);
+        const user = (await dbQuery('SELECT org_id FROM users WHERE id = $1', [req.userId])).rows[0];
+        if (!user || user.org_id !== pathOrgId) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
     }
     next();
 }, express.static(path.join(__dirname, 'uploads')));

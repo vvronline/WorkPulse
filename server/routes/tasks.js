@@ -268,7 +268,10 @@ router.post('/', auth, loadUserContext, async (req, res) => {
 
         let validSprintId = null;
         if (sprint_id) {
-            const sprint = (await query('SELECT id, team_id, end_date FROM sprints WHERE id = $1', [sprint_id])).rows[0];
+            const sprint = (await query(
+                'SELECT s.id, s.team_id, s.end_date FROM sprints s JOIN teams t ON t.id = s.team_id WHERE s.id = $1 AND t.org_id = $2',
+                [sprint_id, req.userOrgId]
+            )).rows[0];
             if (sprint && sprint.team_id === req.userTeamId) {
                 validSprintId = sprint.id;
                 if (!validDueDate) validDueDate = sprint.end_date;
@@ -374,7 +377,10 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
             if (sprint_id === null || sprint_id === '') {
                 newSprintId = null;
             } else {
-                const sprint = (await query('SELECT id, team_id, end_date FROM sprints WHERE id = $1', [sprint_id])).rows[0];
+                const sprint = (await query(
+                    'SELECT s.id, s.team_id, s.end_date FROM sprints s JOIN teams t ON t.id = s.team_id WHERE s.id = $1 AND t.org_id = $2',
+                    [sprint_id, req.userOrgId]
+                )).rows[0];
                 if (sprint && sprint.team_id === req.userTeamId) {
                     newSprintId = sprint_id;
                     newDueDate = sprint.end_date;
