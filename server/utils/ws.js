@@ -107,7 +107,8 @@ function setupWebSocket(server) {
             logger.debug({ userId }, 'WS client disconnected');
         });
 
-        ws.on('error', () => {
+        ws.on('error', (err) => {
+            logger.warn({ err: err?.message, userId }, 'WebSocket error');
             ws.close();
         });
 

@@ -471,9 +471,10 @@ router.put('/users/:id/assignment', async (req, res) => {
             if (!teamRes.rows[0]) return res.status(400).json({ error: 'Team not found in the target organization' });
         }
         const orgChanged = org_id !== undefined && Number(org_id || 0) !== Number(target.org_id || 0);
-        const finalDeptId = orgChanged ? null : (department_id || null);
-        const finalTeamId = orgChanged ? null : (team_id || null);
-        const finalManagerId = orgChanged ? null : (manager_id || null);
+        // When org changes, reset to null UNLESS explicitly provided (and already validated above)
+        const finalDeptId = department_id ? Number(department_id) : (orgChanged ? null : (department_id !== undefined ? null : target.department_id));
+        const finalTeamId = team_id ? Number(team_id) : (orgChanged ? null : (team_id !== undefined ? null : target.team_id));
+        const finalManagerId = manager_id ? Number(manager_id) : (orgChanged ? null : (manager_id !== undefined ? null : target.manager_id));
         await query('UPDATE users SET org_id = $1, department_id = $2, team_id = $3, manager_id = $4 WHERE id = $5',
             [newOrgId, finalDeptId, finalTeamId, finalManagerId, Number(id)]);
         await redis.invalidateUserContext(Number(id));

@@ -54,6 +54,10 @@ export function MeetingProvider({ children }) {
         const ws = new WebSocket(wsUrl);
         wsRef.current = ws;
 
+        ws.addEventListener('error', () => {
+            console.warn('Meeting WebSocket connection error');
+        });
+
         // Listen for meeting_ended while in PiP / away from room
         ws.addEventListener('message', (e) => {
             try {

@@ -78,14 +78,14 @@ export function AuthProvider({ children }) {
   }, [user]);
 
   const saveAuth = useCallback((user) => {
-    localStorage.setItem('user', JSON.stringify(sanitizeForCache(user)));
+    try { localStorage.setItem('user', JSON.stringify(sanitizeForCache(user))); } catch { /* quota exceeded or private mode */ }
     setUser(user);
   }, []);
 
   const updateUser = useCallback((partial) => {
     setUser(prev => {
       const updated = { ...prev, ...partial };
-      localStorage.setItem('user', JSON.stringify(sanitizeForCache(updated)));
+      try { localStorage.setItem('user', JSON.stringify(sanitizeForCache(updated))); } catch { /* quota exceeded or private mode */ }
       return updated;
     });
   }, []);

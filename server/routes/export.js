@@ -13,12 +13,23 @@ const { logger } = require('../utils/logger');
 const router = express.Router();
 router.use(auth, loadUserContext);
 
+// Helper: fetch org work hours config for the current user
+async function getUserTargetMs(userId) {
+    const orgRow = (await query('SELECT org_id FROM users WHERE id = $1', [userId])).rows[0];
+    if (orgRow?.org_id) {
+        const orgConfig = (await query('SELECT work_hours_per_day FROM organizations WHERE id = $1', [orgRow.org_id])).rows[0];
+        if (orgConfig?.work_hours_per_day) return orgConfig.work_hours_per_day * 3600000;
+    }
+    return 8 * 3600000; // default 8 hours
+}
+
 // ─── Personal Analytics Export ─────────────────────────────────────────
 router.get('/my-analytics', async (req, res) => {
     try {
         const { from, to, format } = req.query;
         if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
 
+        const targetMs = await getUserTargetMs(req.userId);
         const offsetMin = getOffsetMin(req);
         const intervalStr = `${-offsetMin} minutes`;
         const entries = (await query(`
@@ -46,7 +57,7 @@ router.get('/my-analytics', async (req, res) => {
                 floor_hours: (floorMs / 3600000).toFixed(2),
                 break_hours: (breakMs / 3600000).toFixed(2),
                 total_hours: ((floorMs + breakMs) / 3600000).toFixed(2),
-                target_met: floorMs >= 8 * 3600000 ? 'Yes' : 'No',
+                target_met: floorMs >= targetMs ? 'Yes' : 'No',
             };
         });
 
@@ -206,6 +217,14 @@ router.get('/team-analytics', requireRole('team_lead'), async (req, res) => {
                 byDate[d].push(e);
             });
 
+            // Fetch per-member org target (fall back to requester's offset)
+            const memberOrgRow = (await query('SELECT org_id FROM users WHERE id = $1', [member.id])).rows[0];
+            let memberTargetMs = 8 * 3600000;
+            if (memberOrgRow?.org_id) {
+                const mOrgCfg = (await query('SELECT work_hours_per_day FROM organizations WHERE id = $1', [memberOrgRow.org_id])).rows[0];
+                if (mOrgCfg?.work_hours_per_day) memberTargetMs = mOrgCfg.work_hours_per_day * 3600000;
+            }
+
             let totalFloor = 0, totalBreak = 0, daysWorked = 0, targetMet = 0;
             Object.values(byDate).forEach(dayEntries => {
                 const f = computeFloorMs(dayEntries);
@@ -213,7 +232,7 @@ router.get('/team-analytics', requireRole('team_lead'), async (req, res) => {
                 totalFloor += f;
                 totalBreak += b;
                 daysWorked++;
-                if (f >= 8 * 3600000) targetMet++;
+                if (f >= memberTargetMs) targetMet++;
             });
 
             const tasksDone = (await query(
