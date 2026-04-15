@@ -277,6 +277,9 @@ router.post('/clock-out', auth, async (req, res) => {
         });
 
         if (txResult.error) return res.status(400).json({ error: txResult.error });
+        // Set user status to offline on clock-out
+        await query('UPDATE users SET user_status = $1, user_status_text = NULL WHERE id = $2', ['offline', req.userId]);
+        await redis.setUserStatus(req.userId, 'offline');
         logAction(req, 'clock_out', 'time_entry', null, {});
         res.json({ message: 'Logged out. See you tomorrow!' });
     } catch (err) {

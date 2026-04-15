@@ -205,10 +205,11 @@ export function useDashboardData() {
         await handleAction(breakEnd, 'breakEnd');
         setManualStatus('available');
     }, [handleAction, setManualStatus]);
-    const handleConfirmClockOut = useCallback(() => {
+    const handleConfirmClockOut = useCallback(async () => {
         setShowClockOutConfirm(false);
-        handleAction(clockOut, 'clockOut');
-    }, [handleAction]);
+        await handleAction(clockOut, 'clockOut');
+        setManualStatus('offline');
+    }, [handleAction, setManualStatus]);
 
     return {
         user, status, state, loading, actionLoading, error,

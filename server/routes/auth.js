@@ -356,6 +356,11 @@ router.post('/logout', async (req, res) => {
                 await query('DELETE FROM user_sessions WHERE id = $1', [decoded.sid]);
                 await redis.invalidateUserSessions(decoded.id);
             }
+            // Set user status to offline
+            if (decoded.id) {
+                await query('UPDATE users SET user_status = $1, user_status_text = NULL WHERE id = $2', ['offline', decoded.id]);
+                await redis.setUserStatus(decoded.id, 'offline');
+            }
         }
     } catch { /* token may be expired/invalid — still clear cookie */ }
     res.clearCookie('token', { httpOnly: true, secure: useSecureCookie, sameSite: 'strict', path: '/' });
