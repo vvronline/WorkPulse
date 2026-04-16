@@ -83,8 +83,9 @@ router.put('/organizations/:id', requireRole('platform_admin'), async (req, res)
     try {
         const { id } = req.params;
         const { name, work_hours_per_day, work_days, timezone, fiscal_year_start } = req.body;
-        const orgRes = await req.db.query('SELECT id FROM organizations WHERE id = $1', [id]);
+        const orgRes = await req.db.query('SELECT id, slug FROM organizations WHERE id = $1', [id]);
         if (!orgRes.rows[0]) return res.status(404).json({ error: 'Organization not found' });
+        const orgSlug = orgRes.rows[0].slug;
         let pi = 1;
         const updates = [];
         const params = [];
@@ -104,6 +105,10 @@ router.put('/organizations/:id', requireRole('platform_admin'), async (req, res)
         if (updates.length <= 1) return res.status(400).json({ error: 'No fields to update' });
         params.push(id);
         await req.db.query(`UPDATE organizations SET ${updates.join(', ')} WHERE id = $${pi}`, params);
+        // Sync org_name to master tenants table
+        if (name) {
+            await masterQuery('UPDATE tenants SET org_name = $1, updated_at = NOW() WHERE slug = $2', [name.trim(), orgSlug]);
+        }
         logAction(req, 'admin_update', 'organization', id, req.body);
         const updated = await req.db.query('SELECT * FROM organizations WHERE id = $1', [id]);
         res.json(updated.rows[0]);

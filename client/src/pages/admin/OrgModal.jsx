@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAutoDismiss } from '../../hooks/useAutoDismiss';
+import TIMEZONES from '../../constants/timezones';
 import s from '../Admin.module.css';
 import sf from './AdminForms.module.css';
 
@@ -42,7 +43,9 @@ export default function OrgModal({ org, onClose, onSave }) {
                     </div>
                     <div className={sf.formGroup}>
                         <label>Timezone</label>
-                        <input value={form.timezone} onChange={e => setForm({ ...form, timezone: e.target.value })} placeholder="UTC" />
+                        <select value={form.timezone} onChange={e => setForm({ ...form, timezone: e.target.value })}>
+                            {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
+                        </select>
                     </div>
                     <div className={sf.formGroup}>
                         <label>Fiscal Year Start Month (1-12)</label>

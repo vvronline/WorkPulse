@@ -193,6 +193,7 @@ export default function TenantManagement() {
       await updateAdminOrganization(id, data);
       setEditingOrg(null);
       loadOrgs();
+      loadTenants();
     } catch (e) { setError(e.response?.data?.error || 'Failed to update org'); }
   };
 

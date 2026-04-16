@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAutoDismiss } from '../../hooks/useAutoDismiss';
 import { updateOrgSettings } from '../../api';
+import TIMEZONES from '../../constants/timezones';
 import s from '../../pages/Admin.module.css';
 import sf from '../../pages/admin/AdminForms.module.css';
 import su from '../../pages/admin/AdminUtils.module.css';
@@ -48,7 +49,9 @@ export default function OrgSettings({ org, onUpdate, userRole }) {
             </>}
             <div className={sf.formGroup}>
                 <label>Timezone</label>
-                <input value={form.timezone} onChange={e => setForm({ ...form, timezone: e.target.value })} />
+                <select value={form.timezone} onChange={e => setForm({ ...form, timezone: e.target.value })}>
+                    {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
+                </select>
             </div>
             <div className={sf.formGroup}>
                 <label>Fiscal Year Start Month (1-12)</label>
