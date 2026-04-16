@@ -57,7 +57,12 @@ async function resolveDefaultDomainUser(identifier) {
         if (!tdb) return { error: 'Organization is not available.' };
         const userRes = await tdb.query('SELECT * FROM users WHERE id = $1', [user_id]);
         if (userRes.rows[0]) {
-            return { user: userRes.rows[0], db: tdb, tenantId: tenant_id };
+            // Check if this user is also a platform admin
+            const platCheck = await masterQuery(
+                'SELECT 1 FROM platform_users WHERE username = $1 OR email = $1',
+                [identifier]
+            );
+            return { user: userRes.rows[0], db: tdb, tenantId: tenant_id, isPlatformUser: !!platCheck.rows[0] };
         }
     }
 
@@ -315,7 +320,8 @@ router.post('/login', async (req, res) => {
         const DUMMY_HASH = '$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy';
         if (!user || !(await bcrypt.compare(password, user ? user.password : DUMMY_HASH))) {
             if (user && db) {
-                const table = isPlatformUser ? 'platform_users' : 'users';
+                // isPlatformUser with tenantId means user record is in tenant users table, not platform_users
+                const table = (isPlatformUser && !tenantId) ? 'platform_users' : 'users';
                 const attempts = (user.failed_login_attempts || 0) + 1;
                 if (attempts >= 5) {
                     await db.query(
@@ -334,7 +340,7 @@ router.post('/login', async (req, res) => {
 
         // Reset failed attempts on successful login
         if (user.failed_login_attempts > 0) {
-            const table = isPlatformUser ? 'platform_users' : 'users';
+            const table = (isPlatformUser && !tenantId) ? 'platform_users' : 'users';
             await db.query(`UPDATE ${table} SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1`, [user.id]);
         }
 
