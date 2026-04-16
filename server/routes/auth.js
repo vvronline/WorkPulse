@@ -5,7 +5,7 @@ const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
 const redis = require('../redis');
 const { masterQuery } = require('../db');
-const { getTenantPool, getTenantById } = require('../utils/tenantManager');
+const { getTenantPool, getTenantById, createTenant } = require('../utils/tenantManager');
 const { validatePassword, validateUsername } = require('../utils/password');
 const { logger } = require('../utils/logger');
 const { getTransporter, sendMail } = require('../utils/mailer');
@@ -347,16 +347,121 @@ router.post('/login', async (req, res) => {
         res.cookie('token', token, cookieOptions());
 
         if (isPlatformUser) {
+            // Platform admins need a user record in a tenant DB to use regular app features.
+            // Find their primary tenant and ensure they have a corresponding user account.
+            const tenantsRes = await masterQuery(
+                'SELECT * FROM tenants WHERE status = $1 ORDER BY id LIMIT 1', ['active']
+            );
+            const primaryTenant = tenantsRes.rows[0];
+
+            if (primaryTenant) {
+                const poolEntry = await getTenantPool(primaryTenant.db_name, primaryTenant.db_host);
+                const tenantDb = { query: poolEntry.query, transaction: poolEntry.transaction };
+
+                // Check if platform admin already has a user record in this tenant
+                let tenantUser = (await tenantDb.query(
+                    'SELECT * FROM users WHERE username = $1 OR email = $2',
+                    [user.username, user.email || '']
+                )).rows[0];
+
+                if (!tenantUser) {
+                    // Create a super_admin user in the tenant DB
+                    tenantUser = (await tenantDb.query(
+                        `INSERT INTO users (username, password, full_name, email, org_id, role)
+                         VALUES ($1, $2, $3, $4, 1, 'super_admin') RETURNING *`,
+                        [user.username, user.password, user.full_name, user.email || `${user.username}@platform.local`]
+                    )).rows[0];
+
+                    // Register in user_directory for future logins
+                    if (user.email) {
+                        await masterQuery(
+                            'INSERT INTO user_directory (email, username, tenant_id, user_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
+                            [user.email.toLowerCase(), user.username.toLowerCase(), primaryTenant.id, tenantUser.id]
+                        );
+                    }
+                }
+
+                // Re-issue JWT with tenant context so all routes use the tenant DB
+                const tenantSid = await createSession(tenantUser.id, req.headers['user-agent'], tenantDb);
+                const tenantToken = jwt.sign(
+                    { id: tenantUser.id, username: tenantUser.username, tv: tenantUser.token_version || 0, sid: tenantSid, tenant_id: primaryTenant.id },
+                    process.env.JWT_SECRET,
+                    { expiresIn: '8h' },
+                );
+                res.cookie('token', tenantToken, cookieOptions());
+
+                const reportsRes = await tenantDb.query(
+                    'SELECT 1 FROM users WHERE manager_id = $1 AND is_active = TRUE LIMIT 1',
+                    [tenantUser.id],
+                );
+                return res.json({
+                    user: {
+                        id: tenantUser.id,
+                        username: tenantUser.username,
+                        full_name: tenantUser.full_name,
+                        email: tenantUser.email || null,
+                        avatar: tenantUser.avatar || null,
+                        role: tenantUser.role || 'super_admin',
+                        org_id: tenantUser.org_id || 1,
+                        tenant_id: primaryTenant.id,
+                        has_reports: reportsRes.rowCount > 0,
+                    },
+                });
+            }
+
+            // No tenant exists yet — auto-provision a default tenant so the app is usable
+            const orgName = user.full_name ? `${user.full_name}'s Organization` : 'Default Organization';
+            const slug = 'default';
+            let newTenant, newDb;
+            try {
+                ({ tenant: newTenant, db: newDb } = await createTenant({ orgName, slug }));
+            } catch (err) {
+                logger.error({ err }, 'Auto-provision default tenant failed');
+                return res.json({
+                    user: {
+                        id: user.id,
+                        username: user.username,
+                        full_name: user.full_name,
+                        email: user.email || null,
+                        avatar: user.avatar || null,
+                        role: 'platform_admin',
+                        org_id: null,
+                        tenant_id: null,
+                    },
+                });
+            }
+
+            const tenantDb = { query: newDb.query, transaction: newDb.transaction };
+            const tenantUser = (await tenantDb.query(
+                `INSERT INTO users (username, password, full_name, email, org_id, role)
+                 VALUES ($1, $2, $3, $4, 1, 'super_admin') RETURNING *`,
+                [user.username, user.password, user.full_name, user.email || `${user.username}@platform.local`]
+            )).rows[0];
+
+            if (user.email) {
+                await masterQuery(
+                    'INSERT INTO user_directory (email, username, tenant_id, user_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
+                    [user.email.toLowerCase(), user.username.toLowerCase(), newTenant.id, tenantUser.id]
+                );
+            }
+
+            const newSid = await createSession(tenantUser.id, req.headers['user-agent'], tenantDb);
+            const newToken = jwt.sign(
+                { id: tenantUser.id, username: tenantUser.username, tv: 0, sid: newSid, tenant_id: newTenant.id },
+                process.env.JWT_SECRET,
+                { expiresIn: '8h' },
+            );
+            res.cookie('token', newToken, cookieOptions());
             return res.json({
                 user: {
-                    id: user.id,
-                    username: user.username,
-                    full_name: user.full_name,
-                    email: user.email || null,
-                    avatar: user.avatar || null,
-                    role: 'platform_admin',
-                    org_id: null,
-                    tenant_id: null,
+                    id: tenantUser.id,
+                    username: tenantUser.username,
+                    full_name: tenantUser.full_name,
+                    email: tenantUser.email || null,
+                    avatar: tenantUser.avatar || null,
+                    role: 'super_admin',
+                    org_id: 1,
+                    tenant_id: newTenant.id,
                 },
             });
         }

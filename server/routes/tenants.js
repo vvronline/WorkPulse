@@ -35,13 +35,34 @@ router.post('/', async (req, res) => {
             return res.status(400).json({ error: 'Slug must be 3-50 chars, lowercase alphanumeric with dashes, no leading/trailing dash.' });
         }
 
-        const { tenant } = await createTenant({
+        const { tenant, db } = await createTenant({
             orgName: org_name,
             slug,
             features: features || {},
             maxUsers: max_users || null,
             maxStorageMb: max_storage_mb || null,
         });
+
+        // Auto-seed a super_admin user for the platform admin who created this tenant
+        if (req.isPlatformUser) {
+            const platUser = (await masterQuery('SELECT * FROM platform_users WHERE id = $1', [req.userId])).rows[0];
+            if (platUser) {
+                const existing = (await db.query('SELECT id FROM users WHERE username = $1 OR email = $2', [platUser.username, platUser.email || ''])).rows[0];
+                if (!existing) {
+                    const newUser = (await db.query(
+                        `INSERT INTO users (username, password, full_name, email, org_id, role)
+                         VALUES ($1, $2, $3, $4, 1, 'super_admin') RETURNING id`,
+                        [platUser.username, platUser.password, platUser.full_name, platUser.email || `${platUser.username}@platform.local`]
+                    )).rows[0];
+                    if (platUser.email) {
+                        await masterQuery(
+                            'INSERT INTO user_directory (email, username, tenant_id, user_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
+                            [platUser.email.toLowerCase(), platUser.username.toLowerCase(), tenant.id, newUser.id]
+                        );
+                    }
+                }
+            }
+        }
 
         logAction(req, 'tenant_created', 'tenant', tenant.id, { slug, org_name });
         res.status(201).json({ tenant });
