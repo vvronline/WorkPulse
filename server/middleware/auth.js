@@ -11,6 +11,9 @@ async function authMiddleware(req, res, next) {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         const tokenVersion = decoded.tv ?? 0;
         const isPlatformUser = !!decoded.platform;
+        // A platform_admin with a tenant_id has a linked user record in the tenant DB.
+        // Token version should be checked against the tenant's users table, not platform_users.
+        const hasTenantContext = !!decoded.tenant_id;
 
         // req.db is set by tenant middleware (or falls back to master DB)
         const dbQuery = req.db?.query;
@@ -21,7 +24,7 @@ async function authMiddleware(req, res, next) {
         // Try Redis cache first for token version check
         let dbTokenVersion = await redis.getTokenVersion(decoded.id);
         if (dbTokenVersion === null) {
-            const result = isPlatformUser
+            const result = (isPlatformUser && !hasTenantContext)
                 ? await dbQuery('SELECT token_version FROM platform_users WHERE id = $1', [decoded.id])
                 : await dbQuery('SELECT token_version FROM users WHERE id = $1', [decoded.id]);
             const user = result.rows[0];

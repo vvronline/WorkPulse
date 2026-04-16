@@ -27,8 +27,8 @@ const VALID_ROLES = Object.keys(ROLE_LEVEL);
  */
 async function loadUserContext(req, res, next) {
     try {
-        // Platform admin: skip user table lookup, set context directly
-        if (req.isPlatformUser) {
+        // Platform admin WITHOUT tenant context: skip user table lookup
+        if (req.isPlatformUser && !req.tenantId) {
             req.userRole = 'platform_admin';
             req.userOrgId = null;
             req.userTeamId = null;
@@ -37,6 +37,10 @@ async function loadUserContext(req, res, next) {
             req.roleLevel = ROLE_LEVEL['platform_admin'];
             return next();
         }
+
+        // Platform admin WITH tenant context: load from tenant users table
+        // but keep platform_admin role level for permission checks
+        const isPlatformWithTenant = req.isPlatformUser && !!req.tenantId;
 
         // Try Redis cache first
         const cached = await redis.getUserContext(req.userId);
@@ -65,7 +69,7 @@ async function loadUserContext(req, res, next) {
             department_id: user.department_id, manager_id: user.manager_id, is_active: user.is_active,
         });
 
-        req.userRole = user.role || 'employee';
+        req.userRole = isPlatformWithTenant ? 'platform_admin' : (user.role || 'employee');
         req.userOrgId = user.org_id || null;
         req.userTeamId = user.team_id || null;
         req.userDeptId = user.department_id || null;

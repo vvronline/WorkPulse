@@ -381,10 +381,11 @@ router.post('/login', async (req, res) => {
                     }
                 }
 
-                // Re-issue JWT with tenant context so all routes use the tenant DB
+                // Re-issue JWT with tenant context + platform flag so routes use tenant DB
+                // while retaining platform_admin powers for tenant management
                 const tenantSid = await createSession(tenantUser.id, req.headers['user-agent'], tenantDb);
                 const tenantToken = jwt.sign(
-                    { id: tenantUser.id, username: tenantUser.username, tv: tenantUser.token_version || 0, sid: tenantSid, tenant_id: primaryTenant.id },
+                    { id: tenantUser.id, username: tenantUser.username, tv: tenantUser.token_version || 0, sid: tenantSid, tenant_id: primaryTenant.id, platform: true },
                     process.env.JWT_SECRET,
                     { expiresIn: '8h' },
                 );
@@ -447,7 +448,7 @@ router.post('/login', async (req, res) => {
 
             const newSid = await createSession(tenantUser.id, req.headers['user-agent'], tenantDb);
             const newToken = jwt.sign(
-                { id: tenantUser.id, username: tenantUser.username, tv: 0, sid: newSid, tenant_id: newTenant.id },
+                { id: tenantUser.id, username: tenantUser.username, tv: 0, sid: newSid, tenant_id: newTenant.id, platform: true },
                 process.env.JWT_SECRET,
                 { expiresIn: '8h' },
             );
