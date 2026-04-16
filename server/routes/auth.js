@@ -59,8 +59,8 @@ async function resolveDefaultDomainUser(identifier) {
         if (userRes.rows[0]) {
             // Check if this user is also a platform admin
             const platCheck = await masterQuery(
-                'SELECT 1 FROM platform_users WHERE username = $1 OR email = $1',
-                [identifier]
+                'SELECT 1 FROM platform_users WHERE LOWER(username) = $1 OR LOWER(email) = $1',
+                [identifier.toLowerCase()]
             );
             return { user: userRes.rows[0], db: tdb, tenantId: tenant_id, isPlatformUser: !!platCheck.rows[0] };
         }
@@ -353,7 +353,30 @@ router.post('/login', async (req, res) => {
         res.cookie('token', token, cookieOptions());
 
         if (isPlatformUser) {
-            // Platform admins need a user record in a tenant DB to use regular app features.
+            // If user was already resolved with a tenant context (via user_directory),
+            // we already have the correct JWT with platform: true and tenant_id.
+            // Just return the platform_admin response.
+            if (tenantId) {
+                const reportsRes = await db.query(
+                    'SELECT 1 FROM users WHERE manager_id = $1 AND is_active = TRUE LIMIT 1',
+                    [user.id],
+                );
+                return res.json({
+                    user: {
+                        id: user.id,
+                        username: user.username,
+                        full_name: user.full_name,
+                        email: user.email || null,
+                        avatar: user.avatar || null,
+                        role: 'platform_admin',
+                        org_id: user.org_id || 1,
+                        tenant_id: tenantId,
+                        has_reports: reportsRes.rowCount > 0,
+                    },
+                });
+            }
+
+            // Platform admin without tenant context — find or create tenant
             // Find their primary tenant and ensure they have a corresponding user account.
             const tenantsRes = await masterQuery(
                 'SELECT * FROM tenants WHERE status = $1 ORDER BY id LIMIT 1', ['active']

@@ -45,7 +45,7 @@ async function loadUserContext(req, res, next) {
         // Try Redis cache first
         const cached = await redis.getUserContext(req.userId);
         if (cached) {
-            req.userRole = cached.role || 'employee';
+            req.userRole = isPlatformWithTenant ? 'platform_admin' : (cached.role || 'employee');
             req.userOrgId = cached.org_id || null;
             req.userTeamId = cached.team_id || null;
             req.userDeptId = cached.department_id || null;
