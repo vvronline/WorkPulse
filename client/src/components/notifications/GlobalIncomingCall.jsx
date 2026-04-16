@@ -27,6 +27,7 @@ export default function GlobalIncomingCall() {
   // Ringtone
   useEffect(() => {
     if (!globalIncomingCall) return;
+    let pulseTimer = null;
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
       const osc = ctx.createOscillator();
@@ -41,11 +42,12 @@ export default function GlobalIncomingCall() {
         if (!ringtoneRef.current) return;
         gain.gain.setValueAtTime(0.1, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
-        setTimeout(pulse, 1000);
+        pulseTimer = setTimeout(pulse, 1000);
       };
       pulse();
     } catch { /* audio not available */ }
     return () => {
+      clearTimeout(pulseTimer);
       if (ringtoneRef.current) {
         try { ringtoneRef.current.osc.stop(); ringtoneRef.current.ctx.close(); } catch {}
         ringtoneRef.current = null;

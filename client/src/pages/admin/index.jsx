@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle2, Users, Building, UsersRound, Clock, AlarmClock, UserPlus, Building2, ScrollText, RefreshCw, Download, DollarSign, Megaphone } from 'lucide-react';
+import { CheckCircle2, Users, Building, UsersRound, Clock, AlarmClock, UserPlus, ScrollText, RefreshCw, Download, DollarSign, Megaphone, Server, Network } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
 import { useSearchParams } from 'react-router-dom';
 import { getAdminStats } from '../../api';
 import UserManagement from './UserManagement';
 import CreateUser from './CreateUser';
-import OrganizationsTab from './OrganizationsTab';
+import MyOrganization from './MyOrganization';
+import TenantManagement from './TenantManagement';
 import AuditLogs from './AuditLogs';
 import RoleRequests from './RoleRequests';
 import ImportUsers from './ImportUsers';
@@ -16,7 +17,8 @@ import s from '../Admin.module.css';
 export default function AdminPanel() {
     const { user } = useAuth();
     const [searchParams] = useSearchParams();
-    const [tab, setTab] = useState(searchParams.get('tab') || 'users');
+    const isPlatform = user?.role === 'platform_admin';
+    const [tab, setTab] = useState(searchParams.get('tab') || (isPlatform ? 'tenants' : 'users'));
     const [stats, setStats] = useState(null);
 
     // Sync tab when URL changes (e.g. navigated from GlobalSearch)
@@ -73,44 +75,61 @@ export default function AdminPanel() {
             )}
 
             <div className={s.tabs}>
+                {/* ─── Platform Section (platform_admin only) ─── */}
+                {isPlatform && (
+                    <>
+                        <span className={s.tabGroupLabel}>Platform</span>
+                        <button className={`${s.tab} ${tab === 'tenants' ? s.active : ''}`} onClick={() => setTab('tenants')}>
+                            <span><Server size={14} /></span> Tenants
+                        </button>
+                        <span className={s.tabDivider} />
+                    </>
+                )}
+
+                {/* ─── Organization Section ─── */}
+                {isPlatform && <span className={s.tabGroupLabel}>Organization</span>}
                 <button className={`${s.tab} ${tab === 'users' ? s.active : ''}`} onClick={() => setTab('users')}>
-                    <span><Users size={14} style={{marginRight:4,verticalAlign:'middle'}} /></span> Users
+                    <span><Users size={14} /></span> Users
                 </button>
                 <button className={`${s.tab} ${tab === 'create' ? s.active : ''}`} onClick={() => setTab('create')}>
-                    <span><UserPlus size={14} style={{marginRight:4,verticalAlign:'middle'}} /></span> Create User
+                    <span><UserPlus size={14} /></span> Create User
                 </button>
-                {(user.role === 'platform_admin' || user.role === 'super_admin' || user.org_id) && (
-                    <button className={`${s.tab} ${tab === 'organizations' ? s.active : ''}`} onClick={() => setTab('organizations')}>
-                        <span><Building2 size={14} style={{marginRight:4,verticalAlign:'middle'}} /></span> Organizations
+                {user.org_id && (
+                    <button className={`${s.tab} ${tab === 'structure' ? s.active : ''}`} onClick={() => setTab('structure')}>
+                        <span><Network size={14} /></span> Structure
                     </button>
                 )}
                 <button className={`${s.tab} ${tab === 'audit' ? s.active : ''}`} onClick={() => setTab('audit')}>
-                    <span><ScrollText size={14} style={{marginRight:4,verticalAlign:'middle'}} /></span> Audit Logs
+                    <span><ScrollText size={14} /></span> Audit Logs
                 </button>
                 <button className={`${s.tab} ${tab === 'role-requests' ? s.active : ''}`} onClick={() => setTab('role-requests')}>
-                    <span><RefreshCw size={14} style={{marginRight:4,verticalAlign:'middle'}} /></span> Role Requests
+                    <span><RefreshCw size={14} /></span> Role Requests
                 </button>
                 <button className={`${s.tab} ${tab === 'import' ? s.active : ''}`} onClick={() => setTab('import')}>
-                    <span><Download size={14} style={{marginRight:4,verticalAlign:'middle'}} /></span> Import Users
+                    <span><Download size={14} /></span> Import Users
                 </button>
                 <button className={`${s.tab} ${tab === 'payroll' ? s.active : ''}`} onClick={() => setTab('payroll')}>
-                    <span><DollarSign size={14} style={{marginRight:4,verticalAlign:'middle'}} /></span> Payroll
+                    <span><DollarSign size={14} /></span> Payroll
                 </button>
-                {(user.role === 'super_admin' || user.role === 'platform_admin') && (
+                {(user.role === 'super_admin' || isPlatform) && (
                     <button className={`${s.tab} ${tab === 'announcements' ? s.active : ''}`} onClick={() => setTab('announcements')}>
-                        <span><Megaphone size={14} style={{marginRight:4,verticalAlign:'middle'}} /></span> Announcements
+                        <span><Megaphone size={14} /></span> Announcements
                     </button>
                 )}
             </div>
 
+            {/* ─── Platform Content ─── */}
+            {tab === 'tenants' && isPlatform && <TenantManagement />}
+
+            {/* ─── Organization Content ─── */}
             {tab === 'users' && <UserManagement userRole={user.role} />}
             {tab === 'create' && <CreateUser userRole={user.role} onCreated={() => setTab('users')} />}
-            {tab === 'organizations' && (user.role === 'platform_admin' || user.role === 'super_admin' || user.org_id) && <OrganizationsTab userRole={user.role} hasOrgId={!!user.org_id} />}
+            {tab === 'structure' && user.org_id && <MyOrganization userRole={user.role} />}
             {tab === 'audit' && <AuditLogs />}
             {tab === 'role-requests' && <RoleRequests userRole={user.role} />}
             {tab === 'import' && <ImportUsers />}
             {tab === 'payroll' && <PayPeriods />}
-            {tab === 'announcements' && (user.role === 'super_admin' || user.role === 'platform_admin') && <AnnouncementsTab userRole={user.role} />}
+            {tab === 'announcements' && (user.role === 'super_admin' || isPlatform) && <AnnouncementsTab userRole={user.role} />}
         </div>
     );
 }

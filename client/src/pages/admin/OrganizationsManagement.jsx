@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Building2, Plus, Hammer, Pencil, Trash2 } from 'lucide-react';
+import { Building2, Building, Plus, Hammer, Pencil, Trash2, UsersRound, GitBranch, X } from 'lucide-react';
 import { useAutoDismiss } from '../../hooks/useAutoDismiss';
 import {
     getAdminOrganizations, createAdminOrganization, updateAdminOrganization, deleteAdminOrganization
 } from '../../api';
 import OrgModal from './OrgModal';
+import Departments from '../../components/organization/Departments';
+import Teams from '../../components/organization/Teams';
+import OrgChartView from '../../components/organization/OrgChartView';
 import s from '../Admin.module.css';
 import sf from './AdminForms.module.css';
 import su from './AdminUtils.module.css';
@@ -15,6 +18,14 @@ export default function OrganizationsManagement({ onOrgChange, onManageOrg }) {
     const [editing, setEditing] = useState(null);
     const [deleting, setDeleting] = useState(null);
     const [msg, setMsg] = useAutoDismiss('');
+    const [managingOrg, setManagingOrg] = useState(null);
+    const [manageTab, setManageTab] = useState('departments');
+
+    const handleManageOrg = (org) => {
+        if (onManageOrg) { onManageOrg(org); return; }
+        setManagingOrg(org);
+        setManageTab('departments');
+    };
 
     const fetchOrgs = useCallback(() => {
         getAdminOrganizations().then(r => setOrgs(r.data.data || r.data)).catch(e => console.error(e));
@@ -78,7 +89,7 @@ export default function OrganizationsManagement({ onOrgChange, onManageOrg }) {
                             <td>{o.member_count}</td>
                             <td>
                                 <div className={s.actions}>
-                                    <button className={`${s.btnSmall} ${s.btnPrimary}`} onClick={() => onManageOrg?.(o)}><Hammer size={13} style={{marginRight:4,verticalAlign:'middle'}} />Manage</button>
+                                    <button className={`${s.btnSmall} ${s.btnPrimary}`} onClick={() => handleManageOrg(o)}><Hammer size={13} style={{marginRight:4,verticalAlign:'middle'}} />Manage</button>
                                     <button className={`${s.btnSmall} ${s.btnAccent}`} onClick={() => setEditing(o)}><Pencil size={13} style={{marginRight:4,verticalAlign:'middle'}} />Edit</button>
                                     <button className={`${s.btnSmall} ${s.btnDanger}`} onClick={() => setDeleting(o)}><Trash2 size={13} style={{marginRight:4,verticalAlign:'middle'}} />Delete</button>
                                 </div>
@@ -108,6 +119,33 @@ export default function OrganizationsManagement({ onOrgChange, onManageOrg }) {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Drill-down: Manage org departments/teams/chart */}
+            {!onManageOrg && managingOrg && (
+                <>
+                    <hr className={su['section-divider']} />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                        <h2 className={su.sectionHeading} style={{ margin: 0 }}><Hammer size={18} style={{marginRight:7,verticalAlign:'middle'}} />Managing: {managingOrg.name}</h2>
+                        <button className={`${s.btnSmall} ${s.btnSecondary}`} onClick={() => setManagingOrg(null)}><X size={14} style={{marginRight:4,verticalAlign:'middle'}} />Close</button>
+                    </div>
+                    <div className={s.tabs}>
+                        <button className={`${s.tab} ${manageTab === 'departments' ? s.active : ''}`} onClick={() => setManageTab('departments')}>
+                            <span><Building size={14} /></span> Departments
+                        </button>
+                        <button className={`${s.tab} ${manageTab === 'teams' ? s.active : ''}`} onClick={() => setManageTab('teams')}>
+                            <span><UsersRound size={14} /></span> Teams
+                        </button>
+                        <button className={`${s.tab} ${manageTab === 'chart' ? s.active : ''}`} onClick={() => setManageTab('chart')}>
+                            <span><GitBranch size={14} /></span> Org Chart
+                        </button>
+                    </div>
+                    <div className={su['tab-content']}>
+                        {manageTab === 'departments' && <Departments orgId={managingOrg.id} userRole="platform_admin" />}
+                        {manageTab === 'teams' && <Teams orgId={managingOrg.id} userRole="platform_admin" />}
+                        {manageTab === 'chart' && <OrgChartView orgId={managingOrg.id} />}
+                    </div>
+                </>
             )}
         </>
     );

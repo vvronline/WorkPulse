@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
 import { CheckCircle2, XCircle, AlertTriangle, Info, X } from 'lucide-react';
 import s from './Toast.module.css';
 
@@ -24,6 +24,13 @@ export function ToastProvider({ children }) {
     }
     return id;
   }, [removeToast]);
+
+  // Cleanup all timers on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(timersRef.current).forEach(clearTimeout);
+    };
+  }, []);
 
   const toast = React.useMemo(() => ({
     success: (msg, dur) => addToast(msg, 'success', dur),

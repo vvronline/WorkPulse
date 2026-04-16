@@ -5,12 +5,16 @@
 const { WebSocketServer } = require('ws');
 const jwt = require('jsonwebtoken');
 const cookie = require('cookie');
-const { query } = require('../db');
+const { masterQuery } = require('../db');
+const { getTenantPool, getTenantById } = require('./tenantManager');
 const { logger } = require('./logger');
 const redis = require('../redis');
 
 /** Map<userId, Set<WebSocket>> — local instance connections only */
 const clients = new Map();
+
+/** Max WebSocket connections a single user may hold per server instance */
+const MAX_CONNECTIONS_PER_USER = 5;
 
 /** Unique instance ID for Pub/Sub dedup */
 const INSTANCE_ID = `ws-${process.pid}-${Date.now()}`;
@@ -54,11 +58,31 @@ function setupWebSocket(server) {
 
         // Verify token_version hasn't been revoked (password change/reset)
         const userId = payload.id;
+        const tenantId = payload.tenant_id;
+
+        // Resolve tenant DB
+        let db;
+        if (tenantId) {
+            try {
+                const tenant = await getTenantById(tenantId);
+                if (!tenant || tenant.status !== 'active') { ws.close(4003, 'Tenant unavailable'); return; }
+                const poolEntry = await getTenantPool(tenant.db_name, tenant.db_host);
+                db = { query: poolEntry.query, transaction: poolEntry.transaction };
+            } catch (e) {
+                logger.warn({ err: e.message, tenantId }, 'WS tenant pool failed');
+                ws.close(4003, 'Tenant unavailable');
+                return;
+            }
+        } else {
+            db = { query: masterQuery };
+        }
+        ws.db = db;
+
         try {
             const tokenVersion = payload.tv ?? 0;
             let dbTokenVersion = await redis.getTokenVersion(userId);
             if (dbTokenVersion === null) {
-                const userRow = (await query('SELECT token_version FROM users WHERE id = $1', [userId])).rows[0];
+                const userRow = (await db.query('SELECT token_version FROM users WHERE id = $1', [userId])).rows[0];
                 if (!userRow) { ws.close(4001, 'Token revoked'); return; }
                 dbTokenVersion = userRow.token_version || 0;
                 await redis.setTokenVersion(userId, dbTokenVersion);
@@ -72,23 +96,28 @@ function setupWebSocket(server) {
             return;
         }
 
-        // Register client
+        // Register client (enforce per-user connection limit)
         const wasOffline = !clients.has(userId) || clients.get(userId).size === 0;
         if (!clients.has(userId)) clients.set(userId, new Set());
-        clients.get(userId).add(ws);
+        const userConns = clients.get(userId);
+        if (userConns.size >= MAX_CONNECTIONS_PER_USER) {
+            ws.close(4029, 'Too many connections');
+            return;
+        }
+        userConns.add(ws);
         logger.debug({ userId }, 'WS client connected');
 
         // Presence: mark online
         if (wasOffline) {
             redis.setPresence(userId, redis.TTL.PRESENCE);
-            query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId]).catch(err => { logger.warn({ err: err.message, userId }, 'Failed to update last_seen_at on connect'); });
-            broadcastPresence(userId, 'online');
+            db.query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId]).catch(err => { logger.warn({ err: err.message, userId }, 'Failed to update last_seen_at on connect'); });
+            broadcastPresence(db, userId, 'online');
         }
 
         ws.on('message', (raw) => {
             try {
                 const msg = JSON.parse(raw);
-                handleChatMessage(userId, msg);
+                handleChatMessage(db, userId, msg);
             } catch { /* ignore non-JSON */ }
         });
 
@@ -100,8 +129,8 @@ function setupWebSocket(server) {
                     clients.delete(userId);
                     // Presence: mark offline
                     redis.removePresence(userId);
-                    query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId]).catch(err => { logger.warn({ err: err.message, userId }, 'Failed to update last_seen_at on disconnect'); });
-                    broadcastPresence(userId, 'offline');
+                    db.query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId]).catch(err => { logger.warn({ err: err.message, userId }, 'Failed to update last_seen_at on disconnect'); });
+                    broadcastPresence(db, userId, 'offline');
                 }
             }
             logger.debug({ userId }, 'WS client disconnected');
@@ -132,13 +161,13 @@ function setupWebSocket(server) {
 }
 
 /** Handle incoming WS messages for chat */
-async function handleChatMessage(senderId, msg) {
+async function handleChatMessage(db, senderId, msg) {
     if (msg.type === 'chat_message') {
         const { conversationId, content, replyToId, formatType, mentions } = msg.data || {};
         if (!conversationId || !content || typeof content !== 'string' || content.trim().length === 0 || content.length > 5000) return;
 
         // Verify sender is a participant
-        const participant = (await query(
+        const participant = (await db.query(
             'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
             [conversationId, senderId]
         )).rows[0];
@@ -147,17 +176,17 @@ async function handleChatMessage(senderId, msg) {
         // Insert message
         const replyId = replyToId ? parseInt(replyToId, 10) : null;
         const fmtType = (formatType === 'markdown' || formatType === 'code') ? formatType : 'text';
-        const result = (await query(
+        const result = (await db.query(
             `INSERT INTO messages (conversation_id, sender_id, content, reply_to_id, format_type)
              VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
             [conversationId, senderId, content.trim(), replyId, fmtType]
         )).rows[0];
 
         // Update conversation timestamp
-        await query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [conversationId]);
+        await db.query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [conversationId]);
 
         // Update sender's read cursor
-        await query(
+        await db.query(
             `INSERT INTO message_reads (conversation_id, user_id, last_read_at)
              VALUES ($1, $2, $3)
              ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = $3`,
@@ -165,18 +194,18 @@ async function handleChatMessage(senderId, msg) {
         );
 
         // Get all participants to broadcast
-        const participants = (await query(
+        const participants = (await db.query(
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
             [conversationId]
         )).rows;
 
         // Get sender info
-        const sender = (await query('SELECT full_name, avatar, username FROM users WHERE id = $1', [senderId])).rows[0];
+        const sender = (await db.query('SELECT full_name, avatar, username FROM users WHERE id = $1', [senderId])).rows[0];
 
         // Get reply details if replying (must belong to the same conversation)
         let replyContent = null, replySenderName = null;
         if (replyId) {
-            const replyMsg = (await query(
+            const replyMsg = (await db.query(
                 `SELECT m.content, u.full_name AS sender_name
                  FROM messages m JOIN users u ON u.id = m.sender_id
                  WHERE m.id = $1 AND m.conversation_id = $2`, [replyId, conversationId]
@@ -227,14 +256,14 @@ async function handleChatMessage(senderId, msg) {
         if (!conversationId) return;
 
         // Verify sender is a participant
-        const participant = (await query(
+        const participant = (await db.query(
             'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
             [conversationId, senderId]
         )).rows[0];
         if (!participant) return;
 
         // Notify other participants
-        const participants = (await query(
+        const participants = (await db.query(
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2',
             [conversationId, senderId]
         )).rows;
@@ -246,13 +275,13 @@ async function handleChatMessage(senderId, msg) {
         const { conversationId } = msg.data || {};
         if (!conversationId) return;
 
-        const participant = (await query(
+        const participant = (await db.query(
             'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
             [conversationId, senderId]
         )).rows[0];
         if (!participant) return;
 
-        await query(
+        await db.query(
             `INSERT INTO message_reads (conversation_id, user_id, last_read_at)
              VALUES ($1, $2, NOW())
              ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = NOW()`,
@@ -264,29 +293,29 @@ async function handleChatMessage(senderId, msg) {
         const { conversationId, callType } = msg.data || {};
         if (!conversationId || !['voice', 'video'].includes(callType)) return;
 
-        const participant = (await query(
+        const participant = (await db.query(
             'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
             [conversationId, senderId]
         )).rows[0];
         if (!participant) return;
 
         // Create call log entry
-        const callLog = (await query(
+        const callLog = (await db.query(
             `INSERT INTO call_logs (conversation_id, caller_id, call_type, status)
              VALUES ($1, $2, $3, 'ringing') RETURNING id, created_at`,
             [conversationId, senderId, callType]
         )).rows[0];
 
-        const caller = (await query('SELECT full_name, avatar FROM users WHERE id = $1', [senderId])).rows[0];
+        const caller = (await db.query('SELECT full_name, avatar FROM users WHERE id = $1', [senderId])).rows[0];
 
         // Notify all other participants about incoming call
-        const participants = (await query(
+        const participants = (await db.query(
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2',
             [conversationId, senderId]
         )).rows;
 
         // Get conversation info for the notification
-        const conv = (await query('SELECT name, is_group FROM conversations WHERE id = $1', [conversationId])).rows[0];
+        const conv = (await db.query('SELECT name, is_group FROM conversations WHERE id = $1', [conversationId])).rows[0];
 
         for (const p of participants) {
             sendToUser(p.user_id, 'call_incoming', {
@@ -313,21 +342,21 @@ async function handleChatMessage(senderId, msg) {
         const { callId, conversationId } = msg.data || {};
         if (!callId || !conversationId) return;
 
-        const callLog = (await query(
+        const callLog = (await db.query(
             `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2 AND status = 'ringing'`,
             [callId, conversationId]
         )).rows[0];
         if (!callLog) return;
 
-        const participant = (await query(
+        const participant = (await db.query(
             'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
             [conversationId, senderId]
         )).rows[0];
         if (!participant) return;
 
-        await query(`UPDATE call_logs SET status = 'answered', started_at = NOW() WHERE id = $1`, [callId]);
+        await db.query(`UPDATE call_logs SET status = 'answered', started_at = NOW() WHERE id = $1`, [callId]);
 
-        const accepter = (await query('SELECT full_name, avatar FROM users WHERE id = $1', [senderId])).rows[0];
+        const accepter = (await db.query('SELECT full_name, avatar FROM users WHERE id = $1', [senderId])).rows[0];
 
         // Notify the caller that call was accepted
         sendToUser(callLog.caller_id, 'call_accepted', {
@@ -343,21 +372,21 @@ async function handleChatMessage(senderId, msg) {
         const { callId, conversationId } = msg.data || {};
         if (!callId || !conversationId) return;
 
-        const callLog = (await query(
+        const callLog = (await db.query(
             `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2`,
             [callId, conversationId]
         )).rows[0];
         if (!callLog) return;
 
-        await query(
+        await db.query(
             `UPDATE call_logs SET status = 'declined', ended_at = NOW() WHERE id = $1 AND status = 'ringing'`,
             [callId]
         );
 
-        const rejecter = (await query('SELECT full_name FROM users WHERE id = $1', [senderId])).rows[0];
+        const rejecter = (await db.query('SELECT full_name FROM users WHERE id = $1', [senderId])).rows[0];
 
         // Notify other participants
-        const participants = (await query(
+        const participants = (await db.query(
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2',
             [conversationId, senderId]
         )).rows;
@@ -376,7 +405,7 @@ async function handleChatMessage(senderId, msg) {
         const { callId, conversationId } = msg.data || {};
         if (!callId || !conversationId) return;
 
-        const callLog = (await query(
+        const callLog = (await db.query(
             `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2`,
             [callId, conversationId]
         )).rows[0];
@@ -388,7 +417,7 @@ async function handleChatMessage(senderId, msg) {
             duration = Math.round((Date.now() - new Date(callLog.started_at).getTime()) / 1000);
         }
 
-        await query(
+        await db.query(
             `UPDATE call_logs SET status = CASE WHEN status = 'ringing' THEN 'missed' ELSE 'ended' END,
              ended_at = NOW(), duration = $2 WHERE id = $1`,
             [callId, duration]
@@ -397,7 +426,7 @@ async function handleChatMessage(senderId, msg) {
         const finalStatus = callLog.status === 'ringing' ? 'missed' : 'ended';
 
         // Notify all participants about call end
-        const allParticipants = (await query(
+        const allParticipants = (await db.query(
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
             [conversationId]
         )).rows;
@@ -414,11 +443,11 @@ async function handleChatMessage(senderId, msg) {
         if (!conversationId || !targetUserId || !signal) return;
 
         // Verify both sender and target are in the conversation
-        const senderOk = (await query(
+        const senderOk = (await db.query(
             'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
             [conversationId, senderId]
         )).rows[0];
-        const targetOk = (await query(
+        const targetOk = (await db.query(
             'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
             [conversationId, targetUserId]
         )).rows[0];
@@ -436,21 +465,21 @@ async function handleChatMessage(senderId, msg) {
         const { callId, conversationId } = msg.data || {};
         if (!callId || !conversationId) return;
 
-        const callLog = (await query(
+        const callLog = (await db.query(
             `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2 AND status = 'answered'`,
             [callId, conversationId]
         )).rows[0];
         if (!callLog) return;
 
         // Verify sender is in the conversation
-        const participant = (await query(
+        const participant = (await db.query(
             'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
             [conversationId, senderId]
         )).rows[0];
         if (!participant) return;
 
         // Find the other participant(s) and tell them to re-offer
-        const others = (await query(
+        const others = (await db.query(
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2',
             [conversationId, senderId]
         )).rows;
@@ -470,21 +499,21 @@ async function handleChatMessage(senderId, msg) {
         const { meetingId } = msg.data || {};
         if (!meetingId) return;
 
-        const meeting = (await query('SELECT * FROM meetings WHERE id = $1', [meetingId])).rows[0];
+        const meeting = (await db.query('SELECT * FROM meetings WHERE id = $1', [meetingId])).rows[0];
         if (!meeting) return;
 
         // Allow rejoining ended meetings — reactivate the meeting
         if (meeting.status === 'ended') {
-            await query(`UPDATE meetings SET status = 'active', ended_at = NULL WHERE id = $1`, [meetingId]);
+            await db.query(`UPDATE meetings SET status = 'active', ended_at = NULL WHERE id = $1`, [meetingId]);
         }
 
         // Verify participant is allowed
-        const mp = (await query(
+        const mp = (await db.query(
             'SELECT status FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2',
             [meetingId, senderId]
         )).rows[0];
         const isOrgMember = meeting.org_id
-            ? (await query('SELECT 1 FROM users WHERE id = $1 AND org_id = $2', [senderId, meeting.org_id])).rows[0]
+            ? (await db.query('SELECT 1 FROM users WHERE id = $1 AND org_id = $2', [senderId, meeting.org_id])).rows[0]
             : true;
         if (!mp && !isOrgMember) return;
 
@@ -492,7 +521,7 @@ async function handleChatMessage(senderId, msg) {
         const wasAlreadyJoined = mp?.status === 'joined';
 
         // Upsert participant
-        await query(
+        await db.query(
             `INSERT INTO meeting_participants (meeting_id, user_id, role, status, joined_at)
              VALUES ($1, $2, 'participant', 'joined', NOW())
              ON CONFLICT (meeting_id, user_id) DO UPDATE SET status = 'joined', joined_at = NOW(), left_at = NULL`,
@@ -501,13 +530,13 @@ async function handleChatMessage(senderId, msg) {
 
         // Mark meeting as active on first join
         if (meeting.status === 'scheduled') {
-            await query(`UPDATE meetings SET status = 'active', started_at = NOW() WHERE id = $1`, [meetingId]);
+            await db.query(`UPDATE meetings SET status = 'active', started_at = NOW() WHERE id = $1`, [meetingId]);
         }
 
-        const joiner = (await query('SELECT full_name, avatar, username FROM users WHERE id = $1', [senderId])).rows[0];
+        const joiner = (await db.query('SELECT full_name, avatar, username FROM users WHERE id = $1', [senderId])).rows[0];
 
         // Get all current participants with user info (for sending to the new joiner)
-        const allParticipants = (await query(
+        const allParticipants = (await db.query(
             `SELECT mp.user_id, u.full_name, u.avatar, u.username
              FROM meeting_participants mp JOIN users u ON u.id = mp.user_id
              WHERE mp.meeting_id = $1 AND mp.status = $2`,
@@ -532,14 +561,14 @@ async function handleChatMessage(senderId, msg) {
 
         // System message in conversation (skip on PiP rejoin to avoid duplicates)
         if (meeting.conversation_id && !wasAlreadyJoined) {
-            const sysMsg = (await query(
+            const sysMsg = (await db.query(
                 `INSERT INTO messages (conversation_id, sender_id, content, format_type, metadata)
                  VALUES ($1, $2, '', 'system', $3) RETURNING id, created_at`,
                 [meeting.conversation_id, senderId, JSON.stringify({
                     type: 'meeting_joined', meetingId, name: joiner?.full_name
                 })]
             )).rows[0];
-            const convParticipants = (await query(
+            const convParticipants = (await db.query(
                 'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
                 [meeting.conversation_id]
             )).rows;
@@ -557,12 +586,12 @@ async function handleChatMessage(senderId, msg) {
         const { meetingId } = msg.data || {};
         if (!meetingId) return;
 
-        await query(
+        await db.query(
             `UPDATE meeting_participants SET status = 'left', left_at = NOW() WHERE meeting_id = $1 AND user_id = $2`,
             [meetingId, senderId]
         );
 
-        const activeParticipants = (await query(
+        const activeParticipants = (await db.query(
             `SELECT mp.user_id FROM meeting_participants mp WHERE mp.meeting_id = $1 AND mp.status = 'joined'`,
             [meetingId]
         )).rows;
@@ -573,14 +602,14 @@ async function handleChatMessage(senderId, msg) {
 
         // If no active participants, mark meeting ended (use WHERE to prevent double-update race)
         if (activeParticipants.length === 0) {
-            await query(`UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1 AND status != 'ended'`, [meetingId]);
+            await db.query(`UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1 AND status != 'ended'`, [meetingId]);
         }
 
     } else if (msg.type === 'meeting_end') {
         const { meetingId } = msg.data || {};
         if (!meetingId) return;
 
-        const meeting = (await query(
+        const meeting = (await db.query(
             'SELECT * FROM meetings WHERE id = $1 AND created_by = $2',
             [meetingId, senderId]
         )).rows[0];
@@ -589,16 +618,16 @@ async function handleChatMessage(senderId, msg) {
         const startedAt = meeting.started_at ? new Date(meeting.started_at) : null;
         const durationSecs = startedAt ? Math.round((Date.now() - startedAt.getTime()) / 1000) : null;
 
-        await query(
+        await db.query(
             `UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1`,
             [meetingId]
         );
-        await query(
+        await db.query(
             `UPDATE meeting_participants SET status = 'left', left_at = NOW() WHERE meeting_id = $1`,
             [meetingId]
         );
 
-        const activeParticipants = (await query(
+        const activeParticipants = (await db.query(
             'SELECT user_id FROM meeting_participants WHERE meeting_id = $1',
             [meetingId]
         )).rows;
@@ -609,14 +638,14 @@ async function handleChatMessage(senderId, msg) {
 
         // System message in conversation
         if (meeting.conversation_id) {
-            const sysMsg = (await query(
+            const sysMsg = (await db.query(
                 `INSERT INTO messages (conversation_id, sender_id, content, format_type, metadata)
                  VALUES ($1, $2, '', 'system', $3) RETURNING id, created_at`,
                 [meeting.conversation_id, senderId, JSON.stringify({
                     type: 'meeting_ended', meetingId, duration: durationSecs
                 })]
             )).rows[0];
-            const convParticipants = (await query(
+            const convParticipants = (await db.query(
                 'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
                 [meeting.conversation_id]
             )).rows;
@@ -636,7 +665,7 @@ async function handleChatMessage(senderId, msg) {
         if (!meetingId || !targetUserId || !signal) return;
 
         // Verify both are active participants
-        const senderOk = (await query(
+        const senderOk = (await db.query(
             `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
             [meetingId, senderId]
         )).rows[0];
@@ -653,28 +682,28 @@ async function handleChatMessage(senderId, msg) {
         const { meetingId, targetUserId } = msg.data || {};
         if (!meetingId || !targetUserId) return;
 
-        const meeting = (await query(
+        const meeting = (await db.query(
             'SELECT * FROM meetings WHERE id = $1 AND created_by = $2',
             [meetingId, senderId]
         )).rows[0];
         if (!meeting || meeting.status === 'ended') return;
 
-        const targetUser = (await query('SELECT full_name, avatar FROM users WHERE id = $1', [targetUserId])).rows[0];
+        const targetUser = (await db.query('SELECT full_name, avatar FROM users WHERE id = $1', [targetUserId])).rows[0];
         if (!targetUser) return;
 
-        await query(
+        await db.query(
             `INSERT INTO meeting_participants (meeting_id, user_id, role, status)
              VALUES ($1, $2, 'participant', 'invited') ON CONFLICT (meeting_id, user_id) DO NOTHING`,
             [meetingId, targetUserId]
         );
         if (meeting.conversation_id) {
-            await query(
+            await db.query(
                 `INSERT INTO conversation_participants (conversation_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
                 [meeting.conversation_id, targetUserId]
             );
         }
 
-        const organizer = (await query('SELECT full_name FROM users WHERE id = $1', [senderId])).rows[0];
+        const organizer = (await db.query('SELECT full_name FROM users WHERE id = $1', [senderId])).rows[0];
         sendToUser(targetUserId, 'meeting_invite', {
             meetingId,
             meetingCode: meeting.meeting_code,
@@ -689,7 +718,7 @@ async function handleChatMessage(senderId, msg) {
         const { meetingId, targetUserId, muted } = msg.data || {};
         if (!meetingId || !targetUserId) return;
 
-        const meeting = (await query('SELECT * FROM meetings WHERE id = $1 AND created_by = $2', [meetingId, senderId])).rows[0];
+        const meeting = (await db.query('SELECT * FROM meetings WHERE id = $1 AND created_by = $2', [meetingId, senderId])).rows[0];
         if (!meeting) return;
 
         sendToUser(targetUserId, 'meeting_muted', { meetingId, muted: !!muted, byUserId: senderId });
@@ -699,18 +728,18 @@ async function handleChatMessage(senderId, msg) {
         if (!meetingId) return;
 
         // Verify sender is an active participant
-        const senderOk = (await query(
+        const senderOk = (await db.query(
             `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
             [meetingId, senderId]
         )).rows[0];
         if (!senderOk) return;
 
-        const participants = (await query(
+        const participants = (await db.query(
             `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined'`,
             [meetingId]
         )).rows;
 
-        const raiser = (await query('SELECT full_name FROM users WHERE id = $1', [senderId])).rows[0];
+        const raiser = (await db.query('SELECT full_name FROM users WHERE id = $1', [senderId])).rows[0];
         for (const p of participants) {
             sendToUser(p.user_id, 'meeting_hand_raised', { meetingId, userId: senderId, name: raiser?.full_name, raised: !!raised });
         }
@@ -721,13 +750,13 @@ async function handleChatMessage(senderId, msg) {
         if (!meetingId) return;
 
         // Verify sender is an active participant
-        const senderOk = (await query(
+        const senderOk = (await db.query(
             `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
             [meetingId, senderId]
         )).rows[0];
         if (!senderOk) return;
 
-        const participants = (await query(
+        const participants = (await db.query(
             `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined'`,
             [meetingId]
         )).rows;
@@ -744,14 +773,14 @@ async function handleChatMessage(senderId, msg) {
         if (!meetingId || !text || typeof text !== 'string' || !text.trim() || text.length > 5000) return;
 
         // Verify sender is an active participant
-        const senderOk = (await query(
+        const senderOk = (await db.query(
             `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
             [meetingId, senderId]
         )).rows[0];
         if (!senderOk) return;
 
-        const sender = (await query('SELECT full_name FROM users WHERE id = $1', [senderId])).rows[0];
-        const participants = (await query(
+        const sender = (await db.query('SELECT full_name FROM users WHERE id = $1', [senderId])).rows[0];
+        const participants = (await db.query(
             `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined'`,
             [meetingId]
         )).rows;
@@ -774,33 +803,33 @@ async function handleChatMessage(senderId, msg) {
         if (!status || !validStatuses.includes(status)) return;
         const safeText = typeof statusText === 'string' ? statusText.trim().slice(0, 100) : null;
         // Persist to DB + Redis
-        await query('UPDATE users SET user_status = $1, user_status_text = $2 WHERE id = $3', [status, safeText, senderId]);
+        await db.query('UPDATE users SET user_status = $1, user_status_text = $2 WHERE id = $3', [status, safeText, senderId]);
         redis.setUserStatus(senderId, status);
         // Broadcast to org members
-        broadcastStatus(senderId, status, safeText);
+        broadcastStatus(db, senderId, status, safeText);
 
     } else if (msg.type === 'call_add_participant') {
         // Add a participant to an ongoing 1:1 call (upgrade to group)
         const { callId, conversationId, targetUserId } = msg.data || {};
         if (!callId || !conversationId || !targetUserId) return;
 
-        const callLog = (await query('SELECT * FROM call_logs WHERE id = $1 AND status = $2', [callId, 'answered'])).rows[0];
+        const callLog = (await db.query('SELECT * FROM call_logs WHERE id = $1 AND status = $2', [callId, 'answered'])).rows[0];
         if (!callLog) return;
 
         // Verify sender is in the call conversation
-        const senderOk = (await query(
+        const senderOk = (await db.query(
             'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
             [conversationId, senderId]
         )).rows[0];
         if (!senderOk) return;
 
         // Add target to conversation
-        await query(
+        await db.query(
             `INSERT INTO conversation_participants (conversation_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
             [conversationId, targetUserId]
         );
 
-        const caller = (await query('SELECT full_name, avatar FROM users WHERE id = $1', [senderId])).rows[0];
+        const caller = (await db.query('SELECT full_name, avatar FROM users WHERE id = $1', [senderId])).rows[0];
 
         // Notify target as incoming call
         sendToUser(targetUserId, 'call_incoming', {
@@ -853,13 +882,13 @@ function broadcast(type, data) {
 /**
  * Broadcast presence change to org members who are online.
  */
-async function broadcastPresence(userId, status) {
+async function broadcastPresence(db, userId, status) {
     try {
-        const user = (await query('SELECT org_id, full_name, user_status FROM users WHERE id = $1', [userId])).rows[0];
+        const user = (await db.query('SELECT org_id, full_name, user_status FROM users WHERE id = $1', [userId])).rows[0];
         if (!user?.org_id) return;
 
         // Only notify online org users
-        const orgUsers = (await query(
+        const orgUsers = (await db.query(
             'SELECT id FROM users WHERE org_id = $1 AND id != $2 AND is_active = TRUE',
             [user.org_id, userId]
         )).rows;
@@ -873,12 +902,12 @@ async function broadcastPresence(userId, status) {
 /**
  * Broadcast user status change (available/busy/dnd/away/in_call/in_meeting/offline) to org members.
  */
-async function broadcastStatus(userId, userStatus, statusText) {
+async function broadcastStatus(db, userId, userStatus, statusText) {
     try {
-        const user = (await query('SELECT org_id, full_name FROM users WHERE id = $1', [userId])).rows[0];
+        const user = (await db.query('SELECT org_id, full_name FROM users WHERE id = $1', [userId])).rows[0];
         if (!user?.org_id) return;
 
-        const orgUsers = (await query(
+        const orgUsers = (await db.query(
             'SELECT id FROM users WHERE org_id = $1 AND id != $2 AND is_active = TRUE',
             [user.org_id, userId]
         )).rows;
@@ -893,7 +922,7 @@ async function broadcastStatus(userId, userStatus, statusText) {
  * Create a notification in the DB and push it to the user via WebSocket.
  * Drop-in wrapper: call this instead of raw INSERT INTO notifications.
  */
-async function notifyUser(userId, type, title, body, linkTaskId) {
+async function notifyUser(db, userId, type, title, body, linkTaskId) {
     try {
         const sql = linkTaskId
             ? 'INSERT INTO notifications (user_id, type, title, body, link_task_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at'
@@ -901,7 +930,7 @@ async function notifyUser(userId, type, title, body, linkTaskId) {
         const params = linkTaskId
             ? [userId, type, title, body, linkTaskId]
             : [userId, type, title, body];
-        const row = (await query(sql, params)).rows[0];
+        const row = (await db.query(sql, params)).rows[0];
         if (row) {
             sendToUser(userId, 'notification', {
                 id: row.id, type, title, body,

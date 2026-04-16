@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { register as registerApi, getRegistrationMode } from '../api';
 import { Lock, Briefcase } from 'lucide-react';
@@ -9,7 +9,10 @@ import s from './Auth.module.css';
 
 export default function Register() {
   const { saveAuth } = useAuth();
-  const [form, setForm] = useState({ username: '', password: '', full_name: '', email: '', invite_code: '' });
+  const [searchParams] = useSearchParams();
+  const tenantSlug = searchParams.get('tenant') || '';
+  const inviteFromUrl = searchParams.get('invite') || '';
+  const [form, setForm] = useState({ username: '', password: '', full_name: '', email: '', invite_code: inviteFromUrl });
   const [error, setError] = useAutoDismiss('');
   const [loading, setLoading] = useState(false);
   const [regMode, setRegMode] = useState(null); // null = loading, safest default
@@ -25,7 +28,7 @@ export default function Register() {
     setError('');
     setLoading(true);
     try {
-      const { data } = await registerApi(form);
+      const { data } = await registerApi({ ...form, tenant_slug: tenantSlug || undefined });
       saveAuth(data.user);
     } catch (err) {
       setError(err.response?.data?.error || 'Registration failed');

@@ -28,7 +28,7 @@ export default function MobileTabBar() {
         { to: '/analytics', label: 'Analytics', icon: BarChart3 },
         { to: '/manual-entry', label: 'Manual Entry', icon: FileEdit },
     ];
-    if (user?.org_id) moreItems.push({ to: '/organization', label: 'Organization', icon: Building2 });
+    if (user?.org_id && user?.role !== 'platform_admin') moreItems.push({ to: '/organization', label: 'Organization', icon: Building2 });
     if (user?.org_id) moreItems.push({ to: '/leave-policy', label: 'Leave Policy', icon: ClipboardList });
     if (isTeamLead) moreItems.push({ to: '/manager', label: 'My Team', icon: Users });
     if (isHR) moreItems.push({ to: '/admin', label: 'Admin', icon: Settings });

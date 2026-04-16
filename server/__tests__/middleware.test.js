@@ -14,6 +14,10 @@ jest.mock('../utils/logger', () => ({
 const mockQuery = jest.fn();
 jest.mock('../db', () => ({
     query: (...args) => mockQuery(...args),
+
+    masterQuery: (...args) => mockQuery(...args),
+
+    masterTransaction: (...args) => mockTransaction ? mockTransaction(...args) : (async (fn) => fn({ query: (...a) => mockQuery(...a) }))(...args),
 }));
 
 const authMiddleware = require('../middleware/auth');
@@ -22,7 +26,10 @@ const { canManageUser } = require('../middleware/rbac');
 const SECRET = process.env.JWT_SECRET || 'test-secret';
 
 function mockReqRes(cookie) {
-    const req = { cookies: { token: cookie } };
+    const req = {
+        cookies: { token: cookie },
+        db: { query: (...args) => mockQuery(...args) },
+    };
     const res = {
         status: jest.fn().mockReturnThis(),
         json: jest.fn().mockReturnThis(),

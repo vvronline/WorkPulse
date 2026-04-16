@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { resetPassword } from '../api';
 import { Lock, ArrowLeft, CheckCircle2 } from 'lucide-react';
 import PasswordInput from '../components/common/PasswordInput';
@@ -8,6 +8,8 @@ import s from './Auth.module.css';
 
 export default function ResetPassword() {
   const { token } = useParams();
+  const [searchParams] = useSearchParams();
+  const tenantSlug = searchParams.get('t') || '';
   const navigate = useNavigate();
   const [form, setForm] = useState({ password: '', confirm: '' });
   const [error, setError] = useAutoDismiss('');
@@ -36,7 +38,7 @@ export default function ResetPassword() {
 
     setLoading(true);
     try {
-      const { data } = await resetPassword({ token, password: form.password });
+      const { data } = await resetPassword({ token, password: form.password, tenant_slug: tenantSlug || undefined });
       setSuccess(data.message);
       redirectTimerRef.current = setTimeout(() => navigate('/login'), 3000);
     } catch (err) {

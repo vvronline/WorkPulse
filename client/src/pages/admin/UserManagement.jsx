@@ -150,6 +150,7 @@ export default function UserManagement({ userRole }) {
                 <select value={filterRole} onChange={e => setFilterRole(e.target.value)}>
                     <option value="">All Roles</option>
                     {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+                    <option value="platform_admin">{ROLE_LABELS.platform_admin}</option>
                 </select>
                 <select value={filterActive} onChange={e => setFilterActive(e.target.value)}>
                     <option value="">All Status</option>
@@ -195,6 +196,10 @@ export default function UserManagement({ userRole }) {
                                             <button style={{ marginLeft: '0.5rem', fontSize: '0.7rem', cursor: 'pointer', background: 'none', border: 'none', color: 'var(--danger)', textDecoration: 'underline' }} onClick={() => handleCancelRoleRequest(pendingRequests[u.id].id)}>Cancel</button>
                                         </span>
                                     </div>
+                                ) : u.role === 'platform_admin' ? (
+                                    <span className={sf.inlineSelect} style={{ background: 'color-mix(in srgb, var(--accent) 14%, transparent)', padding: '0.25rem 0.5rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600, color: 'var(--accent)' }}>
+                                        {ROLE_LABELS[u.role]}
+                                    </span>
                                 ) : (
                                     <select value={u.role} onChange={e => handleRoleChange(u.id, e.target.value)} className={sf.inlineSelect}>
                                         {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}

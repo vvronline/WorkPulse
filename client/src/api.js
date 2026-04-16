@@ -209,6 +209,25 @@ export const createAnnouncement = (data) => API.post('/admin/announcements', dat
 export const updateAnnouncement = (id, data) => API.put(`/admin/announcements/${id}`, data);
 export const deleteAnnouncement = (id) => API.delete(`/admin/announcements/${id}`);
 
+// Tenant Management (platform_admin)
+export const getTenants = (params) => API.get('/admin/tenants', { params });
+export const getTenantOverview = () => API.get('/admin/tenants/overview');
+export const getTenant = (id) => API.get(`/admin/tenants/${id}`);
+export const createTenant = (data) => API.post('/admin/tenants', data);
+export const updateTenant = (id, data) => API.put(`/admin/tenants/${id}`, data);
+export const suspendTenant = (id, reason) => API.put(`/admin/tenants/${id}/suspend`, { reason });
+export const reactivateTenant = (id) => API.put(`/admin/tenants/${id}/reactivate`);
+export const deleteTenantApi = (id, hard) => API.delete(`/admin/tenants/${id}`, { params: { hard } });
+export const getTenantStats = (id) => API.get(`/admin/tenants/${id}/stats`);
+export const updateTenantDomain = (id, domain) => API.put(`/admin/tenants/${id}/domain`, { custom_domain: domain });
+export const updateTenantFeatures = (id, features) => API.put(`/admin/tenants/${id}/features`, { features });
+export const updateTenantLimits = (id, limits) => API.put(`/admin/tenants/${id}/limits`, limits);
+export const impersonateTenant = (id) => API.post(`/admin/tenants/${id}/impersonate`);
+export const exitImpersonation = (id) => API.post(`/admin/tenants/${id}/exit-impersonate`);
+export const getTenantUsers = (id, params) => API.get(`/admin/tenants/${id}/users`, { params });
+export const createTenantUser = (id, data) => API.post(`/admin/tenants/${id}/users`, data);
+export const deactivateTenantUser = (tenantId, userId) => API.put(`/admin/tenants/${tenantId}/users/${userId}/deactivate`);
+
 // Manager Dashboard
 export const getTeamAttendance = (date) => API.get('/manager/team-attendance', { params: { date } });
 export const getTeamAnalytics = (days, from, to) => API.get('/manager/team-analytics', { params: { days, from, to } });

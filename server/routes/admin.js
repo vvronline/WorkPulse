@@ -1,7 +1,7 @@
-﻿const express = require('express');
+const express = require('express');
 const bcrypt = require('bcryptjs');
 const multer = require('multer');
-const { query, transaction } = require('../db');
+const { masterQuery } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole, requireSameOrg, canManageUser, VALID_ROLES, ROLE_LEVEL } = require('../middleware/rbac');
 const { logAction, queryLogs } = require('../utils/audit');
@@ -20,9 +20,9 @@ router.get('/organizations', requireRole('platform_admin'), async (req, res) => 
         const page = Math.max(parseInt(req.query.page) || 1, 1);
         const perPage = Math.min(Math.max(parseInt(req.query.per_page) || 50, 1), 100);
         const offset = (page - 1) * perPage;
-        const totalRes = await query('SELECT COUNT(*) as count FROM organizations');
+        const totalRes = await req.db.query('SELECT COUNT(*) as count FROM organizations');
         const total = parseInt(totalRes.rows[0].count, 10);
-        const orgsRes = await query(`
+        const orgsRes = await req.db.query(`
             SELECT o.id, o.name, o.slug, o.timezone, o.work_hours_per_day, o.work_days, o.fiscal_year_start,
                    (SELECT COUNT(*) FROM users WHERE org_id = o.id AND is_active = TRUE) as member_count
             FROM organizations o ORDER BY o.name LIMIT $1 OFFSET $2
@@ -37,12 +37,12 @@ router.get('/organizations', requireRole('platform_admin'), async (req, res) => 
 router.get('/organizations/:id', requireRole('platform_admin'), async (req, res) => {
     try {
         const { id } = req.params;
-        const orgRes = await query('SELECT * FROM organizations WHERE id = $1', [id]);
+        const orgRes = await req.db.query('SELECT * FROM organizations WHERE id = $1', [id]);
         const org = orgRes.rows[0];
         if (!org) return res.status(404).json({ error: 'Organization not found' });
-        const memberRes = await query('SELECT COUNT(*) as count FROM users WHERE org_id = $1 AND is_active = TRUE', [id]);
-        const deptRes = await query('SELECT COUNT(*) as count FROM departments WHERE org_id = $1', [id]);
-        const teamRes = await query('SELECT COUNT(*) as count FROM teams WHERE org_id = $1', [id]);
+        const memberRes = await req.db.query('SELECT COUNT(*) as count FROM users WHERE org_id = $1 AND is_active = TRUE', [id]);
+        const deptRes = await req.db.query('SELECT COUNT(*) as count FROM departments WHERE org_id = $1', [id]);
+        const teamRes = await req.db.query('SELECT COUNT(*) as count FROM teams WHERE org_id = $1', [id]);
         res.json({
             ...org,
             memberCount: parseInt(memberRes.rows[0].count, 10),
@@ -62,11 +62,11 @@ router.post('/organizations', requireRole('platform_admin'), async (req, res) =>
         if (!trimmedName) return res.status(400).json({ error: 'Organization name is required' });
         if (trimmedName.length > 100) return res.status(400).json({ error: 'Name must be 100 characters or less' });
         const slug = trimmedName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-        const existingRes = await query('SELECT id FROM organizations WHERE slug = $1', [slug]);
+        const existingRes = await req.db.query('SELECT id FROM organizations WHERE slug = $1', [slug]);
         if (existingRes.rows[0]) return res.status(400).json({ error: 'An organization with a similar name already exists' });
         const whpd = Number(work_hours_per_day) || 8;
         if (whpd < 1 || whpd > 24) return res.status(400).json({ error: 'Work hours per day must be between 1 and 24' });
-        const result = await query(
+        const result = await req.db.query(
             'INSERT INTO organizations (name, slug, created_by, work_hours_per_day, work_days, timezone) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
             [trimmedName, slug, req.userId, whpd, work_days || '1,2,3,4,5', timezone || 'UTC']
         );
@@ -83,7 +83,7 @@ router.put('/organizations/:id', requireRole('platform_admin'), async (req, res)
     try {
         const { id } = req.params;
         const { name, work_hours_per_day, work_days, timezone, fiscal_year_start } = req.body;
-        const orgRes = await query('SELECT id FROM organizations WHERE id = $1', [id]);
+        const orgRes = await req.db.query('SELECT id FROM organizations WHERE id = $1', [id]);
         if (!orgRes.rows[0]) return res.status(404).json({ error: 'Organization not found' });
         let pi = 1;
         const updates = [];
@@ -103,9 +103,9 @@ router.put('/organizations/:id', requireRole('platform_admin'), async (req, res)
         updates.push('updated_at = CURRENT_TIMESTAMP');
         if (updates.length <= 1) return res.status(400).json({ error: 'No fields to update' });
         params.push(id);
-        await query(`UPDATE organizations SET ${updates.join(', ')} WHERE id = $${pi}`, params);
+        await req.db.query(`UPDATE organizations SET ${updates.join(', ')} WHERE id = $${pi}`, params);
         logAction(req, 'admin_update', 'organization', id, req.body);
-        const updated = await query('SELECT * FROM organizations WHERE id = $1', [id]);
+        const updated = await req.db.query('SELECT * FROM organizations WHERE id = $1', [id]);
         res.json(updated.rows[0]);
     } catch (err) {
         req.log.error({ err }, 'Update org error');
@@ -116,13 +116,13 @@ router.put('/organizations/:id', requireRole('platform_admin'), async (req, res)
 router.delete('/organizations/:id', requireRole('platform_admin'), async (req, res) => {
     try {
         const { id } = req.params;
-        const orgRes = await query('SELECT id, name FROM organizations WHERE id = $1', [id]);
+        const orgRes = await req.db.query('SELECT id, name FROM organizations WHERE id = $1', [id]);
         const org = orgRes.rows[0];
         if (!org) return res.status(404).json({ error: 'Organization not found' });
-        const activeRes = await query('SELECT COUNT(*) as count FROM users WHERE org_id = $1 AND is_active = TRUE', [id]);
+        const activeRes = await req.db.query('SELECT COUNT(*) as count FROM users WHERE org_id = $1 AND is_active = TRUE', [id]);
         const activeUsers = parseInt(activeRes.rows[0].count, 10);
         if (activeUsers > 0) return res.status(400).json({ error: `Cannot delete organization with ${activeUsers} active user(s). Deactivate or reassign users first.` });
-        await transaction(async (client) => {
+        await req.db.transaction(async (client) => {
             await client.query('UPDATE approval_requests SET org_id = NULL WHERE org_id = $1', [id]);
             await client.query('UPDATE audit_logs SET org_id = NULL WHERE org_id = $1', [id]);
             await client.query('DELETE FROM invite_codes WHERE org_id = $1', [id]);
@@ -170,10 +170,10 @@ router.get('/users', async (req, res) => {
         if (is_active !== undefined) { where.push(`u.is_active = $${pi++}`); params.push(is_active === 'true'); }
 
         const whereClause = where.length > 0 ? 'WHERE ' + where.join(' AND ') : '';
-        const countRes = await query(`SELECT COUNT(*) as count FROM users u ${whereClause}`, params);
+        const countRes = await req.db.query(`SELECT COUNT(*) as count FROM users u ${whereClause}`, params);
         const total = parseInt(countRes.rows[0].count, 10);
 
-        const usersRes = await query(`
+        const usersRes = await req.db.query(`
             SELECT u.id, u.username, u.full_name, u.email, u.avatar, u.role,
                    u.is_active, u.org_id, u.department_id, u.team_id, u.manager_id, u.created_at,
                    o.name as org_name, d.name as department_name, t.name as team_name,
@@ -197,7 +197,7 @@ router.get('/users', async (req, res) => {
 router.get('/users/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const userRes = await query(`
+        const userRes = await req.db.query(`
             SELECT u.id, u.username, u.full_name, u.email, u.avatar, u.role,
                    u.is_active, u.org_id, u.department_id, u.team_id, u.manager_id, u.created_at, u.timezone_offset,
                    o.name as org_name, d.name as department_name, t.name as team_name,
@@ -240,7 +240,7 @@ router.put('/users/:id/role', async (req, res) => {
         if (role === 'super_admin' && req.userRole !== 'platform_admin') {
             return res.status(403).json({ error: 'Only platform administrators can assign the super_admin role' });
         }
-        const targetRes = await query('SELECT id, role, org_id, full_name FROM users WHERE id = $1', [Number(id)]);
+        const targetRes = await req.db.query('SELECT id, role, org_id, full_name FROM users WHERE id = $1', [Number(id)]);
         const target = targetRes.rows[0];
         if (!target) return res.status(404).json({ error: 'User not found' });
         if (req.userRole !== 'platform_admin' && target.org_id !== req.userOrgId) {
@@ -257,7 +257,7 @@ router.put('/users/:id/role', async (req, res) => {
             return res.status(400).json({ error: 'Cannot change your own role' });
         }
         // Check for existing pending request
-        const existingRes = await query('SELECT id FROM role_change_requests WHERE target_user_id = $1 AND status = $2', [Number(id), 'pending']);
+        const existingRes = await req.db.query('SELECT id FROM role_change_requests WHERE target_user_id = $1 AND status = $2', [Number(id), 'pending']);
         if (existingRes.rows[0]) return res.status(400).json({ error: 'A role change request is already pending for this user' });
 
         // platform_admin: apply immediately (no one above them)
@@ -265,10 +265,10 @@ router.put('/users/:id/role', async (req, res) => {
         const canApplyImmediately = req.userRole === 'platform_admin' ||
             (req.userRole === 'super_admin' && ROLE_LEVEL[role] < ROLE_LEVEL['super_admin']);
         if (canApplyImmediately) {
-            await query('UPDATE users SET role = $1 WHERE id = $2', [role, Number(id)]);
+            await req.db.query('UPDATE users SET role = $1 WHERE id = $2', [role, Number(id)]);
             await redis.invalidateUserContext(Number(id));
             const approverKey = req.userRole;
-            await query(
+            await req.db.query(
                 `INSERT INTO role_change_requests (org_id, target_user_id, requested_by, from_role, to_role, status, reason, approvals, resolved_at)
                  VALUES ($1,$2,$3,$4,$5,'approved',$6,$7,NOW())`,
                 [req.userOrgId, Number(id), req.userId, target.role, role, reason || null, JSON.stringify({ [approverKey]: { status: 'approved', by: req.userId, at: new Date().toISOString() } })]
@@ -282,7 +282,7 @@ router.put('/users/:id/role', async (req, res) => {
         const approvals = {};
         for (const r of required) approvals[r] = { status: 'pending' };
 
-        const result = await query(
+        const result = await req.db.query(
             `INSERT INTO role_change_requests (org_id, target_user_id, requested_by, from_role, to_role, reason, approvals)
              VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
             [req.userOrgId, Number(id), req.userId, target.role, role, reason || null, JSON.stringify(approvals)]
@@ -314,7 +314,7 @@ router.get('/role-requests', async (req, res) => {
             params.push(status);
         }
 
-        const result = await query(`
+        const result = await req.db.query(`
             SELECT r.*, u.full_name AS target_name, u.username AS target_username,
                    req.full_name AS requester_name,
                    r.from_role AS current_role, r.to_role AS requested_role
@@ -334,7 +334,7 @@ router.get('/role-requests', async (req, res) => {
 router.post('/role-requests/:id/approve', async (req, res) => {
     try {
         const reqId = Number(req.params.id);
-        const rcRes = await query('SELECT * FROM role_change_requests WHERE id = $1', [reqId]);
+        const rcRes = await req.db.query('SELECT * FROM role_change_requests WHERE id = $1', [reqId]);
         const rc = rcRes.rows[0];
         if (!rc) return res.status(404).json({ error: 'Request not found' });
         if (rc.status !== 'pending') return res.status(400).json({ error: `Request is already ${rc.status}` });
@@ -356,7 +356,7 @@ router.post('/role-requests/:id/approve', async (req, res) => {
 
         if (allApproved) {
             // Apply the role change
-            await transaction(async (client) => {
+            await req.db.transaction(async (client) => {
                 await client.query('UPDATE users SET role = $1 WHERE id = $2', [rc.to_role, rc.target_user_id]);
                 await client.query(
                     'UPDATE role_change_requests SET status = $1, approvals = $2, resolved_at = NOW() WHERE id = $3',
@@ -365,10 +365,10 @@ router.post('/role-requests/:id/approve', async (req, res) => {
             });
             await redis.invalidateUserContext(rc.target_user_id);
             logAction(req, 'approve_role_change', 'user', rc.target_user_id, { from: rc.from_role, to: rc.to_role, request_id: reqId });
-            const targetUser = (await query('SELECT full_name FROM users WHERE id = $1', [rc.target_user_id])).rows[0];
+            const targetUser = (await req.db.query('SELECT full_name FROM users WHERE id = $1', [rc.target_user_id])).rows[0];
             res.json({ message: `Role change approved. ${targetUser?.full_name}'s role updated to ${rc.to_role}.`, fully_approved: true });
         } else {
-            await query('UPDATE role_change_requests SET approvals = $1 WHERE id = $2', [JSON.stringify(approvals), reqId]);
+            await req.db.query('UPDATE role_change_requests SET approvals = $1 WHERE id = $2', [JSON.stringify(approvals), reqId]);
             logAction(req, 'partial_approve_role_change', 'role_change_request', reqId, { role_level: req.userRole });
             const remaining = Object.entries(approvals).filter(([, a]) => a.status === 'pending').map(([r]) => r);
             res.json({ message: `Approved at ${req.userRole} level. Still awaiting: ${remaining.join(', ')}`, fully_approved: false });
@@ -383,7 +383,7 @@ router.post('/role-requests/:id/reject', async (req, res) => {
     try {
         const reqId = Number(req.params.id);
         const { reject_reason } = req.body;
-        const rcRes = await query('SELECT * FROM role_change_requests WHERE id = $1', [reqId]);
+        const rcRes = await req.db.query('SELECT * FROM role_change_requests WHERE id = $1', [reqId]);
         const rc = rcRes.rows[0];
         if (!rc) return res.status(404).json({ error: 'Request not found' });
         if (rc.status !== 'pending') return res.status(400).json({ error: `Request is already ${rc.status}` });
@@ -395,12 +395,12 @@ router.post('/role-requests/:id/reject', async (req, res) => {
             return res.status(400).json({ error: 'Your role level is not part of the approval chain for this request' });
         }
 
-        await query(
+        await req.db.query(
             'UPDATE role_change_requests SET status = $1, reject_reason = $2, rejected_by = $3, resolved_at = NOW() WHERE id = $4',
             ['rejected', reject_reason || null, req.userId, reqId]
         );
         logAction(req, 'reject_role_change', 'role_change_request', reqId, { role_level: req.userRole, reason: reject_reason });
-        const targetUser = (await query('SELECT full_name FROM users WHERE id = $1', [rc.target_user_id])).rows[0];
+        const targetUser = (await req.db.query('SELECT full_name FROM users WHERE id = $1', [rc.target_user_id])).rows[0];
         res.json({ message: `Role change request for ${targetUser?.full_name} has been rejected.` });
     } catch (err) {
         req.log.error({ err }, 'Reject role request error');
@@ -411,14 +411,14 @@ router.post('/role-requests/:id/reject', async (req, res) => {
 router.post('/role-requests/:id/cancel', async (req, res) => {
     try {
         const reqId = Number(req.params.id);
-        const rcRes = await query('SELECT * FROM role_change_requests WHERE id = $1', [reqId]);
+        const rcRes = await req.db.query('SELECT * FROM role_change_requests WHERE id = $1', [reqId]);
         const rc = rcRes.rows[0];
         if (!rc) return res.status(404).json({ error: 'Request not found' });
         if (rc.status !== 'pending') return res.status(400).json({ error: `Request is already ${rc.status}` });
         if (rc.requested_by !== req.userId && req.userRole !== 'platform_admin') {
             return res.status(403).json({ error: 'Only the requester or a platform admin can cancel' });
         }
-        await query('UPDATE role_change_requests SET status = $1, resolved_at = NOW() WHERE id = $2', ['cancelled', reqId]);
+        await req.db.query('UPDATE role_change_requests SET status = $1, resolved_at = NOW() WHERE id = $2', ['cancelled', reqId]);
         logAction(req, 'cancel_role_change', 'role_change_request', reqId, {});
         res.json({ message: 'Role change request cancelled.' });
     } catch (err) {
@@ -431,7 +431,7 @@ router.put('/users/:id/assignment', async (req, res) => {
     try {
         const { id } = req.params;
         const { org_id, department_id, team_id, manager_id } = req.body;
-        const targetRes = await query('SELECT id, org_id, full_name FROM users WHERE id = $1', [Number(id)]);
+        const targetRes = await req.db.query('SELECT id, org_id, full_name FROM users WHERE id = $1', [Number(id)]);
         const target = targetRes.rows[0];
         if (!target) return res.status(404).json({ error: 'User not found' });
         if (req.userRole !== 'platform_admin' && target.org_id !== req.userOrgId) {
@@ -441,11 +441,11 @@ router.put('/users/:id/assignment', async (req, res) => {
             return res.status(403).json({ error: 'Only platform admins can change organization assignment' });
         }
         if (org_id) {
-            const orgRes = await query('SELECT id FROM organizations WHERE id = $1', [Number(org_id)]);
+            const orgRes = await req.db.query('SELECT id FROM organizations WHERE id = $1', [Number(org_id)]);
             if (!orgRes.rows[0]) return res.status(400).json({ error: 'Organization not found' });
         }
         if (manager_id) {
-            const mgrRes = await query('SELECT id FROM users WHERE id = $1 AND is_active = TRUE', [Number(manager_id)]);
+            const mgrRes = await req.db.query('SELECT id FROM users WHERE id = $1 AND is_active = TRUE', [Number(manager_id)]);
             if (!mgrRes.rows[0]) return res.status(400).json({ error: 'Manager not found' });
             if (Number(manager_id) === Number(id)) return res.status(400).json({ error: 'Cannot assign user as their own manager' });
             // Prevent circular manager chains: walk up from proposed manager
@@ -455,19 +455,19 @@ router.put('/users/:id/assignment', async (req, res) => {
                 if (visited.has(current)) {
                     return res.status(400).json({ error: 'Circular manager chain detected. This assignment would create a loop.' });
                 }
+                const parent = (await req.db.query('SELECT manager_id FROM users WHERE id = $1', [current])).rows[0];
                 visited.add(current);
-                const parent = (await query('SELECT manager_id FROM users WHERE id = $1', [current])).rows[0];
                 if (!parent || !parent.manager_id) break;
                 current = parent.manager_id;
             }
         }
         const newOrgId = org_id !== undefined ? (org_id || null) : target.org_id;
         if (department_id) {
-            const deptRes = await query('SELECT id FROM departments WHERE id = $1 AND org_id = $2', [Number(department_id), Number(newOrgId || 0)]);
+            const deptRes = await req.db.query('SELECT id FROM departments WHERE id = $1 AND org_id = $2', [Number(department_id), Number(newOrgId || 0)]);
             if (!deptRes.rows[0]) return res.status(400).json({ error: 'Department not found in the target organization' });
         }
         if (team_id) {
-            const teamRes = await query('SELECT id FROM teams WHERE id = $1 AND org_id = $2', [Number(team_id), Number(newOrgId || 0)]);
+            const teamRes = await req.db.query('SELECT id FROM teams WHERE id = $1 AND org_id = $2', [Number(team_id), Number(newOrgId || 0)]);
             if (!teamRes.rows[0]) return res.status(400).json({ error: 'Team not found in the target organization' });
         }
         const orgChanged = org_id !== undefined && Number(org_id || 0) !== Number(target.org_id || 0);
@@ -475,7 +475,7 @@ router.put('/users/:id/assignment', async (req, res) => {
         const finalDeptId = department_id ? Number(department_id) : (orgChanged ? null : (department_id !== undefined ? null : target.department_id));
         const finalTeamId = team_id ? Number(team_id) : (orgChanged ? null : (team_id !== undefined ? null : target.team_id));
         const finalManagerId = manager_id ? Number(manager_id) : (orgChanged ? null : (manager_id !== undefined ? null : target.manager_id));
-        await query('UPDATE users SET org_id = $1, department_id = $2, team_id = $3, manager_id = $4 WHERE id = $5',
+        await req.db.query('UPDATE users SET org_id = $1, department_id = $2, team_id = $3, manager_id = $4 WHERE id = $5',
             [newOrgId, finalDeptId, finalTeamId, finalManagerId, Number(id)]);
         await redis.invalidateUserContext(Number(id));
         logAction(req, 'update_assignment', 'user', Number(id), { org_id: newOrgId, department_id: finalDeptId, team_id: finalTeamId, manager_id: finalManagerId });
@@ -489,7 +489,7 @@ router.put('/users/:id/assignment', async (req, res) => {
 router.put('/users/:id/deactivate', async (req, res) => {
     try {
         const { id } = req.params;
-        const targetRes = await query('SELECT id, role, org_id, full_name, is_active FROM users WHERE id = $1', [Number(id)]);
+        const targetRes = await req.db.query('SELECT id, role, org_id, full_name, is_active FROM users WHERE id = $1', [Number(id)]);
         const target = targetRes.rows[0];
         if (!target) return res.status(404).json({ error: 'User not found' });
         if (Number(id) === req.userId) return res.status(400).json({ error: 'Cannot deactivate yourself' });
@@ -500,11 +500,11 @@ router.put('/users/:id/deactivate', async (req, res) => {
             return res.status(403).json({ error: 'Cannot deactivate a user with equal or higher role' });
         }
         const newActive = !target.is_active;
-        await query('UPDATE users SET is_active = $1 WHERE id = $2', [newActive, Number(id)]);
+        await req.db.query('UPDATE users SET is_active = $1 WHERE id = $2', [newActive, Number(id)]);
         await redis.invalidateUserContext(Number(id));
         // Clear sessions when deactivating a user
         if (!newActive) {
-            await query('DELETE FROM user_sessions WHERE user_id = $1', [Number(id)]);
+            await req.db.query('DELETE FROM user_sessions WHERE user_id = $1', [Number(id)]);
             await redis.invalidateUserSessions(Number(id));
         }
         const action = target.is_active ? 'deactivate' : 'reactivate';
@@ -524,7 +524,7 @@ router.post('/users/:id/reset-password', requireRole('hr_admin'), async (req, re
         if (new_password.length > 72) return res.status(400).json({ error: 'Password must be 72 characters or less' });
         const pwErr = validatePassword(new_password);
         if (pwErr) return res.status(400).json({ error: pwErr });
-        const targetRes = await query('SELECT id, role, org_id, full_name FROM users WHERE id = $1', [Number(id)]);
+        const targetRes = await req.db.query('SELECT id, role, org_id, full_name FROM users WHERE id = $1', [Number(id)]);
         const target = targetRes.rows[0];
         if (!target) return res.status(404).json({ error: 'User not found' });
         if (req.userRole !== 'platform_admin' && target.org_id !== req.userOrgId) {
@@ -534,10 +534,10 @@ router.post('/users/:id/reset-password', requireRole('hr_admin'), async (req, re
             return res.status(403).json({ error: 'Cannot reset password for a user with equal or higher role' });
         }
         const hash = await bcrypt.hash(new_password, 10);
-        await query('UPDATE users SET password = $1, token_version = COALESCE(token_version, 0) + 1, must_change_password = TRUE WHERE id = $2', [hash, Number(id)]);
+        await req.db.query('UPDATE users SET password = $1, token_version = COALESCE(token_version, 0) + 1, must_change_password = TRUE WHERE id = $2', [hash, Number(id)]);
         await redis.invalidateTokenVersion(Number(id));
         // Clear all sessions for the target user
-        await query('DELETE FROM user_sessions WHERE user_id = $1', [Number(id)]);
+        await req.db.query('DELETE FROM user_sessions WHERE user_id = $1', [Number(id)]);
         await redis.invalidateUserSessions(Number(id));
         logAction(req, 'admin_reset_password', 'user', Number(id), { name: target.full_name });
         res.json({ message: `Password reset for ${target.full_name}. User will be required to change password on next login.` });
@@ -550,7 +550,7 @@ router.post('/users/:id/reset-password', requireRole('hr_admin'), async (req, re
 router.delete('/users/:id', requireRole('super_admin'), async (req, res) => {
     try {
         const userId = Number(req.params.id);
-        const targetRes = await query('SELECT id, role, org_id, full_name, is_active FROM users WHERE id = $1', [userId]);
+        const targetRes = await req.db.query('SELECT id, role, org_id, full_name, is_active FROM users WHERE id = $1', [userId]);
         const target = targetRes.rows[0];
         if (!target) return res.status(404).json({ error: 'User not found' });
         if (userId === req.userId) return res.status(400).json({ error: 'Cannot delete yourself' });
@@ -560,7 +560,7 @@ router.delete('/users/:id', requireRole('super_admin'), async (req, res) => {
         if (req.userRole !== 'platform_admin' && target.org_id !== req.userOrgId) {
             return res.status(403).json({ error: 'Cannot delete users outside your organization' });
         }
-        await transaction(async (client) => {
+        await req.db.transaction(async (client) => {
             await client.query('DELETE FROM time_entries WHERE user_id = $1', [userId]);
             await client.query('DELETE FROM leaves WHERE user_id = $1', [userId]);
             await client.query('DELETE FROM tasks WHERE user_id = $1', [userId]);
@@ -595,7 +595,7 @@ router.post('/users', requireRole('hr_admin'), async (req, res) => {
         const usernameErr = validateUsername(username);
         if (usernameErr) return res.status(400).json({ error: usernameErr });
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email' });
-        const existingRes = await query('SELECT id FROM users WHERE username = $1 OR email = $2', [username, email]);
+        const existingRes = await req.db.query('SELECT id FROM users WHERE username = $1 OR email = $2', [username, email]);
         if (existingRes.rows[0]) return res.status(400).json({ error: 'Username or email already taken' });
         const assignRole = VALID_ROLES.includes(role) ? role : 'employee';
         if (req.userRole !== 'platform_admin' && ROLE_LEVEL[assignRole] >= ROLE_LEVEL[req.userRole]) {
@@ -605,20 +605,20 @@ router.post('/users', requireRole('hr_admin'), async (req, res) => {
         let assignOrgId = req.userOrgId;
         if (req.userRole === 'platform_admin' && org_id !== undefined) {
             if (org_id) {
-                const orgRes = await query('SELECT id FROM organizations WHERE id = $1', [org_id]);
+                const orgRes = await req.db.query('SELECT id FROM organizations WHERE id = $1', [org_id]);
                 if (!orgRes.rows[0]) return res.status(400).json({ error: 'Organization not found' });
             }
             assignOrgId = org_id || null;
         }
         if (department_id && assignOrgId) {
-            const deptRes = await query('SELECT id FROM departments WHERE id = $1 AND org_id = $2', [Number(department_id), Number(assignOrgId)]);
+            const deptRes = await req.db.query('SELECT id FROM departments WHERE id = $1 AND org_id = $2', [Number(department_id), Number(assignOrgId)]);
             if (!deptRes.rows[0]) return res.status(400).json({ error: 'Department not found in the target organization' });
         }
         if (team_id && assignOrgId) {
-            const teamRes = await query('SELECT id FROM teams WHERE id = $1 AND org_id = $2', [Number(team_id), Number(assignOrgId)]);
+            const teamRes = await req.db.query('SELECT id FROM teams WHERE id = $1 AND org_id = $2', [Number(team_id), Number(assignOrgId)]);
             if (!teamRes.rows[0]) return res.status(400).json({ error: 'Team not found in the target organization' });
         }
-        const result = await query(
+        const result = await req.db.query(
             'INSERT INTO users (username, password, full_name, email, role, org_id, department_id, team_id, manager_id, must_change_password) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE) RETURNING id',
             [username, hash, full_name, email, assignRole, assignOrgId, department_id || null, team_id || null, manager_id || null]
         );
@@ -636,7 +636,7 @@ router.get('/audit-logs', async (req, res) => {
     try {
         const { actor_id, entity_type, entity_id, action, from, to, limit, offset } = req.query;
         const orgId = req.userRole === 'platform_admin' ? (req.query.org_id || null) : req.userOrgId;
-        const result = await queryLogs({
+        const result = await queryLogs(req.db, {
             orgId,
             actorId: actor_id ? Number(actor_id) : null,
             entityType: entity_type || null,
@@ -662,7 +662,7 @@ router.get('/stats', requireSameOrg, async (req, res) => {
         if (!orgId) {
             return res.json({ totalUsers: 0, activeUsers: 0, departments: 0, teams: 0, pendingApprovals: 0, clockedInToday: 0 });
         }
-        const countsRes = await query(`
+        const countsRes = await req.db.query(`
             SELECT
                 (SELECT COUNT(*) FROM users WHERE org_id = $1) AS "totalUsers",
                 (SELECT COUNT(*) FROM users WHERE org_id = $1 AND is_active = TRUE) AS "activeUsers",
@@ -677,7 +677,7 @@ router.get('/stats', requireSameOrg, async (req, res) => {
             return `${localNow.getUTCFullYear()}-${String(localNow.getUTCMonth() + 1).padStart(2, '0')}-${String(localNow.getUTCDate()).padStart(2, '0')}`;
         })();
         const tzMod = getTzModifier(req);
-        const clockedRes = await query(`
+        const clockedRes = await req.db.query(`
             SELECT COUNT(DISTINCT user_id) as c
             FROM time_entries
             WHERE user_id IN (SELECT id FROM users WHERE org_id = $1)
@@ -702,7 +702,7 @@ router.get('/stats', requireSameOrg, async (req, res) => {
 
 router.get('/registration-settings', async (req, res) => {
     try {
-        const res2 = await query("SELECT value FROM app_settings WHERE key = 'registration_mode'");
+        const res2 = await req.db.query("SELECT value FROM app_settings WHERE key = 'registration_mode'");
         res.json({ mode: res2.rows[0]?.value || 'open' });
     } catch (err) {
         res.status(500).json({ error: 'Failed to get registration settings' });
@@ -715,7 +715,7 @@ router.put('/registration-settings', requireRole('platform_admin'), async (req, 
         if (!['open', 'invite_only', 'closed'].includes(mode)) {
             return res.status(400).json({ error: 'Mode must be open, invite_only, or closed' });
         }
-        await query(
+        await req.db.query(
             "INSERT INTO app_settings (key, value) VALUES ('registration_mode', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
             [mode]
         );
@@ -731,13 +731,13 @@ router.get('/invite-codes', async (req, res) => {
         const orgId = req.userOrgId;
         let codesRes;
         if (orgId) {
-            codesRes = await query(`
+            codesRes = await req.db.query(`
                 SELECT ic.*, u.full_name as created_by_name
                 FROM invite_codes ic LEFT JOIN users u ON u.id = ic.created_by
                 WHERE ic.org_id = $1 OR ic.org_id IS NULL ORDER BY ic.id DESC
             `, [orgId]);
         } else {
-            codesRes = await query(`
+            codesRes = await req.db.query(`
                 SELECT ic.*, u.full_name as created_by_name
                 FROM invite_codes ic LEFT JOIN users u ON u.id = ic.created_by
                 ORDER BY ic.id DESC
@@ -761,7 +761,7 @@ router.post('/invite-codes', async (req, res) => {
         }
         const code = require('crypto').randomBytes(6).toString('hex').toUpperCase();
         const expiresAt = expires_days ? new Date(Date.now() + expires_days * 86400000).toISOString() : null;
-        await query(
+        await req.db.query(
             'INSERT INTO invite_codes (code, created_by, org_id, role, max_uses, expires_at) VALUES ($1,$2,$3,$4,$5,$6)',
             [code, req.userId, req.userOrgId || null, role || 'employee', max_uses || 0, expiresAt]
         );
@@ -773,13 +773,13 @@ router.post('/invite-codes', async (req, res) => {
 
 router.delete('/invite-codes/:id', async (req, res) => {
     try {
-        const codeRes = await query('SELECT id, org_id FROM invite_codes WHERE id = $1', [Number(req.params.id)]);
+        const codeRes = await req.db.query('SELECT id, org_id FROM invite_codes WHERE id = $1', [Number(req.params.id)]);
         const code = codeRes.rows[0];
         if (!code) return res.status(404).json({ error: 'Invite code not found' });
         if (req.userRole !== 'platform_admin' && code.org_id !== req.userOrgId) {
             return res.status(403).json({ error: 'Cannot deactivate invite codes from another organization' });
         }
-        await query('UPDATE invite_codes SET is_active = FALSE WHERE id = $1', [Number(req.params.id)]);
+        await req.db.query('UPDATE invite_codes SET is_active = FALSE WHERE id = $1', [Number(req.params.id)]);
         res.json({ message: 'Invite code deactivated' });
     } catch (err) {
         res.status(500).json({ error: 'Failed to deactivate invite code' });
@@ -791,7 +791,7 @@ router.delete('/invite-codes/:id', async (req, res) => {
 router.get('/task-labels', async (req, res) => {
     try {
         if (!req.userOrgId) return res.json([]);
-        const result = await query(
+        const result = await req.db.query(
             'SELECT tl.*, u.username as created_by_username FROM task_labels tl LEFT JOIN users u ON u.id = tl.created_by WHERE tl.org_id = $1 ORDER BY tl.name ASC',
             [req.userOrgId]
         );
@@ -808,10 +808,10 @@ router.post('/task-labels', async (req, res) => {
         const { name, color } = req.body;
         if (!name || !name.trim()) return res.status(400).json({ error: 'Label name is required' });
         if (name.trim().length > 30) return res.status(400).json({ error: 'Label name must be 30 characters or less' });
-        const existingRes = await query('SELECT id FROM task_labels WHERE org_id = $1 AND LOWER(name) = LOWER($2)', [req.userOrgId, name.trim()]);
+        const existingRes = await req.db.query('SELECT id FROM task_labels WHERE org_id = $1 AND LOWER(name) = LOWER($2)', [req.userOrgId, name.trim()]);
         if (existingRes.rows[0]) return res.status(409).json({ error: 'A label with this name already exists' });
         const validColor = /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#6366f1';
-        const result = await query(
+        const result = await req.db.query(
             'INSERT INTO task_labels (org_id, name, color, created_by) VALUES ($1,$2,$3,$4) RETURNING *',
             [req.userOrgId, name.trim(), validColor, req.userId]
         );
@@ -826,7 +826,7 @@ router.post('/task-labels', async (req, res) => {
 
 router.put('/task-labels/:id', async (req, res) => {
     try {
-        const labelRes = await query('SELECT * FROM task_labels WHERE id = $1', [Number(req.params.id)]);
+        const labelRes = await req.db.query('SELECT * FROM task_labels WHERE id = $1', [Number(req.params.id)]);
         const label = labelRes.rows[0];
         if (!label) return res.status(404).json({ error: 'Label not found' });
         if (req.userRole !== 'platform_admin' && label.org_id !== req.userOrgId) {
@@ -836,12 +836,12 @@ router.put('/task-labels/:id', async (req, res) => {
         const newName = name?.trim() || label.name;
         if (newName.length > 30) return res.status(400).json({ error: 'Label name must be 30 characters or less' });
         if (newName.toLowerCase() !== label.name.toLowerCase()) {
-            const existingRes = await query('SELECT id FROM task_labels WHERE org_id = $1 AND LOWER(name) = LOWER($2) AND id != $3', [label.org_id, newName, label.id]);
+            const existingRes = await req.db.query('SELECT id FROM task_labels WHERE org_id = $1 AND LOWER(name) = LOWER($2) AND id != $3', [label.org_id, newName, label.id]);
             if (existingRes.rows[0]) return res.status(409).json({ error: 'A label with this name already exists' });
         }
         const newColor = /^#[0-9a-fA-F]{6}$/.test(color) ? color : label.color;
-        await query('UPDATE task_labels SET name = $1, color = $2 WHERE id = $3', [newName, newColor, label.id]);
-        const updated = await query('SELECT * FROM task_labels WHERE id = $1', [label.id]);
+        await req.db.query('UPDATE task_labels SET name = $1, color = $2 WHERE id = $3', [newName, newColor, label.id]);
+        const updated = await req.db.query('SELECT * FROM task_labels WHERE id = $1', [label.id]);
         logAction(req, 'update', 'task_label', label.id, { name: newName });
         res.json(updated.rows[0]);
     } catch (err) {
@@ -852,14 +852,14 @@ router.put('/task-labels/:id', async (req, res) => {
 
 router.delete('/task-labels/:id', async (req, res) => {
     try {
-        const labelRes = await query('SELECT * FROM task_labels WHERE id = $1', [Number(req.params.id)]);
+        const labelRes = await req.db.query('SELECT * FROM task_labels WHERE id = $1', [Number(req.params.id)]);
         const label = labelRes.rows[0];
         if (!label) return res.status(404).json({ error: 'Label not found' });
         if (req.userRole !== 'platform_admin' && label.org_id !== req.userOrgId) {
             return res.status(403).json({ error: 'Cannot delete labels from another organization' });
         }
-        await query('DELETE FROM task_label_map WHERE label_id = $1', [label.id]);
-        await query('DELETE FROM task_labels WHERE id = $1', [label.id]);
+        await req.db.query('DELETE FROM task_label_map WHERE label_id = $1', [label.id]);
+        await req.db.query('DELETE FROM task_labels WHERE id = $1', [label.id]);
         logAction(req, 'delete', 'task_label', label.id, { name: label.name });
         res.json({ message: 'Label deleted' });
     } catch (err) {
@@ -874,7 +874,7 @@ router.get('/pay-periods', requireSameOrg, async (req, res) => {
     try {
         const orgId = req.userRole === 'platform_admin' ? (req.query.org_id || req.userOrgId) : req.userOrgId;
         if (!orgId) return res.json([]);
-        const result = await query(
+        const result = await req.db.query(
             `SELECT pp.*, u.full_name AS locked_by_name
              FROM pay_periods pp
              LEFT JOIN users u ON u.id = pp.locked_by
@@ -903,7 +903,7 @@ router.post('/pay-periods', requireRole('hr_admin'), requireSameOrg, async (req,
         }
         const orgId = req.userOrgId;
         if (!orgId) return res.status(400).json({ error: 'Organization required' });
-        const result = await query(
+        const result = await req.db.query(
             `INSERT INTO pay_periods (org_id, label, start_date, end_date, locked_by)
              VALUES ($1, $2, $3, $4, $5)
              ON CONFLICT (org_id, start_date, end_date) DO NOTHING
@@ -923,12 +923,12 @@ router.post('/pay-periods', requireRole('hr_admin'), requireSameOrg, async (req,
 
 router.delete('/pay-periods/:id', requireRole('hr_admin'), async (req, res) => {
     try {
-        const pp = (await query('SELECT * FROM pay_periods WHERE id = $1', [Number(req.params.id)])).rows[0];
+        const pp = (await req.db.query('SELECT * FROM pay_periods WHERE id = $1', [Number(req.params.id)])).rows[0];
         if (!pp) return res.status(404).json({ error: 'Pay period not found' });
         if (req.userRole !== 'platform_admin' && pp.org_id !== req.userOrgId) {
             return res.status(403).json({ error: 'Cannot delete pay periods from another organization' });
         }
-        await query('DELETE FROM pay_periods WHERE id = $1', [Number(req.params.id)]);
+        await req.db.query('DELETE FROM pay_periods WHERE id = $1', [Number(req.params.id)]);
         logAction(req, 'delete', 'pay_period', pp.id, { label: pp.label });
         res.json({ message: 'Pay period deleted' });
     } catch (err) {
@@ -1050,30 +1050,30 @@ router.post('/users/import', requireRole('hr_admin'), importUpload.single('file'
                 // Resolve optional department/team by name
                 let deptId = null, teamId = null;
                 if (row.department_name && assignOrgId) {
-                    const deptRes = await query(
+                    const deptRes = await req.db.query(
                         'SELECT id FROM departments WHERE org_id = $1 AND LOWER(name) = LOWER($2)', [assignOrgId, row.department_name.trim()]
                     );
                     deptId = deptRes.rows[0]?.id || null;
                 }
                 if (row.team_name && assignOrgId) {
-                    const teamRes = await query(
+                    const teamRes = await req.db.query(
                         'SELECT id FROM teams WHERE org_id = $1 AND LOWER(name) = LOWER($2)', [assignOrgId, row.team_name.trim()]
                     );
                     teamId = teamRes.rows[0]?.id || null;
                 }
                 let managerId = null;
                 if (row.manager_username) {
-                    const mgrRes = await query(
+                    const mgrRes = await req.db.query(
                         'SELECT id FROM users WHERE username = $1 AND org_id = $2', [row.manager_username.trim(), assignOrgId]
                     );
                     managerId = mgrRes.rows[0]?.id || null;
                 }
 
-                const existing = await query('SELECT id FROM users WHERE username = $1 OR email = $2', [username, email]);
+                const existing = await req.db.query('SELECT id FROM users WHERE username = $1 OR email = $2', [username, email]);
                 if (existing.rows[0]) { failed.push({ row: rowNum, error: 'Username or email already taken' }); continue; }
 
                 const hash = await bcrypt.hash(plainPw, 10);
-                const created = await query(
+                const created = await req.db.query(
                     `INSERT INTO users (username, password, full_name, email, role, org_id, department_id, team_id, manager_id, must_change_password)
                      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE) RETURNING id`,
                     [username, hash, full_name, email, assignRole, assignOrgId, deptId, teamId, managerId]
@@ -1123,7 +1123,7 @@ router.get('/announcements', requireRole('super_admin'), async (req, res) => {
                    ORDER BY a.created_at DESC LIMIT 100`;
             params = [req.userOrgId];
         }
-        const rows = (await query(sql, params)).rows;
+        const rows = (await req.db.query(sql, params)).rows;
         res.json({ data: rows });
     } catch (err) {
         req.log.error({ err }, 'GET /announcements error');
@@ -1147,7 +1147,7 @@ router.post('/announcements', requireRole('super_admin'), async (req, res) => {
             expiresAt = new Date(Date.now() + Number(duration) * 3600000).toISOString();
         }
 
-        const row = (await query(
+        const row = (await req.db.query(
             `INSERT INTO announcements (org_id, created_by, message, type, expires_at) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
             [orgId, req.userId, trimmed, announcementType, expiresAt]
         )).rows[0];
@@ -1200,7 +1200,7 @@ router.put('/announcements/:id', requireRole('super_admin'), async (req, res) =>
         }
         params.push(req.params.id);
 
-        const row = (await query(
+        const row = (await req.db.query(
             `UPDATE announcements SET ${updates.join(', ')} WHERE id = $${idx}${scopeSql} RETURNING *`,
             params
         )).rows[0];
@@ -1224,7 +1224,7 @@ router.delete('/announcements/:id', requireRole('super_admin'), async (req, res)
             sql = 'DELETE FROM announcements WHERE id = $1 AND org_id = $2 RETURNING id';
             params = [req.params.id, req.userOrgId];
         }
-        const row = (await query(sql, params)).rows[0];
+        const row = (await req.db.query(sql, params)).rows[0];
         if (!row) return res.status(404).json({ error: 'Announcement not found' });
 
         logAction(req, 'delete_announcement', 'announcements', row.id);

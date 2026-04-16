@@ -2,10 +2,9 @@
  * Shared utility to find the appropriate approver for a user.
  * Priority: Direct manager → Team lead → Department head → HR admin
  */
-const { query } = require('../db');
 
-async function findApprover(userId, orgId) {
-    const userRes = await query(
+async function findApprover(db, userId, orgId) {
+    const userRes = await db.query(
         'SELECT manager_id, team_id, department_id FROM users WHERE id = $1',
         [userId],
     );
@@ -13,7 +12,7 @@ async function findApprover(userId, orgId) {
 
     // 1. Direct manager
     if (user?.manager_id) {
-        const mgrRes = await query(
+        const mgrRes = await db.query(
             'SELECT id FROM users WHERE id = $1 AND is_active = TRUE',
             [user.manager_id],
         );
@@ -24,10 +23,10 @@ async function findApprover(userId, orgId) {
 
     // 2. Team lead
     if (user?.team_id) {
-        const teamRes = await query('SELECT lead_id FROM teams WHERE id = $1', [user.team_id]);
+        const teamRes = await db.query('SELECT lead_id FROM teams WHERE id = $1', [user.team_id]);
         const leadId = teamRes.rows[0]?.lead_id;
         if (leadId && leadId !== userId) {
-            const leadRes = await query(
+            const leadRes = await db.query(
                 'SELECT id FROM users WHERE id = $1 AND is_active = TRUE',
                 [leadId],
             );
@@ -37,10 +36,10 @@ async function findApprover(userId, orgId) {
 
     // 3. Department head
     if (user?.department_id) {
-        const deptRes = await query('SELECT head_id FROM departments WHERE id = $1', [user.department_id]);
+        const deptRes = await db.query('SELECT head_id FROM departments WHERE id = $1', [user.department_id]);
         const headId = deptRes.rows[0]?.head_id;
         if (headId && headId !== userId) {
-            const headRes = await query(
+            const headRes = await db.query(
                 'SELECT id FROM users WHERE id = $1 AND is_active = TRUE',
                 [headId],
             );
@@ -49,7 +48,7 @@ async function findApprover(userId, orgId) {
     }
 
     // 4. Any HR admin in the org
-    const hrRes = await query(
+    const hrRes = await db.query(
         `SELECT id FROM users
          WHERE org_id = $1 AND role IN ('hr_admin','super_admin') AND id != $2 AND is_active = TRUE
          LIMIT 1`,
@@ -58,7 +57,7 @@ async function findApprover(userId, orgId) {
     if (hrRes.rows[0]) return hrRes.rows[0];
 
     // 5. Super admins with no one above them self-approve
-    const selfRes = await query(
+    const selfRes = await db.query(
         `SELECT id FROM users WHERE id = $1 AND role = 'super_admin' AND is_active = TRUE`,
         [userId],
     );

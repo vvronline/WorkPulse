@@ -15,7 +15,9 @@ jest.mock('../db', () => {
     return {
         pool: { end: jest.fn() },
         query: mockQuery,
+        masterQuery: mockQuery,
         transaction: jest.fn(async (fn) => fn({ query: mockQuery })),
+        masterTransaction: jest.fn(async (fn) => fn({ query: mockQuery })),
         initDB: jest.fn(),
     };
 });

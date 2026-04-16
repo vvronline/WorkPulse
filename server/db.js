@@ -1,10 +1,21 @@
 /**
- * PostgreSQL database module.
+ * PostgreSQL database module — multi-tenant aware.
+ *
+ * Master DB (DATABASE_URL) holds platform-level tables: tenants, user_directory,
+ * platform_users, app_settings, _migrations.
+ * Each tenant gets its own database with the full application schema.
  *
  * Exports:
- *   query(sql, params)       – run a query, returns pg Result { rows, rowCount }
- *   transaction(asyncFn)     – run asyncFn(client) inside BEGIN/COMMIT/ROLLBACK
- *   initDB()                 – create all tables on startup
+ *   query(sql, params)              – alias for masterQuery (backward compat)
+ *   transaction(asyncFn)            – alias for masterTransaction (backward compat)
+ *   masterQuery(sql, params)        – run a query against the master DB
+ *   masterTransaction(asyncFn)      – run asyncFn(client) in a master DB transaction
+ *   makePoolQuery(pool)             – create a query fn bound to any pool
+ *   makePoolTransaction(pool)       – create a transaction fn bound to any pool
+ *   initMasterDB()                  – create master-only tables on startup
+ *   initTenantSchema(queryFn)       – create all tenant-scoped tables (idempotent)
+ *   initDB()                        – legacy: runs initMasterDB + initTenantSchema on master (migration compat)
+ *   pool                            – the master pool (for health checks, shutdown)
  */
 const { Pool } = require('pg');
 const { logger } = require('./utils/logger');
@@ -19,58 +30,182 @@ const pool = new Pool({
     ssl: (process.env.DATABASE_URL && process.env.DATABASE_URL.includes('sslmode=require'))
         ? { rejectUnauthorized: false }
         : false,
-    max: 20,
+    max: 10,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,
 });
 
 pool.on('error', (err) => {
-    logger.error({ err }, 'Unexpected DB pool error');
+    logger.error({ err }, 'Unexpected master DB pool error');
 });
 
-/** Run a parameterised query. Returns a pg Result object ({ rows, rowCount }). */
-async function query(sql, params = []) {
-    const client = await pool.connect();
-    try {
-        return await client.query(sql, params);
-    } finally {
-        client.release();
-    }
+// ────────────────────────────────────────────────────────────────────────────
+// Generic pool-bound helpers
+// ────────────────────────────────────────────────────────────────────────────
+
+/** Create a query function bound to the given pool. */
+function makePoolQuery(targetPool) {
+    return async function boundQuery(sql, params = []) {
+        const client = await targetPool.connect();
+        try {
+            return await client.query(sql, params);
+        } finally {
+            client.release();
+        }
+    };
 }
 
-/**
- * Run an async function inside a single DB transaction.
- * asyncFn receives a pg Client. On success, commits. On exception, rolls back.
- */
-async function transaction(asyncFn) {
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
-        const result = await asyncFn(client);
-        await client.query('COMMIT');
-        return result;
-    } catch (err) {
-        await client.query('ROLLBACK');
-        throw err;
-    } finally {
-        client.release();
-    }
+/** Create a transaction function bound to the given pool. */
+function makePoolTransaction(targetPool) {
+    return async function boundTransaction(asyncFn) {
+        const client = await targetPool.connect();
+        try {
+            await client.query('BEGIN');
+            const result = await asyncFn(client);
+            await client.query('COMMIT');
+            return result;
+        } catch (err) {
+            await client.query('ROLLBACK');
+            throw err;
+        } finally {
+            client.release();
+        }
+    };
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Master DB helpers (bound to the master pool)
+// ────────────────────────────────────────────────────────────────────────────
+
+const masterQuery = makePoolQuery(pool);
+const masterTransaction = makePoolTransaction(pool);
+
+/** @deprecated Use masterQuery — kept for backward compatibility during migration. */
+const query = masterQuery;
+/** @deprecated Use masterTransaction — kept for backward compatibility during migration. */
+const transaction = masterTransaction;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Schema initialisation
 // ────────────────────────────────────────────────────────────────────────────
 
 async function initDB() {
+    await initMasterDB();
+    // Legacy: also initialise tenant schema in master DB so existing single-DB
+    // deployments keep working until fully migrated to per-tenant databases.
+    await initTenantSchema(masterQuery);
+    logger.info('Database schema initialised (master + legacy tenant tables)');
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Master-only schema (tenants catalog, platform users, app settings)
+// ────────────────────────────────────────────────────────────────────────────
+
+async function initMasterDB() {
     // Migration tracking
-    await query(`
+    await masterQuery(`
         CREATE TABLE IF NOT EXISTS _migrations (
             name       TEXT PRIMARY KEY,
             applied_at TIMESTAMPTZ DEFAULT NOW()
         )
     `);
 
-    await query(`
+    // ---- Tenant catalog ----
+    await masterQuery(`
+        CREATE TABLE IF NOT EXISTS tenants (
+            id               SERIAL PRIMARY KEY,
+            org_name         TEXT NOT NULL,
+            slug             TEXT UNIQUE NOT NULL,
+            db_name          TEXT UNIQUE NOT NULL,
+            db_host          TEXT,
+            custom_domain    TEXT UNIQUE,
+            status           TEXT NOT NULL DEFAULT 'active'
+                                 CHECK(status IN ('active','suspended','migrating','deleted')),
+            max_users        INTEGER,
+            max_storage_mb   INTEGER,
+            features         JSONB NOT NULL DEFAULT '{}',
+            suspended_at     TIMESTAMPTZ,
+            suspended_reason TEXT,
+            created_at       TIMESTAMPTZ DEFAULT NOW(),
+            updated_at       TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    await masterQuery(`CREATE INDEX IF NOT EXISTS idx_tenants_domain ON tenants(custom_domain)`);
+    await masterQuery(`CREATE INDEX IF NOT EXISTS idx_tenants_status ON tenants(status)`);
+
+    // ---- User directory for cross-tenant login resolution ----
+    await masterQuery(`
+        CREATE TABLE IF NOT EXISTS user_directory (
+            id         SERIAL PRIMARY KEY,
+            email      TEXT UNIQUE NOT NULL,
+            username   TEXT UNIQUE NOT NULL,
+            tenant_id  INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+            user_id    INTEGER NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    await masterQuery(`CREATE INDEX IF NOT EXISTS idx_user_directory_tenant ON user_directory(tenant_id)`);
+
+    // ---- Platform users (platform_admin accounts — no org) ----
+    await masterQuery(`
+        CREATE TABLE IF NOT EXISTS platform_users (
+            id                   SERIAL PRIMARY KEY,
+            username             TEXT UNIQUE NOT NULL,
+            password             TEXT NOT NULL,
+            full_name            TEXT NOT NULL,
+            email                TEXT UNIQUE,
+            role                 TEXT NOT NULL DEFAULT 'platform_admin'
+                                     CHECK(role IN ('platform_admin')),
+            is_active            BOOLEAN NOT NULL DEFAULT TRUE,
+            token_version        INTEGER NOT NULL DEFAULT 0,
+            failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+            locked_until         TIMESTAMPTZ,
+            theme                TEXT NOT NULL DEFAULT 'dark',
+            avatar               TEXT,
+            created_at           TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+
+    // ---- App settings (platform-wide) ----
+    await masterQuery(`
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key        TEXT PRIMARY KEY,
+            value      TEXT NOT NULL,
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+
+    // ---- Sessions for platform_users ----
+    await masterQuery(`
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            user_id    INTEGER NOT NULL,
+            device     TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    await masterQuery(`CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)`);
+
+    // Seed defaults
+    await masterQuery(`
+        INSERT INTO app_settings (key, value) VALUES ('registration_mode', 'open')
+        ON CONFLICT (key) DO NOTHING
+    `);
+
+    logger.info('Master DB schema initialised');
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Tenant schema (all org-scoped tables — run against any tenant DB pool)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Initialise all tenant-scoped tables. `q` must be a query function bound to
+ * the target pool (master pool for legacy single-DB, or a tenant pool).
+ */
+async function initTenantSchema(q) {
+
+    await q(`
         CREATE TABLE IF NOT EXISTS organizations (
             id                  SERIAL PRIMARY KEY,
             name                TEXT NOT NULL,
@@ -86,7 +221,7 @@ async function initDB() {
         )
     `);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS users (
             id                   SERIAL PRIMARY KEY,
             username             TEXT UNIQUE NOT NULL,
@@ -110,13 +245,13 @@ async function initDB() {
             created_at           TIMESTAMPTZ DEFAULT NOW()
         )
     `);
-    await query(`CREATE INDEX IF NOT EXISTS idx_users_org ON users(org_id)`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_users_org ON users(org_id)`);
 
     // Add lockout columns to existing databases
-    await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER NOT NULL DEFAULT 0`);
-    await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ`);
+    await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER NOT NULL DEFAULT 0`);
+    await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ`);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS departments (
             id         SERIAL PRIMARY KEY,
             org_id     INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -127,7 +262,7 @@ async function initDB() {
         )
     `);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS teams (
             id                    SERIAL PRIMARY KEY,
             org_id                INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -142,7 +277,7 @@ async function initDB() {
     `);
 
     // Add deferred FK from users -> teams and users -> departments
-    await query(`
+    await q(`
         DO $do$ BEGIN
             IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints
                            WHERE constraint_name = 'users_team_id_fkey') THEN
@@ -151,7 +286,7 @@ async function initDB() {
             END IF;
         END $do$
     `);
-    await query(`
+    await q(`
         DO $do$ BEGIN
             IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints
                            WHERE constraint_name = 'users_department_id_fkey') THEN
@@ -161,7 +296,7 @@ async function initDB() {
         END $do$
     `);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS time_entries (
             id              SERIAL PRIMARY KEY,
             user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -174,13 +309,13 @@ async function initDB() {
             approved_by     INTEGER REFERENCES users(id) ON DELETE SET NULL
         )
     `);
-    await query(`
+    await q(`
         CREATE INDEX IF NOT EXISTS idx_time_entries_user   ON time_entries(user_id);
         CREATE INDEX IF NOT EXISTS idx_time_entries_ts     ON time_entries(user_id, timestamp);
         CREATE INDEX IF NOT EXISTS idx_time_entries_manual ON time_entries(user_id, is_manual, approval_status);
     `);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS leaves (
             id            SERIAL PRIMARY KEY,
             user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -197,9 +332,9 @@ async function initDB() {
         )
     `);
     // Migration: add created_at to existing leaves tables
-    await query(`ALTER TABLE leaves ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
+    await q(`ALTER TABLE leaves ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
     // Migration: update leaves status constraint to include 'revoked'
-    await query(`
+    await q(`
         DO $do$ BEGIN
             ALTER TABLE leaves DROP CONSTRAINT IF EXISTS leaves_status_check;
             ALTER TABLE leaves ADD CONSTRAINT leaves_status_check
@@ -207,9 +342,9 @@ async function initDB() {
         EXCEPTION WHEN others THEN NULL;
         END $do$
     `);
-    await query(`CREATE INDEX IF NOT EXISTS idx_leaves_status ON leaves(user_id, status, date)`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_leaves_status ON leaves(user_id, status, date)`);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS tasks (
             id           SERIAL PRIMARY KEY,
             user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -226,17 +361,17 @@ async function initDB() {
             sprint_id    INTEGER
         )
     `);
-    await query(`
+    await q(`
         CREATE INDEX IF NOT EXISTS idx_tasks_user_date   ON tasks(user_id, date);
         CREATE INDEX IF NOT EXISTS idx_tasks_assigned_to ON tasks(assigned_to, date);
     `);
     // Migration: add org_id to tasks for tenant isolation
-    await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS org_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL`);
-    await query(`CREATE INDEX IF NOT EXISTS idx_tasks_org ON tasks(org_id)`);
+    await q(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS org_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_tasks_org ON tasks(org_id)`);
     // Backfill org_id from the task owner's org
-    await query(`UPDATE tasks t SET org_id = u.org_id FROM users u WHERE u.id = t.user_id AND t.org_id IS NULL AND u.org_id IS NOT NULL`);
+    await q(`UPDATE tasks t SET org_id = u.org_id FROM users u WHERE u.id = t.user_id AND t.org_id IS NULL AND u.org_id IS NOT NULL`);
     // Migration: update role CHECK to include platform_admin on existing databases
-    await query(`
+    await q(`
         DO $do$ BEGIN
             ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
             ALTER TABLE users ADD CONSTRAINT users_role_check
@@ -245,7 +380,7 @@ async function initDB() {
         END $do$
     `);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS password_reset_tokens (
             id         SERIAL PRIMARY KEY,
             user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -256,7 +391,7 @@ async function initDB() {
     `);
 
     // Active sessions – max 2 per user
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS user_sessions (
             id         TEXT PRIMARY KEY,
             user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -264,9 +399,9 @@ async function initDB() {
             created_at TIMESTAMPTZ DEFAULT NOW()
         )
     `);
-    await query(`CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)`);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS sprints (
             id         SERIAL PRIMARY KEY,
             team_id    INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
@@ -281,7 +416,7 @@ async function initDB() {
     `);
 
     // Deferred FK from tasks -> sprints
-    await query(`
+    await q(`
         DO $do$ BEGIN
             IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints
                            WHERE constraint_name = 'tasks_sprint_id_fkey') THEN
@@ -291,7 +426,7 @@ async function initDB() {
         END $do$
     `);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS leave_policies (
             id                   SERIAL PRIMARY KEY,
             org_id               INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -306,10 +441,10 @@ async function initDB() {
         )
     `);
     // Migration: add name/color to existing leave_policies tables
-    await query(`ALTER TABLE leave_policies ADD COLUMN IF NOT EXISTS name TEXT`);
-    await query(`ALTER TABLE leave_policies ADD COLUMN IF NOT EXISTS color TEXT DEFAULT '#6366f1'`);
+    await q(`ALTER TABLE leave_policies ADD COLUMN IF NOT EXISTS name TEXT`);
+    await q(`ALTER TABLE leave_policies ADD COLUMN IF NOT EXISTS color TEXT DEFAULT '#6366f1'`);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS leave_balances (
             id              SERIAL PRIMARY KEY,
             user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -322,7 +457,7 @@ async function initDB() {
         )
     `);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS holidays (
             id          SERIAL PRIMARY KEY,
             org_id      INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -333,7 +468,7 @@ async function initDB() {
         )
     `);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS approval_requests (
             id            SERIAL PRIMARY KEY,
             org_id        INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
@@ -349,13 +484,13 @@ async function initDB() {
             reviewed_at   TIMESTAMPTZ
         )
     `);
-    await query(`
+    await q(`
         CREATE INDEX IF NOT EXISTS idx_approval_requester   ON approval_requests(requester_id, status);
         CREATE INDEX IF NOT EXISTS idx_approval_approver    ON approval_requests(approver_id, status);
         CREATE INDEX IF NOT EXISTS idx_approval_type_status ON approval_requests(type, status);
     `);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS role_change_requests (
             id              SERIAL PRIMARY KEY,
             org_id          INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
@@ -372,12 +507,12 @@ async function initDB() {
             resolved_at     TIMESTAMPTZ
         )
     `);
-    await query(`
+    await q(`
         CREATE INDEX IF NOT EXISTS idx_role_change_org_status ON role_change_requests(org_id, status);
         CREATE INDEX IF NOT EXISTS idx_role_change_target     ON role_change_requests(target_user_id, status);
     `);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS audit_logs (
             id          SERIAL PRIMARY KEY,
             org_id      INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
@@ -392,22 +527,14 @@ async function initDB() {
         )
     `);
     // Migration: add org_id to existing audit_logs tables that pre-date tenant isolation
-    await query(`ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS org_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL`);
-    await query(`
+    await q(`ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS org_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL`);
+    await q(`
         CREATE INDEX IF NOT EXISTS idx_audit_actor  ON audit_logs(actor_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_audit_org    ON audit_logs(org_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id);
     `);
 
-    await query(`
-        CREATE TABLE IF NOT EXISTS app_settings (
-            key        TEXT PRIMARY KEY,
-            value      TEXT NOT NULL,
-            updated_at TIMESTAMPTZ DEFAULT NOW()
-        )
-    `);
-
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS invite_codes (
             id          SERIAL PRIMARY KEY,
             code        TEXT UNIQUE NOT NULL,
@@ -422,7 +549,7 @@ async function initDB() {
         )
     `);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS task_labels (
             id         SERIAL PRIMARY KEY,
             org_id     INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
@@ -434,19 +561,19 @@ async function initDB() {
         )
     `);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS task_label_map (
             task_id  INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
             label_id INTEGER NOT NULL REFERENCES task_labels(id) ON DELETE CASCADE,
             PRIMARY KEY (task_id, label_id)
         )
     `);
-    await query(`
+    await q(`
         CREATE INDEX IF NOT EXISTS idx_task_label_map_task  ON task_label_map(task_id);
         CREATE INDEX IF NOT EXISTS idx_task_label_map_label ON task_label_map(label_id);
     `);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS task_comments (
             id         SERIAL PRIMARY KEY,
             task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -456,9 +583,9 @@ async function initDB() {
             updated_at TIMESTAMPTZ
         )
     `);
-    await query(`CREATE INDEX IF NOT EXISTS idx_task_comments_task ON task_comments(task_id, created_at)`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_task_comments_task ON task_comments(task_id, created_at)`);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS task_history (
             id         SERIAL PRIMARY KEY,
             task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -470,9 +597,9 @@ async function initDB() {
             created_at TIMESTAMPTZ DEFAULT NOW()
         )
     `);
-    await query(`CREATE INDEX IF NOT EXISTS idx_task_history_task ON task_history(task_id, created_at)`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_task_history_task ON task_history(task_id, created_at)`);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS notebooks (
             user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
             data       TEXT NOT NULL DEFAULT '{}',
@@ -480,7 +607,7 @@ async function initDB() {
         )
     `);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS calendar_events (
             id          SERIAL PRIMARY KEY,
             user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -496,11 +623,11 @@ async function initDB() {
             updated_at  TIMESTAMPTZ DEFAULT NOW()
         )
     `);
-    await query(`
+    await q(`
         CREATE INDEX IF NOT EXISTS idx_cal_events_user_time ON calendar_events(user_id, start_time, end_time);
     `);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS notebook_history (
             id         SERIAL PRIMARY KEY,
             user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -510,11 +637,11 @@ async function initDB() {
             saved_at   TIMESTAMPTZ DEFAULT NOW()
         )
     `);
-    await query(`
+    await q(`
         CREATE INDEX IF NOT EXISTS idx_nb_history_page ON notebook_history(user_id, page_id, saved_at DESC)
     `);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS notifications (
             id           SERIAL PRIMARY KEY,
             user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -526,12 +653,12 @@ async function initDB() {
             created_at   TIMESTAMPTZ DEFAULT NOW()
         )
     `);
-    await query(`
+    await q(`
         CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read, created_at DESC)
     `);
 
     // ---- Chat / Direct Messages ----
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS conversations (
             id          SERIAL PRIMARY KEY,
             org_id      INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -541,22 +668,22 @@ async function initDB() {
             updated_at  TIMESTAMPTZ DEFAULT NOW()
         )
     `);
-    await query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS name VARCHAR(100)`);
-    await query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS is_group BOOLEAN NOT NULL DEFAULT FALSE`);
+    await q(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS name VARCHAR(100)`);
+    await q(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS is_group BOOLEAN NOT NULL DEFAULT FALSE`);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS conversation_participants (
             conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
             user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             PRIMARY KEY (conversation_id, user_id)
         )
     `);
-    await query(`
+    await q(`
         CREATE INDEX IF NOT EXISTS idx_conv_participants_user ON conversation_participants(user_id)
     `);
-    await query(`ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT FALSE`);
-    await query(`ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS is_favourite BOOLEAN NOT NULL DEFAULT FALSE`);
-    await query(`
+    await q(`ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT FALSE`);
+    await q(`ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS is_favourite BOOLEAN NOT NULL DEFAULT FALSE`);
+    await q(`
         CREATE TABLE IF NOT EXISTS messages (
             id              SERIAL PRIMARY KEY,
             conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -576,22 +703,22 @@ async function initDB() {
         )
     `);
     // Migrate existing messages tables
-    await query(`ALTER TABLE messages ALTER COLUMN content DROP NOT NULL`);
-    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_id INTEGER REFERENCES messages(id) ON DELETE SET NULL`);
-    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_url TEXT`);
-    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_name VARCHAR(255)`);
-    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_type VARCHAR(50)`);
-    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_size INTEGER`);
-    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ`);
-    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`);
-    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS forwarded_from_id INTEGER REFERENCES messages(id) ON DELETE SET NULL`);
-    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ`);
-    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS pinned_by INTEGER REFERENCES users(id) ON DELETE SET NULL`);
+    await q(`ALTER TABLE messages ALTER COLUMN content DROP NOT NULL`);
+    await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_id INTEGER REFERENCES messages(id) ON DELETE SET NULL`);
+    await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_url TEXT`);
+    await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_name VARCHAR(255)`);
+    await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_type VARCHAR(50)`);
+    await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_size INTEGER`);
+    await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ`);
+    await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`);
+    await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS forwarded_from_id INTEGER REFERENCES messages(id) ON DELETE SET NULL`);
+    await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ`);
+    await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS pinned_by INTEGER REFERENCES users(id) ON DELETE SET NULL`);
 
-    await query(`
+    await q(`
         CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, created_at DESC)
     `);
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS message_reads (
             conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
             user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -601,7 +728,7 @@ async function initDB() {
     `);
 
     // ---- Message Reactions ----
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS message_reactions (
             id          SERIAL PRIMARY KEY,
             message_id  INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
@@ -611,16 +738,16 @@ async function initDB() {
             UNIQUE (message_id, user_id, emoji)
         )
     `);
-    await query(`CREATE INDEX IF NOT EXISTS idx_reactions_message ON message_reactions(message_id)`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_reactions_message ON message_reactions(message_id)`);
 
     // Presence tracking
-    await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ`);
+    await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ`);
 
     // Full-text search index on messages
-    await query(`CREATE INDEX IF NOT EXISTS idx_messages_search ON messages USING gin(to_tsvector('english', COALESCE(content, '')))`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_messages_search ON messages USING gin(to_tsvector('english', COALESCE(content, '')))`);
 
     // ---- Starred Messages ----
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS starred_messages (
             user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
@@ -630,7 +757,7 @@ async function initDB() {
     `);
 
     // ---- Polls ----
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS polls (
             id              SERIAL PRIMARY KEY,
             conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -642,7 +769,7 @@ async function initDB() {
             created_at      TIMESTAMPTZ DEFAULT NOW()
         )
     `);
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS poll_votes (
             id         SERIAL PRIMARY KEY,
             poll_id    INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
@@ -654,7 +781,7 @@ async function initDB() {
     `);
 
     // ---- Call Logs ----
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS call_logs (
             id              SERIAL PRIMARY KEY,
             conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -667,10 +794,10 @@ async function initDB() {
             created_at      TIMESTAMPTZ DEFAULT NOW()
         )
     `);
-    await query(`CREATE INDEX IF NOT EXISTS idx_call_logs_conv ON call_logs(conversation_id, created_at DESC)`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_call_logs_conv ON call_logs(conversation_id, created_at DESC)`);
 
     // ---- Meetings ----
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS meetings (
             id                  SERIAL PRIMARY KEY,
             org_id              INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
@@ -688,10 +815,10 @@ async function initDB() {
             created_at          TIMESTAMPTZ DEFAULT NOW()
         )
     `);
-    await query(`CREATE INDEX IF NOT EXISTS idx_meetings_org ON meetings(org_id, created_at DESC)`);
-    await query(`CREATE INDEX IF NOT EXISTS idx_meetings_code ON meetings(meeting_code)`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_meetings_org ON meetings(org_id, created_at DESC)`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_meetings_code ON meetings(meeting_code)`);
 
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS meeting_participants (
             id          SERIAL PRIMARY KEY,
             meeting_id  INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
@@ -703,26 +830,26 @@ async function initDB() {
             UNIQUE(meeting_id, user_id)
         )
     `);
-    await query(`CREATE INDEX IF NOT EXISTS idx_meeting_participants ON meeting_participants(meeting_id, user_id)`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_meeting_participants ON meeting_participants(meeting_id, user_id)`);
 
     // ---- Extend calendar_events with meeting_id ----
-    await query(`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS meeting_id INTEGER REFERENCES meetings(id) ON DELETE SET NULL`);
-    await query(`ALTER TABLE meeting_participants ADD COLUMN IF NOT EXISTS participant_type VARCHAR(20) NOT NULL DEFAULT 'required'`);
+    await q(`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS meeting_id INTEGER REFERENCES meetings(id) ON DELETE SET NULL`);
+    await q(`ALTER TABLE meeting_participants ADD COLUMN IF NOT EXISTS participant_type VARCHAR(20) NOT NULL DEFAULT 'required'`);
 
     // ---- Delivery status on messages ----
-    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivered_to JSONB DEFAULT '[]'`);
+    await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivered_to JSONB DEFAULT '[]'`);
 
     // ---- Message format_type for rich text / polls / code ----
-    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS format_type VARCHAR(20) DEFAULT 'text'`);
-    await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS metadata JSONB`);
+    await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS format_type VARCHAR(20) DEFAULT 'text'`);
+    await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS metadata JSONB`);
     // ---- Full-text search index on tasks ----
-    await query(`
+    await q(`
         CREATE INDEX IF NOT EXISTS idx_tasks_fts ON tasks
         USING gin(to_tsvector('english', title || ' ' || COALESCE(description, '')))
     `);
 
     // ---- Pay periods (for payroll locking) ----
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS pay_periods (
             id          SERIAL PRIMARY KEY,
             org_id      INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -735,12 +862,12 @@ async function initDB() {
             UNIQUE(org_id, start_date, end_date)
         )
     `);
-    await query(`
+    await q(`
         CREATE INDEX IF NOT EXISTS idx_pay_periods_org ON pay_periods(org_id, start_date)
     `);
 
     // ---- Announcements ----
-    await query(`
+    await q(`
         CREATE TABLE IF NOT EXISTS announcements (
             id           SERIAL PRIMARY KEY,
             org_id       INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
@@ -752,22 +879,31 @@ async function initDB() {
             created_at   TIMESTAMPTZ DEFAULT NOW()
         )
     `);
-    await query(`
+    await q(`
         CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements(org_id, is_active, created_at DESC)
     `);
-    await query(`ALTER TABLE announcements ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`);
+    await q(`ALTER TABLE announcements ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`);
 
     // Migration: add user_status and user_status_text to users
-    await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS user_status TEXT NOT NULL DEFAULT 'available' CHECK(user_status IN ('available','busy','dnd','away','offline','in_call','in_meeting'))`);
-    await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS user_status_text TEXT`);
+    await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS user_status TEXT NOT NULL DEFAULT 'available' CHECK(user_status IN ('available','busy','dnd','away','offline','in_call','in_meeting'))`);
+    await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS user_status_text TEXT`);
 
-    // Seed defaults
-    await query(`
-        INSERT INTO app_settings (key, value) VALUES ('registration_mode', 'open')
-        ON CONFLICT (key) DO NOTHING
-    `);
-
-    logger.info('Database schema initialised');
+    logger.info('Tenant schema initialised');
 }
 
-module.exports = { query, transaction, initDB, pool };
+module.exports = {
+    pool,
+    // Master DB helpers
+    masterQuery,
+    masterTransaction,
+    // Backward-compatible aliases (hit master DB)
+    query,
+    transaction,
+    // Generic pool-bound factory helpers
+    makePoolQuery,
+    makePoolTransaction,
+    // Schema init
+    initDB,
+    initMasterDB,
+    initTenantSchema,
+};

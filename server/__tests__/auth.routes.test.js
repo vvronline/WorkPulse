@@ -34,6 +34,10 @@ const mockTransaction = jest.fn(async (fn) => {
 jest.mock('../db', () => ({
     pool: { end: jest.fn() },
     query: (...args) => mockQuery(...args),
+
+    masterQuery: (...args) => mockQuery(...args),
+
+    masterTransaction: (...args) => mockTransaction ? mockTransaction(...args) : (async (fn) => fn({ query: (...a) => mockQuery(...a) }))(...args),
     transaction: (...args) => mockTransaction(...args),
     initDB: jest.fn(),
 }));
@@ -61,8 +65,6 @@ describe('POST /api/auth/register', () => {
     });
 
     test('returns 400 for invalid email', async () => {
-        // registration mode = open
-        mockQuery.mockResolvedValueOnce({ rows: [{ value: 'open' }], rowCount: 1 });
         const res = await request(app)
             .post('/api/auth/register')
             .set(CSRF)
@@ -72,32 +74,38 @@ describe('POST /api/auth/register', () => {
     });
 
     test('returns 400 for duplicate username', async () => {
+        // user_directory: duplicate found
         mockQuery
-            .mockResolvedValueOnce({ rows: [{ value: 'open' }], rowCount: 1 }) // registration mode
-            .mockResolvedValueOnce({ rows: [{ id: 1 }], rowCount: 1 }); // existing user
+            .mockResolvedValueOnce({ rows: [{ id: 1 }], rowCount: 1 }); // user_directory hit
         const res = await request(app)
             .post('/api/auth/register')
             .set(CSRF)
             .send({ username: 'taken', password: 'Password1!', full_name: 'Test', email: 'test@example.com' });
         expect(res.status).toBe(400);
-        expect(res.body.error).toMatch(/username/i);
+        expect(res.body.error).toMatch(/already registered/i);
     });
 
-    test('returns 403 when registration is closed', async () => {
-        mockQuery.mockResolvedValueOnce({ rows: [{ value: 'closed' }], rowCount: 1 });
+    test('returns 400 when no tenant context and not bootstrap', async () => {
+        mockQuery
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // user_directory miss
+            .mockResolvedValueOnce({ rows: [{ count: '1' }], rowCount: 1 }) // platform_users count > 0
+            .mockResolvedValueOnce({ rows: [{ count: '1' }], rowCount: 1 }); // tenants count > 0
         const res = await request(app)
             .post('/api/auth/register')
             .set(CSRF)
             .send({ username: 'newuser', password: 'Password1!', full_name: 'New User', email: 'new@example.com' });
-        expect(res.status).toBe(403);
-        expect(res.body.error).toMatch(/closed/i);
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/organization domain|invite/i);
     });
 
-    test('succeeds with valid data and sets cookie', async () => {
+    test('bootstraps platform_admin when no users exist', async () => {
         mockQuery
-            .mockResolvedValueOnce({ rows: [{ value: 'open' }], rowCount: 1 }) // registration mode
-            .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // no existing user
-            .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // no existing email
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 })           // user_directory miss
+            .mockResolvedValueOnce({ rows: [{ count: '0' }], rowCount: 1 }) // 0 platform_users
+            .mockResolvedValueOnce({ rows: [{ count: '0' }], rowCount: 1 }) // 0 tenants
+            .mockResolvedValueOnce({ rows: [{ id: 1 }], rowCount: 1 }) // INSERT platform_user
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 })          // INSERT session
+            .mockResolvedValueOnce({ rows: [{ id: 'sess' }], rowCount: 1 }); // list sessions
 
         const res = await request(app)
             .post('/api/auth/register')
@@ -106,6 +114,7 @@ describe('POST /api/auth/register', () => {
         expect(res.status).toBe(200);
         expect(res.body.user).toBeDefined();
         expect(res.body.user.username).toBe('newuser');
+        expect(res.body.user.role).toBe('platform_admin');
         expect(res.headers['set-cookie']).toBeDefined();
         expect(res.headers['set-cookie'][0]).toMatch(/token=/);
     });
@@ -126,7 +135,7 @@ describe('POST /api/auth/login', () => {
     });
 
     test('returns 401 for non-existent user', async () => {
-        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+        // user_directory miss, platform_users miss, legacy users miss (all default empty)
         const res = await request(app)
             .post('/api/auth/login')
             .set(CSRF)
@@ -137,13 +146,16 @@ describe('POST /api/auth/login', () => {
 
     test('returns 401 for wrong password', async () => {
         const hash = await bcrypt.hash('CorrectPass1!', 10);
-        mockQuery.mockResolvedValueOnce({
-            rows: [{
-                id: 1, username: 'john', password: hash, full_name: 'John',
-                is_active: true, failed_login_attempts: 0, role: 'employee',
-            }],
-            rowCount: 1,
-        });
+        mockQuery
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // user_directory miss
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // platform_users miss
+            .mockResolvedValueOnce({                           // legacy users hit
+                rows: [{
+                    id: 1, username: 'john', password: hash, full_name: 'John',
+                    is_active: true, failed_login_attempts: 0, role: 'employee',
+                }],
+                rowCount: 1,
+            });
         const res = await request(app)
             .post('/api/auth/login')
             .set(CSRF)
@@ -154,7 +166,9 @@ describe('POST /api/auth/login', () => {
     test('returns 200 with user data and cookie on valid login', async () => {
         const hash = await bcrypt.hash('CorrectPass1!', 10);
         mockQuery
-            .mockResolvedValueOnce({
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // user_directory miss
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // platform_users miss
+            .mockResolvedValueOnce({                           // legacy users hit
                 rows: [{
                     id: 1, username: 'john', password: hash, full_name: 'John Doe',
                     email: 'john@example.com', avatar: null, is_active: true,
@@ -163,6 +177,8 @@ describe('POST /api/auth/login', () => {
                 }],
                 rowCount: 1,
             })
+            .mockResolvedValueOnce({ rows: [{ id: 'sess-1' }], rowCount: 1 }) // insert session
+            .mockResolvedValueOnce({ rows: [{ id: 'sess-1' }], rowCount: 1 }) // list sessions
             .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // no reports
 
         const res = await request(app)
@@ -177,13 +193,16 @@ describe('POST /api/auth/login', () => {
 
     test('returns 403 for deactivated user', async () => {
         const hash = await bcrypt.hash('Password1!', 10);
-        mockQuery.mockResolvedValueOnce({
-            rows: [{
-                id: 1, username: 'disabled', password: hash, full_name: 'Disabled',
-                is_active: false, failed_login_attempts: 0,
-            }],
-            rowCount: 1,
-        });
+        mockQuery
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // user_directory miss
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // platform_users miss
+            .mockResolvedValueOnce({                           // legacy users hit
+                rows: [{
+                    id: 1, username: 'disabled', password: hash, full_name: 'Disabled',
+                    is_active: false, failed_login_attempts: 0,
+                }],
+                rowCount: 1,
+            });
         const res = await request(app)
             .post('/api/auth/login')
             .set(CSRF)
@@ -194,14 +213,17 @@ describe('POST /api/auth/login', () => {
 
     test('returns 423 for locked account', async () => {
         const hash = await bcrypt.hash('Password1!', 10);
-        mockQuery.mockResolvedValueOnce({
-            rows: [{
-                id: 1, username: 'locked', password: hash, full_name: 'Locked',
-                is_active: true, failed_login_attempts: 5,
-                locked_until: new Date(Date.now() + 600000).toISOString(),
-            }],
-            rowCount: 1,
-        });
+        mockQuery
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // user_directory miss
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // platform_users miss
+            .mockResolvedValueOnce({                           // legacy users hit
+                rows: [{
+                    id: 1, username: 'locked', password: hash, full_name: 'Locked',
+                    is_active: true, failed_login_attempts: 5,
+                    locked_until: new Date(Date.now() + 600000).toISOString(),
+                }],
+                rowCount: 1,
+            });
         const res = await request(app)
             .post('/api/auth/login')
             .set(CSRF)

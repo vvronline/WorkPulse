@@ -12,7 +12,7 @@ export function ChatProvider({ children }) {
     if (!isAuthenticated) { setUnreadCount(0); return; }
     try {
       const { data } = await getConversations();
-      setUnreadCount(data.reduce((sum, c) => sum + (c.unread_count || 0), 0));
+      setUnreadCount((data || []).reduce((sum, c) => sum + (c.unread_count || 0), 0));
     } catch { /* ignore */ }
   }, [isAuthenticated]);
 

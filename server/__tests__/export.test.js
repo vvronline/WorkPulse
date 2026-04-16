@@ -9,6 +9,7 @@ jest.mock('../utils/logger', () => ({
 jest.mock('../db', () => ({
     pool: { end: jest.fn() },
     query: jest.fn(),
+    masterQuery: jest.fn(),
     initDB: jest.fn(),
 }));
 

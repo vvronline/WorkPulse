@@ -43,7 +43,7 @@ export default function Analytics() {
                 if (analyticsRes.status === 'fulfilled') setData(analyticsRes.value.data);
                 else setError('Failed to load analytics chart data.');
                 if (historyRes.status === 'fulfilled') setHistory(historyRes.value.data);
-                else if (analyticsRes.status === 'fulfilled') setError('Failed to load history data.');
+                else if (historyRes.status === 'rejected') setError('Failed to load history data.');
                 if (widgetsRes.status === 'fulfilled') setWidgets(widgetsRes.value.data);
             } catch (err) {
                 if (cancelled) return;

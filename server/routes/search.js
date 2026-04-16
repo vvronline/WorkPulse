@@ -43,7 +43,7 @@ router.get('/', async (req, res) => {
         // ── Tasks: tsvector search scoped to user's visible tasks ──────────────
         let taskRows = [];
         if (tsQuery) {
-            taskRows = (await query(
+            taskRows = (await req.db.query(
                 `SELECT id, title, description, status, priority, date, due_date, sprint_id,
                         ts_headline('english',
                             title || ' ' || COALESCE(description, ''),
@@ -62,7 +62,7 @@ router.get('/', async (req, res) => {
 
         // ── Notes: user's own notebook pages (stored as JSON blob) ────────────
         let noteResults = [];
-        const notebookRow = (await query(
+        const notebookRow = (await req.db.query(
             'SELECT data FROM notebooks WHERE user_id = $1', [req.userId]
         )).rows[0];
         if (notebookRow) {
@@ -87,7 +87,7 @@ router.get('/', async (req, res) => {
         // ── Users: same org, active, name/username/email ILIKE ────────────────
         let userRows = [];
         if (req.userOrgId) {
-            userRows = (await query(
+            userRows = (await req.db.query(
                 `SELECT id, username, full_name, email, avatar, role
                  FROM users
                  WHERE org_id = $1 AND id != $2 AND is_active = TRUE
@@ -99,7 +99,7 @@ router.get('/', async (req, res) => {
         }
 
         // ── Calendar events: user's own, title/description ILIKE ─────────────
-        const eventRows = (await query(
+        const eventRows = (await req.db.query(
             `SELECT id, title, description, start_time, end_time, all_day
              FROM calendar_events
              WHERE user_id = $1 AND (title ILIKE $2 OR description ILIKE $2)
@@ -109,7 +109,7 @@ router.get('/', async (req, res) => {
         )).rows;
 
         // ── Leaves: user's own, leave_type/reason ILIKE ───────────────────────
-        const leaveRows = (await query(
+        const leaveRows = (await req.db.query(
             `SELECT id, date, leave_type, duration, status, reason
              FROM leaves
              WHERE user_id = $1 AND (leave_type ILIKE $2 OR COALESCE(reason, '') ILIKE $2)
@@ -120,11 +120,11 @@ router.get('/', async (req, res) => {
 
         // ── Sprints: user's team, name/goal ILIKE ─────────────────────────────
         let sprintRows = [];
-        const teamRow = (await query(
+        const teamRow = (await req.db.query(
             'SELECT team_id FROM users WHERE id = $1', [req.userId]
         )).rows[0];
         if (teamRow?.team_id) {
-            sprintRows = (await query(
+            sprintRows = (await req.db.query(
                 `SELECT id, name, goal, status, start_date, end_date
                  FROM sprints
                  WHERE team_id = $1 AND (name ILIKE $2 OR COALESCE(goal, '') ILIKE $2)
@@ -139,7 +139,7 @@ router.get('/', async (req, res) => {
         const userLevel = ROLE_LEVEL[req.userRole] || 1;
         if (userLevel >= ROLE_LEVEL['hr_admin']) {
             const orgId = req.userRole === 'platform_admin' ? null : req.userOrgId;
-            logRows = (await query(
+            logRows = (await req.db.query(
                 `SELECT al.id, al.action, al.entity_type, al.entity_id, al.details, al.created_at,
                         u.full_name AS actor_name
                  FROM audit_logs al

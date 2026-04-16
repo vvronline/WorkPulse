@@ -11,7 +11,7 @@ router.get('/', auth, loadUserContext, async (req, res) => {
     try {
         if (!req.userTeamId) return res.json({ sprints: [] });
 
-        const sprints = (await query(`
+        const sprints = (await req.db.query(`
             SELECT * FROM sprints
             WHERE team_id = $1
             ORDER BY
@@ -34,7 +34,7 @@ router.get('/active', auth, loadUserContext, async (req, res) => {
         const cached = await redis.getActiveSprint(req.userTeamId);
         if (cached !== null) return res.json({ sprint: cached || null });
 
-        const sprint = (await query(`
+        const sprint = (await req.db.query(`
             SELECT * FROM sprints
             WHERE team_id = $1 AND status = 'active'
             ORDER BY start_date DESC LIMIT 1
@@ -61,14 +61,14 @@ router.post('/', auth, loadUserContext, requireRole('team_lead'), async (req, re
             return res.status(400).json({ error: 'Dates must be in YYYY-MM-DD format' });
         }
 
-        const existing = (await query('SELECT id FROM sprints WHERE team_id = $1 AND name = $2', [req.userTeamId, name])).rows[0];
+        const existing = (await req.db.query('SELECT id FROM sprints WHERE team_id = $1 AND name = $2', [req.userTeamId, name])).rows[0];
         if (existing) return res.status(400).json({ error: 'A sprint with this name already exists for your team' });
 
-        const result = await query(
+        const result = await req.db.query(
             "INSERT INTO sprints (team_id, name, start_date, end_date, goal, status) VALUES ($1, $2, $3, $4, $5, 'planned') RETURNING id",
             [req.userTeamId, name, start_date, end_date, goal || null]
         );
-        const newSprint = (await query('SELECT * FROM sprints WHERE id = $1', [result.rows[0].id])).rows[0];
+        const newSprint = (await req.db.query('SELECT * FROM sprints WHERE id = $1', [result.rows[0].id])).rows[0];
         res.json({ sprint: newSprint });
     } catch (err) {
         req.log.error({ err }, 'Error creating sprint:');
@@ -81,7 +81,7 @@ router.put('/:id', auth, loadUserContext, requireRole('team_lead'), async (req, 
         const { id } = req.params;
         const { name, start_date, end_date, goal, status } = req.body;
 
-        const sprint = (await query(
+        const sprint = (await req.db.query(
             'SELECT s.* FROM sprints s JOIN teams t ON t.id = s.team_id WHERE s.id = $1 AND t.org_id = $2',
             [id, req.userOrgId]
         )).rows[0];
@@ -109,10 +109,10 @@ router.put('/:id', auth, loadUserContext, requireRole('team_lead'), async (req, 
         if (updates.length === 0) return res.status(400).json({ error: 'No valid fields to update' });
 
         params.push(id);
-        await query(`UPDATE sprints SET ${updates.join(', ')} WHERE id = $${pi}`, params);
+        await req.db.query(`UPDATE sprints SET ${updates.join(', ')} WHERE id = $${pi}`, params);
         await redis.invalidateActiveSprint(sprint.team_id);
 
-        const updated = (await query('SELECT * FROM sprints WHERE id = $1', [id])).rows[0];
+        const updated = (await req.db.query('SELECT * FROM sprints WHERE id = $1', [id])).rows[0];
         res.json({ sprint: updated });
     } catch (err) {
         req.log.error({ err }, 'Error updating sprint:');
@@ -124,15 +124,15 @@ router.delete('/:id', auth, loadUserContext, requireRole('team_lead'), async (re
     try {
         const { id } = req.params;
 
-        const sprint = (await query(
+        const sprint = (await req.db.query(
             'SELECT s.* FROM sprints s JOIN teams t ON t.id = s.team_id WHERE s.id = $1 AND t.org_id = $2',
             [id, req.userOrgId]
         )).rows[0];
         if (!sprint) return res.status(404).json({ error: 'Sprint not found' });
         if (sprint.team_id !== req.userTeamId) return res.status(403).json({ error: 'Access denied' });
 
-        await query('UPDATE tasks SET sprint_id = NULL WHERE sprint_id = $1', [id]);
-        await query('DELETE FROM sprints WHERE id = $1', [id]);
+        await req.db.query('UPDATE tasks SET sprint_id = NULL WHERE sprint_id = $1', [id]);
+        await req.db.query('DELETE FROM sprints WHERE id = $1', [id]);
         await redis.invalidateActiveSprint(sprint.team_id);
         res.json({ message: 'Sprint deleted successfully' });
     } catch (err) {
@@ -145,14 +145,14 @@ router.get('/:id/tasks', auth, loadUserContext, async (req, res) => {
     try {
         const { id } = req.params;
 
-        const sprint = (await query(
+        const sprint = (await req.db.query(
             'SELECT s.* FROM sprints s JOIN teams t ON t.id = s.team_id WHERE s.id = $1 AND t.org_id = $2',
             [id, req.userOrgId]
         )).rows[0];
         if (!sprint) return res.status(404).json({ error: 'Sprint not found' });
         if (sprint.team_id !== req.userTeamId) return res.status(403).json({ error: 'Access denied' });
 
-        const tasks = (await query('SELECT * FROM tasks WHERE sprint_id = $1 ORDER BY created_at ASC', [id])).rows;
+        const tasks = (await req.db.query('SELECT * FROM tasks WHERE sprint_id = $1 ORDER BY created_at ASC', [id])).rows;
         res.json({ tasks });
     } catch (err) {
         req.log.error({ err }, 'Error fetching sprint tasks:');

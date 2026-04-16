@@ -14,10 +14,10 @@ const router = express.Router();
 router.use(auth, loadUserContext);
 
 // Helper: fetch org work hours config for the current user
-async function getUserTargetMs(userId) {
-    const orgRow = (await query('SELECT org_id FROM users WHERE id = $1', [userId])).rows[0];
+async function getUserTargetMs(userId, db) {
+    const orgRow = (await db.query('SELECT org_id FROM users WHERE id = $1', [userId])).rows[0];
     if (orgRow?.org_id) {
-        const orgConfig = (await query('SELECT work_hours_per_day FROM organizations WHERE id = $1', [orgRow.org_id])).rows[0];
+        const orgConfig = (await db.query('SELECT work_hours_per_day FROM organizations WHERE id = $1', [orgRow.org_id])).rows[0];
         if (orgConfig?.work_hours_per_day) return orgConfig.work_hours_per_day * 3600000;
     }
     return 8 * 3600000; // default 8 hours
@@ -29,10 +29,10 @@ router.get('/my-analytics', async (req, res) => {
         const { from, to, format } = req.query;
         if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
 
-        const targetMs = await getUserTargetMs(req.userId);
+        const targetMs = await getUserTargetMs(req.userId, req.db);
         const offsetMin = getOffsetMin(req);
         const intervalStr = `${-offsetMin} minutes`;
-        const entries = (await query(`
+        const entries = (await req.db.query(`
             SELECT * FROM time_entries
             WHERE user_id = $1 AND approval_status = 'approved'
                 AND (timestamp + $4::interval)::date BETWEEN $2::date AND $3::date
@@ -92,7 +92,7 @@ router.get('/my-leaves', async (req, res) => {
         const { year, format } = req.query;
         const targetYear = parseInt(year, 10) || new Date().getFullYear();
 
-        const leaves = (await query(`
+        const leaves = (await req.db.query(`
             SELECT l.date, l.leave_type, l.duration, l.status, l.reason, l.reject_reason,
                    u.full_name AS approved_by_name
             FROM leaves l
@@ -138,7 +138,7 @@ router.get('/my-tasks', async (req, res) => {
             params.push(from, to);
         }
 
-        const tasks = (await query(`
+        const tasks = (await req.db.query(`
             SELECT t.date, t.title, t.status, t.priority, t.due_date,
                    u.full_name AS assigned_to_name
             FROM tasks t
@@ -178,7 +178,7 @@ router.get('/team-analytics', requireRole('team_lead'), async (req, res) => {
         const { from, to, format } = req.query;
         if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
 
-        const userIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId);
+        const userIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId, req.db);
         if (userIds.length === 0) return res.status(200).json([]);
 
         // Enforce org boundary: only include members from the requester's org
@@ -188,7 +188,7 @@ router.get('/team-analytics', requireRole('team_lead'), async (req, res) => {
             memberConditions.push('u.org_id = $2');
             memberParams.push(req.userOrgId);
         }
-        const members = (await query(`
+        const members = (await req.db.query(`
             SELECT u.id, u.full_name, u.email, u.role, u.timezone_offset,
                    d.name AS department_name, tm.name AS team_name
             FROM users u
@@ -202,7 +202,7 @@ router.get('/team-analytics', requireRole('team_lead'), async (req, res) => {
         const rows = [];
         for (const member of members) {
             const memberInterval = `${-(member.timezone_offset || offsetMin)} minutes`;
-            const entries = (await query(`
+            const entries = (await req.db.query(`
                 SELECT * FROM time_entries
                 WHERE user_id = $1 AND approval_status = 'approved'
                     AND (timestamp + $4::interval)::date BETWEEN $2::date AND $3::date
@@ -218,10 +218,10 @@ router.get('/team-analytics', requireRole('team_lead'), async (req, res) => {
             });
 
             // Fetch per-member org target (fall back to requester's offset)
-            const memberOrgRow = (await query('SELECT org_id FROM users WHERE id = $1', [member.id])).rows[0];
+            const memberOrgRow = (await req.db.query('SELECT org_id FROM users WHERE id = $1', [member.id])).rows[0];
             let memberTargetMs = 8 * 3600000;
             if (memberOrgRow?.org_id) {
-                const mOrgCfg = (await query('SELECT work_hours_per_day FROM organizations WHERE id = $1', [memberOrgRow.org_id])).rows[0];
+                const mOrgCfg = (await req.db.query('SELECT work_hours_per_day FROM organizations WHERE id = $1', [memberOrgRow.org_id])).rows[0];
                 if (mOrgCfg?.work_hours_per_day) memberTargetMs = mOrgCfg.work_hours_per_day * 3600000;
             }
 
@@ -235,12 +235,12 @@ router.get('/team-analytics', requireRole('team_lead'), async (req, res) => {
                 if (f >= memberTargetMs) targetMet++;
             });
 
-            const tasksDone = (await query(
+            const tasksDone = (await req.db.query(
                 "SELECT COUNT(*) AS c FROM tasks WHERE (user_id = $1 OR assigned_to = $1) AND status = 'done' AND date BETWEEN $2 AND $3",
                 [member.id, from, to]
             )).rows[0].c;
 
-            const leaves = (await query(
+            const leaves = (await req.db.query(
                 "SELECT COUNT(*) AS c FROM leaves WHERE user_id = $1 AND status = 'approved' AND date BETWEEN $2 AND $3",
                 [member.id, from, to]
             )).rows[0].c;
@@ -321,11 +321,11 @@ router.get('/payroll-hours', requireRole('team_lead'), async (req, res) => {
             return res.status(400).json({ error: "'from' must be on or before 'to'" });
         }
 
-        const userIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId);
+        const userIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId, req.db);
         if (userIds.length === 0) return sendCSV(res, [], [], 'payroll.csv');
 
         // 1. Org work configuration
-        const orgRow = (await query(
+        const orgRow = (await req.db.query(
             `SELECT work_days, work_hours_per_day FROM organizations WHERE id = $1`,
             [req.userOrgId]
         )).rows[0] || {};
@@ -337,7 +337,7 @@ router.get('/payroll-hours', requireRole('team_lead'), async (req, res) => {
 
         // 2. Non-optional org holidays in the period
         const holidaySet = new Set(
-            (await query(
+            (await req.db.query(
                 `SELECT date FROM holidays
                  WHERE org_id = $1 AND date BETWEEN $2 AND $3 AND is_optional = FALSE`,
                 [req.userOrgId, from, to]
@@ -345,7 +345,7 @@ router.get('/payroll-hours', requireRole('team_lead'), async (req, res) => {
         );
 
         // 3. Member info
-        const members = (await query(
+        const members = (await req.db.query(
             `SELECT u.id, u.full_name, u.email, u.role, u.timezone_offset,
                     d.name AS department_name, tm.name AS team_name
              FROM users u
@@ -375,7 +375,7 @@ router.get('/payroll-hours', requireRole('team_lead'), async (req, res) => {
             const memberInterval = `${-memberOffsetMin} minutes`;
 
             // Approved time entries for the period
-            const entries = (await query(
+            const entries = (await req.db.query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND approval_status = 'approved'
                    AND (timestamp + $4::interval)::date BETWEEN $2::date AND $3::date
@@ -393,7 +393,7 @@ router.get('/payroll-hours', requireRole('team_lead'), async (req, res) => {
 
             // Approved leaves for the period
             const leaveMap = {};
-            for (const l of (await query(
+            for (const l of (await req.db.query(
                 `SELECT date, leave_type, duration FROM leaves
                  WHERE user_id = $1 AND status = 'approved' AND date BETWEEN $2 AND $3`,
                 [member.id, from, to]
@@ -536,10 +536,10 @@ router.get('/team-leaves', requireRole('team_lead'), async (req, res) => {
     try {
         const { year, format } = req.query;
         const targetYear = parseInt(year, 10) || new Date().getFullYear();
-        const userIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId);
+        const userIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId, req.db);
         if (userIds.length === 0) return sendCSV(res, [], [], 'team_leaves.csv');
 
-        const leaves = (await query(`
+        const leaves = (await req.db.query(`
             SELECT u.full_name, l.date, l.leave_type, l.duration, l.status, l.reason
             FROM leaves l
             JOIN users u ON u.id = l.user_id

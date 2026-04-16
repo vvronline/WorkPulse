@@ -120,16 +120,9 @@ export default function App() {
     document.body.appendChild(tip);
 
     let hideTimer = null;
+    let activeEl = null;
 
-    const show = (e) => {
-      const el = e.currentTarget;
-      const text = el.getAttribute('data-tooltip');
-      if (!text) return;
-      clearTimeout(hideTimer);
-      tip.textContent = text;
-      tip.style.opacity = '0';
-      tip.style.display = 'block';
-
+    const positionTip = (el) => {
       const rect = el.getBoundingClientRect();
       const tipW = tip.offsetWidth;
       const tipH = tip.offsetHeight;
@@ -147,52 +140,49 @@ export default function App() {
       tip.style.opacity = '1';
     };
 
-    const hide = () => {
-      hideTimer = setTimeout(() => { tip.style.opacity = '0'; }, 50);
+    // Event delegation: capture mouseenter on any [title] or [data-tooltip]
+    const onOver = (e) => {
+      const el = e.target.closest('[title], [data-tooltip]');
+      if (!el) return;
+      // Swap title → data-tooltip to suppress native tooltip
+      if (el.hasAttribute('title')) {
+        el.setAttribute('data-tooltip', el.getAttribute('title'));
+        el.removeAttribute('title');
+      }
+      const text = el.getAttribute('data-tooltip');
+      if (!text) return;
+      clearTimeout(hideTimer);
+      activeEl = el;
+      tip.textContent = text;
+      tip.style.opacity = '0';
+      tip.style.display = 'block';
+      positionTip(el);
+    };
+
+    const onOut = (e) => {
+      const el = e.target.closest('[data-tooltip]');
+      if (el && el === activeEl) {
+        hideTimer = setTimeout(() => { tip.style.opacity = '0'; activeEl = null; }, 50);
+      }
     };
 
     const hideImmediately = () => {
       clearTimeout(hideTimer);
       tip.style.opacity = '0';
+      activeEl = null;
     };
 
-    const swap = (el) => {
-      if (el.getAttribute('title')) {
-        el.setAttribute('data-tooltip', el.getAttribute('title'));
-        el.removeAttribute('title');
-        el.addEventListener('mouseenter', show);
-        el.addEventListener('mouseleave', hide);
-      }
-    };
-
-    document.querySelectorAll('[title]').forEach(swap);
-
-    // Hide immediately on press/click so tooltips do not linger after UI state changes
+    document.addEventListener('mouseover', onOver, true);
+    document.addEventListener('mouseout', onOut, true);
     document.addEventListener('pointerdown', hideImmediately, true);
     document.addEventListener('click', hideImmediately, true);
 
-    const obs = new MutationObserver((mutations) => {
-      for (const m of mutations) {
-        if (m.type === 'attributes' && m.attributeName === 'title' && m.target.getAttribute('title')) {
-          swap(m.target);
-        }
-        if (m.type === 'childList') {
-          m.addedNodes.forEach((n) => {
-            if (n.nodeType === 1) {
-              if (n.getAttribute('title')) swap(n);
-              n.querySelectorAll?.('[title]').forEach(swap);
-            }
-          });
-        }
-      }
-    });
-    obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['title'] });
-
     return () => {
       clearTimeout(hideTimer);
+      document.removeEventListener('mouseover', onOver, true);
+      document.removeEventListener('mouseout', onOut, true);
       document.removeEventListener('pointerdown', hideImmediately, true);
       document.removeEventListener('click', hideImmediately, true);
-      obs.disconnect();
       tip.remove();
     };
   }, []);

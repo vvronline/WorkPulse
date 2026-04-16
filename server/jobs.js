@@ -14,6 +14,7 @@ try {
 let autoClockOutQueue = null;
 let tokenCleanupQueue = null;
 let workers = [];
+let fallbackIntervals = [];
 
 /**
  * Initialize job queues. Must be called after Redis is connected.
@@ -29,8 +30,8 @@ function initJobs({ autoClockOut, cleanupTokens }) {
         // Fallback: use setInterval (single-instance mode)
         logger.info('BullMQ unavailable — using setInterval for background jobs');
         autoClockOut();
-        setInterval(autoClockOut, 5 * 60 * 1000);
-        setInterval(cleanupTokens, 60 * 60 * 1000);
+        fallbackIntervals.push(setInterval(autoClockOut, 5 * 60 * 1000));
+        fallbackIntervals.push(setInterval(cleanupTokens, 60 * 60 * 1000));
         return;
     }
 
@@ -80,6 +81,8 @@ function initJobs({ autoClockOut, cleanupTokens }) {
 }
 
 async function shutdownJobs() {
+    for (const id of fallbackIntervals) clearInterval(id);
+    fallbackIntervals = [];
     for (const w of workers) {
         try { await w.close(); } catch { /* ignore */ }
     }

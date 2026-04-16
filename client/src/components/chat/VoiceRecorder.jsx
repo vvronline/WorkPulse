@@ -97,8 +97,11 @@ export default function VoiceRecorder({ onSend, onCancel }) {
         onCancel?.();
     }, [onCancel]);
 
+    const startRef = useRef(start);
+    startRef.current = start;
+
     useEffect(() => {
-        start();
+        startRef.current();
         return () => {
             clearInterval(timerRef.current);
             cancelAnimationFrame(rafRef.current);

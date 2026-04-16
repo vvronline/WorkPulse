@@ -47,6 +47,12 @@ export function MeetingProvider({ children }) {
             return;
         }
 
+        // Close stale WebSocket before creating a new one
+        if (wsRef.current) {
+            try { wsRef.current.close(); } catch { /* ignore */ }
+            wsRef.current = null;
+        }
+
         // Create WebSocket for this meeting session
         const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
         const host = import.meta.env.PROD ? window.location.host : `${window.location.hostname}:${import.meta.env.VITE_API_PORT || '5000'}`;

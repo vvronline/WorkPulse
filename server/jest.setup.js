@@ -2,3 +2,31 @@
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
 process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgresql://test:test@localhost:5432/test';
 process.env.NODE_ENV = 'test';
+
+// Mock tenant resolution middleware so it passes through to the mocked db module.
+// Each test file mocks ../db with its own mockQuery; resolveTenant would otherwise
+// fail because it calls masterQuery / getTenantPool which are not mocked.
+jest.mock('./middleware/tenant', () => ({
+    resolveTenant: (req, _res, next) => {
+        const db = require('./db');
+        req.tenant = null;
+        req.isMasterRoute = true;
+        req.db = {
+            query: (...args) => db.query(...args),
+            transaction: (...args) => db.transaction(...args),
+            pool: db.pool,
+        };
+        next();
+    },
+}));
+
+// Mock tenantManager so modules that import it don't try to connect to real DBs
+jest.mock('./utils/tenantManager', () => ({
+    getTenantPool: jest.fn(),
+    getTenantById: jest.fn(),
+    listActiveTenants: jest.fn().mockResolvedValue([]),
+    destroyAllPools: jest.fn(),
+    suspendTenant: jest.fn(),
+    reactivateTenant: jest.fn(),
+    provisionTenant: jest.fn(),
+}));

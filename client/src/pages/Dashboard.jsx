@@ -48,7 +48,7 @@ export default function Dashboard() {
   }, [announcements.length]);
 
   // Fetch tasks + events
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (signal) => {
     try {
       const now = new Date();
       const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
@@ -60,16 +60,21 @@ export default function Dashboard() {
         getCalendarEvents(dayEnd, tomorrowEnd),
         getActiveAnnouncements(),
       ]);
+      if (signal?.aborted) return;
       if (taskRes.status === 'fulfilled') setTaskSummary(taskRes.value.data);
       if (eventsRes.status === 'fulfilled') setTodayEvents(eventsRes.value.data || []);
       if (tomorrowRes.status === 'fulfilled') setTomorrowEvents(tomorrowRes.value.data || []);
       if (announcementsRes.status === 'fulfilled') setAnnouncements(announcementsRes.value.data?.data || []);
     } catch { /* silent */ } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchData(controller.signal);
+    return () => controller.abort();
+  }, [fetchData]);
 
   if (loading) return <DashboardSkeleton />;
 

@@ -22,12 +22,15 @@ export function WorkStateProvider({ children }) {
       setWorkMode('office');
       return;
     }
+    let cancelled = false;
     getStatus()
       .then(res => {
+        if (cancelled) return;
         setWorkState(res.data?.state || 'logged_out');
         if (res.data?.workMode) setWorkMode(res.data.workMode);
       })
       .catch(() => { /* keep logged_out default on error */ });
+    return () => { cancelled = true; };
   }, [isAuthenticated]);
 
   const value = useMemo(() => ({ workState, setWorkState, workMode, setWorkMode }), [workState, workMode]);

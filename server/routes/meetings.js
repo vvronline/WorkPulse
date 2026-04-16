@@ -11,26 +11,26 @@ router.use(auth);
 router.use(loadUserContext);
 
 /** Generate a unique meeting code: XXX-XXXX-XXX */
-async function generateMeetingCode() {
+async function generateMeetingCode(db) {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     for (let attempt = 0; attempt < 10; attempt++) {
         const part = (n) => Array.from({ length: n }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
         const code = `${part(3)}-${part(4)}-${part(3)}`;
-        const exists = (await query('SELECT 1 FROM meetings WHERE meeting_code = $1', [code])).rows[0];
+        const exists = (await db.query('SELECT 1 FROM meetings WHERE meeting_code = $1', [code])).rows[0];
         if (!exists) return code;
     }
     throw new Error('Could not generate unique meeting code');
 }
 
 /** Insert a system message into a conversation and broadcast it */
-async function insertSystemMessage(conversationId, senderId, metadata) {
-    const result = (await query(
+async function insertSystemMessage(conversationId, senderId, metadata, db) {
+    const result = (await db.query(
         `INSERT INTO messages (conversation_id, sender_id, content, format_type, metadata)
          VALUES ($1, $2, $3, 'system', $4) RETURNING id, created_at`,
         [conversationId, senderId, metadata.text || '', JSON.stringify(metadata)]
     )).rows[0];
 
-    const participants = (await query(
+    const participants = (await db.query(
         'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
         [conversationId]
     )).rows;
@@ -52,10 +52,10 @@ async function insertSystemMessage(conversationId, senderId, metadata) {
 }
 
 /** Check which users have conflicting calendar events in a time range */
-async function getConflictsForUsers(userIds, startTime, endTime) {
+async function getConflictsForUsers(userIds, startTime, endTime, db) {
     if (!userIds.length) return {};
     // Batch query: fetch all conflicts in a single query instead of per-user
-    const rows = (await query(
+    const rows = (await db.query(
         `SELECT user_id, id, title, start_time, end_time
          FROM calendar_events
          WHERE user_id = ANY($1)
@@ -86,11 +86,11 @@ router.post('/check-conflicts', async (req, res) => {
         const ids = user_ids.map(Number).filter(n => n > 0);
         if (!ids.length) return res.json({ conflicts: [] });
 
-        const conflictMap = await getConflictsForUsers(ids, start_time, end_time);
+        const conflictMap = await getConflictsForUsers(ids, start_time, end_time, req.db);
         const result = [];
         for (const uid of ids) {
             if (conflictMap[uid]) {
-                const userInfo = (await query(
+                const userInfo = (await req.db.query(
                     'SELECT full_name, username FROM users WHERE id = $1', [uid]
                 )).rows[0];
                 result.push({
@@ -116,7 +116,7 @@ router.get('/', async (req, res) => {
         if (status) params.push(status);
         params.push(parseInt(limit, 10) || 20, parseInt(offset, 10) || 0);
 
-        const result = await query(
+        const result = await req.db.query(
             `SELECT m.*,
                     u.full_name AS organizer_name, u.avatar AS organizer_avatar,
                     ce.title AS calendar_title, ce.start_time AS calendar_start,
@@ -144,7 +144,7 @@ router.get('/', async (req, res) => {
 // ─── Get meeting by code ────────────────────────────────────────────────────
 router.get('/:code', async (req, res) => {
     try {
-        const result = await query(
+        const result = await req.db.query(
             `SELECT m.*,
                     u.full_name AS organizer_name, u.avatar AS organizer_avatar,
                     ce.title AS calendar_title, ce.start_time AS calendar_start, ce.end_time AS calendar_end
@@ -160,7 +160,7 @@ router.get('/:code', async (req, res) => {
 
         // Check access: must be in the same org or an explicit participant
         if (!meeting.org_id || meeting.org_id !== req.userOrgId) {
-            const isParticipant = (await query(
+            const isParticipant = (await req.db.query(
                 'SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2',
                 [meeting.id, req.userId]
             )).rows[0];
@@ -170,7 +170,7 @@ router.get('/:code', async (req, res) => {
         // Fetch participants (with Redis cache for active meetings)
         let participantRows = await redis.getMeetingParticipants(meeting.id);
         if (!participantRows) {
-            participantRows = (await query(
+            participantRows = (await req.db.query(
                 `SELECT mp.*, u.full_name, u.avatar, u.username
                  FROM meeting_participants mp JOIN users u ON u.id = mp.user_id
                  WHERE mp.meeting_id = $1 ORDER BY mp.id`,
@@ -196,7 +196,7 @@ router.post('/', async (req, res) => {
         if (title.trim().length > 200) return res.status(400).json({ error: 'Title too long (max 200 chars)' });
         if (!req.userOrgId) return res.status(403).json({ error: 'You must belong to an organization to create meetings' });
 
-        const code = await generateMeetingCode();
+        const code = await generateMeetingCode(req.db);
 
         // Support both new (required/optional) and legacy (participant_ids) formats
         const requiredIds = Array.isArray(required_participant_ids)
@@ -211,7 +211,7 @@ router.post('/', async (req, res) => {
             : [];
         const inviteeIds = legacyIds.length > 0 ? legacyIds : [...requiredIds, ...optionalIds];
 
-        const result = await transaction(async (client) => {
+        const result = await req.db.transaction(async (client) => {
             // 1. Create group conversation for the meeting
             const conv = (await client.query(
                 `INSERT INTO conversations (org_id, name, is_group, created_at, updated_at)
@@ -270,7 +270,7 @@ router.post('/', async (req, res) => {
         const { meeting, conversationId } = result;
 
         // Get organizer info
-        const organizer = (await query('SELECT full_name, avatar FROM users WHERE id = $1', [req.userId])).rows[0];
+        const organizer = (await req.db.query('SELECT full_name, avatar FROM users WHERE id = $1', [req.userId])).rows[0];
 
         // Insert meeting card message + system message
         await insertSystemMessage(conversationId, req.userId, {
@@ -283,7 +283,7 @@ router.post('/', async (req, res) => {
 
         // Check conflicts for all invitees if time range provided
         const conflictMap = (start_time && end_time)
-            ? await getConflictsForUsers(inviteeIds, start_time, end_time)
+            ? await getConflictsForUsers(inviteeIds, start_time, end_time, req.db)
             : {};
 
         // Send notifications to invitees
@@ -295,7 +295,7 @@ router.post('/', async (req, res) => {
                 ? `${organizer?.full_name || 'Someone'} invited you to "${meeting.title}" — ⚠️ Conflicts with "${conflictTitle}"`
                 : `${organizer?.full_name || 'Someone'} invited you to "${meeting.title}"`;
 
-            await query(
+            await req.db.query(
                 `INSERT INTO notifications (user_id, type, title, body) VALUES ($1, 'meeting_invite', $2, $3)`,
                 [uid, `Meeting invitation`, notifBody]
             );
@@ -311,7 +311,7 @@ router.post('/', async (req, res) => {
             });
 
             // Send email notification to participant
-            const inviteeUser = (await query('SELECT id, full_name, email, username FROM users WHERE id = $1', [uid])).rows[0];
+            const inviteeUser = (await req.db.query('SELECT id, full_name, email, username FROM users WHERE id = $1', [uid])).rows[0];
             if (inviteeUser) {
                 notifyByEmail('meetingScheduled', inviteeUser, { title: meeting.title, meeting_code: code, start_time, end_time }, organizer?.full_name || 'Someone');
             }
@@ -328,7 +328,7 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
     try {
         const meetingId = Number(req.params.id);
-        const meeting = (await query('SELECT * FROM meetings WHERE id = $1 AND created_by = $2', [meetingId, req.userId])).rows[0];
+        const meeting = (await req.db.query('SELECT * FROM meetings WHERE id = $1 AND created_by = $2', [meetingId, req.userId])).rows[0];
         if (!meeting) return res.status(404).json({ error: 'Meeting not found or not organizer' });
         if (meeting.org_id !== req.userOrgId) return res.status(403).json({ error: 'Access denied' });
         if (meeting.status === 'ended') return res.status(400).json({ error: 'Cannot update ended meeting' });
@@ -336,7 +336,7 @@ router.put('/:id', async (req, res) => {
         const { title, description, settings } = req.body;
         const newSettings = settings ? { ...meeting.settings, ...settings } : meeting.settings;
 
-        const result = await query(
+        const result = await req.db.query(
             `UPDATE meetings SET
                 title = COALESCE($1, title),
                 description = COALESCE($2, description),
@@ -348,8 +348,8 @@ router.put('/:id', async (req, res) => {
         const updatedMeeting = result.rows[0];
 
         // Notify participants about meeting update via WS and email
-        const organizer = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
-        const participants = (await query(
+        const organizer = (await req.db.query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
+        const participants = (await req.db.query(
             `SELECT mp.user_id, u.full_name, u.email, u.username
              FROM meeting_participants mp JOIN users u ON u.id = mp.user_id
              WHERE mp.meeting_id = $1 AND mp.user_id != $2`,
@@ -380,19 +380,19 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
     try {
         const meetingId = Number(req.params.id);
-        const meeting = (await query('SELECT * FROM meetings WHERE id = $1 AND created_by = $2', [meetingId, req.userId])).rows[0];
+        const meeting = (await req.db.query('SELECT * FROM meetings WHERE id = $1 AND created_by = $2', [meetingId, req.userId])).rows[0];
         if (!meeting) return res.status(404).json({ error: 'Meeting not found or not organizer' });
 
-        await query(`UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1`, [meetingId]);
+        await req.db.query(`UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1`, [meetingId]);
 
         // Delete calendar events for ALL participants (including organizer)
-        await query('DELETE FROM calendar_events WHERE meeting_id = $1', [meetingId]);
+        await req.db.query('DELETE FROM calendar_events WHERE meeting_id = $1', [meetingId]);
 
         // Get organizer info for email
-        const organizer = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
+        const organizer = (await req.db.query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
 
         // Notify participants via WS and email
-        const participants = (await query(
+        const participants = (await req.db.query(
             `SELECT mp.user_id, u.full_name, u.email, u.username
              FROM meeting_participants mp JOIN users u ON u.id = mp.user_id
              WHERE mp.meeting_id = $1 AND mp.user_id != $2`,
@@ -422,7 +422,7 @@ router.delete('/:id', async (req, res) => {
 router.get('/:id/participants', async (req, res) => {
     try {
         const meetingId = Number(req.params.id);
-        const meeting = (await query('SELECT * FROM meetings WHERE id = $1', [meetingId])).rows[0];
+        const meeting = (await req.db.query('SELECT * FROM meetings WHERE id = $1', [meetingId])).rows[0];
         if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
 
         // Verify the meeting belongs to the user's org
@@ -431,13 +431,13 @@ router.get('/:id/participants', async (req, res) => {
         }
 
         // Must be a participant or organizer
-        const access = (await query(
+        const access = (await req.db.query(
             'SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2',
             [meetingId, req.userId]
         )).rows[0];
         if (!access && meeting.created_by !== req.userId) return res.status(403).json({ error: 'Access denied' });
 
-        const result = await query(
+        const result = await req.db.query(
             `SELECT mp.*, u.full_name, u.avatar, u.username, u.role
              FROM meeting_participants mp JOIN users u ON u.id = mp.user_id
              WHERE mp.meeting_id = $1 ORDER BY mp.role DESC, mp.id`,
@@ -457,17 +457,17 @@ router.post('/:id/participants', async (req, res) => {
         const { user_id } = req.body;
         if (!user_id) return res.status(400).json({ error: 'user_id required' });
 
-        const meeting = (await query('SELECT * FROM meetings WHERE id = $1', [meetingId])).rows[0];
+        const meeting = (await req.db.query('SELECT * FROM meetings WHERE id = $1', [meetingId])).rows[0];
         if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
         if (meeting.created_by !== req.userId) return res.status(403).json({ error: 'Only organizer can add participants' });
         if (meeting.status === 'ended') return res.status(400).json({ error: 'Meeting has ended' });
 
-        const targetUser = (await query('SELECT id, full_name, avatar, username, org_id FROM users WHERE id = $1', [user_id])).rows[0];
+        const targetUser = (await req.db.query('SELECT id, full_name, avatar, username, org_id FROM users WHERE id = $1', [user_id])).rows[0];
         if (!targetUser) return res.status(404).json({ error: 'User not found' });
         if (meeting.org_id && targetUser.org_id !== meeting.org_id) return res.status(403).json({ error: 'Cannot add participants from a different organization' });
 
         // Add to meeting_participants
-        await query(
+        await req.db.query(
             `INSERT INTO meeting_participants (meeting_id, user_id, role, status)
              VALUES ($1, $2, 'participant', 'invited') ON CONFLICT (meeting_id, user_id) DO NOTHING`,
             [meetingId, user_id]
@@ -476,23 +476,23 @@ router.post('/:id/participants', async (req, res) => {
 
         // Add to conversation
         if (meeting.conversation_id) {
-            await query(
+            await req.db.query(
                 `INSERT INTO conversation_participants (conversation_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
                 [meeting.conversation_id, user_id]
             );
         }
 
-        const organizer = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
+        const organizer = (await req.db.query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
 
         // Check if new participant has a conflict with this meeting's calendar event
         let hasConflict = false;
         let conflictTitle = null;
-        const calEvent = (await query(
+        const calEvent = (await req.db.query(
             'SELECT start_time, end_time FROM calendar_events WHERE meeting_id = $1 AND user_id = $2 LIMIT 1',
             [meetingId, meeting.created_by]
         )).rows[0];
         if (calEvent) {
-            const overlapping = (await query(
+            const overlapping = (await req.db.query(
                 `SELECT title FROM calendar_events
                  WHERE user_id = $1
                    AND start_time < $3::timestamptz
@@ -511,7 +511,7 @@ router.post('/:id/participants', async (req, res) => {
         const notifBody = hasConflict
             ? `${organizer?.full_name || 'Someone'} invited you to "${meeting.title}" — ⚠️ Conflicts with "${conflictTitle}"`
             : `${organizer?.full_name || 'Someone'} invited you to "${meeting.title}"`;
-        await query(
+        await req.db.query(
             `INSERT INTO notifications (user_id, type, title, body) VALUES ($1, 'meeting_invite', $2, $3)`,
             [user_id, `Meeting invitation`, notifBody]
         );
@@ -539,7 +539,7 @@ router.delete('/:id/participants/:userId', async (req, res) => {
         const meetingId = Number(req.params.id);
         const targetId = Number(req.params.userId);
 
-        const meeting = (await query('SELECT * FROM meetings WHERE id = $1', [meetingId])).rows[0];
+        const meeting = (await req.db.query('SELECT * FROM meetings WHERE id = $1', [meetingId])).rows[0];
         if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
 
         // Organizer can remove anyone; user can remove themselves
@@ -547,7 +547,7 @@ router.delete('/:id/participants/:userId', async (req, res) => {
             return res.status(403).json({ error: 'Access denied' });
         }
 
-        await query('DELETE FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2', [meetingId, targetId]);
+        await req.db.query('DELETE FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2', [meetingId, targetId]);
         await redis.invalidateMeetingParticipants(meetingId);
         sendToUser(targetId, 'meeting_removed', { meetingId, title: meeting.title });
 

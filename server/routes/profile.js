@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -83,7 +83,7 @@ router.post('/avatar', auth, loadUserContext, upload.single('avatar'), async (re
     const avatarPath = `/uploads/${orgDir}avatars/${req.file.filename}`;
 
     let oldAvatarPath = null;
-    await transaction(async (client) => {
+    await req.db.transaction(async (client) => {
         const user = (await client.query('SELECT avatar FROM users WHERE id = $1', [req.userId])).rows[0];
         await client.query('UPDATE users SET avatar = $1 WHERE id = $2', [avatarPath, req.userId]);
         oldAvatarPath = user?.avatar || null;
@@ -97,24 +97,24 @@ router.post('/avatar', auth, loadUserContext, upload.single('avatar'), async (re
 });
 
 router.delete('/avatar', auth, async (req, res) => {
-    const user = (await query('SELECT avatar FROM users WHERE id = $1', [req.userId])).rows[0];
+    const user = (await req.db.query('SELECT avatar FROM users WHERE id = $1', [req.userId])).rows[0];
     if (user?.avatar) {
         try { await fsPromises.unlink(safeAvatarPath(user.avatar)); } catch { }
     }
-    await query('UPDATE users SET avatar = NULL WHERE id = $1', [req.userId]);
+    await req.db.query('UPDATE users SET avatar = NULL WHERE id = $1', [req.userId]);
     res.json({ avatar: null });
 });
 
 router.get('/', auth, async (req, res) => {
     try {
-        const user = (await query(`
+        const user = (await req.db.query(`
             SELECT u.id, u.username, u.full_name, u.email, u.avatar, u.role, u.org_id, u.team_id, u.department_id, u.must_change_password,
                    t.name as team_name
             FROM users u LEFT JOIN teams t ON u.team_id = t.id WHERE u.id = $1
         `, [req.userId])).rows[0];
         if (!user) return res.status(404).json({ error: 'User not found' });
         user.must_change_password = !!user.must_change_password;
-        const hasReports = (await query('SELECT 1 FROM users WHERE manager_id = $1 AND is_active = TRUE LIMIT 1', [req.userId])).rows[0];
+        const hasReports = (await req.db.query('SELECT 1 FROM users WHERE manager_id = $1 AND is_active = TRUE LIMIT 1', [req.userId])).rows[0];
         user.has_reports = !!hasReports;
         res.json(user);
     } catch (err) {
@@ -131,11 +131,11 @@ router.put('/', auth, async (req, res) => {
         if (usernameError) return res.status(400).json({ error: usernameError });
         if (full_name.length > 100) return res.status(400).json({ error: 'Full name must be 100 characters or less' });
 
-        const existing = (await query('SELECT id FROM users WHERE username = $1 AND id != $2', [username, req.userId])).rows[0];
+        const existing = (await req.db.query('SELECT id FROM users WHERE username = $1 AND id != $2', [username, req.userId])).rows[0];
         if (existing) return res.status(400).json({ error: 'Username already taken' });
 
-        await query('UPDATE users SET full_name = $1, username = $2 WHERE id = $3', [full_name.trim(), username.trim(), req.userId]);
-        const updated = (await query('SELECT id, username, full_name, email, avatar FROM users WHERE id = $1', [req.userId])).rows[0];
+        await req.db.query('UPDATE users SET full_name = $1, username = $2 WHERE id = $3', [full_name.trim(), username.trim(), req.userId]);
+        const updated = (await req.db.query('SELECT id, username, full_name, email, avatar FROM users WHERE id = $1', [req.userId])).rows[0];
         res.json(updated);
     } catch (err) {
         req.log.error({ err }, 'PUT /profile error');
@@ -149,10 +149,10 @@ router.put('/email', auth, async (req, res) => {
         if (!email) return res.status(400).json({ error: 'Email is required' });
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email address' });
 
-        const existing = (await query('SELECT id FROM users WHERE email = $1 AND id != $2', [email, req.userId])).rows[0];
+        const existing = (await req.db.query('SELECT id FROM users WHERE email = $1 AND id != $2', [email, req.userId])).rows[0];
         if (existing) return res.status(400).json({ error: 'Email already in use' });
 
-        await query('UPDATE users SET email = $1 WHERE id = $2', [email, req.userId]);
+        await req.db.query('UPDATE users SET email = $1 WHERE id = $2', [email, req.userId]);
         res.json({ email });
     } catch (err) {
         req.log.error({ err }, 'PUT /profile/email error');
@@ -169,20 +169,20 @@ router.put('/password', auth, loadUserContext, async (req, res) => {
         const pwError = validatePassword(new_password);
         if (pwError) return res.status(400).json({ error: pwError });
 
-        const user = (await query('SELECT password FROM users WHERE id = $1', [req.userId])).rows[0];
+        const user = (await req.db.query('SELECT password FROM users WHERE id = $1', [req.userId])).rows[0];
         if (!(await bcrypt.compare(current_password, user.password))) return res.status(400).json({ error: 'Current password is incorrect' });
 
         const hash = await bcrypt.hash(new_password, 10);
-        await query('UPDATE users SET password = $1, token_version = COALESCE(token_version, 0) + 1, must_change_password = FALSE WHERE id = $2', [hash, req.userId]);
+        await req.db.query('UPDATE users SET password = $1, token_version = COALESCE(token_version, 0) + 1, must_change_password = FALSE WHERE id = $2', [hash, req.userId]);
         await redis.invalidateTokenVersion(req.userId);
         // Clear other sessions, keep the current one
         if (req.sessionId) {
-            await query('DELETE FROM user_sessions WHERE user_id = $1 AND id != $2', [req.userId, req.sessionId]);
+            await req.db.query('DELETE FROM user_sessions WHERE user_id = $1 AND id != $2', [req.userId, req.sessionId]);
         } else {
-            await query('DELETE FROM user_sessions WHERE user_id = $1', [req.userId]);
+            await req.db.query('DELETE FROM user_sessions WHERE user_id = $1', [req.userId]);
         }
         await redis.invalidateUserSessions(req.userId);
-        const updated = (await query('SELECT token_version FROM users WHERE id = $1', [req.userId])).rows[0];
+        const updated = (await req.db.query('SELECT token_version FROM users WHERE id = $1', [req.userId])).rows[0];
         const token = jwt.sign({ id: req.userId, username: req.username, tv: updated.token_version || 0, sid: req.sessionId }, process.env.JWT_SECRET, { expiresIn: '8h' });
         res.cookie('token', token, cookieOptions());
         logAction(req, 'change_password', 'user', req.userId, {});
@@ -198,14 +198,14 @@ router.delete('/', auth, async (req, res) => {
         const { password } = req.body;
         if (!password) return res.status(400).json({ error: 'Password is required to delete your account' });
 
-        const user = (await query('SELECT password, avatar FROM users WHERE id = $1', [req.userId])).rows[0];
+        const user = (await req.db.query('SELECT password, avatar FROM users WHERE id = $1', [req.userId])).rows[0];
         if (!(await bcrypt.compare(password, user.password))) return res.status(400).json({ error: 'Incorrect password' });
 
         if (user.avatar) {
             try { await fsPromises.unlink(safeAvatarPath(user.avatar)); } catch { }
         }
 
-        await transaction(async (client) => {
+        await req.db.transaction(async (client) => {
             await client.query('DELETE FROM time_entries WHERE user_id = $1', [req.userId]);
             await client.query('DELETE FROM leaves WHERE user_id = $1', [req.userId]);
             await client.query('DELETE FROM tasks WHERE user_id = $1', [req.userId]);

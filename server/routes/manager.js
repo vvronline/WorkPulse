@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole, getVisibleUserIds, ROLE_LEVEL } = require('../middleware/rbac');
@@ -25,7 +25,7 @@ router.use(async (req, res, next) => {
 
 router.get('/team-attendance', async (req, res) => {
     try {
-        const visibleIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId);
+        const visibleIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId, req.db);
         if (visibleIds.length === 0) return res.json([]);
 
         const { date: queryDate } = req.query;
@@ -34,24 +34,24 @@ router.get('/team-attendance', async (req, res) => {
         const isToday = targetDate === today;
         const tzMod = getTzModifier(req);
 
-        const users = (await query(
+        const users = (await req.db.query(
             'SELECT id, full_name, avatar, role, team_id, department_id FROM users WHERE id = ANY($1) AND is_active = TRUE',
             [visibleIds]
         )).rows;
 
-        const entries = (await query(
+        const entries = (await req.db.query(
             `SELECT * FROM time_entries WHERE user_id = ANY($1) AND (timestamp + $2::interval)::date = $3::date ORDER BY timestamp ASC`,
             [visibleIds, tzMod, targetDate]
         )).rows;
 
-        const leaves = (await query(
+        const leaves = (await req.db.query(
             `SELECT user_id, leave_type, status as leave_status FROM leaves WHERE user_id = ANY($1) AND date = $2`,
             [visibleIds, targetDate]
         )).rows;
         const leaveMap = {};
         leaves.forEach(l => { leaveMap[l.user_id] = l; });
 
-        const tasks = (await query(
+        const tasks = (await req.db.query(
             `SELECT user_id, title, status FROM tasks WHERE user_id = ANY($1) AND date = $2 AND status IN ('in_progress', 'in_review') ORDER BY priority DESC`,
             [visibleIds, targetDate]
         )).rows;
@@ -113,7 +113,7 @@ router.get('/team-attendance', async (req, res) => {
 router.get('/team-analytics', async (req, res) => {
     try {
         const { days, from, to } = req.query;
-        const visibleIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId);
+        const visibleIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId, req.db);
         if (visibleIds.length === 0) return res.json({ members: [], totalMembers: 0 });
 
         const offsetMin = getOffsetMin(req);
@@ -130,7 +130,7 @@ router.get('/team-analytics', async (req, res) => {
         const numDays = Math.round((new Date(toDate).getTime() - new Date(fromDate).getTime()) / 86400000) + 1;
         const tzMod = getTzModifier(req);
 
-        const entries = (await query(
+        const entries = (await req.db.query(
             `SELECT * FROM time_entries WHERE user_id = ANY($1) AND (timestamp + $2::interval)::date BETWEEN $3::date AND $4::date ORDER BY timestamp ASC`,
             [visibleIds, tzMod, fromDate, toDate]
         )).rows;
@@ -143,7 +143,7 @@ router.get('/team-analytics', async (req, res) => {
             byUser[e.user_id][dateStr].push(e);
         });
 
-        const users = (await query(
+        const users = (await req.db.query(
             `SELECT u.id, u.full_name, u.email, u.avatar, u.role, u.department_id, u.team_id,
                     d.name as department_name, t.name as team_name
              FROM users u
@@ -153,7 +153,7 @@ router.get('/team-analytics', async (req, res) => {
             [visibleIds]
         )).rows;
 
-        const taskCounts = (await query(
+        const taskCounts = (await req.db.query(
             `SELECT user_id, SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done, COUNT(*) as total
              FROM tasks WHERE user_id = ANY($1) AND date BETWEEN $2 AND $3 GROUP BY user_id`,
             [visibleIds, fromDate, toDate]
@@ -161,7 +161,7 @@ router.get('/team-analytics', async (req, res) => {
         const taskMap = {};
         taskCounts.forEach(t => { taskMap[t.user_id] = { done: parseInt(t.done || 0, 10), total: parseInt(t.total, 10) }; });
 
-        const leaveCounts = (await query(
+        const leaveCounts = (await req.db.query(
             `SELECT user_id, leave_type, COUNT(*) as count FROM leaves
              WHERE user_id = ANY($1) AND date BETWEEN $2 AND $3 AND status != 'rejected'
              GROUP BY user_id, leave_type`,
@@ -175,12 +175,12 @@ router.get('/team-analytics', async (req, res) => {
             leaveMap[l.user_id].byType[l.leave_type] = cnt;
         });
 
-        const pendingCount = (await query(
+        const pendingCount = (await req.db.query(
             "SELECT COUNT(*) as count FROM approval_requests WHERE approver_id = $1 AND status = 'pending'",
             [req.userId]
         )).rows[0];
 
-        const todayEntries = (await query(
+        const todayEntries = (await req.db.query(
             `SELECT * FROM time_entries WHERE user_id = ANY($1) AND (timestamp + $2::interval)::date = $3::date ORDER BY timestamp ASC`,
             [visibleIds, tzMod, toDate]
         )).rows;
@@ -190,7 +190,7 @@ router.get('/team-analytics', async (req, res) => {
             todayByUser[e.user_id].push(e);
         });
 
-        const todayLeaves = (await query(
+        const todayLeaves = (await req.db.query(
             `SELECT user_id FROM leaves WHERE user_id = ANY($1) AND date = $2 AND status != 'rejected'`,
             [visibleIds, toDate]
         )).rows;
@@ -206,7 +206,7 @@ router.get('/team-analytics', async (req, res) => {
         }
         let orgWhpd = 8;
         if (req.userOrgId) {
-            const org = (await query('SELECT work_hours_per_day FROM organizations WHERE id = $1', [req.userOrgId])).rows[0];
+            const org = (await req.db.query('SELECT work_hours_per_day FROM organizations WHERE id = $1', [req.userOrgId])).rows[0];
             if (org?.work_hours_per_day) orgWhpd = org.work_hours_per_day;
         }
         const targetMinutes = orgWhpd * 60;
@@ -332,7 +332,7 @@ router.get('/approvals', async (req, res) => {
         if (filterStatus !== 'all') { conditions.push(`ar.status = $${pi++}`); params.push(filterStatus); }
         if (type) { conditions.push(`ar.type = $${pi++}`); params.push(type); }
 
-        const approvals = (await query(`
+        const approvals = (await req.db.query(`
             SELECT ar.*, u.full_name as requester_name, u.avatar as requester_avatar
             FROM approval_requests ar
             JOIN users u ON u.id = ar.requester_id
@@ -359,7 +359,7 @@ router.get('/my-requests', async (req, res) => {
         let pi = 2;
         if (status && status !== 'all') { conditions.push(`ar.status = $${pi++}`); params.push(status); }
 
-        const requests = (await query(`
+        const requests = (await req.db.query(`
             SELECT ar.*, u.full_name as approver_name
             FROM approval_requests ar
             LEFT JOIN users u ON u.id = ar.approver_id
@@ -382,7 +382,7 @@ router.post('/approvals/:id/approve', async (req, res) => {
     try {
         const { id } = req.params;
 
-        const txResult = await transaction(async (client) => {
+        const txResult = await req.db.transaction(async (client) => {
             const approval = (await client.query('SELECT * FROM approval_requests WHERE id = $1', [Number(id)])).rows[0];
             if (!approval) return { error: 'Request not found', status: 404 };
             const isDirectManager = (await client.query('SELECT 1 FROM users WHERE id = $1 AND manager_id = $2', [approval.requester_id, req.userId])).rows[0];
@@ -440,12 +440,12 @@ router.post('/approvals/:id/approve', async (req, res) => {
 
         // Notify the requester about approval
         try {
-            const requester = (await query('SELECT email, full_name FROM users WHERE id = $1', [txResult.requesterId])).rows[0];
+            const requester = (await req.db.query('SELECT email, full_name FROM users WHERE id = $1', [txResult.requesterId])).rows[0];
             if (requester) {
                 if (txResult.type === 'leave' || txResult.type === 'leave_withdraw') {
-                    const leave = txResult.referenceId ? (await query('SELECT * FROM leaves WHERE id = $1', [txResult.referenceId])).rows[0] : null;
+                    const leave = txResult.referenceId ? (await req.db.query('SELECT * FROM leaves WHERE id = $1', [txResult.referenceId])).rows[0] : null;
                     const leaveInfo = leave || { leave_type: 'leave', date: '' };
-                    await query(
+                    await req.db.query(
                         'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
                         [txResult.requesterId, 'leave', 'Leave Approved \u2705', `Your ${leaveInfo.leave_type} leave on ${leaveInfo.date} has been approved.`]
                     );
@@ -455,7 +455,7 @@ router.post('/approvals/:id/approve', async (req, res) => {
                     let meta = {};
                     if (txResult.metadata) { try { meta = JSON.parse(txResult.metadata); } catch { } }
                     const entryDate = meta.date || '';
-                    await query(
+                    await req.db.query(
                         'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
                         [txResult.requesterId, 'approval', 'Manual Entry Approved \u2705', `Your manual time entry for ${entryDate} has been approved.`]
                     );
@@ -465,7 +465,7 @@ router.post('/approvals/:id/approve', async (req, res) => {
                     let meta = {};
                     if (txResult.metadata) { try { meta = JSON.parse(txResult.metadata); } catch { } }
                     const overtimeDate = meta.date || '';
-                    await query(
+                    await req.db.query(
                         'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
                         [txResult.requesterId, 'approval', 'Overtime Approved \u2705', `Your overtime request for ${overtimeDate} has been approved. Comp-off has been credited.`]
                     );
@@ -489,7 +489,7 @@ router.post('/approvals/:id/reject', async (req, res) => {
         const { id } = req.params;
         const { reject_reason } = req.body;
 
-        const txResult = await transaction(async (client) => {
+        const txResult = await req.db.transaction(async (client) => {
             const approval = (await client.query('SELECT * FROM approval_requests WHERE id = $1', [Number(id)])).rows[0];
             if (!approval) return { error: 'Request not found', status: 404 };
             const isDirectManager = (await client.query('SELECT 1 FROM users WHERE id = $1 AND manager_id = $2', [approval.requester_id, req.userId])).rows[0];
@@ -527,12 +527,12 @@ router.post('/approvals/:id/reject', async (req, res) => {
 
         // Notify the requester about rejection
         try {
-            const requester = (await query('SELECT email, full_name FROM users WHERE id = $1', [txResult.requesterId])).rows[0];
+            const requester = (await req.db.query('SELECT email, full_name FROM users WHERE id = $1', [txResult.requesterId])).rows[0];
             if (requester) {
                 if (txResult.type === 'leave') {
-                    const leave = txResult.referenceId ? (await query('SELECT * FROM leaves WHERE id = $1', [txResult.referenceId])).rows[0] : null;
+                    const leave = txResult.referenceId ? (await req.db.query('SELECT * FROM leaves WHERE id = $1', [txResult.referenceId])).rows[0] : null;
                     const leaveInfo = leave || { leave_type: 'leave', date: '' };
-                    await query(
+                    await req.db.query(
                         'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
                         [txResult.requesterId, 'leave', 'Leave Rejected', `Your ${leaveInfo.leave_type} leave on ${leaveInfo.date} has been rejected.${reject_reason ? ' Reason: ' + reject_reason : ''}`]
                     );
@@ -542,7 +542,7 @@ router.post('/approvals/:id/reject', async (req, res) => {
                     let meta = {};
                     if (txResult.metadata) { try { meta = JSON.parse(txResult.metadata); } catch { } }
                     const entryDate = meta.date || '';
-                    await query(
+                    await req.db.query(
                         'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
                         [txResult.requesterId, 'approval', 'Manual Entry Rejected', `Your manual time entry for ${entryDate} has been rejected.${reject_reason ? ' Reason: ' + reject_reason : ''}`]
                     );
@@ -572,7 +572,7 @@ router.post('/approvals/bulk', async (req, res) => {
         const status = action === 'approve' ? 'approved' : 'rejected';
         let processed = 0, skipped = 0;
 
-        await transaction(async (client) => {
+        await req.db.transaction(async (client) => {
             for (const id of ids) {
                 const approval = (await client.query("SELECT * FROM approval_requests WHERE id = $1 AND status = 'pending'", [id])).rows[0];
                 if (!approval) continue;
@@ -651,7 +651,7 @@ router.post('/approvals/bulk', async (req, res) => {
 router.get('/member/:userId/hours', async (req, res) => {
     try {
         const targetUserId = Number(req.params.userId);
-        const visibleIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId);
+        const visibleIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId, req.db);
         if (!visibleIds.includes(targetUserId)) return res.status(403).json({ error: 'Not authorized to view this user\'s data' });
 
         const { from, to } = req.query;
@@ -661,7 +661,7 @@ router.get('/member/:userId/hours', async (req, res) => {
         const toDate = to || today;
         const tzMod = getTzModifier(req);
 
-        const entries = (await query(
+        const entries = (await req.db.query(
             `SELECT * FROM time_entries WHERE user_id = $1 AND (timestamp + $2::interval)::date BETWEEN $3::date AND $4::date ORDER BY timestamp ASC`,
             [targetUserId, tzMod, fromDate, toDate]
         )).rows;
@@ -694,11 +694,11 @@ router.get('/member/:userId/hours', async (req, res) => {
 router.get('/member/:userId/tasks', async (req, res) => {
     try {
         const targetUserId = Number(req.params.userId);
-        const visibleIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId);
+        const visibleIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId, req.db);
         if (!visibleIds.includes(targetUserId)) return res.status(403).json({ error: 'Not authorized to view this user\'s tasks' });
 
         const targetDate = req.query.date || getLocalToday(req);
-        const tasks = (await query(
+        const tasks = (await req.db.query(
             'SELECT * FROM tasks WHERE (user_id = $1 OR assigned_to = $1) AND date = $2 ORDER BY priority DESC, created_at ASC',
             [targetUserId, targetDate]
         )).rows;
@@ -713,7 +713,7 @@ router.get('/member/:userId/tasks', async (req, res) => {
 router.get('/member/:userId/leaves', async (req, res) => {
     try {
         const targetUserId = Number(req.params.userId);
-        const visibleIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId);
+        const visibleIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId, req.db);
         if (!visibleIds.includes(targetUserId)) return res.status(403).json({ error: 'Not authorized to view this user\'s data' });
 
         const { from, to } = req.query;
@@ -721,7 +721,7 @@ router.get('/member/:userId/leaves', async (req, res) => {
         const fromDate = from || new Date(Date.now() - offsetMin * 60000 - 90 * 86400000).toISOString().slice(0, 10);
         const toDate = to || getLocalToday(req);
 
-        const leaves = (await query(
+        const leaves = (await req.db.query(
             `SELECT l.*, u.full_name as approved_by_name FROM leaves l
              LEFT JOIN users u ON u.id = l.approved_by
              WHERE l.user_id = $1 AND l.date BETWEEN $2 AND $3 ORDER BY l.date DESC`,
@@ -738,10 +738,10 @@ router.get('/member/:userId/leaves', async (req, res) => {
 router.get('/member/:userId/requests', async (req, res) => {
     try {
         const targetUserId = Number(req.params.userId);
-        const visibleIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId);
+        const visibleIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId, req.db);
         if (!visibleIds.includes(targetUserId)) return res.status(403).json({ error: 'Not authorized to view this user\'s data' });
 
-        const requests = (await query(
+        const requests = (await req.db.query(
             `SELECT ar.*, u.full_name as approver_name FROM approval_requests ar
              LEFT JOIN users u ON u.id = ar.approver_id
              WHERE ar.requester_id = $1 ORDER BY ar.created_at DESC LIMIT 100`,
@@ -762,10 +762,10 @@ router.get('/member/:userId/requests', async (req, res) => {
 router.get('/member/:userId/overview', async (req, res) => {
     try {
         const targetUserId = Number(req.params.userId);
-        const visibleIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId);
+        const visibleIds = await getVisibleUserIds(req.userId, req.userRole, req.userOrgId, req.userTeamId, req.db);
         if (!visibleIds.includes(targetUserId)) return res.status(403).json({ error: 'Not authorized to view this user\'s data' });
 
-        const user = (await query(
+        const user = (await req.db.query(
             `SELECT u.id, u.full_name, u.email, u.avatar, u.role, u.team_id, u.department_id, u.created_at,
                     d.name as department_name, t.name as team_name
              FROM users u
@@ -782,34 +782,34 @@ router.get('/member/:userId/overview', async (req, res) => {
         const monthStart = today.slice(0, 7) + '-01';
         const thirtyDaysAgo = new Date(Date.now() - offsetMin * 60000 - 30 * 86400000).toISOString().slice(0, 10);
 
-        const todayEntries = (await query(
+        const todayEntries = (await req.db.query(
             `SELECT * FROM time_entries WHERE user_id = $1 AND (timestamp + $2::interval)::date = $3::date ORDER BY timestamp ASC`,
             [targetUserId, tzMod, today]
         )).rows;
         const todayFloorMs = computeFloorMs(todayEntries, true);
         const todayBreakMs = computeBreakMs(todayEntries, true);
 
-        const pendingRequests = (await query(
+        const pendingRequests = (await req.db.query(
             "SELECT COUNT(*) as count FROM approval_requests WHERE requester_id = $1 AND status = 'pending'",
             [targetUserId]
         )).rows[0];
 
-        const monthLeaves = (await query(
+        const monthLeaves = (await req.db.query(
             "SELECT COUNT(*) as count FROM leaves WHERE user_id = $1 AND date >= $2 AND date <= $3 AND status != 'rejected'",
             [targetUserId, monthStart, today]
         )).rows[0];
 
-        const todayTasks = (await query(
+        const todayTasks = (await req.db.query(
             'SELECT * FROM tasks WHERE (user_id = $1 OR assigned_to = $1) AND date = $2 ORDER BY priority DESC, created_at ASC',
             [targetUserId, today]
         )).rows;
 
-        const recentLeaves = (await query(
+        const recentLeaves = (await req.db.query(
             'SELECT * FROM leaves WHERE user_id = $1 AND date >= $2 ORDER BY date DESC LIMIT 10',
             [targetUserId, thirtyDaysAgo]
         )).rows;
 
-        const recentRequestsRows = (await query(
+        const recentRequestsRows = (await req.db.query(
             `SELECT ar.*, u.full_name as approver_name FROM approval_requests ar
              LEFT JOIN users u ON u.id = ar.approver_id
              WHERE ar.requester_id = $1 ORDER BY ar.created_at DESC LIMIT 10`,
@@ -818,7 +818,7 @@ router.get('/member/:userId/overview', async (req, res) => {
 
         const trendStart = new Date(Date.now() - offsetMin * 60000 - 6 * 86400000);
         const trendStartStr = `${trendStart.getUTCFullYear()}-${String(trendStart.getUTCMonth() + 1).padStart(2, '0')}-${String(trendStart.getUTCDate()).padStart(2, '0')}`;
-        const trendEntries = (await query(
+        const trendEntries = (await req.db.query(
             `SELECT * FROM time_entries WHERE user_id = $1 AND (timestamp + $2::interval)::date BETWEEN $3::date AND $4::date ORDER BY timestamp ASC`,
             [targetUserId, tzMod, trendStartStr, today]
         )).rows;
@@ -842,7 +842,7 @@ router.get('/member/:userId/overview', async (req, res) => {
             });
         }
 
-        const last30Entries = (await query(
+        const last30Entries = (await req.db.query(
             `SELECT * FROM time_entries WHERE user_id = $1 AND (timestamp + $2::interval)::date BETWEEN $3::date AND $4::date ORDER BY timestamp ASC`,
             [targetUserId, tzMod, thirtyDaysAgo, today]
         )).rows;
@@ -855,7 +855,7 @@ router.get('/member/:userId/overview', async (req, res) => {
         let total30Floor = 0, total30Break = 0, days30Worked = 0, targetMet30 = 0, early30 = 0;
         let orgWhpd = 8;
         if (req.userOrgId) {
-            const org = (await query('SELECT work_hours_per_day FROM organizations WHERE id = $1', [req.userOrgId])).rows[0];
+            const org = (await req.db.query('SELECT work_hours_per_day FROM organizations WHERE id = $1', [req.userOrgId])).rows[0];
             if (org?.work_hours_per_day) orgWhpd = org.work_hours_per_day;
         }
         const targetMin = orgWhpd * 60;
@@ -875,7 +875,7 @@ router.get('/member/:userId/overview', async (req, res) => {
             }
         });
 
-        const monthTaskStats = (await query(
+        const monthTaskStats = (await req.db.query(
             `SELECT COUNT(*) as total, SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done,
                     SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress
              FROM tasks WHERE (user_id = $1 OR assigned_to = $1) AND date >= $2 AND date <= $3`,
@@ -885,7 +885,7 @@ router.get('/member/:userId/overview', async (req, res) => {
         const year = parseInt(today.slice(0, 4));
         let leaveBalances = [];
         try {
-            leaveBalances = (await query(
+            leaveBalances = (await req.db.query(
                 `SELECT lb.leave_type, lb.quota, lb.carried_forward, lb.used,
                         lp.annual_quota, lp.half_day_allowed, lp.quarter_day_allowed
                  FROM leave_balances lb

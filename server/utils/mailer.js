@@ -53,8 +53,11 @@ function esc(str) {
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 3000;
+
 /**
- * Send an email (fire-and-forget). Never throws.
+ * Send an email with automatic retry. Never throws.
  */
 function sendMail({ to, subject, html }) {
     const mailer = getTransporter();
@@ -62,9 +65,24 @@ function sendMail({ to, subject, html }) {
         logger.debug({ to, subject }, 'Email skipped (SMTP not configured)');
         return;
     }
-    mailer.sendMail({ from: FROM(), to, subject, html }).catch(err => {
-        logger.error({ err, to, subject }, 'Failed to send email');
-    });
+    if (!to || !to.includes('@')) {
+        logger.warn({ to, subject }, 'Email skipped — invalid recipient');
+        return;
+    }
+
+    let attempt = 0;
+    const trySend = () => {
+        attempt++;
+        mailer.sendMail({ from: FROM(), to, subject, html }).catch(err => {
+            if (attempt <= MAX_RETRIES) {
+                logger.warn({ err: err.message, to, subject, attempt }, 'Email send failed — retrying');
+                setTimeout(trySend, RETRY_DELAY_MS * attempt);
+            } else {
+                logger.error({ err, to, subject, attempts: attempt }, 'Failed to send email after retries');
+            }
+        });
+    };
+    trySend();
 }
 
 /**

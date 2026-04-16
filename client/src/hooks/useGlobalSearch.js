@@ -20,7 +20,7 @@ const NAV_INDEX = [
     { icon: Palmtree, title: 'Leaves', sub: 'Leave requests & history', path: '/leaves', keywords: 'vacation time off absence sick holiday request' },
     { icon: BarChart3, title: 'Analytics', sub: 'Work hours & productivity stats', path: '/analytics', keywords: 'reports hours productivity stats charts' },
     { icon: FileEdit, title: 'Manual Entry', sub: 'Log work hours manually', path: '/manual-entry', keywords: 'clock time log entry hours manual' },
-    { icon: Building2, title: 'Organization', sub: 'Org profile & settings', path: '/organization', keywords: 'company settings profile org details' },
+    { icon: Building2, title: 'Organization', sub: 'Org profile & settings', path: '/organization', keywords: 'company settings profile org details', excludeRole: 'platform_admin' },
     { icon: ClipboardList, title: 'Leave Policy', sub: 'Leave balances & public holidays', path: '/leave-policy', keywords: 'balance quota leave entitlement policy' },
     { icon: Wallet, title: 'Leave Balances', sub: 'My leave balances & quotas', path: '/leave-policy?tab=balances', keywords: 'quota remaining sick planned balance' },
     { icon: Palmtree, title: 'Holidays', sub: 'Company public holidays', path: '/leave-policy?tab=holidays', keywords: 'public holiday national bank calendar' },
@@ -32,7 +32,8 @@ const NAV_INDEX = [
     { icon: ScrollText, title: 'Audit Logs', sub: 'System activity history', path: '/admin?tab=audit', keywords: 'logs history activity events actions audit', minRole: 'hr_admin' },
     { icon: RefreshCw, title: 'Role Requests', sub: 'Pending role change requests', path: '/admin?tab=role-requests', keywords: 'role promotion request pending', minRole: 'hr_admin' },
     { icon: Wallet, title: 'Payroll', sub: 'Pay periods & payroll export', path: '/admin?tab=payroll', keywords: 'pay salary export hours period payroll', minRole: 'hr_admin' },
-    { icon: Building, title: 'Organizations', sub: 'Manage all organizations / tenants', path: '/admin?tab=organizations', keywords: 'org tenant company organizations', minRole: 'super_admin' },
+    { icon: Building, title: 'Org Structure', sub: 'Departments, teams & org chart', path: '/admin?tab=structure', keywords: 'departments teams structure chart', minRole: 'super_admin' },
+    { icon: Building, title: 'Tenant Management', sub: 'Manage tenants, organizations & databases', path: '/admin?tab=tenants', keywords: 'org tenant company organizations database', minRole: 'platform_admin' },
     { icon: ClipboardList, title: 'Leave Policies', sub: 'Configure leave quotas & accrual', path: '/leave-policy?tab=policies', keywords: 'policy accrual quota configure sick', minRole: 'hr_admin' },
     { icon: Users, title: 'All Leave Balances', sub: "View all employees' leave balances", path: '/leave-policy?tab=allBalances', keywords: 'all balances employees leave', minRole: 'hr_admin' },
 ];
@@ -59,8 +60,11 @@ export function useGlobalSearch({ onClose }) {
 
     // Navigation items the current user is permitted to see
     const visibleNav = useMemo(() =>
-        NAV_INDEX.filter(n => !n.minRole || userLevel >= (ROLE_LEVEL[n.minRole] ?? 1)),
-        [userLevel]
+        NAV_INDEX.filter(n =>
+            (!n.minRole || userLevel >= (ROLE_LEVEL[n.minRole] ?? 1)) &&
+            (!n.excludeRole || n.excludeRole !== user?.role)
+        ),
+        [userLevel, user?.role]
     );
 
     // Client-side nav filter against the current query

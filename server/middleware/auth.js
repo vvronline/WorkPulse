@@ -1,5 +1,4 @@
 const jwt = require('jsonwebtoken');
-const { query } = require('../db');
 const { logger } = require('../utils/logger');
 const redis = require('../redis');
 
@@ -11,11 +10,20 @@ async function authMiddleware(req, res, next) {
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         const tokenVersion = decoded.tv ?? 0;
+        const isPlatformUser = !!decoded.platform;
+
+        // req.db is set by tenant middleware (or falls back to master DB)
+        const dbQuery = req.db?.query;
+        if (!dbQuery) {
+            return res.status(500).json({ error: 'Database context not available' });
+        }
 
         // Try Redis cache first for token version check
         let dbTokenVersion = await redis.getTokenVersion(decoded.id);
         if (dbTokenVersion === null) {
-            const result = await query('SELECT token_version FROM users WHERE id = $1', [decoded.id]);
+            const result = isPlatformUser
+                ? await dbQuery('SELECT token_version FROM platform_users WHERE id = $1', [decoded.id])
+                : await dbQuery('SELECT token_version FROM users WHERE id = $1', [decoded.id]);
             const user = result.rows[0];
             if (!user) {
                 return res.status(401).json({ error: 'User no longer exists' });
@@ -32,7 +40,7 @@ async function authMiddleware(req, res, next) {
         if (decoded.sid) {
             let sessions = await redis.getUserSessions(decoded.id);
             if (sessions === null) {
-                const sessRes = await query('SELECT id FROM user_sessions WHERE user_id = $1', [decoded.id]);
+                const sessRes = await dbQuery('SELECT id FROM user_sessions WHERE user_id = $1', [decoded.id]);
                 sessions = sessRes.rows.map(r => r.id);
                 await redis.setUserSessions(decoded.id, sessions);
             }
@@ -44,6 +52,8 @@ async function authMiddleware(req, res, next) {
         req.userId = decoded.id;
         req.username = decoded.username;
         req.sessionId = decoded.sid || null;
+        req.tenantId = decoded.tenant_id || null;
+        req.isPlatformUser = isPlatformUser;
         next();
     } catch (err) {
         if (err.name === 'TokenExpiredError') {

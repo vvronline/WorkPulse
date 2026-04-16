@@ -15,7 +15,7 @@ router.get('/', async (req, res) => {
     try {
         const { from, to } = req.query;
         if (!from || !to) return res.status(400).json({ error: 'from and to query params required' });
-        const result = await query(
+        const result = await req.db.query(
             `SELECT ce.*, t.title AS task_title, t.status AS task_status, t.priority AS task_priority,
                     m.meeting_code, m.status AS meeting_status, m.conversation_id AS meeting_conversation_id,
                     m.created_by AS meeting_created_by
@@ -61,12 +61,12 @@ router.post('/', async (req, res) => {
         }
 
         // Rate limit: max 100 events per user
-        const countRes = await query('SELECT COUNT(*) AS c FROM calendar_events WHERE user_id = $1', [req.userId]);
+        const countRes = await req.db.query('SELECT COUNT(*) AS c FROM calendar_events WHERE user_id = $1', [req.userId]);
         if (parseInt(countRes.rows[0].c, 10) >= 1000) {
             return res.status(400).json({ error: 'Maximum event limit reached (1000). Delete old events first.' });
         }
 
-        const result = await query(
+        const result = await req.db.query(
             `INSERT INTO calendar_events (user_id, org_id, title, description, start_time, end_time, all_day, color, task_id, meeting_id)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
             [req.userId, req.userOrgId || null, title.trim(), description || null, start_time, end_time, all_day || false, color || '#6366f1', task_id || null, meeting_id || null]
@@ -74,18 +74,18 @@ router.post('/', async (req, res) => {
 
         // If linked to a meeting, also create calendar events for all other participants
         if (meeting_id) {
-            const otherParticipants = (await query(
+            const otherParticipants = (await req.db.query(
                 `SELECT mp.user_id FROM meeting_participants mp
                  WHERE mp.meeting_id = $1 AND mp.user_id != $2`,
                 [meeting_id, req.userId]
             )).rows;
             for (const p of otherParticipants) {
-                const existing = (await query(
+                const existing = (await req.db.query(
                     'SELECT id FROM calendar_events WHERE user_id = $1 AND meeting_id = $2',
                     [p.user_id, meeting_id]
                 )).rows[0];
                 if (!existing) {
-                    await query(
+                    await req.db.query(
                         `INSERT INTO calendar_events (user_id, org_id, title, description, start_time, end_time, all_day, color, meeting_id)
                          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
                         [p.user_id, req.userOrgId || null, title.trim(), description || null, start_time, end_time, all_day || false, color || '#6366f1', meeting_id]
@@ -105,14 +105,14 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
     try {
         const eventId = Number(req.params.id);
-        const existing = await query('SELECT * FROM calendar_events WHERE id = $1 AND user_id = $2 AND (org_id = $3 OR org_id IS NULL)', [eventId, req.userId, req.userOrgId || null]);
+        const existing = await req.db.query('SELECT * FROM calendar_events WHERE id = $1 AND user_id = $2 AND (org_id = $3 OR org_id IS NULL)', [eventId, req.userId, req.userOrgId || null]);
         if (!existing.rows[0]) return res.status(404).json({ error: 'Event not found' });
 
         const event = existing.rows[0];
 
         // If this event is linked to a meeting, only the organizer can edit it
         if (event.meeting_id) {
-            const meeting = (await query('SELECT * FROM meetings WHERE id = $1', [event.meeting_id])).rows[0];
+            const meeting = (await req.db.query('SELECT * FROM meetings WHERE id = $1', [event.meeting_id])).rows[0];
             if (meeting && meeting.created_by !== req.userId) {
                 return res.status(403).json({ error: 'Only the meeting organizer can edit this event' });
             }
@@ -125,7 +125,7 @@ router.put('/:id', async (req, res) => {
         if (effectiveEnd <= effectiveStart) {
             return res.status(400).json({ error: 'end_time must be after start_time' });
         }
-        const result = await query(
+        const result = await req.db.query(
             `UPDATE calendar_events SET
                 title = COALESCE($1, title),
                 description = COALESCE($2, description),
@@ -141,7 +141,7 @@ router.put('/:id', async (req, res) => {
 
         // If linked to a meeting, also update all other participants' calendar events and notify them
         if (event.meeting_id) {
-            await query(
+            await req.db.query(
                 `UPDATE calendar_events SET
                     title = COALESCE($1, title),
                     description = COALESCE($2, description),
@@ -154,10 +154,10 @@ router.put('/:id', async (req, res) => {
                 [title?.trim(), description, start_time, end_time, all_day, color, event.meeting_id, req.userId]
             );
 
-            const meeting = (await query('SELECT * FROM meetings WHERE id = $1', [event.meeting_id])).rows[0];
+            const meeting = (await req.db.query('SELECT * FROM meetings WHERE id = $1', [event.meeting_id])).rows[0];
             if (meeting) {
-                const organizer = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
-                const participants = (await query(
+                const organizer = (await req.db.query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
+                const participants = (await req.db.query(
                     `SELECT mp.user_id, u.full_name, u.email, u.username
                      FROM meeting_participants mp JOIN users u ON u.id = mp.user_id
                      WHERE mp.meeting_id = $1 AND mp.user_id != $2`,
@@ -181,26 +181,26 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
     try {
         const eventId = Number(req.params.id);
-        const event = (await query('SELECT * FROM calendar_events WHERE id = $1 AND user_id = $2 AND (org_id = $3 OR org_id IS NULL)', [eventId, req.userId, req.userOrgId || null])).rows[0];
+        const event = (await req.db.query('SELECT * FROM calendar_events WHERE id = $1 AND user_id = $2 AND (org_id = $3 OR org_id IS NULL)', [eventId, req.userId, req.userOrgId || null])).rows[0];
         if (!event) return res.status(404).json({ error: 'Event not found' });
 
         // If linked to a meeting, only the organizer can cancel it
         if (event.meeting_id) {
-            const meeting = (await query('SELECT * FROM meetings WHERE id = $1', [event.meeting_id])).rows[0];
+            const meeting = (await req.db.query('SELECT * FROM meetings WHERE id = $1', [event.meeting_id])).rows[0];
             if (meeting && meeting.created_by !== req.userId) {
                 return res.status(403).json({ error: 'Only the meeting organizer can cancel this event' });
             }
 
             if (meeting) {
                 // Cancel the meeting
-                await query(`UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1`, [event.meeting_id]);
+                await req.db.query(`UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1`, [event.meeting_id]);
 
                 // Delete calendar events for ALL participants
-                await query('DELETE FROM calendar_events WHERE meeting_id = $1', [event.meeting_id]);
+                await req.db.query('DELETE FROM calendar_events WHERE meeting_id = $1', [event.meeting_id]);
 
                 // Notify all participants
-                const organizer = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
-                const participants = (await query(
+                const organizer = (await req.db.query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
+                const participants = (await req.db.query(
                     `SELECT mp.user_id, u.full_name, u.email, u.username
                      FROM meeting_participants mp JOIN users u ON u.id = mp.user_id
                      WHERE mp.meeting_id = $1 AND mp.user_id != $2`,
@@ -215,7 +215,7 @@ router.delete('/:id', async (req, res) => {
             }
         }
 
-        await query('DELETE FROM calendar_events WHERE id = $1 AND user_id = $2 AND (org_id = $3 OR org_id IS NULL)', [eventId, req.userId, req.userOrgId || null]);
+        await req.db.query('DELETE FROM calendar_events WHERE id = $1 AND user_id = $2 AND (org_id = $3 OR org_id IS NULL)', [eventId, req.userId, req.userOrgId || null]);
         res.json({ message: 'Event cancelled' });
     } catch (err) {
         req.log.error({ err }, 'Cancel event error');

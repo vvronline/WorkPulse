@@ -6,19 +6,24 @@
  *   const { logAction } = require('../utils/audit');
  *   logAction(req, 'create', 'leave', leave.id, { date, leave_type });
  *
- * logAction is fire-and-forget (async, errors swallowed so they never break
- * the main request flow).  queryLogs is async and must be awaited.
+ * logAction returns a Promise. For fire-and-forget usage the caller can ignore it,
+ * but for compliance-critical operations (role changes, deletions) the caller
+ * should await it.  Errors are always caught so the main flow is never broken.
  */
-const { query } = require('../db');
 const { logger } = require('./logger');
 
 /**
- * Fire-and-forget audit log write.
+ * Write an audit log entry. Returns a Promise (can be awaited or ignored).
  */
 function logAction(req, action, entityType, entityId = null, details = null) {
     const ip = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || null;
     const ua = req.headers['user-agent'] || null;
-    query(
+    const dbQuery = req.db?.query;
+    if (!dbQuery) {
+        logger.error({ action, entityType, entityId }, 'Audit log skipped — no DB context');
+        return Promise.resolve();
+    }
+    return dbQuery(
         `INSERT INTO audit_logs (org_id, actor_id, action, entity_type, entity_id, details, ip_address, user_agent)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
@@ -37,7 +42,7 @@ function logAction(req, action, entityType, entityId = null, details = null) {
 /**
  * Query audit logs with filters. Returns { total, logs }.
  */
-async function queryLogs({ orgId, actorId, entityType, entityId, action, from, to, limit: rawLimit = 100, offset = 0 }) {
+async function queryLogs(db, { orgId, actorId, entityType, entityId, action, from, to, limit: rawLimit = 100, offset = 0 }) {
     const limit = Math.min(Math.max(Number(rawLimit) || 100, 1), 500);
     const where = [];
     const params = [];
@@ -53,13 +58,13 @@ async function queryLogs({ orgId, actorId, entityType, entityId, action, from, t
 
     const whereClause = where.length > 0 ? 'WHERE ' + where.join(' AND ') : '';
 
-    const countRes = await query(
+    const countRes = await db.query(
         `SELECT COUNT(*) AS count FROM audit_logs al ${whereClause}`,
         params,
     );
     const total = parseInt(countRes.rows[0].count, 10);
 
-    const logsRes = await query(
+    const logsRes = await db.query(
         `SELECT al.*, u.username AS actor_username, u.full_name AS actor_name
          FROM audit_logs al
          LEFT JOIN users u ON u.id = al.actor_id

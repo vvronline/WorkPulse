@@ -14,11 +14,11 @@ const redis = require('../redis');
 const router = express.Router();
 
 // Helper: fetch org config with Redis cache
-async function getOrgWorkConfig(orgId) {
+async function getOrgWorkConfig(orgId, db) {
     if (!orgId) return { work_hours_per_day: 8, work_days: '1,2,3,4,5' };
     const cached = await redis.getOrgConfig(orgId);
     if (cached) return cached;
-    const result = await query('SELECT work_hours_per_day, work_days FROM organizations WHERE id = $1', [orgId]);
+    const result = await db.query('SELECT work_hours_per_day, work_days FROM organizations WHERE id = $1', [orgId]);
     const config = result.rows[0] || { work_hours_per_day: 8, work_days: '1,2,3,4,5' };
     await redis.setOrgConfig(orgId, config);
     return config;
@@ -50,13 +50,13 @@ router.get('/status', auth, async (req, res) => {
         const isWeekend = dow === 0 || dow === 6;
 
         // Load this user's org work hours target
-        const orgRow = (await query(
+        const orgRow = (await req.db.query(
             `SELECT u.org_id FROM users u WHERE u.id = $1`, [req.userId],
         )).rows[0];
-        const orgConfig = await getOrgWorkConfig(orgRow?.org_id);
+        const orgConfig = await getOrgWorkConfig(orgRow?.org_id, req.db);
         const targetMinutes = (orgConfig.work_hours_per_day || 8) * 60;
 
-        const result = await query(
+        const result = await req.db.query(
             `SELECT * FROM time_entries
              WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
              ORDER BY timestamp ASC, id ASC`,
@@ -69,14 +69,14 @@ router.get('/status', auth, async (req, res) => {
         // Auto clock-out when daily target is met and user is still active
         let autoLoggedOut = false;
         if (status.state !== 'logged_out' && status.floorMinutes >= targetMinutes) {
-            await query(
+            await req.db.query(
                 'INSERT INTO time_entries (user_id, entry_type) VALUES ($1, $2)',
                 [req.userId, 'clock_out'],
             );
             logAction(req, 'auto_clock_out', 'time_entry', null, {
                 floorMinutes: status.floorMinutes, targetMinutes,
             });
-            const refreshed = await query(
+            const refreshed = await req.db.query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
                  ORDER BY timestamp ASC, id ASC`,
@@ -109,7 +109,7 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
 
         let workDays = [1, 2, 3, 4, 5];
         if (req.userOrgId) {
-            const orgConfig = await getOrgWorkConfig(req.userOrgId);
+            const orgConfig = await getOrgWorkConfig(req.userOrgId, req.db);
             const wd = orgConfig.work_days;
             if (wd) workDays = wd.split(',').map(Number).filter(n => !isNaN(n));
         }
@@ -119,9 +119,9 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
 
         // Block re-login if daily target already met without approved overtime
         if (req.userOrgId) {
-            const orgConfig = await getOrgWorkConfig(req.userOrgId);
+            const orgConfig = await getOrgWorkConfig(req.userOrgId, req.db);
             const targetMin = (orgConfig.work_hours_per_day || 8) * 60;
-            const todayEntries = (await query(
+            const todayEntries = (await req.db.query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
                  ORDER BY timestamp ASC, id ASC`,
@@ -129,7 +129,7 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
             )).rows;
             const todayStatus = computeStatus(todayEntries);
             if (todayStatus.state === 'logged_out' && todayStatus.floorMinutes >= targetMin) {
-                const approvedOT = (await query(
+                const approvedOT = (await req.db.query(
                     `SELECT id FROM approval_requests
                      WHERE requester_id = $1
                        AND type = 'overtime'
@@ -155,7 +155,7 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
             return res.status(400).json({ error: 'Invalid timezone offset' });
         }
 
-        const txResult = await transaction(async (client) => {
+        const txResult = await req.db.transaction(async (client) => {
             const lastRes = await client.query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
@@ -175,7 +175,7 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
 
         if (txResult.error) return res.status(400).json({ error: txResult.error });
 
-        await query('UPDATE users SET timezone_offset = $1 WHERE id = $2', [tzOffset, req.userId]);
+        await req.db.query('UPDATE users SET timezone_offset = $1 WHERE id = $2', [tzOffset, req.userId]);
         logAction(req, 'clock_in', 'time_entry', null, { work_mode: selectedWorkMode });
         res.json({ message: 'Logged in successfully' });
     } catch (err) {
@@ -190,7 +190,7 @@ router.post('/break-start', auth, async (req, res) => {
         const today = getLocalToday(req);
         const tzMod = getTzModifier(req);
 
-        const txResult = await transaction(async (client) => {
+        const txResult = await req.db.transaction(async (client) => {
             const lastRes = await client.query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
@@ -222,7 +222,7 @@ router.post('/break-end', auth, async (req, res) => {
         const today = getLocalToday(req);
         const tzMod = getTzModifier(req);
 
-        const txResult = await transaction(async (client) => {
+        const txResult = await req.db.transaction(async (client) => {
             const lastRes = await client.query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
@@ -253,7 +253,7 @@ router.post('/clock-out', auth, async (req, res) => {
         const today = getLocalToday(req);
         const tzMod = getTzModifier(req);
 
-        const txResult = await transaction(async (client) => {
+        const txResult = await req.db.transaction(async (client) => {
             const lastRes = await client.query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
@@ -278,7 +278,7 @@ router.post('/clock-out', auth, async (req, res) => {
 
         if (txResult.error) return res.status(400).json({ error: txResult.error });
         // Set user status to offline on clock-out
-        await query('UPDATE users SET user_status = $1, user_status_text = NULL WHERE id = $2', ['offline', req.userId]);
+        await req.db.query('UPDATE users SET user_status = $1, user_status_text = NULL WHERE id = $2', ['offline', req.userId]);
         await redis.setUserStatus(req.userId, 'offline');
         logAction(req, 'clock_out', 'time_entry', null, {});
         res.json({ message: 'Logged out. See you tomorrow!' });
@@ -297,7 +297,7 @@ router.get('/history', auth, async (req, res) => {
         const toDate = to || getLocalToday(req);
         const tzMod = getTzModifier(req);
 
-        const result = await query(
+        const result = await req.db.query(
             `SELECT * FROM time_entries
              WHERE user_id = $1
                AND ${pgDateInTz('timestamp', tzMod)} BETWEEN $2::date AND $3::date
@@ -335,7 +335,7 @@ router.get('/analytics', auth, async (req, res) => {
         const toDate = getLocalToday(req);
         const tzMod = getTzModifier(req);
 
-        const result = await query(
+        const result = await req.db.query(
             `SELECT * FROM time_entries
              WHERE user_id = $1
                AND ${pgDateInTz('timestamp', tzMod)} BETWEEN $2::date AND $3::date
@@ -369,7 +369,7 @@ router.get('/analytics', auth, async (req, res) => {
 // Get pending manual entries for current user
 router.get('/manual-entries', auth, loadUserContext, async (req, res) => {
     try {
-        const result = await query(
+        const result = await req.db.query(
             `SELECT ar.id as request_id, ar.status as approval_status, ar.metadata, ar.created_at,
                     ar.reviewed_at, ar.reject_reason, u.full_name as approver_name
              FROM approval_requests ar
@@ -442,7 +442,7 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
         }
 
         const tzMod = getTzModifier(req);
-        const existingRes = await query(
+        const existingRes = await req.db.query(
             `SELECT COUNT(*) AS count FROM time_entries
              WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date`,
             [req.userId, date],
@@ -451,7 +451,7 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
             return res.status(400).json({ error: 'Entries already exist for this date. Delete them first to add manual entries.' });
         }
 
-        const leaveRes = await query(
+        const leaveRes = await req.db.query(
             'SELECT id, leave_type FROM leaves WHERE user_id = $1 AND date = $2',
             [req.userId, date],
         );
@@ -461,7 +461,7 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
 
         // Reject if the date falls within a locked pay period for this org
         if (req.userOrgId) {
-            const lockedPeriod = (await query(
+            const lockedPeriod = (await req.db.query(
                 `SELECT label FROM pay_periods WHERE org_id = $1 AND start_date <= $2 AND end_date >= $2`,
                 [req.userOrgId, date]
             )).rows[0];
@@ -480,7 +480,7 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
         const clockOutTs = clock_out ? toUTC(date, clock_out) : null;
         let txApprover = null;
 
-        await transaction(async (client) => {
+        await req.db.transaction(async (client) => {
             const ins = (uid, type, ts, wm) => client.query(
                 'INSERT INTO time_entries (user_id, entry_type, timestamp, work_mode, is_manual, approval_status) VALUES ($1,$2,$3,$4,TRUE,$5)',
                 [uid, type, ts, wm || null, approvalStatus],
@@ -496,7 +496,7 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
             if (clockOutTs) await ins(req.userId, 'clock_out', clockOutTs, null);
 
             if (needsApproval) {
-                const approver = await findApprover(req.userId, req.userOrgId);
+                const approver = await findApprover(req.db, req.userId, req.userOrgId);
                 txApprover = approver;
                 await client.query(
                     `INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
@@ -510,8 +510,8 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
         // Notify the manager/approver about the new manual entry (reuse approver from transaction)
         if (needsApproval && txApprover?.id) {
             try {
-                const requesterName = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0]?.full_name || 'A team member';
-                await query(
+                const requesterName = (await req.db.query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0]?.full_name || 'A team member';
+                await req.db.query(
                     'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
                     [txApprover.id, 'approval', 'New Manual Entry Request', `${requesterName} submitted a manual time entry for ${date}.`]
                 );
@@ -589,7 +589,7 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
 
         // Reject if the date falls within a locked pay period for this org
         if (req.userOrgId) {
-            const lockedPeriod = (await query(
+            const lockedPeriod = (await req.db.query(
                 `SELECT label FROM pay_periods WHERE org_id = $1 AND start_date <= $2 AND end_date >= $2`,
                 [req.userOrgId, date]
             )).rows[0];
@@ -609,7 +609,7 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
         const clockOutTs = clock_out ? toUTC(date, clock_out) : null;
         let txApproverEdit = null;
 
-        await transaction(async (client) => {
+        await req.db.transaction(async (client) => {
             // Cancel existing pending approval for this date
             await client.query(
                 `UPDATE approval_requests
@@ -640,7 +640,7 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
             if (clockOutTs) await ins(req.userId, 'clock_out', clockOutTs, null);
 
             if (needsApproval) {
-                const approver = await findApprover(req.userId, req.userOrgId);
+                const approver = await findApprover(req.db, req.userId, req.userOrgId);
                 txApproverEdit = approver;
                 await client.query(
                     `INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
@@ -654,8 +654,8 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
         // Notify the manager/approver about the edited manual entry (reuse approver from transaction)
         if (needsApproval && txApproverEdit?.id) {
             try {
-                const requesterName = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0]?.full_name || 'A team member';
-                await query(
+                const requesterName = (await req.db.query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0]?.full_name || 'A team member';
+                await req.db.query(
                     'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
                     [txApproverEdit.id, 'approval', 'Manual Entry Updated', `${requesterName} updated a manual time entry for ${date}.`]
                 );
@@ -684,7 +684,7 @@ router.delete('/entries/:date', auth, async (req, res) => {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Invalid date format' });
 
         const tzMod = getTzModifier(req);
-        const protectedRes = await query(
+        const protectedRes = await req.db.query(
             `SELECT 1 FROM time_entries
              WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
                AND approval_status IN ('pending','approved')
@@ -695,7 +695,7 @@ router.delete('/entries/:date', auth, async (req, res) => {
             return res.status(403).json({ error: 'Cannot delete entries that are pending approval or already approved. Contact your manager.' });
         }
 
-        const result = await query(
+        const result = await req.db.query(
             `DELETE FROM time_entries WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date`,
             [req.userId, date],
         );
@@ -711,7 +711,7 @@ router.get('/entries/:date', auth, async (req, res) => {
     try {
         const { date } = req.params;
         const tzMod = getTzModifier(req);
-        const result = await query(
+        const result = await req.db.query(
             `SELECT * FROM time_entries
              WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
              ORDER BY timestamp ASC`,
@@ -731,7 +731,7 @@ router.get('/widgets', auth, async (req, res) => {
         const tzMod = getTzModifier(req);
         const offsetMin = getOffsetMin(req);
 
-        const entriesRes = await query(
+        const entriesRes = await req.db.query(
             `SELECT * FROM time_entries
              WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} >= ($2::date - INTERVAL '30 days')
              ORDER BY timestamp ASC`,
@@ -749,7 +749,7 @@ router.get('/widgets', auth, async (req, res) => {
         let leaveCount = 0;
         let leaveDatesSet = new Set();
         try {
-            const leaveRes = await query(
+            const leaveRes = await req.db.query(
                 `SELECT date FROM leaves WHERE user_id = $1 AND date::date >= $2::date - INTERVAL '60 days' AND date::date <= $3::date`,
                 [req.userId, today, today],
             );
@@ -760,7 +760,7 @@ router.get('/widgets', auth, async (req, res) => {
         let totalFloorMin = 0, workDays = 0, targetMetDays = 0, officeDays = 0, remoteDays = 0;
         let orgWhpd = 8;
         if (req.userOrgId) {
-            const orgConfig = await getOrgWorkConfig(req.userOrgId);
+            const orgConfig = await getOrgWorkConfig(req.userOrgId, req.db);
             if (orgConfig.work_hours_per_day) orgWhpd = orgConfig.work_hours_per_day;
         }
         const TARGET = orgWhpd * 60;
@@ -830,7 +830,7 @@ router.get('/weekly', auth, async (req, res) => {
         const sundayStr = sunday.toISOString().slice(0, 10);
 
         const tzMod = getTzModifier(req);
-        const result = await query(
+        const result = await req.db.query(
             `SELECT * FROM time_entries
              WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} BETWEEN $2::date AND $3::date
              ORDER BY timestamp ASC`,
@@ -871,7 +871,7 @@ router.get('/weekly', auth, async (req, res) => {
 router.get('/task-summary', auth, async (req, res) => {
     try {
         const today = getLocalToday(req);
-        const result = await query(
+        const result = await req.db.query(
             'SELECT * FROM tasks WHERE (user_id = $1 OR assigned_to = $1) AND date = $2 ORDER BY priority DESC, created_at ASC',
             [req.userId, today],
         );
@@ -903,7 +903,7 @@ router.post('/overtime-request', auth, loadUserContext, async (req, res) => {
         const numHours = parseFloat(hours);
         if (isNaN(numHours) || numHours <= 0 || numHours > 24) return res.status(400).json({ error: 'Hours must be between 0 and 24' });
 
-        const existingRes = await query(
+        const existingRes = await req.db.query(
             `SELECT id FROM approval_requests
              WHERE requester_id = $1 AND type = 'overtime' AND status = 'pending'
                AND metadata::jsonb->>'date' = $2`,
@@ -913,8 +913,8 @@ router.post('/overtime-request', auth, loadUserContext, async (req, res) => {
             return res.status(400).json({ error: 'You already have a pending overtime request for this date' });
         }
 
-        const approver = await findApprover(req.userId, req.userOrgId);
-        await query(
+        const approver = await findApprover(req.db, req.userId, req.userOrgId);
+        await req.db.query(
             `INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
              VALUES ($1,$2,$3,'overtime',NULL,$4,$5)`,
             [req.userOrgId || null, req.userId, approver?.id || null, reason,
@@ -924,8 +924,8 @@ router.post('/overtime-request', auth, loadUserContext, async (req, res) => {
         // Notify the manager/approver about the overtime request
         try {
             if (approver?.id) {
-                const requesterName = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0]?.full_name || 'A team member';
-                await query(
+                const requesterName = (await req.db.query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0]?.full_name || 'A team member';
+                await req.db.query(
                     'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
                     [approver.id, 'approval', 'Overtime Request', `${requesterName} requested ${numHours}h overtime for ${date}.`]
                 );
@@ -946,7 +946,7 @@ router.post('/overtime-request', auth, loadUserContext, async (req, res) => {
 // Get overtime requests
 router.get('/overtime-requests', auth, async (req, res) => {
     try {
-        const result = await query(
+        const result = await req.db.query(
             `SELECT ar.id, ar.status, ar.reason, ar.metadata, ar.created_at, ar.reject_reason,
                     u.full_name as approver_name
              FROM approval_requests ar
@@ -971,7 +971,7 @@ router.get('/overtime-requests', auth, async (req, res) => {
 // Theme
 router.get('/theme', auth, async (req, res) => {
     try {
-        const result = await query('SELECT theme FROM users WHERE id = $1', [req.userId]);
+        const result = await req.db.query('SELECT theme FROM users WHERE id = $1', [req.userId]);
         res.json({ theme: result.rows[0]?.theme || 'dark' });
     } catch (err) {
         res.status(500).json({ error: 'Failed to fetch theme' });
@@ -982,7 +982,7 @@ router.put('/theme', auth, async (req, res) => {
     try {
         const { theme } = req.body;
         if (!['dark', 'light'].includes(theme)) return res.status(400).json({ error: 'Invalid theme' });
-        await query('UPDATE users SET theme = $1 WHERE id = $2', [theme, req.userId]);
+        await req.db.query('UPDATE users SET theme = $1 WHERE id = $2', [theme, req.userId]);
         res.json({ theme, message: 'Theme updated' });
     } catch (err) {
         res.status(500).json({ error: 'Failed to update theme' });

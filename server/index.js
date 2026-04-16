@@ -20,8 +20,10 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const { RedisStore } = require('rate-limit-redis');
 const cookieParser = require('cookie-parser');
-const { pool, initDB, query, transaction } = require('./db');
+const { pool, initDB, masterQuery, masterTransaction } = require('./db');
 const redis = require('./redis');
+const { resolveTenant } = require('./middleware/tenant');
+const { listActiveTenants, getTenantPool, destroyAllPools } = require('./utils/tenantManager');
 const authRoutes = require('./routes/auth');
 const trackerRoutes = require('./routes/tracker');
 const leaveRoutes = require('./routes/leaves');
@@ -40,6 +42,7 @@ const exportRoutes = require('./routes/export');
 const chatRoutes = require('./routes/chat');
 const searchRoutes = require('./routes/search');
 const meetingsRoutes = require('./routes/meetings');
+const tenantRoutes = require('./routes/tenants');
 const { setupWebSocket } = require('./utils/ws');
 const { initJobs, shutdownJobs } = require('./jobs');
 
@@ -126,8 +129,10 @@ app.use(express.urlencoded({ limit: '100kb', extended: true }));
 // Structured request logging with request IDs
 app.use(requestLogger);
 
+// Tenant resolution — must come before auth and all /api routes
+app.use(resolveTenant);
+
 const authMiddleware = require('./middleware/auth');
-const { query: dbQuery } = require('./db');
 app.use('/uploads', authMiddleware, async (req, res, next) => {
     const resolved = path.resolve(__dirname, 'uploads', req.path.replace(/^\//, ''));
     if (!resolved.startsWith(path.resolve(__dirname, 'uploads'))) {
@@ -137,7 +142,7 @@ app.use('/uploads', authMiddleware, async (req, res, next) => {
     const orgMatch = req.path.match(/^\/org_(\d+)\//);
     if (orgMatch) {
         const pathOrgId = parseInt(orgMatch[1], 10);
-        const user = (await dbQuery('SELECT org_id FROM users WHERE id = $1', [req.userId])).rows[0];
+        const user = (await req.db.query('SELECT org_id FROM users WHERE id = $1', [req.userId])).rows[0];
         if (!user || user.org_id !== pathOrgId) {
             return res.status(403).json({ error: 'Forbidden' });
         }
@@ -178,6 +183,7 @@ app.use('/api/profile/password', passwordLimiter);
 app.use('/api/profile', apiLimiter, profileRoutes);
 app.use('/api/org', apiLimiter, organizationRoutes);
 app.use('/api/admin', apiLimiter, adminRoutes);
+app.use('/api/admin/tenants', apiLimiter, tenantRoutes);
 app.use('/api/manager', apiLimiter, managerRoutes);
 app.use('/api/leave-policy', apiLimiter, leavePolicyRoutes);
 app.use('/api/notes', apiLimiter, notesRoutes);
@@ -190,7 +196,7 @@ app.use('/api/search', apiLimiter, searchRoutes);
 
 app.get('/api/health', async (req, res) => {
     try {
-        await query('SELECT 1');
+        await masterQuery('SELECT 1');
         res.json({ status: 'ok', time: new Date().toISOString() });
     } catch (err) {
         logger.error({ err }, 'Health check DB ping failed');
@@ -198,36 +204,62 @@ app.get('/api/health', async (req, res) => {
     }
 });
 
-// ============= AUTO CLOCK-OUT =============
+// ============= AUTO CLOCK-OUT (multi-tenant) =============
 async function autoClockOut() {
     try {
-        // Use DISTINCT ON to efficiently find each user's latest time entry,
-        // then filter only those whose last entry is not a clock_out.
-        // This avoids O(N) correlated subqueries for large user bases.
-        const activeUsers = (await query(`
-            SELECT u.id, u.timezone_offset
-            FROM users u
-            INNER JOIN LATERAL (
-                SELECT entry_type FROM time_entries t
-                WHERE t.user_id = u.id
-                ORDER BY t.timestamp DESC
-                LIMIT 1
-            ) latest ON latest.entry_type != 'clock_out'
-        `)).rows;
-
-        for (const user of activeUsers) {
+        const tenants = await listActiveTenants();
+        for (const tenant of tenants) {
             try {
-                await autoClockOutUser(user);
+                const db = await getTenantPool(tenant.db_name, tenant.db_host);
+                await autoClockOutForDb(db);
             } catch (e) {
-                logger.error({ userId: user.id, err: e }, 'Auto clock-out failed');
+                logger.error({ tenantId: tenant.id, err: e }, 'Auto clock-out failed for tenant');
             }
         }
+
+        // Also handle legacy users still in the master DB (pre-migration)
+        const masterDbName = new URL(process.env.DATABASE_URL).pathname.slice(1);
+        const masterCoveredByTenant = tenants.some(t => t.db_name === masterDbName);
+        if (!masterCoveredByTenant) {
+            try {
+                const hasUsers = (await masterQuery('SELECT 1 FROM users LIMIT 1')).rows.length > 0;
+                if (hasUsers) {
+                    await autoClockOutForDb({ query: masterQuery, transaction: masterTransaction });
+                }
+            } catch { /* users table may not exist in fresh master-only DB */ }
+        }
     } catch (e) {
-        logger.error({ err: e }, 'autoClockOut query error');
+        logger.error({ err: e }, 'autoClockOut iteration error');
     }
 }
 
-async function autoClockOutUser(user) {
+async function autoClockOutForDb(db) {
+    const activeUsers = (await db.query(`
+        SELECT u.id, u.timezone_offset
+        FROM users u
+        INNER JOIN LATERAL (
+            SELECT entry_type FROM time_entries t
+            WHERE t.user_id = u.id
+            ORDER BY t.timestamp DESC
+            LIMIT 1
+        ) latest ON latest.entry_type != 'clock_out'
+    `)).rows;
+
+    if (activeUsers.length === 0) return;
+
+    // Process in batches to avoid overwhelming the connection pool
+    const BATCH = 50;
+    for (let i = 0; i < activeUsers.length; i += BATCH) {
+        const batch = activeUsers.slice(i, i + BATCH);
+        await Promise.allSettled(batch.map(user =>
+            autoClockOutUser(db, user).catch(e =>
+                logger.error({ userId: user.id, err: e }, 'Auto clock-out failed')
+            )
+        ));
+    }
+}
+
+async function autoClockOutUser(db, user) {
     const rawOffset = user.timezone_offset || 0;
     // Clamp to valid timezone range: UTC-12 (720) to UTC+14 (-840)
     const offsetMin = (typeof rawOffset === 'number' && rawOffset >= -840 && rawOffset <= 720) ? rawOffset : 0;
@@ -237,7 +269,7 @@ async function autoClockOutUser(user) {
     const localYesterday = new Date(localNow.getTime() - 86400000);
     const yesterdayStr = `${localYesterday.getUTCFullYear()}-${String(localYesterday.getUTCMonth() + 1).padStart(2, '0')}-${String(localYesterday.getUTCDate()).padStart(2, '0')}`;
 
-    await transaction(async (client) => {
+    await db.transaction(async (client) => {
         const lastEntryRow = (await client.query(`
             SELECT entry_type, timestamp FROM time_entries
             WHERE user_id = $1 AND (timestamp + $2::interval)::date = $3::date
@@ -267,16 +299,33 @@ async function autoClockOutUser(user) {
     });
 }
 
-// Cleanup expired/used password reset tokens every hour
+// Cleanup expired/used password reset tokens every hour (multi-tenant)
 async function cleanupTokens() {
     try {
-        await query("DELETE FROM password_reset_tokens WHERE used = TRUE OR expires_at < NOW()");
-    } catch (e) { logger.error({ err: e }, 'Token cleanup error'); }
+        const tenants = await listActiveTenants();
+        for (const tenant of tenants) {
+            try {
+                const db = await getTenantPool(tenant.db_name, tenant.db_host);
+                await db.query("DELETE FROM password_reset_tokens WHERE used = TRUE OR expires_at < NOW()");
+            } catch (e) { logger.error({ tenantId: tenant.id, err: e }, 'Token cleanup error for tenant'); }
+        }
+
+        // Also clean up legacy master DB tokens (pre-migration)
+        const masterDbName = new URL(process.env.DATABASE_URL).pathname.slice(1);
+        const masterCoveredByTenant = tenants.some(t => t.db_name === masterDbName);
+        if (!masterCoveredByTenant) {
+            try {
+                await masterQuery("DELETE FROM password_reset_tokens WHERE used = TRUE OR expires_at < NOW()");
+            } catch { /* table may not exist */ }
+        }
+    } catch (e) { logger.error({ err: e }, 'Token cleanup iteration error'); }
 }
 
 // SPA fallback: only serve index.html for navigation requests, not file/asset requests
-app.get(/^[^.]*$/, (req, res) => {
-    res.sendFile(path.join(clientDist, 'index.html'));
+app.get(/^[^.]*$/, (req, res, next) => {
+    res.sendFile(path.join(clientDist, 'index.html'), (err) => {
+        if (err) next(err);
+    });
 });
 
 app.use((err, req, res, next) => {
@@ -306,10 +355,11 @@ if (require.main === module) {
             httpServer.close(async () => {
                 await shutdownJobs();
                 await redis.shutdown();
+                await destroyAllPools();
                 await pool.end();
                 process.exit(0);
             });
-            setTimeout(async () => { await shutdownJobs(); await redis.shutdown(); await pool.end(); process.exit(1); }, 5000);
+            setTimeout(async () => { await shutdownJobs(); await redis.shutdown(); await destroyAllPools(); await pool.end(); process.exit(1); }, 5000);
         }
         process.on('SIGTERM', shutdown);
         process.on('SIGINT', shutdown);

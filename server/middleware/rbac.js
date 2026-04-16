@@ -1,10 +1,10 @@
-﻿/**
+/**
  * Role-Based Access Control (RBAC) middleware.
  *
  * Roles hierarchy (higher includes all lower permissions):
  *   super_admin > hr_admin > manager > team_lead > employee
  */
-const { query } = require('../db');
+// db query comes from req.db (set by tenant middleware)
 const { logger } = require('../utils/logger');
 const redis = require('../redis');
 
@@ -40,7 +40,7 @@ async function loadUserContext(req, res, next) {
             return next();
         }
 
-        const result = await query(
+        const result = await req.db.query(
             'SELECT role, org_id, team_id, department_id, manager_id, is_active FROM users WHERE id = $1',
             [req.userId]
         );
@@ -88,7 +88,7 @@ async function requireSameOrg(req, res, next) {
     if (req.userRole === 'platform_admin') return next(); // System operator — cross-org allowed
     if (req.userOrgId) return next();
     try {
-        const result = await query(
+        const result = await req.db.query(
             'SELECT 1 FROM users WHERE manager_id = $1 AND is_active = TRUE LIMIT 1',
             [req.userId]
         );
@@ -110,11 +110,11 @@ function canManageUser(managerRole, targetRole) {
  * Get all user IDs visible to a manager/lead (async).
  * Only includes users with a strictly lower role level (except self and direct reports).
  */
-async function getVisibleUserIds(userId, role, orgId, teamId) {
+async function getVisibleUserIds(userId, role, orgId, teamId, db) {
     const idSet = new Set();
     idSet.add(userId); // Always include the requesting user
 
-    const directRes = await query(
+    const directRes = await db.query(
         'SELECT id FROM users WHERE manager_id = $1 AND is_active = TRUE',
         [userId]
     );
@@ -129,29 +129,29 @@ async function getVisibleUserIds(userId, role, orgId, teamId) {
     if (orgId && lowerRoles.length > 0) {
         if (ROLE_LEVEL[role] >= ROLE_LEVEL.super_admin) {
             // super_admin sees all active org members (fully org-scoped tenant admin)
-            const res = await query(
+            const res = await db.query(
                 'SELECT id FROM users WHERE org_id = $1 AND is_active = TRUE',
                 [orgId]
             );
             res.rows.forEach(u => idSet.add(u.id));
         } else if (ROLE_LEVEL[role] >= ROLE_LEVEL.hr_admin) {
-            const res = await query(
+            const res = await db.query(
                 'SELECT id FROM users WHERE org_id = $1 AND is_active = TRUE AND role = ANY($2::text[])',
                 [orgId, lowerRoles]
             );
             res.rows.forEach(u => idSet.add(u.id));
         } else if (ROLE_LEVEL[role] >= ROLE_LEVEL.manager) {
-            const userRes = await query('SELECT department_id FROM users WHERE id = $1', [userId]);
+            const userRes = await db.query('SELECT department_id FROM users WHERE id = $1', [userId]);
             const deptId = userRes.rows[0]?.department_id;
             if (deptId) {
-                const res = await query(
+                const res = await db.query(
                     'SELECT id FROM users WHERE org_id = $1 AND department_id = $2 AND is_active = TRUE AND role = ANY($3::text[])',
                     [orgId, deptId, lowerRoles]
                 );
                 res.rows.forEach(u => idSet.add(u.id));
             }
         } else if (ROLE_LEVEL[role] >= ROLE_LEVEL.team_lead && teamId) {
-            const res = await query(
+            const res = await db.query(
                 'SELECT id FROM users WHERE org_id = $1 AND team_id = $2 AND is_active = TRUE AND role = ANY($3::text[])',
                 [orgId, teamId, lowerRoles]
             );

@@ -61,8 +61,8 @@ const chatUpload = multer({
 });
 
 // ─── Helper: verify participant ───
-async function verifyParticipant(convId, userId) {
-    const r = await query(
+async function verifyParticipant(convId, userId, db) {
+    const r = await db.query(
         'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
         [convId, userId]
     );
@@ -70,8 +70,8 @@ async function verifyParticipant(convId, userId) {
 }
 
 // ─── Helper: get user org ───
-async function getUserOrg(userId) {
-    const r = await query('SELECT org_id FROM users WHERE id = $1', [userId]);
+async function getUserOrg(userId, db) {
+    const r = await db.query('SELECT org_id FROM users WHERE id = $1', [userId]);
     return r.rows[0]?.org_id;
 }
 
@@ -83,11 +83,11 @@ router.get('/search', auth, async (req, res) => {
         const { q } = req.query;
         if (!q || q.trim().length < 2) return res.json([]);
 
-        const orgId = await getUserOrg(req.userId);
+        const orgId = await getUserOrg(req.userId, req.db);
         if (!orgId) return res.json([]);
 
         const term = `%${q.trim()}%`;
-        const rows = (await query(`
+        const rows = (await req.db.query(`
             SELECT id, username, full_name, email, avatar, last_seen_at
             FROM users
             WHERE org_id = $1 AND is_active = TRUE
@@ -117,7 +117,7 @@ router.get('/presence', auth, async (req, res) => {
         if (ids.length === 0) return res.json({});
 
         // Only return presence for users within the same organization
-        const orgId = await getUserOrg(req.userId);
+        const orgId = await getUserOrg(req.userId, req.db);
         if (!orgId) return res.json({});
 
         // Try Redis presence first
@@ -137,7 +137,7 @@ router.get('/presence', auth, async (req, res) => {
         }
 
         // Fallback to DB
-        const rows = (await query(
+        const rows = (await req.db.query(
             'SELECT id, last_seen_at, user_status FROM users WHERE id = ANY($1) AND org_id = $2',
             [ids, orgId]
         )).rows;
@@ -162,7 +162,7 @@ router.get('/presence', auth, async (req, res) => {
  */
 router.get('/status', auth, async (req, res) => {
     try {
-        const row = (await query('SELECT user_status, user_status_text FROM users WHERE id = $1', [req.userId])).rows[0];
+        const row = (await req.db.query('SELECT user_status, user_status_text FROM users WHERE id = $1', [req.userId])).rows[0];
         if (!row) return res.status(404).json({ error: 'User not found' });
         res.json({ status: row.user_status, statusText: row.user_status_text });
     } catch (err) {
@@ -182,7 +182,7 @@ router.put('/status', auth, async (req, res) => {
             return res.status(400).json({ error: 'Invalid status' });
         }
         const safeText = typeof statusText === 'string' ? statusText.trim().slice(0, 100) : null;
-        await query('UPDATE users SET user_status = $1, user_status_text = $2 WHERE id = $3', [status, safeText, req.userId]);
+        await req.db.query('UPDATE users SET user_status = $1, user_status_text = $2 WHERE id = $3', [status, safeText, req.userId]);
         await redis.setUserStatus(req.userId, status);
         res.json({ status, statusText: safeText });
     } catch (err) {
@@ -205,7 +205,7 @@ router.post('/conversations', auth, async (req, res) => {
 
         if (isSelfChat) {
             // Self-chat: verify current user exists and is active
-            const selfUser = (await query(
+            const selfUser = (await req.db.query(
                 'SELECT id, org_id FROM users WHERE id = $1 AND is_active = TRUE',
                 [req.userId]
             )).rows[0];
@@ -213,7 +213,7 @@ router.post('/conversations', auth, async (req, res) => {
             const orgId = selfUser.org_id;
 
             // Check for existing self-conversation (only 1 participant)
-            const existing = (await query(`
+            const existing = (await req.db.query(`
                 SELECT cp.conversation_id
                 FROM conversation_participants cp
                 JOIN conversations c ON c.id = cp.conversation_id
@@ -227,7 +227,7 @@ router.post('/conversations', auth, async (req, res) => {
                 return res.json({ conversationId: existing.conversation_id });
             }
 
-            const conv = await transaction(async (client) => {
+            const conv = await req.db.transaction(async (client) => {
                 const c = (await client.query(
                     'INSERT INTO conversations (org_id) VALUES ($1) RETURNING id',
                     [orgId]
@@ -242,7 +242,7 @@ router.post('/conversations', auth, async (req, res) => {
             return res.status(201).json({ conversationId: conv.id });
         }
 
-        const users = (await query(
+        const users = (await req.db.query(
             'SELECT id, org_id FROM users WHERE id = ANY($1) AND is_active = TRUE',
             [[req.userId, otherUserId]]
         )).rows;
@@ -252,7 +252,7 @@ router.post('/conversations', auth, async (req, res) => {
         }
         const orgId = users[0].org_id;
 
-        const existing = (await query(`
+        const existing = (await req.db.query(`
             SELECT cp1.conversation_id
             FROM conversation_participants cp1
             JOIN conversation_participants cp2 ON cp1.conversation_id = cp2.conversation_id
@@ -267,7 +267,7 @@ router.post('/conversations', auth, async (req, res) => {
             return res.json({ conversationId: existing.conversation_id });
         }
 
-        const conv = await transaction(async (client) => {
+        const conv = await req.db.transaction(async (client) => {
             const c = (await client.query(
                 'INSERT INTO conversations (org_id) VALUES ($1) RETURNING id',
                 [orgId]
@@ -298,10 +298,10 @@ router.post('/conversations/group', auth, async (req, res) => {
         }
 
         const allIds = [...new Set([req.userId, ...userIds.map(Number)])];
-        const orgId = await getUserOrg(req.userId);
+        const orgId = await getUserOrg(req.userId, req.db);
         if (!orgId) return res.status(400).json({ error: 'No organization' });
 
-        const users = (await query(
+        const users = (await req.db.query(
             'SELECT id FROM users WHERE id = ANY($1) AND org_id = $2 AND is_active = TRUE',
             [allIds, orgId]
         )).rows;
@@ -309,7 +309,7 @@ router.post('/conversations/group', auth, async (req, res) => {
             return res.status(400).json({ error: 'Some users not found in your organization' });
         }
 
-        const conv = await transaction(async (client) => {
+        const conv = await req.db.transaction(async (client) => {
             const c = (await client.query(
                 'INSERT INTO conversations (org_id, name, is_group) VALUES ($1, $2, TRUE) RETURNING id',
                 [orgId, name.trim().slice(0, 100)]
@@ -343,25 +343,25 @@ router.put('/conversations/:id/group', auth, async (req, res) => {
         const convId = parseInt(req.params.id, 10);
         if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
 
-        const conv = (await query('SELECT * FROM conversations WHERE id = $1 AND is_group = TRUE', [convId])).rows[0];
+        const conv = (await req.db.query('SELECT * FROM conversations WHERE id = $1 AND is_group = TRUE', [convId])).rows[0];
         if (!conv) return res.status(404).json({ error: 'Group not found' });
-        if (!(await verifyParticipant(convId, req.userId))) {
+        if (!(await verifyParticipant(convId, req.userId, req.db))) {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
         const { name, addUserIds, removeUserIds } = req.body;
 
         if (name !== undefined) {
-            await query('UPDATE conversations SET name = $1 WHERE id = $2', [name.trim().slice(0, 100), convId]);
+            await req.db.query('UPDATE conversations SET name = $1 WHERE id = $2', [name.trim().slice(0, 100), convId]);
         }
 
         if (Array.isArray(addUserIds) && addUserIds.length > 0) {
-            const valid = (await query(
+            const valid = (await req.db.query(
                 'SELECT id FROM users WHERE id = ANY($1) AND org_id = $2 AND is_active = TRUE',
                 [addUserIds, conv.org_id]
             )).rows.map(r => r.id);
             for (const uid of valid) {
-                await query(
+                await req.db.query(
                     'INSERT INTO conversation_participants (conversation_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
                     [convId, uid]
                 );
@@ -371,7 +371,7 @@ router.put('/conversations/:id/group', auth, async (req, res) => {
 
         if (Array.isArray(removeUserIds) && removeUserIds.length > 0) {
             // Only remove users who are actually participants in this conversation
-            const validRemoveIds = (await query(
+            const validRemoveIds = (await req.db.query(
                 `SELECT u.id FROM users u
                  JOIN conversation_participants cp ON cp.user_id = u.id AND cp.conversation_id = $3
                  WHERE u.id = ANY($1) AND u.org_id = $2 AND u.is_active = TRUE`,
@@ -380,7 +380,7 @@ router.put('/conversations/:id/group', auth, async (req, res) => {
 
             for (const uid of validRemoveIds) {
                 if (uid === req.userId) continue;
-                await query(
+                await req.db.query(
                     'DELETE FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
                     [convId, uid]
                 );
@@ -402,11 +402,11 @@ router.get('/conversations/:id/members', auth, async (req, res) => {
     try {
         const convId = parseInt(req.params.id, 10);
         if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
-        if (!(await verifyParticipant(convId, req.userId))) {
+        if (!(await verifyParticipant(convId, req.userId, req.db))) {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
-        const rows = (await query(`
+        const rows = (await req.db.query(`
             SELECT u.id, u.username, u.full_name, u.avatar, u.last_seen_at
             FROM conversation_participants cp
             JOIN users u ON u.id = cp.user_id
@@ -426,7 +426,7 @@ router.get('/conversations/:id/members', auth, async (req, res) => {
  */
 router.get('/conversations', auth, async (req, res) => {
     try {
-        const rows = (await query(`
+        const rows = (await req.db.query(`
             SELECT
                 c.id,
                 c.updated_at,
@@ -502,7 +502,7 @@ router.get('/conversations/:id/messages', auth, async (req, res) => {
         const convId = parseInt(req.params.id, 10);
         if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
 
-        if (!(await verifyParticipant(convId, req.userId))) {
+        if (!(await verifyParticipant(convId, req.userId, req.db))) {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
@@ -536,12 +536,12 @@ router.get('/conversations/:id/messages', auth, async (req, res) => {
         sql += ` ORDER BY m.created_at DESC LIMIT $${params.length + 1}`;
         params.push(limit);
 
-        const rows = (await query(sql, params)).rows;
+        const rows = (await req.db.query(sql, params)).rows;
 
         // Fetch reactions for these messages
         if (rows.length > 0) {
             const msgIds = rows.map(r => r.id);
-            const reactions = (await query(`
+            const reactions = (await req.db.query(`
                 SELECT mr.message_id, mr.emoji, mr.user_id, u.full_name
                 FROM message_reactions mr
                 JOIN users u ON u.id = mr.user_id
@@ -574,11 +574,11 @@ router.post('/conversations/:id/read', auth, async (req, res) => {
         const convId = parseInt(req.params.id, 10);
         if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
 
-        if (!(await verifyParticipant(convId, req.userId))) {
+        if (!(await verifyParticipant(convId, req.userId, req.db))) {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
-        await query(
+        await req.db.query(
             `INSERT INTO message_reads (conversation_id, user_id, last_read_at)
              VALUES ($1, $2, NOW())
              ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = NOW()`,
@@ -587,7 +587,7 @@ router.post('/conversations/:id/read', auth, async (req, res) => {
         redis.resetUnread(req.userId, convId);
 
         // Notify others about read receipt
-        const participants = (await query(
+        const participants = (await req.db.query(
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2',
             [convId, req.userId]
         )).rows;
@@ -613,11 +613,11 @@ router.get('/conversations/:id/read-status', auth, async (req, res) => {
     try {
         const convId = parseInt(req.params.id, 10);
         if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
-        if (!(await verifyParticipant(convId, req.userId))) {
+        if (!(await verifyParticipant(convId, req.userId, req.db))) {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
-        const rows = (await query(`
+        const rows = (await req.db.query(`
             SELECT mr.user_id, mr.last_read_at, u.full_name
             FROM message_reads mr
             JOIN users u ON u.id = mr.user_id
@@ -639,7 +639,7 @@ router.post('/conversations/:id/files', auth, loadUserContext, chatUpload.single
         const convId = parseInt(req.params.id, 10);
         if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
 
-        if (!(await verifyParticipant(convId, req.userId))) {
+        if (!(await verifyParticipant(convId, req.userId, req.db))) {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
@@ -656,23 +656,23 @@ router.post('/conversations/:id/files', auth, loadUserContext, chatUpload.single
         const content = req.body.content || null;
         const replyToId = req.body.replyToId ? parseInt(req.body.replyToId, 10) : null;
 
-        const result = (await query(
+        const result = (await req.db.query(
             `INSERT INTO messages (conversation_id, sender_id, content, file_url, file_name, file_type, file_size, reply_to_id)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at`,
             [convId, req.userId, content, fileUrl, safeName, req.file.mimetype, req.file.size, replyToId]
         )).rows[0];
 
-        await query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [convId]);
-        await query(
+        await req.db.query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [convId]);
+        await req.db.query(
             `INSERT INTO message_reads (conversation_id, user_id, last_read_at)
              VALUES ($1, $2, $3)
              ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = $3`,
             [convId, req.userId, result.created_at]
         );
 
-        const sender = (await query('SELECT full_name, avatar, username FROM users WHERE id = $1', [req.userId])).rows[0];
+        const sender = (await req.db.query('SELECT full_name, avatar, username FROM users WHERE id = $1', [req.userId])).rows[0];
 
-        const participants = (await query(
+        const participants = (await req.db.query(
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
             [convId]
         )).rows;
@@ -718,32 +718,32 @@ router.post('/messages/:id/reactions', auth, async (req, res) => {
         const { emoji } = req.body;
         if (!emoji || emoji.length > 20) return res.status(400).json({ error: 'Invalid emoji' });
 
-        const msg = (await query('SELECT conversation_id FROM messages WHERE id = $1', [msgId])).rows[0];
+        const msg = (await req.db.query('SELECT conversation_id FROM messages WHERE id = $1', [msgId])).rows[0];
         if (!msg) return res.status(404).json({ error: 'Message not found' });
-        if (!(await verifyParticipant(msg.conversation_id, req.userId))) {
+        if (!(await verifyParticipant(msg.conversation_id, req.userId, req.db))) {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
-        const existing = (await query(
+        const existing = (await req.db.query(
             'SELECT id FROM message_reactions WHERE message_id = $1 AND user_id = $2 AND emoji = $3',
             [msgId, req.userId, emoji]
         )).rows[0];
 
         let action;
         if (existing) {
-            await query('DELETE FROM message_reactions WHERE id = $1', [existing.id]);
+            await req.db.query('DELETE FROM message_reactions WHERE id = $1', [existing.id]);
             action = 'removed';
         } else {
-            await query(
+            await req.db.query(
                 'INSERT INTO message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3)',
                 [msgId, req.userId, emoji]
             );
             action = 'added';
         }
 
-        const sender = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
+        const sender = (await req.db.query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
 
-        const participants = (await query(
+        const participants = (await req.db.query(
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
             [msg.conversation_id]
         )).rows;
@@ -779,14 +779,14 @@ router.put('/messages/:id', auth, async (req, res) => {
             return res.status(400).json({ error: 'Invalid content' });
         }
 
-        const msg = (await query('SELECT * FROM messages WHERE id = $1', [msgId])).rows[0];
+        const msg = (await req.db.query('SELECT * FROM messages WHERE id = $1', [msgId])).rows[0];
         if (!msg) return res.status(404).json({ error: 'Message not found' });
         if (msg.sender_id !== req.userId) return res.status(403).json({ error: 'Can only edit own messages' });
         if (msg.deleted_at) return res.status(400).json({ error: 'Message is deleted' });
 
-        await query('UPDATE messages SET content = $1, edited_at = NOW() WHERE id = $2', [content.trim(), msgId]);
+        await req.db.query('UPDATE messages SET content = $1, edited_at = NOW() WHERE id = $2', [content.trim(), msgId]);
 
-        const participants = (await query(
+        const participants = (await req.db.query(
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
             [msg.conversation_id]
         )).rows;
@@ -815,14 +815,14 @@ router.delete('/messages/:id', auth, async (req, res) => {
         const msgId = parseInt(req.params.id, 10);
         if (isNaN(msgId)) return res.status(400).json({ error: 'Invalid message' });
 
-        const msg = (await query('SELECT * FROM messages WHERE id = $1', [msgId])).rows[0];
+        const msg = (await req.db.query('SELECT * FROM messages WHERE id = $1', [msgId])).rows[0];
         if (!msg) return res.status(404).json({ error: 'Message not found' });
         if (msg.sender_id !== req.userId) return res.status(403).json({ error: 'Can only delete own messages' });
         if (msg.deleted_at) return res.status(400).json({ error: 'Already deleted' });
 
-        await query('UPDATE messages SET deleted_at = NOW(), content = NULL, file_url = NULL WHERE id = $1', [msgId]);
+        await req.db.query('UPDATE messages SET deleted_at = NOW(), content = NULL, file_url = NULL WHERE id = $1', [msgId]);
 
-        const participants = (await query(
+        const participants = (await req.db.query(
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
             [msg.conversation_id]
         )).rows;
@@ -857,25 +857,25 @@ router.post('/messages/:id/pin', auth, async (req, res) => {
         const msgId = parseInt(req.params.id, 10);
         if (isNaN(msgId)) return res.status(400).json({ error: 'Invalid message' });
 
-        const msg = (await query('SELECT * FROM messages WHERE id = $1', [msgId])).rows[0];
+        const msg = (await req.db.query('SELECT * FROM messages WHERE id = $1', [msgId])).rows[0];
         if (!msg) return res.status(404).json({ error: 'Message not found' });
-        if (!(await verifyParticipant(msg.conversation_id, req.userId))) {
+        if (!(await verifyParticipant(msg.conversation_id, req.userId, req.db))) {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
         const isPinned = !!msg.pinned_at;
         if (isPinned) {
-            await query('UPDATE messages SET pinned_at = NULL, pinned_by = NULL WHERE id = $1', [msgId]);
+            await req.db.query('UPDATE messages SET pinned_at = NULL, pinned_by = NULL WHERE id = $1', [msgId]);
         } else {
-            await query('UPDATE messages SET pinned_at = NOW(), pinned_by = $1 WHERE id = $2', [req.userId, msgId]);
+            await req.db.query('UPDATE messages SET pinned_at = NOW(), pinned_by = $1 WHERE id = $2', [req.userId, msgId]);
         }
 
-        const participants = (await query(
+        const participants = (await req.db.query(
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
             [msg.conversation_id]
         )).rows;
 
-        const sender = (await query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
+        const sender = (await req.db.query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
 
         for (const p of participants) {
             sendToUser(p.user_id, 'chat_pin', {
@@ -901,11 +901,11 @@ router.get('/conversations/:id/pinned', auth, async (req, res) => {
     try {
         const convId = parseInt(req.params.id, 10);
         if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
-        if (!(await verifyParticipant(convId, req.userId))) {
+        if (!(await verifyParticipant(convId, req.userId, req.db))) {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
-        const rows = (await query(`
+        const rows = (await req.db.query(`
             SELECT m.id, m.sender_id, m.content, m.created_at, m.pinned_at, m.pinned_by,
                    m.file_url, m.file_name, m.file_type,
                    u.full_name AS sender_name, u.avatar AS sender_avatar,
@@ -932,7 +932,7 @@ router.get('/search-messages', auth, async (req, res) => {
         const { q, convId } = req.query;
         if (!q || q.trim().length < 2) return res.json([]);
 
-        const orgId = await getUserOrg(req.userId);
+        const orgId = await getUserOrg(req.userId, req.db);
         if (!orgId) return res.json([]);
 
         const searchPattern = `%${q.trim()}%`;
@@ -941,7 +941,7 @@ router.get('/search-messages', auth, async (req, res) => {
         if (convId) {
             const cId = parseInt(convId, 10);
             if (isNaN(cId)) return res.status(400).json({ error: 'Invalid conversation' });
-            if (!(await verifyParticipant(cId, req.userId))) {
+            if (!(await verifyParticipant(cId, req.userId, req.db))) {
                 return res.status(403).json({ error: 'Not a participant' });
             }
 
@@ -975,7 +975,7 @@ router.get('/search-messages', auth, async (req, res) => {
             params = [req.userId, searchPattern];
         }
 
-        const rows = (await query(sql, params)).rows;
+        const rows = (await req.db.query(sql, params)).rows;
         res.json(rows);
     } catch (err) {
         req.log.error({ err }, 'Search messages error');
@@ -996,31 +996,31 @@ router.post('/messages/:id/forward', auth, async (req, res) => {
             return res.status(400).json({ error: 'No conversations selected' });
         }
 
-        const original = (await query(
+        const original = (await req.db.query(
             'SELECT * FROM messages WHERE id = $1 AND deleted_at IS NULL',
             [msgId]
         )).rows[0];
         if (!original) return res.status(404).json({ error: 'Message not found' });
-        if (!(await verifyParticipant(original.conversation_id, req.userId))) {
+        if (!(await verifyParticipant(original.conversation_id, req.userId, req.db))) {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
-        const sender = (await query('SELECT full_name, avatar, username FROM users WHERE id = $1', [req.userId])).rows[0];
+        const sender = (await req.db.query('SELECT full_name, avatar, username FROM users WHERE id = $1', [req.userId])).rows[0];
 
         for (const cId of conversationIds) {
             const convIdNum = parseInt(cId, 10);
             if (isNaN(convIdNum)) continue;
-            if (!(await verifyParticipant(convIdNum, req.userId))) continue;
+            if (!(await verifyParticipant(convIdNum, req.userId, req.db))) continue;
 
-            const result = (await query(
+            const result = (await req.db.query(
                 `INSERT INTO messages (conversation_id, sender_id, content, file_url, file_name, file_type, file_size, forwarded_from_id)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at`,
                 [convIdNum, req.userId, original.content, original.file_url, original.file_name, original.file_type, original.file_size, msgId]
             )).rows[0];
 
-            await query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [convIdNum]);
+            await req.db.query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [convIdNum]);
 
-            const participants = (await query(
+            const participants = (await req.db.query(
                 'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
                 [convIdNum]
             )).rows;
@@ -1065,22 +1065,22 @@ router.post('/messages/:id/star', auth, async (req, res) => {
         const msgId = parseInt(req.params.id, 10);
         if (isNaN(msgId)) return res.status(400).json({ error: 'Invalid message' });
 
-        const msg = (await query('SELECT conversation_id FROM messages WHERE id = $1', [msgId])).rows[0];
+        const msg = (await req.db.query('SELECT conversation_id FROM messages WHERE id = $1', [msgId])).rows[0];
         if (!msg) return res.status(404).json({ error: 'Message not found' });
-        if (!(await verifyParticipant(msg.conversation_id, req.userId))) {
+        if (!(await verifyParticipant(msg.conversation_id, req.userId, req.db))) {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
-        const existing = (await query(
+        const existing = (await req.db.query(
             'SELECT 1 FROM starred_messages WHERE user_id = $1 AND message_id = $2',
             [req.userId, msgId]
         )).rows[0];
 
         if (existing) {
-            await query('DELETE FROM starred_messages WHERE user_id = $1 AND message_id = $2', [req.userId, msgId]);
+            await req.db.query('DELETE FROM starred_messages WHERE user_id = $1 AND message_id = $2', [req.userId, msgId]);
             res.json({ ok: true, starred: false });
         } else {
-            await query('INSERT INTO starred_messages (user_id, message_id) VALUES ($1, $2)', [req.userId, msgId]);
+            await req.db.query('INSERT INTO starred_messages (user_id, message_id) VALUES ($1, $2)', [req.userId, msgId]);
             res.json({ ok: true, starred: true });
         }
     } catch (err) {
@@ -1094,7 +1094,7 @@ router.post('/messages/:id/star', auth, async (req, res) => {
  */
 router.get('/starred', auth, async (req, res) => {
     try {
-        const rows = (await query(`
+        const rows = (await req.db.query(`
             SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at,
                    m.file_url, m.file_name, m.file_type, m.file_size,
                    m.format_type, m.metadata,
@@ -1128,7 +1128,7 @@ router.post('/conversations/:id/polls', auth, async (req, res) => {
     try {
         const convId = parseInt(req.params.id, 10);
         if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
-        if (!(await verifyParticipant(convId, req.userId))) {
+        if (!(await verifyParticipant(convId, req.userId, req.db))) {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
@@ -1141,23 +1141,23 @@ router.post('/conversations/:id/polls', auth, async (req, res) => {
         const cleanOpts = options.map(o => String(o).trim().slice(0, 200)).filter(Boolean);
         if (cleanOpts.length < 2) return res.status(400).json({ error: 'At least 2 non-empty options' });
 
-        const poll = (await query(
+        const poll = (await req.db.query(
             `INSERT INTO polls (conversation_id, creator_id, question, options, multi_select)
              VALUES ($1, $2, $3, $4, $5) RETURNING *`,
             [convId, req.userId, question.trim().slice(0, 500), JSON.stringify(cleanOpts), !!multiSelect]
         )).rows[0];
 
         // Insert a message of type 'poll' referencing this poll
-        const result = (await query(
+        const result = (await req.db.query(
             `INSERT INTO messages (conversation_id, sender_id, content, format_type, metadata)
              VALUES ($1, $2, $3, 'poll', $4) RETURNING id, created_at`,
             [convId, req.userId, question.trim().slice(0, 500), JSON.stringify({ pollId: poll.id })]
         )).rows[0];
 
-        await query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [convId]);
+        await req.db.query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [convId]);
 
-        const sender = (await query('SELECT full_name, avatar, username FROM users WHERE id = $1', [req.userId])).rows[0];
-        const participants = (await query(
+        const sender = (await req.db.query('SELECT full_name, avatar, username FROM users WHERE id = $1', [req.userId])).rows[0];
+        const participants = (await req.db.query(
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1', [convId]
         )).rows;
 
@@ -1188,10 +1188,10 @@ router.post('/polls/:id/vote', auth, async (req, res) => {
         const pollId = parseInt(req.params.id, 10);
         if (isNaN(pollId)) return res.status(400).json({ error: 'Invalid poll' });
 
-        const poll = (await query('SELECT * FROM polls WHERE id = $1', [pollId])).rows[0];
+        const poll = (await req.db.query('SELECT * FROM polls WHERE id = $1', [pollId])).rows[0];
         if (!poll) return res.status(404).json({ error: 'Poll not found' });
         if (poll.closed_at) return res.status(400).json({ error: 'Poll is closed' });
-        if (!(await verifyParticipant(poll.conversation_id, req.userId))) {
+        if (!(await verifyParticipant(poll.conversation_id, req.userId, req.db))) {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
@@ -1202,22 +1202,22 @@ router.post('/polls/:id/vote', auth, async (req, res) => {
         }
 
         // Toggle vote
-        const existing = (await query(
+        const existing = (await req.db.query(
             'SELECT id FROM poll_votes WHERE poll_id = $1 AND user_id = $2 AND option_idx = $3',
             [pollId, req.userId, optionIdx]
         )).rows[0];
 
         if (existing) {
-            await query('DELETE FROM poll_votes WHERE id = $1', [existing.id]);
+            await req.db.query('DELETE FROM poll_votes WHERE id = $1', [existing.id]);
         } else {
             if (!poll.multi_select) {
-                await query('DELETE FROM poll_votes WHERE poll_id = $1 AND user_id = $2', [pollId, req.userId]);
+                await req.db.query('DELETE FROM poll_votes WHERE poll_id = $1 AND user_id = $2', [pollId, req.userId]);
             }
-            await query('INSERT INTO poll_votes (poll_id, user_id, option_idx) VALUES ($1, $2, $3)', [pollId, req.userId, optionIdx]);
+            await req.db.query('INSERT INTO poll_votes (poll_id, user_id, option_idx) VALUES ($1, $2, $3)', [pollId, req.userId, optionIdx]);
         }
 
         // Fetch updated vote counts
-        const votes = (await query(
+        const votes = (await req.db.query(
             'SELECT option_idx, array_agg(user_id) AS user_ids FROM poll_votes WHERE poll_id = $1 GROUP BY option_idx',
             [pollId]
         )).rows;
@@ -1225,7 +1225,7 @@ router.post('/polls/:id/vote', auth, async (req, res) => {
         for (const v of votes) voteMap[v.option_idx] = v.user_ids;
 
         // Broadcast poll update
-        const participants = (await query(
+        const participants = (await req.db.query(
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1', [poll.conversation_id]
         )).rows;
         for (const p of participants) {
@@ -1249,13 +1249,13 @@ router.get('/polls/:id', auth, async (req, res) => {
         const pollId = parseInt(req.params.id, 10);
         if (isNaN(pollId)) return res.status(400).json({ error: 'Invalid poll' });
 
-        const poll = (await query('SELECT * FROM polls WHERE id = $1', [pollId])).rows[0];
+        const poll = (await req.db.query('SELECT * FROM polls WHERE id = $1', [pollId])).rows[0];
         if (!poll) return res.status(404).json({ error: 'Poll not found' });
-        if (!(await verifyParticipant(poll.conversation_id, req.userId))) {
+        if (!(await verifyParticipant(poll.conversation_id, req.userId, req.db))) {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
-        const votes = (await query(
+        const votes = (await req.db.query(
             `SELECT pv.option_idx, pv.user_id, u.full_name
              FROM poll_votes pv JOIN users u ON u.id = pv.user_id
              WHERE pv.poll_id = $1`,
@@ -1286,11 +1286,11 @@ router.get('/conversations/:id/files', auth, async (req, res) => {
     try {
         const convId = parseInt(req.params.id, 10);
         if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
-        if (!(await verifyParticipant(convId, req.userId))) {
+        if (!(await verifyParticipant(convId, req.userId, req.db))) {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
-        const rows = (await query(`
+        const rows = (await req.db.query(`
             SELECT m.id, m.file_url, m.file_name, m.file_type, m.file_size,
                    m.created_at, m.sender_id,
                    u.full_name AS sender_name, u.avatar AS sender_avatar
@@ -1321,11 +1321,11 @@ router.post('/conversations/:id/pin', auth, async (req, res) => {
         const convId = parseInt(req.params.id, 10);
         if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
 
-        if (!(await verifyParticipant(convId, req.userId))) {
+        if (!(await verifyParticipant(convId, req.userId, req.db))) {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
-        const result = (await query(
+        const result = (await req.db.query(
             `UPDATE conversation_participants SET is_pinned = NOT is_pinned
              WHERE conversation_id = $1 AND user_id = $2
              RETURNING is_pinned`,
@@ -1348,11 +1348,11 @@ router.post('/conversations/:id/favourite', auth, async (req, res) => {
         const convId = parseInt(req.params.id, 10);
         if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
 
-        if (!(await verifyParticipant(convId, req.userId))) {
+        if (!(await verifyParticipant(convId, req.userId, req.db))) {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
-        const result = (await query(
+        const result = (await req.db.query(
             `UPDATE conversation_participants SET is_favourite = NOT is_favourite
              WHERE conversation_id = $1 AND user_id = $2
              RETURNING is_favourite`,
@@ -1379,18 +1379,18 @@ router.delete('/conversations/:id/messages', auth, async (req, res) => {
         const convId = parseInt(req.params.id, 10);
         if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
 
-        if (!(await verifyParticipant(convId, req.userId))) {
+        if (!(await verifyParticipant(convId, req.userId, req.db))) {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
-        await query('DELETE FROM messages WHERE conversation_id = $1', [convId]);
-        await query(
+        await req.db.query('DELETE FROM messages WHERE conversation_id = $1', [convId]);
+        await req.db.query(
             "UPDATE conversations SET updated_at = NOW() WHERE id = $1",
             [convId]
         );
 
         // Notify all participants
-        const participants = (await query(
+        const participants = (await req.db.query(
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
             [convId]
         )).rows;
@@ -1421,18 +1421,18 @@ router.delete('/conversations/:id', auth, async (req, res) => {
         const convId = parseInt(req.params.id, 10);
         if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
 
-        if (!(await verifyParticipant(convId, req.userId))) {
+        if (!(await verifyParticipant(convId, req.userId, req.db))) {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
         // Notify other participants before deletion
-        const participants = (await query(
+        const participants = (await req.db.query(
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2',
             [convId, req.userId]
         )).rows;
 
         // Delete the conversation (all children CASCADE automatically)
-        await query('DELETE FROM conversations WHERE id = $1', [convId]);
+        await req.db.query('DELETE FROM conversations WHERE id = $1', [convId]);
 
         for (const p of participants) {
             sendToUser(p.user_id, 'chat_conv_deleted', { conversationId: convId });
@@ -1457,7 +1457,7 @@ router.post('/messages/:id/delivered', auth, async (req, res) => {
         const msgId = parseInt(req.params.id, 10);
         if (isNaN(msgId)) return res.status(400).json({ error: 'Invalid message' });
 
-        await query(
+        await req.db.query(
             `UPDATE messages SET delivered_to = delivered_to || $1::jsonb
              WHERE id = $2 AND NOT delivered_to @> $1::jsonb`,
             [JSON.stringify([req.userId]), msgId]
@@ -1481,7 +1481,7 @@ router.post('/messages/:id/delivered', auth, async (req, res) => {
 router.get('/calls', auth, async (req, res) => {
     try {
         const userId = req.userId;
-        const rows = (await query(`
+        const rows = (await req.db.query(`
             SELECT * FROM (
                 SELECT DISTINCT ON (cl.id)
                     cl.id, cl.caller_id, cl.call_type, cl.status,
@@ -1524,7 +1524,7 @@ router.get('/calls', auth, async (req, res) => {
 router.get('/calls/active', auth, async (req, res) => {
     try {
         const userId = req.userId;
-        const row = (await query(`
+        const row = (await req.db.query(`
             SELECT cl.id, cl.conversation_id, cl.caller_id, cl.call_type, cl.status, cl.started_at,
                    caller.full_name AS caller_name, caller.avatar AS caller_avatar,
                    c.is_group, c.name AS group_name,
@@ -1564,11 +1564,11 @@ router.get('/conversations/:id/calls', auth, async (req, res) => {
     try {
         const convId = parseInt(req.params.id, 10);
         if (isNaN(convId)) return res.status(400).json({ error: 'Invalid conversation' });
-        if (!(await verifyParticipant(convId, req.userId))) {
+        if (!(await verifyParticipant(convId, req.userId, req.db))) {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
-        const rows = (await query(`
+        const rows = (await req.db.query(`
             SELECT cl.id, cl.caller_id, cl.call_type, cl.status, cl.started_at,
                    cl.ended_at, cl.duration, cl.created_at,
                    u.full_name AS caller_name, u.avatar AS caller_avatar

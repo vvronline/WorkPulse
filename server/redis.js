@@ -81,8 +81,12 @@ async function del(...keys) {
 async function delPattern(pattern) {
     if (!isReady) return;
     try {
-        const keys = await client.keys(pattern);
-        if (keys.length > 0) await client.del(...keys);
+        let cursor = '0';
+        do {
+            const [nextCursor, keys] = await client.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+            cursor = nextCursor;
+            if (keys.length > 0) await client.del(...keys);
+        } while (cursor !== '0');
     } catch { /* ignore */ }
 }
 
@@ -127,7 +131,8 @@ async function getOnlineUsers(userIds) {
         const results = await pipeline.exec();
         const map = {};
         for (let i = 0; i < userIds.length; i++) {
-            map[userIds[i]] = results[i][1] === 1 ? 'online' : 'offline';
+            const [err, val] = results[i];
+            map[userIds[i]] = !err && val === 1 ? 'online' : 'offline';
         }
         return map;
     } catch { return null; }

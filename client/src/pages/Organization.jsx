@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Navigate } from 'react-router-dom';
 import { Settings, Building2, Users, GitBranch, Tag } from 'lucide-react';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import { useAuth } from '../AuthContext';
@@ -30,14 +31,7 @@ export default function Organization() {
             return <CreateOrgView onCreated={(orgId) => { fetchOrg(); updateUser({ org_id: orgId, role: 'super_admin' }); }} />;
         }
         if (user?.role === 'platform_admin') {
-            return (
-                <div className={s.adminPage}>
-                    <h1>Organization</h1>
-                    <p style={{ color: 'var(--text-secondary)', marginTop: '1rem' }}>
-                        As a Platform Admin, manage organizations from the <a href="/admin?tab=organizations">Admin Panel → Organizations</a> tab.
-                    </p>
-                </div>
-            );
+            return <Navigate to="/admin?tab=tenants" replace />;
         }
         return (
             <div className={s.adminPage}>

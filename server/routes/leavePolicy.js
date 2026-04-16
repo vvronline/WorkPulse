@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole, requireSameOrg } = require('../middleware/rbac');
@@ -12,7 +12,7 @@ router.use(auth, loadUserContext);
 
 router.get('/policies', requireSameOrg, async (req, res) => {
     try {
-        const policies = (await query('SELECT * FROM leave_policies WHERE org_id = $1 ORDER BY leave_type', [req.userOrgId])).rows;
+        const policies = (await req.db.query('SELECT * FROM leave_policies WHERE org_id = $1 ORDER BY leave_type', [req.userOrgId])).rows;
         res.json(policies);
     } catch (err) {
         req.log.error({ err }, 'GET /policies error');
@@ -30,10 +30,10 @@ router.post('/policies', requireRole('hr_admin'), requireSameOrg, async (req, re
         if (quota < 0 || quota > 365) return res.status(400).json({ error: 'Annual quota must be between 0 and 365' });
         if (cfLimit < 0 || cfLimit > 365) return res.status(400).json({ error: 'Carry forward limit must be between 0 and 365' });
 
-        const existing = (await query('SELECT id FROM leave_policies WHERE org_id = $1 AND leave_type = $2', [req.userOrgId, leave_type])).rows[0];
+        const existing = (await req.db.query('SELECT id FROM leave_policies WHERE org_id = $1 AND leave_type = $2', [req.userOrgId, leave_type])).rows[0];
 
         if (existing) {
-            await query(
+            await req.db.query(
                 `UPDATE leave_policies SET annual_quota = $1, accrual_type = $2, carry_forward_limit = $3,
                  half_day_allowed = $4, quarter_day_allowed = $5 WHERE id = $6`,
                 [quota, accrual_type || 'annual', cfLimit, !!half_day_allowed, !!quarter_day_allowed, existing.id]
@@ -41,7 +41,7 @@ router.post('/policies', requireRole('hr_admin'), requireSameOrg, async (req, re
             logAction(req, 'update', 'leave_policy', existing.id, { leave_type });
             res.json({ message: `Leave policy for ${leave_type} updated` });
         } else {
-            const result = await query(
+            const result = await req.db.query(
                 `INSERT INTO leave_policies (org_id, leave_type, annual_quota, accrual_type, carry_forward_limit, half_day_allowed, quarter_day_allowed)
                  VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
                 [req.userOrgId, leave_type, quota, accrual_type || 'annual', cfLimit, !!half_day_allowed, !!quarter_day_allowed]
@@ -58,10 +58,10 @@ router.post('/policies', requireRole('hr_admin'), requireSameOrg, async (req, re
 router.delete('/policies/:id', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
     try {
         const { id } = req.params;
-        const policy = (await query('SELECT * FROM leave_policies WHERE id = $1 AND org_id = $2', [Number(id), req.userOrgId])).rows[0];
+        const policy = (await req.db.query('SELECT * FROM leave_policies WHERE id = $1 AND org_id = $2', [Number(id), req.userOrgId])).rows[0];
         if (!policy) return res.status(404).json({ error: 'Policy not found' });
 
-        await query('DELETE FROM leave_policies WHERE id = $1', [Number(id)]);
+        await req.db.query('DELETE FROM leave_policies WHERE id = $1', [Number(id)]);
         logAction(req, 'delete', 'leave_policy', Number(id), { leave_type: policy.leave_type });
         res.json({ message: 'Policy deleted' });
     } catch (err) {
@@ -75,9 +75,9 @@ router.delete('/policies/:id', requireRole('hr_admin'), requireSameOrg, async (r
 router.get('/balances', async (req, res) => {
     try {
         const year = parseInt(req.query.year) || new Date().getFullYear();
-        if (req.userOrgId) await initializeBalances(req.userId, req.userOrgId, year);
+        if (req.userOrgId) await initializeBalances(req.userId, req.userOrgId, year, req.db);
 
-        const balances = (await query(
+        const balances = (await req.db.query(
             'SELECT * FROM leave_balances WHERE user_id = $1 AND year = $2',
             [req.userId, year]
         )).rows;
@@ -93,14 +93,14 @@ router.get('/balances/:userId', requireRole('team_lead'), requireSameOrg, async 
         const targetUserId = Number(req.params.userId);
         const year = parseInt(req.query.year) || new Date().getFullYear();
 
-        const targetUser = (await query('SELECT org_id FROM users WHERE id = $1', [targetUserId])).rows[0];
+        const targetUser = (await req.db.query('SELECT org_id FROM users WHERE id = $1', [targetUserId])).rows[0];
         if (!targetUser || targetUser.org_id !== req.userOrgId) {
             return res.status(403).json({ error: 'Cannot view balances for users outside your organization' });
         }
 
-        await initializeBalances(targetUserId, req.userOrgId, year);
+        await initializeBalances(targetUserId, req.userOrgId, year, req.db);
 
-        const balances = (await query(
+        const balances = (await req.db.query(
             'SELECT * FROM leave_balances WHERE user_id = $1 AND year = $2',
             [targetUserId, year]
         )).rows;
@@ -118,12 +118,12 @@ router.put('/balances/:userId', requireRole('hr_admin'), requireSameOrg, async (
 
         if (!leave_type || !year) return res.status(400).json({ error: 'Leave type and year are required' });
 
-        const targetUser = (await query('SELECT org_id FROM users WHERE id = $1', [targetUserId])).rows[0];
+        const targetUser = (await req.db.query('SELECT org_id FROM users WHERE id = $1', [targetUserId])).rows[0];
         if (!targetUser || targetUser.org_id !== req.userOrgId) {
             return res.status(403).json({ error: 'Cannot modify balances for users outside your organization' });
         }
 
-        const existing = (await query(
+        const existing = (await req.db.query(
             'SELECT id FROM leave_balances WHERE user_id = $1 AND leave_type = $2 AND year = $3',
             [targetUserId, leave_type, year]
         )).rows[0];
@@ -136,9 +136,9 @@ router.put('/balances/:userId', requireRole('hr_admin'), requireSameOrg, async (
             if (carried_forward !== undefined) { updates.push(`carried_forward = $${pi++}`); params.push(carried_forward); }
             if (updates.length === 0) return res.status(400).json({ error: 'No fields to update. Provide quota or carried_forward.' });
             params.push(existing.id);
-            await query(`UPDATE leave_balances SET ${updates.join(', ')} WHERE id = $${pi}`, params);
+            await req.db.query(`UPDATE leave_balances SET ${updates.join(', ')} WHERE id = $${pi}`, params);
         } else {
-            await query(
+            await req.db.query(
                 'INSERT INTO leave_balances (user_id, leave_type, year, quota, carried_forward) VALUES ($1, $2, $3, $4, $5)',
                 [targetUserId, leave_type, year, quota || 0, carried_forward || 0]
             );
@@ -157,7 +157,7 @@ router.put('/balances/:userId', requireRole('hr_admin'), requireSameOrg, async (
 router.get('/holidays', requireSameOrg, async (req, res) => {
     try {
         const y = parseInt(req.query.year) || new Date().getFullYear();
-        const holidays = (await query(
+        const holidays = (await req.db.query(
             `SELECT * FROM holidays WHERE org_id = $1 AND date LIKE $2 ORDER BY date ASC`,
             [req.userOrgId, `${y}-%`]
         )).rows;
@@ -173,7 +173,7 @@ router.post('/holidays', requireRole('hr_admin'), requireSameOrg, async (req, re
         const { date, name, is_optional } = req.body;
         if (!date || !name) return res.status(400).json({ error: 'Date and name are required' });
 
-        const result = await query(
+        const result = await req.db.query(
             'INSERT INTO holidays (org_id, date, name, is_optional) VALUES ($1, $2, $3, $4) RETURNING id',
             [req.userOrgId, date, name.trim(), !!is_optional]
         );
@@ -191,7 +191,7 @@ router.post('/holidays/batch', requireRole('hr_admin'), requireSameOrg, async (r
         const { holidays } = req.body;
         if (!holidays || !Array.isArray(holidays)) return res.status(400).json({ error: 'Holidays array is required' });
 
-        const added = await transaction(async (client) => {
+        const added = await req.db.transaction(async (client) => {
             let count = 0;
             for (const h of holidays) {
                 if (h.date && h.name) {
@@ -216,10 +216,10 @@ router.post('/holidays/batch', requireRole('hr_admin'), requireSameOrg, async (r
 router.delete('/holidays/:id', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
     try {
         const { id } = req.params;
-        const holiday = (await query('SELECT * FROM holidays WHERE id = $1 AND org_id = $2', [Number(id), req.userOrgId])).rows[0];
+        const holiday = (await req.db.query('SELECT * FROM holidays WHERE id = $1 AND org_id = $2', [Number(id), req.userOrgId])).rows[0];
         if (!holiday) return res.status(404).json({ error: 'Holiday not found' });
 
-        await query('DELETE FROM holidays WHERE id = $1', [Number(id)]);
+        await req.db.query('DELETE FROM holidays WHERE id = $1', [Number(id)]);
         logAction(req, 'delete', 'holiday', Number(id), { name: holiday.name, date: holiday.date });
         res.json({ message: 'Holiday deleted' });
     } catch (err) {
@@ -230,14 +230,14 @@ router.delete('/holidays/:id', requireRole('hr_admin'), requireSameOrg, async (r
 
 // ==================== HELPERS ====================
 
-async function initializeBalances(userId, orgId, year) {
+async function initializeBalances(userId, orgId, year, db) {
     if (!orgId) return;
-    const policies = (await query('SELECT * FROM leave_policies WHERE org_id = $1', [orgId])).rows;
+    const policies = (await db.query('SELECT * FROM leave_policies WHERE org_id = $1', [orgId])).rows;
 
     for (const policy of policies) {
         let carryForward = 0;
         if (policy.carry_forward_limit > 0) {
-            const prevBalance = (await query(
+            const prevBalance = (await db.query(
                 'SELECT quota, used, carried_forward FROM leave_balances WHERE user_id = $1 AND leave_type = $2 AND year = $3',
                 [userId, policy.leave_type, year - 1]
             )).rows[0];
@@ -246,7 +246,7 @@ async function initializeBalances(userId, orgId, year) {
                 carryForward = Math.min(Math.max(remaining, 0), policy.carry_forward_limit);
             }
         }
-        await query(
+        await db.query(
             `INSERT INTO leave_balances (user_id, leave_type, year, quota, carried_forward)
              VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, leave_type, year) DO NOTHING`,
             [userId, policy.leave_type, year, policy.annual_quota, carryForward]

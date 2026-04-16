@@ -11,10 +11,16 @@ const mockQuery = jest.fn();
 jest.mock('../db', () => ({
     pool: { end: jest.fn() },
     query: (...args) => mockQuery(...args),
+
+    masterQuery: (...args) => mockQuery(...args),
+
+    masterTransaction: (...args) => mockTransaction ? mockTransaction(...args) : (async (fn) => fn({ query: (...a) => mockQuery(...a) }))(...args),
     initDB: jest.fn(),
 }));
 
 const { findApprover } = require('../utils/approver');
+
+const mockDb = { query: (...args) => mockQuery(...args) };
 
 describe('findApprover', () => {
     beforeEach(() => mockQuery.mockReset());
@@ -26,7 +32,7 @@ describe('findApprover', () => {
             // Step 1: SELECT id FROM users WHERE id=5 AND is_active=TRUE
             .mockResolvedValueOnce({ rows: [{ id: 5 }] });
 
-        const result = await findApprover(1, 1);
+        const result = await findApprover(mockDb, 1, 1);
         expect(result).toEqual({ id: 5 });
     });
 
@@ -41,7 +47,7 @@ describe('findApprover', () => {
             // Step 2b: SELECT id FROM users WHERE id=7 AND is_active=TRUE
             .mockResolvedValueOnce({ rows: [{ id: 7 }] });
 
-        const result = await findApprover(1, 1);
+        const result = await findApprover(mockDb, 1, 1);
         expect(result).toEqual({ id: 7 });
     });
 
@@ -56,7 +62,7 @@ describe('findApprover', () => {
             // Step 3b: head active
             .mockResolvedValueOnce({ rows: [{ id: 9 }] });
 
-        const result = await findApprover(1, 1);
+        const result = await findApprover(mockDb, 1, 1);
         expect(result).toEqual({ id: 9 });
     });
 
@@ -67,7 +73,7 @@ describe('findApprover', () => {
             // Step 4: HR admin search
             .mockResolvedValueOnce({ rows: [{ id: 20 }] });
 
-        const result = await findApprover(1, 1);
+        const result = await findApprover(mockDb, 1, 1);
         expect(result).toEqual({ id: 20 });
     });
 
@@ -79,7 +85,7 @@ describe('findApprover', () => {
             // Step 5: not super_admin
             .mockResolvedValueOnce({ rows: [] });
 
-        const result = await findApprover(1, 1);
+        const result = await findApprover(mockDb, 1, 1);
         expect(result).toBeNull();
     });
 
@@ -89,7 +95,7 @@ describe('findApprover', () => {
             .mockResolvedValueOnce({ rows: [] }) // no HR admin
             .mockResolvedValueOnce({ rows: [{ id: 1 }] }); // self is super_admin
 
-        const result = await findApprover(1, 1);
+        const result = await findApprover(mockDb, 1, 1);
         expect(result).toEqual({ id: 1 });
     });
 
@@ -97,7 +103,7 @@ describe('findApprover', () => {
         mockQuery
             .mockResolvedValueOnce({ rows: [{ manager_id: null, team_id: null, department_id: null }] });
 
-        const result = await findApprover(1, null);
+        const result = await findApprover(mockDb, 1, null);
         expect(result).toBeNull();
     });
 });

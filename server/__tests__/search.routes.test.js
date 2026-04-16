@@ -38,6 +38,10 @@ const mockQuery = jest.fn().mockResolvedValue({ rows: [], rowCount: 0 });
 jest.mock('../db', () => ({
     pool: { end: jest.fn() },
     query: (...args) => mockQuery(...args),
+
+    masterQuery: (...args) => mockQuery(...args),
+
+    masterTransaction: (...args) => mockTransaction ? mockTransaction(...args) : (async (fn) => fn({ query: (...a) => mockQuery(...a) }))(...args),
     transaction: jest.fn(async (fn) => fn({ query: jest.fn().mockResolvedValue({ rows: [], rowCount: 0 }) })),
     initDB: jest.fn(),
 }));
