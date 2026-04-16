@@ -355,8 +355,12 @@ router.post('/login', async (req, res) => {
         if (isPlatformUser) {
             // If user was already resolved with a tenant context (via user_directory),
             // we already have the correct JWT with platform: true and tenant_id.
-            // Just return the platform_admin response.
+            // Ensure DB role is platform_admin and return.
             if (tenantId) {
+                if (user.role !== 'platform_admin') {
+                    await db.query('UPDATE users SET role = $1 WHERE id = $2', ['platform_admin', user.id]);
+                    user.role = 'platform_admin';
+                }
                 const reportsRes = await db.query(
                     'SELECT 1 FROM users WHERE manager_id = $1 AND is_active = TRUE LIMIT 1',
                     [user.id],
@@ -394,10 +398,10 @@ router.post('/login', async (req, res) => {
                 )).rows[0];
 
                 if (!tenantUser) {
-                    // Create a super_admin user in the tenant DB
+                    // Create a platform_admin user in the tenant DB
                     tenantUser = (await tenantDb.query(
                         `INSERT INTO users (username, password, full_name, email, org_id, role)
-                         VALUES ($1, $2, $3, $4, 1, 'super_admin') RETURNING *`,
+                         VALUES ($1, $2, $3, $4, 1, 'platform_admin') RETURNING *`,
                         [user.username, user.password, user.full_name, user.email || `${user.username}@platform.local`]
                     )).rows[0];
 
@@ -408,6 +412,10 @@ router.post('/login', async (req, res) => {
                             [user.email.toLowerCase(), user.username.toLowerCase(), primaryTenant.id, tenantUser.id]
                         );
                     }
+                } else if (tenantUser.role !== 'platform_admin') {
+                    // Upgrade existing linked user to platform_admin
+                    await tenantDb.query('UPDATE users SET role = $1 WHERE id = $2', ['platform_admin', tenantUser.id]);
+                    tenantUser.role = 'platform_admin';
                 }
 
                 // Re-issue JWT with tenant context + platform flag so routes use tenant DB
@@ -464,7 +472,7 @@ router.post('/login', async (req, res) => {
             const tenantDb = { query: newDb.query, transaction: newDb.transaction };
             const tenantUser = (await tenantDb.query(
                 `INSERT INTO users (username, password, full_name, email, org_id, role)
-                 VALUES ($1, $2, $3, $4, 1, 'super_admin') RETURNING *`,
+                 VALUES ($1, $2, $3, $4, 1, 'platform_admin') RETURNING *`,
                 [user.username, user.password, user.full_name, user.email || `${user.username}@platform.local`]
             )).rows[0];
 

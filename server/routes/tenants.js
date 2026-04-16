@@ -51,7 +51,7 @@ router.post('/', async (req, res) => {
                 if (!existing) {
                     const newUser = (await db.query(
                         `INSERT INTO users (username, password, full_name, email, org_id, role)
-                         VALUES ($1, $2, $3, $4, 1, 'super_admin') RETURNING id`,
+                         VALUES ($1, $2, $3, $4, 1, 'platform_admin') RETURNING id`,
                         [platUser.username, platUser.password, platUser.full_name, platUser.email || `${platUser.username}@platform.local`]
                     )).rows[0];
                     if (platUser.email) {
