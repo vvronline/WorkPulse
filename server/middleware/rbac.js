@@ -27,6 +27,17 @@ const VALID_ROLES = Object.keys(ROLE_LEVEL);
  */
 async function loadUserContext(req, res, next) {
     try {
+        // Platform admin: skip user table lookup, set context directly
+        if (req.isPlatformUser) {
+            req.userRole = 'platform_admin';
+            req.userOrgId = null;
+            req.userTeamId = null;
+            req.userDeptId = null;
+            req.userManagerId = null;
+            req.roleLevel = ROLE_LEVEL['platform_admin'];
+            return next();
+        }
+
         // Try Redis cache first
         const cached = await redis.getUserContext(req.userId);
         if (cached) {
