@@ -23,6 +23,9 @@ const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 /** @type {Map<string, { pool: Pool, query: Function, transaction: Function, lastUsed: number }>} */
 const poolCache = new Map();
 
+/** Track tenant DBs that have been schema-migrated this process lifetime. */
+const migratedDbs = new Set();
+
 /** Prevents concurrent pool creation for the same db_name. */
 const pendingCreations = new Map();
 
@@ -124,11 +127,19 @@ async function getTenantPool(dbName, dbHost) {
             lastUsed: Date.now(),
         };
 
-        // Run idempotent schema migrations so existing tenant DBs pick up
-        // any new tables/columns added since the DB was first provisioned.
-        await initTenantSchema(entry.query);
-
         poolCache.set(dbName, entry);
+
+        // Run idempotent schema migrations (non-fatal) so existing tenant DBs
+        // pick up new tables/columns added since the DB was first provisioned.
+        if (!migratedDbs.has(dbName)) {
+            try {
+                await initTenantSchema(entry.query);
+                migratedDbs.add(dbName);
+            } catch (err) {
+                logger.error({ err, dbName }, 'Tenant schema migration failed (non-fatal)');
+            }
+        }
+
         logger.info({ dbName, poolCount: poolCache.size }, 'Tenant pool created');
         return entry;
     })();
