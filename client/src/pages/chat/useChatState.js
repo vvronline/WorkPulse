@@ -365,89 +365,95 @@ export default function useChatState() {
                 other_avatar: otherUser.avatar,
                 is_self_chat: otherUser.id === user.id
             });
-        } catch (e) { console.error('Failed to start conversation', e); } = async (convId, convData) => {
-            setActiveConv({ ...convData, id: convId });
-            setMessages([]);
-            setLoadingMsgs(true);
-            setMobileView('chat');
-            setReplyTo(null);
-            setEditingMsg(null);
-            setShowPinned(false);
-            setShowSearch(false);
-            setShowSharedFiles(false);
-            try {
-                const { data } = await getMessages(convId);
-                setMessages(data);
-                setHasMore(data.length >= 50);
-                await markConversationRead(convId);
-                refreshUnread();
-                wsSend('chat_read', { conversationId: convId });
-                setConversations(prev => prev.map(c => c.id === convId ? { ...c, unread_count: 0 } : c));
-                try {
-                    const { data: rs } = await getReadStatus(convId);
-                    const map = {};
-                    rs.forEach(r => { map[r.user_id] = r.last_read_at; });
-                    setReadReceipts(map);
-                } catch (e) { console.error('Failed to load read status', e); }
-                try {
-                    const { data: members } = await getMembers(convId);
-                    setConvMembers(members);
-                } catch (e) { setConvMembers([]); console.error('Failed to load members', e); }
-            } catch (e) { console.error('Failed to open conversation', e); }
-            setLoadingMsgs(false);
-        };
-
-        const loadMore = async () => {
-            if (!activeConv || messages.length === 0 || !hasMore) return;
-            const container = messagesContainerRef.current;
-            const prevHeight = container?.scrollHeight || 0;
-            try {
-                const { data } = await getMessages(activeConv.id, messages[0].id);
-                setMessages(prev => [...data, ...prev]);
-                setHasMore(data.length >= 50);
-                requestAnimationFrame(() => {
-                    if (container) container.scrollTop = container.scrollHeight - prevHeight;
-                });
-            } catch (e) { console.error('Failed to load more messages', e); }
-            user, wsSend, loadConversations, refreshUnread,
-                // State
-                conversations, setConversations,
-                activeConv, setActiveConv,
-                messages, setMessages,
-                input, setInput,
-                search, setSearch,
-                searchResults, searching,
-                loadingMsgs, hasMore,
-                typingUsers,
-                mobileView, setMobileView,
-                onlineUsers,
-                userStatusMap,
-                replyTo, setReplyTo,
-                editingMsg, setEditingMsg,
-                showSearch, setShowSearch,
-                showPinned, setShowPinned,
-                showGroupModal, setShowGroupModal,
-                groupEditData, setGroupEditData,
-                forwardMsg, setForwardMsg,
-                recording, setRecording,
-                dragOver, setDragOver,
-                readReceipts,
-                showEmojiPicker, setShowEmojiPicker,
-                showSharedFiles, setShowSharedFiles,
-                showStarred, setShowStarred,
-                showPollCreator, setShowPollCreator,
-                convMembers,
-                deleteConfirm, setDeleteConfirm,
-                convMenu, setConvMenu,
-                // Call state
-                callState, setCallState,
-                callSignalRef, callEndRef,
-                // Refs
-                messagesEndRef, messagesContainerRef,
-                fileInputRef, mentionInputRef,
-                pendingCounter, typingTimerRef,
-                searchInputRef,
-                // Operations
-                startConversation, openConversation, loadMore,
+        } catch (e) { console.error('Failed to start conversation', e); }
     };
-    }
+
+    const openConversation = async (convId, convData) => {
+        setActiveConv({ ...convData, id: convId });
+        setMessages([]);
+        setLoadingMsgs(true);
+        setMobileView('chat');
+        setReplyTo(null);
+        setEditingMsg(null);
+        setShowPinned(false);
+        setShowSearch(false);
+        setShowSharedFiles(false);
+        try {
+            const { data } = await getMessages(convId);
+            setMessages(data);
+            setHasMore(data.length >= 50);
+            await markConversationRead(convId);
+            refreshUnread();
+            wsSend('chat_read', { conversationId: convId });
+            setConversations(prev => prev.map(c => c.id === convId ? { ...c, unread_count: 0 } : c));
+            try {
+                const { data: rs } = await getReadStatus(convId);
+                const map = {};
+                rs.forEach(r => { map[r.user_id] = r.last_read_at; });
+                setReadReceipts(map);
+            } catch (e) { console.error('Failed to load read status', e); }
+            try {
+                const { data: members } = await getMembers(convId);
+                setConvMembers(members);
+            } catch (e) { setConvMembers([]); console.error('Failed to load members', e); }
+        } catch (e) { console.error('Failed to open conversation', e); }
+        setLoadingMsgs(false);
+    };
+
+    const loadMore = async () => {
+        if (!activeConv || messages.length === 0 || !hasMore) return;
+        const container = messagesContainerRef.current;
+        const prevHeight = container?.scrollHeight || 0;
+        try {
+            const { data } = await getMessages(activeConv.id, messages[0].id);
+            setMessages(prev => [...data, ...prev]);
+            setHasMore(data.length >= 50);
+            requestAnimationFrame(() => {
+                if (container) container.scrollTop = container.scrollHeight - prevHeight;
+            });
+        } catch (e) { console.error('Failed to load more messages', e); }
+    };
+
+    return {
+        user, wsSend, loadConversations, refreshUnread,
+        // State
+        conversations, setConversations,
+        activeConv, setActiveConv,
+        messages, setMessages,
+        input, setInput,
+        search, setSearch,
+        searchResults, searching,
+        loadingMsgs, hasMore,
+        typingUsers,
+        mobileView, setMobileView,
+        onlineUsers,
+        userStatusMap,
+        replyTo, setReplyTo,
+        editingMsg, setEditingMsg,
+        showSearch, setShowSearch,
+        showPinned, setShowPinned,
+        showGroupModal, setShowGroupModal,
+        groupEditData, setGroupEditData,
+        forwardMsg, setForwardMsg,
+        recording, setRecording,
+        dragOver, setDragOver,
+        readReceipts,
+        showEmojiPicker, setShowEmojiPicker,
+        showSharedFiles, setShowSharedFiles,
+        showStarred, setShowStarred,
+        showPollCreator, setShowPollCreator,
+        convMembers,
+        deleteConfirm, setDeleteConfirm,
+        convMenu, setConvMenu,
+        // Call state
+        callState, setCallState,
+        callSignalRef, callEndRef,
+        // Refs
+        messagesEndRef, messagesContainerRef,
+        fileInputRef, mentionInputRef,
+        pendingCounter, typingTimerRef,
+        searchInputRef,
+        // Operations
+        startConversation, openConversation, loadMore,
+    };
+}
