@@ -29,8 +29,7 @@ export default function OrgModal({ org, onClose, onSave }) {
                 <form onSubmit={handleSubmit}>
                     <div className={sf.formGroup}>
                         <label>Organization Name</label>
-                        <input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Acme Corp" disabled={!!org} />
-                        {org && <small className={sf.hint}>Name cannot be changed after creation</small>}
+                        <input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Acme Corp" />
                     </div>
                     <div className={sf.formGroup}>
                         <label>Work Hours Per Day</label>
