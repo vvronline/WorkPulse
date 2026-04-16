@@ -124,6 +124,10 @@ async function getTenantPool(dbName, dbHost) {
             lastUsed: Date.now(),
         };
 
+        // Run idempotent schema migrations so existing tenant DBs pick up
+        // any new tables/columns added since the DB was first provisioned.
+        await initTenantSchema(entry.query);
+
         poolCache.set(dbName, entry);
         logger.info({ dbName, poolCount: poolCache.size }, 'Tenant pool created');
         return entry;
