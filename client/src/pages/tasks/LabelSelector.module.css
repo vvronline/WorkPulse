@@ -3,7 +3,7 @@
 .label-selector-btn { display: flex; align-items: center; gap: 0.35rem; padding: 0.45rem 0.6rem; border: 1px solid var(--border); border-radius: 8px; background: var(--input-bg); color: var(--text); font-size: 0.85rem; font-family: inherit; cursor: pointer; white-space: nowrap; }
 .label-selector-btn:hover { border-color: var(--primary); }
 .label-count { background: var(--primary); color: #fff; font-size: 0.65rem; font-weight: 700; border-radius: 50%; width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; }
-.label-dropdown { position: absolute; top: calc(100% + 4px); left: 0; z-index: 50; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.5rem; min-width: 180px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 0.25rem; }
+.label-dropdown { position: absolute; top: calc(100% + 4px); left: 0; z-index: 50; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.5rem; min-width: 180px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 0.25rem; }
 .label-dropdown-empty { font-size: 0.8rem; color: var(--text-muted); padding: 0.5rem; text-align: center; }
 .label-option { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.5rem; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }
 .label-option:hover { background: var(--surface-hover); }
