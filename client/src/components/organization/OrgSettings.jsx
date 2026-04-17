@@ -15,7 +15,7 @@ export default function OrgSettings({ org, onUpdate, userRole }) {
         fiscal_year_start: org.fiscal_year_start
     });
     const [msg, setMsg] = useAutoDismiss('');
-    const canEdit = ['hr_admin', 'super_admin'].includes(userRole);
+    const canEdit = ['hr_admin', 'super_admin', 'platform_admin'].includes(userRole);
 
     const handleSave = async (e) => {
         e.preventDefault();
@@ -26,7 +26,7 @@ export default function OrgSettings({ org, onUpdate, userRole }) {
         } catch (e) { setMsg(e.response?.data?.error || 'Failed'); }
     };
 
-    const isSuperAdmin = userRole === 'super_admin';
+    const isSuperAdmin = userRole === 'super_admin' || userRole === 'platform_admin';
 
     if (!canEdit) return null;
 

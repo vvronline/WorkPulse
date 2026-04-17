@@ -13,7 +13,7 @@ import s from './Admin.module.css';
 
 export default function Organization() {
     const { user, updateUser } = useAuth();
-    const isAdmin = user?.role === 'hr_admin' || user?.role === 'super_admin';
+    const isAdmin = ['hr_admin', 'super_admin', 'platform_admin'].includes(user?.role);
     const [org, setOrg] = useState(null);
     const [loading, setLoading] = useState(true);
     const [tab, setTab] = useState(isAdmin ? 'overview' : 'departments');
