@@ -7,8 +7,10 @@ const { logger } = require('../utils/logger');
 const { notifyByEmail } = require('../utils/mailer');
 const { sendToUser } = require('../utils/ws');
 const { logAction } = require('../utils/audit');
+const { requireTenant } = require('../middleware/tenant');
 
 const router = express.Router();
+router.use(requireTenant);
 
 // Helper: record task history
 async function logHistory(taskId, userId, action, field, oldValue, newValue, client, db) {
@@ -304,7 +306,7 @@ router.post('/', auth, loadUserContext, async (req, res) => {
                     [assignedTo, 'task', `Task Assigned: ${task.title}`, `${assigner?.full_name || 'Someone'} assigned you a task`, task.id]
                 );
                 notifyByEmail('taskAssigned', assignee, task, assigner?.full_name || 'Someone');
-                sendToUser(assignedTo, 'task_assigned', { taskId, title: task.title });
+                sendToUser(req.tenantId, assignedTo, 'task_assigned', { taskId, title: task.title });
             }
         }
 
@@ -434,7 +436,7 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
                     [newAssignedTo, 'task', `Task Assigned: ${updated.title}`, `${assigner?.full_name || 'Someone'} assigned you a task`, updated.id]
                 );
                 notifyByEmail('taskAssigned', assignee, updated, assigner?.full_name || 'Someone');
-                sendToUser(newAssignedTo, 'task_assigned', { taskId: updated.id, title: updated.title });
+                sendToUser(req.tenantId, newAssignedTo, 'task_assigned', { taskId: updated.id, title: updated.title });
             }
         }
 
@@ -856,7 +858,7 @@ router.post('/:id/comments', auth, loadUserContext, async (req, res) => {
                     const mentioned = (await req.db.query('SELECT email, full_name FROM users WHERE id = $1', [uid])).rows[0];
                     if (mentioned) {
                         notifyByEmail('mention', mentioned, commenterName, task.title);
-                        sendToUser(uid, 'notification', { type: 'mention', title: `${commenterName} mentioned you`, body: `In task: ${task.title}` });
+                        sendToUser(req.tenantId, uid, 'notification', { type: 'mention', title: `${commenterName} mentioned you`, body: `In task: ${task.title}` });
                     }
                 }
             }
@@ -1060,7 +1062,7 @@ router.post('/backlog', auth, loadUserContext, async (req, res) => {
                     [assignedTo, 'task', `Task Assigned: ${task.title}`, `${assigner?.full_name || 'Someone'} assigned you a task`, task.id]
                 );
                 notifyByEmail('taskAssigned', assignee, task, assigner?.full_name || 'Someone');
-                sendToUser(assignedTo, 'task_assigned', { taskId, title: task.title });
+                sendToUser(req.tenantId, assignedTo, 'task_assigned', { taskId, title: task.title });
             }
         }
 

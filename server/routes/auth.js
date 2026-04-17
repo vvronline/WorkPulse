@@ -94,7 +94,7 @@ async function resolveDefaultDomainUser(identifier) {
  * Create a session for the user, evicting the oldest if exceeding MAX_SESSIONS.
  * Returns the new session ID.
  */
-async function createSession(userId, deviceInfo, db) {
+async function createSession(userId, deviceInfo, db, tenantId) {
     const sid = crypto.randomUUID();
     await db.query('INSERT INTO user_sessions (id, user_id, device) VALUES ($1, $2, $3)', [sid, userId, deviceInfo || null]);
 
@@ -108,7 +108,7 @@ async function createSession(userId, deviceInfo, db) {
         const toDelete = sessions.slice(0, sessions.length - MAX_SESSIONS).map(s => s.id);
         await db.query('DELETE FROM user_sessions WHERE id = ANY($1)', [toDelete]);
     }
-    await redis.invalidateUserSessions(userId);
+    await redis.invalidateUserSessions(tenantId, userId);
     return sid;
 }
 
@@ -178,7 +178,7 @@ router.post('/register', async (req, res) => {
                         'INSERT INTO platform_users (username, password, full_name, email) VALUES ($1,$2,$3,$4) RETURNING id',
                         [username, hash, full_name, email]
                     );
-                    const sid = await createSession(result.rows[0].id, req.headers['user-agent'], { query: masterQuery });
+                    const sid = await createSession(result.rows[0].id, req.headers['user-agent'], { query: masterQuery }, null);
                     const token = jwt.sign(
                         { id: result.rows[0].id, username, tv: 0, sid, tenant_id: null, platform: true },
                         process.env.JWT_SECRET,
@@ -266,7 +266,7 @@ router.post('/register', async (req, res) => {
             [email.toLowerCase(), username.toLowerCase(), tenantId, result.id]
         );
 
-        const sid = await createSession(result.id, req.headers['user-agent'], db);
+        const sid = await createSession(result.id, req.headers['user-agent'], db, tenantId);
         const token = jwt.sign(
             { id: result.id, username, tv: 0, sid, tenant_id: tenantId },
             process.env.JWT_SECRET,
@@ -344,7 +344,7 @@ router.post('/login', async (req, res) => {
             }
         }
 
-        const sid = await createSession(user.id, req.headers['user-agent'], db);
+        const sid = await createSession(user.id, req.headers['user-agent'], db, tenantId);
         const token = jwt.sign(
             { id: user.id, username: user.username, tv: user.token_version || 0, sid, tenant_id: tenantId, platform: isPlatformUser || undefined },
             process.env.JWT_SECRET,
@@ -420,7 +420,7 @@ router.post('/login', async (req, res) => {
 
                 // Re-issue JWT with tenant context + platform flag so routes use tenant DB
                 // while retaining platform_admin powers for tenant management
-                const tenantSid = await createSession(tenantUser.id, req.headers['user-agent'], tenantDb);
+                const tenantSid = await createSession(tenantUser.id, req.headers['user-agent'], tenantDb, primaryTenant.id);
                 const tenantToken = jwt.sign(
                     { id: tenantUser.id, username: tenantUser.username, tv: tenantUser.token_version || 0, sid: tenantSid, tenant_id: primaryTenant.id, platform: true },
                     process.env.JWT_SECRET,
@@ -483,7 +483,7 @@ router.post('/login', async (req, res) => {
                 );
             }
 
-            const newSid = await createSession(tenantUser.id, req.headers['user-agent'], tenantDb);
+            const newSid = await createSession(tenantUser.id, req.headers['user-agent'], tenantDb, newTenant.id);
             const newToken = jwt.sign(
                 { id: tenantUser.id, username: tenantUser.username, tv: 0, sid: newSid, tenant_id: newTenant.id, platform: true },
                 process.env.JWT_SECRET,
@@ -642,10 +642,10 @@ router.post('/reset-password', async (req, res) => {
             'UPDATE users SET password = $1, token_version = COALESCE(token_version, 0) + 1 WHERE id = $2',
             [hash, row.user_id],
         );
-        await redis.invalidateTokenVersion(row.user_id);
+        await redis.invalidateTokenVersion(req.tenant?.id || null, row.user_id);
         // Clear all active sessions on password reset
         await db.query('DELETE FROM user_sessions WHERE user_id = $1', [row.user_id]);
-        await redis.invalidateUserSessions(row.user_id);
+        await redis.invalidateUserSessions(req.tenant?.id || null, row.user_id);
         await db.query('UPDATE password_reset_tokens SET used = TRUE WHERE id = $1', [row.id]);
 
         res.json({ message: 'Password has been reset successfully. You can now sign in.' });
@@ -683,12 +683,12 @@ router.post('/logout', async (req, res) => {
             if (decoded.sid) {
                 // Only delete the session that belongs to this user
                 await req.db.query('DELETE FROM user_sessions WHERE id = $1 AND user_id = $2', [decoded.sid, decoded.id]);
-                await redis.invalidateUserSessions(decoded.id);
+                await redis.invalidateUserSessions(decoded.tenant_id || null, decoded.id);
             }
             // Set user status to offline
             if (decoded.id) {
                 await req.db.query('UPDATE users SET user_status = $1, user_status_text = NULL WHERE id = $2', ['offline', decoded.id]);
-                await redis.setUserStatus(decoded.id, 'offline');
+                await redis.setUserStatus(decoded.tenant_id || null, decoded.id, 'offline');
             }
         }
     } catch { /* token may be expired/invalid — still clear cookie */ }

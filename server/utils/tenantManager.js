@@ -194,6 +194,11 @@ async function destroyAllPools() {
 async function createTenant({ orgName, slug, features, maxUsers, maxStorageMb }) {
     const dbName = `wp_${slug.replace(/-/g, '_')}`;
 
+    // Sanitize: only allow safe identifiers to prevent DDL injection
+    if (!/^wp_[a-z0-9_]+$/.test(dbName)) {
+        throw new Error(`Invalid tenant database name: ${dbName}`);
+    }
+
     // 1. Register in master tenants catalog
     const result = await masterQuery(
         `INSERT INTO tenants (org_name, slug, db_name, features, max_users, max_storage_mb)
@@ -250,6 +255,10 @@ async function deleteTenant(tenantId, hardDelete = false) {
     await destroyTenantPool(tenant.db_name);
 
     if (hardDelete) {
+        // Sanitize db_name before using in DDL to prevent injection
+        if (!/^wp_[a-z0-9_]+$/.test(tenant.db_name)) {
+            throw new Error(`Invalid tenant database name: ${tenant.db_name}`);
+        }
         // Terminate active connections first
         await masterQuery(
             `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`,

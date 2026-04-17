@@ -24,22 +24,21 @@ const DOMAIN_CACHE_TTL = 5 * 60; // 5 minutes
 
 /**
  * Resolve tenant from JWT tenant_id claim (fast path).
+ * Uses jwt.verify() to prevent untrusted tenant_id claims from controlling
+ * which database pool is attached to the request.
  */
 async function resolveFromJwt(req) {
-    // The auth middleware hasn't run yet at this point, so we can't read req.userId.
-    // However, we can peek at the JWT if present to get tenant_id without full verification.
-    // The auth middleware will do full verification later.
     const jwt = require('jsonwebtoken');
     const token = req.cookies?.token;
     if (!token) return null;
 
     try {
-        const decoded = jwt.decode(token); // decode only, don't verify (auth middleware does that)
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
         if (decoded?.tenant_id) {
             return decoded.tenant_id;
         }
     } catch {
-        // Invalid token — let auth middleware handle it
+        // Invalid/expired token — let auth middleware handle the full error response
     }
     return null;
 }

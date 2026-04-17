@@ -9,9 +9,10 @@ const { updateLeaveBalance } = require('./leaves');
 const { logger } = require('../utils/logger');
 const { notifyByEmail } = require('../utils/mailer');
 const { sendToUser } = require('../utils/ws');
+const { requireTenant } = require('../middleware/tenant');
 
 const router = express.Router();
-router.use(auth, loadUserContext);
+router.use(auth, loadUserContext, requireTenant);
 
 router.use(async (req, res, next) => {
     // Require at least team_lead role (level 2) to access manager endpoints.
@@ -454,7 +455,7 @@ router.post('/approvals/:id/approve', async (req, res) => {
                         [txResult.requesterId, 'leave', 'Leave Approved \u2705', `Your ${leaveInfo.leave_type} leave on ${leaveInfo.date} has been approved.`]
                     );
                     notifyByEmail('leaveApproved', requester, leaveInfo);
-                    sendToUser(txResult.requesterId, 'leave_update', { status: 'approved' });
+                    sendToUser(req.tenantId, txResult.requesterId, 'leave_update', { status: 'approved' });
                 } else if (txResult.type === 'manual_entry') {
                     let meta = {};
                     if (txResult.metadata) { try { meta = JSON.parse(txResult.metadata); } catch { } }
@@ -464,7 +465,7 @@ router.post('/approvals/:id/approve', async (req, res) => {
                         [txResult.requesterId, 'approval', 'Manual Entry Approved \u2705', `Your manual time entry for ${entryDate} has been approved.`]
                     );
                     notifyByEmail('manualEntryApproved', requester, entryDate);
-                    sendToUser(txResult.requesterId, 'approval_update', { status: 'approved', type: 'manual_entry' });
+                    sendToUser(req.tenantId, txResult.requesterId, 'approval_update', { status: 'approved', type: 'manual_entry' });
                 } else if (txResult.type === 'overtime') {
                     let meta = {};
                     if (txResult.metadata) { try { meta = JSON.parse(txResult.metadata); } catch { } }
@@ -473,7 +474,7 @@ router.post('/approvals/:id/approve', async (req, res) => {
                         'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
                         [txResult.requesterId, 'approval', 'Overtime Approved \u2705', `Your overtime request for ${overtimeDate} has been approved. Comp-off has been credited.`]
                     );
-                    sendToUser(txResult.requesterId, 'approval_update', { status: 'approved', type: 'overtime' });
+                    sendToUser(req.tenantId, txResult.requesterId, 'approval_update', { status: 'approved', type: 'overtime' });
                 }
             }
         } catch (notifErr) {
@@ -545,7 +546,7 @@ router.post('/approvals/:id/reject', async (req, res) => {
                         [txResult.requesterId, 'leave', 'Leave Rejected', `Your ${leaveInfo.leave_type} leave on ${leaveInfo.date} has been rejected.${reject_reason ? ' Reason: ' + reject_reason : ''}`]
                     );
                     notifyByEmail('leaveRejected', requester, leaveInfo, reject_reason);
-                    sendToUser(txResult.requesterId, 'leave_update', { status: 'rejected' });
+                    sendToUser(req.tenantId, txResult.requesterId, 'leave_update', { status: 'rejected' });
                 } else if (txResult.type === 'manual_entry') {
                     let meta = {};
                     if (txResult.metadata) { try { meta = JSON.parse(txResult.metadata); } catch { } }
@@ -555,7 +556,7 @@ router.post('/approvals/:id/reject', async (req, res) => {
                         [txResult.requesterId, 'approval', 'Manual Entry Rejected', `Your manual time entry for ${entryDate} has been rejected.${reject_reason ? ' Reason: ' + reject_reason : ''}`]
                     );
                     notifyByEmail('manualEntryRejected', requester, entryDate, reject_reason);
-                    sendToUser(txResult.requesterId, 'approval_update', { status: 'rejected', type: 'manual_entry' });
+                    sendToUser(req.tenantId, txResult.requesterId, 'approval_update', { status: 'rejected', type: 'manual_entry' });
                 }
             }
         } catch (notifErr) {

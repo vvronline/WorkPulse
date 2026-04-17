@@ -239,7 +239,7 @@ router.post('/platform-users/:id/reset-password', async (req, res) => {
             'UPDATE platform_users SET password = $1, token_version = COALESCE(token_version, 0) + 1, updated_at = NOW() WHERE id = $2',
             [hash, uid]
         );
-        await redis.invalidateTokenVersion(uid);
+        await redis.invalidateTokenVersion(null, uid);
 
         logAction(req, 'platform_admin_reset_password', 'platform_user', uid, { full_name: target.full_name });
         res.json({ message: `Password reset for ${target.full_name}` });

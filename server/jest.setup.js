@@ -11,6 +11,7 @@ jest.mock('./middleware/tenant', () => ({
         const db = require('./db');
         req.tenant = null;
         req.isMasterRoute = true;
+        req.tenantId = null;
         req.db = {
             query: (...args) => db.query(...args),
             transaction: (...args) => db.transaction(...args),
@@ -18,6 +19,10 @@ jest.mock('./middleware/tenant', () => ({
         };
         next();
     },
+    requireTenant: (req, _res, next) => next(),
+    requireFeature: () => (req, _res, next) => next(),
+    checkUserLimit: (req, _res, next) => next(),
+    invalidateTenantCache: jest.fn(),
 }));
 
 // Mock tenantManager so modules that import it don't try to connect to real DBs

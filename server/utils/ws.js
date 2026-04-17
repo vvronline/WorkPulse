@@ -10,7 +10,7 @@ const { getTenantPool, getTenantById } = require('./tenantManager');
 const { logger } = require('./logger');
 const redis = require('../redis');
 
-/** Map<userId, Set<WebSocket>> — local instance connections only */
+/** Map<clientKey, Set<WebSocket>> — local instance connections, keyed by tenantId:userId */
 const clients = new Map();
 
 /** Max WebSocket connections a single user may hold per server instance */
@@ -18,6 +18,11 @@ const MAX_CONNECTIONS_PER_USER = 5;
 
 /** Unique instance ID for Pub/Sub dedup */
 const INSTANCE_ID = `ws-${process.pid}-${Date.now()}`;
+
+/** Composite key for the clients Map to prevent cross-tenant collisions */
+function clientKey(tenantId, userId) {
+    return `${tenantId || 0}:${userId}`;
+}
 
 function setupWebSocket(server) {
     const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 64 * 1024 });
@@ -33,7 +38,7 @@ function setupWebSocket(server) {
                 const envelope = JSON.parse(raw);
                 if (envelope._from === INSTANCE_ID) return; // ignore own publishes
                 if (channel === 'ws:broadcast') {
-                    deliverLocal(envelope.userId, envelope.type, envelope.data);
+                    deliverLocal(envelope.tenantId, envelope.userId, envelope.type, envelope.data);
                 }
             } catch { /* ignore */ }
         });
@@ -77,15 +82,16 @@ function setupWebSocket(server) {
             db = { query: masterQuery };
         }
         ws.db = db;
+        ws.tenantId = tenantId || null;
 
         try {
             const tokenVersion = payload.tv ?? 0;
-            let dbTokenVersion = await redis.getTokenVersion(userId);
+            let dbTokenVersion = await redis.getTokenVersion(tenantId, userId);
             if (dbTokenVersion === null) {
                 const userRow = (await db.query('SELECT token_version FROM users WHERE id = $1', [userId])).rows[0];
                 if (!userRow) { ws.close(4001, 'Token revoked'); return; }
                 dbTokenVersion = userRow.token_version || 0;
-                await redis.setTokenVersion(userId, dbTokenVersion);
+                await redis.setTokenVersion(tenantId, userId, dbTokenVersion);
             }
             if (tokenVersion !== dbTokenVersion) {
                 ws.close(4001, 'Token revoked');
@@ -97,43 +103,44 @@ function setupWebSocket(server) {
         }
 
         // Register client (enforce per-user connection limit)
-        const wasOffline = !clients.has(userId) || clients.get(userId).size === 0;
-        if (!clients.has(userId)) clients.set(userId, new Set());
-        const userConns = clients.get(userId);
+        const ck = clientKey(tenantId, userId);
+        const wasOffline = !clients.has(ck) || clients.get(ck).size === 0;
+        if (!clients.has(ck)) clients.set(ck, new Set());
+        const userConns = clients.get(ck);
         if (userConns.size >= MAX_CONNECTIONS_PER_USER) {
             ws.close(4029, 'Too many connections');
             return;
         }
         userConns.add(ws);
-        logger.debug({ userId }, 'WS client connected');
+        logger.debug({ userId, tenantId }, 'WS client connected');
 
         // Presence: mark online
         if (wasOffline) {
-            redis.setPresence(userId, redis.TTL.PRESENCE);
+            redis.setPresence(tenantId, userId, redis.TTL.PRESENCE);
             db.query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId]).catch(err => { logger.warn({ err: err.message, userId }, 'Failed to update last_seen_at on connect'); });
-            broadcastPresence(db, userId, 'online');
+            broadcastPresence(db, tenantId, userId, 'online');
         }
 
         ws.on('message', (raw) => {
             try {
                 const msg = JSON.parse(raw);
-                handleChatMessage(db, userId, msg);
+                handleChatMessage(db, userId, tenantId, msg);
             } catch { /* ignore non-JSON */ }
         });
 
         ws.on('close', () => {
-            const set = clients.get(userId);
+            const set = clients.get(ck);
             if (set) {
                 set.delete(ws);
                 if (set.size === 0) {
-                    clients.delete(userId);
+                    clients.delete(ck);
                     // Presence: mark offline
-                    redis.removePresence(userId);
+                    redis.removePresence(tenantId, userId);
                     db.query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId]).catch(err => { logger.warn({ err: err.message, userId }, 'Failed to update last_seen_at on disconnect'); });
-                    broadcastPresence(db, userId, 'offline');
+                    broadcastPresence(db, tenantId, userId, 'offline');
                 }
             }
-            logger.debug({ userId }, 'WS client disconnected');
+            logger.debug({ userId, tenantId }, 'WS client disconnected');
         });
 
         ws.on('error', (err) => {
@@ -161,7 +168,7 @@ function setupWebSocket(server) {
 }
 
 /** Handle incoming WS messages for chat */
-async function handleChatMessage(db, senderId, msg) {
+async function handleChatMessage(db, senderId, tenantId, msg) {
     if (msg.type === 'chat_message') {
         const { conversationId, content, replyToId, formatType, mentions } = msg.data || {};
         if (!conversationId || !content || typeof content !== 'string' || content.trim().length === 0 || content.length > 5000) return;
@@ -232,17 +239,17 @@ async function handleChatMessage(db, senderId, msg) {
         };
 
         for (const p of participants) {
-            sendToUser(p.user_id, 'chat_message', outMsg);
+            sendToUser(tenantId, p.user_id, 'chat_message', outMsg);
             // Increment unread counter for recipients (not sender)
             if (p.user_id !== senderId) {
-                redis.incrUnread(p.user_id, conversationId);
+                redis.incrUnread(tenantId, p.user_id, conversationId);
             }
         }
         if (Array.isArray(mentions) && mentions.length > 0) {
             const participantIdSet = new Set(participants.map(p => p.user_id));
             const mentionedIds = mentions.map(Number).filter(n => n > 0 && n !== senderId && participantIdSet.has(n));
             for (const uid of mentionedIds) {
-                sendToUser(uid, 'chat_mention', {
+                sendToUser(tenantId, uid, 'chat_mention', {
                     conversationId,
                     messageId: result.id,
                     senderId,
@@ -269,7 +276,7 @@ async function handleChatMessage(db, senderId, msg) {
         )).rows;
 
         for (const p of participants) {
-            sendToUser(p.user_id, 'chat_typing', { conversationId, userId: senderId });
+            sendToUser(tenantId, p.user_id, 'chat_typing', { conversationId, userId: senderId });
         }
     } else if (msg.type === 'chat_read') {
         const { conversationId } = msg.data || {};
@@ -287,7 +294,7 @@ async function handleChatMessage(db, senderId, msg) {
              ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = NOW()`,
             [conversationId, senderId]
         );
-        redis.resetUnread(senderId, conversationId);
+        redis.resetUnread(tenantId, senderId, conversationId);
     } else if (msg.type === 'call_initiate') {
         // Caller initiates a call → create call_log, notify participants
         const { conversationId, callType } = msg.data || {};
@@ -318,7 +325,7 @@ async function handleChatMessage(db, senderId, msg) {
         const conv = (await db.query('SELECT name, is_group FROM conversations WHERE id = $1', [conversationId])).rows[0];
 
         for (const p of participants) {
-            sendToUser(p.user_id, 'call_incoming', {
+            sendToUser(tenantId, p.user_id, 'call_incoming', {
                 callId: callLog.id,
                 conversationId,
                 callerId: senderId,
@@ -331,7 +338,7 @@ async function handleChatMessage(db, senderId, msg) {
         }
 
         // Confirm call started to caller
-        sendToUser(senderId, 'call_started', {
+        sendToUser(tenantId, senderId, 'call_started', {
             callId: callLog.id,
             conversationId,
             callType
@@ -359,7 +366,7 @@ async function handleChatMessage(db, senderId, msg) {
         const accepter = (await db.query('SELECT full_name, avatar FROM users WHERE id = $1', [senderId])).rows[0];
 
         // Notify the caller that call was accepted
-        sendToUser(callLog.caller_id, 'call_accepted', {
+        sendToUser(tenantId, callLog.caller_id, 'call_accepted', {
             callId,
             conversationId,
             userId: senderId,
@@ -392,7 +399,7 @@ async function handleChatMessage(db, senderId, msg) {
         )).rows;
 
         for (const p of participants) {
-            sendToUser(p.user_id, 'call_rejected', {
+            sendToUser(tenantId, p.user_id, 'call_rejected', {
                 callId,
                 conversationId,
                 userId: senderId,
@@ -433,7 +440,7 @@ async function handleChatMessage(db, senderId, msg) {
 
         for (const p of allParticipants) {
             if (p.user_id !== senderId) {
-                sendToUser(p.user_id, 'call_ended', { callId, conversationId, endedBy: senderId, duration });
+                sendToUser(tenantId, p.user_id, 'call_ended', { callId, conversationId, endedBy: senderId, duration });
             }
         }
 
@@ -454,7 +461,7 @@ async function handleChatMessage(db, senderId, msg) {
         if (!senderOk || !targetOk) return;
 
         // Relay the signal to the target user
-        sendToUser(targetUserId, 'call_signal', {
+        sendToUser(tenantId, targetUserId, 'call_signal', {
             conversationId,
             fromUserId: senderId,
             signal
@@ -485,7 +492,7 @@ async function handleChatMessage(db, senderId, msg) {
         )).rows;
 
         for (const p of others) {
-            sendToUser(p.user_id, 'call_reconnect', {
+            sendToUser(tenantId, p.user_id, 'call_reconnect', {
                 callId,
                 conversationId,
                 userId: senderId
@@ -549,7 +556,7 @@ async function handleChatMessage(db, senderId, msg) {
             .map(p => ({ userId: p.user_id, fullName: p.full_name, avatar: p.avatar, username: p.username }));
 
         for (const p of allParticipants) {
-            sendToUser(p.user_id, 'meeting_participant_joined', {
+            sendToUser(tenantId, p.user_id, 'meeting_participant_joined', {
                 meetingId,
                 userId: senderId,
                 fullName: joiner?.full_name,
@@ -573,7 +580,7 @@ async function handleChatMessage(db, senderId, msg) {
                 [meeting.conversation_id]
             )).rows;
             for (const p of convParticipants) {
-                sendToUser(p.user_id, 'chat_message', {
+                sendToUser(tenantId, p.user_id, 'chat_message', {
                     id: sysMsg.id, conversationId: meeting.conversation_id, senderId,
                     content: '', formatType: 'system',
                     metadata: { type: 'meeting_joined', meetingId, name: joiner?.full_name },
@@ -597,7 +604,7 @@ async function handleChatMessage(db, senderId, msg) {
         )).rows;
 
         for (const p of activeParticipants) {
-            sendToUser(p.user_id, 'meeting_participant_left', { meetingId, userId: senderId });
+            sendToUser(tenantId, p.user_id, 'meeting_participant_left', { meetingId, userId: senderId });
         }
 
         // If no active participants, mark meeting ended (use WHERE to prevent double-update race)
@@ -633,7 +640,7 @@ async function handleChatMessage(db, senderId, msg) {
         )).rows;
 
         for (const p of activeParticipants) {
-            sendToUser(p.user_id, 'meeting_ended', { meetingId, endedBy: senderId, duration: durationSecs });
+            sendToUser(tenantId, p.user_id, 'meeting_ended', { meetingId, endedBy: senderId, duration: durationSecs });
         }
 
         // System message in conversation
@@ -650,7 +657,7 @@ async function handleChatMessage(db, senderId, msg) {
                 [meeting.conversation_id]
             )).rows;
             for (const p of convParticipants) {
-                sendToUser(p.user_id, 'chat_message', {
+                sendToUser(tenantId, p.user_id, 'chat_message', {
                     id: sysMsg.id, conversationId: meeting.conversation_id, senderId,
                     content: '', formatType: 'system',
                     metadata: { type: 'meeting_ended', meetingId, duration: durationSecs },
@@ -671,7 +678,7 @@ async function handleChatMessage(db, senderId, msg) {
         )).rows[0];
         if (!senderOk) return;
 
-        sendToUser(targetUserId, 'meeting_signal', {
+        sendToUser(tenantId, targetUserId, 'meeting_signal', {
             meetingId,
             fromUserId: senderId,
             signal
@@ -704,7 +711,7 @@ async function handleChatMessage(db, senderId, msg) {
         }
 
         const organizer = (await db.query('SELECT full_name FROM users WHERE id = $1', [senderId])).rows[0];
-        sendToUser(targetUserId, 'meeting_invite', {
+        sendToUser(tenantId, targetUserId, 'meeting_invite', {
             meetingId,
             meetingCode: meeting.meeting_code,
             title: meeting.title,
@@ -721,7 +728,7 @@ async function handleChatMessage(db, senderId, msg) {
         const meeting = (await db.query('SELECT * FROM meetings WHERE id = $1 AND created_by = $2', [meetingId, senderId])).rows[0];
         if (!meeting) return;
 
-        sendToUser(targetUserId, 'meeting_muted', { meetingId, muted: !!muted, byUserId: senderId });
+        sendToUser(tenantId, targetUserId, 'meeting_muted', { meetingId, muted: !!muted, byUserId: senderId });
 
     } else if (msg.type === 'meeting_raise_hand') {
         const { meetingId, raised } = msg.data || {};
@@ -741,7 +748,7 @@ async function handleChatMessage(db, senderId, msg) {
 
         const raiser = (await db.query('SELECT full_name FROM users WHERE id = $1', [senderId])).rows[0];
         for (const p of participants) {
-            sendToUser(p.user_id, 'meeting_hand_raised', { meetingId, userId: senderId, name: raiser?.full_name, raised: !!raised });
+            sendToUser(tenantId, p.user_id, 'meeting_hand_raised', { meetingId, userId: senderId, name: raiser?.full_name, raised: !!raised });
         }
 
     } else if (msg.type === 'meeting_track_state') {
@@ -763,7 +770,7 @@ async function handleChatMessage(db, senderId, msg) {
 
         for (const p of participants) {
             if (p.user_id !== senderId) {
-                sendToUser(p.user_id, 'meeting_track_state', { meetingId, userId: senderId, muted: !!muted, videoOff: !!videoOff, screenSharing: !!screenSharing });
+                sendToUser(tenantId, p.user_id, 'meeting_track_state', { meetingId, userId: senderId, muted: !!muted, videoOff: !!videoOff, screenSharing: !!screenSharing });
             }
         }
 
@@ -793,7 +800,7 @@ async function handleChatMessage(db, senderId, msg) {
         };
 
         for (const p of participants) {
-            sendToUser(p.user_id, 'meeting_message', { meetingId, message });
+            sendToUser(tenantId, p.user_id, 'meeting_message', { meetingId, message });
         }
 
     } else if (msg.type === 'status_change') {
@@ -804,9 +811,9 @@ async function handleChatMessage(db, senderId, msg) {
         const safeText = typeof statusText === 'string' ? statusText.trim().slice(0, 100) : null;
         // Persist to DB + Redis
         await db.query('UPDATE users SET user_status = $1, user_status_text = $2 WHERE id = $3', [status, safeText, senderId]);
-        redis.setUserStatus(senderId, status);
+        redis.setUserStatus(tenantId, senderId, status);
         // Broadcast to org members
-        broadcastStatus(db, senderId, status, safeText);
+        broadcastStatus(db, tenantId, senderId, status, safeText);
 
     } else if (msg.type === 'call_add_participant') {
         // Add a participant to an ongoing 1:1 call (upgrade to group)
@@ -832,7 +839,7 @@ async function handleChatMessage(db, senderId, msg) {
         const caller = (await db.query('SELECT full_name, avatar FROM users WHERE id = $1', [senderId])).rows[0];
 
         // Notify target as incoming call
-        sendToUser(targetUserId, 'call_incoming', {
+        sendToUser(tenantId, targetUserId, 'call_incoming', {
             callId,
             conversationId,
             callerId: senderId,
@@ -847,9 +854,11 @@ async function handleChatMessage(db, senderId, msg) {
 
 /**
  * Deliver a message to a user's local WebSocket connections (this instance only).
+ * When tenantId is provided, only delivers to connections belonging to that tenant.
  */
-function deliverLocal(userId, type, data) {
-    const set = clients.get(userId);
+function deliverLocal(tenantId, userId, type, data) {
+    const ck = clientKey(tenantId, userId);
+    const set = clients.get(ck);
     if (!set) return;
     const msg = JSON.stringify({ type, data });
     for (const ws of set) {
@@ -859,12 +868,13 @@ function deliverLocal(userId, type, data) {
 
 /**
  * Send a message to a specific user (all their open tabs/devices, across all instances).
+ * tenantId ensures messages are only delivered to connections in the correct tenant.
  */
-function sendToUser(userId, type, data) {
+function sendToUser(tenantId, userId, type, data) {
     // Always deliver locally first
-    deliverLocal(userId, type, data);
-    // Publish to Redis for other instances
-    redis.publish('ws:broadcast', { _from: INSTANCE_ID, userId, type, data });
+    deliverLocal(tenantId, userId, type, data);
+    // Publish to Redis for other instances (include tenantId for cross-instance filtering)
+    redis.publish('ws:broadcast', { _from: INSTANCE_ID, tenantId, userId, type, data });
 }
 
 /**
@@ -882,7 +892,7 @@ function broadcast(type, data) {
 /**
  * Broadcast presence change to org members who are online.
  */
-async function broadcastPresence(db, userId, status) {
+async function broadcastPresence(db, tenantId, userId, status) {
     try {
         const user = (await db.query('SELECT org_id, full_name, user_status FROM users WHERE id = $1', [userId])).rows[0];
         if (!user?.org_id) return;
@@ -894,7 +904,7 @@ async function broadcastPresence(db, userId, status) {
         )).rows;
 
         for (const u of orgUsers) {
-            sendToUser(u.id, 'presence_change', { userId, status, fullName: user.full_name, userStatus: user.user_status });
+            sendToUser(tenantId, u.id, 'presence_change', { userId, status, fullName: user.full_name, userStatus: user.user_status });
         }
     } catch { /* ignore */ }
 }
@@ -902,7 +912,7 @@ async function broadcastPresence(db, userId, status) {
 /**
  * Broadcast user status change (available/busy/dnd/away/in_call/in_meeting/offline) to org members.
  */
-async function broadcastStatus(db, userId, userStatus, statusText) {
+async function broadcastStatus(db, tenantId, userId, userStatus, statusText) {
     try {
         const user = (await db.query('SELECT org_id, full_name FROM users WHERE id = $1', [userId])).rows[0];
         if (!user?.org_id) return;
@@ -913,7 +923,7 @@ async function broadcastStatus(db, userId, userStatus, statusText) {
         )).rows;
 
         for (const u of orgUsers) {
-            sendToUser(u.id, 'status_change', { userId, userStatus, statusText, fullName: user.full_name });
+            sendToUser(tenantId, u.id, 'status_change', { userId, userStatus, statusText, fullName: user.full_name });
         }
     } catch { /* ignore */ }
 }
@@ -922,7 +932,7 @@ async function broadcastStatus(db, userId, userStatus, statusText) {
  * Create a notification in the DB and push it to the user via WebSocket.
  * Drop-in wrapper: call this instead of raw INSERT INTO notifications.
  */
-async function notifyUser(db, userId, type, title, body, linkTaskId) {
+async function notifyUser(db, tenantId, userId, type, title, body, linkTaskId) {
     try {
         const sql = linkTaskId
             ? 'INSERT INTO notifications (user_id, type, title, body, link_task_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at'
@@ -932,7 +942,7 @@ async function notifyUser(db, userId, type, title, body, linkTaskId) {
             : [userId, type, title, body];
         const row = (await db.query(sql, params)).rows[0];
         if (row) {
-            sendToUser(userId, 'notification', {
+            sendToUser(tenantId, userId, 'notification', {
                 id: row.id, type, title, body,
                 link_task_id: linkTaskId || null,
                 created_at: row.created_at, is_read: false,

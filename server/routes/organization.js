@@ -7,7 +7,8 @@ const { logger } = require('../utils/logger');
 const redis = require('../redis');
 
 const router = express.Router();
-router.use(auth, loadUserContext);
+const { requireTenant } = require('../middleware/tenant');
+router.use(auth, loadUserContext, requireTenant);
 
 /**
  * Resolve the effective org_id for platform_admin (who has no user-level org).
@@ -44,7 +45,7 @@ router.post('/', requireRole('super_admin'), async (req, res) => {
         const orgId = result.rows[0].id;
 
         await req.db.query('UPDATE users SET org_id = $1, role = $2 WHERE id = $3', [orgId, 'super_admin', req.userId]);
-        await redis.invalidateUserContext(req.userId);
+        await redis.invalidateUserContext(req.tenantId, req.userId);
         logAction(req, 'create', 'organization', orgId, { name: name.trim() });
 
         res.json({ id: orgId, name: name.trim(), slug, message: 'Organization created successfully' });
@@ -108,7 +109,7 @@ router.put('/settings', requireRole('hr_admin'), requireSameOrg, async (req, res
 
         params.push(req.userOrgId);
         await req.db.query(`UPDATE organizations SET ${updates.join(', ')} WHERE id = $${pi}`, params);
-        await redis.invalidateOrgConfig(req.userOrgId);
+        await redis.invalidateOrgConfig(req.tenantId, req.userOrgId);
         logAction(req, 'update', 'organization', req.userOrgId, req.body);
 
         const org = (await req.db.query('SELECT * FROM organizations WHERE id = $1', [req.userOrgId])).rows[0];
@@ -194,7 +195,7 @@ router.post('/invite', requireRole('hr_admin'), requireSameOrg, async (req, res)
 
         await req.db.query('UPDATE users SET org_id = $1, role = $2, department_id = $3, team_id = $4 WHERE id = $5',
             [req.userOrgId, assignRole, department_id || null, team_id || null, user_id]);
-        await redis.invalidateUserContext(user_id);
+        await redis.invalidateUserContext(req.tenantId, user_id);
         logAction(req, 'invite', 'user', user_id, { role: assignRole, department_id, team_id });
 
         res.json({ message: `${target.full_name} added to the organization` });
@@ -218,7 +219,7 @@ router.post('/remove-member', requireRole('hr_admin'), requireSameOrg, async (re
         }
 
         await req.db.query("UPDATE users SET org_id = NULL, team_id = NULL, department_id = NULL, role = 'employee' WHERE id = $1", [user_id]);
-        await redis.invalidateUserContext(user_id);
+        await redis.invalidateUserContext(req.tenantId, user_id);
         logAction(req, 'remove_member', 'user', user_id, { name: target.full_name });
 
         res.json({ message: `${target.full_name} has been removed from the organization` });

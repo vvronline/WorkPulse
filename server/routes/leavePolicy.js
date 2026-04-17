@@ -6,7 +6,8 @@ const { logAction } = require('../utils/audit');
 const { logger } = require('../utils/logger');
 
 const router = express.Router();
-router.use(auth, loadUserContext);
+const { requireTenant } = require('../middleware/tenant');
+router.use(auth, loadUserContext, requireTenant);
 
 // ==================== LEAVE POLICIES (HR Admin+) ====================
 

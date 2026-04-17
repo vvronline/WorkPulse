@@ -9,7 +9,8 @@ const { loadUserContext, ROLE_LEVEL } = require('../middleware/rbac');
 const redis = require('../redis');
 
 const router = express.Router();
-router.use(auth, loadUserContext);
+const { requireTenant } = require('../middleware/tenant');
+router.use(auth, loadUserContext, requireTenant);
 
 /**
  * GET /api/search?q=<term>
@@ -26,7 +27,7 @@ router.get('/', async (req, res) => {
         const term = q.trim().slice(0, 100); // cap length to prevent expensive queries
 
         // Check Redis cache first
-        const cached = await redis.getSearchCache(req.userId, term);
+        const cached = await redis.getSearchCache(req.tenantId, req.userId, term);
         if (cached) return res.json(cached);
 
         // Build a prefix-matching tsquery: each word gets :* for partial matching
@@ -169,7 +170,7 @@ router.get('/', async (req, res) => {
         };
 
         // Cache results in Redis (2-min TTL)
-        await redis.setSearchCache(req.userId, term, results);
+        await redis.setSearchCache(req.tenantId, req.userId, term, results);
 
         res.json(results);
     } catch (err) {

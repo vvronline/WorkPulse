@@ -12,8 +12,10 @@ const { loadUserContext } = require('../middleware/rbac');
 const { logAction } = require('../utils/audit');
 const { validatePassword, validateUsername, BCRYPT_ROUNDS } = require('../utils/password');
 const { logger } = require('../utils/logger');
+const { requireTenant } = require('../middleware/tenant');
 
 const router = express.Router();
+router.use(requireTenant);
 
 const isProduction = process.env.NODE_ENV === 'production';
 // Use secure cookies only when HTTPS is actually configured.
@@ -236,14 +238,14 @@ router.put('/password', auth, loadUserContext, async (req, res) => {
 
         const hash = await bcrypt.hash(new_password, BCRYPT_ROUNDS);
         await req.db.query('UPDATE users SET password = $1, token_version = COALESCE(token_version, 0) + 1, must_change_password = FALSE WHERE id = $2', [hash, req.userId]);
-        await redis.invalidateTokenVersion(req.userId);
+        await redis.invalidateTokenVersion(req.tenantId, req.userId);
         // Clear other sessions, keep the current one
         if (req.sessionId) {
             await req.db.query('DELETE FROM user_sessions WHERE user_id = $1 AND id != $2', [req.userId, req.sessionId]);
         } else {
             await req.db.query('DELETE FROM user_sessions WHERE user_id = $1', [req.userId]);
         }
-        await redis.invalidateUserSessions(req.userId);
+        await redis.invalidateUserSessions(req.tenantId, req.userId);
         const updated = (await req.db.query('SELECT token_version FROM users WHERE id = $1', [req.userId])).rows[0];
         const tokenPayload = { id: req.userId, username: req.username, tv: updated.token_version || 0, sid: req.sessionId };
         if (req.tenantId) tokenPayload.tenant_id = req.tenantId;

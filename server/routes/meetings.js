@@ -5,9 +5,10 @@ const { loadUserContext } = require('../middleware/rbac');
 const { sendToUser } = require('../utils/ws');
 const { notifyByEmail } = require('../utils/mailer');
 const redis = require('../redis');
+const { requireTenant } = require('../middleware/tenant');
 
 const router = express.Router();
-router.use(auth);
+router.use(auth, requireTenant);
 router.use(loadUserContext);
 
 /** Generate a unique meeting code: XXX-XXXX-XXX */
@@ -46,7 +47,7 @@ async function insertSystemMessage(conversationId, senderId, metadata, db) {
     };
 
     for (const p of participants) {
-        sendToUser(p.user_id, 'chat_message', outMsg);
+        sendToUser(req.tenantId, p.user_id, 'chat_message', outMsg);
     }
     return result;
 }
@@ -171,7 +172,7 @@ router.get('/:code', async (req, res) => {
         const meeting = result.rows[0];
 
         // Fetch participants (with Redis cache for active meetings)
-        let participantRows = await redis.getMeetingParticipants(meeting.id);
+        let participantRows = await redis.getMeetingParticipants(req.tenantId, meeting.id);
         if (!participantRows) {
             participantRows = (await req.db.query(
                 `SELECT mp.*, u.full_name, u.avatar, u.username
@@ -180,7 +181,7 @@ router.get('/:code', async (req, res) => {
                 [meeting.id]
             )).rows;
             if (meeting.status === 'active' || meeting.status === 'scheduled') {
-                await redis.setMeetingParticipants(meeting.id, participantRows);
+                await redis.setMeetingParticipants(req.tenantId, meeting.id, participantRows);
             }
         }
         meeting.participants = participantRows;
@@ -302,7 +303,7 @@ router.post('/', async (req, res) => {
                 `INSERT INTO notifications (user_id, type, title, body) VALUES ($1, 'meeting_invite', $2, $3)`,
                 [uid, `Meeting invitation`, notifBody]
             );
-            sendToUser(uid, 'meeting_invite', {
+            sendToUser(req.tenantId, uid, 'meeting_invite', {
                 meetingId: meeting.id,
                 meetingCode: code,
                 title: meeting.title,
@@ -475,7 +476,7 @@ router.post('/:id/participants', async (req, res) => {
              VALUES ($1, $2, 'participant', 'invited') ON CONFLICT (meeting_id, user_id) DO NOTHING`,
             [meetingId, user_id]
         );
-        await redis.invalidateMeetingParticipants(meetingId);
+        await redis.invalidateMeetingParticipants(req.tenantId, meetingId);
 
         // Add to conversation
         if (meeting.conversation_id) {
@@ -518,7 +519,7 @@ router.post('/:id/participants', async (req, res) => {
             `INSERT INTO notifications (user_id, type, title, body) VALUES ($1, 'meeting_invite', $2, $3)`,
             [user_id, `Meeting invitation`, notifBody]
         );
-        sendToUser(user_id, 'meeting_invite', {
+        sendToUser(req.tenantId, user_id, 'meeting_invite', {
             meetingId,
             meetingCode: meeting.meeting_code,
             title: meeting.title,
@@ -551,8 +552,8 @@ router.delete('/:id/participants/:userId', async (req, res) => {
         }
 
         await req.db.query('DELETE FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2', [meetingId, targetId]);
-        await redis.invalidateMeetingParticipants(meetingId);
-        sendToUser(targetId, 'meeting_removed', { meetingId, title: meeting.title });
+        await redis.invalidateMeetingParticipants(req.tenantId, meetingId);
+        sendToUser(req.tenantId, targetId, 'meeting_removed', { meetingId, title: meeting.title });
 
         res.json({ message: 'Participant removed' });
     } catch (err) {

@@ -10,17 +10,19 @@ const { logger } = require('../utils/logger');
 const { notifyByEmail } = require('../utils/mailer');
 const { sendToUser } = require('../utils/ws');
 const redis = require('../redis');
+const { requireTenant } = require('../middleware/tenant');
 
 const router = express.Router();
+router.use(requireTenant);
 
 // Helper: fetch org config with Redis cache
-async function getOrgWorkConfig(orgId, db) {
+async function getOrgWorkConfig(orgId, db, tenantId) {
     if (!orgId) return { work_hours_per_day: 8, work_days: '1,2,3,4,5' };
-    const cached = await redis.getOrgConfig(orgId);
+    const cached = await redis.getOrgConfig(tenantId, orgId);
     if (cached) return cached;
     const result = await db.query('SELECT work_hours_per_day, work_days FROM organizations WHERE id = $1', [orgId]);
     const config = result.rows[0] || { work_hours_per_day: 8, work_days: '1,2,3,4,5' };
-    await redis.setOrgConfig(orgId, config);
+    await redis.setOrgConfig(tenantId, orgId, config);
     return config;
 }
 
@@ -53,7 +55,7 @@ router.get('/status', auth, async (req, res) => {
         const orgRow = (await req.db.query(
             `SELECT u.org_id FROM users u WHERE u.id = $1`, [req.userId],
         )).rows[0];
-        const orgConfig = await getOrgWorkConfig(orgRow?.org_id, req.db);
+        const orgConfig = await getOrgWorkConfig(orgRow?.org_id, req.db, req.tenantId);
         const targetMinutes = (orgConfig.work_hours_per_day || 8) * 60;
 
         const result = await req.db.query(
@@ -109,7 +111,7 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
 
         let workDays = [1, 2, 3, 4, 5];
         if (req.userOrgId) {
-            const orgConfig = await getOrgWorkConfig(req.userOrgId, req.db);
+            const orgConfig = await getOrgWorkConfig(req.userOrgId, req.db, req.tenantId);
             const wd = orgConfig.work_days;
             if (wd) workDays = wd.split(',').map(Number).filter(n => !isNaN(n));
         }
@@ -119,7 +121,7 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
 
         // Block re-login if daily target already met without approved overtime
         if (req.userOrgId) {
-            const orgConfig = await getOrgWorkConfig(req.userOrgId, req.db);
+            const orgConfig = await getOrgWorkConfig(req.userOrgId, req.db, req.tenantId);
             const targetMin = (orgConfig.work_hours_per_day || 8) * 60;
             const todayEntries = (await req.db.query(
                 `SELECT * FROM time_entries
@@ -279,7 +281,7 @@ router.post('/clock-out', auth, async (req, res) => {
         if (txResult.error) return res.status(400).json({ error: txResult.error });
         // Set user status to offline on clock-out
         await req.db.query('UPDATE users SET user_status = $1, user_status_text = NULL WHERE id = $2', ['offline', req.userId]);
-        await redis.setUserStatus(req.userId, 'offline');
+        await redis.setUserStatus(req.tenantId, req.userId, 'offline');
         logAction(req, 'clock_out', 'time_entry', null, {});
         res.json({ message: 'Logged out. See you tomorrow!' });
     } catch (err) {
@@ -515,7 +517,7 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
                     'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
                     [txApprover.id, 'approval', 'New Manual Entry Request', `${requesterName} submitted a manual time entry for ${date}.`]
                 );
-                sendToUser(txApprover.id, 'approval_update', { type: 'manual_entry', status: 'pending' });
+                sendToUser(req.tenantId, txApprover.id, 'approval_update', { type: 'manual_entry', status: 'pending' });
             } catch (notifErr) {
                 req.log.error({ err: notifErr }, 'Manager notification error (manual entry)');
             }
@@ -659,7 +661,7 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
                     'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
                     [txApproverEdit.id, 'approval', 'Manual Entry Updated', `${requesterName} updated a manual time entry for ${date}.`]
                 );
-                sendToUser(txApproverEdit.id, 'approval_update', { type: 'manual_entry', status: 'pending' });
+                sendToUser(req.tenantId, txApproverEdit.id, 'approval_update', { type: 'manual_entry', status: 'pending' });
             } catch (notifErr) {
                 req.log.error({ err: notifErr }, 'Manager notification error (manual entry edit)');
             }
@@ -760,7 +762,7 @@ router.get('/widgets', auth, async (req, res) => {
         let totalFloorMin = 0, workDays = 0, targetMetDays = 0, officeDays = 0, remoteDays = 0;
         let orgWhpd = 8;
         if (req.userOrgId) {
-            const orgConfig = await getOrgWorkConfig(req.userOrgId, req.db);
+            const orgConfig = await getOrgWorkConfig(req.userOrgId, req.db, req.tenantId);
             if (orgConfig.work_hours_per_day) orgWhpd = orgConfig.work_hours_per_day;
         }
         const TARGET = orgWhpd * 60;
@@ -929,7 +931,7 @@ router.post('/overtime-request', auth, loadUserContext, async (req, res) => {
                     'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
                     [approver.id, 'approval', 'Overtime Request', `${requesterName} requested ${numHours}h overtime for ${date}.`]
                 );
-                sendToUser(approver.id, 'approval_update', { type: 'overtime', status: 'pending' });
+                sendToUser(req.tenantId, approver.id, 'approval_update', { type: 'overtime', status: 'pending' });
             }
         } catch (notifErr) {
             req.log.error({ err: notifErr }, 'Manager notification error (overtime)');

@@ -25,7 +25,8 @@ async function authMiddleware(req, res, next) {
         // Skip token version & session checks for virtual impersonation (no real user in tenant)
         if (!isVirtualImpersonation) {
             // Try Redis cache first for token version check
-            let dbTokenVersion = await redis.getTokenVersion(decoded.id);
+            const tenantId = decoded.tenant_id || null;
+            let dbTokenVersion = await redis.getTokenVersion(tenantId, decoded.id);
             if (dbTokenVersion === null) {
                 const result = (isPlatformUser && !hasTenantContext)
                     ? await dbQuery('SELECT token_version FROM platform_users WHERE id = $1', [decoded.id])
@@ -35,7 +36,7 @@ async function authMiddleware(req, res, next) {
                     return res.status(401).json({ error: 'User no longer exists' });
                 }
                 dbTokenVersion = user.token_version || 0;
-                await redis.setTokenVersion(decoded.id, dbTokenVersion);
+                await redis.setTokenVersion(tenantId, decoded.id, dbTokenVersion);
             }
 
             if (tokenVersion !== dbTokenVersion) {
@@ -44,11 +45,11 @@ async function authMiddleware(req, res, next) {
 
             // Validate session is still active (max-2-device enforcement)
             if (decoded.sid) {
-                let sessions = await redis.getUserSessions(decoded.id);
+                let sessions = await redis.getUserSessions(tenantId, decoded.id);
                 if (sessions === null) {
                     const sessRes = await dbQuery('SELECT id FROM user_sessions WHERE user_id = $1', [decoded.id]);
                     sessions = sessRes.rows.map(r => r.id);
-                    await redis.setUserSessions(decoded.id, sessions);
+                    await redis.setUserSessions(tenantId, decoded.id, sessions);
                 }
                 if (!sessions.includes(decoded.sid)) {
                     return res.status(401).json({ error: 'Session ended. You may have signed in on another device.' });

@@ -5,7 +5,8 @@ const { loadUserContext } = require('../middleware/rbac');
 const { logger } = require('../utils/logger');
 
 const router = express.Router();
-router.use(auth, loadUserContext);
+const { requireTenant } = require('../middleware/tenant');
+router.use(auth, loadUserContext, requireTenant);
 
 router.get('/', async (req, res) => {
     try {

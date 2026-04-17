@@ -55,7 +55,7 @@ async function loadUserContext(req, res, next) {
         const isPlatformWithTenant = (req.isPlatformUser && !!req.tenantId) || (req.isImpersonated && !!req.impersonatedBy);
 
         // Try Redis cache first
-        const cached = await redis.getUserContext(req.userId);
+        const cached = await redis.getUserContext(req.tenantId, req.userId);
         if (cached) {
             req.userRole = isPlatformWithTenant ? 'platform_admin' : (cached.role || 'employee');
             req.userOrgId = cached.org_id || null;
@@ -76,7 +76,7 @@ async function loadUserContext(req, res, next) {
         if (!user.is_active) return res.status(403).json({ error: 'Account has been deactivated. Contact your administrator.' });
 
         // Cache user context in Redis
-        await redis.setUserContext(req.userId, {
+        await redis.setUserContext(req.tenantId, req.userId, {
             role: user.role, org_id: user.org_id, team_id: user.team_id,
             department_id: user.department_id, manager_id: user.manager_id, is_active: user.is_active,
         });

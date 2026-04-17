@@ -7,8 +7,10 @@ const auth = require('../middleware/auth');
 const { loadUserContext } = require('../middleware/rbac');
 const { sendToUser } = require('../utils/ws');
 const redis = require('../redis');
+const { requireTenant } = require('../middleware/tenant');
 
 const router = express.Router();
+router.use(requireTenant);
 
 // ─── File upload setup ───
 const uploadDir = path.join(__dirname, '..', 'uploads', 'chat');
@@ -121,8 +123,8 @@ router.get('/presence', auth, async (req, res) => {
         if (!orgId) return res.json({});
 
         // Try Redis presence first
-        const redisPresence = await redis.getOnlineUsers(ids);
-        const redisStatuses = await redis.getUserStatuses(ids);
+        const redisPresence = await redis.getOnlineUsers(req.tenantId, ids);
+        const redisStatuses = await redis.getUserStatuses(req.tenantId, ids);
 
         if (redisPresence) {
             // Merge presence with status
@@ -183,7 +185,7 @@ router.put('/status', auth, async (req, res) => {
         }
         const safeText = typeof statusText === 'string' ? statusText.trim().slice(0, 100) : null;
         await req.db.query('UPDATE users SET user_status = $1, user_status_text = $2 WHERE id = $3', [status, safeText, req.userId]);
-        await redis.setUserStatus(req.userId, status);
+        await redis.setUserStatus(req.tenantId, req.userId, status);
         res.json({ status, statusText: safeText });
     } catch (err) {
         req.log.error({ err }, 'Update status error');
@@ -324,7 +326,7 @@ router.post('/conversations/group', auth, async (req, res) => {
 
         for (const uid of allIds) {
             if (uid !== req.userId) {
-                sendToUser(uid, 'chat_group_created', { conversationId: conv.id, name: name.trim() });
+                sendToUser(req.tenantId, uid, 'chat_group_created', { conversationId: conv.id, name: name.trim() });
             }
         }
 
@@ -365,7 +367,7 @@ router.put('/conversations/:id/group', auth, async (req, res) => {
                     'INSERT INTO conversation_participants (conversation_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
                     [convId, uid]
                 );
-                sendToUser(uid, 'chat_group_added', { conversationId: convId });
+                sendToUser(req.tenantId, uid, 'chat_group_added', { conversationId: convId });
             }
         }
 
@@ -384,7 +386,7 @@ router.put('/conversations/:id/group', auth, async (req, res) => {
                     'DELETE FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
                     [convId, uid]
                 );
-                sendToUser(uid, 'chat_group_removed', { conversationId: convId });
+                sendToUser(req.tenantId, uid, 'chat_group_removed', { conversationId: convId });
             }
         }
 
@@ -479,7 +481,7 @@ router.get('/conversations', auth, async (req, res) => {
         // Overlay Redis unread counts if available (faster than the SQL subquery)
         if (rows.length > 0) {
             const convIds = rows.map(r => r.id);
-            const redisCounts = await redis.getUnreadCounts(req.userId, convIds);
+            const redisCounts = await redis.getUnreadCounts(req.tenantId, req.userId, convIds);
             if (redisCounts) {
                 for (const row of rows) {
                     row.unread_count = redisCounts[row.id] ?? row.unread_count;
@@ -584,7 +586,7 @@ router.post('/conversations/:id/read', auth, async (req, res) => {
              ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = NOW()`,
             [convId, req.userId]
         );
-        redis.resetUnread(req.userId, convId);
+        redis.resetUnread(req.tenantId, req.userId, convId);
 
         // Notify others about read receipt
         const participants = (await req.db.query(
@@ -592,7 +594,7 @@ router.post('/conversations/:id/read', auth, async (req, res) => {
             [convId, req.userId]
         )).rows;
         for (const p of participants) {
-            sendToUser(p.user_id, 'chat_read_receipt', {
+            sendToUser(req.tenantId, p.user_id, 'chat_read_receipt', {
                 conversationId: convId,
                 userId: req.userId,
                 readAt: new Date().toISOString()
@@ -694,9 +696,9 @@ router.post('/conversations/:id/files', auth, loadUserContext, chatUpload.single
         };
 
         for (const p of participants) {
-            sendToUser(p.user_id, 'chat_message', outMsg);
+            sendToUser(req.tenantId, p.user_id, 'chat_message', outMsg);
             if (p.user_id !== req.userId) {
-                redis.incrUnread(p.user_id, convId);
+                redis.incrUnread(req.tenantId, p.user_id, convId);
             }
         }
 
@@ -749,7 +751,7 @@ router.post('/messages/:id/reactions', auth, async (req, res) => {
         )).rows;
 
         for (const p of participants) {
-            sendToUser(p.user_id, 'chat_reaction', {
+            sendToUser(req.tenantId, p.user_id, 'chat_reaction', {
                 messageId: msgId,
                 conversationId: msg.conversation_id,
                 userId: req.userId,
@@ -792,7 +794,7 @@ router.put('/messages/:id', auth, async (req, res) => {
         )).rows;
 
         for (const p of participants) {
-            sendToUser(p.user_id, 'chat_edit', {
+            sendToUser(req.tenantId, p.user_id, 'chat_edit', {
                 messageId: msgId,
                 conversationId: msg.conversation_id,
                 content: content.trim(),
@@ -828,7 +830,7 @@ router.delete('/messages/:id', auth, async (req, res) => {
         )).rows;
 
         for (const p of participants) {
-            sendToUser(p.user_id, 'chat_delete', {
+            sendToUser(req.tenantId, p.user_id, 'chat_delete', {
                 messageId: msgId,
                 conversationId: msg.conversation_id
             });
@@ -878,7 +880,7 @@ router.post('/messages/:id/pin', auth, async (req, res) => {
         const sender = (await req.db.query('SELECT full_name FROM users WHERE id = $1', [req.userId])).rows[0];
 
         for (const p of participants) {
-            sendToUser(p.user_id, 'chat_pin', {
+            sendToUser(req.tenantId, p.user_id, 'chat_pin', {
                 messageId: msgId,
                 conversationId: msg.conversation_id,
                 pinned: !isPinned,
@@ -1042,7 +1044,7 @@ router.post('/messages/:id/forward', auth, async (req, res) => {
             };
 
             for (const p of participants) {
-                sendToUser(p.user_id, 'chat_message', outMsg);
+                sendToUser(req.tenantId, p.user_id, 'chat_message', outMsg);
             }
         }
 
@@ -1170,7 +1172,7 @@ router.post('/conversations/:id/polls', auth, async (req, res) => {
         };
 
         for (const p of participants) {
-            sendToUser(p.user_id, 'chat_message', outMsg);
+            sendToUser(req.tenantId, p.user_id, 'chat_message', outMsg);
         }
 
         res.status(201).json({ ok: true, poll, messageId: result.id });
@@ -1229,7 +1231,7 @@ router.post('/polls/:id/vote', auth, async (req, res) => {
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1', [poll.conversation_id]
         )).rows;
         for (const p of participants) {
-            sendToUser(p.user_id, 'chat_poll_vote', {
+            sendToUser(req.tenantId, p.user_id, 'chat_poll_vote', {
                 pollId, conversationId: poll.conversation_id, votes: voteMap
             });
         }
@@ -1396,7 +1398,7 @@ router.delete('/conversations/:id/messages', auth, async (req, res) => {
         )).rows;
 
         for (const p of participants) {
-            sendToUser(p.user_id, 'chat_cleared', { conversationId: convId });
+            sendToUser(req.tenantId, p.user_id, 'chat_cleared', { conversationId: convId });
         }
 
         res.json({ ok: true });
@@ -1435,7 +1437,7 @@ router.delete('/conversations/:id', auth, async (req, res) => {
         await req.db.query('DELETE FROM conversations WHERE id = $1', [convId]);
 
         for (const p of participants) {
-            sendToUser(p.user_id, 'chat_conv_deleted', { conversationId: convId });
+            sendToUser(req.tenantId, p.user_id, 'chat_conv_deleted', { conversationId: convId });
         }
 
         res.json({ ok: true });

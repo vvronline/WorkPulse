@@ -4,7 +4,8 @@ const auth = require('../middleware/auth');
 const { logger } = require('../utils/logger');
 
 const router = express.Router();
-router.use(auth);
+const { requireTenant } = require('../middleware/tenant');
+router.use(auth, requireTenant);
 
 const MAX_HISTORY = 50;
 

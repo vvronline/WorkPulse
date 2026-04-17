@@ -146,8 +146,16 @@ app.use('/uploads', authMiddleware, async (req, res, next) => {
     if (!resolved.startsWith(path.resolve(__dirname, 'uploads'))) {
         return res.status(403).json({ error: 'Forbidden' });
     }
-    // Enforce tenant isolation: org-scoped paths like /uploads/org_42/... must match user's org
-    const orgMatch = req.path.match(/^\/org_(\d+)\//);
+    // Enforce tenant isolation: tenant-scoped paths like /uploads/tenant_5/org_42/...
+    const tenantMatch = req.path.match(/^\/tenant_(\d+)\//);
+    if (tenantMatch) {
+        const pathTenantId = parseInt(tenantMatch[1], 10);
+        if (!req.tenantId || req.tenantId !== pathTenantId) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+    }
+    // Enforce org isolation: org-scoped paths like /uploads/tenant_5/org_42/... must match user's org
+    const orgMatch = req.path.match(/\/org_(\d+)\//);
     if (orgMatch) {
         const pathOrgId = parseInt(orgMatch[1], 10);
         const user = (await req.db.query('SELECT org_id FROM users WHERE id = $1', [req.userId])).rows[0];
@@ -174,11 +182,14 @@ function makeStore(prefix) {
     return undefined; // express-rate-limit uses MemoryStore by default
 }
 
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 15, store: makeStore('auth'), message: { error: 'Too many attempts. Please try again later.' } });
-const registerLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, store: makeStore('reg'), message: { error: 'Too many registration attempts. Please try again later.' } });
-const forgotPasswordLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, store: makeStore('fp'), message: { error: 'Too many password reset attempts. Please try again later.' } });
-const passwordLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, store: makeStore('pw'), message: { error: 'Too many password attempts. Please try again later.' } });
-const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5000, store: makeStore('api'), message: { error: 'Too many requests. Please try again later.' } });
+// Per-tenant rate limiting: include tenantId in the key so tenants can't exhaust each other's quotas
+const tenantKeyGen = (req) => `${req.tenantId || 'master'}:${req.ip}`;
+const rlOpts = (prefix, max) => ({ windowMs: 15 * 60 * 1000, max, store: makeStore(prefix), keyGenerator: tenantKeyGen, validate: { keyGeneratorIpFallback: false } });
+const authLimiter = rateLimit({ ...rlOpts('auth', 15), message: { error: 'Too many attempts. Please try again later.' } });
+const registerLimiter = rateLimit({ ...rlOpts('reg', 10), message: { error: 'Too many registration attempts. Please try again later.' } });
+const forgotPasswordLimiter = rateLimit({ ...rlOpts('fp', 5), message: { error: 'Too many password reset attempts. Please try again later.' } });
+const passwordLimiter = rateLimit({ ...rlOpts('pw', 10), message: { error: 'Too many password attempts. Please try again later.' } });
+const apiLimiter = rateLimit({ ...rlOpts('api', 5000), message: { error: 'Too many requests. Please try again later.' } });
 
 app.use('/api/auth/register', registerLimiter);
 app.use('/api/auth/forgot-password', forgotPasswordLimiter);

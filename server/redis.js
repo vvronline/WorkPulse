@@ -102,32 +102,40 @@ async function publish(channel, data) {
     } catch { /* ignore */ }
 }
 
+// -- Tenant-scoped key helper --
+// All tenant-scoped data MUST include tenantId to prevent cross-tenant collisions.
+// Keys are prefixed: t:<tenantId>:<originalKey>  (or just <originalKey> when tenantId is null for master context).
+function tk(tenantId, ...parts) {
+    const base = parts.join(':');
+    return tenantId ? `t:${tenantId}:${base}` : base;
+}
+
 // -- Presence helpers --
 
-async function setPresence(userId, ttlSeconds) {
+async function setPresence(tenantId, userId, ttlSeconds) {
     if (!isReady) return;
     try {
-        await client.set(`presence:${userId}`, '1', 'EX', ttlSeconds || TTL.PRESENCE);
+        await client.set(tk(tenantId, 'presence', userId), '1', 'EX', ttlSeconds || TTL.PRESENCE);
     } catch { /* ignore */ }
 }
 
-async function removePresence(userId) {
+async function removePresence(tenantId, userId) {
     if (!isReady) return;
-    try { await client.del(`presence:${userId}`); } catch { /* ignore */ }
+    try { await client.del(tk(tenantId, 'presence', userId)); } catch { /* ignore */ }
 }
 
-async function isOnline(userId) {
+async function isOnline(tenantId, userId) {
     if (!isReady) return null;
     try {
-        return !!(await client.exists(`presence:${userId}`));
+        return !!(await client.exists(tk(tenantId, 'presence', userId)));
     } catch { return null; }
 }
 
-async function getOnlineUsers(userIds) {
+async function getOnlineUsers(tenantId, userIds) {
     if (!isReady || !userIds.length) return null;
     try {
         const pipeline = client.pipeline();
-        for (const id of userIds) pipeline.exists(`presence:${id}`);
+        for (const id of userIds) pipeline.exists(tk(tenantId, 'presence', id));
         const results = await pipeline.exec();
         const map = {};
         for (let i = 0; i < userIds.length; i++) {
@@ -140,25 +148,25 @@ async function getOnlineUsers(userIds) {
 
 // -- User status helpers --
 
-async function setUserStatus(userId, status) {
+async function setUserStatus(tenantId, userId, status) {
     if (!isReady) return;
     try {
-        await client.set(`user_status:${userId}`, status, 'EX', TTL.USER_CONTEXT);
+        await client.set(tk(tenantId, 'user_status', userId), status, 'EX', TTL.USER_CONTEXT);
     } catch { /* ignore */ }
 }
 
-async function getUserStatus(userId) {
+async function getUserStatus(tenantId, userId) {
     if (!isReady) return null;
     try {
-        return await client.get(`user_status:${userId}`);
+        return await client.get(tk(tenantId, 'user_status', userId));
     } catch { return null; }
 }
 
-async function getUserStatuses(userIds) {
+async function getUserStatuses(tenantId, userIds) {
     if (!isReady || !userIds.length) return null;
     try {
         const pipeline = client.pipeline();
-        for (const id of userIds) pipeline.get(`user_status:${id}`);
+        for (const id of userIds) pipeline.get(tk(tenantId, 'user_status', id));
         const results = await pipeline.exec();
         const map = {};
         for (let i = 0; i < userIds.length; i++) {
@@ -170,25 +178,25 @@ async function getUserStatuses(userIds) {
 
 // -- Unread counter helpers --
 
-async function incrUnread(userId, conversationId) {
+async function incrUnread(tenantId, userId, conversationId) {
     if (!isReady) return;
     try {
-        await client.incr(`unread:${userId}:${conversationId}`);
+        await client.incr(tk(tenantId, 'unread', userId, conversationId));
     } catch { /* ignore */ }
 }
 
-async function resetUnread(userId, conversationId) {
+async function resetUnread(tenantId, userId, conversationId) {
     if (!isReady) return;
     try {
-        await client.del(`unread:${userId}:${conversationId}`);
+        await client.del(tk(tenantId, 'unread', userId, conversationId));
     } catch { /* ignore */ }
 }
 
-async function getUnreadCounts(userId, conversationIds) {
+async function getUnreadCounts(tenantId, userId, conversationIds) {
     if (!isReady || !conversationIds.length) return null;
     try {
         const pipeline = client.pipeline();
-        for (const cid of conversationIds) pipeline.get(`unread:${userId}:${cid}`);
+        for (const cid of conversationIds) pipeline.get(tk(tenantId, 'unread', userId, cid));
         const results = await pipeline.exec();
         const map = {};
         for (let i = 0; i < conversationIds.length; i++) {
@@ -200,105 +208,105 @@ async function getUnreadCounts(userId, conversationIds) {
 
 // -- Search cache helpers --
 
-function searchKey(userId, queryStr) {
+function searchKey(tenantId, userId, queryStr) {
     const crypto = require('crypto');
     const hash = crypto.createHash('md5').update(queryStr).digest('hex');
-    return `search:${userId}:${hash}`;
+    return tk(tenantId, 'search', userId, hash);
 }
 
-async function getSearchCache(userId, queryStr) {
-    return get(searchKey(userId, queryStr));
+async function getSearchCache(tenantId, userId, queryStr) {
+    return get(searchKey(tenantId, userId, queryStr));
 }
 
-async function setSearchCache(userId, queryStr, results) {
-    return set(searchKey(userId, queryStr), results, TTL.SEARCH);
+async function setSearchCache(tenantId, userId, queryStr, results) {
+    return set(searchKey(tenantId, userId, queryStr), results, TTL.SEARCH);
 }
 
 // -- Sprint cache helpers --
 
-async function getActiveSprint(teamId) {
-    return get(`sprint:active:${teamId}`);
+async function getActiveSprint(tenantId, teamId) {
+    return get(tk(tenantId, 'sprint', 'active', teamId));
 }
 
-async function setActiveSprint(teamId, sprint) {
-    return set(`sprint:active:${teamId}`, sprint, TTL.SPRINT);
+async function setActiveSprint(tenantId, teamId, sprint) {
+    return set(tk(tenantId, 'sprint', 'active', teamId), sprint, TTL.SPRINT);
 }
 
-async function invalidateActiveSprint(teamId) {
-    return del(`sprint:active:${teamId}`);
+async function invalidateActiveSprint(tenantId, teamId) {
+    return del(tk(tenantId, 'sprint', 'active', teamId));
 }
 
 // -- Meeting participant cache helpers --
 
-async function getMeetingParticipants(meetingId) {
-    return get(`meeting:${meetingId}:participants`);
+async function getMeetingParticipants(tenantId, meetingId) {
+    return get(tk(tenantId, 'meeting', meetingId, 'participants'));
 }
 
-async function setMeetingParticipants(meetingId, participants) {
-    return set(`meeting:${meetingId}:participants`, participants, TTL.MEETING_PARTICIPANTS);
+async function setMeetingParticipants(tenantId, meetingId, participants) {
+    return set(tk(tenantId, 'meeting', meetingId, 'participants'), participants, TTL.MEETING_PARTICIPANTS);
 }
 
-async function invalidateMeetingParticipants(meetingId) {
-    return del(`meeting:${meetingId}:participants`);
+async function invalidateMeetingParticipants(tenantId, meetingId) {
+    return del(tk(tenantId, 'meeting', meetingId, 'participants'));
 }
 
 // -- domain-specific cache helpers --
 
 const KEYS = {
-    tokenVersion: (userId) => `user:${userId}:tv`,
-    userContext: (userId) => `user:${userId}:ctx`,
-    orgConfig: (orgId) => `org:${orgId}:config`,
-    userSessions: (userId) => `user:${userId}:sessions`,
+    tokenVersion: (tenantId, userId) => tk(tenantId, 'user', userId, 'tv'),
+    userContext: (tenantId, userId) => tk(tenantId, 'user', userId, 'ctx'),
+    orgConfig: (tenantId, orgId) => tk(tenantId, 'org', orgId, 'config'),
+    userSessions: (tenantId, userId) => tk(tenantId, 'user', userId, 'sessions'),
 };
 
-async function getTokenVersion(userId) {
-    return get(KEYS.tokenVersion(userId));
+async function getTokenVersion(tenantId, userId) {
+    return get(KEYS.tokenVersion(tenantId, userId));
 }
 
-async function setTokenVersion(userId, version) {
-    return set(KEYS.tokenVersion(userId), version, TTL.TOKEN_VERSION);
+async function setTokenVersion(tenantId, userId, version) {
+    return set(KEYS.tokenVersion(tenantId, userId), version, TTL.TOKEN_VERSION);
 }
 
-async function invalidateTokenVersion(userId) {
-    return del(KEYS.tokenVersion(userId));
+async function invalidateTokenVersion(tenantId, userId) {
+    return del(KEYS.tokenVersion(tenantId, userId));
 }
 
-async function getUserContext(userId) {
-    return get(KEYS.userContext(userId));
+async function getUserContext(tenantId, userId) {
+    return get(KEYS.userContext(tenantId, userId));
 }
 
-async function setUserContext(userId, context) {
-    return set(KEYS.userContext(userId), context, TTL.USER_CONTEXT);
+async function setUserContext(tenantId, userId, context) {
+    return set(KEYS.userContext(tenantId, userId), context, TTL.USER_CONTEXT);
 }
 
-async function invalidateUserContext(userId) {
-    return del(KEYS.userContext(userId));
+async function invalidateUserContext(tenantId, userId) {
+    return del(KEYS.userContext(tenantId, userId));
 }
 
-async function getOrgConfig(orgId) {
-    return get(KEYS.orgConfig(orgId));
+async function getOrgConfig(tenantId, orgId) {
+    return get(KEYS.orgConfig(tenantId, orgId));
 }
 
-async function setOrgConfig(orgId, config) {
-    return set(KEYS.orgConfig(orgId), config, TTL.ORG_CONFIG);
+async function setOrgConfig(tenantId, orgId, config) {
+    return set(KEYS.orgConfig(tenantId, orgId), config, TTL.ORG_CONFIG);
 }
 
-async function invalidateOrgConfig(orgId) {
-    return del(KEYS.orgConfig(orgId));
+async function invalidateOrgConfig(tenantId, orgId) {
+    return del(KEYS.orgConfig(tenantId, orgId));
 }
 
 // -- Session helpers (max-2-device enforcement) --
 
-async function getUserSessions(userId) {
-    return get(KEYS.userSessions(userId));
+async function getUserSessions(tenantId, userId) {
+    return get(KEYS.userSessions(tenantId, userId));
 }
 
-async function setUserSessions(userId, sessionIds) {
-    return set(KEYS.userSessions(userId), sessionIds, TTL.USER_CONTEXT);
+async function setUserSessions(tenantId, userId, sessionIds) {
+    return set(KEYS.userSessions(tenantId, userId), sessionIds, TTL.USER_CONTEXT);
 }
 
-async function invalidateUserSessions(userId) {
-    return del(KEYS.userSessions(userId));
+async function invalidateUserSessions(tenantId, userId) {
+    return del(KEYS.userSessions(tenantId, userId));
 }
 
 async function shutdown() {

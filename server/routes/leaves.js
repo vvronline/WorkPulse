@@ -7,9 +7,10 @@ const { initializeBalances, getAccruedQuota } = require('./leavePolicy');
 const { logger } = require('../utils/logger');
 const { notifyByEmail } = require('../utils/mailer');
 const { sendToUser } = require('../utils/ws');
+const { requireTenant } = require('../middleware/tenant');
 
 const router = express.Router();
-router.use(auth, loadUserContext);
+router.use(auth, loadUserContext, requireTenant);
 
 // Helper: update leave balance (add or subtract used days)
 // IMPORTANT: client (transaction connection) is required to ensure atomicity
@@ -388,7 +389,7 @@ router.post('/', async (req, res) => {
                     'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
                     [approver.id, 'approval', 'New Leave Request', `${requesterName} submitted ${created.length} ${leave_type} leave request(s).`]
                 );
-                sendToUser(approver.id, 'approval_update', { type: 'leave', status: 'pending' });
+                sendToUser(req.tenantId, approver.id, 'approval_update', { type: 'leave', status: 'pending' });
             }
         } catch (notifErr) {
             req.log.error({ err: notifErr }, 'Manager notification error (leave request)');
@@ -444,7 +445,7 @@ router.patch('/:id/approve', requireRole('manager'), async (req, res) => {
                 [leave.user_id, 'leave', 'Leave Approved ✅', `Your ${leave.leave_type} leave on ${leave.date} has been approved.`]
             );
             notifyByEmail('leaveApproved', leaveUser, leave);
-            sendToUser(leave.user_id, 'leave_update', { id: leave.id, status: 'approved' });
+            sendToUser(req.tenantId, leave.user_id, 'leave_update', { id: leave.id, status: 'approved' });
         }
 
         res.json({ message: 'Leave approved' });
@@ -497,7 +498,7 @@ router.patch('/:id/reject', requireRole('manager'), async (req, res) => {
                 [leave.user_id, 'leave', 'Leave Rejected', `Your ${leave.leave_type} leave on ${leave.date} has been rejected.${reason ? ' Reason: ' + reason : ''}`]
             );
             notifyByEmail('leaveRejected', leaveUser, leave, reason);
-            sendToUser(leave.user_id, 'leave_update', { id: leave.id, status: 'rejected' });
+            sendToUser(req.tenantId, leave.user_id, 'leave_update', { id: leave.id, status: 'rejected' });
         }
 
         res.json({ message: 'Leave rejected' });
@@ -565,7 +566,7 @@ router.post('/:id/withdraw', async (req, res) => {
                         'INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)',
                         [approver.id, 'approval', 'Leave Withdrawal Request', `${requesterName} requested withdrawal of ${leave.leave_type} leave on ${leave.date}.`]
                     );
-                    sendToUser(approver.id, 'approval_update', { type: 'leave_withdraw', status: 'pending' });
+                    sendToUser(req.tenantId, approver.id, 'approval_update', { type: 'leave_withdraw', status: 'pending' });
                 }
             } catch (notifErr) {
                 req.log.error({ err: notifErr }, 'Manager notification error (withdrawal)');
@@ -605,7 +606,7 @@ router.patch('/:id/revoke', requireRole('manager'), async (req, res) => {
                 [leave.user_id, 'leave', 'Leave Revoked', `Your ${leave.leave_type} leave on ${leave.date} has been revoked by management.`]
             );
             notifyByEmail('leaveRevoked', leaveUser, leave);
-            sendToUser(leave.user_id, 'leave_update', { id: leave.id, status: 'revoked' });
+            sendToUser(req.tenantId, leave.user_id, 'leave_update', { id: leave.id, status: 'revoked' });
         }
 
         res.json({ message: 'Leave revoked' });

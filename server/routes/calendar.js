@@ -5,9 +5,10 @@ const { loadUserContext } = require('../middleware/rbac');
 const { getOffsetMin } = require('../utils/timezone');
 const { sendToUser } = require('../utils/ws');
 const { notifyByEmail } = require('../utils/mailer');
+const { requireTenant } = require('../middleware/tenant');
 
 const router = express.Router();
-router.use(auth);
+router.use(auth, requireTenant);
 router.use(loadUserContext);
 
 // List events for a date range
@@ -173,7 +174,7 @@ router.put('/:id', async (req, res) => {
                     [event.meeting_id, req.userId]
                 )).rows;
                 for (const p of participants) {
-                    sendToUser(p.user_id, 'meeting_updated', { meetingId: event.meeting_id, title: meeting.title });
+                    sendToUser(req.tenantId, p.user_id, 'meeting_updated', { meetingId: event.meeting_id, title: meeting.title });
                     notifyByEmail('meetingUpdated', p, { title: meeting.title, meeting_code: meeting.meeting_code }, organizer?.full_name || 'Someone');
                 }
             }
@@ -216,7 +217,7 @@ router.delete('/:id', async (req, res) => {
                     [event.meeting_id, req.userId]
                 )).rows;
                 for (const p of participants) {
-                    sendToUser(p.user_id, 'meeting_cancelled', { meetingId: event.meeting_id, title: meeting.title });
+                    sendToUser(req.tenantId, p.user_id, 'meeting_cancelled', { meetingId: event.meeting_id, title: meeting.title });
                     notifyByEmail('meetingCancelled', p, { title: meeting.title, meeting_code: meeting.meeting_code }, organizer?.full_name || 'Someone');
                 }
 
