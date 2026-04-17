@@ -219,10 +219,14 @@ export default function UserManagement({ userRole }) {
                                 </select>
                             </td>
                             <td>
-                                <select value={u.manager_id || ''} onChange={e => handleInlineManager(u.id, e.target.value)} className={sf.inlineSelect}>
-                                    <option value="">—</option>
-                                    {users.filter(m => m.id !== u.id && m.is_active && (!u.org_id || m.org_id === u.org_id)).map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}
-                                </select>
+                                {u.role === 'platform_admin' ? (
+                                    <span className={sf.inlineSelect} style={{ background: 'color-mix(in srgb, var(--accent) 14%, transparent)', padding: '0.25rem 0.5rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600, color: 'var(--accent)' }}>Platform Admin</span>
+                                ) : (
+                                    <select value={u.manager_id || ''} onChange={e => handleInlineManager(u.id, e.target.value)} className={sf.inlineSelect}>
+                                        <option value="">—</option>
+                                        {users.filter(m => m.id !== u.id && m.is_active && (!u.org_id || m.org_id === u.org_id)).map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}
+                                    </select>
+                                )}
                             </td>
                             <td>
                                 {u.is_active ? <span className={s.badgeActive}>Active</span> : <span className={s.badgeInactive}>Inactive</span>}
@@ -285,7 +289,7 @@ export default function UserManagement({ userRole }) {
                     <div className={sf.modal} onClick={e => e.stopPropagation()}>
                         <h2>Change Role</h2>
                         <p>Change <strong>{roleConfirm.name}</strong>'s role to <strong>{ROLE_LABELS[roleConfirm.role]}</strong>?</p>
-                        {userRole !== 'super_admin' && (
+                        {userRole !== 'super_admin' && userRole !== 'platform_admin' && (
                             <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                                 This will require approval from all higher role levels before taking effect.
                             </p>
@@ -297,7 +301,7 @@ export default function UserManagement({ userRole }) {
                         <div className={sf.formActions}>
                             <button className={sf.btnCancel} onClick={() => setRoleConfirm(null)}>Cancel</button>
                             <button className={s.btnPrimary} onClick={submitRoleChange}>
-                                {userRole === 'super_admin' ? 'Change Role' : 'Submit Request'}
+                                {(userRole === 'super_admin' || userRole === 'platform_admin') ? 'Change Role' : 'Submit Request'}
                             </button>
                         </div>
                     </div>

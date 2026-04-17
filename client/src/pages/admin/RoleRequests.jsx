@@ -109,10 +109,10 @@ export default function RoleRequests({ userRole }) {
                             <td>
                                 {r.status === 'pending' && (
                                     <div className={s.actions}>
-                                        {r.approvals?.[userRole]?.status === 'pending' && (
+                                        {(r.approvals?.[userRole]?.status === 'pending' || userRole === 'platform_admin') && (
                                             <button className={`${s.btnSmall} ${s.btnSuccess}`} onClick={() => handleApprove(r.id)}><Check size={13} style={{marginRight:4,verticalAlign:'middle'}} />Approve</button>
                                         )}
-                                        {(r.approvals?.[userRole] || userRole === 'super_admin') && (
+                                        {(r.approvals?.[userRole] || userRole === 'super_admin' || userRole === 'platform_admin') && (
                                             <button className={`${s.btnSmall} ${s.btnDanger}`} onClick={() => setRejectModal(r.id)}><X size={13} style={{marginRight:4,verticalAlign:'middle'}} />Reject</button>
                                         )}
                                         <button className={`${s.btnSmall} ${s.btnAccent}`} onClick={() => handleCancel(r.id)}>Cancel</button>

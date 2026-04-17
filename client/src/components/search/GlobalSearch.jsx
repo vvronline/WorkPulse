@@ -7,7 +7,7 @@ const LEAVE_STATUS_COLOR = { approved: '#16a34a', pending: '#d97706', rejected: 
 const SPRINT_STATUS_COLOR = { active: '#16a34a', planned: '#2563eb', completed: '#6b7280' };
 const ROLE_LABELS = {
     employee: 'Employee', team_lead: 'Team Lead', manager: 'Manager',
-    hr_admin: 'HR Admin', super_admin: 'Super Admin',
+    hr_admin: 'HR Admin', super_admin: 'Super Admin', platform_admin: 'Platform Admin',
 };
 
 export default function GlobalSearch({ onClose }) {
