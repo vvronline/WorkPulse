@@ -26,7 +26,13 @@ function getTransporter() {
                 refreshToken: process.env.GMAIL_REFRESH_TOKEN,
             },
         });
-        logger.info('Email transport: Gmail OAuth2');
+        // Verify connection at startup so OAuth errors surface early
+        transporter.verify().then(() => {
+            logger.info('Email transport: Gmail OAuth2 — verified');
+        }).catch(err => {
+            logger.error({ err: err.message }, 'Email transport: Gmail OAuth2 — verification FAILED (check refresh token / credentials)');
+            transporter = null;
+        });
         return transporter;
     }
 
@@ -63,28 +69,32 @@ function sendMail({ to, subject, html }) {
     const mailer = getTransporter();
     if (!mailer) {
         logger.debug({ to, subject }, 'Email skipped (SMTP not configured)');
-        return;
+        return Promise.resolve(false);
     }
     if (!to || !to.includes('@')) {
         logger.warn({ to, subject }, 'Email skipped — invalid recipient');
-        return;
+        return Promise.resolve(false);
     }
 
     let attempt = 0;
-    const trySend = () => {
-        attempt++;
-        mailer.sendMail({ from: FROM(), to, subject, html }).then(() => {
-            logger.info({ to, subject }, 'Email sent successfully');
-        }).catch(err => {
-            if (attempt <= MAX_RETRIES) {
-                logger.warn({ err: err.message, to, subject, attempt }, 'Email send failed — retrying');
-                setTimeout(trySend, RETRY_DELAY_MS * attempt);
-            } else {
-                logger.error({ err, to, subject, attempts: attempt }, 'Failed to send email after retries');
-            }
-        });
-    };
-    trySend();
+    return new Promise((resolve) => {
+        const trySend = () => {
+            attempt++;
+            mailer.sendMail({ from: FROM(), to, subject, html }).then(() => {
+                logger.info({ to, subject }, 'Email sent successfully');
+                resolve(true);
+            }).catch(err => {
+                if (attempt <= MAX_RETRIES) {
+                    logger.warn({ err: err.message, to, subject, attempt }, 'Email send failed — retrying');
+                    setTimeout(trySend, RETRY_DELAY_MS * attempt);
+                } else {
+                    logger.error({ err, to, subject, attempts: attempt }, 'Failed to send email after retries');
+                    resolve(false);
+                }
+            });
+        };
+        trySend();
+    });
 }
 
 /**

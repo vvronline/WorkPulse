@@ -575,7 +575,7 @@ router.post('/forgot-password', async (req, res) => {
 
         const mailer = getTransporter();
         if (mailer) {
-            sendMail({
+            const sent = await sendMail({
                 to: user.email,
                 subject: 'WorkPulse — Password Reset',
                 html: `
@@ -588,6 +588,9 @@ router.post('/forgot-password', async (req, res) => {
                     </div>
                 `,
             });
+            if (!sent) {
+                req.log.error({ email: user.email }, 'Password reset email failed to send');
+            }
         } else {
             logger.info({ username: user.username }, 'Password reset link generated (no SMTP — token not logged)');
         }
