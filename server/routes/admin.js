@@ -627,6 +627,13 @@ router.post('/users', requireRole('hr_admin'), async (req, res) => {
             'INSERT INTO users (username, password, full_name, email, role, org_id, department_id, team_id, manager_id, must_change_password) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE) RETURNING id',
             [username, hash, full_name, email, assignRole, assignOrgId, department_id || null, team_id || null, manager_id || null]
         );
+        // Register in master user_directory so cross-tenant login resolution works
+        if (req.tenantId) {
+            await masterQuery(
+                'INSERT INTO user_directory (email, username, tenant_id, user_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
+                [email.toLowerCase(), username.toLowerCase(), req.tenantId, result.rows[0].id]
+            );
+        }
         logAction(req, 'admin_create', 'user', result.rows[0].id, { username, role: assignRole });
         res.json({ id: result.rows[0].id, message: `User ${username} created successfully` });
     } catch (err) {
@@ -1083,6 +1090,12 @@ router.post('/users/import', requireRole('hr_admin'), importUpload.single('file'
                      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE) RETURNING id`,
                     [username, hash, full_name, email, assignRole, assignOrgId, deptId, teamId, managerId]
                 );
+                if (req.tenantId) {
+                    await masterQuery(
+                        'INSERT INTO user_directory (email, username, tenant_id, user_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
+                        [email.toLowerCase(), username.toLowerCase(), req.tenantId, created.rows[0].id]
+                    );
+                }
                 logAction(req, 'admin_create', 'user', created.rows[0].id, { username, role: assignRole, via: 'bulk_import' });
                 imported.push({
                     row: rowNum,
