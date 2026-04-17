@@ -5,7 +5,7 @@ const { masterQuery } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole, requireSameOrg, canManageUser, VALID_ROLES, ROLE_LEVEL } = require('../middleware/rbac');
 const { logAction, queryLogs } = require('../utils/audit');
-const { validatePassword, validateUsername } = require('../utils/password');
+const { validatePassword, validateUsername, BCRYPT_ROUNDS } = require('../utils/password');
 const { getOffsetMin, getTzModifier } = require('../utils/timezone');
 const { logger } = require('../utils/logger');
 const redis = require('../redis');
@@ -66,9 +66,18 @@ router.post('/organizations', requireRole('platform_admin'), async (req, res) =>
         if (existingRes.rows[0]) return res.status(400).json({ error: 'An organization with a similar name already exists' });
         const whpd = Number(work_hours_per_day) || 8;
         if (whpd < 1 || whpd > 24) return res.status(400).json({ error: 'Work hours per day must be between 1 and 24' });
+        // Validate work_days format
+        let validatedWorkDays = '1,2,3,4,5';
+        if (work_days) {
+            const dayNums = String(work_days).split(',').map(s => parseInt(s.trim(), 10));
+            if (dayNums.some(n => isNaN(n) || n < 1 || n > 7) || dayNums.length === 0) {
+                return res.status(400).json({ error: 'work_days must be comma-separated day numbers 1-7' });
+            }
+            validatedWorkDays = dayNums.join(',');
+        }
         const result = await req.db.query(
             'INSERT INTO organizations (name, slug, created_by, work_hours_per_day, work_days, timezone) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
-            [trimmedName, slug, req.userId, whpd, work_days || '1,2,3,4,5', timezone || 'UTC']
+            [trimmedName, slug, req.userId, whpd, validatedWorkDays, timezone || 'UTC']
         );
         const newId = result.rows[0].id;
         logAction(req, 'admin_create', 'organization', newId, { name: trimmedName });
@@ -98,8 +107,20 @@ router.put('/organizations/:id', requireRole('platform_admin'), async (req, res)
             if (isNaN(whpd) || whpd < 1 || whpd > 24) return res.status(400).json({ error: 'Work hours per day must be between 1 and 24' });
             updates.push(`work_hours_per_day = $${pi++}`); params.push(whpd);
         }
-        if (work_days) { updates.push(`work_days = $${pi++}`); params.push(work_days); }
-        if (timezone) { updates.push(`timezone = $${pi++}`); params.push(timezone); }
+        if (work_days) {
+            // Validate work_days is a comma-separated list of day numbers 1-7
+            const dayNums = String(work_days).split(',').map(s => parseInt(s.trim(), 10));
+            if (dayNums.some(n => isNaN(n) || n < 1 || n > 7) || dayNums.length === 0) {
+                return res.status(400).json({ error: 'work_days must be comma-separated day numbers 1-7' });
+            }
+            updates.push(`work_days = $${pi++}`); params.push(dayNums.join(','));
+        }
+        if (timezone) {
+            if (typeof timezone !== 'string' || timezone.length > 50) {
+                return res.status(400).json({ error: 'Invalid timezone value' });
+            }
+            updates.push(`timezone = $${pi++}`); params.push(timezone);
+        }
         if (fiscal_year_start !== undefined) { updates.push(`fiscal_year_start = $${pi++}`); params.push(Number(fiscal_year_start)); }
         updates.push('updated_at = CURRENT_TIMESTAMP');
         if (updates.length <= 1) return res.status(400).json({ error: 'No fields to update' });
@@ -538,7 +559,7 @@ router.post('/users/:id/reset-password', requireRole('hr_admin'), async (req, re
         if (req.userRole !== 'platform_admin' && !canManageUser(req.userRole, target.role)) {
             return res.status(403).json({ error: 'Cannot reset password for a user with equal or higher role' });
         }
-        const hash = await bcrypt.hash(new_password, 10);
+        const hash = await bcrypt.hash(new_password, BCRYPT_ROUNDS);
         await req.db.query('UPDATE users SET password = $1, token_version = COALESCE(token_version, 0) + 1, must_change_password = TRUE WHERE id = $2', [hash, Number(id)]);
         await redis.invalidateTokenVersion(Number(id));
         // Clear all sessions for the target user
@@ -614,7 +635,7 @@ router.post('/users', requireRole('hr_admin'), async (req, res) => {
         if (req.userRole !== 'platform_admin' && ROLE_LEVEL[assignRole] >= ROLE_LEVEL[req.userRole]) {
             return res.status(403).json({ error: 'Cannot create a user with a role equal to or higher than your own' });
         }
-        const hash = await bcrypt.hash(password, 10);
+        const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
         let assignOrgId = req.userOrgId;
         if (req.userRole === 'platform_admin' && org_id !== undefined) {
             if (org_id) {
@@ -1117,7 +1138,7 @@ router.post('/users/import', requireRole('hr_admin'), importUpload.single('file'
                     if (dirCheck.rows[0]) { failed.push({ row: rowNum, error: 'Username or email already registered in another organization' }); continue; }
                 }
 
-                const hash = await bcrypt.hash(plainPw, 10);
+                const hash = await bcrypt.hash(plainPw, BCRYPT_ROUNDS);
                 const created = await req.db.query(
                     `INSERT INTO users (username, password, full_name, email, role, org_id, department_id, team_id, manager_id, must_change_password)
                      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE) RETURNING id`,

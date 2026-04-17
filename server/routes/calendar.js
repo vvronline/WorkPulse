@@ -72,8 +72,17 @@ router.post('/', async (req, res) => {
             [req.userId, req.userOrgId || null, title.trim(), description || null, start_time, end_time, all_day || false, color || '#6366f1', task_id || null, meeting_id || null]
         );
 
-        // If linked to a meeting, also create calendar events for all other participants
+        // If linked to a meeting, verify meeting belongs to user's org and create events for participants
         if (meeting_id) {
+            // Validate meeting belongs to user's org
+            const meetingCheck = (await req.db.query(
+                'SELECT id FROM meetings WHERE id = $1 AND org_id = $2',
+                [meeting_id, req.userOrgId]
+            )).rows[0];
+            if (!meetingCheck) {
+                return res.status(403).json({ error: 'Meeting not found in your organization' });
+            }
+
             const otherParticipants = (await req.db.query(
                 `SELECT mp.user_id FROM meeting_participants mp
                  WHERE mp.meeting_id = $1 AND mp.user_id != $2`,

@@ -6,7 +6,7 @@ const nodemailer = require('nodemailer');
 const redis = require('../redis');
 const { masterQuery } = require('../db');
 const { getTenantPool, getTenantById, createTenant } = require('../utils/tenantManager');
-const { validatePassword, validateUsername } = require('../utils/password');
+const { validatePassword, validateUsername, BCRYPT_ROUNDS } = require('../utils/password');
 const { logger } = require('../utils/logger');
 const { getTransporter, sendMail } = require('../utils/mailer');
 const auth = require('../middleware/auth');
@@ -173,7 +173,7 @@ router.post('/register', async (req, res) => {
                 const tenantCount = (await masterQuery('SELECT COUNT(*) FROM tenants')).rows[0].count;
                 if (parseInt(platCount) === 0 && parseInt(tenantCount) === 0) {
                     // Bootstrap: create platform_admin in master DB
-                    const hash = await bcrypt.hash(password, 10);
+                    const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
                     const result = await masterQuery(
                         'INSERT INTO platform_users (username, password, full_name, email) VALUES ($1,$2,$3,$4) RETURNING id',
                         [username, hash, full_name, email]
@@ -226,7 +226,7 @@ router.post('/register', async (req, res) => {
         const existingEmail = await db.query('SELECT id FROM users WHERE email = $1', [email]);
         if (existingEmail.rows[0]) return res.status(400).json({ error: 'Email already registered' });
 
-        const hash = await bcrypt.hash(password, 10);
+        const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
         const assignedOrgId = inviteRow?.org_id || 1; // each tenant has org id=1
         const assignedRole = inviteRow?.role || (mode === 'open' ? 'employee' : 'employee');
 
@@ -311,26 +311,23 @@ router.post('/login', async (req, res) => {
             isPlatformUser = !!resolved.isPlatformUser;
         }
 
-        // Check account lockout
+        // Check account lockout — return generic message to prevent account enumeration
         if (user && user.locked_until && new Date(user.locked_until) > new Date()) {
-            const mins = Math.ceil((new Date(user.locked_until) - new Date()) / 60000);
-            return res.status(423).json({ error: `Account locked. Try again in ${mins} minute(s).` });
+            return res.status(401).json({ error: 'Invalid credentials' });
         }
 
         const DUMMY_HASH = '$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy';
         if (!user || !(await bcrypt.compare(password, user ? user.password : DUMMY_HASH))) {
             if (user && db) {
-                // isPlatformUser with tenantId means user record is in tenant users table, not platform_users
-                const table = (isPlatformUser && !tenantId) ? 'platform_users' : 'users';
                 const attempts = (user.failed_login_attempts || 0) + 1;
-                if (attempts >= 5) {
-                    await db.query(
-                        `UPDATE ${table} SET failed_login_attempts = $1, locked_until = NOW() + INTERVAL '15 minutes' WHERE id = $2`,
-                        [attempts, user.id],
-                    );
-                    return res.status(423).json({ error: 'Account locked for 15 minutes due to too many failed attempts.' });
+                const lockQuery = attempts >= 5
+                    ? 'failed_login_attempts = $1, locked_until = NOW() + INTERVAL \'15 minutes\''
+                    : 'failed_login_attempts = $1';
+                if (isPlatformUser && !tenantId) {
+                    await db.query(`UPDATE platform_users SET ${lockQuery} WHERE id = $2`, [attempts, user.id]);
+                } else {
+                    await db.query(`UPDATE users SET ${lockQuery} WHERE id = $2`, [attempts, user.id]);
                 }
-                await db.query(`UPDATE ${table} SET failed_login_attempts = $1 WHERE id = $2`, [attempts, user.id]);
             }
             return res.status(401).json({ error: 'Invalid credentials' });
         }
@@ -340,8 +337,11 @@ router.post('/login', async (req, res) => {
 
         // Reset failed attempts on successful login
         if (user.failed_login_attempts > 0) {
-            const table = (isPlatformUser && !tenantId) ? 'platform_users' : 'users';
-            await db.query(`UPDATE ${table} SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1`, [user.id]);
+            if (isPlatformUser && !tenantId) {
+                await db.query('UPDATE platform_users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1', [user.id]);
+            } else {
+                await db.query('UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1', [user.id]);
+            }
         }
 
         const sid = await createSession(user.id, req.headers['user-agent'], db);
@@ -637,7 +637,7 @@ router.post('/reset-password', async (req, res) => {
             return res.status(400).json({ error: 'This reset link has expired' });
         }
 
-        const hash = await bcrypt.hash(password, 10);
+        const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
         await db.query(
             'UPDATE users SET password = $1, token_version = COALESCE(token_version, 0) + 1 WHERE id = $2',
             [hash, row.user_id],
@@ -681,7 +681,8 @@ router.post('/logout', async (req, res) => {
         if (token) {
             const decoded = jwt.verify(token, process.env.JWT_SECRET);
             if (decoded.sid) {
-                await req.db.query('DELETE FROM user_sessions WHERE id = $1', [decoded.sid]);
+                // Only delete the session that belongs to this user
+                await req.db.query('DELETE FROM user_sessions WHERE id = $1 AND user_id = $2', [decoded.sid, decoded.id]);
                 await redis.invalidateUserSessions(decoded.id);
             }
             // Set user status to offline

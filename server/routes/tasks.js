@@ -105,7 +105,8 @@ async function canAccessTask(task, userId, requesterOrgId, db) {
 
     const userRes = await db.query('SELECT team_id, org_id FROM users WHERE id = $1', [userId]);
     const user = userRes.rows[0];
-    if (!user || user.org_id !== requesterOrgId || owner?.org_id !== requesterOrgId) return false;
+    if (!user || user.org_id !== requesterOrgId) return false;
+    if (!owner || owner.org_id !== requesterOrgId) return false;
 
     return user.team_id && owner.team_id && user.team_id === owner.team_id;
 }

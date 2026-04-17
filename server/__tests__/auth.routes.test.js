@@ -228,8 +228,8 @@ describe('POST /api/auth/login', () => {
             .post('/api/auth/login')
             .set(CSRF)
             .send({ username: 'locked', password: 'Password1!' });
-        expect(res.status).toBe(423);
-        expect(res.body.error).toMatch(/locked/i);
+        expect(res.status).toBe(401);
+        expect(res.body.error).toMatch(/invalid credentials/i);
     });
 });
 

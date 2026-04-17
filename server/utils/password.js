@@ -3,6 +3,9 @@
  * Enforces complexity rules across registration, reset, and change flows.
  */
 
+/** Bcrypt cost factor — OWASP recommends 10+ for enterprise applications */
+const BCRYPT_ROUNDS = 12;
+
 /**
  * Validate password meets complexity requirements.
  * @param {string} password
@@ -32,4 +35,4 @@ function validateUsername(username) {
     return null;
 }
 
-module.exports = { validatePassword, validateUsername };
+module.exports = { validatePassword, validateUsername, BCRYPT_ROUNDS };

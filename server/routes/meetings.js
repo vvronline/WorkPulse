@@ -86,7 +86,14 @@ router.post('/check-conflicts', async (req, res) => {
         const ids = user_ids.map(Number).filter(n => n > 0);
         if (!ids.length) return res.json({ conflicts: [] });
 
-        const conflictMap = await getConflictsForUsers(ids, start_time, end_time, req.db);
+        // Restrict to users in the same org to prevent cross-tenant data leakage
+        const orgFilteredRes = req.userOrgId
+            ? await req.db.query('SELECT id FROM users WHERE id = ANY($1) AND org_id = $2', [ids, req.userOrgId])
+            : { rows: [] };
+        const orgIds = orgFilteredRes.rows.map(r => r.id);
+        if (!orgIds.length) return res.json({ conflicts: [] });
+
+        const conflictMap = await getConflictsForUsers(orgIds, start_time, end_time, req.db);
         const result = [];
         for (const uid of ids) {
             if (conflictMap[uid]) {
@@ -151,21 +158,17 @@ router.get('/:code', async (req, res) => {
              FROM meetings m
              JOIN users u ON u.id = m.created_by
              LEFT JOIN calendar_events ce ON ce.id = m.calendar_event_id
-             WHERE m.meeting_code = $1`,
-            [req.params.code]
+             WHERE m.meeting_code = $1
+               AND (
+                   m.org_id = $2
+                   OR m.created_by = $3
+                   OR EXISTS (SELECT 1 FROM meeting_participants mp WHERE mp.meeting_id = m.id AND mp.user_id = $3)
+               )`,
+            [req.params.code, req.userOrgId, req.userId]
         );
         if (!result.rows[0]) return res.status(404).json({ error: 'Meeting not found' });
 
         const meeting = result.rows[0];
-
-        // Check access: must be in the same org or an explicit participant
-        if (!meeting.org_id || meeting.org_id !== req.userOrgId) {
-            const isParticipant = (await req.db.query(
-                'SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2',
-                [meeting.id, req.userId]
-            )).rows[0];
-            if (!isParticipant) return res.status(403).json({ error: 'Access denied' });
-        }
 
         // Fetch participants (with Redis cache for active meetings)
         let participantRows = await redis.getMeetingParticipants(meeting.id);

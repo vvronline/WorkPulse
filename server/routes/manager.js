@@ -385,6 +385,10 @@ router.post('/approvals/:id/approve', async (req, res) => {
         const txResult = await req.db.transaction(async (client) => {
             const approval = (await client.query('SELECT * FROM approval_requests WHERE id = $1', [Number(id)])).rows[0];
             if (!approval) return { error: 'Request not found', status: 404 };
+            // Enforce org boundary: approval must belong to user's org
+            if (req.userOrgId && approval.org_id && approval.org_id !== req.userOrgId) {
+                return { error: 'Not authorized to approve this request', status: 403 };
+            }
             const isDirectManager = (await client.query('SELECT 1 FROM users WHERE id = $1 AND manager_id = $2', [approval.requester_id, req.userId])).rows[0];
             if (approval.approver_id !== req.userId && req.roleLevel < 4 && !isDirectManager) {
                 return { error: 'Not authorized to approve this request', status: 403 };
@@ -492,6 +496,10 @@ router.post('/approvals/:id/reject', async (req, res) => {
         const txResult = await req.db.transaction(async (client) => {
             const approval = (await client.query('SELECT * FROM approval_requests WHERE id = $1', [Number(id)])).rows[0];
             if (!approval) return { error: 'Request not found', status: 404 };
+            // Enforce org boundary
+            if (req.userOrgId && approval.org_id && approval.org_id !== req.userOrgId) {
+                return { error: 'Not authorized to reject this request', status: 403 };
+            }
             const isDirectManager = (await client.query('SELECT 1 FROM users WHERE id = $1 AND manager_id = $2', [approval.requester_id, req.userId])).rows[0];
             if (approval.approver_id !== req.userId && req.roleLevel < 4 && !isDirectManager) {
                 return { error: 'Not authorized to reject this request', status: 403 };

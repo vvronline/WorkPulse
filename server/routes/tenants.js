@@ -15,7 +15,7 @@ const { logger } = require('../utils/logger');
 const redis = require('../redis');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { validatePassword, validateUsername } = require('../utils/password');
+const { validatePassword, validateUsername, BCRYPT_ROUNDS } = require('../utils/password');
 
 const router = express.Router();
 router.use(auth, loadUserContext, requireRole('platform_admin'));
@@ -508,7 +508,7 @@ router.post('/:id/users', async (req, res) => {
         }
 
         const db = await getTenantPool(tenant.db_name, tenant.db_host);
-        const hash = await bcrypt.hash(password, 10);
+        const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
         const validRole = ['super_admin', 'hr_admin', 'manager', 'team_lead', 'employee'].includes(role) ? role : 'employee';
 
         const result = await db.query(

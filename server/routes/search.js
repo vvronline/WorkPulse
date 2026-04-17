@@ -138,18 +138,24 @@ router.get('/', async (req, res) => {
         let logRows = [];
         const userLevel = ROLE_LEVEL[req.userRole] || 1;
         if (userLevel >= ROLE_LEVEL['hr_admin']) {
-            const orgId = req.userRole === 'platform_admin' ? null : req.userOrgId;
-            logRows = (await req.db.query(
-                `SELECT al.id, al.action, al.entity_type, al.entity_id, al.details, al.created_at,
-                        u.full_name AS actor_name
-                 FROM audit_logs al
-                 LEFT JOIN users u ON u.id = al.actor_id
-                 WHERE ($1::integer IS NULL OR al.org_id = $1)
-                   AND (al.action ILIKE $2 OR al.entity_type ILIKE $2 OR al.details ILIKE $2)
-                 ORDER BY al.created_at DESC
-                 LIMIT 10`,
-                [orgId, ilikePat]
-            )).rows;
+            // Platform admins must have a tenant context to search audit logs;
+            // without it return empty to prevent cross-tenant data leakage.
+            const orgId = req.userOrgId || null;
+            if (!orgId) {
+                logRows = [];
+            } else {
+                logRows = (await req.db.query(
+                    `SELECT al.id, al.action, al.entity_type, al.entity_id, al.details, al.created_at,
+                            u.full_name AS actor_name
+                     FROM audit_logs al
+                     LEFT JOIN users u ON u.id = al.actor_id
+                     WHERE al.org_id = $1
+                       AND (al.action ILIKE $2 OR al.entity_type ILIKE $2 OR al.details ILIKE $2)
+                     ORDER BY al.created_at DESC
+                     LIMIT 10`,
+                    [orgId, ilikePat]
+                )).rows;
+            }
         }
 
         const results = {

@@ -27,12 +27,13 @@
       --maxmemory 128mb
       --maxmemory-policy allkeys-lru
       --appendonly yes
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required in .env}
     volumes:
       - ./data/redis:/data
     networks:
       - workpulse-internal
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -55,7 +56,7 @@
       - DATABASE_URL=postgresql://workpulse:${DB_PASSWORD:?DB_PASSWORD is required in .env}@postgres:5432/workpulse
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required in .env}
       - CORS_ORIGIN=${CORS_ORIGIN:-}
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required in .env}@redis:6379
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-}
       - SMTP_USER=${SMTP_USER:-}

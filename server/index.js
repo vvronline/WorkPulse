@@ -63,11 +63,19 @@ app.use(helmet({
     },
     crossOriginOpenerPolicy: false,
     originAgentCluster: false,
+    // Prevent click-jacking
+    frameguard: { action: 'deny' },
+    // Strict transport security for HTTPS deployments
+    hsts: isProduction ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
 }));
 
 // Helmet 8.x does not support permissionsPolicy — set the header manually
 app.use((req, res, next) => {
     res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), display-capture=(self)');
+    // Prevent browsers from MIME-sniffing
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    // Referrer policy to prevent leaking URLs (e.g. password reset tokens)
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     next();
 });
 

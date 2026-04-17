@@ -10,7 +10,7 @@ const { query, transaction, masterQuery } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext } = require('../middleware/rbac');
 const { logAction } = require('../utils/audit');
-const { validatePassword, validateUsername } = require('../utils/password');
+const { validatePassword, validateUsername, BCRYPT_ROUNDS } = require('../utils/password');
 const { logger } = require('../utils/logger');
 
 const router = express.Router();
@@ -45,7 +45,9 @@ const storage = multer.diskStorage({
         cb(null, dir);
     },
     filename: (req, file, cb) => {
-        const ext = path.extname(file.originalname).toLowerCase();
+        // Use MIME type to determine extension, not the user-provided filename
+        const MIME_EXT = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif' };
+        const ext = MIME_EXT[file.mimetype] || '.jpg';
         cb(null, `user_${req.userId}_${Date.now()}${ext}`);
     }
 });
@@ -207,7 +209,7 @@ router.put('/password', auth, loadUserContext, async (req, res) => {
         const user = (await req.db.query('SELECT password FROM users WHERE id = $1', [req.userId])).rows[0];
         if (!(await bcrypt.compare(current_password, user.password))) return res.status(400).json({ error: 'Current password is incorrect' });
 
-        const hash = await bcrypt.hash(new_password, 10);
+        const hash = await bcrypt.hash(new_password, BCRYPT_ROUNDS);
         await req.db.query('UPDATE users SET password = $1, token_version = COALESCE(token_version, 0) + 1, must_change_password = FALSE WHERE id = $2', [hash, req.userId]);
         await redis.invalidateTokenVersion(req.userId);
         // Clear other sessions, keep the current one
