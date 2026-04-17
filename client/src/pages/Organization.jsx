@@ -14,6 +14,7 @@ import s from './Admin.module.css';
 export default function Organization() {
     const { user, updateUser } = useAuth();
     const isAdmin = ['hr_admin', 'super_admin', 'platform_admin'].includes(user?.role);
+    const canManageLabels = ['manager', 'hr_admin', 'super_admin', 'platform_admin'].includes(user?.role);
     const [org, setOrg] = useState(null);
     const [loading, setLoading] = useState(true);
     const [tab, setTab] = useState(isAdmin ? 'overview' : 'departments');
@@ -61,7 +62,7 @@ export default function Organization() {
                 <button className={`${s.tab} ${tab === 'departments' ? s.active : ''}`} onClick={() => setTab('departments')}><span><Building2 size={14} /></span> {isAdmin ? 'Departments' : 'My Department'}</button>
                 <button className={`${s.tab} ${tab === 'teams' ? s.active : ''}`} onClick={() => setTab('teams')}><span><Users size={14} /></span> {isAdmin ? 'Teams' : 'My Team'}</button>
                 <button className={`${s.tab} ${tab === 'chart' ? s.active : ''}`} onClick={() => setTab('chart')}><span><GitBranch size={14} /></span> Org Chart</button>
-                {isAdmin && (
+                {canManageLabels && (
                     <button className={`${s.tab} ${tab === 'labels' ? s.active : ''}`} onClick={() => setTab('labels')}><span><Tag size={14} /></span> Task Labels</button>
                 )}
             </div>
@@ -70,7 +71,7 @@ export default function Organization() {
             {tab === 'departments' && <Departments orgId={org.id} userRole={user.role} />}
             {tab === 'teams' && <Teams orgId={org.id} userRole={user.role} />}
             {tab === 'chart' && <OrgChartView />}
-            {tab === 'labels' && isAdmin && <TaskLabelsTab />}
+            {tab === 'labels' && canManageLabels && <TaskLabelsTab />}
         </div>
     );
 }

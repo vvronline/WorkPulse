@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle2, Users, Building, UsersRound, Clock, AlarmClock, UserPlus, ScrollText, RefreshCw, Download, DollarSign, Megaphone, Server, Network } from 'lucide-react';
+import { CheckCircle2, Users, Building, UsersRound, Clock, AlarmClock, UserPlus, ScrollText, RefreshCw, Download, DollarSign, Megaphone, Server, Network, Tag } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
 import { useSearchParams } from 'react-router-dom';
 import { getAdminStats } from '../../api';
@@ -12,6 +12,7 @@ import RoleRequests from './RoleRequests';
 import ImportUsers from './ImportUsers';
 import PayPeriods from './PayPeriods';
 import AnnouncementsTab from './AnnouncementsTab';
+import TaskLabelsTab from './TaskLabelsTab';
 import s from '../Admin.module.css';
 
 export default function AdminPanel() {
@@ -111,6 +112,9 @@ export default function AdminPanel() {
                 <button className={`${s.tab} ${tab === 'payroll' ? s.active : ''}`} onClick={() => setTab('payroll')}>
                     <span><DollarSign size={14} /></span> Payroll
                 </button>
+                <button className={`${s.tab} ${tab === 'labels' ? s.active : ''}`} onClick={() => setTab('labels')}>
+                    <span><Tag size={14} /></span> Task Labels
+                </button>
                 {(user.role === 'super_admin' || isPlatform) && (
                     <button className={`${s.tab} ${tab === 'announcements' ? s.active : ''}`} onClick={() => setTab('announcements')}>
                         <span><Megaphone size={14} /></span> Announcements
@@ -129,6 +133,7 @@ export default function AdminPanel() {
             {tab === 'role-requests' && <RoleRequests userRole={user.role} />}
             {tab === 'import' && <ImportUsers />}
             {tab === 'payroll' && <PayPeriods />}
+            {tab === 'labels' && <TaskLabelsTab />}
             {tab === 'announcements' && (user.role === 'super_admin' || isPlatform) && <AnnouncementsTab userRole={user.role} />}
         </div>
     );

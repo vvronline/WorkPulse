@@ -2,14 +2,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Tag } from 'lucide-react';
 import { useAutoDismiss } from '../../hooks/useAutoDismiss';
 import {
-    getAdminTaskLabels, createAdminTaskLabel, updateAdminTaskLabel, deleteAdminTaskLabel
+    getTaskLabelsManage, createTaskLabel, updateTaskLabel, deleteTaskLabel
 } from '../../api';
 import s from '../Admin.module.css';
 import tl from './TaskLabels.module.css';
 import sf from './AdminForms.module.css';
 import su from './AdminUtils.module.css';
 
-const PRESET_COLORS = ['#0ea5e9', '#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#0ea5e9', '#ec4899', '#14b8a6', '#f97316', '#64748b'];
+const PRESET_COLORS = ['#0ea5e9', '#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#64748b'];
 
 export default function TaskLabelsTab() {
     const [labels, setLabels] = useState([]);
@@ -24,7 +24,7 @@ export default function TaskLabelsTab() {
 
     const fetchLabels = useCallback(async () => {
         try {
-            const res = await getAdminTaskLabels();
+            const res = await getTaskLabelsManage();
             setLabels(res.data);
         } catch { setError('Failed to load labels'); }
         finally { setLoading(false); }
@@ -36,7 +36,7 @@ export default function TaskLabelsTab() {
         e.preventDefault();
         if (!name.trim()) return;
         try {
-            await createAdminTaskLabel({ name, color });
+            await createTaskLabel({ name, color });
             setName('');
             setColor('#0ea5e9');
             setSuccess('Label created');
@@ -55,7 +55,7 @@ export default function TaskLabelsTab() {
     const saveEdit = async () => {
         if (!editName.trim()) return;
         try {
-            await updateAdminTaskLabel(editId, { name: editName, color: editColor });
+            await updateTaskLabel(editId, { name: editName, color: editColor });
             setEditId(null);
             setSuccess('Label updated');
             fetchLabels();
@@ -67,7 +67,7 @@ export default function TaskLabelsTab() {
     const handleDelete = async (id) => {
         if (!confirm('Delete this label? It will be removed from all tasks.')) return;
         try {
-            await deleteAdminTaskLabel(id);
+            await deleteTaskLabel(id);
             setSuccess('Label deleted');
             fetchLabels();
         } catch {
