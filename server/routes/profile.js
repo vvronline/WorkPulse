@@ -6,7 +6,7 @@ const fsPromises = require('fs').promises;
 const redis = require('../redis');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { query, transaction } = require('../db');
+const { query, transaction, masterQuery } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext } = require('../middleware/rbac');
 const { logAction } = require('../utils/audit');
@@ -136,7 +136,23 @@ router.put('/', auth, async (req, res) => {
         const existing = (await req.db.query('SELECT id FROM users WHERE username = $1 AND id != $2', [username, req.userId])).rows[0];
         if (existing) return res.status(400).json({ error: 'Username already taken' });
 
+        // Check global uniqueness in user_directory (another tenant may own this username)
+        if (req.tenantId) {
+            const dirCheck = await masterQuery(
+                'SELECT 1 FROM user_directory WHERE username = $1 AND user_id != $2',
+                [username.toLowerCase(), req.userId]
+            );
+            if (dirCheck.rows[0]) return res.status(400).json({ error: 'Username already taken' });
+        }
+
         await req.db.query('UPDATE users SET full_name = $1, username = $2 WHERE id = $3', [full_name.trim(), username.trim(), req.userId]);
+        // Sync username in master user_directory so login resolution works with new username
+        if (req.tenantId) {
+            await masterQuery(
+                'UPDATE user_directory SET username = $1 WHERE tenant_id = $2 AND user_id = $3',
+                [username.toLowerCase(), req.tenantId, req.userId]
+            );
+        }
         const updated = (await req.db.query('SELECT id, username, full_name, email, avatar FROM users WHERE id = $1', [req.userId])).rows[0];
         res.json(updated);
     } catch (err) {
@@ -154,7 +170,24 @@ router.put('/email', auth, async (req, res) => {
         const existing = (await req.db.query('SELECT id FROM users WHERE email = $1 AND id != $2', [email, req.userId])).rows[0];
         if (existing) return res.status(400).json({ error: 'Email already in use' });
 
+        // Check global uniqueness in user_directory (another tenant may own this email)
+        if (req.tenantId) {
+            const dirCheck = await masterQuery(
+                'SELECT 1 FROM user_directory WHERE email = $1 AND user_id != $2',
+                [email.toLowerCase(), req.userId]
+            );
+            if (dirCheck.rows[0]) return res.status(400).json({ error: 'Email already in use' });
+        }
+
+        const oldUser = (await req.db.query('SELECT email FROM users WHERE id = $1', [req.userId])).rows[0];
         await req.db.query('UPDATE users SET email = $1 WHERE id = $2', [email, req.userId]);
+        // Sync email in master user_directory so login resolution works with new email
+        if (req.tenantId && oldUser?.email) {
+            await masterQuery(
+                'UPDATE user_directory SET email = $1 WHERE tenant_id = $2 AND user_id = $3',
+                [email.toLowerCase(), req.tenantId, req.userId]
+            );
+        }
         res.json({ email });
     } catch (err) {
         req.log.error({ err }, 'PUT /profile/email error');
@@ -185,7 +218,10 @@ router.put('/password', auth, loadUserContext, async (req, res) => {
         }
         await redis.invalidateUserSessions(req.userId);
         const updated = (await req.db.query('SELECT token_version FROM users WHERE id = $1', [req.userId])).rows[0];
-        const token = jwt.sign({ id: req.userId, username: req.username, tv: updated.token_version || 0, sid: req.sessionId }, process.env.JWT_SECRET, { expiresIn: '8h' });
+        const tokenPayload = { id: req.userId, username: req.username, tv: updated.token_version || 0, sid: req.sessionId };
+        if (req.tenantId) tokenPayload.tenant_id = req.tenantId;
+        if (req.isPlatformUser) tokenPayload.platform = true;
+        const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, { expiresIn: '8h' });
         res.cookie('token', token, cookieOptions());
         logAction(req, 'change_password', 'user', req.userId, {});
         res.json({ message: 'Password updated successfully' });

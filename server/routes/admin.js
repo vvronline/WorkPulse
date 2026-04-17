@@ -602,6 +602,14 @@ router.post('/users', requireRole('hr_admin'), async (req, res) => {
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email' });
         const existingRes = await req.db.query('SELECT id FROM users WHERE username = $1 OR email = $2', [username, email]);
         if (existingRes.rows[0]) return res.status(400).json({ error: 'Username or email already taken' });
+        // Check global uniqueness in user_directory (cross-tenant)
+        if (req.tenantId) {
+            const dirCheck = await masterQuery(
+                'SELECT 1 FROM user_directory WHERE email = $1 OR username = $2',
+                [email.toLowerCase(), username.toLowerCase()]
+            );
+            if (dirCheck.rows[0]) return res.status(400).json({ error: 'Username or email already registered in another organization' });
+        }
         const assignRole = VALID_ROLES.includes(role) ? role : 'employee';
         if (req.userRole !== 'platform_admin' && ROLE_LEVEL[assignRole] >= ROLE_LEVEL[req.userRole]) {
             return res.status(403).json({ error: 'Cannot create a user with a role equal to or higher than your own' });
@@ -633,6 +641,17 @@ router.post('/users', requireRole('hr_admin'), async (req, res) => {
                 'INSERT INTO user_directory (email, username, tenant_id, user_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
                 [email.toLowerCase(), username.toLowerCase(), req.tenantId, result.rows[0].id]
             );
+        }
+        // Initialize leave balances from org leave policies
+        if (assignOrgId) {
+            const currentYear = new Date().getFullYear();
+            const policies = (await req.db.query('SELECT leave_type, annual_quota FROM leave_policies WHERE org_id = $1', [assignOrgId])).rows;
+            for (const policy of policies) {
+                await req.db.query(
+                    'INSERT INTO leave_balances (user_id, leave_type, year, quota, carried_forward) VALUES ($1, $2, $3, $4, 0) ON CONFLICT (user_id, leave_type, year) DO NOTHING',
+                    [result.rows[0].id, policy.leave_type, currentYear, policy.annual_quota]
+                );
+            }
         }
         logAction(req, 'admin_create', 'user', result.rows[0].id, { username, role: assignRole });
         res.json({ id: result.rows[0].id, message: `User ${username} created successfully` });
@@ -1023,6 +1042,12 @@ router.post('/users/import', requireRole('hr_admin'), importUpload.single('file'
         const failed = [];
         const assignOrgId = req.userOrgId;
 
+        // Pre-fetch org leave policies to initialize balances (avoids N+1 in loop)
+        let orgPolicies = [];
+        if (assignOrgId) {
+            orgPolicies = (await req.db.query('SELECT leave_type, annual_quota FROM leave_policies WHERE org_id = $1', [assignOrgId])).rows;
+        }
+
         for (let i = 0; i < usersToImport.length; i++) {
             const row = usersToImport[i];
             const rowNum = i + 1;
@@ -1083,6 +1108,14 @@ router.post('/users/import', requireRole('hr_admin'), importUpload.single('file'
 
                 const existing = await req.db.query('SELECT id FROM users WHERE username = $1 OR email = $2', [username, email]);
                 if (existing.rows[0]) { failed.push({ row: rowNum, error: 'Username or email already taken' }); continue; }
+                // Check global uniqueness in user_directory (cross-tenant)
+                if (req.tenantId) {
+                    const dirCheck = await masterQuery(
+                        'SELECT 1 FROM user_directory WHERE email = $1 OR username = $2',
+                        [email.toLowerCase(), username.toLowerCase()]
+                    );
+                    if (dirCheck.rows[0]) { failed.push({ row: rowNum, error: 'Username or email already registered in another organization' }); continue; }
+                }
 
                 const hash = await bcrypt.hash(plainPw, 10);
                 const created = await req.db.query(
@@ -1095,6 +1128,16 @@ router.post('/users/import', requireRole('hr_admin'), importUpload.single('file'
                         'INSERT INTO user_directory (email, username, tenant_id, user_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
                         [email.toLowerCase(), username.toLowerCase(), req.tenantId, created.rows[0].id]
                     );
+                }
+                // Initialize leave balances from org leave policies
+                if (assignOrgId) {
+                    const currentYear = new Date().getFullYear();
+                    for (const policy of orgPolicies) {
+                        await req.db.query(
+                            'INSERT INTO leave_balances (user_id, leave_type, year, quota, carried_forward) VALUES ($1, $2, $3, $4, 0) ON CONFLICT (user_id, leave_type, year) DO NOTHING',
+                            [created.rows[0].id, policy.leave_type, currentYear, policy.annual_quota]
+                        );
+                    }
                 }
                 logAction(req, 'admin_create', 'user', created.rows[0].id, { username, role: assignRole, via: 'bulk_import' });
                 imported.push({
