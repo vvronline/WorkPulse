@@ -232,6 +232,7 @@ export const getTenantUsers = (id, params) => API.get(`/admin/tenants/${id}/user
 export const createTenantUser = (id, data) => API.post(`/admin/tenants/${id}/users`, data);
 export const deactivateTenantUser = (tenantId, userId) => API.put(`/admin/tenants/${tenantId}/users/${userId}/deactivate`);
 export const seedTenant = (id) => API.post(`/admin/tenants/${id}/seed`);
+export const getPlatformAuditLogs = (params) => API.get('/admin/tenants/audit-logs', { params });
 
 // Platform Admin Management (platform_admin)
 export const getPlatformUsers = () => API.get('/admin/tenants/platform-users');

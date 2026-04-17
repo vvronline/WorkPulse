@@ -10,7 +10,7 @@ const {
     createTenant, deleteTenant, suspendTenant, reactivateTenant,
     getTenantById, getTenantPool, getPoolStats, listActiveTenants,
 } = require('../utils/tenantManager');
-const { logAction } = require('../utils/audit');
+const { logPlatformAction, queryPlatformLogs } = require('../utils/platformAudit');
 const { logger } = require('../utils/logger');
 const redis = require('../redis');
 const jwt = require('jsonwebtoken');
@@ -64,7 +64,7 @@ router.post('/', async (req, res) => {
             }
         }
 
-        logAction(req, 'tenant_created', 'tenant', tenant.id, { slug, org_name });
+        logPlatformAction(req, 'tenant_created', 'tenant', tenant.id, { slug, org_name }, tenant.id);
         res.status(201).json({ tenant });
     } catch (err) {
         if (err.code === '23505') {
@@ -186,7 +186,7 @@ router.post('/platform-users', async (req, res) => {
             [username.toLowerCase(), hash, full_name, email.toLowerCase()]
         );
 
-        logAction(req, 'platform_admin_created', 'platform_user', result.rows[0].id, { username, full_name });
+        logPlatformAction(req, 'platform_admin_created', 'platform_user', result.rows[0].id, { username, full_name });
         res.status(201).json({ user: result.rows[0], message: 'Platform admin created successfully' });
     } catch (err) {
         logger.error({ err }, 'Create platform user error');
@@ -209,7 +209,7 @@ router.put('/platform-users/:id/deactivate', async (req, res) => {
         const newActive = !target.is_active;
         await masterQuery('UPDATE platform_users SET is_active = $1, updated_at = NOW() WHERE id = $2', [newActive, uid]);
 
-        logAction(req, newActive ? 'platform_admin_reactivated' : 'platform_admin_deactivated', 'platform_user', uid, { full_name: target.full_name });
+        logPlatformAction(req, newActive ? 'platform_admin_reactivated' : 'platform_admin_deactivated', 'platform_user', uid, { full_name: target.full_name });
         res.json({ message: `${target.full_name} has been ${newActive ? 'reactivated' : 'deactivated'}`, is_active: newActive });
     } catch (err) {
         logger.error({ err }, 'Deactivate platform user error');
@@ -241,7 +241,7 @@ router.post('/platform-users/:id/reset-password', async (req, res) => {
         );
         await redis.invalidateTokenVersion(null, uid);
 
-        logAction(req, 'platform_admin_reset_password', 'platform_user', uid, { full_name: target.full_name });
+        logPlatformAction(req, 'platform_admin_reset_password', 'platform_user', uid, { full_name: target.full_name });
         res.json({ message: `Password reset for ${target.full_name}` });
     } catch (err) {
         logger.error({ err }, 'Reset platform user password error');
@@ -293,7 +293,7 @@ router.put('/:id', async (req, res) => {
         await redis.del(`tenant:id:${tid}`);
         if (tenant.custom_domain) await redis.del(`tenant:domain:${tenant.custom_domain}`);
 
-        logAction(req, 'tenant_updated', 'tenant', tid, { changes: req.body });
+        logPlatformAction(req, 'tenant_updated', 'tenant', tid, { changes: req.body }, tid);
         res.json({ tenant: result.rows[0] });
     } catch (err) {
         logger.error({ err }, 'Update tenant error');
@@ -312,7 +312,7 @@ router.put('/:id/suspend', async (req, res) => {
         await redis.del(`tenant:id:${tid}`);
         if (tenant.custom_domain) await redis.del(`tenant:domain:${tenant.custom_domain}`);
 
-        logAction(req, 'tenant_suspended', 'tenant', tid, { reason });
+        logPlatformAction(req, 'tenant_suspended', 'tenant', tid, { reason }, tid);
         res.json({ tenant });
     } catch (err) {
         logger.error({ err }, 'Suspend tenant error');
@@ -330,7 +330,7 @@ router.put('/:id/reactivate', async (req, res) => {
         await redis.del(`tenant:id:${tid}`);
         if (tenant.custom_domain) await redis.del(`tenant:domain:${tenant.custom_domain}`);
 
-        logAction(req, 'tenant_reactivated', 'tenant', tid);
+        logPlatformAction(req, 'tenant_reactivated', 'tenant', tid, null, tid);
         res.json({ tenant });
     } catch (err) {
         logger.error({ err }, 'Reactivate tenant error');
@@ -348,7 +348,7 @@ router.delete('/:id', async (req, res) => {
 
         await redis.del(`tenant:id:${tid}`);
 
-        logAction(req, hard ? 'tenant_hard_deleted' : 'tenant_soft_deleted', 'tenant', tid);
+        logPlatformAction(req, hard ? 'tenant_hard_deleted' : 'tenant_soft_deleted', 'tenant', tid, null, tid);
         res.json({ message: hard ? 'Tenant permanently deleted.' : 'Tenant marked as deleted.' });
     } catch (err) {
         logger.error({ err }, 'Delete tenant error');
@@ -419,7 +419,7 @@ router.put('/:id/domain', async (req, res) => {
 
         await redis.del(`tenant:id:${tid}`);
 
-        logAction(req, 'tenant_domain_changed', 'tenant', tid, { old: tenant.custom_domain, new: custom_domain });
+        logPlatformAction(req, 'tenant_domain_changed', 'tenant', tid, { old: tenant.custom_domain, new: custom_domain }, tid);
         res.json({ tenant: result.rows[0] });
     } catch (err) {
         if (err.code === '23505') {
@@ -454,7 +454,7 @@ router.put('/:id/features', async (req, res) => {
 
         await redis.del(`tenant:id:${tid}`);
 
-        logAction(req, 'tenant_features_updated', 'tenant', tid, { features });
+        logPlatformAction(req, 'tenant_features_updated', 'tenant', tid, { features }, tid);
         res.json({ tenant: result.rows[0] });
     } catch (err) {
         logger.error({ err }, 'Update features error');
@@ -477,7 +477,7 @@ router.put('/:id/limits', async (req, res) => {
 
         await redis.del(`tenant:id:${tid}`);
 
-        logAction(req, 'tenant_limits_updated', 'tenant', tid, { max_users, max_storage_mb });
+        logPlatformAction(req, 'tenant_limits_updated', 'tenant', tid, { max_users, max_storage_mb }, tid);
         res.json({ tenant: result.rows[0] });
     } catch (err) {
         logger.error({ err }, 'Update limits error');
@@ -537,11 +537,11 @@ router.post('/:id/impersonate', async (req, res) => {
             { expiresIn: '1h' }
         );
 
-        logAction(req, 'tenant_impersonation_started', 'tenant', tid, {
+        logPlatformAction(req, 'tenant_impersonation_started', 'tenant', tid, {
             target_user: platUser.id,
             target_username: platUser.username,
             virtual: !targetUser,
-        });
+        }, tid);
 
         res.json({
             token: impersonationToken,
@@ -557,7 +557,7 @@ router.post('/:id/impersonate', async (req, res) => {
 // POST /admin/tenants/:id/exit-impersonate
 router.post('/:id/exit-impersonate', async (req, res) => {
     try {
-        logAction(req, 'tenant_impersonation_ended', 'tenant', Number(req.params.id));
+        logPlatformAction(req, 'tenant_impersonation_ended', 'tenant', Number(req.params.id), null, Number(req.params.id));
         // Client should restore the original platform admin token
         res.json({ message: 'Impersonation ended. Restore your admin session.' });
     } catch (err) {
@@ -656,7 +656,7 @@ router.post('/:id/users', async (req, res) => {
             [email.toLowerCase(), username.toLowerCase(), tid, result.rows[0].id]
         );
 
-        logAction(req, 'tenant_user_created', 'user', result.rows[0].id, { tenant_id: tid, username });
+        logPlatformAction(req, 'tenant_user_created', 'user', result.rows[0].id, { tenant_id: tid, username }, tid);
         res.status(201).json({ user: result.rows[0] });
     } catch (err) {
         logger.error({ err }, 'Create tenant user error');
@@ -679,7 +679,7 @@ router.put('/:tenantId/users/:userId/deactivate', async (req, res) => {
         );
         if (!result.rows[0]) return res.status(404).json({ error: 'User not found' });
 
-        logAction(req, 'tenant_user_deactivated', 'user', uid, { tenant_id: tid });
+        logPlatformAction(req, 'tenant_user_deactivated', 'user', uid, { tenant_id: tid }, tid);
         res.json({ message: 'User deactivated', user: result.rows[0] });
     } catch (err) {
         logger.error({ err }, 'Deactivate tenant user error');
@@ -730,11 +730,37 @@ router.post('/:id/seed', async (req, res) => {
             }
         }
 
-        logAction(req, 'tenant_seeded', 'tenant', tid, seeded);
+        logPlatformAction(req, 'tenant_seeded', 'tenant', tid, seeded, tid);
         res.json({ message: 'Seed data applied', seeded });
     } catch (err) {
         logger.error({ err }, 'Seed tenant error');
         res.status(500).json({ error: 'Failed to seed tenant data' });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  PLATFORM AUDIT LOGS
+// ═══════════════════════════════════════════════════════════════
+
+// GET /admin/tenants/audit-logs — query platform-level audit trail
+router.get('/audit-logs', async (req, res) => {
+    try {
+        const { actor_id, entity_type, entity_id, action, tenant_id, from, to, limit, offset } = req.query;
+        const result = await queryPlatformLogs({
+            actorId: actor_id ? Number(actor_id) : null,
+            entityType: entity_type || null,
+            entityId: entity_id ? Number(entity_id) : null,
+            action: action || null,
+            tenantId: tenant_id ? Number(tenant_id) : null,
+            from: from || null,
+            to: to || null,
+            limit: limit ? Number(limit) : 50,
+            offset: offset ? Number(offset) : 0,
+        });
+        res.json(result);
+    } catch (err) {
+        logger.error({ err }, 'Platform audit logs query error');
+        res.status(500).json({ error: 'Failed to query audit logs' });
     }
 });
 

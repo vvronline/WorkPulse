@@ -186,6 +186,25 @@ async function initMasterDB() {
     `);
     await masterQuery(`CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)`);
 
+    // ---- Platform audit logs (master-level admin actions) ----
+    await masterQuery(`
+        CREATE TABLE IF NOT EXISTS platform_audit_logs (
+            id          SERIAL PRIMARY KEY,
+            actor_id    INTEGER REFERENCES platform_users(id) ON DELETE SET NULL,
+            action      TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            entity_id   INTEGER,
+            tenant_id   INTEGER REFERENCES tenants(id) ON DELETE SET NULL,
+            details     JSONB,
+            ip_address  TEXT,
+            user_agent  TEXT,
+            created_at  TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    await masterQuery(`CREATE INDEX IF NOT EXISTS idx_platform_audit_actor ON platform_audit_logs(actor_id, created_at)`);
+    await masterQuery(`CREATE INDEX IF NOT EXISTS idx_platform_audit_tenant ON platform_audit_logs(tenant_id, created_at)`);
+    await masterQuery(`CREATE INDEX IF NOT EXISTS idx_platform_audit_action ON platform_audit_logs(action, created_at)`);
+
     // Seed defaults
     await masterQuery(`
         INSERT INTO app_settings (key, value) VALUES ('registration_mode', 'open')

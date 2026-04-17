@@ -866,3 +866,236 @@
     gap: 12px;
   }
 }
+
+/* ─── Platform Audit Logs ─── */
+.auditSection {
+  margin-top: 0;
+}
+
+.auditHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.auditHeaderIcon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.auditTitle {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.auditSubtitle {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  margin: 2px 0 0;
+}
+
+.auditCount {
+  margin-left: auto;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.auditToolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.auditToolbar select {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--input-bg, var(--card-bg));
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  min-width: 140px;
+}
+
+.auditToolbar select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+.auditTableWrap {
+  overflow-x: auto;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+}
+
+.auditTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.auditTable th {
+  padding: 10px 14px;
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.auditTable td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.auditTable tr:last-child td {
+  border-bottom: none;
+}
+
+.auditRow {
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.auditRow:hover td {
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+}
+
+.auditRowHigh {
+  border-left: 3px solid var(--danger);
+}
+
+.auditRowMedium {
+  border-left: 3px solid #f59e0b;
+}
+
+.auditTime {
+  white-space: nowrap;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.auditActor {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 500;
+}
+
+.auditBadge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  text-transform: capitalize;
+}
+
+.auditEntity {
+  font-family: monospace;
+  font-size: 0.82rem;
+}
+
+.auditTenant {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.auditIp {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-family: monospace;
+}
+
+.auditDetailRow td {
+  padding: 0 !important;
+  background: var(--bg-secondary);
+}
+
+.auditDetails {
+  padding: 12px 16px;
+  font-size: 0.82rem;
+}
+
+.auditDetails pre {
+  margin: 6px 0 0;
+  padding: 10px;
+  border-radius: 6px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  overflow-x: auto;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.auditUa {
+  margin-top: 8px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
+.auditEmpty {
+  text-align: center;
+  padding: 48px 20px !important;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.auditPagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 16px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.auditPagination button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  background: var(--card-bg);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+
+.auditPagination button:hover:not([disabled]) {
+  background: var(--bg-secondary);
+}
+
+.auditPagination button[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
