@@ -250,6 +250,33 @@ router.post('/platform-users/:id/reset-password', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+//  PLATFORM AUDIT LOGS
+// ═══════════════════════════════════════════════════════════════
+
+// GET /admin/tenants/audit-logs — query platform-level audit trail
+// NOTE: Must be defined BEFORE /:id routes to avoid being caught by the param.
+router.get('/audit-logs', async (req, res) => {
+    try {
+        const { actor_id, entity_type, entity_id, action, tenant_id, from, to, limit, offset } = req.query;
+        const result = await queryPlatformLogs({
+            actorId: actor_id ? Number(actor_id) : null,
+            entityType: entity_type || null,
+            entityId: entity_id ? Number(entity_id) : null,
+            action: action || null,
+            tenantId: tenant_id ? Number(tenant_id) : null,
+            from: from || null,
+            to: to || null,
+            limit: limit ? Number(limit) : 50,
+            offset: offset ? Number(offset) : 0,
+        });
+        res.json(result);
+    } catch (err) {
+        logger.error({ err }, 'Platform audit logs query error');
+        res.status(500).json({ error: 'Failed to query audit logs' });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════
 //  SINGLE TENANT DETAIL & LIFECYCLE
 // ═══════════════════════════════════════════════════════════════
 
@@ -735,32 +762,6 @@ router.post('/:id/seed', async (req, res) => {
     } catch (err) {
         logger.error({ err }, 'Seed tenant error');
         res.status(500).json({ error: 'Failed to seed tenant data' });
-    }
-});
-
-// ═══════════════════════════════════════════════════════════════
-//  PLATFORM AUDIT LOGS
-// ═══════════════════════════════════════════════════════════════
-
-// GET /admin/tenants/audit-logs — query platform-level audit trail
-router.get('/audit-logs', async (req, res) => {
-    try {
-        const { actor_id, entity_type, entity_id, action, tenant_id, from, to, limit, offset } = req.query;
-        const result = await queryPlatformLogs({
-            actorId: actor_id ? Number(actor_id) : null,
-            entityType: entity_type || null,
-            entityId: entity_id ? Number(entity_id) : null,
-            action: action || null,
-            tenantId: tenant_id ? Number(tenant_id) : null,
-            from: from || null,
-            to: to || null,
-            limit: limit ? Number(limit) : 50,
-            offset: offset ? Number(offset) : 0,
-        });
-        res.json(result);
-    } catch (err) {
-        logger.error({ err }, 'Platform audit logs query error');
-        res.status(500).json({ error: 'Failed to query audit logs' });
     }
 });
 
