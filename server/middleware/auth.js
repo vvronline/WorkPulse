@@ -11,6 +11,7 @@ async function authMiddleware(req, res, next) {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         const tokenVersion = decoded.tv ?? 0;
         const isPlatformUser = !!decoded.platform;
+        const isVirtualImpersonation = !!decoded.impersonated && !!decoded.is_virtual;
         // A platform_admin with a tenant_id has a linked user record in the tenant DB.
         // Token version should be checked against the tenant's users table, not platform_users.
         const hasTenantContext = !!decoded.tenant_id;
@@ -21,42 +22,48 @@ async function authMiddleware(req, res, next) {
             return res.status(500).json({ error: 'Database context not available' });
         }
 
-        // Try Redis cache first for token version check
-        let dbTokenVersion = await redis.getTokenVersion(decoded.id);
-        if (dbTokenVersion === null) {
-            const result = (isPlatformUser && !hasTenantContext)
-                ? await dbQuery('SELECT token_version FROM platform_users WHERE id = $1', [decoded.id])
-                : await dbQuery('SELECT token_version FROM users WHERE id = $1', [decoded.id]);
-            const user = result.rows[0];
-            if (!user) {
-                return res.status(401).json({ error: 'User no longer exists' });
+        // Skip token version & session checks for virtual impersonation (no real user in tenant)
+        if (!isVirtualImpersonation) {
+            // Try Redis cache first for token version check
+            let dbTokenVersion = await redis.getTokenVersion(decoded.id);
+            if (dbTokenVersion === null) {
+                const result = (isPlatformUser && !hasTenantContext)
+                    ? await dbQuery('SELECT token_version FROM platform_users WHERE id = $1', [decoded.id])
+                    : await dbQuery('SELECT token_version FROM users WHERE id = $1', [decoded.id]);
+                const user = result.rows[0];
+                if (!user) {
+                    return res.status(401).json({ error: 'User no longer exists' });
+                }
+                dbTokenVersion = user.token_version || 0;
+                await redis.setTokenVersion(decoded.id, dbTokenVersion);
             }
-            dbTokenVersion = user.token_version || 0;
-            await redis.setTokenVersion(decoded.id, dbTokenVersion);
-        }
 
-        if (tokenVersion !== dbTokenVersion) {
-            return res.status(401).json({ error: 'Session expired. Please sign in again.' });
-        }
+            if (tokenVersion !== dbTokenVersion) {
+                return res.status(401).json({ error: 'Session expired. Please sign in again.' });
+            }
 
-        // Validate session is still active (max-2-device enforcement)
-        if (decoded.sid) {
-            let sessions = await redis.getUserSessions(decoded.id);
-            if (sessions === null) {
-                const sessRes = await dbQuery('SELECT id FROM user_sessions WHERE user_id = $1', [decoded.id]);
-                sessions = sessRes.rows.map(r => r.id);
-                await redis.setUserSessions(decoded.id, sessions);
+            // Validate session is still active (max-2-device enforcement)
+            if (decoded.sid) {
+                let sessions = await redis.getUserSessions(decoded.id);
+                if (sessions === null) {
+                    const sessRes = await dbQuery('SELECT id FROM user_sessions WHERE user_id = $1', [decoded.id]);
+                    sessions = sessRes.rows.map(r => r.id);
+                    await redis.setUserSessions(decoded.id, sessions);
+                }
+                if (!sessions.includes(decoded.sid)) {
+                    return res.status(401).json({ error: 'Session ended. You may have signed in on another device.' });
+                }
             }
-            if (!sessions.includes(decoded.sid)) {
-                return res.status(401).json({ error: 'Session ended. You may have signed in on another device.' });
-            }
-        }
+        } // end !isVirtualImpersonation
 
         req.userId = decoded.id;
         req.username = decoded.username;
         req.sessionId = decoded.sid || null;
         req.tenantId = decoded.tenant_id || null;
         req.isPlatformUser = isPlatformUser;
+        req.isImpersonated = !!decoded.impersonated;
+        req.impersonatedBy = decoded.impersonated_by || null;
+        req.impersonatedTenantName = decoded.impersonated_tenant_name || null;
         next();
     } catch (err) {
         if (err.name === 'TokenExpiredError') {

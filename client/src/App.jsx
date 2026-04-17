@@ -21,6 +21,7 @@ import { UserStatusProvider } from './UserStatusContext';
 import MeetingPiP from './components/meeting/MeetingPiP';
 import GlobalIncomingCall from './components/notifications/GlobalIncomingCall';
 import PageSkeleton from './components/common/PageSkeleton';
+import ImpersonationBanner from './components/common/ImpersonationBanner';
 
 // Lazy-load non-critical pages for smaller initial bundle
 const Analytics = lazy(() => import('./pages/analytics'));
@@ -39,6 +40,7 @@ const ManagerDashboard = lazy(() => import('./pages/ManagerDashboard'));
 const LeavePolicy = lazy(() => import('./pages/LeavePolicy'));
 const Organization = lazy(() => import('./pages/Organization'));
 const SetEmail = lazy(() => import('./pages/SetEmail'));
+const TenantsPage = lazy(() => import('./pages/tenants'));
 
 function ProtectedRoute({ children, minRole }) {
   const { isAuthenticated, user } = useAuth();
@@ -65,6 +67,7 @@ function AppRoutes() {
   return (
     <div className="app">
       <ErrorBoundary resetKey={location.pathname}>
+      {isAuthenticated && <ImpersonationBanner />}
       {isAuthenticated && !location.pathname.match(/^\/meeting\/[^/]+\/room/) && <Navbar />}
       <Suspense fallback={<PageSkeleton />}>
         <Routes>
@@ -84,6 +87,7 @@ function AppRoutes() {
           <Route path="/meeting/:code" element={<ProtectedRoute><MeetingJoin /></ProtectedRoute>} />
           <Route path="/meeting/:code/room" element={<ProtectedRoute><MeetingRoom /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute minRole="hr_admin"><Admin /></ProtectedRoute>} />
+          <Route path="/tenants" element={<ProtectedRoute minRole="platform_admin"><TenantsPage /></ProtectedRoute>} />
           <Route path="/manager" element={<ProtectedRoute minRole="team_lead"><ManagerDashboard /></ProtectedRoute>} />
           <Route path="/leave-policy" element={<ProtectedRoute><LeavePolicy /></ProtectedRoute>} />
           <Route path="/organization" element={<ProtectedRoute><Organization /></ProtectedRoute>} />

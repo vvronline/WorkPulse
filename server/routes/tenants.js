@@ -83,7 +83,11 @@ router.get('/', async (req, res) => {
         const params = [];
         let p = 1;
 
-        if (status) { where.push(`t.status = $${p++}`); params.push(status); }
+        // Exclude deleted tenants by default; only show them if explicitly requested
+        if (status === 'deleted') { where.push(`t.status = 'deleted'`); }
+        else if (status) { where.push(`t.status = $${p++}`); params.push(status); }
+        else { where.push(`t.status != 'deleted'`); }
+
         if (search) { where.push(`(t.org_name ILIKE $${p} OR t.slug ILIKE $${p})`); params.push(`%${search}%`); p++; }
 
         const whereClause = where.length ? 'WHERE ' + where.join(' AND ') : '';
@@ -133,6 +137,121 @@ router.get('/overview', async (req, res) => {
         res.status(500).json({ error: 'Failed to get overview' });
     }
 });
+
+// ═══════════════════════════════════════════════════════════════
+//  PLATFORM ADMIN MANAGEMENT
+// ═══════════════════════════════════════════════════════════════
+
+// GET /admin/tenants/platform-users — list all platform admins
+router.get('/platform-users', async (req, res) => {
+    try {
+        const result = await masterQuery(
+            'SELECT id, username, full_name, email, avatar, is_active, created_at FROM platform_users ORDER BY created_at DESC'
+        );
+        res.json(result.rows);
+    } catch (err) {
+        logger.error({ err }, 'List platform users error');
+        res.status(500).json({ error: 'Failed to list platform users' });
+    }
+});
+
+// POST /admin/tenants/platform-users — create a new platform admin
+router.post('/platform-users', async (req, res) => {
+    try {
+        const { username, password, full_name, email } = req.body;
+        if (!username || !password || !full_name || !email) {
+            return res.status(400).json({ error: 'username, password, full_name and email are required' });
+        }
+
+        const pwError = validatePassword(password);
+        if (pwError) return res.status(400).json({ error: pwError });
+        const usernameError = validateUsername(username);
+        if (usernameError) return res.status(400).json({ error: usernameError });
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            return res.status(400).json({ error: 'Invalid email format' });
+        }
+
+        // Check uniqueness in platform_users
+        const existing = await masterQuery(
+            'SELECT id FROM platform_users WHERE username = $1 OR email = $2',
+            [username.toLowerCase(), email.toLowerCase()]
+        );
+        if (existing.rows[0]) {
+            return res.status(409).json({ error: 'Username or email already exists' });
+        }
+
+        const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+        const result = await masterQuery(
+            'INSERT INTO platform_users (username, password, full_name, email) VALUES ($1, $2, $3, $4) RETURNING id, username, full_name, email, is_active, created_at',
+            [username.toLowerCase(), hash, full_name, email.toLowerCase()]
+        );
+
+        logAction(req, 'platform_admin_created', 'platform_user', result.rows[0].id, { username, full_name });
+        res.status(201).json({ user: result.rows[0], message: 'Platform admin created successfully' });
+    } catch (err) {
+        logger.error({ err }, 'Create platform user error');
+        res.status(500).json({ error: 'Failed to create platform admin' });
+    }
+});
+
+// PUT /admin/tenants/platform-users/:id/deactivate — toggle active status
+router.put('/platform-users/:id/deactivate', async (req, res) => {
+    try {
+        const uid = Number(req.params.id);
+        if (uid === req.userId) {
+            return res.status(400).json({ error: 'Cannot deactivate yourself' });
+        }
+
+        const userRes = await masterQuery('SELECT id, is_active, full_name FROM platform_users WHERE id = $1', [uid]);
+        const target = userRes.rows[0];
+        if (!target) return res.status(404).json({ error: 'Platform user not found' });
+
+        const newActive = !target.is_active;
+        await masterQuery('UPDATE platform_users SET is_active = $1, updated_at = NOW() WHERE id = $2', [newActive, uid]);
+
+        logAction(req, newActive ? 'platform_admin_reactivated' : 'platform_admin_deactivated', 'platform_user', uid, { full_name: target.full_name });
+        res.json({ message: `${target.full_name} has been ${newActive ? 'reactivated' : 'deactivated'}`, is_active: newActive });
+    } catch (err) {
+        logger.error({ err }, 'Deactivate platform user error');
+        res.status(500).json({ error: 'Failed to update platform user' });
+    }
+});
+
+// POST /admin/tenants/platform-users/:id/reset-password — reset platform admin password
+router.post('/platform-users/:id/reset-password', async (req, res) => {
+    try {
+        const uid = Number(req.params.id);
+        const { new_password } = req.body;
+        if (!new_password || new_password.length < 8) {
+            return res.status(400).json({ error: 'Password must be at least 8 characters' });
+        }
+        if (new_password.length > 72) {
+            return res.status(400).json({ error: 'Password must be 72 characters or less' });
+        }
+        const pwErr = validatePassword(new_password);
+        if (pwErr) return res.status(400).json({ error: pwErr });
+
+        const target = (await masterQuery('SELECT id, full_name FROM platform_users WHERE id = $1', [uid])).rows[0];
+        if (!target) return res.status(404).json({ error: 'Platform user not found' });
+
+        const hash = await bcrypt.hash(new_password, BCRYPT_ROUNDS);
+        await masterQuery(
+            'UPDATE platform_users SET password = $1, token_version = COALESCE(token_version, 0) + 1, updated_at = NOW() WHERE id = $2',
+            [hash, uid]
+        );
+        await redis.invalidateTokenVersion(uid);
+
+        logAction(req, 'platform_admin_reset_password', 'platform_user', uid, { full_name: target.full_name });
+        res.json({ message: `Password reset for ${target.full_name}` });
+    } catch (err) {
+        logger.error({ err }, 'Reset platform user password error');
+        res.status(500).json({ error: 'Failed to reset password' });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  SINGLE TENANT DETAIL & LIFECYCLE
+// ═══════════════════════════════════════════════════════════════
 
 // GET /admin/tenants/:id — single tenant detail
 router.get('/:id', async (req, res) => {
@@ -379,40 +498,55 @@ router.post('/:id/impersonate', async (req, res) => {
             return res.status(404).json({ error: 'Tenant not found or not active' });
         }
 
-        // Get the super_admin of the tenant to impersonate as
+        // Get the highest-role active user to impersonate as
         const db = await getTenantPool(tenant.db_name, tenant.db_host);
         const adminRes = await db.query(
-            "SELECT id, username, full_name, email, role FROM users WHERE role = 'super_admin' AND is_active = TRUE LIMIT 1"
+            `SELECT id, username, full_name, email, role FROM users WHERE is_active = TRUE
+             ORDER BY CASE role
+                WHEN 'super_admin' THEN 1
+                WHEN 'hr_admin' THEN 2
+                WHEN 'manager' THEN 3
+                WHEN 'team_lead' THEN 4
+                ELSE 5 END
+             LIMIT 1`
         );
         const targetUser = adminRes.rows[0];
-        if (!targetUser) {
-            return res.status(404).json({ error: 'No active super_admin found in this tenant' });
-        }
 
-        // Short-lived impersonation token (15 min)
+        // If no users exist, create a virtual platform_admin context for this tenant
+        const platUser = targetUser || {
+            id: 0,
+            username: `platform_admin_${req.userId}`,
+            full_name: 'Platform Admin',
+            email: null,
+            role: 'super_admin',
+        };
+
+        // Impersonation token (1 hour)
         const impersonationToken = jwt.sign(
             {
-                id: targetUser.id,
-                username: targetUser.username,
+                id: platUser.id,
+                username: platUser.username,
                 tv: 0,
                 tenant_id: tid,
                 impersonated: true,
                 impersonated_by: req.userId,
-                original_token: req.cookies.token, // store original platform admin token
+                impersonated_tenant_name: tenant.org_name,
+                is_virtual: !targetUser, // no real user exists
             },
             process.env.JWT_SECRET,
-            { expiresIn: '15m' }
+            { expiresIn: '1h' }
         );
 
         logAction(req, 'tenant_impersonation_started', 'tenant', tid, {
-            target_user: targetUser.id,
-            target_username: targetUser.username,
+            target_user: platUser.id,
+            target_username: platUser.username,
+            virtual: !targetUser,
         });
 
         res.json({
             token: impersonationToken,
             tenant: { id: tid, org_name: tenant.org_name, slug: tenant.slug },
-            user: targetUser,
+            user: platUser,
         });
     } catch (err) {
         logger.error({ err }, 'Impersonation error');
@@ -550,6 +684,57 @@ router.put('/:tenantId/users/:userId/deactivate', async (req, res) => {
     } catch (err) {
         logger.error({ err }, 'Deactivate tenant user error');
         res.status(500).json({ error: 'Failed to deactivate user' });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  TENANT SEED DATA
+// ═══════════════════════════════════════════════════════════════
+
+// POST /admin/tenants/:id/seed — seed default data for a new tenant
+router.post('/:id/seed', async (req, res) => {
+    try {
+        const tid = Number(req.params.id);
+        const tenant = await getTenantById(tid);
+        if (!tenant || tenant.status !== 'active') {
+            return res.status(404).json({ error: 'Tenant not found or not active' });
+        }
+
+        const db = await getTenantPool(tenant.db_name, tenant.db_host);
+        const seeded = { departments: 0, leave_policies: 0 };
+
+        // Seed default departments
+        const defaultDepts = ['Engineering', 'Product', 'Design', 'Marketing', 'Sales', 'Human Resources', 'Finance'];
+        for (const name of defaultDepts) {
+            const exists = (await db.query('SELECT id FROM departments WHERE org_id = 1 AND LOWER(name) = LOWER($1)', [name])).rows[0];
+            if (!exists) {
+                await db.query('INSERT INTO departments (org_id, name) VALUES (1, $1)', [name]);
+                seeded.departments++;
+            }
+        }
+
+        // Seed default leave policies
+        const defaultPolicies = [
+            { leave_type: 'Annual Leave', annual_quota: 20, carry_forward: true, max_carry: 5 },
+            { leave_type: 'Sick Leave', annual_quota: 10, carry_forward: false, max_carry: 0 },
+            { leave_type: 'Personal Leave', annual_quota: 5, carry_forward: false, max_carry: 0 },
+        ];
+        for (const p of defaultPolicies) {
+            const exists = (await db.query('SELECT id FROM leave_policies WHERE org_id = 1 AND LOWER(leave_type) = LOWER($1)', [p.leave_type])).rows[0];
+            if (!exists) {
+                await db.query(
+                    'INSERT INTO leave_policies (org_id, leave_type, annual_quota, carry_forward, max_carry_forward) VALUES (1, $1, $2, $3, $4)',
+                    [p.leave_type, p.annual_quota, p.carry_forward, p.max_carry]
+                );
+                seeded.leave_policies++;
+            }
+        }
+
+        logAction(req, 'tenant_seeded', 'tenant', tid, seeded);
+        res.json({ message: 'Seed data applied', seeded });
+    } catch (err) {
+        logger.error({ err }, 'Seed tenant error');
+        res.status(500).json({ error: 'Failed to seed tenant data' });
     }
 });
 

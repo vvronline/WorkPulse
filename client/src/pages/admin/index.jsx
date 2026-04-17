@@ -1,17 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle2, Users, Building, UsersRound, Clock, AlarmClock, UserPlus, ScrollText, RefreshCw, Download, DollarSign, Megaphone, Server, Network, Tag } from 'lucide-react';
+import { CheckCircle2, Users, Building, UsersRound, Clock, AlarmClock, UserPlus, ScrollText, RefreshCw, Download, DollarSign, Megaphone, Network, Tag, Settings } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
 import { useSearchParams } from 'react-router-dom';
 import { getAdminStats } from '../../api';
 import UserManagement from './UserManagement';
 import CreateUser from './CreateUser';
 import MyOrganization from './MyOrganization';
-import TenantManagement from './TenantManagement';
 import AuditLogs from './AuditLogs';
 import RoleRequests from './RoleRequests';
 import ImportUsers from './ImportUsers';
 import PayPeriods from './PayPeriods';
 import AnnouncementsTab from './AnnouncementsTab';
+import OrgSettings from './OrgSettings';
 import TaskLabelsTab from './TaskLabelsTab';
 import s from '../Admin.module.css';
 
@@ -19,7 +19,7 @@ export default function AdminPanel() {
     const { user } = useAuth();
     const [searchParams] = useSearchParams();
     const isPlatform = user?.role === 'platform_admin';
-    const [tab, setTab] = useState(searchParams.get('tab') || (isPlatform ? 'tenants' : 'users'));
+    const [tab, setTab] = useState(searchParams.get('tab') || 'users');
     const [stats, setStats] = useState(null);
 
     // Sync tab when URL changes (e.g. navigated from GlobalSearch)
@@ -76,19 +76,7 @@ export default function AdminPanel() {
             )}
 
             <div className={s.tabs}>
-                {/* ─── Platform Section (platform_admin only) ─── */}
-                {isPlatform && (
-                    <>
-                        <span className={s.tabGroupLabel}>Platform</span>
-                        <button className={`${s.tab} ${tab === 'tenants' ? s.active : ''}`} onClick={() => setTab('tenants')}>
-                            <span><Server size={14} /></span> Tenants
-                        </button>
-                        <span className={s.tabDivider} />
-                    </>
-                )}
-
                 {/* ─── Organization Section ─── */}
-                {isPlatform && <span className={s.tabGroupLabel}>Organization</span>}
                 <button className={`${s.tab} ${tab === 'users' ? s.active : ''}`} onClick={() => setTab('users')}>
                     <span><Users size={14} /></span> Users
                 </button>
@@ -120,10 +108,12 @@ export default function AdminPanel() {
                         <span><Megaphone size={14} /></span> Announcements
                     </button>
                 )}
+                {(user.role === 'super_admin' || isPlatform) && (
+                    <button className={`${s.tab} ${tab === 'settings' ? s.active : ''}`} onClick={() => setTab('settings')}>
+                        <span><Settings size={14} /></span> Settings
+                    </button>
+                )}
             </div>
-
-            {/* ─── Platform Content ─── */}
-            {tab === 'tenants' && isPlatform && <TenantManagement />}
 
             {/* ─── Organization Content ─── */}
             {tab === 'users' && <UserManagement userRole={user.role} />}
@@ -135,6 +125,7 @@ export default function AdminPanel() {
             {tab === 'payroll' && <PayPeriods />}
             {tab === 'labels' && <TaskLabelsTab />}
             {tab === 'announcements' && (user.role === 'super_admin' || isPlatform) && <AnnouncementsTab userRole={user.role} />}
+            {tab === 'settings' && (user.role === 'super_admin' || isPlatform) && <OrgSettings />}
         </div>
     );
 }

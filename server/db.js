@@ -888,6 +888,19 @@ async function initTenantSchema(q) {
     await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS user_status TEXT NOT NULL DEFAULT 'available' CHECK(user_status IN ('available','busy','dnd','away','offline','in_call','in_meeting'))`);
     await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS user_status_text TEXT`);
 
+    // Tenant-level app settings (registration_mode, etc.)
+    await q(`
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key        TEXT PRIMARY KEY,
+            value      TEXT NOT NULL,
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    await q(`
+        INSERT INTO app_settings (key, value) VALUES ('registration_mode', 'open')
+        ON CONFLICT (key) DO NOTHING
+    `);
+
     logger.info('Tenant schema initialised');
 }
 

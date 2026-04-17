@@ -231,6 +231,13 @@ export const exitImpersonation = (id) => API.post(`/admin/tenants/${id}/exit-imp
 export const getTenantUsers = (id, params) => API.get(`/admin/tenants/${id}/users`, { params });
 export const createTenantUser = (id, data) => API.post(`/admin/tenants/${id}/users`, data);
 export const deactivateTenantUser = (tenantId, userId) => API.put(`/admin/tenants/${tenantId}/users/${userId}/deactivate`);
+export const seedTenant = (id) => API.post(`/admin/tenants/${id}/seed`);
+
+// Platform Admin Management (platform_admin)
+export const getPlatformUsers = () => API.get('/admin/tenants/platform-users');
+export const createPlatformUser = (data) => API.post('/admin/tenants/platform-users', data);
+export const deactivatePlatformUser = (id) => API.put(`/admin/tenants/platform-users/${id}/deactivate`);
+export const resetPlatformUserPassword = (id, new_password) => API.post(`/admin/tenants/platform-users/${id}/reset-password`, { new_password });
 
 // Manager Dashboard
 export const getTeamAttendance = (date) => API.get('/manager/team-attendance', { params: { date } });

@@ -38,9 +38,21 @@ async function loadUserContext(req, res, next) {
             return next();
         }
 
+        // Virtual impersonation: platform admin entered a tenant with no users
+        if (req.isImpersonated && req.userId === 0) {
+            req.userRole = 'platform_admin';
+            req.userOrgId = null;
+            req.userTeamId = null;
+            req.userDeptId = null;
+            req.userManagerId = null;
+            req.roleLevel = ROLE_LEVEL['platform_admin'];
+            return next();
+        }
+
         // Platform admin WITH tenant context: load from tenant users table
-        // but keep platform_admin role level for permission checks
-        const isPlatformWithTenant = req.isPlatformUser && !!req.tenantId;
+        // but keep platform_admin role level for permission checks.
+        // Impersonated sessions are also platform admins viewing a tenant.
+        const isPlatformWithTenant = (req.isPlatformUser && !!req.tenantId) || (req.isImpersonated && !!req.impersonatedBy);
 
         // Try Redis cache first
         const cached = await redis.getUserContext(req.userId);

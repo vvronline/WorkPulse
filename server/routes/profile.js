@@ -109,6 +109,26 @@ router.delete('/avatar', auth, async (req, res) => {
 
 router.get('/', auth, async (req, res) => {
     try {
+        // Virtual impersonation: platform admin in a tenant with no users
+        if (req.isImpersonated && req.userId === 0) {
+            return res.json({
+                id: 0,
+                username: req.username,
+                full_name: 'Platform Admin',
+                email: null,
+                avatar: null,
+                role: 'platform_admin',
+                org_id: null,
+                team_id: null,
+                department_id: null,
+                must_change_password: false,
+                has_reports: false,
+                impersonated: true,
+                impersonated_tenant_name: req.impersonatedTenantName || null,
+                tenant_id: req.tenantId,
+            });
+        }
+
         const user = (await req.db.query(`
             SELECT u.id, u.username, u.full_name, u.email, u.avatar, u.role, u.org_id, u.team_id, u.department_id, u.must_change_password,
                    t.name as team_name
@@ -120,6 +140,11 @@ router.get('/', auth, async (req, res) => {
         if (req.isPlatformUser) user.role = 'platform_admin';
         const hasReports = (await req.db.query('SELECT 1 FROM users WHERE manager_id = $1 AND is_active = TRUE LIMIT 1', [req.userId])).rows[0];
         user.has_reports = !!hasReports;
+        // Include impersonation info so the UI can show a banner
+        if (req.isImpersonated) {
+            user.impersonated = true;
+            user.impersonated_tenant_name = req.impersonatedTenantName || null;
+        }
         res.json(user);
     } catch (err) {
         req.log.error({ err }, 'GET /profile error');

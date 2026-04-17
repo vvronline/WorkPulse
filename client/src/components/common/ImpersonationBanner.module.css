@@ -1,0 +1,56 @@
+.banner {
+  position: sticky;
+  top: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 6px 16px;
+  background: var(--warning, #f59e0b);
+  color: #1a1a1a;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.banner svg {
+  flex-shrink: 0;
+}
+
+.text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tenantName {
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.exitBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 12px;
+  border: 1.5px solid rgba(0,0,0,0.3);
+  border-radius: 6px;
+  background: rgba(255,255,255,0.25);
+  color: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.exitBtn:hover {
+  background: rgba(255,255,255,0.5);
+}
+
+.exitBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
