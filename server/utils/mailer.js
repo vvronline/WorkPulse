@@ -73,7 +73,9 @@ function sendMail({ to, subject, html }) {
     let attempt = 0;
     const trySend = () => {
         attempt++;
-        mailer.sendMail({ from: FROM(), to, subject, html }).catch(err => {
+        mailer.sendMail({ from: FROM(), to, subject, html }).then(() => {
+            logger.info({ to, subject }, 'Email sent successfully');
+        }).catch(err => {
             if (attempt <= MAX_RETRIES) {
                 logger.warn({ err: err.message, to, subject, attempt }, 'Email send failed — retrying');
                 setTimeout(trySend, RETRY_DELAY_MS * attempt);

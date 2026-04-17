@@ -553,7 +553,7 @@ router.post('/forgot-password', async (req, res) => {
             }
         }
 
-        const userRes = await db.query('SELECT id, username, email FROM users WHERE email = $1', [email]);
+        const userRes = await db.query('SELECT id, username, email FROM users WHERE LOWER(email) = LOWER($1)', [email]);
         const user = userRes.rows[0];
         if (!user) return res.json({ message: 'If that email is registered, a reset link has been sent.' });
 
@@ -581,7 +581,7 @@ router.post('/forgot-password', async (req, res) => {
                 html: `
                     <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;">
                         <h2 style="color:#6366f1;">Reset Your Password</h2>
-                        <p>Hi <strong>${user.username}</strong>,</p>
+                        <p>Hi <strong>${user.username.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</strong>,</p>
                         <p>Click the button below to reset your password. This link expires in 1 hour.</p>
                         <a href="${resetLink}" style="display:inline-block;background:#6366f1;color:#fff;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:600;margin:16px 0;">Reset Password</a>
                         <p style="font-size:0.85rem;color:#888;">If you didn't request this, just ignore this email.</p>
