@@ -111,6 +111,13 @@ router.delete('/avatar', auth, async (req, res) => {
 
 router.get('/', auth, async (req, res) => {
     try {
+        // Fetch platform admin's name for impersonation banner
+        let impersonatedByName = null;
+        if (req.isImpersonated && req.impersonatedBy) {
+            const adminRow = (await masterQuery('SELECT full_name, username FROM platform_users WHERE id = $1', [req.impersonatedBy])).rows[0];
+            impersonatedByName = adminRow?.full_name || adminRow?.username || null;
+        }
+
         // Virtual impersonation: platform admin in a tenant with no users
         if (req.isImpersonated && req.userId === 0) {
             return res.json({
@@ -126,6 +133,7 @@ router.get('/', auth, async (req, res) => {
                 must_change_password: false,
                 has_reports: false,
                 impersonated: true,
+                impersonated_by_name: impersonatedByName,
                 impersonated_tenant_name: req.impersonatedTenantName || null,
                 tenant_id: req.tenantId,
             });
@@ -145,6 +153,7 @@ router.get('/', auth, async (req, res) => {
         // Include impersonation info so the UI can show a banner
         if (req.isImpersonated) {
             user.impersonated = true;
+            user.impersonated_by_name = impersonatedByName;
             user.impersonated_tenant_name = req.impersonatedTenantName || null;
             user.tenant_id = req.tenantId || null;
         }

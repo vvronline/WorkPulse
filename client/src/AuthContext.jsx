@@ -6,7 +6,7 @@ const AuthContext = createContext(null);
 
 // Only cache display-safe fields in localStorage to prevent privilege escalation
 // via tampered localStorage. Role, org_id, has_reports etc. always come from the server.
-const SAFE_CACHE_FIELDS = ['id', 'username', 'full_name', 'email', 'avatar', 'tenant_id', 'impersonated', 'impersonated_tenant_name'];
+const SAFE_CACHE_FIELDS = ['id', 'username', 'full_name', 'email', 'avatar', 'tenant_id', 'impersonated', 'impersonated_by_name', 'impersonated_tenant_name'];
 function sanitizeForCache(user) {
   const safe = {};
   SAFE_CACHE_FIELDS.forEach(key => { if (user?.[key] !== undefined) safe[key] = user[key]; });
