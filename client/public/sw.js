@@ -1,5 +1,5 @@
 // IMPORTANT: Bump this version string on every deployment to bust the cache
-const CACHE_NAME = 'workpulse-v2';
+const CACHE_NAME = 'workpulse-v4';
 const PRECACHE_URLS = [
     '/',
     '/manifest.json'

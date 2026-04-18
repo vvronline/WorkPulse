@@ -22,13 +22,21 @@ const { logger } = require('./logger');
  * @param {object|null} details  - Additional context (JSON-serialisable)
  * @param {number|null} tenantId - Associated tenant ID (if applicable)
  */
+function normalizeIp(raw) {
+    if (!raw) return null;
+    if (raw === '::1') return '127.0.0.1';
+    if (raw.startsWith('::ffff:')) return raw.slice(7);
+    return raw;
+}
+
 function logPlatformAction(req, action, entityType, entityId = null, details = null, tenantId = null) {
-    const ip = req.ip || req.headers?.['x-forwarded-for'] || req.socket?.remoteAddress || null;
+    const ip = normalizeIp(req.ip || req.headers?.['x-forwarded-for'] || req.socket?.remoteAddress);
     const ua = req.headers?.['user-agent'] || null;
 
     return masterQuery(
         `INSERT INTO platform_audit_logs (actor_id, action, entity_type, entity_id, tenant_id, details, ip_address, user_agent)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id`,
         [
             req.userId || null,
             action,
@@ -40,6 +48,16 @@ function logPlatformAction(req, action, entityType, entityId = null, details = n
             ua,
         ],
     ).catch(e => logger.error({ err: e, action, entityType, entityId }, 'Platform audit log write failed'));
+}
+
+/**
+ * Update an existing audit log entry (e.g. to set ended_at and final details).
+ */
+function updatePlatformAuditLog(id, { ended_at, details }) {
+    return masterQuery(
+        `UPDATE platform_audit_logs SET ended_at = $1, details = $2 WHERE id = $3`,
+        [ended_at, details ? JSON.stringify(details) : null, id],
+    ).catch(e => logger.error({ err: e, id }, 'Platform audit log update failed'));
 }
 
 /**
@@ -68,7 +86,7 @@ async function queryPlatformLogs({ actorId, entityType, entityId, action, tenant
     const total = parseInt(countRes.rows[0].count, 10);
 
     const logsRes = await masterQuery(
-        `SELECT pal.*, pu.username AS actor_username, pu.full_name AS actor_name,
+        `SELECT pal.*, pal.ended_at, pu.username AS actor_username, pu.full_name AS actor_name,
                 t.org_name AS tenant_name, t.slug AS tenant_slug
          FROM platform_audit_logs pal
          LEFT JOIN platform_users pu ON pu.id = pal.actor_id
@@ -82,4 +100,4 @@ async function queryPlatformLogs({ actorId, entityType, entityId, action, tenant
     return { total, logs: logsRes.rows };
 }
 
-module.exports = { logPlatformAction, queryPlatformLogs };
+module.exports = { logPlatformAction, updatePlatformAuditLog, queryPlatformLogs };

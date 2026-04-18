@@ -1055,6 +1055,102 @@
   word-break: break-all;
 }
 
+/* Session audit row styles */
+.sessionTime {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sessionEndTime {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.sessionActive {
+  font-size: 0.7rem;
+  color: #f97316;
+  font-weight: 600;
+}
+
+.sessionDetails {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sessionStats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 8px 0;
+}
+
+.sessionStat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.8rem;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.sessionActionLog {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.sessionActionItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+
+.sessionActionItem:last-child {
+  border-bottom: none;
+}
+
+.sessionActionMethod {
+  font-weight: 700;
+  font-size: 0.65rem;
+  padding: 1px 5px;
+  border-radius: 3px;
+  min-width: 36px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.sessionMethodRead {
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.sessionMethodWrite {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.sessionActionPath {
+  flex: 1;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sessionActionTime {
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+
 .auditEmpty {
   text-align: center;
   padding: 48px 20px !important;

@@ -93,11 +93,8 @@ export default function TenantList({ onSelectTenant }) {
 
   const handleImpersonate = async (id) => {
     try {
-      const { data } = await impersonateTenant(id);
-      const currentToken = document.cookie.split('; ').find(c => c.startsWith('token='));
-      if (currentToken) localStorage.setItem('_wp_orig_token', currentToken.split('=')[1]);
-      const secure = location.protocol === 'https:' ? ';secure' : '';
-      document.cookie = `token=${data.token};path=/;samesite=strict${secure}`;
+      await impersonateTenant(id);
+      // Server sets the impersonation cookie (HttpOnly) and saves the original token
       window.location.href = '/';
     } catch (e) { setError(e.response?.data?.error || 'Failed to impersonate'); }
   };

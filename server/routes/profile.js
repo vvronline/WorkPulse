@@ -146,6 +146,7 @@ router.get('/', auth, async (req, res) => {
         if (req.isImpersonated) {
             user.impersonated = true;
             user.impersonated_tenant_name = req.impersonatedTenantName || null;
+            user.tenant_id = req.tenantId || null;
         }
         res.json(user);
     } catch (err) {

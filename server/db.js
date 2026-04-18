@@ -198,9 +198,12 @@ async function initMasterDB() {
             details     JSONB,
             ip_address  TEXT,
             user_agent  TEXT,
-            created_at  TIMESTAMPTZ DEFAULT NOW()
+            created_at  TIMESTAMPTZ DEFAULT NOW(),
+            ended_at    TIMESTAMPTZ
         )
     `);
+    // Add ended_at if table already exists without it
+    await masterQuery(`ALTER TABLE platform_audit_logs ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ`);
     await masterQuery(`CREATE INDEX IF NOT EXISTS idx_platform_audit_actor ON platform_audit_logs(actor_id, created_at)`);
     await masterQuery(`CREATE INDEX IF NOT EXISTS idx_platform_audit_tenant ON platform_audit_logs(tenant_id, created_at)`);
     await masterQuery(`CREATE INDEX IF NOT EXISTS idx_platform_audit_action ON platform_audit_logs(action, created_at)`);

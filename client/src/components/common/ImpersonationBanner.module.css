@@ -2,55 +2,401 @@
   position: sticky;
   top: 0;
   z-index: 10000;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #1a1a2e 100%);
+  color: #e0e0e0;
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  border-bottom: 2px solid #e74c3c;
+  box-shadow: 0 2px 12px rgba(231, 76, 60, 0.15);
+}
+
+.bannerMain {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 12px;
-  padding: 6px 16px;
-  background: var(--warning, #f59e0b);
-  color: #1a1a1a;
-  font-size: 0.8rem;
-  font-weight: 600;
-  letter-spacing: 0.01em;
+  padding: 7px 16px;
+  flex-wrap: wrap;
 }
 
 .banner svg {
   flex-shrink: 0;
+  opacity: 0.85;
+}
+
+/* Recording / Monitored indicator */
+.recordingIndicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  background: rgba(231, 76, 60, 0.15);
+  border: 1px solid rgba(231, 76, 60, 0.35);
+  border-radius: 20px;
+}
+
+.recordingDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e74c3c;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.5); }
+  50% { opacity: 0.6; box-shadow: 0 0 0 4px rgba(231, 76, 60, 0); }
+}
+
+.recordingText {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #e74c3c;
+  text-transform: uppercase;
+}
+
+.divider {
+  width: 1px;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.15);
 }
 
 .text {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .tenantName {
   font-weight: 700;
+  color: #f39c12;
   text-decoration: underline;
   text-decoration-style: dotted;
   text-underline-offset: 2px;
+}
+
+/* Stats row */
+.stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.7);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Detail toggle */
+.detailToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.detailToggle:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
 }
 
 .exitBtn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 12px;
-  border: 1.5px solid rgba(0,0,0,0.3);
+  padding: 4px 14px;
+  border: 1.5px solid rgba(231, 76, 60, 0.5);
   border-radius: 6px;
-  background: rgba(255,255,255,0.25);
-  color: inherit;
+  background: rgba(231, 76, 60, 0.15);
+  color: #e74c3c;
   font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.exitBtn:hover {
+  background: rgba(231, 76, 60, 0.3);
+  border-color: #e74c3c;
+}
+
+.exitBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Expanded action log at bottom of banner */
+.expandedLog {
+  padding: 4px 16px 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.miniLogItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 3px;
+  font-size: 0.65rem;
+}
+
+.miniMethod {
+  font-weight: 700;
+  font-size: 0.6rem;
+  padding: 0 3px;
+  border-radius: 2px;
+}
+
+.miniPath {
+  color: rgba(255, 255, 255, 0.55);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.miniTime {
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 0.6rem;
+}
+
+.methodRead {
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.methodWrite {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.moreActions {
+  width: 100%;
+  text-align: center;
+  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.35);
+  padding: 2px 0;
+}
+
+/* ── Session Summary Modal ── */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(3px);
+}
+
+.modal {
+  width: 520px;
+  max-width: 92vw;
+  max-height: 80vh;
+  border-radius: 12px;
+  background: var(--card-bg, #1e1e2e);
+  border: 1px solid var(--border, #333);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 18px;
+  background: rgba(231, 76, 60, 0.08);
+  border-bottom: 1px solid var(--border, #333);
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text, #e0e0e0);
+}
+
+.modalHeader svg {
+  color: #e74c3c;
+}
+
+.modalCloseBtn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-muted, #888);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+}
+
+.modalCloseBtn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.modalBody {
+  padding: 18px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.summaryStats {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.summaryStat {
+  flex: 1;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.summaryStatValue {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text, #e0e0e0);
+  font-variant-numeric: tabular-nums;
+}
+
+.summaryStatLabel {
+  font-size: 0.72rem;
+  color: var(--text-muted, #888);
+  margin-top: 2px;
+}
+
+.actionLog {
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.actionLogTitle {
+  padding: 8px 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted, #888);
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid var(--border, #333);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.actionLogList {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.actionLogItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 0.75rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.actionLogItem:last-child {
+  border-bottom: none;
+}
+
+.actionMethod {
+  font-weight: 700;
+  font-size: 0.65rem;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  min-width: 40px;
+  text-align: center;
+}
+
+.actionPath {
+  flex: 1;
+  color: var(--text-muted, #aaa);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actionTime {
+  font-size: 0.65rem;
+  color: var(--text-muted, #666);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.noActions {
+  text-align: center;
+  padding: 24px;
+  color: var(--text-muted, #888);
+  font-size: 0.85rem;
+}
+
+.modalFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--border, #333);
+}
+
+.cancelBtn {
+  padding: 7px 16px;
+  border: 1px solid var(--border, #444);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text, #e0e0e0);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.cancelBtn:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.confirmExitBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 18px;
+  border: 1.5px solid #e74c3c;
+  border-radius: 6px;
+  background: rgba(231, 76, 60, 0.15);
+  color: #e74c3c;
+  font-size: 0.8rem;
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s;
 }
 
-.exitBtn:hover {
-  background: rgba(255,255,255,0.5);
+.confirmExitBtn:hover {
+  background: rgba(231, 76, 60, 0.3);
 }
 
-.exitBtn:disabled {
+.confirmExitBtn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }

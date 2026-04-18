@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { ScrollText, Shield, Building2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ScrollText, Shield, Building2, ChevronLeft, ChevronRight, Clock, Eye, Edit3 } from 'lucide-react';
 import { getPlatformAuditLogs, getTenants, getPlatformUsers } from '../../api';
 import s from './Tenants.module.css';
 
@@ -13,6 +13,7 @@ const ACTION_COLORS = {
     tenant_domain_changed: '#8b5cf6',
     tenant_features_updated: '#6366f1',
     tenant_limits_updated: '#6366f1',
+    tenant_impersonation_session: '#f97316',
     tenant_impersonation_started: '#f97316',
     tenant_impersonation_ended: '#f97316',
     tenant_user_created: '#0ea5e9',
@@ -25,6 +26,7 @@ const ACTION_COLORS = {
 };
 
 const SEVERITY = {
+    tenant_impersonation_session: 'high',
     tenant_impersonation_started: 'high',
     tenant_hard_deleted: 'high',
     tenant_suspended: 'high',
@@ -106,7 +108,7 @@ export default function PlatformAuditLogs() {
                     <thead>
                         <tr>
                             <th>Time</th>
-                            <th>Actor</th>
+                            <th>User</th>
                             <th>Action</th>
                             <th>Entity</th>
                             <th>Tenant</th>
@@ -119,6 +121,7 @@ export default function PlatformAuditLogs() {
                             const severity = SEVERITY[log.action];
                             const isExpanded = expandedId === log.id;
                             const details = log.details ? (typeof log.details === 'string' ? JSON.parse(log.details) : log.details) : null;
+                            const isSession = log.action === 'tenant_impersonation_session';
 
                             return (
                                 <React.Fragment key={log.id}>
@@ -126,7 +129,19 @@ export default function PlatformAuditLogs() {
                                         className={`${s.auditRow} ${severity === 'high' ? s.auditRowHigh : severity === 'medium' ? s.auditRowMedium : ''}`}
                                         onClick={() => setExpandedId(isExpanded ? null : log.id)}
                                     >
-                                        <td className={s.auditTime}>{formatTime(log.created_at)}</td>
+                                        <td className={s.auditTime}>
+                                            {isSession ? (
+                                                <div className={s.sessionTime}>
+                                                    <span>{formatTime(log.created_at)}</span>
+                                                    {log.ended_at && (
+                                                        <span className={s.sessionEndTime}>→ {formatTime(log.ended_at)}</span>
+                                                    )}
+                                                    {!log.ended_at && (
+                                                        <span className={s.sessionActive}>● Active</span>
+                                                    )}
+                                                </div>
+                                            ) : formatTime(log.created_at)}
+                                        </td>
                                         <td>
                                             <span className={s.auditActor}>
                                                 <Shield size={12} />
@@ -155,8 +170,55 @@ export default function PlatformAuditLogs() {
                                         <tr className={s.auditDetailRow}>
                                             <td colSpan={6}>
                                                 <div className={s.auditDetails}>
-                                                    <strong>Details:</strong>
-                                                    <pre>{JSON.stringify(details, null, 2)}</pre>
+                                                    {isSession && details.duration_seconds != null ? (
+                                                        <div className={s.sessionDetails}>
+                                                            <div className={s.sessionStats}>
+                                                                <span className={s.sessionStat}>
+                                                                    <Clock size={13} />
+                                                                    {details.duration_seconds < 60
+                                                                        ? `${details.duration_seconds}s`
+                                                                        : `${Math.floor(details.duration_seconds / 60)}m ${details.duration_seconds % 60}s`}
+                                                                </span>
+                                                                <span className={s.sessionStat}>
+                                                                    <Eye size={13} />
+                                                                    {details.reads || 0} reads
+                                                                </span>
+                                                                <span className={s.sessionStat}>
+                                                                    <Edit3 size={13} />
+                                                                    {details.writes || 0} writes
+                                                                </span>
+                                                                <span className={s.sessionStat}>
+                                                                    {details.total_actions || 0} total actions
+                                                                </span>
+                                                                {details.target_username && (
+                                                                    <span className={s.sessionStat}>
+                                                                        <Shield size={13} />
+                                                                        as {details.target_username}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            {details.actions?.length > 0 && (
+                                                                <div className={s.sessionActionLog}>
+                                                                    {details.actions.map((a, i) => (
+                                                                        <div key={i} className={s.sessionActionItem}>
+                                                                            <span className={`${s.sessionActionMethod} ${a.type === 'write' ? s.sessionMethodWrite : s.sessionMethodRead}`}>
+                                                                                {a.method}
+                                                                            </span>
+                                                                            <span className={s.sessionActionPath}>{a.path}</span>
+                                                                            <span className={s.sessionActionTime}>
+                                                                                {new Date(a.timestamp).toLocaleTimeString()}
+                                                                            </span>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    ) : (
+                                                        <>
+                                                            <strong>Details:</strong>
+                                                            <pre>{JSON.stringify(details, null, 2)}</pre>
+                                                        </>
+                                                    )}
                                                     {log.user_agent && (
                                                         <div className={s.auditUa}>
                                                             <strong>User-Agent:</strong> {log.user_agent}

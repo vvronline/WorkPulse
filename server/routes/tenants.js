@@ -10,15 +10,37 @@ const {
     createTenant, deleteTenant, suspendTenant, reactivateTenant,
     getTenantById, getTenantPool, getPoolStats, listActiveTenants,
 } = require('../utils/tenantManager');
-const { logPlatformAction, queryPlatformLogs } = require('../utils/platformAudit');
+const { logPlatformAction, updatePlatformAuditLog, queryPlatformLogs } = require('../utils/platformAudit');
 const { logger } = require('../utils/logger');
 const redis = require('../redis');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { validatePassword, validateUsername, BCRYPT_ROUNDS } = require('../utils/password');
+const { startSession: startImpSession, getSession: getImpSession, endSession: endImpSession } = require('../middleware/impersonationAudit');
+
+const isProduction = process.env.NODE_ENV === 'production';
+const useSecureCookie = isProduction && process.env.USE_HTTPS === 'true';
+function cookieOptions(maxAge) {
+    return { httpOnly: true, secure: useSecureCookie, sameSite: 'strict', maxAge: maxAge || 60 * 60 * 1000, path: '/' };
+}
 
 const router = express.Router();
 router.use(auth, loadUserContext, requireRole('platform_admin'));
+
+/**
+ * Build session summary from in-memory session data.
+ */
+function buildSessionSummary(session) {
+    if (!session) return { session_start: new Date(), total: 0, reads: 0, writes: 0, actions: [] };
+    const actions = session.actions || [];
+    return {
+        session_start: session.startedAt,
+        total: actions.length,
+        reads: actions.filter(a => a.type === 'read').length,
+        writes: actions.filter(a => a.type === 'write').length,
+        actions,
+    };
+}
 
 // ═══════════════════════════════════════════════════════════════
 //  TENANT CRUD & LIFECYCLE
@@ -528,7 +550,7 @@ router.post('/:id/impersonate', async (req, res) => {
         // Get the highest-role active user to impersonate as
         const db = await getTenantPool(tenant.db_name, tenant.db_host);
         const adminRes = await db.query(
-            `SELECT id, username, full_name, email, role FROM users WHERE is_active = TRUE
+            `SELECT id, username, full_name, email, role, COALESCE(token_version, 0) AS token_version FROM users WHERE is_active = TRUE
              ORDER BY CASE role
                 WHEN 'super_admin' THEN 1
                 WHEN 'hr_admin' THEN 2
@@ -546,6 +568,7 @@ router.post('/:id/impersonate', async (req, res) => {
             full_name: 'Platform Admin',
             email: null,
             role: 'super_admin',
+            token_version: 0,
         };
 
         // Impersonation token (1 hour)
@@ -553,7 +576,7 @@ router.post('/:id/impersonate', async (req, res) => {
             {
                 id: platUser.id,
                 username: platUser.username,
-                tv: 0,
+                tv: platUser.token_version || 0,
                 tenant_id: tid,
                 impersonated: true,
                 impersonated_by: req.userId,
@@ -564,14 +587,28 @@ router.post('/:id/impersonate', async (req, res) => {
             { expiresIn: '1h' }
         );
 
-        logPlatformAction(req, 'tenant_impersonation_started', 'tenant', tid, {
+        // Insert a single audit row for this session (ended_at filled on exit)
+        const auditResult = await logPlatformAction(req, 'tenant_impersonation_session', 'tenant', tid, {
             target_user: platUser.id,
             target_username: platUser.username,
             virtual: !targetUser,
         }, tid);
+        const auditLogId = auditResult?.rows?.[0]?.id || null;
+
+        // Start in-memory session tracker for action recording
+        startImpSession(req.userId, tid, auditLogId);
+
+        // Save the original platform admin token so we can restore it on exit
+        const origToken = req.cookies.token;
+
+        // Set impersonation token as HttpOnly cookie (replaces existing auth cookie)
+        res.cookie('token', impersonationToken, cookieOptions(60 * 60 * 1000));
+        // Store original token in a separate HttpOnly cookie for restoration
+        if (origToken) {
+            res.cookie('_wp_orig_token', origToken, cookieOptions(60 * 60 * 1000));
+        }
 
         res.json({
-            token: impersonationToken,
             tenant: { id: tid, org_name: tenant.org_name, slug: tenant.slug },
             user: platUser,
         });
@@ -584,12 +621,55 @@ router.post('/:id/impersonate', async (req, res) => {
 // POST /admin/tenants/:id/exit-impersonate
 router.post('/:id/exit-impersonate', async (req, res) => {
     try {
-        logPlatformAction(req, 'tenant_impersonation_ended', 'tenant', Number(req.params.id), null, Number(req.params.id));
-        // Client should restore the original platform admin token
-        res.json({ message: 'Impersonation ended. Restore your admin session.' });
+        const tid = Number(req.params.id);
+        const actorId = req.impersonatedBy || req.userId;
+
+        // Flush in-memory session and build summary
+        const session = endImpSession(actorId, tid);
+        const summary = buildSessionSummary(session);
+
+        // Update the SAME audit row: set ended_at and full session details
+        if (session.auditLogId) {
+            updatePlatformAuditLog(session.auditLogId, {
+                ended_at: new Date(),
+                details: {
+                    target_user: summary.actions[0]?.as_user || null,
+                    duration_seconds: Math.round((Date.now() - new Date(summary.session_start).getTime()) / 1000),
+                    total_actions: summary.total,
+                    reads: summary.reads,
+                    writes: summary.writes,
+                    actions: summary.actions,
+                },
+            });
+        }
+
+        // Restore the original platform admin token from the saved cookie
+        const origToken = req.cookies._wp_orig_token;
+        if (origToken) {
+            res.cookie('token', origToken, cookieOptions(8 * 60 * 60 * 1000));
+            res.clearCookie('_wp_orig_token', { httpOnly: true, secure: useSecureCookie, sameSite: 'strict', path: '/' });
+        }
+
+        res.json({
+            message: 'Impersonation ended.',
+            session_summary: summary,
+        });
     } catch (err) {
         logger.error({ err }, 'Exit impersonation error');
         res.status(500).json({ error: 'Failed to exit impersonation' });
+    }
+});
+
+// GET /admin/tenants/:id/impersonation-session — live actions during current impersonation
+router.get('/:id/impersonation-session', async (req, res) => {
+    try {
+        const tid = Number(req.params.id);
+        const actorId = req.impersonatedBy || req.userId;
+        const session = getImpSession(actorId, tid);
+        res.json(buildSessionSummary(session));
+    } catch (err) {
+        logger.error({ err }, 'Get impersonation session error');
+        res.status(500).json({ error: 'Failed to get session actions' });
     }
 });
 

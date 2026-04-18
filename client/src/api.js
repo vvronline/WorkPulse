@@ -228,6 +228,7 @@ export const updateTenantFeatures = (id, features) => API.put(`/admin/tenants/${
 export const updateTenantLimits = (id, limits) => API.put(`/admin/tenants/${id}/limits`, limits);
 export const impersonateTenant = (id) => API.post(`/admin/tenants/${id}/impersonate`);
 export const exitImpersonation = (id) => API.post(`/admin/tenants/${id}/exit-impersonate`);
+export const getImpersonationSession = (id) => API.get(`/admin/tenants/${id}/impersonation-session`);
 export const getTenantUsers = (id, params) => API.get(`/admin/tenants/${id}/users`, { params });
 export const createTenantUser = (id, data) => API.post(`/admin/tenants/${id}/users`, data);
 export const deactivateTenantUser = (tenantId, userId) => API.put(`/admin/tenants/${tenantId}/users/${userId}/deactivate`);

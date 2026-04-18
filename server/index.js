@@ -81,7 +81,16 @@ app.use((req, res, next) => {
 
 // Serve React static files BEFORE cors/auth — assets don't need CORS
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
-app.use(express.static(clientDist));
+// Cache-bust: hashed assets get long cache, index.html/sw.js never cached
+app.use(express.static(clientDist, {
+    setHeaders(res, filePath) {
+        if (filePath.endsWith('.html') || filePath.endsWith('sw.js')) {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        } else if (filePath.match(/\.(js|css|woff2?|png|jpg|svg)$/)) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+    },
+}));
 
 app.use((req, res, next) => {
     const origin = req.headers.origin;
@@ -190,6 +199,10 @@ const registerLimiter = rateLimit({ ...rlOpts('reg', 10), message: { error: 'Too
 const forgotPasswordLimiter = rateLimit({ ...rlOpts('fp', 5), message: { error: 'Too many password reset attempts. Please try again later.' } });
 const passwordLimiter = rateLimit({ ...rlOpts('pw', 10), message: { error: 'Too many password attempts. Please try again later.' } });
 const apiLimiter = rateLimit({ ...rlOpts('api', 5000), message: { error: 'Too many requests. Please try again later.' } });
+
+// Audit every action during impersonation sessions
+const impersonationAudit = require('./middleware/impersonationAudit');
+app.use('/api', impersonationAudit);
 
 app.use('/api/auth/register', registerLimiter);
 app.use('/api/auth/forgot-password', forgotPasswordLimiter);

@@ -16,7 +16,8 @@ const { logger } = require('./logger');
  * Write an audit log entry. Returns a Promise (can be awaited or ignored).
  */
 function logAction(req, action, entityType, entityId = null, details = null) {
-    const ip = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || null;
+    const rawIp = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || null;
+    const ip = rawIp === '::1' ? '127.0.0.1' : rawIp?.startsWith('::ffff:') ? rawIp.slice(7) : rawIp;
     const ua = req.headers['user-agent'] || null;
     const dbQuery = req.db?.query;
     if (!dbQuery) {
