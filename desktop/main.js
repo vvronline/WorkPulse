@@ -1,8 +1,12 @@
-const { app, BrowserWindow, protocol, net, session, Menu } = require('electron');
+const { app, BrowserWindow, protocol, net, session, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { setupTray } = require('./tray');
 const { setupUpdater } = require('./updater');
+
+// Set app identity for Windows notifications and taskbar
+app.setAppUserModelId('com.workpulse.desktop');
+app.name = 'WorkPulse';
 
 // ─── Configuration ───
 const RAILWAY_URL = process.env.API_SERVER || 'https://workpulse-prod.up.railway.app';
@@ -176,7 +180,7 @@ app.whenReady().then(() => {
         minWidth: 800,
         minHeight: 600,
         title: '',
-        icon: path.join(__dirname, 'icons', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
+        icon: nativeImage.createFromPath(path.join(__dirname, 'icons', 'icon.png')),
         frame: process.platform === 'darwin',
         titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : undefined,
         webPreferences: {
