@@ -1,12 +1,6 @@
 const { autoUpdater } = require('electron-updater');
 const { ipcMain } = require('electron');
 
-// Authenticate for private GitHub repo releases
-try {
-    const token = require('./update-config');
-    if (token) process.env.GH_TOKEN = token;
-} catch { /* no token in dev mode */ }
-
 // Enable logging
 autoUpdater.logger = console;
 

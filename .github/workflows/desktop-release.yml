@@ -46,10 +46,6 @@ jobs:
         working-directory: desktop
         run: npm ci
 
-      - name: Inject update token
-        working-directory: desktop
-        run: echo "module.exports = '${{ secrets.DESKTOP_UPDATE_TOKEN }}';"> update-config.js
-
       - name: Build Electron app
         working-directory: desktop
         env:
