@@ -1,5 +1,5 @@
 const express = require('express');
-const { query, transaction } = require('../db');
+const crypto = require('crypto');
 const auth = require('../middleware/auth');
 const { loadUserContext } = require('../middleware/rbac');
 const { sendToUser } = require('../utils/ws');
@@ -14,8 +14,8 @@ router.use(loadUserContext);
 /** Generate a unique meeting code: XXX-XXXX-XXX */
 async function generateMeetingCode(db) {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    for (let attempt = 0; attempt < 10; attempt++) {
-        const part = (n) => Array.from({ length: n }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+    for (let attempt = 0; attempt < 20; attempt++) {
+        const part = (n) => Array.from({ length: n }, () => chars[crypto.randomInt(chars.length)]).join('');
         const code = `${part(3)}-${part(4)}-${part(3)}`;
         const exists = (await db.query('SELECT 1 FROM meetings WHERE meeting_code = $1', [code])).rows[0];
         if (!exists) return code;
@@ -24,7 +24,7 @@ async function generateMeetingCode(db) {
 }
 
 /** Insert a system message into a conversation and broadcast it */
-async function insertSystemMessage(conversationId, senderId, metadata, db) {
+async function insertSystemMessage(conversationId, senderId, metadata, db, tenantId) {
     const result = (await db.query(
         `INSERT INTO messages (conversation_id, sender_id, content, format_type, metadata)
          VALUES ($1, $2, $3, 'system', $4) RETURNING id, created_at`,
@@ -47,7 +47,7 @@ async function insertSystemMessage(conversationId, senderId, metadata, db) {
     };
 
     for (const p of participants) {
-        sendToUser(req.tenantId, p.user_id, 'chat_message', outMsg);
+        sendToUser(tenantId, p.user_id, 'chat_message', outMsg);
     }
     return result;
 }
@@ -283,7 +283,7 @@ router.post('/', async (req, res) => {
             meetingCode: code,
             title: meeting.title,
             text: `Meeting "${meeting.title}" created`
-        });
+        }, req.db, req.tenantId);
 
         // Check conflicts for all invitees if time range provided
         const conflictMap = (start_time && end_time)
@@ -370,7 +370,7 @@ router.put('/:id', async (req, res) => {
                 type: 'meeting_updated',
                 meetingId,
                 text: `Meeting "${updatedMeeting.title}" was updated`
-            });
+            }, req.db, req.tenantId);
         }
 
         res.json(updatedMeeting);
@@ -412,7 +412,7 @@ router.delete('/:id', async (req, res) => {
                 type: 'meeting_cancelled',
                 meetingId,
                 text: `Meeting "${meeting.title}" was cancelled`
-            });
+            }, req.db, req.tenantId);
         }
 
         res.json({ message: 'Meeting cancelled' });

@@ -1,5 +1,4 @@
 const express = require('express');
-const { query } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext } = require('../middleware/rbac');
 const { logger } = require('../utils/logger');
@@ -10,16 +9,23 @@ router.use(auth, loadUserContext, requireTenant);
 
 router.get('/', async (req, res) => {
     try {
+        const page = Math.max(parseInt(req.query.page) || 1, 1);
+        const perPage = Math.min(Math.max(parseInt(req.query.per_page) || 50, 1), 100);
+        const offset = (page - 1) * perPage;
+
+        const totalRes = await req.db.query('SELECT COUNT(*) AS count FROM notifications WHERE user_id = $1', [req.userId]);
+        const total = parseInt(totalRes.rows[0].count, 10);
+
         const rows = (await req.db.query(`
             SELECT n.*, t.title AS task_title
             FROM notifications n
             LEFT JOIN tasks t ON t.id = n.link_task_id
             WHERE n.user_id = $1
             ORDER BY n.created_at DESC
-            LIMIT 50
-        `, [req.userId])).rows;
-        const unread = rows.filter(r => !r.is_read).length;
-        res.json({ notifications: rows, unread });
+            LIMIT $2 OFFSET $3
+        `, [req.userId, perPage, offset])).rows;
+        const unread = (await req.db.query('SELECT COUNT(*) AS count FROM notifications WHERE user_id = $1 AND is_read = FALSE', [req.userId])).rows[0].count;
+        res.json({ notifications: rows, unread: parseInt(unread, 10), total, page, perPage });
     } catch (err) {
         req.log.error({ err }, 'Error fetching notifications');
         res.status(500).json({ error: 'Failed to fetch notifications' });
@@ -37,8 +43,10 @@ router.post('/read-all', async (req, res) => {
 
 router.post('/:id/read', async (req, res) => {
     try {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) return res.status(400).json({ error: 'Invalid notification ID' });
         await req.db.query('UPDATE notifications SET is_read = TRUE WHERE id = $1 AND user_id = $2',
-            [req.params.id, req.userId]);
+            [id, req.userId]);
         res.json({ ok: true });
     } catch (err) {
         res.status(500).json({ error: 'Failed to mark notification read' });
@@ -47,8 +55,10 @@ router.post('/:id/read', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
     try {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) return res.status(400).json({ error: 'Invalid notification ID' });
         await req.db.query('DELETE FROM notifications WHERE id = $1 AND user_id = $2',
-            [req.params.id, req.userId]);
+            [id, req.userId]);
         res.json({ ok: true });
     } catch (err) {
         res.status(500).json({ error: 'Failed to delete notification' });

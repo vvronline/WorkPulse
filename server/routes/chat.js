@@ -2,7 +2,6 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext } = require('../middleware/rbac');
 const { sendToUser } = require('../utils/ws');
@@ -37,10 +36,13 @@ const ALLOWED_TYPES = {
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
+        const tenantId = req.tenantId;
         const orgId = req.userOrgId;
-        const dir = orgId
-            ? path.join(__dirname, '..', 'uploads', `org_${orgId}`, 'chat')
-            : uploadDir;
+        const dir = tenantId && orgId
+            ? path.join(__dirname, '..', 'uploads', `tenant_${tenantId}`, `org_${orgId}`, 'chat')
+            : orgId
+                ? path.join(__dirname, '..', 'uploads', `org_${orgId}`, 'chat')
+                : uploadDir;
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         cb(null, dir);
     },
@@ -88,7 +90,7 @@ router.get('/search', auth, async (req, res) => {
         const orgId = await getUserOrg(req.userId, req.db);
         if (!orgId) return res.json([]);
 
-        const term = `%${q.trim()}%`;
+        const term = `%${q.trim().replace(/[%_]/g, c => `\\${c}`)}%`;
         const rows = (await req.db.query(`
             SELECT id, username, full_name, email, avatar, last_seen_at
             FROM users

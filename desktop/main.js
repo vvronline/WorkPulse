@@ -150,21 +150,26 @@ app.whenReady().then(() => {
         }
 
         // Serve file if it exists, otherwise SPA fallback to index.html
-        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-            return new Response(fs.readFileSync(filePath), {
-                headers: { 'Content-Type': getMimeType(filePath) }
-            });
-        }
+        try {
+            const stat = await fs.promises.stat(filePath);
+            if (stat.isFile()) {
+                const data = await fs.promises.readFile(filePath);
+                return new Response(data, {
+                    headers: { 'Content-Type': getMimeType(filePath) }
+                });
+            }
+        } catch { /* file doesn't exist — fall through to SPA fallback */ }
 
         // SPA fallback — serve index.html for all non-file routes
         const indexPath = path.join(CLIENT_DIST, 'index.html');
-        if (fs.existsSync(indexPath)) {
-            return new Response(fs.readFileSync(indexPath), {
+        try {
+            const data = await fs.promises.readFile(indexPath);
+            return new Response(data, {
                 headers: { 'Content-Type': 'text/html' }
             });
+        } catch {
+            return new Response('Not found', { status: 404 });
         }
-
-        return new Response('Not found', { status: 404 });
     });
 
     // Remove default menu bar

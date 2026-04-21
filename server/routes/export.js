@@ -2,7 +2,6 @@
  * Export endpoints — CSV & PDF for analytics, leaves, tasks, and team data.
  */
 const express = require('express');
-const { query } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole, getVisibleUserIds } = require('../middleware/rbac');
 const { getOffsetMin } = require('../utils/timezone');

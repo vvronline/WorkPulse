@@ -3,7 +3,6 @@
  * Searches tasks, the user's own notes, org members, and audit logs (hr_admin+).
  */
 const express = require('express');
-const { query } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, ROLE_LEVEL } = require('../middleware/rbac');
 const redis = require('../redis');

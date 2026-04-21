@@ -18,15 +18,7 @@ const bcrypt = require('bcryptjs');
 const { validatePassword, validateUsername, BCRYPT_ROUNDS } = require('../utils/password');
 const { startSession: startImpSession, getSession: getImpSession, endSession: endImpSession } = require('../middleware/impersonationAudit');
 
-const isProduction = process.env.NODE_ENV === 'production';
-const useSecureCookie = isProduction && process.env.USE_HTTPS === 'true';
-function cookieOptions(req, maxAge) {
-    const origin = req?.headers?.origin || '';
-    if (origin.startsWith('workpulse://')) {
-        return { httpOnly: true, secure: true, sameSite: 'none', maxAge: maxAge || 60 * 60 * 1000, path: '/' };
-    }
-    return { httpOnly: true, secure: useSecureCookie, sameSite: 'strict', maxAge: maxAge || 60 * 60 * 1000, path: '/' };
-}
+const { cookieOptions } = require('../utils/cookie');
 
 const router = express.Router();
 router.use(auth, loadUserContext, requireRole('platform_admin'));
@@ -651,7 +643,7 @@ router.post('/:id/exit-impersonate', async (req, res) => {
         const origToken = req.cookies._wp_orig_token;
         if (origToken) {
             res.cookie('token', origToken, cookieOptions(req, 8 * 60 * 60 * 1000));
-            res.clearCookie('_wp_orig_token', { httpOnly: true, secure: useSecureCookie, sameSite: 'strict', path: '/' });
+            res.clearCookie('_wp_orig_token', { httpOnly: true, sameSite: 'strict', path: '/' });
         }
 
         res.json({

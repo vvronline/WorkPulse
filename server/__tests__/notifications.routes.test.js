@@ -77,7 +77,10 @@ describe('GET /api/notifications', () => {
 
     test('returns empty notifications list', async () => {
         setupAuth();
-        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // notifications query
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ count: '0' }], rowCount: 1 }) // total count
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // notifications query
+            .mockResolvedValueOnce({ rows: [{ count: '0' }], rowCount: 1 }); // unread count
 
         const res = await request(app)
             .get('/api/notifications')
@@ -95,7 +98,10 @@ describe('GET /api/notifications', () => {
             { id: 2, message: 'Leave approved', is_read: true, created_at: '2024-01-01T09:00:00Z', task_title: null },
             { id: 3, message: 'Sprint started', is_read: false, created_at: '2024-01-01T08:00:00Z', task_title: null },
         ];
-        mockQuery.mockResolvedValueOnce({ rows, rowCount: 3 });
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ count: '3' }], rowCount: 1 }) // total count
+            .mockResolvedValueOnce({ rows, rowCount: 3 }) // notifications query
+            .mockResolvedValueOnce({ rows: [{ count: '2' }], rowCount: 1 }); // unread count
 
         const res = await request(app)
             .get('/api/notifications')
@@ -163,8 +169,8 @@ describe('POST /api/notifications/:id/read', () => {
         // Verify the query was called with the correct notification id and user id
         const updateCall = mockQuery.mock.calls.find(c => c[0] && typeof c[0] === 'string' && c[0].includes('UPDATE notifications'));
         expect(updateCall).toBeDefined();
-        // ID from URL params arrives as string '5'
-        expect(updateCall[1][0]).toBe('5');
+        // ID from URL params is parsed to integer
+        expect(updateCall[1][0]).toBe(5);
         expect(updateCall[1][1]).toBe(1); // userId
     });
 });
@@ -196,7 +202,7 @@ describe('DELETE /api/notifications/:id', () => {
         expect(res.body).toEqual({ ok: true });
         const deleteCall = mockQuery.mock.calls.find(c => c[0] && typeof c[0] === 'string' && c[0].includes('DELETE FROM notifications'));
         expect(deleteCall).toBeDefined();
-        expect(deleteCall[1][0]).toBe('5');
+        expect(deleteCall[1][0]).toBe(5);
         expect(deleteCall[1][1]).toBe(1); // userId
     });
 });

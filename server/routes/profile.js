@@ -6,7 +6,7 @@ const fsPromises = require('fs').promises;
 const redis = require('../redis');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { query, transaction, masterQuery } = require('../db');
+const { masterQuery } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext } = require('../middleware/rbac');
 const { logAction } = require('../utils/audit');
@@ -17,24 +17,7 @@ const { requireTenant } = require('../middleware/tenant');
 const router = express.Router();
 router.use(requireTenant);
 
-const isProduction = process.env.NODE_ENV === 'production';
-// Use secure cookies only when HTTPS is actually configured.
-// When serving over plain HTTP (e.g. IP-only deployment), secure:true would
-// cause browsers to silently drop the cookie on every request.
-const useSecureCookie = isProduction && process.env.USE_HTTPS === 'true';
-
-function cookieOptions(req) {
-    const origin = req?.headers?.origin || '';
-    if (origin.startsWith('workpulse://')) {
-        return { httpOnly: true, secure: true, sameSite: 'none', maxAge: 8 * 60 * 60 * 1000 };
-    }
-    return {
-        httpOnly: true,
-        secure: useSecureCookie,
-        sameSite: 'strict',
-        maxAge: 8 * 60 * 60 * 1000
-    };
-}
+const { cookieOptions } = require('../utils/cookie');
 
 const uploadDir = path.join(__dirname, '..', 'uploads', 'avatars');
 if (!fs.existsSync(uploadDir)) {
@@ -62,10 +45,8 @@ const upload = multer({
     storage,
     limits: { fileSize: 10 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
-        const allowedExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
         const allowedMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-        const ext = path.extname(file.originalname).toLowerCase();
-        if (allowedExts.includes(ext) && allowedMimes.includes(file.mimetype)) cb(null, true);
+        if (allowedMimes.includes(file.mimetype)) cb(null, true);
         else cb(new Error('Only image files (jpg, png, webp, gif) are allowed'));
     }
 });
@@ -298,7 +279,7 @@ router.delete('/', auth, async (req, res) => {
             await client.query('DELETE FROM users WHERE id = $1', [req.userId]);
         });
 
-        res.clearCookie('token', { httpOnly: true, secure: useSecureCookie, sameSite: 'strict', path: '/' });
+        res.clearCookie('token', { httpOnly: true, sameSite: 'strict', path: '/' });
         res.json({ message: 'Account deleted successfully' });
     } catch (err) {
         req.log.error({ err }, 'DELETE /profile error');

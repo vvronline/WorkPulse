@@ -13,25 +13,7 @@ const auth = require('../middleware/auth');
 
 const router = express.Router();
 
-const isProduction = process.env.NODE_ENV === 'production';
-// Use secure cookies only when HTTPS is actually configured.
-// When serving over plain HTTP (e.g. IP-only deployment), secure:true would
-// cause browsers to silently drop the cookie on every request.
-const useSecureCookie = isProduction && process.env.USE_HTTPS === 'true';
-
-function cookieOptions(req) {
-    // Desktop (Electron) app uses a custom protocol origin — needs cross-site cookies
-    const origin = req?.headers?.origin || '';
-    if (origin.startsWith('workpulse://')) {
-        return { httpOnly: true, secure: true, sameSite: 'none', maxAge: 8 * 60 * 60 * 1000 };
-    }
-    return {
-        httpOnly: true,
-        secure: useSecureCookie,
-        sameSite: 'strict',
-        maxAge: 8 * 60 * 60 * 1000,
-    };
-}
+const { cookieOptions } = require('../utils/cookie');
 
 const MAX_SESSIONS = 2;
 
@@ -697,7 +679,7 @@ router.post('/logout', async (req, res) => {
             }
         }
     } catch { /* token may be expired/invalid — still clear cookie */ }
-    res.clearCookie('token', { httpOnly: true, secure: useSecureCookie, sameSite: 'strict', path: '/' });
+    res.clearCookie('token', { httpOnly: true, sameSite: 'strict', path: '/' });
     res.json({ message: 'Logged out successfully' });
 });
 

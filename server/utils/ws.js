@@ -150,7 +150,13 @@ function setupWebSocket(server) {
 
         // Heartbeat: keep connection alive
         ws.isAlive = true;
-        ws.on('pong', () => { ws.isAlive = true; });
+        ws.userId = userId;
+        ws.tenantId = tenantId || null;
+        ws.on('pong', () => {
+            ws.isAlive = true;
+            // Refresh Redis presence TTL on every pong so users don't appear offline
+            redis.setPresence(ws.tenantId, ws.userId, redis.TTL.PRESENCE);
+        });
     });
 
     // Heartbeat interval

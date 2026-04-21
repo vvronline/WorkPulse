@@ -1,5 +1,4 @@
 const express = require('express');
-const { query, transaction } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole } = require('../middleware/rbac');
 const { getLocalToday } = require('../utils/timezone');
@@ -57,36 +56,37 @@ async function getCommentCounts(taskIds, db) {
 async function enrichTasks(tasks, db) {
     if (!tasks.length) return [];
     const taskIds = tasks.map(t => t.id);
-    const labelsMap = await getLabelsForTasks(taskIds, db);
-    const commentMap = await getCommentCounts(taskIds, db);
+
+    const [labelsMap, commentMap] = await Promise.all([
+        getLabelsForTasks(taskIds, db),
+        getCommentCounts(taskIds, db),
+    ]);
 
     const assigneeIds = [...new Set(tasks.map(t => t.assigned_to).filter(Boolean))];
-    const assigneeMap = {};
-    if (assigneeIds.length) {
-        const users = (await db.query('SELECT id, username, full_name, avatar FROM users WHERE id = ANY($1)', [assigneeIds])).rows;
-        for (const u of users) assigneeMap[u.id] = { username: u.username, full_name: u.full_name, avatar: u.avatar };
-    }
-
     const creatorIds = [...new Set(tasks.map(t => t.user_id))];
-    const creatorMap = {};
-    if (creatorIds.length) {
-        const users = (await db.query('SELECT id, username, full_name FROM users WHERE id = ANY($1)', [creatorIds])).rows;
-        for (const u of users) creatorMap[u.id] = { username: u.username, full_name: u.full_name };
-    }
-
     const sprintIds = [...new Set(tasks.map(t => t.sprint_id).filter(Boolean))];
+    const allUserIds = [...new Set([...assigneeIds, ...creatorIds])];
+
+    const [userRows, sprintRows] = await Promise.all([
+        allUserIds.length
+            ? db.query('SELECT id, username, full_name, avatar FROM users WHERE id = ANY($1)', [allUserIds]).then(r => r.rows)
+            : [],
+        sprintIds.length
+            ? db.query('SELECT id, name, status, start_date, end_date FROM sprints WHERE id = ANY($1)', [sprintIds]).then(r => r.rows)
+            : [],
+    ]);
+
+    const userMap = {};
+    for (const u of userRows) userMap[u.id] = u;
     const sprintMap = {};
-    if (sprintIds.length) {
-        const sprints = (await db.query('SELECT id, name, status, start_date, end_date FROM sprints WHERE id = ANY($1)', [sprintIds])).rows;
-        for (const s of sprints) sprintMap[s.id] = s;
-    }
+    for (const s of sprintRows) sprintMap[s.id] = s;
 
     return tasks.map(t => ({
         ...t,
         labels: labelsMap[t.id] || [],
         comment_count: commentMap[t.id] || 0,
-        assignee: t.assigned_to ? (assigneeMap[t.assigned_to] || null) : null,
-        creator: creatorMap[t.user_id] || null,
+        assignee: t.assigned_to ? (userMap[t.assigned_to] ? { username: userMap[t.assigned_to].username, full_name: userMap[t.assigned_to].full_name, avatar: userMap[t.assigned_to].avatar } : null) : null,
+        creator: userMap[t.user_id] ? { username: userMap[t.user_id].username, full_name: userMap[t.user_id].full_name } : null,
         sprint: t.sprint_id ? (sprintMap[t.sprint_id] || null) : null,
     }));
 }
@@ -118,18 +118,20 @@ async function canAccessTask(task, userId, requesterOrgId, db) {
 async function syncLabels(taskId, labelIds, orgId, db) {
     if (!labelIds || !Array.isArray(labelIds)) return;
     // Limit labels per task to prevent resource exhaustion
-    const limitedIds = labelIds.slice(0, 20);
+    const limitedIds = labelIds.slice(0, 20).map(lid => parseInt(lid, 10)).filter(n => !isNaN(n));
     await db.query('DELETE FROM task_label_map WHERE task_id = $1', [taskId]);
-    for (const lid of limitedIds) {
-        const validLid = parseInt(lid, 10);
-        if (isNaN(validLid)) continue;
-        // Only allow labels from the same org (or personal labels with no org)
-        const label = orgId
-            ? (await db.query('SELECT id FROM task_labels WHERE id = $1 AND org_id = $2', [validLid, orgId])).rows[0]
-            : (await db.query('SELECT id FROM task_labels WHERE id = $1 AND org_id IS NULL', [validLid])).rows[0];
-        if (label) {
-            await db.query('INSERT INTO task_label_map (task_id, label_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [taskId, validLid]);
-        }
+    if (limitedIds.length === 0) return;
+    // Batch-validate labels belong to the same org
+    const validLabels = orgId
+        ? (await db.query('SELECT id FROM task_labels WHERE id = ANY($1) AND org_id = $2', [limitedIds, orgId])).rows
+        : (await db.query('SELECT id FROM task_labels WHERE id = ANY($1) AND org_id IS NULL', [limitedIds])).rows;
+    const validIds = validLabels.map(r => r.id);
+    if (validIds.length > 0) {
+        const values = validIds.map((lid, i) => `($1, $${i + 2})`).join(', ');
+        await db.query(
+            `INSERT INTO task_label_map (task_id, label_id) VALUES ${values} ON CONFLICT DO NOTHING`,
+            [taskId, ...validIds]
+        );
     }
 }
 
@@ -209,6 +211,14 @@ router.get('/', auth, loadUserContext, async (req, res) => {
             params.push(status);
         }
 
+        if (label) {
+            const labelId = parseInt(label, 10);
+            if (!isNaN(labelId)) {
+                conditions.push(`EXISTS (SELECT 1 FROM task_label_map tlm WHERE tlm.task_id = t.id AND tlm.label_id = $${pi++})`);
+                params.push(labelId);
+            }
+        }
+
         if (search && search.trim()) {
             const escaped = search.trim().replace(/[%_]/g, c => `\\${c}`);
             conditions.push(`(t.title ILIKE $${pi} OR t.description ILIKE $${pi})`);
@@ -216,7 +226,7 @@ router.get('/', auth, loadUserContext, async (req, res) => {
             pi++;
         }
 
-        let tasks = (await req.db.query(`
+        const tasks = (await req.db.query(`
             SELECT t.* FROM tasks t
             WHERE ${conditions.join(' AND ')}
             ORDER BY
@@ -224,14 +234,6 @@ router.get('/', auth, loadUserContext, async (req, res) => {
                 CASE t.status WHEN 'in_progress' THEN 1 WHEN 'in_review' THEN 2 WHEN 'pending' THEN 3 WHEN 'done' THEN 4 END,
                 t.created_at ASC
         `, params)).rows;
-
-        if (label) {
-            const labelId = parseInt(label, 10);
-            const taskIdsWithLabel = new Set(
-                (await req.db.query('SELECT task_id FROM task_label_map WHERE label_id = $1', [labelId])).rows.map(r => r.task_id)
-            );
-            tasks = tasks.filter(t => taskIdsWithLabel.has(t.id));
-        }
 
         const enriched = await enrichTasks(tasks, req.db);
         const total = enriched.length;
@@ -320,7 +322,8 @@ router.post('/', auth, loadUserContext, async (req, res) => {
 // ─── Update task status ──────────────────────────────────────────────────
 router.patch('/:id/status', auth, loadUserContext, async (req, res) => {
     try {
-        const { id } = req.params;
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) return res.status(400).json({ error: 'Invalid task ID' });
         const { status } = req.body;
 
         if (!['pending', 'in_progress', 'in_review', 'done'].includes(status)) {
@@ -347,7 +350,8 @@ router.patch('/:id/status', auth, loadUserContext, async (req, res) => {
 // ─── Update task details ─────────────────────────────────────────────────
 router.put('/:id', auth, loadUserContext, async (req, res) => {
     try {
-        const { id } = req.params;
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) return res.status(400).json({ error: 'Invalid task ID' });
         const { title, description, priority, assigned_to, due_date, label_ids, sprint_id } = req.body;
 
         const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
@@ -400,7 +404,7 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
         );
 
         if (newTitle !== task.title) await logHistory(id, req.userId, 'updated', 'title', task.title, newTitle, null, req.db);
-        if (newDesc !== task.description) await logHistory(id, req.userId, 'updated', 'description', task.description ? task.description.slice(0, 100, null, req.db) : null, newDesc ? newDesc.slice(0, 100) : null);
+        if (newDesc !== task.description) await logHistory(id, req.userId, 'updated', 'description', task.description ? task.description.slice(0, 100) : null, newDesc ? newDesc.slice(0, 100) : null, null, req.db);
         if (newPriority !== task.priority) await logHistory(id, req.userId, 'updated', 'priority', task.priority, newPriority, null, req.db);
         if (String(newAssignedTo || '') !== String(task.assigned_to || '')) {
             const oldUser = task.assigned_to ? (await req.db.query('SELECT full_name FROM users WHERE id = $1', [task.assigned_to])).rows[0] : null;
@@ -419,7 +423,7 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
             await syncLabels(id, label_ids || [], req.userOrgId, req.db);
             const newLabels = (await req.db.query('SELECT tl.name FROM task_label_map tlm JOIN task_labels tl ON tl.id = tlm.label_id WHERE tlm.task_id = $1 ORDER BY tl.name', [id])).rows.map(r => r.name);
             if (JSON.stringify(oldLabels) !== JSON.stringify(newLabels)) {
-                await logHistory(id, req.userId, 'updated', 'labels', oldLabels.join(', ', null, req.db) || 'none', newLabels.join(', ') || 'none');
+                await logHistory(id, req.userId, 'updated', 'labels', oldLabels.join(', ') || 'none', newLabels.join(', ') || 'none', null, req.db);
             }
         }
 
@@ -450,7 +454,8 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
 // ─── Delete a task (only creator can delete) ─────────────────────────────
 router.delete('/:id', auth, loadUserContext, async (req, res) => {
     try {
-        const { id } = req.params;
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) return res.status(400).json({ error: 'Invalid task ID' });
         const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
         if (!task) return res.status(404).json({ error: 'Task not found' });
         if (task.user_id !== req.userId) return res.status(403).json({ error: 'Only task creator can delete task' });

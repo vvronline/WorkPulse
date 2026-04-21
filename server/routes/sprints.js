@@ -1,5 +1,4 @@
 const express = require('express');
-const { query } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole } = require('../middleware/rbac');
 const { logger } = require('../utils/logger');

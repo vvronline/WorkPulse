@@ -1,5 +1,4 @@
 const express = require('express');
-const { query } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext } = require('../middleware/rbac');
 const { getOffsetMin } = require('../utils/timezone');
@@ -61,10 +60,21 @@ router.post('/', async (req, res) => {
             return res.status(400).json({ error: 'Cannot create events in the past' });
         }
 
-        // Rate limit: max 100 events per user
-        const countRes = await req.db.query('SELECT COUNT(*) AS c FROM calendar_events WHERE user_id = $1', [req.userId]);
+        // Rate limit: max 1000 events per user (atomic check)
+        const countRes = await req.db.query('SELECT COUNT(*) AS c FROM calendar_events WHERE user_id = $1 FOR SHARE', [req.userId]);
         if (parseInt(countRes.rows[0].c, 10) >= 1000) {
             return res.status(400).json({ error: 'Maximum event limit reached (1000). Delete old events first.' });
+        }
+
+        // If linked to a meeting, validate meeting belongs to user's org BEFORE creating the event
+        if (meeting_id) {
+            const meetingCheck = (await req.db.query(
+                'SELECT id FROM meetings WHERE id = $1 AND org_id = $2',
+                [meeting_id, req.userOrgId]
+            )).rows[0];
+            if (!meetingCheck) {
+                return res.status(403).json({ error: 'Meeting not found in your organization' });
+            }
         }
 
         const result = await req.db.query(
@@ -73,17 +83,8 @@ router.post('/', async (req, res) => {
             [req.userId, req.userOrgId || null, title.trim(), description || null, start_time, end_time, all_day || false, color || '#6366f1', task_id || null, meeting_id || null]
         );
 
-        // If linked to a meeting, verify meeting belongs to user's org and create events for participants
+        // If linked to a meeting, create events for other participants
         if (meeting_id) {
-            // Validate meeting belongs to user's org
-            const meetingCheck = (await req.db.query(
-                'SELECT id FROM meetings WHERE id = $1 AND org_id = $2',
-                [meeting_id, req.userOrgId]
-            )).rows[0];
-            if (!meetingCheck) {
-                return res.status(403).json({ error: 'Meeting not found in your organization' });
-            }
-
             const otherParticipants = (await req.db.query(
                 `SELECT mp.user_id FROM meeting_participants mp
                  WHERE mp.meeting_id = $1 AND mp.user_id != $2`,
