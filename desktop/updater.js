@@ -46,7 +46,7 @@ function setupUpdater(mainWindow) {
     });
 
     ipcMain.on('download-update', () => {
-        autoUpdater.downloadUpdate().catch(() => {});
+        autoUpdater.downloadUpdate().catch(() => { });
     });
 
     ipcMain.handle('get-app-version', () => {
@@ -78,11 +78,11 @@ function setupUpdater(mainWindow) {
 
     // Check for updates after a short delay, then periodically
     setTimeout(() => {
-        autoUpdater.checkForUpdates().catch(() => {});
+        autoUpdater.checkForUpdates().catch(() => { });
     }, 5000);
 
     setInterval(() => {
-        autoUpdater.checkForUpdates().catch(() => {});
+        autoUpdater.checkForUpdates().catch(() => { });
     }, 4 * 60 * 60 * 1000); // Every 4 hours
 }
 
