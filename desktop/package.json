@@ -5,6 +5,10 @@
   "main": "main.js",
   "author": "WorkPulse",
   "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vvronline/WorkPulse.git"
+  },
   "scripts": {
     "start": "electron .",
     "start:local": "cross-env API_SERVER=http://localhost:5000 electron .",
