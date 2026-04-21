@@ -6,7 +6,11 @@ import ProfileMenu from './ProfileMenu';
 import MobileTabBar from './MobileTabBar';
 import NotificationBell from '../notifications/NotificationBell';
 import GlobalSearch from '../search/GlobalSearch';
+import WindowControls from './WindowControls';
 import s from './Navbar.module.css';
+
+const isElectron = !!window.electronAPI?.isElectron;
+const isMacElectron = isElectron && window.electronAPI?.platform === 'darwin';
 
 export default function Navbar() {
   const { isAuthenticated } = useAuth();
@@ -28,7 +32,7 @@ export default function Navbar() {
 
   return (
     <>
-      <nav className={s.navbar}>
+      <nav className={`${s.navbar} ${isElectron ? s.electronNavbar : ''}`}>
         <NavLink to="/" className={s['navbar-logo']}>
           <div className={s['logo-icon']}>💼</div>
           <h1 className={s.title}>WorkPulse</h1>
@@ -48,6 +52,7 @@ export default function Navbar() {
             </svg>
           </button>
           <ProfileMenu />
+          {isElectron && !isMacElectron && <WindowControls />}
         </div>
       </nav>
 

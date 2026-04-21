@@ -26,6 +26,16 @@ function setupUpdater(mainWindow) {
         }
     });
 
+    autoUpdater.on('download-progress', (progress) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('download-progress', {
+                percent: Math.round(progress.percent),
+                transferred: progress.transferred,
+                total: progress.total,
+            });
+        }
+    });
+
     autoUpdater.on('error', (err) => {
         console.error('Auto-updater error:', err?.message);
     });
@@ -35,9 +45,18 @@ function setupUpdater(mainWindow) {
         autoUpdater.quitAndInstall(false, true);
     });
 
+    ipcMain.on('download-update', () => {
+        autoUpdater.downloadUpdate().catch(() => {});
+    });
+
     ipcMain.handle('get-app-version', () => {
         const { app } = require('electron');
         return app.getVersion();
+    });
+
+    ipcMain.handle('is-maximized', (event) => {
+        const win = require('electron').BrowserWindow.fromWebContents(event.sender);
+        return win ? win.isMaximized() : false;
     });
 
     ipcMain.on('window-minimize', (event) => {

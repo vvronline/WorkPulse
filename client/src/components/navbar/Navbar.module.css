@@ -16,6 +16,24 @@
   transition: transform 0.3s cubic-bezier(.4,0,.2,1), opacity 0.3s cubic-bezier(.4,0,.2,1);
 }
 
+/* Electron: make navbar act as draggable title bar */
+.electronNavbar {
+  -webkit-app-region: drag;
+  padding-right: 0;
+}
+
+/* Interactive elements inside the draggable navbar must be non-draggable */
+.electronNavbar :global(a),
+.electronNavbar :global(button),
+.electronNavbar :global(input),
+.electronNavbar :global(select) {
+  -webkit-app-region: no-drag;
+}
+
+.electronNavbar .navbar-right {
+  -webkit-app-region: no-drag;
+}
+
 .navbar-logo {
   display: flex;
   align-items: center;

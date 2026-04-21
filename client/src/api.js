@@ -4,6 +4,8 @@ import 'nprogress/nprogress.css';
 
 NProgress.configure({ showSpinner: false });
 
+// Disable NProgress loading bar in Electron desktop app
+const isElectron = !!import.meta.env.VITE_ELECTRON;
 // Desktop (Electron) builds set VITE_API_URL to the Railway server; web builds use relative /api
 export const baseURL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '/api' : 'http://localhost:5000/api');
 export const serverURL = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace(/\/api$/, '') : '';
@@ -29,7 +31,7 @@ export function getLocalDate(daysAgo = 0) {
 
 // Attach timezone offset to every request (Auth token is sent automatically via HttpOnly cookie)
 API.interceptors.request.use(config => {
-    NProgress.start();
+    if (!isElectron) NProgress.start();
     config.headers['x-timezone-offset'] = new Date().getTimezoneOffset();
     return config;
 });
@@ -37,11 +39,11 @@ API.interceptors.request.use(config => {
 // NProgress bar — AxiosInterceptor component handles 401/token expiration separately
 API.interceptors.response.use(
     response => {
-        NProgress.done();
+        if (!isElectron) NProgress.done();
         return response;
     },
     error => {
-        NProgress.done();
+        if (!isElectron) NProgress.done();
         return Promise.reject(error);
     }
 );

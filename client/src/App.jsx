@@ -22,6 +22,8 @@ import MeetingPiP from './components/meeting/MeetingPiP';
 import GlobalIncomingCall from './components/notifications/GlobalIncomingCall';
 import PageSkeleton from './components/common/PageSkeleton';
 import ImpersonationBanner from './components/common/ImpersonationBanner';
+import ElectronTitleBar from './components/common/ElectronTitleBar';
+import UpdateNotification from './components/common/UpdateNotification';
 
 // Lazy-load non-critical pages for smaller initial bundle
 const Analytics = lazy(() => import('./pages/analytics'));
@@ -68,7 +70,9 @@ function AppRoutes() {
     <div className="app">
       <ErrorBoundary resetKey={location.pathname}>
       {isAuthenticated && <ImpersonationBanner />}
+      {!isAuthenticated && <ElectronTitleBar />}
       {isAuthenticated && !location.pathname.match(/^\/meeting\/[^/]+\/room/) && <Navbar />}
+      <UpdateNotification />
       <Suspense fallback={<PageSkeleton />}>
         <Routes>
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />

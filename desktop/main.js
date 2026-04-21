@@ -1,4 +1,4 @@
-const { app, BrowserWindow, protocol, net, session, Menu, globalShortcut } = require('electron');
+const { app, BrowserWindow, protocol, net, session, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { setupTray } = require('./tray');
@@ -34,11 +34,16 @@ function loadWindowState() {
     return { width: 1280, height: 800 };
 }
 
+let saveTimeout = null;
 function saveWindowState(win) {
     if (!win || win.isDestroyed()) return;
-    const bounds = win.getBounds();
-    const isMaximized = win.isMaximized();
-    fs.writeFileSync(WINDOW_STATE_FILE, JSON.stringify({ ...bounds, isMaximized }));
+    clearTimeout(saveTimeout);
+    saveTimeout = setTimeout(() => {
+        if (!win || win.isDestroyed()) return;
+        const bounds = win.getBounds();
+        const isMaximized = win.isMaximized();
+        fs.writeFileSync(WINDOW_STATE_FILE, JSON.stringify({ ...bounds, isMaximized }));
+    }, 500);
 }
 
 // ─── MIME type lookup ───
@@ -112,9 +117,9 @@ app.whenReady().then(() => {
                 // Buffer the body for methods that have one
                 if (!['GET', 'HEAD'].includes(request.method)) {
                     try {
-                        const bodyText = await request.text();
-                        if (bodyText) {
-                            fetchOpts.body = bodyText;
+                        const buf = await request.arrayBuffer();
+                        if (buf.byteLength > 0) {
+                            fetchOpts.body = Buffer.from(buf);
                         }
                     } catch { /* no body */ }
                 }
@@ -172,6 +177,8 @@ app.whenReady().then(() => {
         minHeight: 600,
         title: '',
         icon: path.join(__dirname, 'icons', 'transparent.png'),
+        frame: process.platform === 'darwin',
+        titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : undefined,
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
@@ -185,9 +192,12 @@ app.whenReady().then(() => {
 
     mainWindow.loadURL('workpulse://app/');
 
-    // F12 toggles DevTools for debugging
-    globalShortcut.register('F12', () => {
-        if (mainWindow) mainWindow.webContents.toggleDevTools();
+    // F12 toggles DevTools (local shortcut, only active when window is focused)
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+        if (input.key === 'F12' && input.type === 'keyDown') {
+            mainWindow.webContents.toggleDevTools();
+            event.preventDefault();
+        }
     });
 
     console.log(`[WorkPulse] API server: ${RAILWAY_URL}`);
@@ -200,6 +210,10 @@ app.whenReady().then(() => {
     // Persist window state on move/resize
     mainWindow.on('resize', () => saveWindowState(mainWindow));
     mainWindow.on('move', () => saveWindowState(mainWindow));
+
+    // Notify renderer of maximize state changes (for window control icons)
+    mainWindow.on('maximize', () => mainWindow.webContents.send('maximize-change', true));
+    mainWindow.on('unmaximize', () => mainWindow.webContents.send('maximize-change', false));
 
     // Minimize to tray on close instead of quitting
     mainWindow.on('close', (e) => {
