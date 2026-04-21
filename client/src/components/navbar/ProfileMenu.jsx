@@ -229,6 +229,17 @@ export default function ProfileMenu() {
                             </span>
                             {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
                         </button>
+                        {window.electronAPI && (
+                            <button className={s['profile-dropdown-item']} onClick={() => { setProfileOpen(false); window.dispatchEvent(new Event('workpulse-check-update')); }}>
+                                <span className={s['dd-item-icon']}>
+                                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                                        <path d="M14 8a6 6 0 1 1-4.15-5.7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                                        <polyline points="14 2 14 6 10 6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                </span>
+                                Check for Updates
+                            </button>
+                        )}
                     </div>
 
                     <div className={s['profile-dropdown-divider']} />

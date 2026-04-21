@@ -51,8 +51,17 @@ function setupUpdater(mainWindow) {
         }
     });
 
+    autoUpdater.on('update-not-available', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('update-not-available');
+        }
+    });
+
     autoUpdater.on('error', (err) => {
         console.error('Auto-updater error:', err?.message);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('update-error', { message: err?.message });
+        }
     });
 
     // IPC handlers
@@ -63,6 +72,16 @@ function setupUpdater(mainWindow) {
 
     ipcMain.on('download-update', () => {
         autoUpdater.downloadUpdate().catch(() => { });
+    });
+
+    ipcMain.handle('check-for-update', async () => {
+        try {
+            const result = await autoUpdater.checkForUpdates();
+            if (!result || !result.updateInfo) return { available: false };
+            return { available: true, version: result.updateInfo.version };
+        } catch {
+            return { available: false };
+        }
     });
 
     ipcMain.handle('get-app-version', () => {

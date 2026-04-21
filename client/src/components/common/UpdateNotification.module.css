@@ -1,3 +1,46 @@
+/* Floating check-for-update button */
+.checkBtn {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  z-index: 9999;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border, rgba(255,255,255,0.1));
+  background: var(--surface, #1e1e3a);
+  color: var(--text-secondary, #999);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  -webkit-app-region: no-drag;
+}
+
+.checkBtn:hover {
+  color: var(--primary, #6c63ff);
+  border-color: var(--primary, #6c63ff);
+  box-shadow: 0 4px 20px rgba(108,99,255,0.2);
+  transform: scale(1.05);
+}
+
+/* Spinner for checking state */
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--glass-border, rgba(255,255,255,0.15));
+  border-top-color: var(--primary, #6c63ff);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .banner {
   position: fixed;
   bottom: 1rem;
