@@ -1,6 +1,12 @@
 const { autoUpdater } = require('electron-updater');
 const { ipcMain } = require('electron');
 
+// Authenticate for private GitHub repo releases
+try {
+    const token = require('./update-config');
+    if (token) process.env.GH_TOKEN = token;
+} catch { /* no token in dev mode */ }
+
 // Enable logging
 autoUpdater.logger = console;
 
@@ -77,10 +83,15 @@ function setupUpdater(mainWindow) {
     ipcMain.handle('check-for-update', async () => {
         try {
             const result = await autoUpdater.checkForUpdates();
-            if (!result || !result.updateInfo) return { available: false };
-            return { available: true, version: result.updateInfo.version };
-        } catch {
-            return { available: false };
+            if (!result || !result.updateInfo) return { available: false, reason: 'no-info' };
+            const current = require('electron').app.getVersion();
+            const latest = result.updateInfo.version;
+            console.log(`[updater] Current: ${current}, Latest: ${latest}`);
+            if (latest === current) return { available: false, reason: 'up-to-date', version: current };
+            return { available: true, version: latest };
+        } catch (err) {
+            console.error('[updater] Check failed:', err?.message);
+            return { available: false, reason: 'error', error: err?.message };
         }
     });
 

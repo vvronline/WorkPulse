@@ -12,21 +12,29 @@ export default function UpdateNotification() {
 
   const dismiss = useCallback(() => setVisible(false), []);
 
+  const [errorMsg, setErrorMsg] = useState('');
+
   const checkForUpdate = useCallback(async () => {
     if (!api?.checkForUpdate) return;
     setState('checking');
     setVisible(true);
     try {
       const result = await api.checkForUpdate();
-      // If IPC returned before events fired, handle directly
-      if (!result?.available) {
-        setState('upToDate');
-        setTimeout(() => { setState('idle'); setVisible(false); }, 4000);
+      if (result?.available) {
+        // update-available event will handle state transition
+        return;
       }
-      // If available, the update-available event will handle state transition
+      if (result?.reason === 'error') {
+        setErrorMsg(result.error || 'Unknown error');
+        setState('error');
+      } else {
+        setState('upToDate');
+      }
+      setTimeout(() => { setState('idle'); setVisible(false); setErrorMsg(''); }, 4000);
     } catch {
       setState('error');
-      setTimeout(() => { setState('idle'); setVisible(false); }, 4000);
+      setErrorMsg('Failed to check for updates');
+      setTimeout(() => { setState('idle'); setVisible(false); setErrorMsg(''); }, 4000);
     }
   }, []);
 
@@ -120,7 +128,7 @@ export default function UpdateNotification() {
             {state === 'error' && (
               <>
                 <span className={s.icon}>⚠️</span>
-                <span>Couldn't check for updates</span>
+                <span>{errorMsg || "Couldn't check for updates"}</span>
               </>
             )}
           </div>

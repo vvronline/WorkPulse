@@ -11,6 +11,7 @@ files:
   - preload.js
   - tray.js
   - updater.js
+  - update-config.js
   - icons/**/*
   - package.json
 
