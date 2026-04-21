@@ -17,9 +17,16 @@ export default function UpdateNotification() {
     setState('checking');
     setVisible(true);
     try {
-      await api.checkForUpdate();
+      const result = await api.checkForUpdate();
+      // If IPC returned before events fired, handle directly
+      if (!result?.available) {
+        setState('upToDate');
+        setTimeout(() => { setState('idle'); setVisible(false); }, 4000);
+      }
+      // If available, the update-available event will handle state transition
     } catch {
       setState('error');
+      setTimeout(() => { setState('idle'); setVisible(false); }, 4000);
     }
   }, []);
 
