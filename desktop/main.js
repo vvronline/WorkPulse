@@ -1,4 +1,4 @@
-const { app, BrowserWindow, protocol, net, session, Menu } = require('electron');
+const { app, BrowserWindow, protocol, net, session, Menu, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { setupTray } = require('./tray');
@@ -120,6 +120,7 @@ app.whenReady().then(() => {
                 }
 
                 const resp = await net.fetch(targetUrl, fetchOpts);
+                console.log(`[proxy] ${request.method} ${targetUrl} -> ${resp.status}`);
                 return resp;
             } catch (err) {
                 console.error('[proxy] FETCH ERROR:', err);
@@ -183,6 +184,13 @@ app.whenReady().then(() => {
     if (state.isMaximized) mainWindow.maximize();
 
     mainWindow.loadURL('workpulse://app/');
+
+    // F12 toggles DevTools for debugging
+    globalShortcut.register('F12', () => {
+        if (mainWindow) mainWindow.webContents.toggleDevTools();
+    });
+
+    console.log(`[WorkPulse] API server: ${RAILWAY_URL}`);
 
     // Override the HTML <title> tag so the title bar stays blank
     mainWindow.on('page-title-updated', (e) => e.preventDefault());
