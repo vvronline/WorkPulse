@@ -176,7 +176,7 @@ app.whenReady().then(() => {
         minWidth: 800,
         minHeight: 600,
         title: '',
-        icon: path.join(__dirname, 'icons', 'transparent.png'),
+        icon: path.join(__dirname, 'icons', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
         frame: process.platform === 'darwin',
         titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : undefined,
         webPreferences: {

@@ -5,11 +5,15 @@ const { ipcMain } = require('electron');
 autoUpdater.logger = console;
 
 function setupUpdater(mainWindow) {
-    // Disable auto-download — we'll prompt the user first
-    autoUpdater.autoDownload = false;
+    // Auto-download updates immediately when available
+    autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
 
+    let pendingVersion = null;
+    let reminderInterval = null;
+
     autoUpdater.on('update-available', (info) => {
+        pendingVersion = info.version;
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('update-available', {
                 version: info.version,
@@ -19,11 +23,22 @@ function setupUpdater(mainWindow) {
     });
 
     autoUpdater.on('update-downloaded', (info) => {
+        pendingVersion = info.version;
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('update-downloaded', {
                 version: info.version,
             });
         }
+
+        // Start periodic reminder every 30 minutes if user dismisses
+        if (reminderInterval) clearInterval(reminderInterval);
+        reminderInterval = setInterval(() => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('update-reminder', {
+                    version: pendingVersion,
+                });
+            }
+        }, 30 * 60 * 1000);
     });
 
     autoUpdater.on('download-progress', (progress) => {
@@ -42,6 +57,7 @@ function setupUpdater(mainWindow) {
 
     // IPC handlers
     ipcMain.on('install-update', () => {
+        if (reminderInterval) clearInterval(reminderInterval);
         autoUpdater.quitAndInstall(false, true);
     });
 
@@ -76,14 +92,14 @@ function setupUpdater(mainWindow) {
         if (win) win.close();
     });
 
-    // Check for updates after a short delay, then periodically
+    // Check for updates after a short delay, then every 30 minutes
     setTimeout(() => {
         autoUpdater.checkForUpdates().catch(() => { });
-    }, 5000);
+    }, 3000);
 
     setInterval(() => {
         autoUpdater.checkForUpdates().catch(() => { });
-    }, 4 * 60 * 60 * 1000); // Every 4 hours
+    }, 30 * 60 * 1000);
 }
 
 module.exports = { setupUpdater };
