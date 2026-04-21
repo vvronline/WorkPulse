@@ -25,7 +25,12 @@ export default function ChatMessages({
                 {hasMore && (
                     <button className={s.loadMore} onClick={onLoadMore}>Load older messages</button>
                 )}
-                {loadingMsgs && <div className={s.hint} style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>}
+                {loadingMsgs && (
+                    <div className={s.loadingContainer}>
+                        <div className={s.msgSpinner} />
+                        <span>Loading messages…</span>
+                    </div>
+                )}
                 {!loadingMsgs && messages.length === 0 && (
                     <div className={s.hint} style={{ padding: '2rem', textAlign: 'center' }}>
                         No messages yet. Say hello! 👋

@@ -34,7 +34,7 @@ export default function Chat() {
         showPollCreator, setShowPollCreator, convMembers,
         deleteConfirm, setDeleteConfirm, convMenu, setConvMenu,
         callState, wsSend,
-        loadingMsgs, hasMore,
+        loadingMsgs, loadingConvs, hasMore,
         messagesEndRef, messagesContainerRef, fileInputRef, mentionInputRef,
         searchInputRef,
         startConversation, openConversation, loadMore, loadConversations,
@@ -91,6 +91,7 @@ export default function Chat() {
                 userStatusMap={userStatusMap}
                 convMenu={convMenu}
                 mobileView={mobileView}
+                loadingConvs={loadingConvs}
                 onSearchUser={startConversation}
                 onOpenConv={(c) => openConversation(c.id, {
                     other_user_id: c.other_user_id,

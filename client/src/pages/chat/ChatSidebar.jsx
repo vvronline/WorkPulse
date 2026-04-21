@@ -9,6 +9,7 @@ import s from './ChatSidebar.module.css';
 export default function ChatSidebar({
     conversations, activeConvId, search, setSearch, searchResults, searching,
     typingUsers, onlineUsers, userStatusMap = {}, convMenu, mobileView, userId,
+    loadingConvs,
     onSearchUser, onOpenConv, onMenuToggle, onPinConv, onFavConv, onDeleteConv,
     onNewGroup, searchInputRef
 }) {
@@ -140,10 +141,14 @@ export default function ChatSidebar({
 
                 {!search && (
                     <div className={s.convList}>
-                        {regularConvs.length === 0 && (
+                        {loadingConvs ? (
+                            <div className={s.convListLoading}>
+                                <div className={s.convListSpinner} />
+                                <span>Loading conversations…</span>
+                            </div>
+                        ) : regularConvs.length === 0 ? (
                             <div className={s.empty}>No conversations yet. Search for a colleague to start chatting.</div>
-                        )}
-                        {pinned.length > 0 && (
+                        ) : (<>
                             <>
                                 <div className={s.convSection}><Pin size={13} style={{marginRight:4,verticalAlign:'middle'}} />Pinned</div>
                                 {pinned.map(c => <ConversationItem key={c.id} conv={c} onOpen={onOpenConv} {...convProps} />)}
@@ -159,6 +164,7 @@ export default function ChatSidebar({
                             <div className={s.convSection}><MessageSquare size={13} style={{marginRight:4,verticalAlign:'middle'}} />All Messages</div>
                         )}
                         {others.map(c => <ConversationItem key={c.id} conv={c} onOpen={onOpenConv} {...convProps} />)}
+                        </>)}
                     </div>
                 )}
             </>)}

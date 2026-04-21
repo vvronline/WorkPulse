@@ -34,6 +34,7 @@ export default function useChatState() {
     const [searchResults, setSearchResults] = useState([]);
     const [searching, setSearching] = useState(false);
     const [loadingMsgs, setLoadingMsgs] = useState(false);
+    const [loadingConvs, setLoadingConvs] = useState(true);
     const [hasMore, setHasMore] = useState(false);
     const [typingUsers, setTypingUsers] = useState({});
     const [mobileView, setMobileView] = useState('list');
@@ -324,6 +325,7 @@ export default function useChatState() {
     // ─── Core operations ───
 
     const loadConversations = async () => {
+        setLoadingConvs(true);
         try {
             const { data } = await getConversations();
             setConversations(data);
@@ -350,6 +352,7 @@ export default function useChatState() {
                 } catch (e) { console.error('Failed to load presence', e); }
             }
         } catch (e) { console.error('Failed to load conversations', e); }
+        setLoadingConvs(false);
     };
 
     const startConversation = async (otherUser) => {
@@ -423,7 +426,7 @@ export default function useChatState() {
         input, setInput,
         search, setSearch,
         searchResults, searching,
-        loadingMsgs, hasMore,
+        loadingMsgs, loadingConvs, hasMore,
         typingUsers,
         mobileView, setMobileView,
         onlineUsers,
