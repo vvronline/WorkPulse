@@ -4,7 +4,7 @@ copyright: Copyright © 2026 WorkPulse
 
 directories:
   output: dist
-  buildResources: icons
+  buildResources: build
 
 files:
   - main.js
@@ -26,6 +26,8 @@ win:
       arch:
         - x64
   icon: icons/icon.png
+  publisherName: WorkPulse
+  verifyUpdateCodeSignature: false
 
 nsis:
   oneClick: false
