@@ -1,0 +1,27 @@
+{
+  "name": "workpulse-desktop",
+  "version": "1.1.0",
+  "description": "WorkPulse Desktop Application",
+  "main": "main.js",
+  "author": "WorkPulse",
+  "license": "ISC",
+  "scripts": {
+    "start": "electron .",
+    "start:local": "cross-env API_SERVER=http://localhost:5000 electron .",
+    "build:client": "cd ../client && npx cross-env VITE_WS_URL=wss://workpulse-prod.up.railway.app/ws VITE_ELECTRON=true npm run build",
+    "build:client:local": "cd ../client && npx cross-env VITE_ELECTRON=true npm run build",
+    "build:win": "npm run build:client && electron-builder --win",
+    "build:mac": "npm run build:client && electron-builder --mac",
+    "build:linux": "npm run build:client && electron-builder --linux",
+    "build:all": "npm run build:client && electron-builder --win --mac --linux"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "electron": "^33.4.0",
+    "electron-builder": "^25.1.8",
+    "sharp": "^0.34.5"
+  }
+}

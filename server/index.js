@@ -112,6 +112,9 @@ app.use((req, res, next) => {
             return true;
         }
 
+        // Allow Electron desktop app (custom protocol origin)
+        if (origin.startsWith('workpulse://')) return true;
+
         if (process.env.NODE_ENV !== 'production') {
             const devOrigins = [
                 `http://localhost:${PORT}`, 'http://localhost', 'https://localhost',

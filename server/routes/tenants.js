@@ -20,7 +20,11 @@ const { startSession: startImpSession, getSession: getImpSession, endSession: en
 
 const isProduction = process.env.NODE_ENV === 'production';
 const useSecureCookie = isProduction && process.env.USE_HTTPS === 'true';
-function cookieOptions(maxAge) {
+function cookieOptions(req, maxAge) {
+    const origin = req?.headers?.origin || '';
+    if (origin.startsWith('workpulse://')) {
+        return { httpOnly: true, secure: true, sameSite: 'none', maxAge: maxAge || 60 * 60 * 1000, path: '/' };
+    }
     return { httpOnly: true, secure: useSecureCookie, sameSite: 'strict', maxAge: maxAge || 60 * 60 * 1000, path: '/' };
 }
 
@@ -602,10 +606,10 @@ router.post('/:id/impersonate', async (req, res) => {
         const origToken = req.cookies.token;
 
         // Set impersonation token as HttpOnly cookie (replaces existing auth cookie)
-        res.cookie('token', impersonationToken, cookieOptions(60 * 60 * 1000));
+        res.cookie('token', impersonationToken, cookieOptions(req, 60 * 60 * 1000));
         // Store original token in a separate HttpOnly cookie for restoration
         if (origToken) {
-            res.cookie('_wp_orig_token', origToken, cookieOptions(60 * 60 * 1000));
+            res.cookie('_wp_orig_token', origToken, cookieOptions(req, 60 * 60 * 1000));
         }
 
         res.json({
@@ -646,7 +650,7 @@ router.post('/:id/exit-impersonate', async (req, res) => {
         // Restore the original platform admin token from the saved cookie
         const origToken = req.cookies._wp_orig_token;
         if (origToken) {
-            res.cookie('token', origToken, cookieOptions(8 * 60 * 60 * 1000));
+            res.cookie('token', origToken, cookieOptions(req, 8 * 60 * 60 * 1000));
             res.clearCookie('_wp_orig_token', { httpOnly: true, secure: useSecureCookie, sameSite: 'strict', path: '/' });
         }
 

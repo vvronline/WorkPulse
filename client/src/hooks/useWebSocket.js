@@ -18,9 +18,15 @@ export default function useWebSocket(onMessage) {
         if (wsRef.current && wsRef.current.readyState <= 1) return;
         connectingRef.current = true;
 
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const host = import.meta.env.PROD ? window.location.host : 'localhost:5000';
-        const ws = new WebSocket(`${protocol}//${host}/ws`);
+        let wsUrl;
+        if (import.meta.env.VITE_WS_URL) {
+            wsUrl = import.meta.env.VITE_WS_URL;
+        } else {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = import.meta.env.PROD ? window.location.host : 'localhost:5000';
+            wsUrl = `${protocol}//${host}/ws`;
+        }
+        const ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {
             connectingRef.current = false;

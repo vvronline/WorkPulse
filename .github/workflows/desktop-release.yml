@@ -1,0 +1,51 @@
+name: Desktop Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Triggers on version tags like v1.0.0, v1.2.3
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            args: --win
+          - os: macos-latest
+            args: --mac
+          - os: ubuntu-latest
+            args: --linux
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Build the React client with Electron env vars
+      - name: Install client dependencies
+        working-directory: client
+        run: npm ci
+
+      - name: Build client for Electron
+        working-directory: client
+        env:
+          VITE_WS_URL: wss://workpulse-prod.up.railway.app/ws
+          VITE_ELECTRON: 'true'
+        run: npm run build
+
+      # Build the Electron app
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build Electron app
+        working-directory: desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder ${{ matrix.args }} --publish always

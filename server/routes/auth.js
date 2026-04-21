@@ -19,7 +19,12 @@ const isProduction = process.env.NODE_ENV === 'production';
 // cause browsers to silently drop the cookie on every request.
 const useSecureCookie = isProduction && process.env.USE_HTTPS === 'true';
 
-function cookieOptions() {
+function cookieOptions(req) {
+    // Desktop (Electron) app uses a custom protocol origin — needs cross-site cookies
+    const origin = req?.headers?.origin || '';
+    if (origin.startsWith('workpulse://')) {
+        return { httpOnly: true, secure: true, sameSite: 'none', maxAge: 8 * 60 * 60 * 1000 };
+    }
     return {
         httpOnly: true,
         secure: useSecureCookie,
@@ -184,7 +189,7 @@ router.post('/register', async (req, res) => {
                         process.env.JWT_SECRET,
                         { expiresIn: '8h' }
                     );
-                    res.cookie('token', token, cookieOptions());
+                    res.cookie('token', token, cookieOptions(req));
                     return res.json({
                         user: { id: result.rows[0].id, username, full_name, email, avatar: null, role: 'platform_admin', org_id: null }
                     });
@@ -272,7 +277,7 @@ router.post('/register', async (req, res) => {
             process.env.JWT_SECRET,
             { expiresIn: '8h' },
         );
-        res.cookie('token', token, cookieOptions());
+        res.cookie('token', token, cookieOptions(req));
         res.json({ user: { id: result.id, username, full_name, email, avatar: null, role: result.role, org_id: assignedOrgId, tenant_id: tenantId } });
     } catch (err) {
         if (err.message === 'INVITE_EXHAUSTED') {
@@ -350,7 +355,7 @@ router.post('/login', async (req, res) => {
             process.env.JWT_SECRET,
             { expiresIn: '8h' },
         );
-        res.cookie('token', token, cookieOptions());
+        res.cookie('token', token, cookieOptions(req));
 
         if (isPlatformUser) {
             // If user was already resolved with a tenant context (via user_directory),
@@ -426,7 +431,7 @@ router.post('/login', async (req, res) => {
                     process.env.JWT_SECRET,
                     { expiresIn: '8h' },
                 );
-                res.cookie('token', tenantToken, cookieOptions());
+                res.cookie('token', tenantToken, cookieOptions(req));
 
                 const reportsRes = await tenantDb.query(
                     'SELECT 1 FROM users WHERE manager_id = $1 AND is_active = TRUE LIMIT 1',
@@ -489,7 +494,7 @@ router.post('/login', async (req, res) => {
                 process.env.JWT_SECRET,
                 { expiresIn: '8h' },
             );
-            res.cookie('token', newToken, cookieOptions());
+            res.cookie('token', newToken, cookieOptions(req));
             return res.json({
                 user: {
                     id: tenantUser.id,
@@ -666,7 +671,7 @@ router.post('/refresh', auth, async (req, res) => {
             process.env.JWT_SECRET,
             { expiresIn: '8h' },
         );
-        res.cookie('token', token, cookieOptions());
+        res.cookie('token', token, cookieOptions(req));
         res.json({ message: 'Token refreshed' });
     } catch (err) {
         req.log.error({ err }, 'Token refresh error');

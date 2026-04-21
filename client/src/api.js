@@ -4,7 +4,9 @@ import 'nprogress/nprogress.css';
 
 NProgress.configure({ showSpinner: false });
 
-export const baseURL = import.meta.env.PROD ? '/api' : 'http://localhost:5000/api';
+// Desktop (Electron) builds set VITE_API_URL to the Railway server; web builds use relative /api
+export const baseURL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '/api' : 'http://localhost:5000/api');
+export const serverURL = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace(/\/api$/, '') : '';
 
 const API = axios.create({
     baseURL: baseURL,

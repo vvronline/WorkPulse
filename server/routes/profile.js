@@ -23,7 +23,11 @@ const isProduction = process.env.NODE_ENV === 'production';
 // cause browsers to silently drop the cookie on every request.
 const useSecureCookie = isProduction && process.env.USE_HTTPS === 'true';
 
-function cookieOptions() {
+function cookieOptions(req) {
+    const origin = req?.headers?.origin || '';
+    if (origin.startsWith('workpulse://')) {
+        return { httpOnly: true, secure: true, sameSite: 'none', maxAge: 8 * 60 * 60 * 1000 };
+    }
     return {
         httpOnly: true,
         secure: useSecureCookie,
@@ -261,7 +265,7 @@ router.put('/password', auth, loadUserContext, async (req, res) => {
         if (req.tenantId) tokenPayload.tenant_id = req.tenantId;
         if (req.isPlatformUser) tokenPayload.platform = true;
         const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, { expiresIn: '8h' });
-        res.cookie('token', token, cookieOptions());
+        res.cookie('token', token, cookieOptions(req));
         logAction(req, 'change_password', 'user', req.userId, {});
         res.json({ message: 'Password updated successfully' });
     } catch (err) {

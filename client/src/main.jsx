@@ -11,8 +11,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   </React.StrictMode>
 );
 
-// Register service worker for PWA
-if ('serviceWorker' in navigator) {
+// Register service worker for PWA (skip in Electron — custom protocol conflicts with SW)
+if ('serviceWorker' in navigator && !import.meta.env.VITE_ELECTRON) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch(e => console.error(e));
   });

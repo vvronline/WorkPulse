@@ -1,0 +1,63 @@
+appId: com.workpulse.desktop
+productName: WorkPulse
+copyright: Copyright © 2026 WorkPulse
+
+directories:
+  output: dist
+  buildResources: icons
+
+files:
+  - main.js
+  - preload.js
+  - tray.js
+  - updater.js
+  - icons/**/*
+  - package.json
+
+extraResources:
+  - from: ../client/dist
+    to: client/dist
+    filter:
+      - "**/*"
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: icons/icon.png
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  icon: icons/icon.png
+  category: public.app-category.business
+
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+
+linux:
+  target:
+    - target: AppImage
+    - target: deb
+  icon: icons
+  category: Office
+
+publish:
+  provider: github
+  releaseType: release
