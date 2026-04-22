@@ -264,7 +264,30 @@
 }
 
 .pt-muted-icon { font-size: 0.7rem; }
-.pt-hand { font-size: 0.8rem; }
+
+/* Raised hand badge — top-right corner of tile */
+.pt-raised-hand {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 5;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: rgba(250, 204, 21, 0.9);
+    color: #78350f;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    animation: pt-hand-bounce 1s ease-in-out infinite;
+}
+
+@keyframes pt-hand-bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-4px); }
+}
+
 .pt-quality-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .pt-speaking-icon { font-size: 0.65rem; animation: pt-pulse 1s ease-in-out infinite; }
 .pt-screen-icon { font-size: 0.65rem; }

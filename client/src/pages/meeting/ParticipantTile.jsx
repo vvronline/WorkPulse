@@ -54,7 +54,7 @@ export default function ParticipantTile({ participant, isLocal, localStream, scr
     const muted = isLocal
         ? (localMuted !== undefined ? localMuted : !localStream?.getAudioTracks().some(t => t.enabled))
         : participant?.muted;
-    const raisedHand = participant?.raisedHand;
+    const raisedHand = isLocal ? participant?.raisedHand : participant?.raisedHand;
     const isScreenSharing = !isLocal && participant?.screenSharing;
 
     const qualityColor = { good: '#10b981', medium: '#f59e0b', poor: '#ef4444' };
@@ -76,9 +76,14 @@ export default function ParticipantTile({ participant, isLocal, localStream, scr
                 />
             )}
 
+            {raisedHand && (
+                <div className="pt-raised-hand" title="Hand raised">
+                    <Hand size={22} />
+                </div>
+            )}
+
             <div className="pt-overlay">
                 <div className="pt-name-row">
-                    {raisedHand && <span className="pt-hand"><Hand size={14} /></span>}
                     {isScreenSharing && <span className="pt-screen-icon" title="Screen sharing"><MonitorUp size={14} /></span>}
                     <span className="pt-name">{name}{isLocal ? ' (You)' : ''}</span>
                     {muted && <span className="pt-muted-icon"><MicOff size={12} /></span>}

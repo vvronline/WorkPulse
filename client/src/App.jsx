@@ -19,6 +19,7 @@ import { MeetingProvider } from './MeetingContext';
 import { UserStatusProvider } from './UserStatusContext';
 import MeetingPiP from './components/meeting/MeetingPiP';
 import GlobalIncomingCall from './components/notifications/GlobalIncomingCall';
+import GlobalMeetingNotification from './components/notifications/GlobalMeetingNotification';
 import PageSkeleton from './components/common/PageSkeleton';
 import ImpersonationBanner from './components/common/ImpersonationBanner';
 import ElectronTitleBar from './components/common/ElectronTitleBar';
@@ -202,6 +203,7 @@ export default function App() {
                       <AppRoutes />
                       <MeetingPiP />
                       <GlobalIncomingCall />
+                      <GlobalMeetingNotification />
                     </MeetingProvider>
                   </CallProvider>
                   </UserStatusProvider>

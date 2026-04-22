@@ -175,6 +175,7 @@ export default function MeetingRoom() {
                     <div className={`mr-grid ${presenterId ? 'mr-grid-strip' : ''}`} data-count={gridDataCount}>
                         <ParticipantTile
                             isLocal
+                            participant={{ raisedHand }}
                             localStream={localStream}
                             screenStream={screenStream}
                             screenSharing={screenSharing && !presenterId}

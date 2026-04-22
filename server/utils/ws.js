@@ -621,6 +621,24 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
         // Mark meeting as active on first join
         if (meeting.status === 'scheduled') {
             await db.query(`UPDATE meetings SET status = 'active', started_at = NOW() WHERE id = $1`, [meetingId]);
+
+            // Notify all invited participants that the meeting has started (Teams-like join card)
+            const allInvited = (await db.query(
+                `SELECT mp.user_id FROM meeting_participants mp
+                 WHERE mp.meeting_id = $1 AND mp.user_id != $2`,
+                [meetingId, senderId]
+            )).rows;
+            const organizer = (await db.query('SELECT full_name, avatar FROM users WHERE id = $1', [meeting.created_by])).rows[0];
+            for (const p of allInvited) {
+                sendToUser(tenantId, p.user_id, 'meeting_started', {
+                    meetingId,
+                    meetingCode: meeting.meeting_code,
+                    title: meeting.title,
+                    organizerName: organizer?.full_name || 'Someone',
+                    organizerAvatar: organizer?.avatar,
+                    startedBy: senderId,
+                });
+            }
         }
 
         const joiner = (await db.query('SELECT full_name, avatar, username FROM users WHERE id = $1', [senderId])).rows[0];

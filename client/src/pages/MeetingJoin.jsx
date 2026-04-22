@@ -298,13 +298,9 @@ export default function MeetingJoin() {
                         )}
                     </div>
 
-                    {isEnded ? (
-                        <div className="mj-ended">This meeting has ended.</div>
-                    ) : (
-                        <button className="mj-join-btn" onClick={handleJoin}>
-                            Join now
-                        </button>
-                    )}
+                    <button className="mj-join-btn" onClick={handleJoin}>
+                        {isEnded ? 'Rejoin meeting' : 'Join now'}
+                    </button>
                     <button className="mj-back-btn" onClick={() => navigate(-1)}>← Back</button>
                 </div>
             </div>

@@ -1,0 +1,143 @@
+/* ── Meeting Started Notification Card (Teams-style) ── */
+.card {
+  position: fixed;
+  z-index: 10000;
+  width: 320px;
+  background: #1a1a2e;
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+  animation: meetNotifSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.card:active { cursor: grabbing; }
+.card:hover { box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(14, 165, 233, 0.35); }
+
+@keyframes meetNotifSlideIn {
+  from { opacity: 0; transform: translateX(40px) scale(0.92); }
+  to   { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+/* ── Top bar ── */
+.topBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: linear-gradient(90deg, rgba(14, 165, 233, 0.15), rgba(14, 165, 233, 0.05));
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.pulseRing {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #0ea5e9;
+  flex-shrink: 0;
+  animation: meetPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes meetPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.5); }
+  50%      { box-shadow: 0 0 0 6px rgba(14, 165, 233, 0); }
+}
+
+.topLabel {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: rgba(255, 255, 255, 0.55);
+  flex: 1;
+}
+
+.dismissBtn {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.dismissBtn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* ── Meeting info ── */
+.meetInfo {
+  padding: 14px 14px 10px;
+}
+
+.meetTitle {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #fff;
+  margin: 0 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meetHost {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.45);
+  margin: 0;
+}
+
+/* ── Actions ── */
+.actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 14px 14px;
+}
+
+.joinBtn {
+  flex: 1;
+  padding: 8px 0;
+  border: none;
+  border-radius: 8px;
+  background: #0ea5e9;
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.12s;
+}
+
+.joinBtn:hover {
+  background: #0284c7;
+  transform: scale(1.02);
+}
+
+.joinBtn:active { transform: scale(0.98); }
+
+.declineBtn {
+  padding: 8px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.declineBtn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+/* ── Responsive ── */
+@media (max-width: 480px) {
+  .card {
+    width: 280px;
+  }
+}

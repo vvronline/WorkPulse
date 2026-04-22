@@ -471,11 +471,17 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             // Turning video ON
             if (localStreamRef.current) {
                 const existingTracks = localStreamRef.current.getVideoTracks();
-                if (existingTracks.length > 0) {
-                    // Re-enable existing track
-                    existingTracks.forEach(t => { t.enabled = true; });
+                const liveTracks = existingTracks.filter(t => t.readyState === 'live');
+                if (liveTracks.length > 0) {
+                    // Re-enable existing live track
+                    liveTracks.forEach(t => { t.enabled = true; });
+                    // Force React to notice the stream changed so video element re-renders
+                    setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
                 } else {
-                    // No video track exists (joined with video off) — acquire new one
+                    // No live video track — remove any ended tracks and acquire new one
+                    existingTracks.filter(t => t.readyState === 'ended').forEach(t => {
+                        localStreamRef.current.removeTrack(t);
+                    });
                     try {
                         const newStream = await navigator.mediaDevices.getUserMedia({ video: true });
                         const newTrack = newStream.getVideoTracks()[0];
