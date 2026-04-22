@@ -142,9 +142,16 @@ export default function ChatSidebar({
                 {!search && (
                     <div className={s.convList}>
                         {loadingConvs ? (
-                            <div className={s.convListLoading}>
-                                <div className={s.convListSpinner} />
-                                <span>Loading conversations…</span>
+                            <div className={s.skeletonList}>
+                                {[...Array(8)].map((_, i) => (
+                                    <div key={i} className={s.skeletonItem}>
+                                        <div className={s.skeletonAvatar} />
+                                        <div className={s.skeletonText}>
+                                            <div className={s.skeletonLine} style={{ width: `${55 + (i % 3) * 15}%` }} />
+                                            <div className={s.skeletonLine} style={{ width: `${35 + (i % 4) * 10}%`, height: 10 }} />
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
                         ) : regularConvs.length === 0 ? (
                             <div className={s.empty}>No conversations yet. Search for a colleague to start chatting.</div>

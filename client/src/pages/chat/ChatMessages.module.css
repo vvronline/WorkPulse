@@ -187,22 +187,44 @@
     }
 }
 
-/* ─── Loading spinner ─── */
-.loadingContainer {
+/* ─── Message loading skeleton ─── */
+.skeletonMessages {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 3rem 1rem;
-    color: var(--text-muted);
-    font-size: 0.85rem;
+    gap: 12px;
+    padding: 1rem 16px;
+    flex: 1;
 }
-.msgSpinner {
-    width: 24px;
-    height: 24px;
-    border: 2.5px solid var(--glass-border);
-    border-top-color: var(--primary);
+.skeletonBubbleRow {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+}
+.skeletonBubbleRow.skeletonMine {
+    justify-content: flex-end;
+}
+.skeletonMsgAvatar {
+    width: 28px;
+    height: 28px;
     border-radius: 50%;
-    animation: msgSpin 0.6s linear infinite;
+    background: var(--glass-border, rgba(255,255,255,0.08));
+    flex-shrink: 0;
+    animation: msgShimmer 1.4s ease-in-out infinite;
 }
-@keyframes msgSpin { to { transform: rotate(360deg); } }
+.skeletonBubble {
+    height: 36px;
+    border-radius: 16px;
+    background: var(--glass-border, rgba(255,255,255,0.08));
+    animation: msgShimmer 1.4s ease-in-out infinite;
+    min-width: 60px;
+}
+.skeletonMine .skeletonBubble {
+    border-bottom-right-radius: 4px;
+}
+.skeletonBubbleRow:not(.skeletonMine) .skeletonBubble {
+    border-bottom-left-radius: 4px;
+}
+@keyframes msgShimmer {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 0.65; }
+}

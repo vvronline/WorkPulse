@@ -26,9 +26,13 @@ export default function ChatMessages({
                     <button className={s.loadMore} onClick={onLoadMore}>Load older messages</button>
                 )}
                 {loadingMsgs && (
-                    <div className={s.loadingContainer}>
-                        <div className={s.msgSpinner} />
-                        <span>Loading messages…</span>
+                    <div className={s.skeletonMessages}>
+                        {[0,1,0,0,1,0,1,1,0].map((side, i) => (
+                            <div key={i} className={`${s.skeletonBubbleRow} ${side ? s.skeletonMine : ''}`}>
+                                {!side && <div className={s.skeletonMsgAvatar} />}
+                                <div className={s.skeletonBubble} style={{ width: `${30 + (i % 4) * 15}%` }} />
+                            </div>
+                        ))}
                     </div>
                 )}
                 {!loadingMsgs && messages.length === 0 && (
