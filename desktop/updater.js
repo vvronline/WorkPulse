@@ -3,6 +3,41 @@ const { ipcMain, app, BrowserWindow } = require('electron');
 
 autoUpdater.logger = console;
 
+/**
+ * Extract plain-text release notes from electron-updater's releaseNotes.
+ * releaseNotes can be a string (HTML), an array of {version, note}, or null.
+ * We strip HTML tags and clean up to produce readable text lines.
+ */
+function cleanReleaseNotes(raw) {
+    if (!raw) return '';
+    // If array of {version, note}, join the notes
+    let html = '';
+    if (Array.isArray(raw)) {
+        html = raw.map(n => (typeof n === 'string' ? n : n?.note || '')).join('\n');
+    } else if (typeof raw === 'string') {
+        html = raw;
+    } else {
+        return '';
+    }
+    // Remove everything from "Checksums" onward (noisy)
+    html = html.replace(/(<h[23][^>]*>.*?Checksums.*$)/is, '');
+    // Strip HTML tags but keep text content
+    let text = html
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/li>/gi, '\n')
+        .replace(/<\/p>/gi, '\n')
+        .replace(/<\/h[1-6]>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    return text;
+}
+
 function setupUpdater(mainWindow) {
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
@@ -53,7 +88,7 @@ function setupUpdater(mainWindow) {
         pendingVersion = info.version;
         sendToRenderer('update-available', {
             version: info.version,
-            releaseNotes: info.releaseNotes,
+            releaseNotes: cleanReleaseNotes(info.releaseNotes),
         });
     });
 
@@ -61,7 +96,7 @@ function setupUpdater(mainWindow) {
         pendingVersion = info.version;
         sendToRenderer('update-downloaded', {
             version: info.version,
-            releaseNotes: info.releaseNotes,
+            releaseNotes: cleanReleaseNotes(info.releaseNotes),
         });
 
         // Periodic reminder every 30 minutes if user dismisses

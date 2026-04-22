@@ -143,36 +143,11 @@
   max-height: 120px;
   overflow-y: auto;
   line-height: 1.5;
-}
-
-.releaseNotes h2,
-.releaseNotes h3 {
-  font-size: 0.82rem;
-  margin: 0.4rem 0 0.2rem;
-  color: var(--text, #e0e0e0);
-}
-
-.releaseNotes h2:first-child,
-.releaseNotes h3:first-child {
-  margin-top: 0;
-}
-
-.releaseNotes ul {
-  margin: 0.2rem 0;
-  padding-left: 1.2rem;
-}
-
-.releaseNotes li {
-  margin-bottom: 0.15rem;
+  white-space: pre-wrap;
 }
 
 .releaseNotes p {
   margin: 0 0 0.25rem;
-}
-
-.releaseNotes pre,
-.releaseNotes code {
-  display: none;
 }
 
 .progressBar {
