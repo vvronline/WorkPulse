@@ -134,8 +134,9 @@ export default function MessageBubble({
     }
 
     const isPoll = msg.format_type === 'poll' && msg.metadata?.pollId;
+    const isPending = String(msg.id).startsWith('pending_');
 
-    const menuItems = [
+    const menuItems = isPending ? [] : [
         isMine && !msg.file_url && !isPoll && { icon: <Pencil size={14} />, label: 'Edit', onClick: () => onEdit?.(msg) },
         { icon: <Pin size={14} />, label: msg.pinned_at ? 'Unpin' : 'Pin', onClick: () => onPin?.(msg) },
         { icon: <Star size={14} />, label: msg.starred ? 'Unsave' : 'Save', onClick: () => onStar?.(msg) },
@@ -170,8 +171,8 @@ export default function MessageBubble({
 
                 <div
                     ref={bubbleRef}
-                    className={`${s.bubble} ${isMine ? s.myBubble : s.theirBubble} ${msg.pinned_at ? s.pinned : ''} ${msg.starred ? s.starredBubble : ''} ${toolbarOpen ? s.toolbarActive : ''}`}
-                    onContextMenu={handleContext}
+                    className={`${s.bubble} ${isMine ? s.myBubble : s.theirBubble} ${msg.pinned_at ? s.pinned : ''} ${msg.starred ? s.starredBubble : ''} ${toolbarOpen ? s.toolbarActive : ''} ${isPending ? s.pendingBubble : ''}`}
+                    onContextMenu={isPending ? undefined : handleContext}
                 >
                     {msg.pinned_at && <div className={s.pinnedBadge}><Pin size={11} style={{marginRight:4}} />Pinned</div>}
                     {msg.starred && <div className={s.starBadge}><Star size={11} /></div>}
@@ -217,15 +218,17 @@ export default function MessageBubble({
                         />
                     </div>
 
-                    <MessageToolbar
-                        msg={msg}
-                        isMine={isMine}
-                        onReply={onReply}
-                        onReact={onReact}
-                        onOpenReactions={() => { setShowReactions(true); setToolbarOpen(false); }}
-                        onOpenContextMenu={handleContext}
-                        onCloseToolbar={() => setToolbarOpen(false)}
-                    />
+                    {!isPending && (
+                        <MessageToolbar
+                            msg={msg}
+                            isMine={isMine}
+                            onReply={onReply}
+                            onReact={onReact}
+                            onOpenReactions={() => { setShowReactions(true); setToolbarOpen(false); }}
+                            onOpenContextMenu={handleContext}
+                            onCloseToolbar={() => setToolbarOpen(false)}
+                        />
+                    )}
                 </div>
 
                 <ReactionBar

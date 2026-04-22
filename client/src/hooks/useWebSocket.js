@@ -3,6 +3,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 /**
  * Hook that maintains a WebSocket connection for real-time updates.
  * Reconnects automatically on disconnect. Auth is via HttpOnly cookie.
+ * Queues outbound messages while disconnected and flushes on reconnect.
  */
 export default function useWebSocket(onMessage) {
     const wsRef = useRef(null);
@@ -11,6 +12,15 @@ export default function useWebSocket(onMessage) {
     const [connected, setConnected] = useState(false);
     const onMessageRef = useRef(onMessage);
     onMessageRef.current = onMessage;
+    const queueRef = useRef([]);
+
+    const flushQueue = useCallback(() => {
+        if (!wsRef.current || wsRef.current.readyState !== 1) return;
+        const pending = queueRef.current.splice(0);
+        for (const msg of pending) {
+            wsRef.current.send(msg);
+        }
+    }, []);
 
     const connect = useCallback(() => {
         // Prevent duplicate connections: skip if already open, connecting, or a connect is in-flight
@@ -31,6 +41,7 @@ export default function useWebSocket(onMessage) {
         ws.onopen = () => {
             connectingRef.current = false;
             setConnected(true);
+            flushQueue();
         };
 
         ws.onmessage = (event) => {
@@ -55,11 +66,15 @@ export default function useWebSocket(onMessage) {
         };
 
         wsRef.current = ws;
-    }, []);
+    }, [flushQueue]);
 
     const sendMessage = useCallback((type, data) => {
+        const msg = JSON.stringify({ type, data });
         if (wsRef.current && wsRef.current.readyState === 1) {
-            wsRef.current.send(JSON.stringify({ type, data }));
+            wsRef.current.send(msg);
+        } else {
+            // Queue the message to send on reconnect
+            queueRef.current.push(msg);
         }
     }, []);
 

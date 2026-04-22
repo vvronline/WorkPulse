@@ -71,9 +71,13 @@ export default function useMessageActions(state) {
     };
 
     const handleReply = (msg) => { setReplyTo(msg); setEditingMsg(null); };
-    const handleEdit = (msg) => { setEditingMsg(msg); setInput(msg.content || ''); setReplyTo(null); };
+    const handleEdit = (msg) => {
+        if (String(msg.id).startsWith('pending_')) return;
+        setEditingMsg(msg); setInput(msg.content || ''); setReplyTo(null);
+    };
 
     const handleDelete = async (msg) => {
+        if (String(msg.id).startsWith('pending_')) return;
         try {
             await deleteMessage(msg.id);
             setMessages(prev => prev.map(m =>
@@ -83,6 +87,7 @@ export default function useMessageActions(state) {
     };
 
     const handlePin = async (msg) => {
+        if (String(msg.id).startsWith('pending_')) return;
         try {
             await togglePin(msg.id);
             setMessages(prev => prev.map(m =>
@@ -92,12 +97,17 @@ export default function useMessageActions(state) {
     };
 
     const handleReact = async (msgId, emoji) => {
+        if (String(msgId).startsWith('pending_')) return;
         try { await toggleReaction(msgId, emoji); } catch { /* ignore */ }
     };
 
-    const handleForward = (msg) => setForwardMsg(msg);
+    const handleForward = (msg) => {
+        if (String(msg.id).startsWith('pending_')) return;
+        setForwardMsg(msg);
+    };
 
     const handleStar = async (msg) => {
+        if (String(msg.id).startsWith('pending_')) return;
         try {
             const { data } = await toggleStar(msg.id);
             setMessages(prev => prev.map(m =>

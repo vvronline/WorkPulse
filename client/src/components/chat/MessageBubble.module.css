@@ -84,6 +84,7 @@
 .theirs.grouped .theirBubble { border-radius: 4px 18px 18px 4px; }
 
 .pinned { border-left: 2px solid #f59e0b; padding-left: 8px; }
+.pendingBubble { opacity: 0.6; }
 .deleted {
     background: transparent;
     color: var(--text-muted);
@@ -421,14 +422,20 @@
 .myBubble .pinnedBadge { color: #fde68a; }
 
 /* ─── Delivery receipts ─── */
-.deliverySent, .deliveryPartial, .deliveryRead {
+.deliverySent, .deliveryPartial, .deliveryRead, .deliveryPending {
     font-size: 0.6rem;
     margin-left: 2px;
     letter-spacing: -1px;
 }
+.deliveryPending { color: rgba(255,255,255,0.4); animation: pendingPulse 1.5s ease-in-out infinite; }
 .deliverySent { color: rgba(255,255,255,0.55); }
 .deliveryPartial { color: rgba(255,255,255,0.8); }
 .deliveryRead { color: #93c5fd; }
+
+@keyframes pendingPulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+}
 
 /* ─── Starred badge ─── */
 .starBadge {

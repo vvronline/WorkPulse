@@ -3,6 +3,11 @@ import s from './MessageBubble.module.css';
 export default function DeliveryStatus({ isMine, msg, participantCount, readReceipts, userId }) {
     if (!isMine) return null;
 
+    // Pending message — not yet confirmed by server
+    if (String(msg.id).startsWith('pending_')) {
+        return <span className={s.deliveryPending} title="Sending…">○</span>;
+    }
+
     const delivered = msg.delivered_to || [];
     const others = (participantCount || 2) - 1;
     if (others <= 0) return null;
