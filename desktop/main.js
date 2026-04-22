@@ -1,4 +1,4 @@
-const { app, BrowserWindow, protocol, net, session, Menu, nativeImage, desktopCapturer, systemPreferences } = require('electron');
+const { app, BrowserWindow, protocol, net, session, Menu, nativeImage, desktopCapturer, systemPreferences, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { setupTray } = require('./tray');
