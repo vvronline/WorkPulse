@@ -85,7 +85,10 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     }, []);
 
     const createPeerConnection = useCallback((stream, targetUserId) => {
-        const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+        const pc = new RTCPeerConnection({
+            iceServers: ICE_SERVERS,
+            iceCandidatePoolSize: 10
+        });
         pcRef.current = pc;
 
         // Track whether initial negotiation is done to avoid duplicate offers

@@ -161,12 +161,8 @@ function setupWebSocket(server) {
 
             try {
                 const msg = JSON.parse(raw);
-                // Serialize message processing per connection to preserve ordering
-                // (prevents ICE candidates from being relayed before the offer)
-                ws._msgQueue = (ws._msgQueue || Promise.resolve()).then(() =>
-                    handleChatMessage(db, userId, tenantId, msg)
-                ).catch(err => {
-                    logger.warn({ err: err.message, userId, tenantId }, 'WS message handler error');
+                handleChatMessage(db, userId, tenantId, msg).catch(err => {
+                    logger.warn({ err: err?.message, userId, tenantId }, 'WS message handler error');
                 });
             } catch { /* ignore non-JSON */ }
         });
