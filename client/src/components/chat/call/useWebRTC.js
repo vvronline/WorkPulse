@@ -2,7 +2,10 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 const ICE_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' }
 ];
 
 export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatusChange }) {
@@ -26,6 +29,9 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     const screenSenderRef = useRef(null);
     const connectionTimeoutRef = useRef(null);
     const ringtoneRef = useRef(null);
+    const handleEndRef = useRef(null);
+    const iceRestartAttemptedRef = useRef(false);
+    const disconnectTimerRef = useRef(null);
 
     const stopRingtone = useCallback(() => {
         if (ringtoneRef.current) {
@@ -74,6 +80,8 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
         pendingSignalsRef.current = [];
         clearTimeout(connectionTimeoutRef.current);
+        clearTimeout(disconnectTimerRef.current);
+        iceRestartAttemptedRef.current = false;
     }, []);
 
     const createPeerConnection = useCallback((stream, targetUserId) => {
@@ -140,8 +148,32 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 initialNegotiationDone = true;
                 onStatusChange('connected');
                 stopRingtone();
-            } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-                handleEnd();
+                clearTimeout(disconnectTimerRef.current);
+                iceRestartAttemptedRef.current = false;
+            } else if (pc.connectionState === 'disconnected') {
+                // Grace period: temporary network hiccup — wait 5s before ending
+                clearTimeout(disconnectTimerRef.current);
+                disconnectTimerRef.current = setTimeout(() => {
+                    if (handleEndRef.current) handleEndRef.current();
+                }, 5000);
+            } else if (pc.connectionState === 'failed') {
+                clearTimeout(disconnectTimerRef.current);
+                // Attempt ICE restart once before giving up
+                if (!iceRestartAttemptedRef.current && initialNegotiationDone) {
+                    iceRestartAttemptedRef.current = true;
+                    pc.createOffer({ iceRestart: true }).then(offer => {
+                        return pc.setLocalDescription(offer);
+                    }).then(() => {
+                        wsSend('call_signal', {
+                            conversationId, targetUserId,
+                            signal: { type: 'offer', sdp: pc.localDescription.sdp }
+                        });
+                    }).catch(() => {
+                        if (handleEndRef.current) handleEndRef.current();
+                    });
+                } else {
+                    if (handleEndRef.current) handleEndRef.current();
+                }
             }
         };
 
@@ -159,18 +191,22 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
 
     const handleSignalInternal = useCallback(async (signal, fromUserId) => {
         if (!pcRef.current) return;
-        if (signal.type === 'offer') {
-            await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal));
-            const answer = await pcRef.current.createAnswer();
-            await pcRef.current.setLocalDescription(answer);
-            wsSend('call_signal', {
-                conversationId, targetUserId: fromUserId,
-                signal: { type: 'answer', sdp: answer.sdp }
-            });
-        } else if (signal.type === 'answer') {
-            await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal));
-        } else if (signal.type === 'ice-candidate' && signal.candidate) {
-            try { await pcRef.current.addIceCandidate(new RTCIceCandidate(signal.candidate)); } catch { }
+        try {
+            if (signal.type === 'offer') {
+                await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal));
+                const answer = await pcRef.current.createAnswer();
+                await pcRef.current.setLocalDescription(answer);
+                wsSend('call_signal', {
+                    conversationId, targetUserId: fromUserId,
+                    signal: { type: 'answer', sdp: answer.sdp }
+                });
+            } else if (signal.type === 'answer') {
+                await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal));
+            } else if (signal.type === 'ice-candidate' && signal.candidate) {
+                await pcRef.current.addIceCandidate(new RTCIceCandidate(signal.candidate));
+            }
+        } catch (err) {
+            console.error('Signal handling error:', err);
         }
     }, [conversationId, wsSend]);
 
@@ -189,10 +225,14 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     // ─── End call ───
     const handleEnd = useCallback(() => {
         stopRingtone();
+        clearTimeout(disconnectTimerRef.current);
         wsSend('call_end', { callId, conversationId });
         cleanup();
         onEnd();
     }, [callId, conversationId, wsSend, onEnd, stopRingtone, cleanup]);
+
+    // Keep handleEndRef always pointing to the latest handleEnd (avoids stale closure in PC handlers)
+    handleEndRef.current = handleEnd;
 
     const handleReject = useCallback(() => {
         stopRingtone();
