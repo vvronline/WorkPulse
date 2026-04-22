@@ -61,6 +61,13 @@ export default function useCallControls({ localStreamRef, pcRef, screenStreamRef
         return () => document.removeEventListener('fullscreenchange', handler);
     }, []);
 
+    // Sync screen share stream to video element when it mounts (audio call case)
+    useEffect(() => {
+        if (screenSharing && screenStreamRef.current && localVideoRef.current && !localVideoRef.current.srcObject) {
+            localVideoRef.current.srcObject = screenStreamRef.current;
+        }
+    }, [screenSharing]);
+
     const toggleMute = () => {
         if (localStreamRef.current) {
             localStreamRef.current.getAudioTracks().forEach(t => { t.enabled = !t.enabled; });

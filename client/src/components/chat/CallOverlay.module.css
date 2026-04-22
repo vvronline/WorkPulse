@@ -13,6 +13,39 @@
     animation: fadeIn 0.3s ease;
 }
 
+/* ── Window controls inside call overlay (frameless Electron) ── */
+.windowControls {
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 50;
+    display: flex;
+    -webkit-app-region: no-drag;
+}
+
+.winBtn {
+    width: 46px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: rgba(255,255,255,0.7);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.winBtn:hover {
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+}
+
+.winCloseBtn:hover {
+    background: #e81123;
+    color: #fff;
+}
+
 .overlay.videoMode {
     background: #000;
 }

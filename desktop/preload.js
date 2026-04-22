@@ -43,6 +43,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     downloadUpdate: () => ipcRenderer.send('download-update'),
     installUpdate: () => ipcRenderer.send('install-update'),
     fetchReleaseNotes: (version) => ipcRenderer.invoke('fetch-release-notes', version),
+    // Screen source picker
+    onScreenSources: createListener('screen-sources'),
+    selectScreenSource: (sourceId) => ipcRenderer.send('screen-source-selected', sourceId),
     // Incoming call: flash taskbar and show/focus window
     flashFrame: (flash) => ipcRenderer.send('flash-frame', flash),
     showAndFocus: () => ipcRenderer.send('show-and-focus'),

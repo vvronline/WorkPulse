@@ -13,6 +13,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
 
     const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
     const [remoteVideoOff, setRemoteVideoOff] = useState(false);
+    const [remoteHasVideo, setRemoteHasVideo] = useState(false);
 
     const pcRef = useRef(null);
     const localStreamRef = useRef(null);
@@ -117,9 +118,11 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 if (isMobile) remoteVideoRef.current.muted = true;
             }
             if (e.track.kind === 'video') {
+                setRemoteHasVideo(true);
                 setRemoteVideoOff(e.track.muted);
                 e.track.onmute = () => setRemoteVideoOff(true);
                 e.track.onunmute = () => setRemoteVideoOff(false);
+                e.track.onended = () => setRemoteHasVideo(false);
             }
         };
 
@@ -284,6 +287,15 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     // ─── Cleanup on unmount ───
     useEffect(() => cleanup, [cleanup]);
 
+    // ─── Sync remote stream to video element when it mounts (audio call screen share) ───
+    useEffect(() => {
+        if (remoteHasVideo && remoteVideoRef.current && remoteStreamRef.current) {
+            if (!remoteVideoRef.current.srcObject) {
+                remoteVideoRef.current.srcObject = remoteStreamRef.current;
+            }
+        }
+    }, [remoteHasVideo]);
+
     // ─── Connection timeout ───
     useEffect(() => {
         return () => clearTimeout(connectionTimeoutRef.current);
@@ -295,6 +307,6 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         screenSenderRef, connectionTimeoutRef, ringtoneRef,
         handleAccept, handleReject, handleEnd,
         stopRingtone, startMedia, createPeerConnection,
-        isMobile, remoteVideoOff
+        isMobile, remoteVideoOff, remoteHasVideo
     };
 }

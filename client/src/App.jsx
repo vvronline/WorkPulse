@@ -23,6 +23,7 @@ import PageSkeleton from './components/common/PageSkeleton';
 import ImpersonationBanner from './components/common/ImpersonationBanner';
 import ElectronTitleBar from './components/common/ElectronTitleBar';
 import UpdateNotification from './components/common/UpdateNotification';
+import ScreenPicker from './components/common/ScreenPicker';
 import KeepAlive from './components/common/KeepAlive';
 
 // Lazy-load pages that are NOT part of keep-alive (meetings use dynamic params)
@@ -73,6 +74,7 @@ function AppRoutes() {
       {!isAuthenticated && <ElectronTitleBar />}
       {isAuthenticated && !location.pathname.match(/^\/meeting\/[^/]+\/room/) && <Navbar />}
       <UpdateNotification />
+      <ScreenPicker />
 
       {/* Keep-alive pages: stay mounted across navigations */}
       {isAuthenticated && <KeepAliveRoutes />}

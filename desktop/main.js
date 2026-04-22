@@ -104,15 +104,46 @@ app.whenReady().then(async () => {
         }
     }
 
-    // ─── Screen sharing: handle getDisplayMedia in sandboxed renderer ───
-    session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
-        desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
-            // Grant the first screen source (primary display) — Electron shows
-            // its own picker so the user already selected which screen/window.
-            callback({ video: sources[0], audio: 'loopback' });
-        }).catch(() => {
+    // ─── Screen sharing: show picker so user can choose which screen/window ───
+    let pendingSourceSelection = null;
+
+    session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+        try {
+            const sources = await desktopCapturer.getSources({
+                types: ['screen', 'window'],
+                thumbnailSize: { width: 320, height: 180 },
+                fetchWindowIcons: true,
+            });
+            // Send source list to renderer for user selection
+            const serialized = sources.map(s => ({
+                id: s.id,
+                name: s.name,
+                thumbnail: s.thumbnail.toDataURL(),
+                appIcon: s.appIcon ? s.appIcon.toDataURL() : null,
+            }));
+            mainWindow.webContents.send('screen-sources', serialized);
+
+            // Wait for user to pick a source or cancel
+            pendingSourceSelection = { sources, callback };
+        } catch {
             callback({});
-        });
+        }
+    });
+
+    ipcMain.on('screen-source-selected', (_e, sourceId) => {
+        if (!pendingSourceSelection) return;
+        const { sources, callback } = pendingSourceSelection;
+        pendingSourceSelection = null;
+        if (!sourceId) {
+            callback({}); // user cancelled
+            return;
+        }
+        const selected = sources.find(s => s.id === sourceId);
+        if (selected) {
+            callback({ video: selected, audio: 'loopback' });
+        } else {
+            callback({});
+        }
     });
 
     // Content Security Policy — restrict what can run in the renderer
