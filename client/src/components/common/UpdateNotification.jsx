@@ -86,17 +86,35 @@ export default function UpdateNotification() {
     });
     if (unsub2) cleanups.push(unsub2);
 
-    const unsub3 = api.onUpdateDownloaded((info) => {
+    const unsub3 = api.onUpdateDownloaded(async (info) => {
       setVersion(info.version);
-      if (info.releaseNotes) setReleaseNotes(info.releaseNotes);
+      if (info.releaseNotes) {
+        setReleaseNotes(info.releaseNotes);
+        setShowNotes(true);
+      }
       setState('ready');
       setVisible(true);
+      // Auto-fetch release notes if not included by electron-updater
+      if (!info.releaseNotes && api?.fetchReleaseNotes && info.version) {
+        setFetchingNotes(true);
+        try {
+          const notes = await api.fetchReleaseNotes(info.version);
+          if (notes) {
+            setReleaseNotes(notes);
+            setShowNotes(true);
+          }
+        } catch { /* ignore */ }
+        setFetchingNotes(false);
+      }
     });
     if (unsub3) cleanups.push(unsub3);
 
     const unsub4 = api.onUpdateReminder?.((info) => {
       setVersion(info.version);
-      if (info.releaseNotes) setReleaseNotes(info.releaseNotes);
+      if (info.releaseNotes) {
+        setReleaseNotes(info.releaseNotes);
+        setShowNotes(true);
+      }
       setState('ready');
       setVisible(true);
     });
