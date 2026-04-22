@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import ConfirmDialog from '../components/common/ConfirmDialog';
 import {
     MessageSearch, ForwardModal, GroupModal,
@@ -19,6 +20,8 @@ export default function Chat() {
     const state = useChatState();
     const actions = useChatActions(state);
     const { myStatus } = useUserStatus();
+    const { pathname } = useLocation();
+    const isChatPage = pathname === '/chat';
 
     const {
         user, conversations, activeConv, messages, input, setInput,
@@ -66,14 +69,14 @@ export default function Chat() {
 
     // Hide navbar & bottom tab bar on mobile when a chat conversation is active
     useEffect(() => {
-        const isMobileChat = mobileView === 'chat' && activeConv;
+        const isMobileChat = isChatPage && mobileView === 'chat' && activeConv;
         if (isMobileChat) {
             document.body.setAttribute('data-chat-active', '');
         } else {
             document.body.removeAttribute('data-chat-active');
         }
         return () => document.body.removeAttribute('data-chat-active');
-    }, [mobileView, activeConv]);
+    }, [isChatPage, mobileView, activeConv]);
 
     const jumpTo = (msgId) => handleJumpTo(msgId, msgStyles.highlight);
 

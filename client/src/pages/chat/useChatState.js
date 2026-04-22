@@ -100,6 +100,8 @@ export default function useChatState() {
                         delivered_to: [], reactions: []
                     };
                     setMessages(prev => {
+                        // Deduplicate: don't add if a real message with this ID already exists
+                        if (prev.some(m => m.id === d.id)) return prev;
                         if (d.senderId === user?.id) {
                             const idx = prev.findIndex(p => String(p.id).startsWith('pending_') && p.content === d.content);
                             if (idx >= 0) {
@@ -121,12 +123,18 @@ export default function useChatState() {
                 }
                 setConversations(prev => {
                     const isActive = activeConvRef.current?.id === d.conversationId;
+                    const exists = prev.some(c => c.id === d.conversationId);
+                    // If conversation is not in the list (created from another device), reload
+                    if (!exists) {
+                        loadConversations();
+                        return prev;
+                    }
                     const preview = d.content || (d.fileName ? `📎 ${d.fileName}` : '🎤 Voice');
                     return prev.map(c =>
                         c.id === d.conversationId
                             ? {
                                 ...c, last_message: preview, last_sender_id: d.senderId, last_message_at: d.createdAt,
-                                unread_count: (isActive || d.senderId === user.id) ? 0 : (c.unread_count || 0) + 1
+                                unread_count: isActive ? 0 : (c.unread_count || 0) + 1
                             }
                             : c
                     ).sort((a, b) => new Date(b.last_message_at || b.updated_at) - new Date(a.last_message_at || a.updated_at));

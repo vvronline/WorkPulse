@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useGlobalCall } from '../../CallContext';
 import { getActiveCall } from '../../api';
 import { useUserStatus } from '../../UserStatusContext';
@@ -6,6 +7,8 @@ import { useUserStatus } from '../../UserStatusContext';
 export default function useCallState(wsSendRef) {
     const { setChatPageActive, pendingAcceptedCall, consumePendingCall } = useGlobalCall();
     const { setAutoStatus, clearAutoStatus } = useUserStatus();
+    const { pathname } = useLocation();
+    const isChatPage = pathname === '/chat';
     const statusSetRef = useRef(false);
 
     const [callState, setCallState] = useState(null);
@@ -43,11 +46,10 @@ export default function useCallState(wsSendRef) {
         }
     }, [callState]);
 
-    // Register chat page as active for CallContext
+    // Register chat page as active for CallContext only when actually visible
     useEffect(() => {
-        setChatPageActive(true);
-        return () => setChatPageActive(false);
-    }, [setChatPageActive]);
+        setChatPageActive(isChatPage);
+    }, [isChatPage, setChatPageActive]);
 
     // Pick up a pending accepted call from global notification
     useEffect(() => {
