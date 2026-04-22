@@ -15,6 +15,9 @@ export default function useCallState(wsSendRef) {
     const callSignalRef = useRef(null);
     const callEndRef = useRef(null);
     const callActiveRef = useRef(false);
+    const pendingCallSignalsRef = useRef([]);
+
+    callSignalRef.pendingSignalsRef = pendingCallSignalsRef;
 
     // Persist active call metadata in sessionStorage + manage auto-status
     useEffect(() => {
@@ -42,6 +45,7 @@ export default function useCallState(wsSendRef) {
                 statusSetRef.current = false;
                 clearAutoStatus('in_call');
             }
+            pendingCallSignalsRef.current = [];
             try { sessionStorage.removeItem('wp_active_call'); } catch { /* ignore */ }
         }
     }, [callState]);
@@ -176,6 +180,8 @@ export default function useCallState(wsSendRef) {
             case 'call_signal': {
                 if (callSignalRef.current) {
                     callSignalRef.current(data.signal, data.fromUserId);
+                } else {
+                    pendingCallSignalsRef.current.push({ signal: data.signal, fromUserId: data.fromUserId });
                 }
                 break;
             }

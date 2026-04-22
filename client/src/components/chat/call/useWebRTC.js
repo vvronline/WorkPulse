@@ -32,6 +32,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     const handleEndRef = useRef(null);
     const iceRestartAttemptedRef = useRef(false);
     const disconnectTimerRef = useRef(null);
+    const pendingIceCandidatesRef = useRef([]);
 
     const stopRingtone = useCallback(() => {
         if (ringtoneRef.current) {
@@ -79,9 +80,18 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
         if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
         pendingSignalsRef.current = [];
+        pendingIceCandidatesRef.current = [];
         clearTimeout(connectionTimeoutRef.current);
         clearTimeout(disconnectTimerRef.current);
         iceRestartAttemptedRef.current = false;
+    }, []);
+
+    const flushPendingIceCandidates = useCallback(async () => {
+        if (!pcRef.current?.remoteDescription) return;
+        const pendingCandidates = pendingIceCandidatesRef.current.splice(0);
+        for (const candidate of pendingCandidates) {
+            await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+        }
     }, []);
 
     const createPeerConnection = useCallback((stream, targetUserId) => {
@@ -199,19 +209,25 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal));
                 const answer = await pcRef.current.createAnswer();
                 await pcRef.current.setLocalDescription(answer);
+                await flushPendingIceCandidates();
                 wsSend('call_signal', {
                     conversationId, targetUserId: fromUserId,
                     signal: { type: 'answer', sdp: answer.sdp }
                 });
             } else if (signal.type === 'answer') {
                 await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal));
+                await flushPendingIceCandidates();
             } else if (signal.type === 'ice-candidate' && signal.candidate) {
-                await pcRef.current.addIceCandidate(new RTCIceCandidate(signal.candidate));
+                if (pcRef.current.remoteDescription) {
+                    await pcRef.current.addIceCandidate(new RTCIceCandidate(signal.candidate));
+                } else {
+                    pendingIceCandidatesRef.current.push(signal.candidate);
+                }
             }
         } catch (err) {
             console.error('Signal handling error:', err);
         }
-    }, [conversationId, wsSend]);
+    }, [conversationId, wsSend, flushPendingIceCandidates]);
 
     const handleSignal = useCallback((signal, fromUserId) => {
         if (!pcRef.current && signal.type === 'offer' && localStreamRef.current) {
@@ -257,7 +273,12 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
 
     // ─── Register signal handler ───
     useEffect(() => {
-        if (onSignal) onSignal.current = handleSignal;
+        if (!onSignal) return;
+        onSignal.current = handleSignal;
+        const pendingSignals = onSignal.pendingSignalsRef?.current?.splice(0) || [];
+        for (const { signal, fromUserId } of pendingSignals) {
+            handleSignal(signal, fromUserId);
+        }
     }, [handleSignal, onSignal]);
 
     // ─── Outgoing call: use pre-acquired stream ───
