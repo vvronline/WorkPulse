@@ -13,8 +13,10 @@ const redis = require('../redis');
 /** Map<clientKey, Set<WebSocket>> — local instance connections, keyed by tenantId:userId */
 const clients = new Map();
 
-/** Max WebSocket connections a single user may hold per server instance */
-const MAX_CONNECTIONS_PER_USER = 5;
+/** Max WebSocket connections a single user may hold per server instance.
+ *  Each browser tab uses ~4 WS connections (chat, calls, status, notifications)
+ *  so allow enough for 2-3 tabs or a browser + desktop app. */
+const MAX_CONNECTIONS_PER_USER = 12;
 
 /** Unique instance ID for Pub/Sub dedup */
 const INSTANCE_ID = `ws-${process.pid}-${Date.now()}`;

@@ -55,8 +55,8 @@ export default function useWebSocket(onMessage) {
             connectingRef.current = false;
             setConnected(false);
             wsRef.current = null;
-            // Reconnect after 3s unless auth failure
-            if (e.code !== 4001) {
+            // Reconnect after a delay unless auth failure or too-many-connections
+            if (e.code !== 4001 && e.code !== 4029) {
                 reconnectTimer.current = setTimeout(connect, 3000);
             }
         };
