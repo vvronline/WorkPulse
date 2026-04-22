@@ -1,7 +1,7 @@
 /* ── Teams-style chat layout ── */
 .chatPage {
     display: flex;
-    height: calc(100vh - 64px);
+    height: calc(100vh - 72px);
     background: var(--bg);
     overflow: hidden;
     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
@@ -67,8 +67,8 @@
 /* ─── Mobile (≤768px) ─── */
 @media (max-width: 768px) {
     .chatPage {
-        height: calc(100vh - 56px);
-        height: calc(100dvh - 56px);
+        height: calc(100vh - 60px);
+        height: calc(100dvh - 60px);
         transition: height 0.3s cubic-bezier(.4,0,.2,1);
     }
     :global(body[data-chat-active]) .chatPage {

@@ -51,10 +51,12 @@ export default function MobileTabBar() {
                 <span className={s['nav-icon']}><ClipboardList size={22} /></span>
                 <span className={s['tab-label']}>Tasks</span>
             </NavLink>
-            <NavLink to="/chat" className={`${p === '/chat' ? s.active : ''} ${s.chatLink}`}>
-                <span className={s['nav-icon']}><MessageSquare size={22} /></span>
+            <NavLink to="/chat" className={`${p === '/chat' ? s.active : ''}`}>
+                <span className={`${s['nav-icon']} ${s.mobileIconWrap}`}>
+                    <MessageSquare size={22} />
+                    {chatUnread > 0 && <span className={s.chatBadge}>{chatUnread > 99 ? '99+' : chatUnread}</span>}
+                </span>
                 <span className={s['tab-label']}>Chat</span>
-                {chatUnread > 0 && <span className={s.chatBadge}>{chatUnread > 99 ? '99+' : chatUnread}</span>}
             </NavLink>
             <div className={s['mobile-more-wrapper']} ref={mobileMoreRef}>
                 <button
