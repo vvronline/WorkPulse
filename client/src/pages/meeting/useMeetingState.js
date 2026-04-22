@@ -39,6 +39,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     const [status, setStatus] = useState('joining'); // joining | connecting | connected | ended | left
     const [raisedHand, setRaisedHand] = useState(false);
     const [connectionQualities, setConnectionQualities] = useState(new Map());
+    const [mediaReady, setMediaReady] = useState(!!existingStream);
 
     // Refs
     const localStreamRef = useRef(null);
@@ -61,6 +62,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         if (existingStream) {
             localStreamRef.current = existingStream;
             setLocalStream(existingStream);
+            setMediaReady(true);
             return;
         }
         let stream;
@@ -74,6 +76,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 st.getAudioTracks().forEach(t => { t.enabled = !initialMuted; });
                 localStreamRef.current = st;
                 setLocalStream(st);
+                setMediaReady(true);
             })
             .catch(() => {
                 navigator.mediaDevices.getUserMedia({ audio: true })
@@ -83,10 +86,12 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                         localStreamRef.current = st;
                         setLocalStream(st);
                         setVideoOff(true);
+                        setMediaReady(true);
                     })
                     .catch(err => {
                         setMuted(true);
                         setVideoOff(true);
+                        setMediaReady(true);
                         if (err?.name === 'NotAllowedError') {
                             alert('Camera/microphone access is blocked.\n\n1. Click the lock/tune icon in the address bar → allow camera & microphone\n2. If the setting is locked, your organization may be blocking it — contact your IT admin to whitelist this site');
                         }
@@ -107,6 +112,31 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         navigator.mediaDevices?.addEventListener('devicechange', handleChange);
         return () => navigator.mediaDevices?.removeEventListener('devicechange', handleChange);
     }, []);
+
+    // Safety net: when localStream becomes available, add tracks to any peer connections that lack senders
+    useEffect(() => {
+        if (!localStreamRef.current) return;
+        const stream = localStreamRef.current;
+        for (const [peerId, pc] of pcsRef.current) {
+            const senders = pc.getSenders().filter(s => s.track);
+            if (senders.length === 0 && stream.getTracks().length > 0) {
+                stream.getTracks().forEach(track => pc.addTrack(track, stream));
+                // Renegotiate so remote peer receives the new tracks
+                if (pc.signalingState === 'stable') {
+                    pc.createOffer()
+                        .then(offer => pc.setLocalDescription(offer))
+                        .then(() => {
+                            wsSend('meeting_signal', {
+                                meetingId,
+                                targetUserId: peerId,
+                                signal: { type: 'offer', sdp: pc.localDescription },
+                            });
+                        })
+                        .catch(console.error);
+                }
+            }
+        }
+    }, [localStream, meetingId, wsSend]);
 
     // Quality monitoring
     useEffect(() => {
@@ -160,11 +190,12 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         // Handle remote tracks
         const remoteStream = new MediaStream();
         pc.ontrack = (e) => {
-            e.streams[0]?.getTracks().forEach(t => remoteStream.addTrack(t));
+            remoteStream.addTrack(e.track);
+            // Create new MediaStream ref so React components detect the change and re-render
             setParticipants(prev => {
                 const next = new Map(prev);
                 const existing = next.get(remoteUserId) || { userId: remoteUserId };
-                next.set(remoteUserId, { ...existing, stream: remoteStream });
+                next.set(remoteUserId, { ...existing, stream: new MediaStream(remoteStream.getTracks()) });
                 return next;
             });
         };
@@ -376,9 +407,9 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         }
     }, [user, createPeerConnection, handleSignal, presenterId]);
 
-    // Send WS join on mount — wait for socket to be open before sending
+    // Send WS join on mount — wait for socket to be open AND media to be ready before sending
     useEffect(() => {
-        if (!ws || !meetingId) return;
+        if (!ws || !meetingId || !mediaReady) return;
 
         const sendJoin = () => wsSend('meeting_join', { meetingId });
 
@@ -398,7 +429,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             }
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [ws, meetingId]);
+    }, [ws, meetingId, mediaReady]);
 
     // Actions
     const toggleMute = useCallback(() => {
@@ -412,16 +443,54 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         });
     }, [meetingId, videoOff, wsSend]);
 
-    const toggleVideo = useCallback(() => {
-        setVideoOff(v => {
-            const next = !v;
+    const toggleVideo = useCallback(async () => {
+        const next = !videoOff;
+        if (next) {
+            // Turning video OFF — disable existing tracks
             if (localStreamRef.current) {
-                localStreamRef.current.getVideoTracks().forEach(t => { t.enabled = !next; });
+                localStreamRef.current.getVideoTracks().forEach(t => { t.enabled = false; });
             }
-            wsSend('meeting_track_state', { meetingId, muted, videoOff: next });
-            return next;
-        });
-    }, [meetingId, muted, wsSend]);
+        } else {
+            // Turning video ON
+            if (localStreamRef.current) {
+                const existingTracks = localStreamRef.current.getVideoTracks();
+                if (existingTracks.length > 0) {
+                    // Re-enable existing track
+                    existingTracks.forEach(t => { t.enabled = true; });
+                } else {
+                    // No video track exists (joined with video off) — acquire new one
+                    try {
+                        const newStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                        const newTrack = newStream.getVideoTracks()[0];
+                        if (newTrack) {
+                            localStreamRef.current.addTrack(newTrack);
+                            // Add video track to all peer connections and renegotiate
+                            for (const [peerId, pc] of pcsRef.current) {
+                                pc.addTrack(newTrack, localStreamRef.current);
+                                if (pc.signalingState === 'stable') {
+                                    try {
+                                        const offer = await pc.createOffer();
+                                        await pc.setLocalDescription(offer);
+                                        wsSend('meeting_signal', {
+                                            meetingId,
+                                            targetUserId: peerId,
+                                            signal: { type: 'offer', sdp: pc.localDescription },
+                                        });
+                                    } catch (err) { console.error('Renegotiation failed:', err); }
+                                }
+                            }
+                            setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+                        }
+                    } catch (err) {
+                        console.error('Failed to start video:', err);
+                        return; // Don't change state if camera unavailable
+                    }
+                }
+            }
+        }
+        setVideoOff(next);
+        wsSend('meeting_track_state', { meetingId, muted, videoOff: next });
+    }, [meetingId, muted, videoOff, wsSend]);
 
     const toggleScreenShare = useCallback(async () => {
         if (screenSharing) {
@@ -433,12 +502,14 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             setScreenStream(null);
             setPresenterId(null);
             wsSend('meeting_track_state', { meetingId, muted, videoOff, screenSharing: false });
-            // Revert to camera on all peers
-            pcsRef.current.forEach((pc) => {
+            // Revert to camera on all peers (or null if no camera track)
+            for (const [peerId, pc] of pcsRef.current) {
                 const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
                 const videoTrack = localStreamRef.current?.getVideoTracks()[0];
-                if (videoSender && videoTrack) videoSender.replaceTrack(videoTrack).catch(() => { });
-            });
+                if (videoSender) {
+                    videoSender.replaceTrack(videoTrack || null).catch(() => { });
+                }
+            }
         } else {
             try {
                 const ss = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
@@ -447,16 +518,32 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 setScreenSharing(true);
                 setPresenterId(user?.id);
                 const screenTrack = ss.getVideoTracks()[0];
-                // Replace video track on all peers
-                pcsRef.current.forEach((pc) => {
+                // Replace or add video track on all peers
+                for (const [peerId, pc] of pcsRef.current) {
                     const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
-                    if (videoSender) videoSender.replaceTrack(screenTrack).catch(() => { });
-                });
+                    if (videoSender) {
+                        videoSender.replaceTrack(screenTrack).catch(() => { });
+                    } else {
+                        // No video sender (audio-only) — add screen track and renegotiate
+                        pc.addTrack(screenTrack, ss);
+                        if (pc.signalingState === 'stable') {
+                            try {
+                                const offer = await pc.createOffer();
+                                await pc.setLocalDescription(offer);
+                                wsSend('meeting_signal', {
+                                    meetingId,
+                                    targetUserId: peerId,
+                                    signal: { type: 'offer', sdp: pc.localDescription },
+                                });
+                            } catch (err) { console.error('Screen share renegotiation failed:', err); }
+                        }
+                    }
+                }
                 screenTrack.onended = () => toggleScreenShare();
                 wsSend('meeting_track_state', { meetingId, muted, videoOff, screenSharing: true });
             } catch { /* user cancelled */ }
         }
-    }, [screenSharing, meetingId, muted, videoOff, wsSend]);
+    }, [screenSharing, meetingId, muted, videoOff, wsSend, user?.id]);
 
     const raiseHand = useCallback(() => {
         const next = !raisedHand;
