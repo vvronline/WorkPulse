@@ -61,8 +61,50 @@ jobs:
           path: client/dist
           retention-days: 1
 
-  build:
+  prepare-release:
     needs: [validate, build-client]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create tag on releases repo
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          # Create the tag on WorkPulse-releases so electron-builder can create a release against it
+          # First check if tag already exists
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/vvronline/WorkPulse-releases/git/ref/tags/v${VERSION}")
+          if [ "$STATUS" = "200" ]; then
+            echo "Tag v${VERSION} already exists on WorkPulse-releases"
+            exit 0
+          fi
+          # Get the default branch SHA to anchor the tag
+          DEFAULT_SHA=$(curl -s \
+            -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/vvronline/WorkPulse-releases/git/ref/heads/main" \
+            | jq -r '.object.sha // empty')
+          if [ -z "$DEFAULT_SHA" ]; then
+            # Try master branch
+            DEFAULT_SHA=$(curl -s \
+              -H "Authorization: token $GH_TOKEN" \
+              "https://api.github.com/repos/vvronline/WorkPulse-releases/git/ref/heads/master" \
+              | jq -r '.object.sha // empty')
+          fi
+          if [ -z "$DEFAULT_SHA" ]; then
+            echo "::error::Could not find default branch SHA on WorkPulse-releases"
+            exit 1
+          fi
+          # Create a lightweight tag
+          curl -s -X POST \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/vvronline/WorkPulse-releases/git/refs" \
+            -d "{\"ref\": \"refs/tags/v${VERSION}\", \"sha\": \"${DEFAULT_SHA}\"}"
+          echo "Created tag v${VERSION} on WorkPulse-releases"
+
+  build:
+    needs: [validate, build-client, prepare-release]
     permissions:
       contents: write
     strategy:
