@@ -59,7 +59,7 @@ export function MeetingProvider({ children }) {
             wsUrl = import.meta.env.VITE_WS_URL;
         } else {
             const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-            const host = import.meta.env.PROD ? window.location.host : `${window.location.hostname}:${import.meta.env.VITE_API_PORT || '5000'}`;
+            const host = window.location.host;
             wsUrl = `${proto}://${host}/ws`;
         }
         const ws = new WebSocket(wsUrl);

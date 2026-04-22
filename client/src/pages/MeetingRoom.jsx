@@ -47,7 +47,6 @@ export default function MeetingRoom() {
         connectionQualities, presenterId,
         toggleMute, toggleVideo, toggleScreenShare, raiseHand,
         sendChatMessage, endMeeting, leaveMeeting, muteParticipant, addParticipant,
-        handleWsMessage,
     } = useMeetingState({
         meetingId,
         ws: wsRef.current,
@@ -61,17 +60,6 @@ export default function MeetingRoom() {
     useEffect(() => {
         if (localStream) setLocalStream(localStream);
     }, [localStream, setLocalStream]);
-
-    // Route incoming WS messages to the hook
-    useEffect(() => {
-        const ws = wsRef.current;
-        if (!ws) return;
-        const onMessage = (e) => {
-            try { handleWsMessage(JSON.parse(e.data)); } catch { /* ignore */ }
-        };
-        ws.addEventListener('message', onMessage);
-        return () => ws.removeEventListener('message', onMessage);
-    }, [handleWsMessage, wsRef]);
 
     // Meeting duration timer
     useEffect(() => {

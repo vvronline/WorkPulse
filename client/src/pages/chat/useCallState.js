@@ -161,6 +161,7 @@ export default function useCallState(wsSendRef) {
                 break;
             }
             case 'call_accepted': {
+                console.log('[call-state] call_accepted by:', data.userId);
                 if (window.electronAPI?.flashFrame) window.electronAPI.flashFrame(false);
                 setCallState(prev => prev ? { ...prev, accepted: true, acceptedBy: data.userId } : prev);
                 break;
@@ -178,9 +179,11 @@ export default function useCallState(wsSendRef) {
                 break;
             }
             case 'call_signal': {
+                console.log('[call-state] received call_signal, type:', data.signal?.type, 'from:', data.fromUserId, 'hasHandler:', !!callSignalRef.current);
                 if (callSignalRef.current) {
                     callSignalRef.current(data.signal, data.fromUserId);
                 } else {
+                    console.log('[call-state] queuing signal (no handler yet)');
                     pendingCallSignalsRef.current.push({ signal: data.signal, fromUserId: data.fromUserId });
                 }
                 break;

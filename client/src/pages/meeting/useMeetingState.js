@@ -289,6 +289,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             case 'meeting_participant_joined': {
                 // Server sends: { userId, fullName, avatar, username, existingPeers? }
                 // existingPeers is an array of { userId, fullName, avatar, username } objects
+                console.log('[meeting] participant_joined:', data.userId, 'existingPeers:', data.existingPeers?.length, 'hasLocalStream:', !!localStreamRef.current);
                 if (data.existingPeers && Array.isArray(data.existingPeers)) {
                     // We are the new joiner — existingPeers is sent only to us
                     data.existingPeers.forEach(peer => {
@@ -342,6 +343,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             }
             case 'meeting_signal': {
                 const { fromUserId, signal } = data;
+                console.log('[meeting] received signal:', signal.type, 'from:', fromUserId);
                 let pc = pcsRef.current.get(fromUserId);
                 if (!pc) {
                     pc = createPeerConnection(fromUserId, false);
@@ -406,6 +408,21 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             default: break;
         }
     }, [user, createPeerConnection, handleSignal, presenterId]);
+
+    // Register WS message handler inside the hook (before join effect) to ensure
+    // signals are captured from the moment we join
+    useEffect(() => {
+        if (!ws) return;
+        const onMessage = (e) => {
+            try {
+                handleWsMessage(JSON.parse(e.data));
+            } catch (err) {
+                console.error('Meeting WS message error:', err);
+            }
+        };
+        ws.addEventListener('message', onMessage);
+        return () => ws.removeEventListener('message', onMessage);
+    }, [ws, handleWsMessage]);
 
     // Send WS join on mount — wait for socket to be open AND media to be ready before sending
     useEffect(() => {

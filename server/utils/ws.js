@@ -151,18 +151,22 @@ function setupWebSocket(server) {
         }
 
         ws.on('message', (raw) => {
-            // Per-connection rate limiting: max 30 messages per second
+            // Per-connection rate limiting: max 60 messages per second
+            // (WebRTC ICE candidate trickling can burst during call setup)
             const now = Date.now();
             if (!ws._rlWindow || now - ws._rlWindow > 1000) {
                 ws._rlWindow = now;
                 ws._rlCount = 0;
             }
-            if (++ws._rlCount > 30) return; // silently drop excessive messages
+            if (++ws._rlCount > 60) {
+                logger.warn({ userId, tenantId, count: ws._rlCount }, 'WS rate limit exceeded, dropping message');
+                return;
+            }
 
             try {
                 const msg = JSON.parse(raw);
                 handleChatMessage(db, userId, tenantId, msg).catch(err => {
-                    logger.warn({ err: err?.message, userId, tenantId }, 'WS message handler error');
+                    logger.error({ err: err?.message, stack: err?.stack, userId, tenantId, type: msg?.type }, 'WS message handler error');
                 });
             } catch { /* ignore non-JSON */ }
         });
@@ -349,7 +353,10 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
             'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
             [conversationId, senderId]
         )).rows[0];
-        if (!participant) return;
+        if (!participant) {
+            logger.warn({ senderId, conversationId }, 'call_initiate: sender not a participant');
+            return;
+        }
 
         // Create call log entry
         const callLog = (await db.query(
@@ -368,6 +375,8 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
 
         // Get conversation info for the notification
         const conv = (await db.query('SELECT name, is_group FROM conversations WHERE id = $1', [conversationId])).rows[0];
+
+        logger.info({ senderId, callId: callLog.id, conversationId, callType, participantCount: participants.length, tenantId }, 'call_initiate: notifying participants');
 
         for (const p of participants) {
             sendToUser(tenantId, p.user_id, 'call_incoming', {
@@ -398,17 +407,25 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
             `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2 AND status = 'ringing'`,
             [callId, conversationId]
         )).rows[0];
-        if (!callLog) return;
+        if (!callLog) {
+            logger.warn({ senderId, callId, conversationId }, 'call_accept: no ringing call found');
+            return;
+        }
 
         const participant = (await db.query(
             'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
             [conversationId, senderId]
         )).rows[0];
-        if (!participant) return;
+        if (!participant) {
+            logger.warn({ senderId, callId, conversationId }, 'call_accept: sender not a participant');
+            return;
+        }
 
         await db.query(`UPDATE call_logs SET status = 'answered', started_at = NOW() WHERE id = $1`, [callId]);
 
         const accepter = (await db.query('SELECT full_name, avatar FROM users WHERE id = $1', [senderId])).rows[0];
+
+        logger.info({ senderId, callerId: callLog.caller_id, callId, conversationId, tenantId }, 'call_accept: notifying caller');
 
         // Notify the caller that call was accepted
         sendToUser(tenantId, callLog.caller_id, 'call_accepted', {
@@ -506,16 +523,25 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
         const { conversationId, targetUserId, signal } = msg.data || {};
         if (!conversationId || !targetUserId || !signal) return;
 
-        // Verify both sender and target are in the conversation
-        const senderOk = (await db.query(
-            'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
-            [conversationId, senderId]
-        )).rows[0];
-        const targetOk = (await db.query(
-            'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
-            [conversationId, targetUserId]
-        )).rows[0];
-        if (!senderOk || !targetOk) return;
+        // For offer/answer: verify both sender and target are in the conversation.
+        // For ICE candidates: skip DB checks to avoid pool exhaustion during rapid trickle.
+        // (Both parties were already verified during call_initiate / call_accept.)
+        if (signal.type === 'offer' || signal.type === 'answer') {
+            const senderOk = (await db.query(
+                'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
+                [conversationId, senderId]
+            )).rows[0];
+            const targetOk = (await db.query(
+                'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
+                [conversationId, targetUserId]
+            )).rows[0];
+            if (!senderOk || !targetOk) {
+                logger.warn({ senderId, targetUserId, conversationId, senderOk: !!senderOk, targetOk: !!targetOk, signalType: signal.type }, 'call_signal: participant check failed');
+                return;
+            }
+        }
+
+        logger.debug({ senderId, targetUserId, conversationId, signalType: signal.type, tenantId }, 'call_signal: relaying');
 
         // Relay the signal to the target user
         sendToUser(tenantId, targetUserId, 'call_signal', {
@@ -735,18 +761,21 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
         const { meetingId, targetUserId, signal } = msg.data || {};
         if (!meetingId || !targetUserId || !signal) return;
 
-        // Verify both sender and target are active participants
-        const senderOk = (await db.query(
-            `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
-            [meetingId, senderId]
-        )).rows[0];
-        if (!senderOk) return;
+        // For offer/answer: verify sender is a joined participant.
+        // For ICE candidates: skip DB checks to avoid pool exhaustion during rapid trickle.
+        // (Both parties were verified during meeting_join.)
+        if (signal.type === 'offer' || signal.type === 'answer') {
+            const senderOk = (await db.query(
+                `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
+                [meetingId, senderId]
+            )).rows[0];
+            if (!senderOk) {
+                logger.warn({ senderId, targetUserId, meetingId, signalType: signal.type }, 'meeting_signal: sender not joined');
+                return;
+            }
+        }
 
-        const targetOk = (await db.query(
-            `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
-            [meetingId, targetUserId]
-        )).rows[0];
-        if (!targetOk) return;
+        logger.debug({ senderId, targetUserId, meetingId, signalType: signal.type, tenantId }, 'meeting_signal: relaying');
 
         sendToUser(tenantId, targetUserId, 'meeting_signal', {
             meetingId,
@@ -929,10 +958,19 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
 function deliverLocal(tenantId, userId, type, data) {
     const ck = clientKey(tenantId, userId);
     const set = clients.get(ck);
-    if (!set) return;
+    if (!set) {
+        if (type === 'call_signal' || type === 'call_accepted' || type === 'call_incoming' || type === 'meeting_signal' || type === 'meeting_participant_joined') {
+            logger.warn({ tenantId, userId, type, clientKey: ck, totalKeys: clients.size }, 'deliverLocal: no connections found for user');
+        }
+        return;
+    }
     const msg = JSON.stringify({ type, data });
+    let delivered = 0;
     for (const ws of set) {
-        if (ws.readyState === 1) ws.send(msg);
+        if (ws.readyState === 1) { ws.send(msg); delivered++; }
+    }
+    if (delivered === 0 && (type === 'call_signal' || type === 'call_accepted' || type === 'call_incoming' || type === 'meeting_signal' || type === 'meeting_participant_joined')) {
+        logger.warn({ tenantId, userId, type, clientKey: ck, connections: set.size }, 'deliverLocal: user has connections but none are open');
     }
 }
 

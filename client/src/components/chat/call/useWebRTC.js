@@ -156,7 +156,16 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
             }
         };
 
+        pc.onicecandidateerror = (e) => {
+            console.warn('[call-webrtc] ICE candidate error:', e.errorCode, e.errorText, e.url);
+        };
+
+        pc.oniceconnectionstatechange = () => {
+            console.log('[call-webrtc] ICE connection state:', pc.iceConnectionState);
+        };
+
         pc.onconnectionstatechange = () => {
+            console.log('[call-webrtc] connection state:', pc.connectionState);
             if (pc.connectionState === 'connected') {
                 initialNegotiationDone = true;
                 onStatusChange('connected');
@@ -205,6 +214,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     const handleSignalInternal = useCallback(async (signal, fromUserId) => {
         if (!pcRef.current) return;
         try {
+            console.log('[call-webrtc] handleSignal:', signal.type, 'from:', fromUserId, 'pcState:', pcRef.current.signalingState);
             if (signal.type === 'offer') {
                 await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal));
                 const answer = await pcRef.current.createAnswer();
@@ -323,14 +333,16 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     useEffect(() => {
         if (accepted && !isIncoming) {
             (async () => {
+                console.log('[call-webrtc] call accepted, creating offer. acceptedBy:', acceptedBy, 'hasStream:', !!localStreamRef.current);
                 onStatusChange('connecting');
                 stopRingtone();
                 const stream = localStreamRef.current;
-                if (!stream) { handleEnd(); return; }
+                if (!stream) { console.warn('[call-webrtc] no local stream, ending call'); handleEnd(); return; }
                 const pc = createPeerConnection(stream, acceptedBy);
                 flushPendingSignals();
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
+                console.log('[call-webrtc] sending offer to:', acceptedBy);
                 wsSend('call_signal', {
                     conversationId, targetUserId: acceptedBy,
                     signal: { type: 'offer', sdp: offer.sdp }

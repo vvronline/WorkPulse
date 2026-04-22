@@ -6,16 +6,16 @@
  *
  * Pool strategy:
  *   - Master pool: max 10 connections (in db.js)
- *   - Active tenant pools: up to MAX_POOLS (10), each with POOL_SIZE (5)
+ *   - Active tenant pools: up to MAX_POOLS (10), each with POOL_SIZE (8)
  *   - Idle pools evicted after IDLE_TIMEOUT_MS (5 min)
- *   - Total worst case: 10 + 10×5 = 60 connections
+ *   - Total worst case: 10 + 10×8 = 90 connections
  */
 const { Pool } = require('pg');
 const { masterQuery, masterTransaction, makePoolQuery, makePoolTransaction, initTenantSchema } = require('../db');
 const { logger } = require('./logger');
 
 const MAX_POOLS = 10;
-const POOL_SIZE = 5;
+const POOL_SIZE = 8;
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 // ── LRU pool cache ──────────────────────────────────────────────────────────

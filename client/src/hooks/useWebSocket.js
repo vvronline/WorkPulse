@@ -33,7 +33,7 @@ export default function useWebSocket(onMessage) {
             wsUrl = import.meta.env.VITE_WS_URL;
         } else {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const host = import.meta.env.PROD ? window.location.host : 'localhost:5000';
+            const host = window.location.host;
             wsUrl = `${protocol}//${host}/ws`;
         }
         const ws = new WebSocket(wsUrl);
@@ -73,6 +73,7 @@ export default function useWebSocket(onMessage) {
         if (wsRef.current && wsRef.current.readyState === 1) {
             wsRef.current.send(msg);
         } else {
+            console.warn('[ws] queuing message (WS not open):', type);
             // Queue the message to send on reconnect
             queueRef.current.push(msg);
         }
