@@ -65,7 +65,11 @@ jobs:
     needs: [validate, build-client]
     runs-on: ubuntu-latest
     steps:
-      - name: Create tag and draft release on releases repo
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create tag and release on releases repo
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           VERSION: ${{ needs.validate.outputs.version }}
@@ -102,7 +106,22 @@ jobs:
             echo "Tag v${VERSION} already exists on WorkPulse-releases"
           fi
 
-          # Create a draft release so parallel electron-builder jobs don't race to create one
+          # Build initial release notes from git log so electron-updater has content immediately
+          PREV_TAG=$(git tag --sort=-creatordate | grep '^v' | sed -n '2p' || true)
+          BODY="## WorkPulse Desktop v${VERSION}\n\n"
+          if [ -n "$PREV_TAG" ]; then
+            FEATURES=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --grep="^feat" --no-merges 2>/dev/null || true)
+            FIXES=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --grep="^fix" --no-merges 2>/dev/null || true)
+            if [ -n "$FEATURES" ]; then BODY+="### ✨ Features\n${FEATURES}\n\n"; fi
+            if [ -n "$FIXES" ]; then BODY+="### 🐛 Bug Fixes\n${FIXES}\n\n"; fi
+            if [ -z "$FEATURES" ] && [ -z "$FIXES" ]; then
+              COMMITS=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --no-merges 2>/dev/null | head -10 || true)
+              if [ -n "$COMMITS" ]; then BODY+="### Changes\n${COMMITS}\n\n"; fi
+            fi
+          fi
+          BODY_JSON=$(echo -e "$BODY" | jq -Rs '.')
+
+          # Create a release so parallel electron-builder jobs don't race to create one
           RELEASE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Authorization: token $GH_TOKEN" \
             "https://api.github.com/repos/vvronline/WorkPulse-releases/releases/tags/v${VERSION}")
@@ -111,8 +130,8 @@ jobs:
               -H "Authorization: token $GH_TOKEN" \
               -H "Content-Type: application/json" \
               "https://api.github.com/repos/vvronline/WorkPulse-releases/releases" \
-              -d "{\"tag_name\": \"v${VERSION}\", \"name\": \"v${VERSION}\", \"draft\": false, \"prerelease\": false}"
-            echo "Created release v${VERSION} on WorkPulse-releases"
+              -d "{\"tag_name\": \"v${VERSION}\", \"name\": \"v${VERSION}\", \"body\": $BODY_JSON, \"draft\": false, \"prerelease\": false}"
+            echo "Created release v${VERSION} on WorkPulse-releases with notes"
           else
             echo "Release v${VERSION} already exists on WorkPulse-releases"
           fi
