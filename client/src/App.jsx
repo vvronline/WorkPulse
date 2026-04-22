@@ -9,7 +9,6 @@ import Register from './pages/Register';
 import ChangePassword from './pages/ChangePassword';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
-import Dashboard from './pages/Dashboard';
 import Navbar from './components/navbar/Navbar';
 import AxiosInterceptor from './components/common/AxiosInterceptor';
 import ErrorBoundary from './components/common/ErrorBoundary';
@@ -24,25 +23,11 @@ import PageSkeleton from './components/common/PageSkeleton';
 import ImpersonationBanner from './components/common/ImpersonationBanner';
 import ElectronTitleBar from './components/common/ElectronTitleBar';
 import UpdateNotification from './components/common/UpdateNotification';
+import KeepAlive from './components/common/KeepAlive';
 
-// Lazy-load non-critical pages for smaller initial bundle
-const Analytics = lazy(() => import('./pages/analytics'));
-const ManualEntry = lazy(() => import('./pages/ManualEntry'));
-const Leaves = lazy(() => import('./pages/Leaves'));
-const Tasks = lazy(() => import('./pages/Tasks'));
-const CalendarPage = lazy(() => import('./pages/CalendarPage'));
-const NotesPage = lazy(() => import('./pages/NotesPage'));
-const Chat = lazy(() => import('./pages/Chat'));
+// Lazy-load pages that are NOT part of keep-alive (meetings use dynamic params)
 const MeetingJoin = lazy(() => import('./pages/MeetingJoin'));
 const MeetingRoom = lazy(() => import('./pages/MeetingRoom'));
-
-// Enterprise pages
-const Admin = lazy(() => import('./pages/Admin'));
-const ManagerDashboard = lazy(() => import('./pages/ManagerDashboard'));
-const LeavePolicy = lazy(() => import('./pages/LeavePolicy'));
-const Organization = lazy(() => import('./pages/Organization'));
-const SetEmail = lazy(() => import('./pages/SetEmail'));
-const TenantsPage = lazy(() => import('./pages/tenants'));
 
 function ProtectedRoute({ children, minRole }) {
   const { isAuthenticated, user } = useAuth();
@@ -62,6 +47,21 @@ function PublicRoute({ children }) {
   return !isAuthenticated ? children : <Navigate to="/" />;
 }
 
+function KeepAliveRoutes() {
+  const { pathname } = useLocation();
+
+  // Keep-alive paths that map to static protected pages
+  const KEEP_ALIVE_PATHS = [
+    '/', '/analytics', '/manual-entry', '/leaves', '/tasks',
+    '/calendar', '/notes', '/chat', '/admin', '/manager',
+    '/leave-policy', '/organization', '/set-email', '/tenants',
+  ];
+
+  const isKeepAlivePath = KEEP_ALIVE_PATHS.includes(pathname);
+
+  return isKeepAlivePath ? <KeepAlive /> : null;
+}
+
 function AppRoutes() {
   const { isAuthenticated } = useAuth();
   const location = useLocation();
@@ -73,6 +73,11 @@ function AppRoutes() {
       {!isAuthenticated && <ElectronTitleBar />}
       {isAuthenticated && !location.pathname.match(/^\/meeting\/[^/]+\/room/) && <Navbar />}
       <UpdateNotification />
+
+      {/* Keep-alive pages: stay mounted across navigations */}
+      {isAuthenticated && <KeepAliveRoutes />}
+
+      {/* Non-keep-alive routes: public pages + dynamic param pages */}
       <Suspense fallback={<PageSkeleton />}>
         <Routes>
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
@@ -80,23 +85,9 @@ function AppRoutes() {
           <Route path="/change-password" element={isAuthenticated ? <ChangePassword /> : <Navigate to="/login" />} />
           <Route path="/forgot-password" element={<PublicRoute><ForgotPassword /></PublicRoute>} />
           <Route path="/reset-password/:token" element={<PublicRoute><ResetPassword /></PublicRoute>} />
-          <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-          <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
-          <Route path="/manual-entry" element={<ProtectedRoute><ManualEntry /></ProtectedRoute>} />
-          <Route path="/leaves" element={<ProtectedRoute><Leaves /></ProtectedRoute>} />
-          <Route path="/tasks" element={<ProtectedRoute><Tasks /></ProtectedRoute>} />
-          <Route path="/calendar" element={<ProtectedRoute><CalendarPage /></ProtectedRoute>} />
-          <Route path="/notes" element={<ProtectedRoute><NotesPage /></ProtectedRoute>} />
-          <Route path="/chat" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
           <Route path="/meeting/:code" element={<ProtectedRoute><MeetingJoin /></ProtectedRoute>} />
           <Route path="/meeting/:code/room" element={<ProtectedRoute><MeetingRoom /></ProtectedRoute>} />
-          <Route path="/admin" element={<ProtectedRoute minRole="hr_admin"><Admin /></ProtectedRoute>} />
-          <Route path="/tenants" element={<ProtectedRoute minRole="platform_admin"><TenantsPage /></ProtectedRoute>} />
-          <Route path="/manager" element={<ProtectedRoute minRole="team_lead"><ManagerDashboard /></ProtectedRoute>} />
-          <Route path="/leave-policy" element={<ProtectedRoute><LeavePolicy /></ProtectedRoute>} />
-          <Route path="/organization" element={<ProtectedRoute><Organization /></ProtectedRoute>} />
-          <Route path="/set-email" element={<ProtectedRoute><SetEmail /></ProtectedRoute>} />
-          <Route path="*" element={<Navigate to="/" />} />
+          <Route path="*" element={isAuthenticated ? null : <Navigate to="/login" />} />
         </Routes>
       </Suspense>
       </ErrorBoundary>

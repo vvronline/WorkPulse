@@ -149,21 +149,22 @@ export default function ChatSidebar({
                         ) : regularConvs.length === 0 ? (
                             <div className={s.empty}>No conversations yet. Search for a colleague to start chatting.</div>
                         ) : (<>
-                            <>
-                                <div className={s.convSection}><Pin size={13} style={{marginRight:4,verticalAlign:'middle'}} />Pinned</div>
-                                {pinned.map(c => <ConversationItem key={c.id} conv={c} onOpen={onOpenConv} {...convProps} />)}
-                            </>
-                        )}
-                        {favourites.length > 0 && (
-                            <>
-                                <div className={s.convSection}><Star size={13} style={{marginRight:4,verticalAlign:'middle'}} />Favourites</div>
-                                {favourites.map(c => <ConversationItem key={c.id} conv={c} onOpen={onOpenConv} {...convProps} />)}
-                            </>
-                        )}
-                        {(pinned.length > 0 || favourites.length > 0) && others.length > 0 && (
-                            <div className={s.convSection}><MessageSquare size={13} style={{marginRight:4,verticalAlign:'middle'}} />All Messages</div>
-                        )}
-                        {others.map(c => <ConversationItem key={c.id} conv={c} onOpen={onOpenConv} {...convProps} />)}
+                            {pinned.length > 0 && (
+                                <>
+                                    <div className={s.convSection}><Pin size={13} style={{marginRight:4,verticalAlign:'middle'}} />Pinned</div>
+                                    {pinned.map(c => <ConversationItem key={c.id} conv={c} onOpen={onOpenConv} {...convProps} />)}
+                                </>
+                            )}
+                            {favourites.length > 0 && (
+                                <>
+                                    <div className={s.convSection}><Star size={13} style={{marginRight:4,verticalAlign:'middle'}} />Favourites</div>
+                                    {favourites.map(c => <ConversationItem key={c.id} conv={c} onOpen={onOpenConv} {...convProps} />)}
+                                </>
+                            )}
+                            {(pinned.length > 0 || favourites.length > 0) && others.length > 0 && (
+                                <div className={s.convSection}><MessageSquare size={13} style={{marginRight:4,verticalAlign:'middle'}} />All Messages</div>
+                            )}
+                            {others.map(c => <ConversationItem key={c.id} conv={c} onOpen={onOpenConv} {...convProps} />)}
                         </>)}
                     </div>
                 )}
