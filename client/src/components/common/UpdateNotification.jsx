@@ -95,6 +95,7 @@ export default function UpdateNotification() {
 
     const unsub4 = api.onUpdateReminder?.((info) => {
       setVersion(info.version);
+      if (info.releaseNotes) setReleaseNotes(info.releaseNotes);
       setState('ready');
       setVisible(true);
     });

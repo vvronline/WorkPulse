@@ -43,6 +43,7 @@ function setupUpdater(mainWindow) {
     autoUpdater.autoInstallOnAppQuit = true;
 
     let pendingVersion = null;
+    let pendingReleaseNotes = null;
     let reminderInterval = null;
     let checkInProgress = false;
     let checkInterval = null;
@@ -86,23 +87,30 @@ function setupUpdater(mainWindow) {
     // ─── Auto-updater events ───
     autoUpdater.on('update-available', (info) => {
         pendingVersion = info.version;
+        const notes = cleanReleaseNotes(info.releaseNotes);
+        if (notes) pendingReleaseNotes = notes;
         sendToRenderer('update-available', {
             version: info.version,
-            releaseNotes: cleanReleaseNotes(info.releaseNotes),
+            releaseNotes: notes || pendingReleaseNotes || '',
         });
     });
 
     autoUpdater.on('update-downloaded', (info) => {
         pendingVersion = info.version;
+        const notes = cleanReleaseNotes(info.releaseNotes);
+        if (notes) pendingReleaseNotes = notes;
         sendToRenderer('update-downloaded', {
             version: info.version,
-            releaseNotes: cleanReleaseNotes(info.releaseNotes),
+            releaseNotes: notes || pendingReleaseNotes || '',
         });
 
         // Periodic reminder every 30 minutes if user dismisses
         clearReminder();
         reminderInterval = setInterval(() => {
-            sendToRenderer('update-reminder', { version: pendingVersion });
+            sendToRenderer('update-reminder', {
+                version: pendingVersion,
+                releaseNotes: pendingReleaseNotes || '',
+            });
         }, 30 * 60 * 1000);
     });
 
