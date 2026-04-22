@@ -91,7 +91,11 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     const [addPartQuery, setAddPartQuery] = useState('');
     const [addPartResults, setAddPartResults] = useState([]);
     const [addPartSearching, setAddPartSearching] = useState(false);
+    const [swapped, setSwapped] = useState(false);
+    const [pipPos, setPipPos] = useState(null);
+    const [dragging, setDragging] = useState(false);
     const addPartTimerRef = useRef(null);
+    const dragRef = useRef(null);
 
     // Refs
     const pcRef = useRef(null);
@@ -662,6 +666,61 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
         setAddPartQuery('');
         setAddPartResults([]);
     };
+
+    // ─── PiP drag handlers ───
+    const onPipMouseDown = useCallback((e) => {
+        if (swapped) return;
+        e.preventDefault();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        const rect = e.currentTarget.getBoundingClientRect();
+        dragRef.current = {
+            startX: clientX,
+            startY: clientY,
+            origRight: window.innerWidth - rect.right,
+            origBottom: window.innerHeight - rect.bottom,
+            moved: false,
+        };
+        setDragging(true);
+    }, [swapped]);
+
+    useEffect(() => {
+        const onMove = (e) => {
+            if (!dragRef.current) return;
+            e.preventDefault();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            const dx = clientX - dragRef.current.startX;
+            const dy = clientY - dragRef.current.startY;
+            if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragRef.current.moved = true;
+            setPipPos({
+                right: Math.max(0, dragRef.current.origRight - dx),
+                bottom: Math.max(0, dragRef.current.origBottom - dy),
+            });
+        };
+        const onUp = () => {
+            if (!dragRef.current) return;
+            const wasDrag = dragRef.current.moved;
+            dragRef.current = null;
+            setDragging(false);
+            if (!wasDrag) setSwapped(prev => !prev);
+        };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+        window.addEventListener('touchmove', onMove, { passive: false });
+        window.addEventListener('touchend', onUp);
+        return () => {
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+            window.removeEventListener('touchmove', onMove);
+            window.removeEventListener('touchend', onUp);
+        };
+    }, []);
+
+    useEffect(() => { setPipPos(null); setSwapped(false); }, [status]);
+
+    const pipStyle = !swapped && pipPos ? { right: pipPos.right, bottom: pipPos.bottom } : undefined;
+
     return (
         <div
             ref={overlayRef}
@@ -688,8 +747,21 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
             {/* Video elements */}
             {(isVideoCall || screenSharing) && (
                 <>
-                    <video ref={remoteVideoRef} className={s.remoteVideo} autoPlay playsInline />
-                    <video ref={localVideoRef} className={s.localVideo} autoPlay playsInline muted />
+                    <video
+                        ref={remoteVideoRef}
+                        className={`${s.remoteVideo} ${swapped ? s.swapped : ''}`}
+                        autoPlay playsInline
+                        onClick={swapped ? () => setSwapped(false) : undefined}
+                        style={swapped && pipPos ? { right: pipPos.right, bottom: pipPos.bottom } : undefined}
+                    />
+                    <video
+                        ref={localVideoRef}
+                        className={`${s.localVideo} ${swapped ? s.swapped : ''} ${dragging ? s.dragging : ''}`}
+                        autoPlay playsInline muted
+                        onMouseDown={!swapped ? onPipMouseDown : undefined}
+                        onTouchStart={!swapped ? onPipMouseDown : undefined}
+                        style={pipStyle}
+                    />
                 </>
             )}
 

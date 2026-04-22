@@ -21,11 +21,15 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     const [status, setStatus] = useState(isReconnect ? 'reconnecting' : (isIncoming ? 'incoming' : 'ringing'));
     const [duration, setDuration] = useState(0);
     const [showAddParticipant, setShowAddParticipant] = useState(false);
+    const [swapped, setSwapped] = useState(false);
+    const [pipPos, setPipPos] = useState(null);
+    const [dragging, setDragging] = useState(false);
     const canScreenShare = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
 
     const overlayRef = useRef(null);
     const timerRef = useRef(null);
     const handleEndRef = useRef(null);
+    const dragRef = useRef(null);
 
     const webrtc = useWebRTC({
         callState, callType, wsSend, onEnd,
@@ -114,6 +118,65 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
         return `${m}:${String(sec).padStart(2, '0')}`;
     };
 
+    // ─── PiP drag handlers ───
+    const onPipMouseDown = useCallback((e) => {
+        if (swapped) return;
+        e.preventDefault();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        const el = e.currentTarget;
+        const rect = el.getBoundingClientRect();
+        dragRef.current = {
+            startX: clientX,
+            startY: clientY,
+            origRight: window.innerWidth - rect.right,
+            origBottom: window.innerHeight - rect.bottom,
+            moved: false,
+        };
+        setDragging(true);
+    }, [swapped]);
+
+    useEffect(() => {
+        const onMove = (e) => {
+            if (!dragRef.current) return;
+            e.preventDefault();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            const dx = clientX - dragRef.current.startX;
+            const dy = clientY - dragRef.current.startY;
+            if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragRef.current.moved = true;
+            setPipPos({
+                right: Math.max(0, dragRef.current.origRight - dx),
+                bottom: Math.max(0, dragRef.current.origBottom - dy),
+            });
+        };
+        const onUp = () => {
+            if (!dragRef.current) return;
+            const wasDrag = dragRef.current.moved;
+            dragRef.current = null;
+            setDragging(false);
+            if (!wasDrag) setSwapped(prev => !prev);
+        };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+        window.addEventListener('touchmove', onMove, { passive: false });
+        window.addEventListener('touchend', onUp);
+        return () => {
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+            window.removeEventListener('touchmove', onMove);
+            window.removeEventListener('touchend', onUp);
+        };
+    }, []);
+
+    // Reset pip position and swap when call reconnects or ends
+    useEffect(() => {
+        setPipPos(null);
+        setSwapped(false);
+    }, [status]);
+
+    const pipStyle = !swapped && pipPos ? { right: pipPos.right, bottom: pipPos.bottom } : undefined;
+
     const isConnected = status === 'connected';
     const isVideoCall = callType === 'video';
 
@@ -141,10 +204,27 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
 
             {(isVideoCall || controls.screenSharing || webrtc.remoteHasVideo) && (
                 <>
-                    <video ref={webrtc.remoteVideoRef} className={s.remoteVideo} autoPlay playsInline />
-                    <video ref={webrtc.localVideoRef} className={`${s.localVideo} ${controls.videoOff && !controls.screenSharing ? s.localVideoHidden : ''}`} autoPlay playsInline muted />
+                    <video
+                        ref={webrtc.remoteVideoRef}
+                        className={`${s.remoteVideo} ${swapped ? s.swapped : ''}`}
+                        autoPlay playsInline
+                        onClick={swapped ? () => setSwapped(false) : undefined}
+                        style={swapped && pipPos ? { right: pipPos.right, bottom: pipPos.bottom } : undefined}
+                    />
+                    <video
+                        ref={webrtc.localVideoRef}
+                        className={`${s.localVideo} ${controls.videoOff && !controls.screenSharing ? s.localVideoHidden : ''} ${swapped ? s.swapped : ''} ${dragging ? s.dragging : ''}`}
+                        autoPlay playsInline muted
+                        onMouseDown={!swapped ? onPipMouseDown : undefined}
+                        onTouchStart={!swapped ? onPipMouseDown : undefined}
+                        style={pipStyle}
+                    />
                     {controls.videoOff && !controls.screenSharing && (
-                        <div className={s.localVideoAvatar}>
+                        <div
+                            className={s.localVideoAvatar}
+                            onClick={() => setSwapped(prev => !prev)}
+                            style={pipPos ? { right: pipPos.right, bottom: pipPos.bottom } : undefined}
+                        >
                             <ChatAvatar name={user?.fullName || 'You'} avatar={user?.avatar} size="md" />
                         </div>
                     )}

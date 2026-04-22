@@ -130,7 +130,7 @@
 /* ── Local video (PiP) ── */
 .localVideo {
     position: absolute;
-    top: 1rem;
+    bottom: 8rem;
     right: 1rem;
     width: 180px;
     height: 135px;
@@ -140,11 +140,53 @@
     z-index: 10;
     box-shadow: 0 4px 20px rgba(0,0,0,0.5);
     cursor: grab;
-    transition: box-shadow 0.2s;
+    transition: box-shadow 0.2s, border-color 0.2s;
 }
 
 .localVideo:hover {
     box-shadow: 0 6px 28px rgba(0,0,0,0.6);
+    border-color: rgba(255,255,255,0.6);
+}
+
+.localVideo.dragging {
+    cursor: grabbing;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.7);
+}
+
+/* ── Swapped: local is fullscreen, remote is PiP ── */
+.localVideo.swapped {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+    border: none;
+    z-index: 1;
+    box-shadow: none;
+    cursor: default;
+    bottom: auto;
+    right: auto;
+}
+
+.remoteVideo.swapped {
+    position: absolute;
+    bottom: 8rem;
+    right: 1rem;
+    width: 180px;
+    height: 135px;
+    object-fit: cover;
+    border-radius: 12px;
+    border: 2px solid rgba(255,255,255,0.3);
+    z-index: 10;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    cursor: pointer;
+    inset: auto;
+    transition: box-shadow 0.2s, border-color 0.2s;
+}
+
+.remoteVideo.swapped:hover {
+    box-shadow: 0 6px 28px rgba(0,0,0,0.6);
+    border-color: rgba(255,255,255,0.6);
 }
 
 .localVideoHidden {
@@ -154,7 +196,7 @@
 /* ── Local video avatar (shown when camera is off) ── */
 .localVideoAvatar {
     position: absolute;
-    top: 1rem;
+    bottom: 8rem;
     right: 1rem;
     width: 180px;
     height: 135px;
@@ -166,6 +208,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    cursor: pointer;
 }
 
 /* ── Call info (avatar, name, status) ── */
