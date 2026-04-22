@@ -15,6 +15,25 @@ const CLIENT_DIST = app.isPackaged
     ? path.join(process.resourcesPath, 'client', 'dist')
     : path.join(__dirname, '..', 'client', 'dist');
 const WINDOW_STATE_FILE = path.join(app.getPath('userData'), 'window-state.json');
+const VERSION_FILE = path.join(app.getPath('userData'), 'last-version.txt');
+
+// ─── Cache clearing on version change ───
+function clearCacheIfVersionChanged() {
+    const currentVersion = app.getVersion();
+    let lastVersion = null;
+    try {
+        lastVersion = fs.readFileSync(VERSION_FILE, 'utf-8').trim();
+    } catch { /* first run or missing file */ }
+    if (lastVersion !== currentVersion) {
+        console.log(`[WorkPulse] Version changed: ${lastVersion || 'none'} → ${currentVersion}, will clear cache`);
+        // Write new version immediately so we don't repeat on crash
+        try { fs.writeFileSync(VERSION_FILE, currentVersion); } catch { /* ignore */ }
+        return true; // Signal that cache should be cleared after session is ready
+    }
+    return false;
+}
+
+const shouldClearCache = clearCacheIfVersionChanged();
 
 // ─── Custom protocol registration (must happen before app.ready) ───
 protocol.registerSchemesAsPrivileged([{
@@ -71,7 +90,20 @@ function getMimeType(filePath) {
 let mainWindow = null;
 let tray = null;
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+    // Clear stale caches from previous version
+    if (shouldClearCache) {
+        try {
+            await session.defaultSession.clearCache();
+            await session.defaultSession.clearStorageData({
+                storages: ['cachestorage', 'serviceworkers'],
+            });
+            console.log('[WorkPulse] Cleared cache after version update');
+        } catch (err) {
+            console.error('[WorkPulse] Cache clear failed:', err?.message);
+        }
+    }
+
     // Handle the custom protocol — serve bundled React files + proxy /uploads to Railway
     protocol.handle('workpulse', async (request) => {
         const url = new URL(request.url);
