@@ -73,6 +73,7 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [connectionQuality, setConnectionQuality] = useState('unknown');
     const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const canScreenShare = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
 
     // Device switching
     const [audioDevices, setAudioDevices] = useState([]);
@@ -812,7 +813,7 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
                         )}
 
                         {/* Screen share (available for all call types when connected) */}
-                        {isConnected && (
+                        {isConnected && canScreenShare && (
                             <button
                                 className={`${s.controlBtn} ${screenSharing ? s.active : ''}`}
                                 onClick={toggleScreenShare}

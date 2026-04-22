@@ -1,4 +1,4 @@
-const { app, BrowserWindow, protocol, net, session, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, protocol, net, session, Menu, nativeImage, desktopCapturer, systemPreferences } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { setupTray } = require('./tray');
@@ -103,6 +103,17 @@ app.whenReady().then(async () => {
             console.error('[WorkPulse] Cache clear failed:', err?.message);
         }
     }
+
+    // ─── Screen sharing: handle getDisplayMedia in sandboxed renderer ───
+    session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+        desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
+            // Grant the first screen source (primary display) — Electron shows
+            // its own picker so the user already selected which screen/window.
+            callback({ video: sources[0], audio: 'loopback' });
+        }).catch(() => {
+            callback({});
+        });
+    });
 
     // Content Security Policy — restrict what can run in the renderer
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {

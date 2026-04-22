@@ -18,6 +18,7 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     const [status, setStatus] = useState(isReconnect ? 'reconnecting' : (isIncoming ? 'incoming' : 'ringing'));
     const [duration, setDuration] = useState(0);
     const [showAddParticipant, setShowAddParticipant] = useState(false);
+    const canScreenShare = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
 
     const overlayRef = useRef(null);
     const timerRef = useRef(null);
@@ -240,7 +241,7 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
                             </div>
                         )}
 
-                        {isConnected && (
+                        {isConnected && canScreenShare && (
                             <button
                                 className={`${s.controlBtn} ${controls.screenSharing ? s.active : ''}`}
                                 onClick={controls.toggleScreenShare}

@@ -164,6 +164,36 @@ function setupUpdater(mainWindow) {
 
     ipcMain.handle('get-app-version', () => app.getVersion());
 
+    // Fetch release notes from GitHub API (fallback when electron-updater omits them)
+    ipcMain.handle('fetch-release-notes', async (_event, version) => {
+        try {
+            const tag = version.startsWith('v') ? version : `v${version}`;
+            const https = require('https');
+            const data = await new Promise((resolve, reject) => {
+                const req = https.get(
+                    `https://api.github.com/repos/vvronline/WorkPulse-releases/releases/tags/${tag}`,
+                    { headers: { 'User-Agent': 'WorkPulse-Desktop', Accept: 'application/vnd.github.v3+json' } },
+                    (res) => {
+                        let body = '';
+                        res.on('data', (c) => (body += c));
+                        res.on('end', () => {
+                            if (res.statusCode === 200) resolve(JSON.parse(body));
+                            else reject(new Error(`GitHub ${res.statusCode}`));
+                        });
+                    }
+                );
+                req.on('error', reject);
+                req.setTimeout(10000, () => { req.destroy(); reject(new Error('timeout')); });
+            });
+            const notes = cleanReleaseNotes(data.body || '');
+            if (notes) pendingReleaseNotes = notes;
+            return notes || data.body || '';
+        } catch (err) {
+            console.error('[updater] Failed to fetch release notes:', err?.message);
+            return '';
+        }
+    });
+
     // ─── Window management IPC handlers ───
     ipcMain.handle('is-maximized', (event) => {
         const win = BrowserWindow.fromWebContents(event.sender);

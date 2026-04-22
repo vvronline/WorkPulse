@@ -12,6 +12,7 @@ export default function UpdateNotification() {
   const [errorMsg, setErrorMsg] = useState('');
   const [releaseNotes, setReleaseNotes] = useState('');
   const [showNotes, setShowNotes] = useState(false);
+  const [fetchingNotes, setFetchingNotes] = useState(false);
   const dismissTimerRef = useRef(null);
 
   const clearDismissTimer = useCallback(() => {
@@ -153,20 +154,39 @@ export default function UpdateNotification() {
               <button className={s.actionBtn} onClick={() => api.installUpdate()}>
                 Restart Now
               </button>
-              {releaseNotes && (
-                <button className={s.notesBtn} onClick={() => setShowNotes(v => !v)}>
-                  {showNotes ? 'Hide' : "What's new"}
-                </button>
-              )}
+              <button
+                className={s.notesBtn}
+                disabled={fetchingNotes}
+                onClick={async () => {
+                  if (showNotes) { setShowNotes(false); return; }
+                  // If we already have notes, just toggle
+                  if (releaseNotes) { setShowNotes(true); return; }
+                  // Fetch from GitHub API as fallback
+                  if (api?.fetchReleaseNotes && version) {
+                    setFetchingNotes(true);
+                    try {
+                      const notes = await api.fetchReleaseNotes(version);
+                      if (notes) setReleaseNotes(notes);
+                    } catch { /* ignore */ }
+                    setFetchingNotes(false);
+                  }
+                  setShowNotes(true);
+                }}
+              >
+                {fetchingNotes ? 'Loading…' : showNotes ? 'Hide' : "What's new"}
+              </button>
               <button className={s.dismissBtn} onClick={dismiss}>Later</button>
             </div>
-            {showNotes && releaseNotes && (
+            {showNotes && (
               <div className={s.releaseNotes}>
-                {typeof releaseNotes === 'string'
-                  ? releaseNotes
-                  : Array.isArray(releaseNotes)
-                    ? releaseNotes.map((n, i) => <p key={i}>{n.note || n}</p>)
-                    : null}
+                {releaseNotes
+                  ? (typeof releaseNotes === 'string'
+                      ? releaseNotes
+                      : Array.isArray(releaseNotes)
+                        ? releaseNotes.map((n, i) => <p key={i}>{n.note || n}</p>)
+                        : null)
+                  : <span className={s.noNotes}>No release notes available for this version.</span>
+                }
               </div>
             )}
           </>
