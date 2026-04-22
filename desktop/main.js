@@ -104,6 +104,26 @@ app.whenReady().then(async () => {
         }
     }
 
+    // Content Security Policy — restrict what can run in the renderer
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+        callback({
+            responseHeaders: {
+                ...details.responseHeaders,
+                'Content-Security-Policy': [
+                    "default-src 'self' workpulse://app; " +
+                    "script-src 'self' workpulse://app 'unsafe-inline'; " +
+                    "style-src 'self' workpulse://app 'unsafe-inline'; " +
+                    `connect-src 'self' workpulse://app ${RAILWAY_URL} wss://${new URL(RAILWAY_URL).host}; ` +
+                    "img-src 'self' workpulse://app data: blob:; " +
+                    "media-src 'self' workpulse://app blob:; " +
+                    "font-src 'self' workpulse://app; " +
+                    "frame-src 'none'; " +
+                    "object-src 'none';"
+                ],
+            },
+        });
+    });
+
     // Handle the custom protocol — serve bundled React files + proxy /uploads to Railway
     protocol.handle('workpulse', async (request) => {
         const url = new URL(request.url);
@@ -233,13 +253,15 @@ app.whenReady().then(async () => {
 
     mainWindow.loadURL('workpulse://app/');
 
-    // F12 toggles DevTools (local shortcut, only active when window is focused)
-    mainWindow.webContents.on('before-input-event', (event, input) => {
-        if (input.key === 'F12' && input.type === 'keyDown') {
-            mainWindow.webContents.toggleDevTools();
-            event.preventDefault();
-        }
-    });
+    // F12 toggles DevTools (only in development builds)
+    if (!app.isPackaged) {
+        mainWindow.webContents.on('before-input-event', (event, input) => {
+            if (input.key === 'F12' && input.type === 'keyDown') {
+                mainWindow.webContents.toggleDevTools();
+                event.preventDefault();
+            }
+        });
+    }
 
     console.log(`[WorkPulse] API server: ${RAILWAY_URL}`);
 
@@ -270,6 +292,13 @@ app.whenReady().then(async () => {
             require('electron').shell.openExternal(url);
         }
         return { action: 'deny' };
+    });
+
+    // Prevent renderer from navigating to arbitrary origins (XSS protection)
+    mainWindow.webContents.on('will-navigate', (event, url) => {
+        if (!url.startsWith('workpulse://app/')) {
+            event.preventDefault();
+        }
     });
 
     // System tray

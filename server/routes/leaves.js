@@ -87,9 +87,14 @@ router.get('/summary', async (req, res) => {
 
         // Support month+year shorthand
         if (!start_date && month && year) {
-            const m = String(month).padStart(2, '0');
-            const y = String(year);
-            const lastDay = new Date(parseInt(y), parseInt(month), 0).getDate();
+            const mNum = parseInt(month, 10);
+            const yNum = parseInt(year, 10);
+            if (isNaN(mNum) || mNum < 1 || mNum > 12 || isNaN(yNum) || yNum < 1900 || yNum > 2200) {
+                return res.status(400).json({ error: 'Invalid month or year' });
+            }
+            const m = String(mNum).padStart(2, '0');
+            const y = String(yNum);
+            const lastDay = new Date(yNum, mNum, 0).getDate();
             start_date = `${y}-${m}-01`;
             end_date = `${y}-${m}-${String(lastDay).padStart(2, '0')}`;
         }
@@ -249,12 +254,14 @@ router.post('/', async (req, res) => {
         const durationValue = leaveDuration === 'half' ? 0.5 : leaveDuration === 'quarter' ? 0.25 : 1;
 
         // Pre-filter: valid date format and no existing leave on that date
-        const newDates = [];
-        for (const d of rawDates) {
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
-            const exists = (await req.db.query('SELECT id FROM leaves WHERE user_id = $1 AND date = $2', [req.userId, d])).rows[0];
-            if (!exists) newDates.push(d);
-        }
+        const validDates = rawDates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+        if (validDates.length === 0) return res.status(400).json({ error: 'No valid dates provided' });
+        const existingDates = (await req.db.query(
+            'SELECT date::text FROM leaves WHERE user_id = $1 AND date = ANY($2::date[])',
+            [req.userId, validDates]
+        )).rows.map(r => r.date.slice(0, 10));
+        const existingSet = new Set(existingDates);
+        const newDates = validDates.filter(d => !existingSet.has(d));
         if (newDates.length === 0) return res.json({ message: '0 leave(s) submitted', ids: [] });
 
         // ── Policy enforcement ────────────────────────────────────────────────
@@ -424,7 +431,14 @@ router.patch('/:id/approve', requireRole('manager'), async (req, res) => {
             return res.status(403).json({ error: 'You are not authorized to approve this leave' });
         }
 
-        await req.db.transaction(async (client) => {
+        const approved = await req.db.transaction(async (client) => {
+            // Re-check status inside transaction with row lock to prevent double-approve race
+            const freshLeave = (await client.query(
+                'SELECT id, status, user_id, leave_type, date, duration FROM leaves WHERE id = $1 FOR UPDATE',
+                [leave.id]
+            )).rows[0];
+            if (!freshLeave || freshLeave.status !== 'pending') return false;
+
             await client.query(
                 "UPDATE leaves SET status = 'approved', approved_by = $1, reviewed_at = NOW() WHERE id = $2",
                 [req.userId, leave.id]
@@ -433,8 +447,10 @@ router.patch('/:id/approve', requireRole('manager'), async (req, res) => {
                 "UPDATE approval_requests SET status = 'approved', approver_id = $1, reviewed_at = NOW() WHERE type = 'leave' AND reference_id = $2 AND status = 'pending'",
                 [req.userId, leave.id]
             );
-            await updateLeaveBalance(leave.user_id, leave.leave_type, leave.date, leave.duration || 'full', 'add', client);
+            await updateLeaveBalance(freshLeave.user_id, freshLeave.leave_type, freshLeave.date, freshLeave.duration || 'full', 'add', client);
+            return true;
         });
+        if (!approved) return res.status(400).json({ error: 'Leave is no longer pending' });
 
         // Notify the leave requester
         const leaveUser = (await req.db.query('SELECT email, full_name FROM users WHERE id = $1', [leave.user_id])).rows[0];
@@ -589,13 +605,22 @@ router.patch('/:id/revoke', requireRole('manager'), async (req, res) => {
         if (req.userOrgId && leave.leave_org_id !== req.userOrgId) return res.status(403).json({ error: 'Cannot revoke leaves from another organization' });
         if (leave.status !== 'approved') return res.status(400).json({ error: 'Leave is not approved' });
 
-        await req.db.transaction(async (client) => {
+        const revoked = await req.db.transaction(async (client) => {
+            // Re-check status inside transaction with row lock to prevent double-revoke race
+            const freshLeave = (await client.query(
+                'SELECT id, status, user_id, leave_type, date, duration FROM leaves WHERE id = $1 FOR UPDATE',
+                [leave.id]
+            )).rows[0];
+            if (!freshLeave || freshLeave.status !== 'approved') return false;
+
             await client.query(
                 "UPDATE leaves SET status = 'revoked', approved_by = $1, reviewed_at = NOW() WHERE id = $2",
                 [req.userId, leave.id]
             );
-            await updateLeaveBalance(leave.user_id, leave.leave_type, leave.date, leave.duration || 'full', 'subtract', client);
+            await updateLeaveBalance(freshLeave.user_id, freshLeave.leave_type, freshLeave.date, freshLeave.duration || 'full', 'subtract', client);
+            return true;
         });
+        if (!revoked) return res.status(400).json({ error: 'Leave is no longer approved' });
 
         // Notify the leave requester
         const leaveUser = (await req.db.query('SELECT email, full_name FROM users WHERE id = $1', [leave.user_id])).rows[0];

@@ -28,7 +28,7 @@
     "express-rate-limit": "^8.2.1",
     "helmet": "^8.1.0",
     "ioredis": "^5.10.1",
-    "json2csv": "^6.0.0-alpha.2",
+    "json2csv": "^5.0.7",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.0.2",
     "nodemailer": "^8.0.1",

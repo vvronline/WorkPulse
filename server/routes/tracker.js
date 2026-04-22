@@ -14,6 +14,8 @@ const { requireTenant } = require('../middleware/tenant');
 const router = express.Router();
 router.use(requireTenant);
 
+const VALID_WORK_MODES = ['office', 'remote', 'hybrid'];
+
 // Helper: fetch org config with Redis cache
 async function getOrgWorkConfig(orgId, db, tenantId) {
     if (!orgId) return { work_hours_per_day: 8, work_days: '1,2,3,4,5' };
@@ -70,22 +72,33 @@ router.get('/status', auth, async (req, res) => {
         // Auto clock-out when daily target is met and user is still active
         let autoLoggedOut = false;
         if (status.state !== 'logged_out' && status.floorMinutes >= targetMinutes) {
-            await req.db.query(
-                'INSERT INTO time_entries (user_id, entry_type) VALUES ($1, $2)',
-                [req.userId, 'clock_out'],
-            );
-            logAction(req, 'auto_clock_out', 'time_entry', null, {
-                floorMinutes: status.floorMinutes, targetMinutes,
+            // Use transaction with row lock to prevent duplicate clock-outs from concurrent requests
+            const didClockOut = await req.db.transaction(async (client) => {
+                const latest = (await client.query(
+                    `SELECT entry_type FROM time_entries WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date ORDER BY timestamp DESC, id DESC LIMIT 1 FOR UPDATE`,
+                    [req.userId, today]
+                )).rows[0];
+                if (!latest || latest.entry_type === 'clock_out') return false;
+                await client.query(
+                    'INSERT INTO time_entries (user_id, entry_type) VALUES ($1, $2)',
+                    [req.userId, 'clock_out']
+                );
+                return true;
             });
-            const refreshed = await req.db.query(
-                `SELECT * FROM time_entries
-                 WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
-                 ORDER BY timestamp ASC, id ASC`,
-                [req.userId, today],
-            );
-            entries = refreshed.rows;
-            Object.assign(status, computeStatus(entries));
-            autoLoggedOut = true;
+            if (didClockOut) {
+                logAction(req, 'auto_clock_out', 'time_entry', null, {
+                    floorMinutes: status.floorMinutes, targetMinutes,
+                });
+                const refreshed = await req.db.query(
+                    `SELECT * FROM time_entries
+                     WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
+                     ORDER BY timestamp ASC, id ASC`,
+                    [req.userId, today],
+                );
+                entries = refreshed.rows;
+                Object.assign(status, computeStatus(entries));
+                autoLoggedOut = true;
+            }
         }
 
         status.isWeekend = isWeekend;
@@ -402,6 +415,9 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
             return res.status(400).json({ error: 'Logout time must be after login time' });
         }
 
+        if (typeof timezoneOffset === 'number' && (timezoneOffset < -840 || timezoneOffset > 720)) {
+            return res.status(400).json({ error: 'Invalid timezone offset' });
+        }
         const offsetMs = (typeof timezoneOffset === 'number') ? timezoneOffset * 60000 : 0;
         function toUTC(dateStr, timeStr) {
             const [year, month, day] = dateStr.split('-').map(Number);
@@ -486,7 +502,7 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
                 'INSERT INTO time_entries (user_id, entry_type, timestamp, work_mode, is_manual, approval_status) VALUES ($1,$2,$3,$4,TRUE,$5)',
                 [uid, type, ts, wm || null, approvalStatus],
             );
-            await ins(req.userId, 'clock_in', clockInTs, work_mode || 'office');
+            await ins(req.userId, 'clock_in', clockInTs, VALID_WORK_MODES.includes(work_mode) ? work_mode : 'office');
             if (breaks && Array.isArray(breaks)) {
                 const sorted = [...breaks].sort((a, b) => a.start.localeCompare(b.start));
                 for (const brk of sorted) {
@@ -503,7 +519,7 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
                     `INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
                      VALUES ($1,$2,$3,'manual_entry',NULL,$4,$5)`,
                     [req.userOrgId || null, req.userId, approver?.id || null, 'Manual time entry',
-                    JSON.stringify({ date, clock_in, clock_out: clock_out || null, work_mode: work_mode || 'office' })],
+                    JSON.stringify({ date, clock_in, clock_out: clock_out || null, work_mode: VALID_WORK_MODES.includes(work_mode) ? work_mode : 'office' })],
                 );
             }
         });
@@ -581,6 +597,9 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
             }
         }
 
+        if (typeof timezoneOffset === 'number' && (timezoneOffset < -840 || timezoneOffset > 720)) {
+            return res.status(400).json({ error: 'Invalid timezone offset' });
+        }
         const offsetMs = (typeof timezoneOffset === 'number') ? timezoneOffset * 60000 : 0;
         function toUTC(dateStr, timeStr) {
             const [year, month, day] = dateStr.split('-').map(Number);
@@ -630,7 +649,7 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
                 'INSERT INTO time_entries (user_id, entry_type, timestamp, work_mode, is_manual, approval_status) VALUES ($1,$2,$3,$4,TRUE,$5)',
                 [uid, type, ts, wm || null, approvalStatus],
             );
-            await ins(req.userId, 'clock_in', clockInTs, work_mode || 'office');
+            await ins(req.userId, 'clock_in', clockInTs, VALID_WORK_MODES.includes(work_mode) ? work_mode : 'office');
             if (breaks && Array.isArray(breaks)) {
                 const sorted = [...breaks].sort((a, b) => a.start.localeCompare(b.start));
                 for (const brk of sorted) {
@@ -647,7 +666,7 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
                     `INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
                      VALUES ($1,$2,$3,'manual_entry',NULL,$4,$5)`,
                     [req.userOrgId || null, req.userId, approver?.id || null, 'Manual time entry (edited)',
-                    JSON.stringify({ date, clock_in, clock_out: clock_out || null, work_mode: work_mode || 'office' })],
+                    JSON.stringify({ date, clock_in, clock_out: clock_out || null, work_mode: VALID_WORK_MODES.includes(work_mode) ? work_mode : 'office' })],
                 );
             }
         });
@@ -679,10 +698,21 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
 });
 
 // Delete all entries for a date
-router.delete('/entries/:date', auth, async (req, res) => {
+router.delete('/entries/:date', auth, loadUserContext, async (req, res) => {
     try {
         const { date } = req.params;
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Invalid date format' });
+
+        // Reject if the date falls within a locked pay period
+        if (req.userOrgId) {
+            const lockedPeriod = (await req.db.query(
+                `SELECT label FROM pay_periods WHERE org_id = $1 AND start_date <= $2 AND end_date >= $2`,
+                [req.userOrgId, date]
+            )).rows[0];
+            if (lockedPeriod) {
+                return res.status(400).json({ error: `This date is in a locked pay period (${lockedPeriod.label}). Time entries cannot be deleted.` });
+            }
+        }
 
         const tzMod = getTzModifier(req);
         const protectedRes = await req.db.query(
@@ -711,6 +741,7 @@ router.delete('/entries/:date', auth, async (req, res) => {
 router.get('/entries/:date', auth, async (req, res) => {
     try {
         const { date } = req.params;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Invalid date format' });
         const tzMod = getTzModifier(req);
         const result = await req.db.query(
             `SELECT * FROM time_entries
@@ -751,7 +782,7 @@ router.get('/widgets', auth, async (req, res) => {
         let leaveDatesSet = new Set();
         try {
             const leaveRes = await req.db.query(
-                `SELECT date FROM leaves WHERE user_id = $1 AND date::date >= $2::date - INTERVAL '60 days' AND date::date <= $3::date`,
+                `SELECT date FROM leaves WHERE user_id = $1 AND status = 'approved' AND date::date >= $2::date - INTERVAL '60 days' AND date::date <= $3::date`,
                 [req.userId, today, today],
             );
             leaveRes.rows.forEach(r => leaveDatesSet.add(r.date));
@@ -900,6 +931,7 @@ router.post('/overtime-request', auth, loadUserContext, async (req, res) => {
     try {
         const { date, hours, reason } = req.body;
         if (!date || !hours || !reason) return res.status(400).json({ error: 'Date, hours, and reason are required' });
+        if (typeof reason !== 'string' || reason.length > 500) return res.status(400).json({ error: 'Reason must be 500 characters or less' });
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Invalid date format' });
         const numHours = parseFloat(hours);
         if (isNaN(numHours) || numHours <= 0 || numHours > 24) return res.status(400).json({ error: 'Hours must be between 0 and 24' });

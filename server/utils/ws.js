@@ -27,7 +27,34 @@ function clientKey(tenantId, userId) {
 }
 
 function setupWebSocket(server) {
-    const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 64 * 1024 });
+    const wss = new WebSocketServer({
+        server,
+        path: '/ws',
+        maxPayload: 64 * 1024,
+        verifyClient: ({ req }, done) => {
+            // Prevent Cross-Site WebSocket Hijacking (CSWSH)
+            const origin = req.headers.origin;
+            if (!origin) return done(true); // non-browser clients (Electron, curl) have no Origin
+
+            const host = req.headers.host;
+            if (host && (origin === `https://${host}` || origin === `http://${host}`)) return done(true);
+
+            if (origin.startsWith('workpulse://')) return done(true);
+
+            if (process.env.CORS_ORIGIN) {
+                const allowed = process.env.CORS_ORIGIN.split(',').map(s => s.trim());
+                if (allowed.includes(origin)) return done(true);
+            }
+
+            if (process.env.NODE_ENV !== 'production') {
+                const devOrigins = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173', 'http://localhost:5000'];
+                if (devOrigins.includes(origin)) return done(true);
+            }
+
+            logger.warn({ origin }, 'WebSocket connection rejected: invalid origin');
+            done(false, 403, 'Origin not allowed');
+        },
+    });
 
     // ── Redis Pub/Sub: subscribe to user message channels ──
     const sub = redis.getSubscriber();
@@ -124,9 +151,19 @@ function setupWebSocket(server) {
         }
 
         ws.on('message', (raw) => {
+            // Per-connection rate limiting: max 30 messages per second
+            const now = Date.now();
+            if (!ws._rlWindow || now - ws._rlWindow > 1000) {
+                ws._rlWindow = now;
+                ws._rlCount = 0;
+            }
+            if (++ws._rlCount > 30) return; // silently drop excessive messages
+
             try {
                 const msg = JSON.parse(raw);
-                handleChatMessage(db, userId, tenantId, msg);
+                handleChatMessage(db, userId, tenantId, msg).catch(err => {
+                    logger.warn({ err: err.message, userId, tenantId }, 'WS message handler error');
+                });
             } catch { /* ignore non-JSON */ }
         });
 
@@ -387,6 +424,13 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
         const { callId, conversationId } = msg.data || {};
         if (!callId || !conversationId) return;
 
+        // Verify sender is a participant in this conversation
+        const isParticipant = (await db.query(
+            'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
+            [conversationId, senderId]
+        )).rows[0];
+        if (!isParticipant) return;
+
         const callLog = (await db.query(
             `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2`,
             [callId, conversationId]
@@ -420,6 +464,13 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
         const { callId, conversationId } = msg.data || {};
         if (!callId || !conversationId) return;
 
+        // Verify sender is a participant in this conversation
+        const isParticipant = (await db.query(
+            'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
+            [conversationId, senderId]
+        )).rows[0];
+        if (!isParticipant) return;
+
         const callLog = (await db.query(
             `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2`,
             [callId, conversationId]
@@ -437,8 +488,6 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
              ended_at = NOW(), duration = $2 WHERE id = $1`,
             [callId, duration]
         );
-
-        const finalStatus = callLog.status === 'ringing' ? 'missed' : 'ended';
 
         // Notify all participants about call end
         const allParticipants = (await db.query(
@@ -601,6 +650,13 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
         const { meetingId } = msg.data || {};
         if (!meetingId) return;
 
+        // Verify sender is actually a joined participant
+        const isJoined = (await db.query(
+            `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
+            [meetingId, senderId]
+        )).rows[0];
+        if (!isJoined) return;
+
         await db.query(
             `UPDATE meeting_participants SET status = 'left', left_at = NOW() WHERE meeting_id = $1 AND user_id = $2`,
             [meetingId, senderId]
@@ -679,12 +735,18 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
         const { meetingId, targetUserId, signal } = msg.data || {};
         if (!meetingId || !targetUserId || !signal) return;
 
-        // Verify both are active participants
+        // Verify both sender and target are active participants
         const senderOk = (await db.query(
             `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
             [meetingId, senderId]
         )).rows[0];
         if (!senderOk) return;
+
+        const targetOk = (await db.query(
+            `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
+            [meetingId, targetUserId]
+        )).rows[0];
+        if (!targetOk) return;
 
         sendToUser(tenantId, targetUserId, 'meeting_signal', {
             meetingId,
@@ -886,11 +948,15 @@ function sendToUser(tenantId, userId, type, data) {
 }
 
 /**
- * Broadcast to all connected clients (local instance).
+ * Broadcast to all connected clients of a specific tenant (local instance).
+ * tenantId is required to prevent cross-tenant data leaks.
  */
-function broadcast(type, data) {
+function broadcast(tenantId, type, data) {
     const msg = JSON.stringify({ type, data });
-    for (const [, set] of clients) {
+    for (const [key, set] of clients) {
+        // Only deliver to connections belonging to the specified tenant
+        const keyTenant = key.split(':')[0];
+        if (String(tenantId || 0) !== keyTenant) continue;
         for (const ws of set) {
             if (ws.readyState === 1) ws.send(msg);
         }

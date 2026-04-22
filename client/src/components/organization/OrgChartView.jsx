@@ -22,7 +22,7 @@ function MemberChip({ member, highlight, showDeptTeam }) {
     const escapedHl = hl ? hl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : null;
     const hiName = escapedHl && name.toLowerCase().includes(hl)
         ? DOMPurify.sanitize(name.replace(new RegExp(`(${escapedHl})`, 'gi'), '<mark>$1</mark>'))
-        : name;
+        : DOMPurify.sanitize(name);
     const deptTeamLabel = showDeptTeam
         ? [member.department_name, member.team_name].filter(Boolean).join(' › ') || null
         : null;

@@ -260,8 +260,19 @@ router.delete('/', auth, async (req, res) => {
         const { password } = req.body;
         if (!password) return res.status(400).json({ error: 'Password is required to delete your account' });
 
-        const user = (await req.db.query('SELECT password, avatar FROM users WHERE id = $1', [req.userId])).rows[0];
+        const user = (await req.db.query('SELECT password, avatar, role, org_id FROM users WHERE id = $1', [req.userId])).rows[0];
         if (!(await bcrypt.compare(password, user.password))) return res.status(400).json({ error: 'Incorrect password' });
+
+        // Prevent sole admin from deleting their account
+        if (['super_admin', 'hr_admin'].includes(user.role) && user.org_id) {
+            const adminCount = (await req.db.query(
+                "SELECT COUNT(*) FROM users WHERE org_id = $1 AND role IN ('super_admin', 'hr_admin') AND id != $2 AND is_active = TRUE",
+                [user.org_id, req.userId]
+            )).rows[0].count;
+            if (parseInt(adminCount) === 0) {
+                return res.status(400).json({ error: 'Cannot delete account: you are the only admin in your organization. Transfer admin role first.' });
+            }
+        }
 
         if (user.avatar) {
             try { await fsPromises.unlink(safeAvatarPath(user.avatar)); } catch { }
@@ -270,14 +281,29 @@ router.delete('/', auth, async (req, res) => {
         await req.db.transaction(async (client) => {
             await client.query('DELETE FROM time_entries WHERE user_id = $1', [req.userId]);
             await client.query('DELETE FROM leaves WHERE user_id = $1', [req.userId]);
-            await client.query('DELETE FROM tasks WHERE user_id = $1', [req.userId]);
+            await client.query('DELETE FROM leave_balances WHERE user_id = $1', [req.userId]);
+            await client.query('DELETE FROM task_comments WHERE user_id = $1', [req.userId]);
+            await client.query('DELETE FROM tasks WHERE user_id = $1 OR assigned_to = $1', [req.userId]);
             await client.query('DELETE FROM password_reset_tokens WHERE user_id = $1', [req.userId]);
             await client.query('DELETE FROM approval_requests WHERE requester_id = $1', [req.userId]);
-            await client.query('DELETE FROM leave_balances WHERE user_id = $1', [req.userId]);
+            await client.query('DELETE FROM notifications WHERE user_id = $1', [req.userId]);
+            await client.query('DELETE FROM user_sessions WHERE user_id = $1', [req.userId]);
+            await client.query('DELETE FROM starred_messages WHERE user_id = $1', [req.userId]);
+            await client.query('DELETE FROM message_reads WHERE user_id = $1', [req.userId]);
+            await client.query('DELETE FROM message_reactions WHERE user_id = $1', [req.userId]);
+            await client.query('DELETE FROM conversation_participants WHERE user_id = $1', [req.userId]);
+            await client.query('DELETE FROM meeting_participants WHERE user_id = $1', [req.userId]);
             try { await client.query('DELETE FROM audit_logs WHERE actor_id = $1', [req.userId]); } catch { }
             await client.query('UPDATE users SET manager_id = NULL WHERE manager_id = $1', [req.userId]);
             await client.query('DELETE FROM users WHERE id = $1', [req.userId]);
         });
+
+        // Clean up master user_directory entry
+        if (req.tenantId) {
+            try {
+                await masterQuery('DELETE FROM user_directory WHERE tenant_id = $1 AND user_id = $2', [req.tenantId, req.userId]);
+            } catch { /* ignore if table doesn't exist */ }
+        }
 
         res.clearCookie('token', { httpOnly: true, sameSite: 'strict', path: '/' });
         res.json({ message: 'Account deleted successfully' });

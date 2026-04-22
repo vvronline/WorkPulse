@@ -138,14 +138,18 @@ describe('GET /api/tracker/status', () => {
                 rows: [{ entry_type: 'clock_in', timestamp: nineHoursAgo, work_mode: 'office' }],
                 rowCount: 1,
             })                                                                          // time_entries: 9hr session active
-            .mockResolvedValueOnce({ rows: [], rowCount: 0 })                          // INSERT clock_out
             .mockResolvedValueOnce({
                 rows: [
                     { entry_type: 'clock_in', timestamp: nineHoursAgo, work_mode: 'office' },
                     { entry_type: 'clock_out', timestamp: nowTs },
                 ],
                 rowCount: 2,
-            });                                                                        // refreshed entries
+            });                                                                        // refreshed entries after auto-clock-out
+
+        // Auto-clock-out now runs inside a transaction
+        mockTxClient.query
+            .mockResolvedValueOnce({ rows: [{ entry_type: 'clock_in' }], rowCount: 1 }) // SELECT FOR UPDATE latest entry
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 });                          // INSERT clock_out
 
         const res = await request(app)
             .get('/api/tracker/status')

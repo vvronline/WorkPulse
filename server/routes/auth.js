@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
 const redis = require('../redis');
-const { masterQuery } = require('../db');
+const { masterQuery, masterTransaction } = require('../db');
 const { getTenantPool, getTenantById, createTenant } = require('../utils/tenantManager');
 const { validatePassword, validateUsername, BCRYPT_ROUNDS } = require('../utils/password');
 const { logger } = require('../utils/logger');
@@ -156,24 +156,32 @@ router.post('/register', async (req, res) => {
                 db = { query: poolEntry.query, transaction: poolEntry.transaction };
             } else {
                 // No tenant context — check if first-ever user (platform_admin bootstrap)
-                const platCount = (await masterQuery('SELECT COUNT(*) FROM platform_users')).rows[0].count;
-                const tenantCount = (await masterQuery('SELECT COUNT(*) FROM tenants')).rows[0].count;
-                if (parseInt(platCount) === 0 && parseInt(tenantCount) === 0) {
-                    // Bootstrap: create platform_admin in master DB
-                    const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
-                    const result = await masterQuery(
-                        'INSERT INTO platform_users (username, password, full_name, email) VALUES ($1,$2,$3,$4) RETURNING id',
-                        [username, hash, full_name, email]
-                    );
-                    const sid = await createSession(result.rows[0].id, req.headers['user-agent'], { query: masterQuery }, null);
+                // Use advisory lock to prevent race condition where two concurrent requests
+                // both see zero counts and both create a platform_admin
+                const bootstrapResult = await masterTransaction(async (client) => {
+                    await client.query('SELECT pg_advisory_xact_lock(1)'); // lock #1 = bootstrap
+                    const platCount = (await client.query('SELECT COUNT(*) FROM platform_users')).rows[0].count;
+                    const tenantCount = (await client.query('SELECT COUNT(*) FROM tenants')).rows[0].count;
+                    if (parseInt(platCount) === 0 && parseInt(tenantCount) === 0) {
+                        const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+                        const result = await client.query(
+                            'INSERT INTO platform_users (username, password, full_name, email) VALUES ($1,$2,$3,$4) RETURNING id',
+                            [username, hash, full_name, email]
+                        );
+                        return result.rows[0];
+                    }
+                    return null;
+                });
+                if (bootstrapResult) {
+                    const sid = await createSession(bootstrapResult.id, req.headers['user-agent'], { query: masterQuery }, null);
                     const token = jwt.sign(
-                        { id: result.rows[0].id, username, tv: 0, sid, tenant_id: null, platform: true },
+                        { id: bootstrapResult.id, username, tv: 0, sid, tenant_id: null, platform: true },
                         process.env.JWT_SECRET,
                         { expiresIn: '8h' }
                     );
                     res.cookie('token', token, cookieOptions(req));
                     return res.json({
-                        user: { id: result.rows[0].id, username, full_name, email, avatar: null, role: 'platform_admin', org_id: null }
+                        user: { id: bootstrapResult.id, username, full_name, email, avatar: null, role: 'platform_admin', org_id: null }
                     });
                 }
                 return res.status(400).json({ error: 'Please register from your organization domain or use an invite link.' });
@@ -247,11 +255,19 @@ router.post('/register', async (req, res) => {
             return ins.rows[0];
         });
 
-        // Add to user_directory in master DB
-        await masterQuery(
-            'INSERT INTO user_directory (email, username, tenant_id, user_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
-            [email.toLowerCase(), username.toLowerCase(), tenantId, result.id]
-        );
+        // Add to user_directory in master DB (retry once on failure — cross-DB so can't share transaction)
+        try {
+            await masterQuery(
+                'INSERT INTO user_directory (email, username, tenant_id, user_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
+                [email.toLowerCase(), username.toLowerCase(), tenantId, result.id]
+            );
+        } catch (dirErr) {
+            req.log.error({ err: dirErr }, 'user_directory insert failed, retrying');
+            await masterQuery(
+                'INSERT INTO user_directory (email, username, tenant_id, user_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
+                [email.toLowerCase(), username.toLowerCase(), tenantId, result.id]
+            );
+        }
 
         const sid = await createSession(result.id, req.headers['user-agent'], db, tenantId);
         const token = jwt.sign(
@@ -648,11 +664,23 @@ router.post('/refresh', auth, async (req, res) => {
         const row = (await req.db.query('SELECT token_version FROM users WHERE id = $1', [req.userId])).rows[0];
         if (!row) return res.status(401).json({ error: 'User not found' });
 
-        const token = jwt.sign(
-            { id: req.userId, username: req.username, tv: row.token_version || 0, sid: req.sessionId, tenant_id: req.tenantId || null },
-            process.env.JWT_SECRET,
-            { expiresIn: '8h' },
-        );
+        const claims = {
+            id: req.userId,
+            username: req.username,
+            tv: row.token_version || 0,
+            sid: req.sessionId,
+            tenant_id: req.tenantId || null,
+        };
+        // Preserve platform_admin flag across refreshes
+        if (req.isPlatformUser) claims.platform = true;
+        // Preserve impersonation state
+        if (req.isImpersonated) {
+            claims.impersonated = true;
+            claims.impersonated_by = req.impersonatedBy;
+            if (req.impersonatedTenantName) claims.impersonated_tenant_name = req.impersonatedTenantName;
+        }
+
+        const token = jwt.sign(claims, process.env.JWT_SECRET, { expiresIn: '8h' });
         res.cookie('token', token, cookieOptions(req));
         res.json({ message: 'Token refreshed' });
     } catch (err) {

@@ -124,14 +124,21 @@ router.get('/presence', auth, async (req, res) => {
         const orgId = await getUserOrg(req.userId, req.db);
         if (!orgId) return res.json({});
 
-        // Try Redis presence first
+        // Try Redis presence first — but filter by org membership
         const redisPresence = await redis.getOnlineUsers(req.tenantId, ids);
         const redisStatuses = await redis.getUserStatuses(req.tenantId, ids);
 
         if (redisPresence) {
-            // Merge presence with status
+            // Filter to only users in the same org (prevent cross-org presence leak)
+            const orgMembers = (await req.db.query(
+                'SELECT id FROM users WHERE id = ANY($1) AND org_id = $2',
+                [ids, orgId]
+            )).rows.map(r => r.id);
+            const orgMemberSet = new Set(orgMembers);
+
             const result = {};
             for (const id of ids) {
+                if (!orgMemberSet.has(id)) continue;
                 result[id] = {
                     presence: redisPresence[id] || 'offline',
                     userStatus: redisStatuses?.[id] || 'available'
@@ -216,22 +223,21 @@ router.post('/conversations', auth, async (req, res) => {
             if (!selfUser) return res.status(400).json({ error: 'User not found' });
             const orgId = selfUser.org_id;
 
-            // Check for existing self-conversation (only 1 participant)
-            const existing = (await req.db.query(`
-                SELECT cp.conversation_id
-                FROM conversation_participants cp
-                JOIN conversations c ON c.id = cp.conversation_id
-                WHERE cp.user_id = $1
-                  AND c.is_group = FALSE
-                  AND (SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = cp.conversation_id) = 1
-                LIMIT 1
-            `, [req.userId])).rows[0];
-
-            if (existing) {
-                return res.json({ conversationId: existing.conversation_id });
-            }
-
             const conv = await req.db.transaction(async (client) => {
+                // Check inside transaction to prevent duplicate self-chats
+                const existing = (await client.query(`
+                    SELECT cp.conversation_id
+                    FROM conversation_participants cp
+                    JOIN conversations c ON c.id = cp.conversation_id
+                    WHERE cp.user_id = $1
+                      AND c.is_group = FALSE
+                      AND (SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = cp.conversation_id) = 1
+                    LIMIT 1
+                    FOR UPDATE
+                `, [req.userId])).rows[0];
+
+                if (existing) return { id: existing.conversation_id, existed: true };
+
                 const c = (await client.query(
                     'INSERT INTO conversations (org_id) VALUES ($1) RETURNING id',
                     [orgId]
@@ -243,7 +249,7 @@ router.post('/conversations', auth, async (req, res) => {
                 return c;
             });
 
-            return res.status(201).json({ conversationId: conv.id });
+            return res.status(conv.existed ? 200 : 201).json({ conversationId: conv.id });
         }
 
         const users = (await req.db.query(
@@ -256,22 +262,22 @@ router.post('/conversations', auth, async (req, res) => {
         }
         const orgId = users[0].org_id;
 
-        const existing = (await req.db.query(`
-            SELECT cp1.conversation_id
-            FROM conversation_participants cp1
-            JOIN conversation_participants cp2 ON cp1.conversation_id = cp2.conversation_id
-            JOIN conversations c ON c.id = cp1.conversation_id
-            WHERE cp1.user_id = $1 AND cp2.user_id = $2
-              AND c.is_group = FALSE
-              AND (SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = cp1.conversation_id) = 2
-            LIMIT 1
-        `, [req.userId, otherUserId])).rows[0];
-
-        if (existing) {
-            return res.json({ conversationId: existing.conversation_id });
-        }
-
         const conv = await req.db.transaction(async (client) => {
+            // Check inside transaction to prevent duplicate 1:1 conversations
+            const existing = (await client.query(`
+                SELECT cp1.conversation_id
+                FROM conversation_participants cp1
+                JOIN conversation_participants cp2 ON cp1.conversation_id = cp2.conversation_id
+                JOIN conversations c ON c.id = cp1.conversation_id
+                WHERE cp1.user_id = $1 AND cp2.user_id = $2
+                  AND c.is_group = FALSE
+                  AND (SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = cp1.conversation_id) = 2
+                LIMIT 1
+                FOR UPDATE
+            `, [req.userId, otherUserId])).rows[0];
+
+            if (existing) return { id: existing.conversation_id, existed: true };
+
             const c = (await client.query(
                 'INSERT INTO conversations (org_id) VALUES ($1) RETURNING id',
                 [orgId]
@@ -282,6 +288,10 @@ router.post('/conversations', auth, async (req, res) => {
             );
             return c;
         });
+
+        if (conv.existed) {
+            return res.json({ conversationId: conv.id });
+        }
 
         res.status(201).json({ conversationId: conv.id });
     } catch (err) {
@@ -478,6 +488,7 @@ router.get('/conversations', auth, async (req, res) => {
             ) m ON TRUE
             LEFT JOIN message_reads mr ON mr.conversation_id = c.id AND mr.user_id = $1
             ORDER BY cp.is_pinned DESC, COALESCE(m.created_at, c.created_at) DESC
+            LIMIT 200
         `, [req.userId])).rows;
 
         // Overlay Redis unread counts if available (faster than the SQL subquery)
@@ -739,7 +750,7 @@ router.post('/messages/:id/reactions', auth, async (req, res) => {
             action = 'removed';
         } else {
             await req.db.query(
-                'INSERT INTO message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3)',
+                'INSERT INTO message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3) ON CONFLICT (message_id, user_id, emoji) DO NOTHING',
                 [msgId, req.userId, emoji]
             );
             action = 'added';
@@ -939,7 +950,7 @@ router.get('/search-messages', auth, async (req, res) => {
         const orgId = await getUserOrg(req.userId, req.db);
         if (!orgId) return res.json([]);
 
-        const searchPattern = `%${q.trim()}%`;
+        const searchPattern = `%${q.trim().replace(/[%_]/g, c => `\\${c}`)}%`;
         let sql, params;
 
         if (convId) {
@@ -998,6 +1009,9 @@ router.post('/messages/:id/forward', auth, async (req, res) => {
         const { conversationIds } = req.body;
         if (!Array.isArray(conversationIds) || conversationIds.length === 0) {
             return res.status(400).json({ error: 'No conversations selected' });
+        }
+        if (conversationIds.length > 20) {
+            return res.status(400).json({ error: 'Cannot forward to more than 20 conversations at once' });
         }
 
         const original = (await req.db.query(
@@ -1387,6 +1401,12 @@ router.delete('/conversations/:id/messages', auth, async (req, res) => {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
+        // Only group creator or 1-on-1 participants can clear all messages
+        const conv = (await req.db.query('SELECT is_group, created_by FROM conversations WHERE id = $1', [convId])).rows[0];
+        if (conv?.is_group && conv.created_by !== req.userId) {
+            return res.status(403).json({ error: 'Only the group creator can clear all messages' });
+        }
+
         await req.db.query('DELETE FROM messages WHERE conversation_id = $1', [convId]);
         await req.db.query(
             "UPDATE conversations SET updated_at = NOW() WHERE id = $1",
@@ -1429,6 +1449,12 @@ router.delete('/conversations/:id', auth, async (req, res) => {
             return res.status(403).json({ error: 'Not a participant' });
         }
 
+        // Only group creator can delete group conversations; 1-on-1 chats can be deleted by either party
+        const conv = (await req.db.query('SELECT is_group, created_by FROM conversations WHERE id = $1', [convId])).rows[0];
+        if (conv?.is_group && conv.created_by !== req.userId) {
+            return res.status(403).json({ error: 'Only the group creator can delete this conversation' });
+        }
+
         // Notify other participants before deletion
         const participants = (await req.db.query(
             'SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2',
@@ -1460,6 +1486,15 @@ router.post('/messages/:id/delivered', auth, async (req, res) => {
     try {
         const msgId = parseInt(req.params.id, 10);
         if (isNaN(msgId)) return res.status(400).json({ error: 'Invalid message' });
+
+        // Verify user is a participant in the message's conversation
+        const msg = (await req.db.query(
+            `SELECT m.conversation_id FROM messages m
+             JOIN conversation_participants cp ON cp.conversation_id = m.conversation_id AND cp.user_id = $1
+             WHERE m.id = $2`,
+            [req.userId, msgId]
+        )).rows[0];
+        if (!msg) return res.status(403).json({ error: 'Not a participant' });
 
         await req.db.query(
             `UPDATE messages SET delivered_to = delivered_to || $1::jsonb

@@ -33,7 +33,7 @@
     networks:
       - workpulse-internal
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$REDIS_PASSWORD redis-cli ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -85,6 +85,7 @@
       - caddy_config:/config
     networks:
       - workpulse-internal
+      - workpulse-external
 
 volumes:
   caddy_data:
@@ -93,4 +94,6 @@ volumes:
 networks:
   workpulse-internal:
     driver: bridge
-    internal: false
+    internal: true
+  workpulse-external:
+    driver: bridge

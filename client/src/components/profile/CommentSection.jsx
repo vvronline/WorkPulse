@@ -19,7 +19,7 @@ const COMMENT_QUILL_MODULES = {
 function highlightHtml(raw) {
   if (!raw) return '';
   const clean = DOMPurify.sanitize(raw, DOMPURIFY_CONFIG);
-  return clean.replace(/<pre\b[^>]*>([\s\S]*?)<\/pre>/gi, (match, code) => {
+  const highlighted = clean.replace(/<pre\b[^>]*>([\s\S]*?)<\/pre>/gi, (match, code) => {
     const txt = code.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"');
     try {
       const result = hljs.highlightAuto(txt);
@@ -28,6 +28,8 @@ function highlightHtml(raw) {
       return match;
     }
   });
+  // Re-sanitize after hljs mutation to prevent entity-decode XSS
+  return DOMPurify.sanitize(highlighted, DOMPURIFY_CONFIG);
 }
 
 function HighlightedHtml({ html, className, ...rest }) {

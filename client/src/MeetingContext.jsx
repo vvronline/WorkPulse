@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useUserStatus } from './UserStatusContext';
 
 const MeetingCtx = createContext(null);
@@ -113,15 +113,17 @@ export function MeetingProvider({ children }) {
         };
     }, []);
 
+    const value = useMemo(() => ({
+        session,
+        joinMeeting,
+        leaveMeeting,
+        setLocalStream,
+        localStreamRef,
+        wsRef,
+    }), [session, joinMeeting, leaveMeeting, setLocalStream]);
+
     return (
-        <MeetingCtx.Provider value={{
-            session,
-            joinMeeting,
-            leaveMeeting,
-            setLocalStream,
-            localStreamRef,
-            wsRef,
-        }}>
+        <MeetingCtx.Provider value={value}>
             {children}
         </MeetingCtx.Provider>
     );

@@ -180,8 +180,9 @@ describe('POST /api/chat/conversations', () => {
     test('creates self-chat conversation when userId is self', async () => {
         setupAuth();
         mockQuery.mockResolvedValueOnce({ rows: [{ id: 1, org_id: 1 }], rowCount: 1 }); // self user lookup
-        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // no existing self-conversation
+        // Existence check now inside transaction
         mockTxClient.query
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // no existing self-conversation (FOR UPDATE)
             .mockResolvedValueOnce({ rows: [{ id: 50 }], rowCount: 1 }) // INSERT conversation
             .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // INSERT participant
 
@@ -198,7 +199,9 @@ describe('POST /api/chat/conversations', () => {
     test('returns existing self-chat if already exists', async () => {
         setupAuth();
         mockQuery.mockResolvedValueOnce({ rows: [{ id: 1, org_id: 1 }], rowCount: 1 }); // self user lookup
-        mockQuery.mockResolvedValueOnce({ rows: [{ conversation_id: 99 }], rowCount: 1 }); // existing self-conv
+        // Existence check now inside transaction
+        mockTxClient.query
+            .mockResolvedValueOnce({ rows: [{ conversation_id: 99 }], rowCount: 1 }); // existing self-conv (FOR UPDATE)
 
         const res = await request(app)
             .post('/api/chat/conversations')
@@ -246,7 +249,9 @@ describe('POST /api/chat/conversations', () => {
     test('returns existing conversation id when direct chat already exists', async () => {
         setupAuth();
         mockQuery.mockResolvedValueOnce({ rows: [{ id: 1, org_id: 1 }, { id: 2, org_id: 1 }], rowCount: 2 }); // users found
-        mockQuery.mockResolvedValueOnce({ rows: [{ conversation_id: 42 }], rowCount: 1 }); // existing conv
+        // Existence check now inside transaction
+        mockTxClient.query
+            .mockResolvedValueOnce({ rows: [{ conversation_id: 42 }], rowCount: 1 }); // existing conv (FOR UPDATE)
 
         const res = await request(app)
             .post('/api/chat/conversations')
@@ -261,8 +266,9 @@ describe('POST /api/chat/conversations', () => {
     test('creates a new conversation when none exists', async () => {
         setupAuth();
         mockQuery.mockResolvedValueOnce({ rows: [{ id: 1, org_id: 1 }, { id: 2, org_id: 1 }], rowCount: 2 }); // users found
-        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // no existing conv
+        // Existence check now inside transaction
         mockTxClient.query
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // no existing conv (FOR UPDATE)
             .mockResolvedValueOnce({ rows: [{ id: 55 }], rowCount: 1 }) // INSERT conversation
             .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // INSERT participants
 

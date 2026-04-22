@@ -101,11 +101,20 @@ describe('POST /api/auth/register', () => {
     test('bootstraps platform_admin when no users exist', async () => {
         mockQuery
             .mockResolvedValueOnce({ rows: [], rowCount: 0 })           // user_directory miss
-            .mockResolvedValueOnce({ rows: [{ count: '0' }], rowCount: 1 }) // 0 platform_users
-            .mockResolvedValueOnce({ rows: [{ count: '0' }], rowCount: 1 }) // 0 tenants
-            .mockResolvedValueOnce({ rows: [{ id: 1 }], rowCount: 1 }) // INSERT platform_user
-            .mockResolvedValueOnce({ rows: [], rowCount: 0 })          // INSERT session
-            .mockResolvedValueOnce({ rows: [{ id: 'sess' }], rowCount: 1 }); // list sessions
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 })          // INSERT session (createSession)
+            .mockResolvedValueOnce({ rows: [{ id: 'sess' }], rowCount: 1 }); // list sessions (createSession)
+
+        // Bootstrap now runs inside masterTransaction — mock the transaction client
+        mockTransaction.mockImplementationOnce(async (fn) => {
+            const txClient = {
+                query: jest.fn()
+                    .mockResolvedValueOnce({ rows: [], rowCount: 0 })               // pg_advisory_xact_lock
+                    .mockResolvedValueOnce({ rows: [{ count: '0' }], rowCount: 1 }) // platform_users count
+                    .mockResolvedValueOnce({ rows: [{ count: '0' }], rowCount: 1 }) // tenants count
+                    .mockResolvedValueOnce({ rows: [{ id: 1 }], rowCount: 1 })      // INSERT platform_user
+            };
+            return fn(txClient);
+        });
 
         const res = await request(app)
             .post('/api/auth/register')

@@ -233,6 +233,7 @@ router.get('/', auth, loadUserContext, async (req, res) => {
                 CASE t.priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END,
                 CASE t.status WHEN 'in_progress' THEN 1 WHEN 'in_review' THEN 2 WHEN 'pending' THEN 3 WHEN 'done' THEN 4 END,
                 t.created_at ASC
+            LIMIT 500
         `, params)).rows;
 
         const enriched = await enrichTasks(tasks, req.db);
@@ -802,6 +803,7 @@ router.get('/:id/comments', auth, loadUserContext, async (req, res) => {
             JOIN users u ON u.id = tc.user_id
             WHERE tc.task_id = $1
             ORDER BY tc.created_at ASC
+            LIMIT 200
         `, [req.params.id])).rows;
 
         res.json(comments);
@@ -879,8 +881,12 @@ router.post('/:id/comments', auth, loadUserContext, async (req, res) => {
 });
 
 // ─── Edit comment (author only) ───────────────────────────────────────────
-router.put('/:id/comments/:commentId', auth, async (req, res) => {
+router.put('/:id/comments/:commentId', auth, loadUserContext, async (req, res) => {
     try {
+        const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [req.params.id])).rows[0];
+        if (!task || !(await canAccessTask(task, req.userId, req.userOrgId, req.db))) {
+            return res.status(404).json({ error: 'Task not found' });
+        }
         const comment = (await req.db.query('SELECT * FROM task_comments WHERE id = $1 AND task_id = $2', [req.params.commentId, req.params.id])).rows[0];
         if (!comment || comment.user_id !== req.userId) return res.status(404).json({ error: 'Comment not found' });
 
@@ -906,9 +912,12 @@ router.put('/:id/comments/:commentId', auth, async (req, res) => {
 });
 
 // ─── Delete comment (author or task creator) ──────────────────────────────
-router.delete('/:id/comments/:commentId', auth, async (req, res) => {
+router.delete('/:id/comments/:commentId', auth, loadUserContext, async (req, res) => {
     try {
         const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [req.params.id])).rows[0];
+        if (!task || !(await canAccessTask(task, req.userId, req.userOrgId, req.db))) {
+            return res.status(404).json({ error: 'Task not found' });
+        }
         const comment = (await req.db.query('SELECT * FROM task_comments WHERE id = $1 AND task_id = $2', [req.params.commentId, req.params.id])).rows[0];
         if (!comment) return res.status(404).json({ error: 'Comment not found' });
         if (comment.user_id !== req.userId && (!task || task.user_id !== req.userId)) {
@@ -1159,6 +1168,7 @@ router.get('/:id/history', auth, loadUserContext, async (req, res) => {
             JOIN users u ON u.id = th.user_id
             WHERE th.task_id = $1
             ORDER BY th.created_at DESC
+            LIMIT 200
         `, [req.params.id])).rows;
 
         res.json(history);
