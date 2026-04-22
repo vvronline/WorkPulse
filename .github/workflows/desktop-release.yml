@@ -6,7 +6,48 @@ on:
       - 'v*' # Triggers on version tags like v1.0.0, v1.2.3
 
 jobs:
+  init-releases-repo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Initialize releases repo if empty
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+        run: |
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/vvronline/WorkPulse-releases/git/refs/heads/main")
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "Releases repo is empty, initializing with a README..."
+            BLOB=$(curl -s -X POST \
+              -H "Authorization: token $GH_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.github.com/repos/vvronline/WorkPulse-releases/git/blobs" \
+              -d '{"content":"# WorkPulse Releases\n\nDesktop application release binaries.\n","encoding":"utf-8"}')
+            BLOB_SHA=$(echo "$BLOB" | jq -r '.sha')
+            TREE=$(curl -s -X POST \
+              -H "Authorization: token $GH_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.github.com/repos/vvronline/WorkPulse-releases/git/trees" \
+              -d "{\"tree\":[{\"path\":\"README.md\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"$BLOB_SHA\"}]}")
+            TREE_SHA=$(echo "$TREE" | jq -r '.sha')
+            COMMIT=$(curl -s -X POST \
+              -H "Authorization: token $GH_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.github.com/repos/vvronline/WorkPulse-releases/git/commits" \
+              -d "{\"message\":\"Initial commit\",\"tree\":\"$TREE_SHA\"}")
+            COMMIT_SHA=$(echo "$COMMIT" | jq -r '.sha')
+            curl -s -X POST \
+              -H "Authorization: token $GH_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.github.com/repos/vvronline/WorkPulse-releases/git/refs" \
+              -d "{\"ref\":\"refs/heads/main\",\"sha\":\"$COMMIT_SHA\"}"
+            echo "Releases repo initialized."
+          else
+            echo "Releases repo already has commits, skipping init."
+          fi
+
   build:
+    needs: init-releases-repo
     permissions:
       contents: write
     strategy:
