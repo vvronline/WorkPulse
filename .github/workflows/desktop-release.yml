@@ -5,52 +5,68 @@ on:
     tags:
       - 'v*' # Triggers on version tags like v1.0.0, v1.2.3
 
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  init-releases-repo:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate tag matches package.json version
+        id: check
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          PKG_VERSION=$(node -p "require('./desktop/package.json').version")
+          echo "Tag version: $TAG_VERSION"
+          echo "Package version: $PKG_VERSION"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
+            exit 1
+          fi
+          echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+
+  build-client:
+    needs: validate
     runs-on: ubuntu-latest
     steps:
-      - name: Initialize releases repo if empty
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install client dependencies
+        working-directory: client
+        run: npm ci
+
+      - name: Build client for Electron
+        working-directory: client
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
-        run: |
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: token $GH_TOKEN" \
-            "https://api.github.com/repos/vvronline/WorkPulse-releases/git/refs/heads/main")
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "Releases repo is empty, initializing with a README..."
-            BLOB=$(curl -s -X POST \
-              -H "Authorization: token $GH_TOKEN" \
-              -H "Content-Type: application/json" \
-              "https://api.github.com/repos/vvronline/WorkPulse-releases/git/blobs" \
-              -d '{"content":"# WorkPulse Releases\n\nDesktop application release binaries.\n","encoding":"utf-8"}')
-            BLOB_SHA=$(echo "$BLOB" | jq -r '.sha')
-            TREE=$(curl -s -X POST \
-              -H "Authorization: token $GH_TOKEN" \
-              -H "Content-Type: application/json" \
-              "https://api.github.com/repos/vvronline/WorkPulse-releases/git/trees" \
-              -d "{\"tree\":[{\"path\":\"README.md\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"$BLOB_SHA\"}]}")
-            TREE_SHA=$(echo "$TREE" | jq -r '.sha')
-            COMMIT=$(curl -s -X POST \
-              -H "Authorization: token $GH_TOKEN" \
-              -H "Content-Type: application/json" \
-              "https://api.github.com/repos/vvronline/WorkPulse-releases/git/commits" \
-              -d "{\"message\":\"Initial commit\",\"tree\":\"$TREE_SHA\"}")
-            COMMIT_SHA=$(echo "$COMMIT" | jq -r '.sha')
-            curl -s -X POST \
-              -H "Authorization: token $GH_TOKEN" \
-              -H "Content-Type: application/json" \
-              "https://api.github.com/repos/vvronline/WorkPulse-releases/git/refs" \
-              -d "{\"ref\":\"refs/heads/main\",\"sha\":\"$COMMIT_SHA\"}"
-            echo "Releases repo initialized."
-          else
-            echo "Releases repo already has commits, skipping init."
-          fi
+          VITE_WS_URL: wss://workpulse-prod.up.railway.app/ws
+          VITE_ELECTRON: 'true'
+        run: npm run build
+
+      - name: Upload client build
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-dist
+          path: client/dist
+          retention-days: 1
 
   build:
-    needs: init-releases-repo
+    needs: [validate, build-client]
     permissions:
       contents: write
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
@@ -69,20 +85,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
 
-      # Build the React client with Electron env vars
-      - name: Install client dependencies
-        working-directory: client
-        run: npm ci
+      - name: Download client build
+        uses: actions/download-artifact@v4
+        with:
+          name: client-dist
+          path: client/dist
 
-      - name: Build client for Electron
-        working-directory: client
-        env:
-          VITE_WS_URL: wss://workpulse-prod.up.railway.app/ws
-          VITE_ELECTRON: 'true'
-        run: npm run build
-
-      # Build the Electron app
       - name: Install desktop dependencies
         working-directory: desktop
         run: npm ci
@@ -92,3 +103,100 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: npx electron-builder ${{ matrix.args }} --publish always
+
+      - name: Generate checksums
+        shell: bash
+        working-directory: desktop/dist
+        run: |
+          echo "## Checksums (SHA-256)" > checksums.txt
+          for f in *.exe *.dmg *.AppImage *.deb *.zip *.blockmap *.yml *.yaml; do
+            [ -f "$f" ] && sha256sum "$f" >> checksums.txt
+          done
+          cat checksums.txt
+
+      - name: Upload checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksums-${{ matrix.os }}
+          path: desktop/dist/checksums.txt
+          retention-days: 30
+
+  release-notes:
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all checksums
+        uses: actions/download-artifact@v4
+        with:
+          pattern: checksums-*
+          path: checksums
+
+      - name: Generate release notes
+        id: notes
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          # Find previous tag
+          PREV_TAG=$(git tag --sort=-creatordate | grep '^v' | sed -n '2p')
+          
+          NOTES="## WorkPulse Desktop v${VERSION}\n\n"
+          
+          if [ -n "$PREV_TAG" ]; then
+            NOTES+="### Changes since ${PREV_TAG}\n\n"
+            # Group commits by type
+            FEATURES=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --grep="^feat" --no-merges 2>/dev/null || true)
+            FIXES=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --grep="^fix" --no-merges 2>/dev/null || true)
+            OTHER=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --invert-grep --grep="^feat" --grep="^fix" --no-merges 2>/dev/null | head -20 || true)
+            
+            if [ -n "$FEATURES" ]; then
+              NOTES+="### ✨ Features\n${FEATURES}\n\n"
+            fi
+            if [ -n "$FIXES" ]; then
+              NOTES+="### 🐛 Bug Fixes\n${FIXES}\n\n"
+            fi
+            if [ -n "$OTHER" ]; then
+              NOTES+="### 📝 Other Changes\n${OTHER}\n\n"
+            fi
+          fi
+          
+          # Append checksums
+          NOTES+="### 🔒 Checksums (SHA-256)\n\`\`\`\n"
+          for f in checksums/checksums-*/checksums.txt; do
+            if [ -f "$f" ]; then
+              NOTES+="$(cat "$f")\n"
+            fi
+          done
+          NOTES+="\`\`\`\n"
+          
+          # Write to file for the GitHub release
+          echo -e "$NOTES" > release-notes.md
+          cat release-notes.md
+
+      - name: Update release notes on releases repo
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          RELEASE_ID=$(curl -s \
+            -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/vvronline/WorkPulse-releases/releases/tags/v${VERSION}" \
+            | jq -r '.id // empty')
+          
+          if [ -n "$RELEASE_ID" ]; then
+            BODY=$(jq -Rs '.' < release-notes.md)
+            curl -s -X PATCH \
+              -H "Authorization: token $GH_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.github.com/repos/vvronline/WorkPulse-releases/releases/${RELEASE_ID}" \
+              -d "{\"body\": $BODY}"
+            echo "Updated release notes for v${VERSION}"
+          else
+            echo "Release v${VERSION} not found yet, skipping notes update"
+          fi

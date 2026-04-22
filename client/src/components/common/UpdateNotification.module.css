@@ -76,6 +76,14 @@
   flex-shrink: 0;
 }
 
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  margin-top: 0.25rem;
+}
+
 .actionBtn {
   background: var(--primary, #6c63ff);
   color: #fff;
@@ -86,11 +94,25 @@
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s;
-  margin-left: auto;
 }
 
 .actionBtn:hover {
   background: var(--primary-dark, #5a52e0);
+}
+
+.notesBtn {
+  background: transparent;
+  color: var(--primary, #6c63ff);
+  border: 1px solid var(--primary, #6c63ff);
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.notesBtn:hover {
+  background: rgba(108,99,255,0.1);
 }
 
 .dismissBtn {
@@ -102,10 +124,30 @@
   font-size: 0.8rem;
   cursor: pointer;
   transition: color 0.15s;
+  margin-left: auto;
 }
 
 .dismissBtn:hover {
   color: var(--text, #e0e0e0);
+}
+
+.releaseNotes {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--glass-border, rgba(255,255,255,0.08));
+  border-radius: 8px;
+  font-size: 0.78rem;
+  color: var(--text-secondary, #bbb);
+  max-height: 120px;
+  overflow-y: auto;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.releaseNotes p {
+  margin: 0 0 0.25rem;
 }
 
 .progressBar {

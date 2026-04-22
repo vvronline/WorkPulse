@@ -1,5 +1,14 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Helper: subscribe to an IPC channel and return an unsubscribe function
+function createListener(channel, transform) {
+    return (callback) => {
+        const handler = (_e, ...args) => callback(transform ? transform(...args) : args[0]);
+        ipcRenderer.on(channel, handler);
+        return () => ipcRenderer.removeListener(channel, handler);
+    };
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
     platform: process.platform,
     isElectron: true,
@@ -11,7 +20,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onMaximizeChange: (callback) => {
         const handler = (_e, val) => callback(val);
         ipcRenderer.on('maximize-change', handler);
-        // Store handler for cleanup
         if (!window.__maxChangeHandlers) window.__maxChangeHandlers = new Map();
         window.__maxChangeHandlers.set(callback, handler);
     },
@@ -24,12 +32,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
             }
         }
     },
-    onUpdateAvailable: (callback) => ipcRenderer.on('update-available', (_e, info) => callback(info)),
-    onDownloadProgress: (callback) => ipcRenderer.on('download-progress', (_e, info) => callback(info)),
-    onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', (_e, info) => callback(info)),
-    onUpdateReminder: (callback) => ipcRenderer.on('update-reminder', (_e, info) => callback(info)),
-    onUpdateNotAvailable: (callback) => ipcRenderer.on('update-not-available', () => callback()),
-    onUpdateError: (callback) => ipcRenderer.on('update-error', (_e, info) => callback(info)),
+    // Update listeners — each returns an unsubscribe function for cleanup
+    onUpdateAvailable: createListener('update-available'),
+    onDownloadProgress: createListener('download-progress'),
+    onUpdateDownloaded: createListener('update-downloaded'),
+    onUpdateReminder: createListener('update-reminder'),
+    onUpdateNotAvailable: createListener('update-not-available', () => ({})),
+    onUpdateError: createListener('update-error'),
     checkForUpdate: () => ipcRenderer.invoke('check-for-update'),
     downloadUpdate: () => ipcRenderer.send('download-update'),
     installUpdate: () => ipcRenderer.send('install-update'),
