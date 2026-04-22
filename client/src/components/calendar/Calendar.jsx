@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Video } from 'lucide-react';
 import { getCalendarEvents, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent, createMeeting, cancelMeeting } from '../../api';
 import { useAuth } from '../../AuthContext';
+import useWebSocket from '../../hooks/useWebSocket';
 import EventFormModal from './EventFormModal';
 import s from './Calendar.module.css';
 
@@ -91,6 +92,13 @@ export default function Calendar({ tasks = [] }) {
     }, [rangeStart.toISOString(), rangeEnd.toISOString()]);
 
     useEffect(() => { fetchEvents(); }, [fetchEvents]);
+
+    // Listen for real-time calendar refresh events (e.g. edits from another window/device)
+    useWebSocket(useCallback((msg) => {
+        if (msg.type === 'calendar_refresh' || msg.type === 'meeting_updated' || msg.type === 'meeting_cancelled') {
+            fetchEvents();
+        }
+    }, [fetchEvents]));
 
     useEffect(() => {
         if (gridRef.current && (view === 'week' || view === 'day')) {

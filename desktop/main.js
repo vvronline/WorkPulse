@@ -209,6 +209,7 @@ app.whenReady().then(async () => {
                     method: request.method,
                     headers,
                     credentials: 'include',
+                    cache: 'no-store',
                     bypassCustomProtocolHandlers: true,
                 };
 

@@ -150,6 +150,9 @@ router.put('/:id', async (req, res) => {
             [title?.trim(), description, start_time, end_time, all_day, color, task_id !== undefined ? (task_id || null) : event.task_id, eventId, req.userId, req.userOrgId || null]
         );
 
+        // Notify the editing user so other open sessions (e.g. desktop) refresh
+        sendToUser(req.tenantId, req.userId, 'calendar_refresh', { eventId });
+
         // If linked to a meeting, also update all other participants' calendar events and notify them
         if (event.meeting_id) {
             await req.db.query(
@@ -176,6 +179,7 @@ router.put('/:id', async (req, res) => {
                 )).rows;
                 for (const p of participants) {
                     sendToUser(req.tenantId, p.user_id, 'meeting_updated', { meetingId: event.meeting_id, title: meeting.title });
+                    sendToUser(req.tenantId, p.user_id, 'calendar_refresh', { eventId });
                     notifyByEmail('meetingUpdated', p, { title: meeting.title, meeting_code: meeting.meeting_code }, organizer?.full_name || 'Someone');
                 }
             }
@@ -219,14 +223,17 @@ router.delete('/:id', async (req, res) => {
                 )).rows;
                 for (const p of participants) {
                     sendToUser(req.tenantId, p.user_id, 'meeting_cancelled', { meetingId: event.meeting_id, title: meeting.title });
+                    sendToUser(req.tenantId, p.user_id, 'calendar_refresh', { eventId });
                     notifyByEmail('meetingCancelled', p, { title: meeting.title, meeting_code: meeting.meeting_code }, organizer?.full_name || 'Someone');
                 }
 
+                sendToUser(req.tenantId, req.userId, 'calendar_refresh', { eventId });
                 return res.json({ message: 'Event cancelled' });
             }
         }
 
         await req.db.query('DELETE FROM calendar_events WHERE id = $1 AND user_id = $2 AND (org_id = $3 OR org_id IS NULL)', [eventId, req.userId, req.userOrgId || null]);
+        sendToUser(req.tenantId, req.userId, 'calendar_refresh', { eventId });
         res.json({ message: 'Event cancelled' });
     } catch (err) {
         req.log.error({ err }, 'Cancel event error');
