@@ -130,6 +130,25 @@ export default function useCallState(wsSendRef) {
                         onSignal: callSignalRef,
                         onEndExternal: callEndRef
                     });
+                    // Desktop: flash taskbar + bring to front
+                    if (window.electronAPI?.isElectron) {
+                        window.electronAPI.flashFrame(true);
+                        window.electronAPI.showAndFocus();
+                    }
+                    // Web: browser notification when not focused
+                    if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && !document.hasFocus()) {
+                        try {
+                            const callLabel = data.callType === 'video' ? 'Video Call' : 'Voice Call';
+                            const displayName = data.callerName || 'Unknown';
+                            const n = new Notification(`Incoming ${callLabel}`, {
+                                body: `${displayName} is calling...`,
+                                tag: 'workpulse-incoming-call',
+                                icon: '/icon-192.svg',
+                                requireInteraction: true,
+                            });
+                            n.onclick = () => { window.focus(); n.close(); };
+                        } catch { /* ignore */ }
+                    }
                 }
                 break;
             }
@@ -138,15 +157,18 @@ export default function useCallState(wsSendRef) {
                 break;
             }
             case 'call_accepted': {
+                if (window.electronAPI?.flashFrame) window.electronAPI.flashFrame(false);
                 setCallState(prev => prev ? { ...prev, accepted: true, acceptedBy: data.userId } : prev);
                 break;
             }
             case 'call_rejected': {
+                if (window.electronAPI?.flashFrame) window.electronAPI.flashFrame(false);
                 if (callEndRef.current) callEndRef.current();
                 else setCallState(null);
                 break;
             }
             case 'call_ended': {
+                if (window.electronAPI?.flashFrame) window.electronAPI.flashFrame(false);
                 if (callEndRef.current) callEndRef.current();
                 else setCallState(null);
                 break;

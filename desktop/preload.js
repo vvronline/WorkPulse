@@ -42,4 +42,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     checkForUpdate: () => ipcRenderer.invoke('check-for-update'),
     downloadUpdate: () => ipcRenderer.send('download-update'),
     installUpdate: () => ipcRenderer.send('install-update'),
+    // Incoming call: flash taskbar and show/focus window
+    flashFrame: (flash) => ipcRenderer.send('flash-frame', flash),
+    showAndFocus: () => ipcRenderer.send('show-and-focus'),
 });

@@ -22,7 +22,47 @@ export default function GlobalIncomingCall() {
   const ringtoneRef = useRef(null);
   const pipRef = useRef(null);
   const dragState = useRef(null);
+  const notifRef = useRef(null);
   const [pos, setPos] = useState({ right: 24, top: 80 });
+
+  // Browser notification + desktop window flash for incoming calls
+  useEffect(() => {
+    if (!globalIncomingCall) {
+      // Clear notification and stop flashing when call is dismissed
+      if (notifRef.current) { notifRef.current.close(); notifRef.current = null; }
+      if (window.electronAPI?.flashFrame) window.electronAPI.flashFrame(false);
+      return;
+    }
+    const { callerName, callType, isGroup, groupName } = globalIncomingCall;
+    const displayName = isGroup ? (groupName || 'Group Call') : (callerName || 'Unknown');
+    const callLabel = callType === 'video' ? 'Video Call' : 'Voice Call';
+
+    // Desktop (Electron): flash taskbar and bring window to front
+    if (window.electronAPI?.isElectron) {
+      window.electronAPI.flashFrame(true);
+      window.electronAPI.showAndFocus();
+    }
+
+    // Web: show browser notification when tab is not focused
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && !document.hasFocus()) {
+      try {
+        const n = new Notification(`Incoming ${callLabel}`, {
+          body: `${displayName} is calling...`,
+          tag: 'workpulse-incoming-call',
+          icon: '/icon-192.svg',
+          requireInteraction: true,
+        });
+        n.onclick = () => {
+          window.focus();
+          n.close();
+        };
+        notifRef.current = n;
+      } catch { /* notification not available */ }
+    }
+    return () => {
+      if (notifRef.current) { notifRef.current.close(); notifRef.current = null; }
+    };
+  }, [globalIncomingCall]);
 
   // Ringtone
   useEffect(() => {

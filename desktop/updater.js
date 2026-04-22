@@ -187,6 +187,21 @@ function setupUpdater(mainWindow) {
         if (win) win.close();
     });
 
+    // ─── Incoming call: flash taskbar and show/focus window ───
+    ipcMain.on('flash-frame', (event, flash) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (win) win.flashFrame(!!flash);
+    });
+
+    ipcMain.on('show-and-focus', (event) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (win) {
+            if (win.isMinimized()) win.restore();
+            win.show();
+            win.focus();
+        }
+    });
+
     // ─── Scheduled update checks ───
     // Initial check after 5s (gives app time to fully load), then every 30 minutes
     setTimeout(() => performCheck(), 5000);

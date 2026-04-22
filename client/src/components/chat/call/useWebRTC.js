@@ -79,12 +79,30 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
         pcRef.current = pc;
 
+        // Track whether initial negotiation is done to avoid duplicate offers
+        let initialNegotiationDone = false;
+
         if (stream) {
             stream.getTracks().forEach(track => {
                 const sender = pc.addTrack(track, stream);
                 if (track.kind === 'video') screenSenderRef.current = sender;
             });
         }
+
+        // Auto-renegotiate when tracks are added/removed mid-call (e.g. screen share)
+        pc.onnegotiationneeded = async () => {
+            if (!initialNegotiationDone) return;
+            try {
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                wsSend('call_signal', {
+                    conversationId, targetUserId,
+                    signal: { type: 'offer', sdp: offer.sdp }
+                });
+            } catch (err) {
+                console.error('Renegotiation failed:', err);
+            }
+        };
 
         pc.ontrack = (e) => {
             const remoteStream = e.streams[0];
@@ -116,6 +134,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
 
         pc.onconnectionstatechange = () => {
             if (pc.connectionState === 'connected') {
+                initialNegotiationDone = true;
                 onStatusChange('connected');
                 stopRingtone();
             } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
