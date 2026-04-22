@@ -60,8 +60,8 @@ router.post('/', async (req, res) => {
             return res.status(400).json({ error: 'Cannot create events in the past' });
         }
 
-        // Rate limit: max 1000 events per user (atomic check)
-        const countRes = await req.db.query('SELECT COUNT(*) AS c FROM calendar_events WHERE user_id = $1 FOR SHARE', [req.userId]);
+        // Rate limit: max 1000 events per user
+        const countRes = await req.db.query('SELECT COUNT(*) AS c FROM calendar_events WHERE user_id = $1', [req.userId]);
         if (parseInt(countRes.rows[0].c, 10) >= 1000) {
             return res.status(400).json({ error: 'Maximum event limit reached (1000). Delete old events first.' });
         }
