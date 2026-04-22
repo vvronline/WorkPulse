@@ -100,7 +100,7 @@ export default function MeetingPiP() {
         if (ws && ws.readyState === 1) {
             ws.send(JSON.stringify({
                 type: 'meeting_track_state',
-                data: { meetingId: session.meetingId, muted: next, videoOff },
+                data: { meetingId: session.meetingId, muted: next, videoOff, screenSharing: false },
             }));
         }
     };
@@ -116,7 +116,7 @@ export default function MeetingPiP() {
         if (ws && ws.readyState === 1) {
             ws.send(JSON.stringify({
                 type: 'meeting_track_state',
-                data: { meetingId: session.meetingId, muted, videoOff: next },
+                data: { meetingId: session.meetingId, muted, videoOff: next, screenSharing: false },
             }));
         }
     };

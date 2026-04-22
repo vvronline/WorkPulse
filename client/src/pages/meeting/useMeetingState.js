@@ -483,7 +483,6 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 if (liveTracks.length > 0) {
                     // Re-enable existing live track
                     liveTracks.forEach(t => { t.enabled = true; });
-                    // Force React to notice the stream changed so video element re-renders
                     setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
                 } else {
                     // No live video track — remove any ended tracks and acquire new one
@@ -495,19 +494,41 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                         const newTrack = newStream.getVideoTracks()[0];
                         if (newTrack) {
                             localStreamRef.current.addTrack(newTrack);
-                            // Add video track to all peer connections and renegotiate
+                            // Replace track on existing video senders, or add if no sender exists
                             for (const [peerId, pc] of pcsRef.current) {
-                                pc.addTrack(newTrack, localStreamRef.current);
-                                if (pc.signalingState === 'stable') {
+                                const senders = pc.getSenders();
+                                const videoSender = senders.find(s => s.track?.kind === 'video') ||
+                                    senders.find(s => s.track === null && s !== senders.find(as => as.track?.kind === 'audio'));
+                                if (videoSender) {
                                     try {
-                                        const offer = await pc.createOffer();
-                                        await pc.setLocalDescription(offer);
-                                        wsSend('meeting_signal', {
-                                            meetingId,
-                                            targetUserId: peerId,
-                                            signal: { type: 'offer', sdp: pc.localDescription },
-                                        });
-                                    } catch (err) { console.error('Renegotiation failed:', err); }
+                                        await videoSender.replaceTrack(newTrack);
+                                    } catch {
+                                        // replaceTrack failed, try addTrack + renegotiate
+                                        pc.addTrack(newTrack, localStreamRef.current);
+                                        if (pc.signalingState === 'stable') {
+                                            const offer = await pc.createOffer();
+                                            await pc.setLocalDescription(offer);
+                                            wsSend('meeting_signal', {
+                                                meetingId,
+                                                targetUserId: peerId,
+                                                signal: { type: 'offer', sdp: pc.localDescription },
+                                            });
+                                        }
+                                    }
+                                } else {
+                                    pc.addTrack(newTrack, localStreamRef.current);
+                                    // Only renegotiate when adding a brand new sender
+                                    if (pc.signalingState === 'stable') {
+                                        try {
+                                            const offer = await pc.createOffer();
+                                            await pc.setLocalDescription(offer);
+                                            wsSend('meeting_signal', {
+                                                meetingId,
+                                                targetUserId: peerId,
+                                                signal: { type: 'offer', sdp: pc.localDescription },
+                                            });
+                                        } catch (err) { console.error('Renegotiation failed:', err); }
+                                    }
                                 }
                             }
                             setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
