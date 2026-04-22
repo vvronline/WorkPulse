@@ -325,8 +325,8 @@ router.post('/conversations/group', auth, async (req, res) => {
 
         const conv = await req.db.transaction(async (client) => {
             const c = (await client.query(
-                'INSERT INTO conversations (org_id, name, is_group) VALUES ($1, $2, TRUE) RETURNING id',
-                [orgId, name.trim().slice(0, 100)]
+                'INSERT INTO conversations (org_id, name, is_group, created_by) VALUES ($1, $2, TRUE, $3) RETURNING id',
+                [orgId, name.trim().slice(0, 100), req.userId]
             )).rows[0];
             const values = allIds.map((uid, i) => `($1, $${i + 2})`).join(', ');
             await client.query(
@@ -1403,7 +1403,7 @@ router.delete('/conversations/:id/messages', auth, async (req, res) => {
 
         // Only group creator or 1-on-1 participants can clear all messages
         const conv = (await req.db.query('SELECT is_group, created_by FROM conversations WHERE id = $1', [convId])).rows[0];
-        if (conv?.is_group && conv.created_by !== req.userId) {
+        if (conv?.is_group && conv.created_by && conv.created_by !== req.userId) {
             return res.status(403).json({ error: 'Only the group creator can clear all messages' });
         }
 
@@ -1451,7 +1451,7 @@ router.delete('/conversations/:id', auth, async (req, res) => {
 
         // Only group creator can delete group conversations; 1-on-1 chats can be deleted by either party
         const conv = (await req.db.query('SELECT is_group, created_by FROM conversations WHERE id = $1', [convId])).rows[0];
-        if (conv?.is_group && conv.created_by !== req.userId) {
+        if (conv?.is_group && conv.created_by && conv.created_by !== req.userId) {
             return res.status(403).json({ error: 'Only the group creator can delete this conversation' });
         }
 

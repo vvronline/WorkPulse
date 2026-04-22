@@ -692,6 +692,7 @@ async function initTenantSchema(q) {
     `);
     await q(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS name VARCHAR(100)`);
     await q(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS is_group BOOLEAN NOT NULL DEFAULT FALSE`);
+    await q(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users(id) ON DELETE SET NULL`);
 
     await q(`
         CREATE TABLE IF NOT EXISTS conversation_participants (
