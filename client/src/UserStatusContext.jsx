@@ -4,6 +4,7 @@ import { getUserStatus } from './api';
 import useWebSocket from './hooks/useWebSocket';
 
 const IDLE_TIMEOUT = 5 * 60 * 1000; // 5 minutes of inactivity → away
+const VISIBILITY_AWAY_DELAY = 2 * 60 * 1000; // 2 minutes hidden before away
 
 const StatusCtx = createContext({
   myStatus: 'available',
@@ -39,6 +40,7 @@ export function UserStatusProvider({ children }) {
 
   // Idle tracking
   const idleTimerRef = useRef(null);
+  const visibilityTimerRef = useRef(null);
   const wasIdleRef = useRef(false);
   const manualStatusRef = useRef(manualStatus);
   manualStatusRef.current = manualStatus;
@@ -74,7 +76,7 @@ export function UserStatusProvider({ children }) {
 
   // Manual status setter (from StatusPicker)
   const setManualStatus = useCallback((status, statusText) => {
-    setManualStatusState(status === 'available' ? null : status);
+    setManualStatusState(status);
     setManualStatusText(statusText || null);
     // If no auto-status is active, broadcast immediately
     if (autoSetRef.current.size === 0) {
@@ -123,6 +125,7 @@ export function UserStatusProvider({ children }) {
 
     const resetIdle = () => {
       clearTimeout(idleTimerRef.current);
+      clearTimeout(visibilityTimerRef.current);
       // If we were idle-away, revert now that user is active
       if (wasIdleRef.current) {
         wasIdleRef.current = false;
@@ -133,8 +136,8 @@ export function UserStatusProvider({ children }) {
       idleTimerRef.current = setTimeout(() => {
         // Don't override in_call/in_meeting with away
         if (autoSetRef.current.size > 0) return;
-        // Don't override manual offline/dnd/busy
-        if (manualStatusRef.current === 'offline' || manualStatusRef.current === 'dnd' || manualStatusRef.current === 'busy') return;
+        // Don't override any explicitly set manual status
+        if (manualStatusRef.current) return;
         wasIdleRef.current = true;
         broadcastStatus('away', null);
       }, IDLE_TIMEOUT);
@@ -144,14 +147,19 @@ export function UserStatusProvider({ children }) {
     events.forEach(e => document.addEventListener(e, resetIdle, { passive: true }));
     resetIdle(); // start timer
 
-    // Visibility change: tab hidden = away
+    // Visibility change: tab hidden → delayed away (not immediate)
     const onVisibility = () => {
       if (document.hidden) {
         if (autoSetRef.current.size > 0) return;
-        if (manualStatusRef.current === 'offline' || manualStatusRef.current === 'dnd' || manualStatusRef.current === 'busy') return;
-        wasIdleRef.current = true;
-        broadcastStatus('away', null);
+        if (manualStatusRef.current) return;
+        // Don't go away instantly on tab switch — wait before marking away
+        clearTimeout(visibilityTimerRef.current);
+        visibilityTimerRef.current = setTimeout(() => {
+          wasIdleRef.current = true;
+          broadcastStatus('away', null);
+        }, VISIBILITY_AWAY_DELAY);
       } else {
+        clearTimeout(visibilityTimerRef.current);
         resetIdle();
       }
     };
@@ -159,6 +167,7 @@ export function UserStatusProvider({ children }) {
 
     return () => {
       clearTimeout(idleTimerRef.current);
+      clearTimeout(visibilityTimerRef.current);
       events.forEach(e => document.removeEventListener(e, resetIdle));
       document.removeEventListener('visibilitychange', onVisibility);
     };
