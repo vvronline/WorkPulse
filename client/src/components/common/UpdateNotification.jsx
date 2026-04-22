@@ -162,9 +162,9 @@ export default function UpdateNotification() {
             {showNotes && releaseNotes && (
               <div className={s.releaseNotes}>
                 {typeof releaseNotes === 'string'
-                  ? releaseNotes
+                  ? <div dangerouslySetInnerHTML={{ __html: releaseNotes }} />
                   : Array.isArray(releaseNotes)
-                    ? releaseNotes.map((n, i) => <p key={i}>{n.note || n}</p>)
+                    ? releaseNotes.map((n, i) => <div key={i} dangerouslySetInnerHTML={{ __html: n.note || n }} />)
                     : null}
               </div>
             )}
