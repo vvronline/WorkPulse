@@ -3,16 +3,16 @@
   position: fixed;
   z-index: 10000;
   width: 320px;
+  right: 24px;
+  top: 80px;
   background: #1a1a2e;
   border-radius: 14px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.08);
   overflow: hidden;
-  cursor: grab;
   user-select: none;
   animation: meetNotifSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.card:active { cursor: grabbing; }
 .card:hover { box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(14, 165, 233, 0.35); }
 
 @keyframes meetNotifSlideIn {

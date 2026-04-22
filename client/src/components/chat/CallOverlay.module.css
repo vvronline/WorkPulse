@@ -131,7 +131,7 @@
 .localVideo {
     position: absolute;
     bottom: 8rem;
-    right: 1rem;
+    left: 1rem;
     width: 180px;
     height: 135px;
     object-fit: cover;
@@ -139,18 +139,13 @@
     border: 2px solid rgba(255,255,255,0.3);
     z-index: 10;
     box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-    cursor: grab;
+    cursor: pointer;
     transition: box-shadow 0.2s, border-color 0.2s;
 }
 
 .localVideo:hover {
     box-shadow: 0 6px 28px rgba(0,0,0,0.6);
     border-color: rgba(255,255,255,0.6);
-}
-
-.localVideo.dragging {
-    cursor: grabbing;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.7);
 }
 
 /* ── Swapped: local is fullscreen, remote is PiP ── */
@@ -165,13 +160,13 @@
     box-shadow: none;
     cursor: default;
     bottom: auto;
-    right: auto;
+    left: auto;
 }
 
 .remoteVideo.swapped {
     position: absolute;
     bottom: 8rem;
-    right: 1rem;
+    left: 1rem;
     width: 180px;
     height: 135px;
     object-fit: cover;
@@ -189,6 +184,28 @@
     border-color: rgba(255,255,255,0.6);
 }
 
+/* Tablet */
+@media (max-width: 1024px) {
+    .localVideo,
+    .remoteVideo.swapped {
+        width: 150px;
+        height: 112px;
+        bottom: 7rem;
+    }
+}
+
+/* Mobile */
+@media (max-width: 600px) {
+    .localVideo,
+    .remoteVideo.swapped {
+        width: 120px;
+        height: 90px;
+        bottom: 6rem;
+        left: 0.5rem;
+        border-radius: 8px;
+    }
+}
+
 .localVideoHidden {
     visibility: hidden;
 }
@@ -197,7 +214,7 @@
 .localVideoAvatar {
     position: absolute;
     bottom: 8rem;
-    right: 1rem;
+    left: 1rem;
     width: 180px;
     height: 135px;
     border-radius: 12px;
@@ -209,6 +226,24 @@
     align-items: center;
     justify-content: center;
     cursor: pointer;
+}
+
+@media (max-width: 1024px) {
+    .localVideoAvatar {
+        width: 150px;
+        height: 112px;
+        bottom: 7rem;
+    }
+}
+
+@media (max-width: 600px) {
+    .localVideoAvatar {
+        width: 120px;
+        height: 90px;
+        bottom: 6rem;
+        left: 0.5rem;
+        border-radius: 8px;
+    }
 }
 
 /* ── Call info (avatar, name, status) ── */

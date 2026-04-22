@@ -50,6 +50,14 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     const wsRef = useRef(ws);
     wsRef.current = ws;
 
+    // Keep refs in sync with state to avoid stale closures in toggleMute/toggleVideo/toggleScreenShare
+    const mutedRef = useRef(muted);
+    mutedRef.current = muted;
+    const videoOffRef = useRef(videoOff);
+    videoOffRef.current = videoOff;
+    const screenSharingRef = useRef(screenSharing);
+    screenSharingRef.current = screenSharing;
+
     // Helper: send WS message in { type, data } format
     const wsSend = useCallback((type, data) => {
         if (wsRef.current && wsRef.current.readyState === 1) {
@@ -455,10 +463,10 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             if (localStreamRef.current) {
                 localStreamRef.current.getAudioTracks().forEach(t => { t.enabled = !next; });
             }
-            wsSend('meeting_track_state', { meetingId, muted: next, videoOff });
+            wsSend('meeting_track_state', { meetingId, muted: next, videoOff: videoOffRef.current, screenSharing: screenSharingRef.current });
             return next;
         });
-    }, [meetingId, videoOff, wsSend]);
+    }, [meetingId, wsSend]);
 
     const toggleVideo = useCallback(async () => {
         const next = !videoOff;
@@ -512,8 +520,8 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             }
         }
         setVideoOff(next);
-        wsSend('meeting_track_state', { meetingId, muted, videoOff: next });
-    }, [meetingId, muted, videoOff, wsSend]);
+        wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: next, screenSharing: screenSharingRef.current });
+    }, [meetingId, videoOff, wsSend]);
 
     const toggleScreenShare = useCallback(async () => {
         if (screenSharing) {
@@ -524,7 +532,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             setScreenSharing(false);
             setScreenStream(null);
             setPresenterId(null);
-            wsSend('meeting_track_state', { meetingId, muted, videoOff, screenSharing: false });
+            wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: videoOffRef.current, screenSharing: false });
             // Revert to camera on all peers (or null if no camera track)
             for (const [peerId, pc] of pcsRef.current) {
                 const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
@@ -563,10 +571,10 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                     }
                 }
                 screenTrack.onended = () => toggleScreenShare();
-                wsSend('meeting_track_state', { meetingId, muted, videoOff, screenSharing: true });
+                wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: videoOffRef.current, screenSharing: true });
             } catch { /* user cancelled */ }
         }
-    }, [screenSharing, meetingId, muted, videoOff, wsSend, user?.id]);
+    }, [screenSharing, meetingId, wsSend, user?.id]);
 
     const raiseHand = useCallback(() => {
         const next = !raisedHand;

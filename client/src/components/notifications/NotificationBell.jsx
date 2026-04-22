@@ -58,6 +58,10 @@ export default function NotificationBell() {
     if (msg.type === 'chat_message') {
       refreshChatUnread();
     }
+    // Relay meeting_started to GlobalMeetingNotification via custom event
+    if (msg.type === 'meeting_started' && msg.data) {
+      window.dispatchEvent(new CustomEvent('meeting_started', { detail: msg.data }));
+    }
   }, [fetchNotifs, refreshChatUnread, notifyGeneral]));
 
   // Close on outside click / Escape
