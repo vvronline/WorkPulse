@@ -344,6 +344,8 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                     if (!data.existingPeers) {
                         const pc = createPeerConnection(data.userId, true);
                         if (pc) pcsRef.current.set(data.userId, pc);
+                        // Re-broadcast our track state so the new joiner knows our mute/camera status
+                        wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: videoOffRef.current, screenSharing: screenSharingRef.current });
                     }
                 }
                 setStatus('connected');
@@ -436,7 +438,13 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     useEffect(() => {
         if (!ws || !meetingId || !mediaReady) return;
 
-        const sendJoin = () => wsSend('meeting_join', { meetingId });
+        const sendJoin = () => {
+            wsSend('meeting_join', { meetingId });
+            // Broadcast our initial track state so existing participants know our mute/camera status
+            setTimeout(() => {
+                wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: videoOffRef.current, screenSharing: screenSharingRef.current });
+            }, 500);
+        };
 
         if (ws.readyState === WebSocket.OPEN) {
             sendJoin();

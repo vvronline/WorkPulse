@@ -50,10 +50,10 @@ export default function ParticipantTile({ participant, isLocal, localStream, scr
     const name = isLocal ? (userName || 'You') : (participant?.name || 'Participant');
     const videoOff = isLocal
         ? (localVideoOff !== undefined ? localVideoOff : !localStream?.getVideoTracks().some(t => t.enabled))
-        : (participant?.videoOff || !participant?.stream?.getVideoTracks().some(t => t.enabled));
+        : (participant?.videoOff ?? !participant?.stream?.getVideoTracks().some(t => t.enabled));
     const muted = isLocal
         ? (localMuted !== undefined ? localMuted : !localStream?.getAudioTracks().some(t => t.enabled))
-        : participant?.muted;
+        : (participant?.muted ?? false);
     const raisedHand = isLocal ? participant?.raisedHand : participant?.raisedHand;
     const isScreenSharing = !isLocal && participant?.screenSharing;
 

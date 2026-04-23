@@ -1,4 +1,4 @@
-import React, { memo, useMemo } from 'react';
+import React, { memo, useMemo, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CalendarDays, Video } from 'lucide-react';
 import s from './TodayEventsCard.module.css';
@@ -24,14 +24,23 @@ function isStartingSoon(start) {
   return startMs > now && startMs - now <= 30 * 60 * 1000;
 }
 
+function isJoinable(start, end) {
+  const now = Date.now();
+  const startMs = new Date(start).getTime();
+  const endMs = new Date(end).getTime();
+  // Active (happening now) or starting within 5 minutes
+  return now < endMs && startMs - now <= 5 * 60 * 1000;
+}
+
 function getMinutesUntil(isoString) {
   return Math.max(0, Math.round((new Date(isoString).getTime() - Date.now()) / 60000));
 }
 
-function MeetingItem({ ev, onJoinMeeting }) {
+function MeetingItem({ ev, onJoinMeeting, tick }) {
   const active = isHappeningNow(ev.start_time, ev.end_time);
   const soon = !active && isStartingSoon(ev.start_time);
   const minsLeft = !active ? getMinutesUntil(ev.start_time) : 0;
+  const joinable = ev.meeting_code && isJoinable(ev.start_time, ev.end_time);
 
   return (
     <div className={`${s['meeting-item']} ${active ? s['meeting-live'] : ''} ${soon ? s['meeting-soon'] : ''}`}>
@@ -57,7 +66,7 @@ function MeetingItem({ ev, onJoinMeeting }) {
           </div>
         </div>
       </div>
-      {ev.meeting_code && (
+      {joinable && (
         <button
           className={`${s.joinBtn} ${active ? s['joinBtn-live'] : ''}`}
           onClick={(e) => { e.stopPropagation(); onJoinMeeting(ev.meeting_code); }}
@@ -88,6 +97,13 @@ function EventItem({ ev }) {
 
 const TodayEventsCard = memo(function TodayEventsCard({ events, tomorrowEvents }) {
   const navigate = useNavigate();
+
+  // Tick every 30s so join-button visibility updates in real time
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 30000);
+    return () => clearInterval(id);
+  }, []);
 
   const onJoinMeeting = (code) => navigate(`/meeting/${code}`);
 
@@ -131,7 +147,7 @@ const TodayEventsCard = memo(function TodayEventsCard({ events, tomorrowEvents }
           </h4>
           <div className={s['meetings-list']}>
             {upcomingMeetings.map(ev => (
-              <MeetingItem key={ev.id} ev={ev} onJoinMeeting={onJoinMeeting} />
+              <MeetingItem key={ev.id} ev={ev} onJoinMeeting={onJoinMeeting} tick={tick} />
             ))}
           </div>
         </div>

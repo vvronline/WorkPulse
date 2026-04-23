@@ -629,14 +629,28 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
                 [meetingId, senderId]
             )).rows;
             const organizer = (await db.query('SELECT full_name, avatar FROM users WHERE id = $1', [meeting.created_by])).rows[0];
+            const orgName = organizer?.full_name || 'Someone';
             for (const p of allInvited) {
+                // Persist notification in DB so it shows in the bell (even if user is offline)
+                try {
+                    await db.query(
+                        `INSERT INTO notifications (user_id, type, title, body) VALUES ($1, 'meeting_started', $2, $3)`,
+                        [p.user_id, `Meeting Started: ${meeting.title || 'Untitled'}`, `${orgName} started the meeting`]
+                    );
+                } catch { /* ignore duplicate or constraint errors */ }
+
                 sendToUser(tenantId, p.user_id, 'meeting_started', {
                     meetingId,
                     meetingCode: meeting.meeting_code,
                     title: meeting.title,
-                    organizerName: organizer?.full_name || 'Someone',
+                    organizerName: orgName,
                     organizerAvatar: organizer?.avatar,
                     startedBy: senderId,
+                });
+                // Also send a generic notification event so the bell refreshes
+                sendToUser(tenantId, p.user_id, 'notification', {
+                    title: `Meeting Started: ${meeting.title || 'Untitled'}`,
+                    body: `${orgName} started the meeting`,
                 });
             }
         }

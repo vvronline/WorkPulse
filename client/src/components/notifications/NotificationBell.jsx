@@ -48,7 +48,7 @@ export default function NotificationBell() {
 
   // WebSocket: refresh notifications on real-time events
   useWebSocket(useCallback((msg) => {
-    if (['notification', 'leave_update', 'task_assigned', 'approval_update', 'meeting_invite'].includes(msg.type)) {
+    if (['notification', 'leave_update', 'task_assigned', 'approval_update', 'meeting_invite', 'meeting_started'].includes(msg.type)) {
       fetchNotifs();
       notifyGeneral(
         msg.data?.title || msg.type.replace(/_/g, ' '),
