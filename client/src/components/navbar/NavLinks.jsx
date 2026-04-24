@@ -4,7 +4,7 @@ import { useAuth } from '../../AuthContext';
 import { useChatUnread } from '../../ChatContext';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { prefetchPage } from '../common/KeepAlive';
-import { FileEdit, Building2, ClipboardList, Users, Settings, Server } from 'lucide-react';
+import { Building2, ClipboardList, Users, Settings, Server } from 'lucide-react';
 import s from './Navbar.module.css';
 
 const ROLE_LEVELS = { employee: 1, team_lead: 2, manager: 3, hr_admin: 4, super_admin: 5, platform_admin: 6 };
@@ -22,9 +22,7 @@ export default function NavLinks() {
     const isTeamLead = userLevel >= 2 || user?.has_reports;
     const isHR = userLevel >= 4;
 
-    const moreItems = [
-        { to: '/manual-entry', label: 'Manual Entry', icon: FileEdit },
-    ];
+    const moreItems = [];
     if (user?.org_id && user?.role !== 'platform_admin') moreItems.push({ to: '/organization', label: 'Organization', icon: Building2 });
     if (user?.org_id) moreItems.push({ to: '/leave-policy', label: 'Leave Policy', icon: ClipboardList });
     if (isTeamLead) moreItems.push({ to: '/manager', label: 'My Team', icon: Users });
@@ -57,13 +55,9 @@ export default function NavLinks() {
                 Chat
                 {chatUnread > 0 && <span className={s.chatBadge}>{chatUnread > 99 ? '99+' : chatUnread}</span>}
             </NavLink>
-            <NavLink to="/leaves" className={p === '/leaves' ? s.active : ''} onMouseEnter={() => prefetchPage('/leaves')}>
-                <svg className={s['nav-link-icon']} width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                Leaves
-            </NavLink>
-            <NavLink to="/analytics" className={p === '/analytics' ? s.active : ''} onMouseEnter={() => prefetchPage('/analytics')}>
-                <svg className={s['nav-link-icon']} width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M18 20V10M12 20V4M6 20v-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                Analytics
+            <NavLink to="/attendance" className={p.startsWith('/attendance') ? s.active : ''} onMouseEnter={() => prefetchPage('/attendance')}>
+                <svg className={s['nav-link-icon']} width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/><path d="M16 2v4M8 2v4M3 10h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M8 14l2 2 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                Attendance
             </NavLink>
             {moreItems.length > 0 && (
                 <div className={s['more-wrapper']} ref={moreRef}>

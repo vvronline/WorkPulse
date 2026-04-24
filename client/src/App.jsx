@@ -54,7 +54,7 @@ function KeepAliveRoutes() {
 
   // Keep-alive paths that map to static protected pages
   const KEEP_ALIVE_PATHS = [
-    '/', '/analytics', '/manual-entry', '/leaves', '/tasks',
+    '/', '/attendance', '/tasks',
     '/calendar', '/notes', '/chat', '/admin', '/manager',
     '/leave-policy', '/organization', '/set-email', '/tenants',
   ];
@@ -90,6 +90,10 @@ function AppRoutes() {
           <Route path="/reset-password/:token" element={<PublicRoute><ResetPassword /></PublicRoute>} />
           <Route path="/meeting/:code" element={<ProtectedRoute><MeetingJoin /></ProtectedRoute>} />
           <Route path="/meeting/:code/room" element={<ProtectedRoute><MeetingRoom /></ProtectedRoute>} />
+          {/* Legacy redirects — old standalone pages now live under /attendance */}
+          <Route path="/leaves" element={<Navigate to="/attendance#leaves" replace />} />
+          <Route path="/manual-entry" element={<Navigate to="/attendance#manual-entry" replace />} />
+          <Route path="/analytics" element={<Navigate to="/attendance#analytics" replace />} />
           <Route path="*" element={isAuthenticated ? null : <Navigate to="/login" />} />
         </Routes>
       </Suspense>

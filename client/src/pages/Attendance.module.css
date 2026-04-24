@@ -1,0 +1,130 @@
+/* Attendance.module.css — parent shell for tabs */
+
+.page {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 2rem 2rem 5rem;
+    animation: fadeInUp 0.3s ease;
+}
+
+@keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- header ---------- */
+.header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+    flex-wrap: wrap;
+}
+
+.title {
+    font-size: 1.65rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    color: var(--text);
+    margin: 0 0 0.25rem;
+}
+
+.subtitle {
+    font-size: 0.88rem;
+    color: var(--text-muted);
+    margin: 0;
+}
+
+/* ---------- tabs ---------- */
+.tabs {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    margin-bottom: 1.5rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+    width: fit-content;
+    max-width: 100%;
+}
+
+.tabs::-webkit-scrollbar { display: none; }
+
+.tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.55rem 1rem;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.18s;
+}
+
+.tab:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+}
+
+.tabActive {
+    background: var(--primary);
+    color: #fff;
+    box-shadow: 0 2px 10px var(--primary-glow);
+}
+
+.tabActive:hover {
+    background: var(--primary-dark);
+    color: #fff;
+}
+
+/* ---------- body ---------- */
+.body {
+    /* The body just contains the active tab's content */
+}
+
+/* Reset child page paddings since the parent already provides them */
+.body :global(.manual-entry-page),
+.body > div > :global([class*="page"]) {
+    /* Allow children to manage their own internal layout */
+}
+
+/* ---------- responsive ---------- */
+@media (max-width: 768px) {
+    .page {
+        padding: 1.25rem 1rem 4rem;
+    }
+    .header {
+        flex-direction: column;
+    }
+    .title {
+        font-size: 1.4rem;
+    }
+    .tab {
+        padding: 0.5rem 0.75rem;
+        font-size: 0.82rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .tabs {
+        width: 100%;
+    }
+    .tab {
+        flex: 1;
+        justify-content: center;
+    }
+    .tab span {
+        display: none;
+    }
+}

@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../AuthContext';
 import { useChatUnread } from '../../ChatContext';
 import { useClickOutside } from '../../hooks/useClickOutside';
-import { Home, Calendar, ClipboardList, MessageSquare, FileEdit, Palmtree, BarChart3, FileText, Building2, Users, Settings, Server } from 'lucide-react';
+import { Home, Calendar, ClipboardList, MessageSquare, CalendarCheck, FileText, Building2, Users, Settings, Server } from 'lucide-react';
 import s from './Navbar.module.css';
 
 const ROLE_LEVELS = { employee: 1, team_lead: 2, manager: 3, hr_admin: 4, super_admin: 5, platform_admin: 6 };
@@ -24,9 +24,7 @@ export default function MobileTabBar() {
     // Secondary items shown in More sheet
     const moreItems = [
         { to: '/notes', label: 'Notes', icon: FileText },
-        { to: '/leaves', label: 'Leaves', icon: Palmtree },
-        { to: '/analytics', label: 'Analytics', icon: BarChart3 },
-        { to: '/manual-entry', label: 'Manual Entry', icon: FileEdit },
+        { to: '/attendance', label: 'Attendance', icon: CalendarCheck },
     ];
     if (user?.org_id && user?.role !== 'platform_admin') moreItems.push({ to: '/organization', label: 'Organization', icon: Building2 });
     if (user?.org_id) moreItems.push({ to: '/leave-policy', label: 'Leave Policy', icon: ClipboardList });

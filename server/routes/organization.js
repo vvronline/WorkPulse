@@ -83,7 +83,7 @@ router.get('/current', async (req, res) => {
 
 router.put('/settings', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
     try {
-        const { name, work_hours_per_day, work_days, timezone, fiscal_year_start } = req.body;
+        const { name, work_hours_per_day, work_days, timezone, fiscal_year_start, min_hours_present } = req.body;
         const updates = [];
         const params = [];
         let pi = 1;
@@ -102,6 +102,19 @@ router.put('/settings', requireRole('hr_admin'), requireSameOrg, async (req, res
         if (work_days && canEditAll) { updates.push(`work_days = $${pi++}`); params.push(work_days); }
         if (timezone) { updates.push(`timezone = $${pi++}`); params.push(timezone); }
         if (fiscal_year_start !== undefined) { updates.push(`fiscal_year_start = $${pi++}`); params.push(Number(fiscal_year_start)); }
+        // Minimum hours required to be marked present on a working day. Settable by hr_admin+ (any admin).
+        // null/empty clears the override (system falls back to work_hours_per_day / 2).
+        if (min_hours_present !== undefined) {
+            if (min_hours_present === null || min_hours_present === '') {
+                updates.push(`min_hours_present = NULL`);
+            } else {
+                const mhp = Number(min_hours_present);
+                if (isNaN(mhp) || mhp < 0 || mhp > 24) {
+                    return res.status(400).json({ error: 'Minimum hours present must be between 0 and 24' });
+                }
+                updates.push(`min_hours_present = $${pi++}`); params.push(mhp);
+            }
+        }
         updates.push('updated_at = CURRENT_TIMESTAMP');
 
         if (updates.length <= 1) return res.status(400).json({ error: 'No fields to update' });

@@ -243,6 +243,11 @@ async function initTenantSchema(q) {
         )
     `);
 
+    // Migration: minimum hours an employee must log on a working day to be
+    // counted as "Present" by attendance reports/calendar. NULL = use
+    // work_hours_per_day / 2 as a sensible default at query time.
+    await q(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS min_hours_present NUMERIC(4,2)`);
+
     await q(`
         CREATE TABLE IF NOT EXISTS users (
             id                   SERIAL PRIMARY KEY,

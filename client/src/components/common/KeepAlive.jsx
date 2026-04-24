@@ -12,9 +12,7 @@ import PageSkeleton from './PageSkeleton';
 // Lazy page imports (same modules — Vite deduplicates)
 const pageImports = {
   '/': () => import('../../pages/Dashboard'),
-  '/analytics': () => import('../../pages/analytics'),
-  '/manual-entry': () => import('../../pages/ManualEntry'),
-  '/leaves': () => import('../../pages/Leaves'),
+  '/attendance': () => import('../../pages/Attendance'),
   '/tasks': () => import('../../pages/Tasks'),
   '/calendar': () => import('../../pages/CalendarPage'),
   '/notes': () => import('../../pages/NotesPage'),

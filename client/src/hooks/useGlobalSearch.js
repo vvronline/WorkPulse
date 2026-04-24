@@ -7,6 +7,7 @@ import {
     Home, Calendar, CheckSquare, FileText, MessageSquare, Palmtree,
     BarChart3, FileEdit, Building2, ClipboardList, Wallet, Rocket,
     Users, Settings, User, UserPlus, Download, ScrollText, RefreshCw, Building,
+    CalendarCheck,
 } from 'lucide-react';
 
 // Static navigation index — defines all pages/features visible through the command palette.
@@ -17,9 +18,10 @@ const NAV_INDEX = [
     { icon: CheckSquare, title: 'Tasks', sub: 'My tasks & assignments', path: '/tasks', keywords: 'todo assignments work tickets' },
     { icon: FileText, title: 'Notes', sub: 'Personal notebook', path: '/notes', keywords: 'notebook journal writing pages' },
     { icon: MessageSquare, title: 'Chat', sub: 'Team messaging', path: '/chat', keywords: 'messages messaging team direct' },
-    { icon: Palmtree, title: 'Leaves', sub: 'Leave requests & history', path: '/leaves', keywords: 'vacation time off absence sick holiday request' },
-    { icon: BarChart3, title: 'Analytics', sub: 'Work hours & productivity stats', path: '/analytics', keywords: 'reports hours productivity stats charts' },
-    { icon: FileEdit, title: 'Manual Entry', sub: 'Log work hours manually', path: '/manual-entry', keywords: 'clock time log entry hours manual' },
+    { icon: CalendarCheck, title: 'Attendance', sub: 'Attendance calendar, leaves, manual entry & analytics', path: '/attendance', keywords: 'attendance present absent calendar overview' },
+    { icon: Palmtree, title: 'Leaves', sub: 'Leave requests & history', path: '/attendance#leaves', keywords: 'vacation time off absence sick holiday request' },
+    { icon: BarChart3, title: 'Analytics', sub: 'Work hours & productivity stats', path: '/attendance#analytics', keywords: 'reports hours productivity stats charts' },
+    { icon: FileEdit, title: 'Manual Entry', sub: 'Log work hours manually', path: '/attendance#manual-entry', keywords: 'clock time log entry hours manual' },
     { icon: Building2, title: 'Organization', sub: 'Org profile & settings', path: '/organization', keywords: 'company settings profile org details', excludeRole: 'platform_admin' },
     { icon: ClipboardList, title: 'Leave Policy', sub: 'Leave balances & public holidays', path: '/leave-policy', keywords: 'balance quota leave entitlement policy' },
     { icon: Wallet, title: 'Leave Balances', sub: 'My leave balances & quotas', path: '/leave-policy?tab=balances', keywords: 'quota remaining sick planned balance' },
@@ -153,7 +155,7 @@ export function useGlobalSearch({ onClose }) {
             case 'task': navigate(`/tasks?taskId=${data.id}`); break;
             case 'note': navigate(`/notes?pageId=${data.id}`); break;
             case 'event': navigate('/calendar'); break;
-            case 'leave': navigate('/leaves'); break;
+            case 'leave': navigate('/attendance#leaves'); break;
             case 'sprint': navigate('/manager'); break;
             case 'user': navigate(`/admin?tab=users&userId=${data.id}`); break;
             case 'log': navigate('/admin?tab=audit'); break;

@@ -12,7 +12,10 @@ export default function OrgSettings({ org, onUpdate, userRole }) {
         work_hours_per_day: org.work_hours_per_day,
         work_days: org.work_days,
         timezone: org.timezone,
-        fiscal_year_start: org.fiscal_year_start
+        fiscal_year_start: org.fiscal_year_start,
+        // Minimum hours an employee must log on a working day to be marked Present.
+        // Empty string = "use default" (server falls back to work_hours_per_day / 2).
+        min_hours_present: org.min_hours_present ?? '',
     });
     const [msg, setMsg] = useAutoDismiss('');
     const canEdit = ['hr_admin', 'super_admin', 'platform_admin'].includes(userRole);
@@ -20,11 +23,19 @@ export default function OrgSettings({ org, onUpdate, userRole }) {
     const handleSave = async (e) => {
         e.preventDefault();
         try {
-            await updateOrgSettings(form);
+            // Send min_hours_present as null when blank so the server clears the override
+            const payload = {
+                ...form,
+                min_hours_present: form.min_hours_present === '' ? null : Number(form.min_hours_present),
+            };
+            await updateOrgSettings(payload);
             setMsg('Settings saved');
             onUpdate();
         } catch (e) { setMsg(e.response?.data?.error || 'Failed'); }
     };
+
+    // Default the calendar uses when no override is set (work_hours_per_day / 2)
+    const defaultMinHours = (Number(form.work_hours_per_day) || 8) / 2;
 
     const isSuperAdmin = userRole === 'super_admin' || userRole === 'platform_admin';
 
@@ -56,6 +67,25 @@ export default function OrgSettings({ org, onUpdate, userRole }) {
             <div className={sf.formGroup}>
                 <label>Fiscal Year Start Month (1-12)</label>
                 <input type="number" min="1" max="12" value={form.fiscal_year_start} onChange={e => setForm({ ...form, fiscal_year_start: e.target.value })} />
+            </div>
+            <div className={sf.formGroup}>
+                <label>
+                    Minimum Hours to be Marked Present
+                    <span style={{ fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6 }}>(optional)</span>
+                </label>
+                <input
+                    type="number"
+                    step="0.25"
+                    min="0"
+                    max="24"
+                    placeholder={`Default: ${defaultMinHours}h`}
+                    value={form.min_hours_present}
+                    onChange={e => setForm({ ...form, min_hours_present: e.target.value })}
+                />
+                <small style={{ color: 'var(--text-muted)', display: 'block', marginTop: 4 }}>
+                    Employees logging fewer than this many hours on a working day are considered absent
+                    in attendance reports. Leave blank to use half the daily work hours ({defaultMinHours}h).
+                </small>
             </div>
             <button type="submit" className={s.btnPrimary}>Save Settings</button>
         </form>
