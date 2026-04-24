@@ -137,26 +137,30 @@ export default function LeaveRequestForm({ onSuccess }) {
                     </div>
                 )}
 
-                {/* Leave type chips — populated from org policies (with built-in defaults as fallback) */}
+                {/* Leave type chips — populated from org-configured policies only */}
                 <div className={s.field}>
                     <label className={s.label}>Leave Type</label>
-                    <div className={s.typeGrid}>
-                        {typeOptions.map(t => {
-                            const Icon = t.Icon;
-                            return (
-                                <button
-                                    key={t.value}
-                                    type="button"
-                                    className={`${s.typeChip} ${leaveType === t.value ? s.typeChipActive : ''}`}
-                                    style={{ '--lc': t.color, '--lb': t.bg }}
-                                    onClick={() => setLeaveType(t.value)}
-                                >
-                                    <span className={s.typeEmoji}>{Icon ? <Icon size={18} /> : '🗓️'}</span>
-                                    <span className={s.typeLabel}>{t.label}</span>
-                                </button>
-                            );
-                        })}
-                    </div>
+                    {typeOptions.length === 0 ? (
+                        <p className={s.emptyHint}>No leave types configured. Ask your HR admin to add leave policies.</p>
+                    ) : (
+                        <div className={s.typeGrid}>
+                            {typeOptions.map(t => {
+                                const Icon = t.Icon;
+                                return (
+                                    <button
+                                        key={t.value}
+                                        type="button"
+                                        className={`${s.typeChip} ${leaveType === t.value ? s.typeChipActive : ''}`}
+                                        style={{ '--lc': t.color, '--lb': t.bg }}
+                                        onClick={() => setLeaveType(t.value)}
+                                    >
+                                        <span className={s.typeEmoji}>{Icon ? <Icon size={18} /> : '🗓️'}</span>
+                                        <span className={s.typeLabel}>{t.label}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
                 </div>
 
                 {/* Duration */}
@@ -181,7 +185,7 @@ export default function LeaveRequestForm({ onSuccess }) {
                     />
                 </div>
 
-                <button type="submit" className={s.submitBtn} disabled={submitting}>
+                <button type="submit" className={s.submitBtn} disabled={submitting || typeOptions.length === 0}>
                     {submitting ? 'Submitting…' : isRange
                         ? `Submit ${rangeDays.length || ''} Request${rangeDays.length !== 1 ? 's' : ''}`
                         : 'Submit Request'}

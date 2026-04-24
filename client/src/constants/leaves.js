@@ -63,11 +63,13 @@ export function buildLeaveTypeMeta(policies = []) {
 
 /**
  * Build an array of leave-type options (suitable for select/chip pickers) from
- * the org's policies. Falls back to the built-in LEAVE_TYPES when no policies
- * are configured, so brand-new organisations still see something useful.
+ * the org's policies. Only shows types explicitly configured by the org — there
+ * are no built-in defaults for non-holiday types. Holiday is auto-managed by HR
+ * and is excluded from the picker by the consumer.
+ * Returns an empty array when the org has not configured any leave policies yet.
  */
 export function buildLeaveTypeOptions(policies = []) {
-    if (!policies || policies.length === 0) return LEAVE_TYPES;
+    if (!policies || policies.length === 0) return [];
     const meta = buildLeaveTypeMeta(policies);
     return policies.map(p => meta[p.leave_type]);
 }

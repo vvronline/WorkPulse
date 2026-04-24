@@ -235,6 +235,7 @@
 }
 .typeEmoji { font-size: 1.3rem; line-height: 1; }
 .typeLabel { font-size: 0.72rem; font-weight: 600; text-align: center; line-height: 1.2; }
+.emptyHint { font-size: 0.82rem; color: var(--text-secondary); font-style: italic; margin: 0.25rem 0 0; }
 
 /* -- Submit Button -- */
 .submitBtn {
