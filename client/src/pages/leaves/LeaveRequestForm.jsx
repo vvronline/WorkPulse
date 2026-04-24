@@ -16,7 +16,10 @@ export default function LeaveRequestForm({ onSuccess }) {
     const [dateFrom, setDateFrom] = useState('');
     const [dateTo, setDateTo] = useState('');
     const [skipWeekends, setSkipWeekends] = useState(true);
-    const [leaveType, setLeaveType] = useState('sick');
+    /* Initial selection is just a placeholder — the effect below picks the
+       first available type once policies are loaded (and never lands on
+       'holiday' because we filter that out of typeOptions). */
+    const [leaveType, setLeaveType] = useState('');
     const [duration, setDuration] = useState('full');
     const [reason, setReason] = useState('');
     const [error, setError] = useAutoDismiss('');
@@ -35,7 +38,14 @@ export default function LeaveRequestForm({ onSuccess }) {
         return () => { cancelled = true; };
     }, []);
 
-    const typeOptions = useMemo(() => buildLeaveTypeOptions(policies), [policies]);
+    /* The Holiday policy is HR-managed (auto-booked from the Holidays panel).
+       Employees never personally request Holiday leave, so we hide it from
+       the picker. If an org wants employee-opt-in optional holidays, those
+       are represented by a different policy type the org creates. */
+    const typeOptions = useMemo(
+        () => buildLeaveTypeOptions(policies).filter(t => t.value !== 'holiday'),
+        [policies]
+    );
 
     /* Keep the selected type valid when policies load (e.g. switch from default
        'sick' to the first configured policy if 'sick' isn't allowed). */
