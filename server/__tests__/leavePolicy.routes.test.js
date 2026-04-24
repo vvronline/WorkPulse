@@ -265,6 +265,7 @@ describe('GET /api/leave-policy/holidays', () => {
 describe('POST /api/leave-policy/holidays', () => {
     beforeEach(() => {
         mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+        mockTxClient.query.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
     });
 
     test('returns 403 for non-hr_admin', async () => {
@@ -294,7 +295,13 @@ describe('POST /api/leave-policy/holidays', () => {
 
     test('creates a holiday', async () => {
         setupAuth('hr_admin');
-        mockQuery.mockResolvedValueOnce({ rows: [{ id: 7 }], rowCount: 1 }); // INSERT RETURNING
+        // The INSERT runs inside db.transaction() via mockTxClient.query.
+        // ensureDefaultHolidayPolicy runs first (SELECT + INSERT leave_policies),
+        // then the main transaction INSERTs the holiday.
+        mockTxClient.query
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 })      // ensureDefaultHolidayPolicy: SELECT leave_policies
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 })      // ensureDefaultHolidayPolicy: INSERT leave_policies
+            .mockResolvedValueOnce({ rows: [{ id: 7 }], rowCount: 1 }); // INSERT holidays RETURNING
 
         const res = await request(app)
             .post('/api/leave-policy/holidays')
