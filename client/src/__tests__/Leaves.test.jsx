@@ -20,6 +20,7 @@ const mockAddLeavesBatch = vi.fn();
 const mockWithdrawLeave = vi.fn();
 const mockGetLeaveBalances = vi.fn();
 const mockExportMyLeaves = vi.fn();
+const mockGetLeavePolicies = vi.fn();
 
 vi.mock('../api', () => ({
     getLeaves: (...args) => mockGetLeaves(...args),
@@ -29,6 +30,7 @@ vi.mock('../api', () => ({
     getLeaveSummary: vi.fn().mockResolvedValue({ data: {} }),
     getLeaveBalances: (...args) => mockGetLeaveBalances(...args),
     exportMyLeaves: (...args) => mockExportMyLeaves(...args),
+    getLeavePolicies: (...args) => mockGetLeavePolicies(...args),
 }));
 
 vi.mock('../components/ConfirmDialog', () => ({
@@ -64,6 +66,7 @@ describe('Leaves page - rendering', () => {
     beforeEach(() => {
         mockGetLeaves.mockReset().mockResolvedValue({ data: [] });
         mockGetLeaveBalances.mockReset().mockResolvedValue({ data: [] });
+        mockGetLeavePolicies.mockReset().mockResolvedValue({ data: [] });
     });
 
     test('renders the page title', async () => {
@@ -107,6 +110,7 @@ describe('Leaves page - single leave submission', () => {
     beforeEach(() => {
         mockGetLeaves.mockReset().mockResolvedValue({ data: [] });
         mockGetLeaveBalances.mockReset().mockResolvedValue({ data: [] });
+        mockGetLeavePolicies.mockReset().mockResolvedValue({ data: [] });
         mockAddLeave.mockReset();
     });
 
@@ -151,7 +155,9 @@ describe('Leaves page - single leave submission', () => {
 
 describe('Leaves page - leave history', () => {
     beforeEach(() => {
+        mockGetLeaves.mockReset().mockResolvedValue({ data: [] });
         mockGetLeaveBalances.mockReset().mockResolvedValue({ data: [] });
+        mockGetLeavePolicies.mockReset().mockResolvedValue({ data: [] });
     });
 
     test('shows empty state when no leaves', async () => {
