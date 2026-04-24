@@ -48,8 +48,12 @@ export default function MyBalances() {
                 <div className={s.balanceCardGrid}>
                     {balances.map(b => {
                         const meta = TYPE_META[b.leave_type] || TYPE_META.other;
-                        const total = (b.quota || b.total_days || 0) + (b.carried_forward || 0);
-                        const used = b.used || 0;
+                        // Coerce to Number — pg's NUMERIC arrives as a string, and
+                        // '8' + '0' would silently become '80'.
+                        const quota = Number(b.quota ?? b.total_days ?? 0) || 0;
+                        const carried = Number(b.carried_forward ?? 0) || 0;
+                        const used = Number(b.used ?? 0) || 0;
+                        const total = quota + carried;
                         const available = total - used;
                         const pct = total > 0 ? Math.min(Math.round((used / total) * 100), 100) : 0;
                         const barColor = pct >= 80 ? '#ef4444' : pct >= 50 ? '#f59e0b' : meta.color;
@@ -84,7 +88,7 @@ export default function MyBalances() {
                                     <div className={s.balanceDetailFill} style={{ width: `${pct}%`, background: barColor }} />
                                 </div>
                                 <div className={s.balanceDetailMeta}>
-                                    {b.carried_forward > 0 && `${b.carried_forward} carried forward`}
+                                    {carried > 0 && `${carried} carried forward`}
                                 </div>
                             </div>
                         );

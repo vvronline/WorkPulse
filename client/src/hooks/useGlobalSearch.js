@@ -23,9 +23,9 @@ const NAV_INDEX = [
     { icon: BarChart3, title: 'Analytics', sub: 'Work hours & productivity stats', path: '/attendance#analytics', keywords: 'reports hours productivity stats charts' },
     { icon: FileEdit, title: 'Manual Entry', sub: 'Log work hours manually', path: '/attendance#manual-entry', keywords: 'clock time log entry hours manual' },
     { icon: Building2, title: 'Organization', sub: 'Org profile & settings', path: '/organization', keywords: 'company settings profile org details', excludeRole: 'platform_admin' },
-    { icon: ClipboardList, title: 'Leave Policy', sub: 'Leave balances & public holidays', path: '/leave-policy', keywords: 'balance quota leave entitlement policy' },
-    { icon: Wallet, title: 'Leave Balances', sub: 'My leave balances & quotas', path: '/leave-policy?tab=balances', keywords: 'quota remaining sick planned balance' },
-    { icon: Palmtree, title: 'Holidays', sub: 'Company public holidays', path: '/leave-policy?tab=holidays', keywords: 'public holiday national bank calendar' },
+    { icon: ClipboardList, title: 'Leave Policy', sub: 'Leave balances & public holidays', path: '/attendance#leaves', keywords: 'balance quota leave entitlement policy' },
+    { icon: Wallet, title: 'Leave Balances', sub: 'My leave balances & quotas', path: '/attendance#leaves', keywords: 'quota remaining sick planned balance' },
+    { icon: Palmtree, title: 'Holidays', sub: 'Company public holidays', path: '/attendance#leaves', keywords: 'public holiday national bank calendar' },
     { icon: Users, title: 'Manager Dashboard', sub: 'Team approvals & reports', path: '/manager', keywords: 'approve team overtime manual reports pending', minRole: 'team_lead' },
     { icon: Settings, title: 'Admin Panel', sub: 'User & org management', path: '/admin', keywords: 'admin manage settings panel', minRole: 'hr_admin' },
     { icon: User, title: 'User Management', sub: 'View & edit user accounts', path: '/admin?tab=users', keywords: 'users employees accounts manage', minRole: 'hr_admin' },
@@ -36,8 +36,8 @@ const NAV_INDEX = [
     { icon: Wallet, title: 'Payroll', sub: 'Pay periods & payroll export', path: '/admin?tab=payroll', keywords: 'pay salary export hours period payroll', minRole: 'hr_admin' },
     { icon: Building, title: 'Org Structure', sub: 'Departments, teams & org chart', path: '/admin?tab=structure', keywords: 'departments teams structure chart', minRole: 'super_admin' },
     { icon: Building, title: 'Tenant Management', sub: 'Manage tenants, organizations & databases', path: '/admin?tab=tenants', keywords: 'org tenant company organizations database', minRole: 'platform_admin' },
-    { icon: ClipboardList, title: 'Leave Policies', sub: 'Configure leave quotas & accrual', path: '/leave-policy?tab=policies', keywords: 'policy accrual quota configure sick', minRole: 'hr_admin' },
-    { icon: Users, title: 'All Leave Balances', sub: "View all employees' leave balances", path: '/leave-policy?tab=allBalances', keywords: 'all balances employees leave', minRole: 'hr_admin' },
+    { icon: ClipboardList, title: 'Leave Policies', sub: 'Configure leave quotas & accrual', path: '/attendance#leaves', keywords: 'policy accrual quota configure sick', minRole: 'hr_admin' },
+    { icon: Users, title: 'All Leave Balances', sub: "View all employees' leave balances", path: '/attendance#leaves', keywords: 'all balances employees leave', minRole: 'hr_admin' },
 ];
 
 /**

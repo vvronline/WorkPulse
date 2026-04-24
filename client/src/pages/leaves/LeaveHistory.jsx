@@ -1,5 +1,6 @@
-import { useState, useMemo } from 'react';
-import { LEAVE_TYPES, STATUS_CONFIG, getLeaveType } from '../../constants/leaves';
+import { useState, useMemo, useEffect } from 'react';
+import { LEAVE_TYPES, STATUS_CONFIG, getLeaveType, buildLeaveTypeMeta, buildLeaveTypeOptions } from '../../constants/leaves';
+import { getLeavePolicies } from '../../api';
 import { fmtDate } from '../../utils/date';
 import s from '../Leaves.module.css';
 
@@ -8,29 +9,63 @@ import s from '../Leaves.module.css';
  * Receives the full leaves array from the parent (already fetched for the
  * selected month) and applies UI-only filters internally.
  */
+/** A leave row is treated as an auto-booked public holiday when it is a
+ *  Holiday-type leave whose reason starts with the marker we write from the
+ *  server (`Public holiday: <name>`). These are company-wide closures and
+ *  should not appear in the personal leave history — they are surfaced on
+ *  the Attendance Calendar instead. */
+function isPublicHoliday(l) {
+    return l && l.leave_type === 'holiday'
+        && typeof l.reason === 'string'
+        && l.reason.startsWith('Public holiday:');
+}
+
 export default function LeaveHistory({ leaves, loading, onWithdraw }) {
     const [filterStatus, setFilterStatus] = useState('all');
     const [filterType, setFilterType] = useState('all');
+    const [policies, setPolicies] = useState([]);
+
+    /* Load org policies so the type filter and item rendering use whatever
+       custom leave types the organisation has defined. */
+    useEffect(() => {
+        let cancelled = false;
+        getLeavePolicies()
+            .then(r => { if (!cancelled) setPolicies(r.data || []); })
+            .catch(() => {});
+        return () => { cancelled = true; };
+    }, []);
+
+    const typeMeta = useMemo(() => buildLeaveTypeMeta(policies), [policies]);
+    const typeOptions = useMemo(() => buildLeaveTypeOptions(policies), [policies]);
+    /* Resolves a leave_type to its display metadata, falling back to the
+       built-in helper for any unknown values. */
+    const lookupType = (val) => typeMeta[val] || getLeaveType(val);
+
+    /* Personal leaves only — public holidays auto-booked by HR are excluded
+       from every count and from the visible list (they live on the Attendance
+       Calendar instead). */
+    const personalLeaves = useMemo(() => leaves.filter(l => !isPublicHoliday(l)), [leaves]);
 
     const totalDays = useMemo(() =>
-        leaves.reduce((acc, l) => acc + (l.duration === 'half' ? 0.5 : l.duration === 'quarter' ? 0.25 : 1), 0),
-        [leaves]
+        personalLeaves.reduce((acc, l) => acc + (l.duration === 'half' ? 0.5 : l.duration === 'quarter' ? 0.25 : 1), 0),
+        [personalLeaves]
     );
 
     const filteredLeaves = useMemo(() =>
-        leaves.filter(l =>
+        personalLeaves.filter(l =>
             (filterStatus === 'all' || l.status === filterStatus) &&
             (filterType === 'all' || l.leave_type === filterType)
         ),
-        [leaves, filterStatus, filterType]
+        [personalLeaves, filterStatus, filterType]
     );
 
     return (
         <>
-            {/* Summary stats strip */}
+            {/* Summary stats strip — counts personal leaves only (auto-booked
+                public holidays are deliberately excluded). */}
             <div className={s.statsStrip}>
                 <div className={s.statItem}>
-                    <span className={s.statNum}>{leaves.length}</span>
+                    <span className={s.statNum}>{personalLeaves.length}</span>
                     <span className={s.statLabel}>Requests</span>
                 </div>
                 <div className={s.statDivider} />
@@ -40,17 +75,17 @@ export default function LeaveHistory({ leaves, loading, onWithdraw }) {
                 </div>
                 <div className={s.statDivider} />
                 <div className={s.statItem}>
-                    <span className={s.statNum} style={{ color: '#10b981' }}>{leaves.filter(l => l.status === 'approved').length}</span>
+                    <span className={s.statNum} style={{ color: '#10b981' }}>{personalLeaves.filter(l => l.status === 'approved').length}</span>
                     <span className={s.statLabel}>Approved</span>
                 </div>
                 <div className={s.statDivider} />
                 <div className={s.statItem}>
-                    <span className={s.statNum} style={{ color: '#f59e0b' }}>{leaves.filter(l => l.status === 'pending').length}</span>
+                    <span className={s.statNum} style={{ color: '#f59e0b' }}>{personalLeaves.filter(l => l.status === 'pending').length}</span>
                     <span className={s.statLabel}>Pending</span>
                 </div>
                 <div className={s.statDivider} />
                 <div className={s.statItem}>
-                    <span className={s.statNum} style={{ color: '#ef4444' }}>{leaves.filter(l => l.status === 'rejected').length}</span>
+                    <span className={s.statNum} style={{ color: '#ef4444' }}>{personalLeaves.filter(l => l.status === 'rejected').length}</span>
                     <span className={s.statLabel}>Rejected</span>
                 </div>
             </div>
@@ -71,7 +106,7 @@ export default function LeaveHistory({ leaves, loading, onWithdraw }) {
                     <label className={s.filterLabel}>Type</label>
                     <select className={s.filterSelect} value={filterType} onChange={e => setFilterType(e.target.value)}>
                         <option value="all">All Types</option>
-                        {LEAVE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                        {typeOptions.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                     </select>
                 </div>
             </div>
@@ -92,9 +127,15 @@ export default function LeaveHistory({ leaves, loading, onWithdraw }) {
                 ) : (
                     <div className={s.leaveList}>
                         {filteredLeaves.map(leave => {
-                            const type = getLeaveType(leave.leave_type);
+                            const type = lookupType(leave.leave_type);
                             const status = STATUS_CONFIG[leave.status] ?? STATUS_CONFIG.pending;
                             const durLabel = leave.duration === 'half' ? 'Half Day' : leave.duration === 'quarter' ? 'Quarter Day' : 'Full Day';
+                            // Public holidays are auto-booked by HR for the whole org and
+                            // can't be withdrawn by individual employees — they're
+                            // company-wide closures, not personal leave. The server
+                            // marks these with reason starting "Public holiday:".
+                            const isPublicHoliday = typeof leave.reason === 'string' && leave.reason.startsWith('Public holiday:');
+                            const canWithdraw = !isPublicHoliday && (leave.status === 'pending' || leave.status === 'approved');
                             return (
                                 <div key={leave.id} className={s.leaveItem}>
                                     <div className={s.leaveItemLeft}>
@@ -113,7 +154,7 @@ export default function LeaveHistory({ leaves, loading, onWithdraw }) {
                                             )}
                                         </div>
                                     </div>
-                                    {(leave.status === 'pending' || leave.status === 'approved') && (
+                                    {canWithdraw && (
                                         <button className={s.withdrawBtn} onClick={() => onWithdraw(leave)} title="Withdraw this leave">
                                             Withdraw
                                         </button>

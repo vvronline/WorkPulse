@@ -56,7 +56,7 @@ function KeepAliveRoutes() {
   const KEEP_ALIVE_PATHS = [
     '/', '/attendance', '/tasks',
     '/calendar', '/notes', '/chat', '/admin', '/manager',
-    '/leave-policy', '/organization', '/set-email', '/tenants',
+    '/organization', '/set-email', '/tenants',
   ];
 
   const isKeepAlivePath = KEEP_ALIVE_PATHS.includes(pathname);
@@ -94,6 +94,8 @@ function AppRoutes() {
           <Route path="/leaves" element={<Navigate to="/attendance#leaves" replace />} />
           <Route path="/manual-entry" element={<Navigate to="/attendance#manual-entry" replace />} />
           <Route path="/analytics" element={<Navigate to="/attendance#analytics" replace />} />
+          {/* Leave Policy was merged into the Leaves tab (Policies/Holidays sub-tabs) */}
+          <Route path="/leave-policy" element={<Navigate to="/attendance#leaves" replace />} />
           <Route path="*" element={isAuthenticated ? null : <Navigate to="/login" />} />
         </Routes>
       </Suspense>

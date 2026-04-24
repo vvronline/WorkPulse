@@ -2,11 +2,12 @@ import React, { useState } from 'react';
 import { X } from 'lucide-react';
 import { useAutoDismiss } from '../../hooks/useAutoDismiss';
 import { saveLeavePolicyAPI } from '../../api';
-import { LEAVE_TYPES } from '../../constants/leaves';
 import s from '../LeavePolicy.module.css';
 
 const defaults = {
-    leave_type: 'sick',
+    leave_type: '',
+    name: '',
+    color: '#6366f1',
     annual_quota: 12,
     accrual_type: 'annual',
     carry_forward_limit: 0,
@@ -14,10 +15,29 @@ const defaults = {
     quarter_day_allowed: 0,
 };
 
+/* Slugify a free-form leave-type name into a stable, URL-safe identifier so
+   the DB always stores a clean, lowercase slug regardless of the label the
+   admin typed in. */
+function slugify(s) {
+    return String(s || '')
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 40);
+}
+
 export default function PolicyForm({ initial, onClose, onSaved }) {
     const [form, setForm] = useState({ ...defaults, ...initial });
     const [error, setError] = useAutoDismiss('');
     const [saving, setSaving] = useState(false);
+
+    /* Every leave type is now custom — orgs/HR define their own taxonomy.
+       For new policies the field is blank and editable; for existing ones we
+       seed the input with the policy's stored name (or its slug as a fallback)
+       and lock the slug so we never accidentally rename an existing type. */
+    const isExisting = !!form.id;
+    const [customLabel, setCustomLabel] = useState(form.name || form.leave_type || '');
 
     const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
 
@@ -25,7 +45,16 @@ export default function PolicyForm({ initial, onClose, onSaved }) {
         e.preventDefault();
         setSaving(true);
         try {
-            await saveLeavePolicyAPI(form);
+            const payload = { ...form };
+            const label = (customLabel || '').trim();
+            if (!label) { setError('Please enter a leave type name'); setSaving(false); return; }
+            payload.name = label;
+            if (!isExisting) {
+                const slug = slugify(label);
+                if (!slug) { setError('Invalid leave type name'); setSaving(false); return; }
+                payload.leave_type = slug;
+            }
+            await saveLeavePolicyAPI(payload);
             onSaved();
             onClose();
         } catch (err) {
@@ -46,22 +75,36 @@ export default function PolicyForm({ initial, onClose, onSaved }) {
                 {error && <div className={s.formError}>{error}</div>}
 
                 <form onSubmit={handleSave} className={s.modalForm}>
-                    {/* Leave Type */}
+                    {/* Leave Type — fully org-defined. There are no built-in
+                        types, so HR/admins decide their own taxonomy. */}
                     <div className={s.formField}>
-                        <label className={s.formLabel}>Leave Type</label>
-                        <div className={s.typeChipGrid}>
-                            {LEAVE_TYPES.map(t => (
-                                <button
-                                    key={t.value}
-                                    type="button"
-                                    className={`${s.typeChipOption} ${form.leave_type === t.value ? s.typeChipOptionActive : ''}`}
-                                    onClick={() => set('leave_type', t.value)}
-                                >
-                                    <span>{t.Icon && <t.Icon size={15} />}</span>
-                                    <span>{t.label}</span>
-                                </button>
-                            ))}
+                        <label className={s.formLabel}>Leave Type Name</label>
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                            <input
+                                className={s.formInput}
+                                type="text"
+                                placeholder="e.g. Sick, Casual, Bereavement, Maternity, Comp Off…"
+                                value={customLabel}
+                                onChange={e => setCustomLabel(e.target.value)}
+                                maxLength={40}
+                                required
+                                disabled={isExisting}
+                                title={isExisting ? 'Leave-type identifier cannot be renamed once created' : ''}
+                                style={{ flex: 1 }}
+                            />
+                            <input
+                                type="color"
+                                value={form.color || '#6366f1'}
+                                onChange={e => set('color', e.target.value)}
+                                title="Pick a colour for this leave type"
+                                style={{ width: 44, height: 38, padding: 2, border: '1px solid var(--border)', borderRadius: 8, background: 'transparent' }}
+                            />
                         </div>
+                        {isExisting && (
+                            <p style={{ marginTop: '0.4rem', fontSize: '0.75rem', color: 'var(--muted, #888)' }}>
+                                The leave-type identifier is locked once created so existing balances and requests stay linked. Delete and re-create the policy to rename it.
+                            </p>
+                        )}
                     </div>
 
                     <div className={s.formRow}>

@@ -94,8 +94,13 @@ export default function AllBalances() {
                         <tbody>
                             {filtered.map((b, i) => {
                                 const meta = TYPE_META[b.leave_type] || TYPE_META.other;
-                                const total = (b.total_days || 0) + (b.carried_forward || 0);
-                                const pct = total > 0 ? Math.min(Math.round(((b.used || 0) / total) * 100), 100) : 0;
+                                // Coerce — pg's NUMERIC arrives as a string and would
+                                // string-concat instead of summing.
+                                const totalDays = Number(b.total_days ?? b.quota ?? 0) || 0;
+                                const carried = Number(b.carried_forward ?? 0) || 0;
+                                const used = Number(b.used ?? 0) || 0;
+                                const total = totalDays + carried;
+                                const pct = total > 0 ? Math.min(Math.round((used / total) * 100), 100) : 0;
                                 return (
                                     <tr key={i}>
                                         <td className={s.tdName}>{b.full_name}</td>

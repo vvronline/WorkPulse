@@ -17,7 +17,9 @@ const TABS = [
 
 export default function LeavePolicy() {
     const { user } = useAuth();
-    const isHR = ['hr_admin', 'super_admin'].includes(user?.role);
+    /* HR-and-above visibility includes platform_admin so super-admin tooling
+       remains accessible to platform operators when impersonating tenants. */
+    const isHR = ['hr_admin', 'super_admin', 'platform_admin'].includes(user?.role);
     const visibleTabs = TABS.filter(t => !t.hrOnly || isHR);
     const [searchParams] = useSearchParams();
     const [tab, setTab] = useState(() => {

@@ -369,6 +369,40 @@ async function initTenantSchema(q) {
         EXCEPTION WHEN others THEN NULL;
         END $do$
     `);
+    // Migration: drop the hard-coded leave_type CHECK so organisations can define
+    // their own custom leave types via leave_policies. Allowed types are now
+    // governed at the application layer (must exist in leave_policies for the org).
+    //
+    // We do this in two ways for safety:
+    //   1. The well-known default constraint name `leaves_leave_type_check`.
+    //   2. ANY remaining CHECK constraint on the `leave_type` column —
+    //      handles tenants whose DB was bootstrapped under a different
+    //      constraint name (custom ALTER TABLE ADD CONSTRAINT ... etc).
+    await q(`
+        DO $do$ BEGIN
+            ALTER TABLE leaves DROP CONSTRAINT IF EXISTS leaves_leave_type_check;
+        EXCEPTION WHEN others THEN NULL;
+        END $do$
+    `);
+    await q(`
+        DO $do$
+        DECLARE r record;
+        BEGIN
+            FOR r IN
+                SELECT con.conname
+                FROM   pg_constraint con
+                JOIN   pg_class       rel ON rel.oid = con.conrelid
+                JOIN   pg_attribute   att ON att.attrelid = rel.oid
+                                         AND att.attnum   = ANY(con.conkey)
+                WHERE  rel.relname = 'leaves'
+                  AND  con.contype = 'c'
+                  AND  att.attname = 'leave_type'
+            LOOP
+                EXECUTE 'ALTER TABLE leaves DROP CONSTRAINT ' || quote_ident(r.conname);
+            END LOOP;
+        EXCEPTION WHEN others THEN NULL;
+        END $do$
+    `);
     await q(`CREATE INDEX IF NOT EXISTS idx_leaves_status ON leaves(user_id, status, date)`);
 
     await q(`
@@ -470,6 +504,34 @@ async function initTenantSchema(q) {
     // Migration: add name/color to existing leave_policies tables
     await q(`ALTER TABLE leave_policies ADD COLUMN IF NOT EXISTS name TEXT`);
     await q(`ALTER TABLE leave_policies ADD COLUMN IF NOT EXISTS color TEXT DEFAULT '#6366f1'`);
+
+    // Migration: collapse any duplicate (org_id, leave_type) rows down to a
+    // single canonical row before installing the UNIQUE constraint below.
+    // The oldest id wins; duplicates are deleted. This is idempotent — once
+    // there are no duplicates left it's a NO-OP.
+    await q(`
+        DELETE FROM leave_policies a
+         USING leave_policies b
+         WHERE a.org_id     = b.org_id
+           AND a.leave_type = b.leave_type
+           AND a.id         > b.id
+    `);
+    // Migration: enforce one policy per (org_id, leave_type). Wrapped in a DO
+    // block so re-running on databases that already have the constraint is a
+    // safe NO-OP.
+    await q(`
+        DO $do$ BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                 WHERE conname = 'leave_policies_org_leave_type_key'
+            ) THEN
+                ALTER TABLE leave_policies
+                    ADD CONSTRAINT leave_policies_org_leave_type_key
+                    UNIQUE (org_id, leave_type);
+            END IF;
+        EXCEPTION WHEN others THEN NULL;
+        END $do$
+    `);
 
     await q(`
         CREATE TABLE IF NOT EXISTS leave_balances (

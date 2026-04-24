@@ -32,15 +32,47 @@ async function updateLeaveBalance(userId, leaveType, date, duration, operation, 
         );
         balance = ins.rows[0];
     }
+    // pg returns NUMERIC as a string — coerce so we don't accidentally do
+    // string concatenation when adding the duration (e.g. '0' + 1 = '01').
+    const currentUsed = Number(balance.used) || 0;
     const newUsed = operation === 'add'
-        ? balance.used + durationValue
-        : Math.max(0, balance.used - durationValue);
+        ? currentUsed + durationValue
+        : Math.max(0, currentUsed - durationValue);
     await q('UPDATE leave_balances SET used = $1 WHERE id = $2', [newUsed, balance.id]);
 }
 
 // GET /leaves — list leaves (own or visible)
 router.get('/', async (req, res) => {
     try {
+        // Self-heal: any auto-booked public-holiday row that an employee
+        // managed to push into 'withdraw_pending' (before public holidays
+        // were locked from being withdrawn) gets reset back to 'approved' and
+        // its outstanding withdrawal approval request is cancelled. Idempotent.
+        await req.db.query(
+            `UPDATE leaves
+                SET status = 'approved'
+              WHERE user_id = $1
+                AND leave_type = 'holiday'
+                AND status = 'withdraw_pending'
+                AND reason LIKE 'Public holiday:%'`,
+            [req.userId]
+        );
+        await req.db.query(
+            `UPDATE approval_requests
+                SET status = 'rejected', reviewed_at = NOW(),
+                    reject_reason = COALESCE(reject_reason, 'Public holidays cannot be withdrawn individually')
+              WHERE type = 'leave_withdraw'
+                AND status = 'pending'
+                AND requester_id = $1
+                AND reference_id IN (
+                    SELECT id FROM leaves
+                     WHERE user_id = $1
+                       AND leave_type = 'holiday'
+                       AND reason LIKE 'Public holiday:%'
+                )`,
+            [req.userId]
+        );
+
         const { user_id, start_date, end_date, status, type } = req.query;
 
         const conditions = [];
@@ -193,15 +225,35 @@ router.get('/balance', async (req, res) => {
         const targetOrgRes = await req.db.query('SELECT org_id FROM users WHERE id = $1', [targetUserId]);
         const targetOrgId = targetOrgRes.rows[0]?.org_id;
 
-        const balances = (await req.db.query(`
-            SELECT lb.*, lp.name as policy_name, lp.color
-            FROM leave_balances lb
-            LEFT JOIN leave_policies lp ON lp.leave_type = lb.leave_type AND lp.org_id = $3
-            WHERE lb.user_id = $1 AND lb.year = $2
-            ORDER BY lb.leave_type ASC
-        `, [targetUserId, year, targetOrgId])).rows;
+        // INNER JOIN — only return balances whose policy still exists. This
+        // hides "ghost" balance rows from policies that were deleted before
+        // the cascade-cleanup fix shipped. When the user has no org_id we
+        // fall back to plain balance rows since there are no policies to join.
+        const balances = targetOrgId
+            ? (await req.db.query(`
+                SELECT lb.*, lp.name as policy_name, lp.color
+                FROM leave_balances lb
+                JOIN leave_policies lp ON lp.leave_type = lb.leave_type AND lp.org_id = $3
+                WHERE lb.user_id = $1 AND lb.year = $2
+                ORDER BY lb.leave_type ASC
+            `, [targetUserId, year, targetOrgId])).rows
+            : (await req.db.query(`
+                SELECT lb.*
+                FROM leave_balances lb
+                WHERE lb.user_id = $1 AND lb.year = $2
+                ORDER BY lb.leave_type ASC
+            `, [targetUserId, year])).rows;
 
-        res.json(balances);
+        // Coerce NUMERIC columns from string to number — pg returns NUMERIC as
+        // strings to preserve precision, which causes '8' + '0' = '80' bugs
+        // in any client doing arithmetic on these fields.
+        const coerced = balances.map(b => ({
+            ...b,
+            quota: b.quota == null ? 0 : Number(b.quota),
+            used: b.used == null ? 0 : Number(b.used),
+            carried_forward: b.carried_forward == null ? 0 : Number(b.carried_forward),
+        }));
+        res.json(coerced);
     } catch (err) {
         req.log.error({ err }, 'GET /leaves/balance error');
         res.status(500).json({ error: 'Failed to fetch leave balance' });
@@ -238,6 +290,9 @@ router.get('/pending', requireRole('manager'), async (req, res) => {
 });
 
 // POST /leaves — apply for leave
+// NOTE: There is intentionally no admin shortcut to add a leave on someone
+// else's behalf — every employee must raise their own leave request, which
+// then flows through the standard approval workflow.
 router.post('/', async (req, res) => {
     try {
         const { leave_type, date, duration, reason, dates } = req.body;
@@ -256,10 +311,13 @@ router.post('/', async (req, res) => {
         // Pre-filter: valid date format and no existing leave on that date
         const validDates = rawDates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
         if (validDates.length === 0) return res.status(400).json({ error: 'No valid dates provided' });
+        // `leaves.date` is stored as TEXT (YYYY-MM-DD), so compare as text. The
+        // older `$2::date[]` cast tried to do `text = date`, which PG refuses
+        // because there's no implicit operator between the two types.
         const existingDates = (await req.db.query(
-            'SELECT date::text FROM leaves WHERE user_id = $1 AND date = ANY($2::date[])',
+            'SELECT date FROM leaves WHERE user_id = $1 AND date = ANY($2::text[])',
             [req.userId, validDates]
-        )).rows.map(r => r.date.slice(0, 10));
+        )).rows.map(r => String(r.date).slice(0, 10));
         const existingSet = new Set(existingDates);
         const newDates = validDates.filter(d => !existingSet.has(d));
         if (newDates.length === 0) return res.json({ message: '0 leave(s) submitted', ids: [] });
@@ -549,6 +607,18 @@ router.post('/:id/withdraw', async (req, res) => {
         if (!leave) return res.status(404).json({ error: 'Leave not found' });
         if (!['pending', 'approved'].includes(leave.status)) {
             return res.status(400).json({ error: 'Leave cannot be withdrawn in its current status' });
+        }
+        // Public holidays are auto-booked org-wide and aren't personal leaves —
+        // employees can't opt out individually. They are managed by HR via the
+        // Holidays panel (which auto-books and rolls back the leave rows).
+        if (
+            leave.leave_type === 'holiday' &&
+            typeof leave.reason === 'string' &&
+            leave.reason.startsWith('Public holiday:')
+        ) {
+            return res.status(400).json({
+                error: 'Public holidays are organisation-wide and cannot be withdrawn individually. Ask HR to remove the holiday from the Holidays panel.',
+            });
         }
 
         if (leave.status === 'pending') {

@@ -19,7 +19,6 @@ const pageImports = {
   '/chat': () => import('../../pages/Chat'),
   '/admin': () => import('../../pages/Admin'),
   '/manager': () => import('../../pages/ManagerDashboard'),
-  '/leave-policy': () => import('../../pages/LeavePolicy'),
   '/organization': () => import('../../pages/Organization'),
   '/set-email': () => import('../../pages/SetEmail'),
   '/tenants': () => import('../../pages/tenants'),

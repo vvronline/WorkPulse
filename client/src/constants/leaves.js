@@ -1,5 +1,12 @@
 import { Thermometer, Palmtree, CalendarDays, User, FileEdit } from 'lucide-react';
 
+/**
+ * Built-in / "starter" leave-type defaults used as fallback when an organisation
+ * has not yet configured its own custom leave policies. Once an admin defines
+ * leave policies via the Policies tab, those custom types take precedence —
+ * the UI dynamically merges org-defined types with these defaults via
+ * `buildLeaveTypeMeta()`.
+ */
 export const LEAVE_TYPES = [
     { value: 'sick', label: 'Sick Leave', Icon: Thermometer, color: '#ef4444', bg: 'rgba(239,68,68,0.1)' },
     { value: 'holiday', label: 'Holiday', Icon: Palmtree, color: '#f59e0b', bg: 'rgba(245,158,11,0.1)' },
@@ -23,3 +30,59 @@ export function getLeaveType(val) {
 
 /** Object lookup version of LEAVE_TYPES (keyed by value). */
 export const LEAVE_TYPE_MAP = Object.fromEntries(LEAVE_TYPES.map(t => [t.value, t]));
+
+/**
+ * Build a complete leave-type metadata map from a list of org policies.
+ * - Known types (sick / holiday / planned / personal / other) keep their built-in
+ *   icon and colour (with overrides allowed from the policy's name/color fields).
+ * - Custom types defined by the org are returned with the FileEdit icon and
+ *   the policy's configured colour, so they render alongside built-ins.
+ *
+ * @param {Array<{leave_type:string,name?:string,color?:string}>} policies
+ * @returns {Object<string,{value,label,Icon,color,bg}>}
+ */
+export function buildLeaveTypeMeta(policies = []) {
+    const out = { ...LEAVE_TYPE_MAP };
+    for (const p of policies) {
+        const base = LEAVE_TYPE_MAP[p.leave_type] || {
+            value: p.leave_type,
+            Icon: FileEdit,
+            color: p.color || '#6366f1',
+            bg: hexToBg(p.color || '#6366f1'),
+        };
+        out[p.leave_type] = {
+            ...base,
+            value: p.leave_type,
+            label: p.name || base.label || prettify(p.leave_type),
+            color: p.color || base.color,
+            bg: p.color ? hexToBg(p.color) : base.bg,
+        };
+    }
+    return out;
+}
+
+/**
+ * Build an array of leave-type options (suitable for select/chip pickers) from
+ * the org's policies. Falls back to the built-in LEAVE_TYPES when no policies
+ * are configured, so brand-new organisations still see something useful.
+ */
+export function buildLeaveTypeOptions(policies = []) {
+    if (!policies || policies.length === 0) return LEAVE_TYPES;
+    const meta = buildLeaveTypeMeta(policies);
+    return policies.map(p => meta[p.leave_type]);
+}
+
+function prettify(slug) {
+    return String(slug || '').replace(/[_-]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function hexToBg(hex) {
+    // Build a 10%-alpha background colour from a hex value (#rrggbb / #rgb).
+    const h = String(hex || '').replace('#', '');
+    if (!/^[0-9a-fA-F]{3}$|^[0-9a-fA-F]{6}$/.test(h)) return 'rgba(99,102,241,0.1)';
+    const expand = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+    const r = parseInt(expand.slice(0, 2), 16);
+    const g = parseInt(expand.slice(2, 4), 16);
+    const b = parseInt(expand.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, 0.1)`;
+}

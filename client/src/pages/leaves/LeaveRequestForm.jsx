@@ -1,7 +1,7 @@
-import { useState, useMemo } from 'react';
-import { addLeave, addLeavesBatch } from '../../api';
+import { useState, useMemo, useEffect } from 'react';
+import { addLeave, addLeavesBatch, getLeavePolicies } from '../../api';
 import { useAutoDismiss } from '../../hooks/useAutoDismiss';
-import { LEAVE_TYPES } from '../../constants/leaves';
+import { LEAVE_TYPES, buildLeaveTypeOptions } from '../../constants/leaves';
 import { getDateRange } from '../../utils/date';
 import s from '../Leaves.module.css';
 
@@ -22,6 +22,28 @@ export default function LeaveRequestForm({ onSuccess }) {
     const [error, setError] = useAutoDismiss('');
     const [success, setSuccess] = useAutoDismiss('');
     const [submitting, setSubmitting] = useState(false);
+    const [policies, setPolicies] = useState([]);
+
+    /* Fetch the org's leave policies so the picker shows the configured types
+       (custom org types live alongside built-in defaults). Falls back to the
+       built-in LEAVE_TYPES when no policies are configured. */
+    useEffect(() => {
+        let cancelled = false;
+        getLeavePolicies()
+            .then(r => { if (!cancelled) setPolicies(r.data || []); })
+            .catch(() => { /* silent — fall back to defaults */ });
+        return () => { cancelled = true; };
+    }, []);
+
+    const typeOptions = useMemo(() => buildLeaveTypeOptions(policies), [policies]);
+
+    /* Keep the selected type valid when policies load (e.g. switch from default
+       'sick' to the first configured policy if 'sick' isn't allowed). */
+    useEffect(() => {
+        if (!typeOptions.some(t => t.value === leaveType) && typeOptions.length > 0) {
+            setLeaveType(typeOptions[0].value);
+        }
+    }, [typeOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const rangeDays = useMemo(() => {
         if (!isRange || !dateFrom || !dateTo || dateTo < dateFrom) return [];
@@ -105,22 +127,25 @@ export default function LeaveRequestForm({ onSuccess }) {
                     </div>
                 )}
 
-                {/* Leave type chips */}
+                {/* Leave type chips — populated from org policies (with built-in defaults as fallback) */}
                 <div className={s.field}>
                     <label className={s.label}>Leave Type</label>
                     <div className={s.typeGrid}>
-                        {LEAVE_TYPES.map(t => (
-                            <button
-                                key={t.value}
-                                type="button"
-                                className={`${s.typeChip} ${leaveType === t.value ? s.typeChipActive : ''}`}
-                                style={{ '--lc': t.color, '--lb': t.bg }}
-                                onClick={() => setLeaveType(t.value)}
-                            >
-                                <span className={s.typeEmoji}>{t.icon}</span>
-                                <span className={s.typeLabel}>{t.label}</span>
-                            </button>
-                        ))}
+                        {typeOptions.map(t => {
+                            const Icon = t.Icon;
+                            return (
+                                <button
+                                    key={t.value}
+                                    type="button"
+                                    className={`${s.typeChip} ${leaveType === t.value ? s.typeChipActive : ''}`}
+                                    style={{ '--lc': t.color, '--lb': t.bg }}
+                                    onClick={() => setLeaveType(t.value)}
+                                >
+                                    <span className={s.typeEmoji}>{Icon ? <Icon size={18} /> : '🗓️'}</span>
+                                    <span className={s.typeLabel}>{t.label}</span>
+                                </button>
+                            );
+                        })}
                     </div>
                 </div>
 

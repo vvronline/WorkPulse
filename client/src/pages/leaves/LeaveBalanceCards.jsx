@@ -9,8 +9,12 @@ export default function LeaveBalanceCards({ balances }) {
         <div className={s.balanceRow}>
             {balances.map(b => {
                 const type = getLeaveType(b.leave_type);
-                const total = (b.quota || 0) + (b.carried_forward || 0);
-                const used = b.used || 0;
+                // Coerce to Number — pg's NUMERIC arrives as a string, and
+                // '8' + '0' would silently become '80'.
+                const quota = Number(b.quota ?? 0) || 0;
+                const carried = Number(b.carried_forward ?? 0) || 0;
+                const used = Number(b.used ?? 0) || 0;
+                const total = quota + carried;
                 const available = total - used;
                 const pct = total > 0 ? Math.min(Math.round((used / total) * 100), 100) : 0;
                 return (
@@ -31,7 +35,7 @@ export default function LeaveBalanceCards({ balances }) {
                                     }}
                                 />
                             </div>
-                            <div className={s.balanceMeta}>{used} used · {b.carried_forward || 0} carried forward</div>
+                            <div className={s.balanceMeta}>{used} used · {carried} carried forward</div>
                         </div>
                     </div>
                 );
