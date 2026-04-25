@@ -99,7 +99,11 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         if (!pcRef.current?.remoteDescription) return;
         const pendingCandidates = pendingIceCandidatesRef.current.splice(0);
         for (const candidate of pendingCandidates) {
-            await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+            if (candidate === null) {
+                await pcRef.current.addIceCandidate(null);
+            } else {
+                await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+            }
         }
     }, []);
 
@@ -160,7 +164,14 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
             if (e.candidate) {
                 wsSend('call_signal', {
                     conversationId, targetUserId,
-                    signal: { type: 'ice-candidate', candidate: e.candidate }
+                    signal: { type: 'ice-candidate', candidate: e.candidate.toJSON() }
+                });
+            } else {
+                // null candidate = end-of-candidates; signal the remote so it can
+                // call addIceCandidate(null) to indicate gathering is complete.
+                wsSend('call_signal', {
+                    conversationId, targetUserId,
+                    signal: { type: 'ice-candidate', candidate: null }
                 });
             }
         };
@@ -171,6 +182,13 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
 
         pc.oniceconnectionstatechange = () => {
             console.log('[call-webrtc] ICE connection state:', pc.iceConnectionState);
+            if (pc.iceConnectionState === 'failed') {
+                console.warn('[call-webrtc] ICE failed — will attempt ICE restart');
+            }
+        };
+
+        pc.onicegatheringstatechange = () => {
+            console.log('[call-webrtc] ICE gathering state:', pc.iceGatheringState);
         };
 
         pc.onconnectionstatechange = () => {
@@ -236,11 +254,20 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
             } else if (signal.type === 'answer') {
                 await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal));
                 await flushPendingIceCandidates();
-            } else if (signal.type === 'ice-candidate' && signal.candidate) {
-                if (pcRef.current.remoteDescription) {
-                    await pcRef.current.addIceCandidate(new RTCIceCandidate(signal.candidate));
-                } else {
-                    pendingIceCandidatesRef.current.push(signal.candidate);
+            } else if (signal.type === 'ice-candidate') {
+                if (signal.candidate === null) {
+                    // End-of-candidates notification — let the browser know gathering finished
+                    if (pcRef.current.remoteDescription) {
+                        await pcRef.current.addIceCandidate(null);
+                    } else {
+                        pendingIceCandidatesRef.current.push(null);
+                    }
+                } else if (signal.candidate) {
+                    if (pcRef.current.remoteDescription) {
+                        await pcRef.current.addIceCandidate(new RTCIceCandidate(signal.candidate));
+                    } else {
+                        pendingIceCandidatesRef.current.push(signal.candidate);
+                    }
                 }
             }
         } catch (err) {
