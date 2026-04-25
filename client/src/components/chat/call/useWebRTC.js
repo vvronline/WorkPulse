@@ -125,23 +125,48 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         }
     }, [addIceCandidateSafe]);
 
-    const attachLocalTracks = useCallback((stream) => {
+    const attachLocalTracks = useCallback(async (stream) => {
         if (!pcRef.current || !stream) return;
-        const existingSenders = pcRef.current.getSenders();
-        // Only add tracks that aren't already attached to a sender
-        stream.getTracks().forEach(track => {
-            const alreadyAttached = existingSenders.some(s => s.track && s.track.id === track.id);
-            if (alreadyAttached) return;
-            // Reuse a free sender if one exists (created by remote offer); otherwise addTrack
-            const freeSender = existingSenders.find(s => !s.track && s.transport == null);
-            if (freeSender && freeSender.replaceTrack) {
-                freeSender.replaceTrack(track).catch(err => console.warn('[call-webrtc] replaceTrack failed:', err));
-                if (track.kind === 'video') screenSenderRef.current = freeSender;
+        const transceivers = pcRef.current.getTransceivers();
+        const usedTransceivers = new Set();
+
+        for (const track of stream.getTracks()) {
+            // Skip if this exact track is already on some sender
+            const alreadyAttached = transceivers.some(t => t.sender.track && t.sender.track.id === track.id);
+            if (alreadyAttached) continue;
+
+            // Find an unused transceiver of MATCHING kind that the remote offer
+            // created. We must match by kind otherwise replaceTrack throws
+            // "Track kind does not match Sender kind".
+            const matchingTr = transceivers.find(t => {
+                if (usedTransceivers.has(t)) return false;
+                if (t.sender.track) return false; // already in use
+                // The receiver's track kind reflects what the remote offered
+                // for this transceiver's m-section.
+                const trKind = t.receiver?.track?.kind;
+                return trKind === track.kind;
+            });
+
+            if (matchingTr) {
+                usedTransceivers.add(matchingTr);
+                try {
+                    await matchingTr.sender.replaceTrack(track);
+                    // Upgrade the direction so we actually send media on this m-line.
+                    try { matchingTr.direction = 'sendrecv'; } catch { /* not always settable */ }
+                    if (track.kind === 'video') screenSenderRef.current = matchingTr.sender;
+                } catch (err) {
+                    console.warn('[call-webrtc] replaceTrack failed, falling back to addTrack:', err?.message || err);
+                    const sender = pcRef.current.addTrack(track, stream);
+                    if (track.kind === 'video') screenSenderRef.current = sender;
+                }
             } else {
+                // No matching transceiver from the remote offer (e.g. caller
+                // sent voice-only but we somehow have a video track) — addTrack
+                // will create a new m-line and trigger renegotiation.
                 const sender = pcRef.current.addTrack(track, stream);
                 if (track.kind === 'video') screenSenderRef.current = sender;
             }
-        });
+        }
     }, []);
 
     const createPeerConnection = useCallback((stream, targetUserId, addTracksNow = true) => {
@@ -304,7 +329,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 // CRITICAL: attach local tracks AFTER setRemoteDescription so they
                 // bind to the transceivers created by the offer, instead of producing
                 // extra unmatched m-sections that prevent ICE from establishing.
-                attachLocalTracks(localStreamRef.current);
+                await attachLocalTracks(localStreamRef.current);
                 const answer = await pcRef.current.createAnswer();
                 await pcRef.current.setLocalDescription(answer);
                 console.log('[call-webrtc] sending answer to:', fromUserId);
