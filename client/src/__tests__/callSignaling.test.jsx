@@ -78,6 +78,7 @@ describe('call signaling races', () => {
         const addIceCandidate = vi.fn().mockResolvedValue(undefined);
         const setRemoteDescription = vi.fn(async (desc) => {
             fakePc.remoteDescription = desc;
+            fakePc.signalingState = 'stable';
         });
         const setLocalDescription = vi.fn(async (desc) => {
             fakePc.localDescription = desc;
@@ -86,7 +87,9 @@ describe('call signaling races', () => {
         const fakePc = {
             remoteDescription: null,
             localDescription: null,
+            signalingState: 'stable',
             addTrack: vi.fn(),
+            getTransceivers: vi.fn().mockReturnValue([]),
             createOffer: vi.fn().mockResolvedValue({ type: 'offer', sdp: 'offer-sdp' }),
             createAnswer: vi.fn().mockResolvedValue({ type: 'answer', sdp: 'answer-sdp' }),
             setLocalDescription,
