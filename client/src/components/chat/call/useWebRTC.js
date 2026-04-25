@@ -125,7 +125,26 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         }
     }, [addIceCandidateSafe]);
 
-    const createPeerConnection = useCallback((stream, targetUserId) => {
+    const attachLocalTracks = useCallback((stream) => {
+        if (!pcRef.current || !stream) return;
+        const existingSenders = pcRef.current.getSenders();
+        // Only add tracks that aren't already attached to a sender
+        stream.getTracks().forEach(track => {
+            const alreadyAttached = existingSenders.some(s => s.track && s.track.id === track.id);
+            if (alreadyAttached) return;
+            // Reuse a free sender if one exists (created by remote offer); otherwise addTrack
+            const freeSender = existingSenders.find(s => !s.track && s.transport == null);
+            if (freeSender && freeSender.replaceTrack) {
+                freeSender.replaceTrack(track).catch(err => console.warn('[call-webrtc] replaceTrack failed:', err));
+                if (track.kind === 'video') screenSenderRef.current = freeSender;
+            } else {
+                const sender = pcRef.current.addTrack(track, stream);
+                if (track.kind === 'video') screenSenderRef.current = sender;
+            }
+        });
+    }, []);
+
+    const createPeerConnection = useCallback((stream, targetUserId, addTracksNow = true) => {
         const pc = new RTCPeerConnection({
             iceServers: iceServersRef.current,
             iceCandidatePoolSize: 10
@@ -135,7 +154,19 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         // Track whether initial negotiation is done to avoid duplicate offers
         let initialNegotiationDone = false;
 
-        if (stream) {
+        // Surface TURN configuration so missing TURN doesn't silently break NAT traversal
+        const hasTurn = (iceServersRef.current || []).some(s => {
+            const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
+            return urls.some(u => typeof u === 'string' && u.startsWith('turn'));
+        });
+        if (!hasTurn) {
+            console.warn('[call-webrtc] No TURN server configured — calls may fail on restrictive networks. Configure TURN_SERVER_URL/USERNAME/CREDENTIAL on the server.');
+        }
+
+        // For the OFFERER we need tracks before createOffer. For the ANSWERER,
+        // tracks must be attached AFTER setRemoteDescription(offer) so they
+        // bind to the existing transceivers instead of creating new m-lines.
+        if (stream && addTracksNow) {
             stream.getTracks().forEach(track => {
                 const sender = pc.addTrack(track, stream);
                 if (track.kind === 'video') screenSenderRef.current = sender;
@@ -180,9 +211,11 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
 
         pc.onicecandidate = (e) => {
             if (e.candidate) {
+                const c = e.candidate;
+                console.log('[call-webrtc] local ICE candidate →', c.type || '?', c.protocol || '?', c.address || c.candidate?.split(' ')[4] || '?');
                 wsSend('call_signal', {
                     conversationId, targetUserId,
-                    signal: { type: 'ice-candidate', candidate: e.candidate.toJSON() }
+                    signal: { type: 'ice-candidate', candidate: c.toJSON() }
                 });
             }
             // We intentionally do NOT forward the null end-of-candidates marker:
@@ -197,7 +230,17 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         pc.oniceconnectionstatechange = () => {
             console.log('[call-webrtc] ICE connection state:', pc.iceConnectionState);
             if (pc.iceConnectionState === 'failed') {
-                console.warn('[call-webrtc] ICE failed — will attempt ICE restart');
+                console.warn('[call-webrtc] ICE failed — will attempt ICE restart. If this persists, a TURN server is likely required for your network.');
+                // Dump candidate-pair stats for diagnosis
+                try {
+                    pc.getStats().then(stats => {
+                        const pairs = [];
+                        stats.forEach(r => {
+                            if (r.type === 'candidate-pair') pairs.push({ state: r.state, nominated: r.nominated, local: r.localCandidateId, remote: r.remoteCandidateId });
+                        });
+                        console.warn('[call-webrtc] candidate pairs:', pairs);
+                    }).catch(() => { });
+                } catch { /* ignore */ }
             }
         };
 
@@ -258,13 +301,18 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
             console.log('[call-webrtc] handleSignal:', signal.type, 'from:', fromUserId, 'pcState:', pcRef.current.signalingState);
             if (signal.type === 'offer') {
                 await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal));
+                // CRITICAL: attach local tracks AFTER setRemoteDescription so they
+                // bind to the transceivers created by the offer, instead of producing
+                // extra unmatched m-sections that prevent ICE from establishing.
+                attachLocalTracks(localStreamRef.current);
                 const answer = await pcRef.current.createAnswer();
                 await pcRef.current.setLocalDescription(answer);
-                await flushPendingIceCandidates();
+                console.log('[call-webrtc] sending answer to:', fromUserId);
                 wsSend('call_signal', {
                     conversationId, targetUserId: fromUserId,
                     signal: { type: 'answer', sdp: answer.sdp }
                 });
+                await flushPendingIceCandidates();
             } else if (signal.type === 'answer') {
                 // Ignore stray answers when we are not expecting one (avoids
                 // "Failed to set remote answer sdp: Called in wrong state").
@@ -293,7 +341,9 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
 
     const handleSignal = useCallback((signal, fromUserId) => {
         if (!pcRef.current && signal.type === 'offer' && localStreamRef.current) {
-            createPeerConnection(localStreamRef.current, fromUserId);
+            // Answerer-side fast path: create PC WITHOUT tracks; tracks will be
+            // attached after setRemoteDescription inside handleSignalInternal.
+            createPeerConnection(localStreamRef.current, fromUserId, false);
             flushPendingSignals();
         }
         if (!pcRef.current) {
@@ -328,7 +378,10 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         stopRingtone();
         const stream = await startMedia();
         if (!stream) { handleEnd(); return; }
-        createPeerConnection(stream, callerId);
+        // Answerer side: create PC WITHOUT adding tracks yet. Tracks are
+        // attached to the offer's transceivers later in handleSignalInternal,
+        // which avoids the m-line mismatch that prevents ICE from completing.
+        createPeerConnection(stream, callerId, false);
         flushPendingSignals();
         wsSend('call_accept', { callId, conversationId });
     }, [callId, conversationId, wsSend, startMedia, createPeerConnection, callerId, stopRingtone, flushPendingSignals, onStatusChange, handleEnd]);
