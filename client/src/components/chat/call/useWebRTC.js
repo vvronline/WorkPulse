@@ -95,17 +95,35 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         iceRestartAttemptedRef.current = false;
     }, []);
 
-    const flushPendingIceCandidates = useCallback(async () => {
-        if (!pcRef.current?.remoteDescription) return;
-        const pendingCandidates = pendingIceCandidatesRef.current.splice(0);
-        for (const candidate of pendingCandidates) {
+    const addIceCandidateSafe = useCallback(async (candidate) => {
+        if (!pcRef.current) return;
+        try {
             if (candidate === null) {
-                await pcRef.current.addIceCandidate(null);
+                // End-of-candidates marker. Some browsers (Firefox) reject null;
+                // pass an empty candidate string as a portable fallback. Failure
+                // here is non-fatal — the browser will time out trickle on its own.
+                try {
+                    await pcRef.current.addIceCandidate(null);
+                } catch {
+                    try { await pcRef.current.addIceCandidate({ candidate: '' }); } catch { /* ignore */ }
+                }
             } else {
                 await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
             }
+        } catch (err) {
+            // Don't let one bad candidate kill the whole ICE exchange.
+            console.warn('[call-webrtc] addIceCandidate failed (ignored):', err?.message || err);
         }
     }, []);
+
+    const flushPendingIceCandidates = useCallback(async () => {
+        if (!pcRef.current?.remoteDescription) return;
+        const pendingCandidates = pendingIceCandidatesRef.current.splice(0);
+        console.log('[call-webrtc] flushing', pendingCandidates.length, 'buffered ICE candidate(s)');
+        for (const candidate of pendingCandidates) {
+            await addIceCandidateSafe(candidate);
+        }
+    }, [addIceCandidateSafe]);
 
     const createPeerConnection = useCallback((stream, targetUserId) => {
         const pc = new RTCPeerConnection({
@@ -166,14 +184,10 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                     conversationId, targetUserId,
                     signal: { type: 'ice-candidate', candidate: e.candidate.toJSON() }
                 });
-            } else {
-                // null candidate = end-of-candidates; signal the remote so it can
-                // call addIceCandidate(null) to indicate gathering is complete.
-                wsSend('call_signal', {
-                    conversationId, targetUserId,
-                    signal: { type: 'ice-candidate', candidate: null }
-                });
             }
+            // We intentionally do NOT forward the null end-of-candidates marker:
+            // it is unreliable across browsers (Firefox throws on addIceCandidate(null))
+            // and the peer will infer end-of-trickle from the ICE gathering timeout.
         };
 
         pc.onicecandidateerror = (e) => {
@@ -252,28 +266,30 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                     signal: { type: 'answer', sdp: answer.sdp }
                 });
             } else if (signal.type === 'answer') {
-                await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal));
-                await flushPendingIceCandidates();
+                // Ignore stray answers when we are not expecting one (avoids
+                // "Failed to set remote answer sdp: Called in wrong state").
+                if (pcRef.current.signalingState !== 'have-local-offer') {
+                    console.warn('[call-webrtc] ignoring answer in state:', pcRef.current.signalingState);
+                } else {
+                    await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal));
+                    await flushPendingIceCandidates();
+                }
             } else if (signal.type === 'ice-candidate') {
-                if (signal.candidate === null) {
-                    // End-of-candidates notification — let the browser know gathering finished
-                    if (pcRef.current.remoteDescription) {
-                        await pcRef.current.addIceCandidate(null);
-                    } else {
-                        pendingIceCandidatesRef.current.push(null);
-                    }
-                } else if (signal.candidate) {
-                    if (pcRef.current.remoteDescription) {
-                        await pcRef.current.addIceCandidate(new RTCIceCandidate(signal.candidate));
-                    } else {
-                        pendingIceCandidatesRef.current.push(signal.candidate);
-                    }
+                // null/empty candidate is the end-of-candidates marker. We don't
+                // need to forward it to addIceCandidate — drop it silently.
+                if (signal.candidate == null || signal.candidate.candidate === '') {
+                    return;
+                }
+                if (pcRef.current.remoteDescription) {
+                    await addIceCandidateSafe(signal.candidate);
+                } else {
+                    pendingIceCandidatesRef.current.push(signal.candidate);
                 }
             }
         } catch (err) {
-            console.error('Signal handling error:', err);
+            console.error('[call-webrtc] Signal handling error:', err);
         }
-    }, [conversationId, wsSend, flushPendingIceCandidates]);
+    }, [conversationId, wsSend, flushPendingIceCandidates, addIceCandidateSafe]);
 
     const handleSignal = useCallback((signal, fromUserId) => {
         if (!pcRef.current && signal.type === 'offer' && localStreamRef.current) {
