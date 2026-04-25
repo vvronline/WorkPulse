@@ -59,7 +59,7 @@ export default function GlobalSearch({ onClose }) {
                                     const idx = sectionOffsets.nav + i;
                                     return (
                                         <button
-                                            key={`nav-${n.path}`}
+                                            key={`nav-${i}-${n.path}`}
                                             className={`${s.item} ${activeIdx === idx ? s.active : ''}`}
                                             onClick={() => navigateToItem({ type: 'nav', data: n })}
                                             onMouseEnter={() => setActiveIdx(idx)}

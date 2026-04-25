@@ -8,8 +8,11 @@ const mockConsumePendingCall = vi.fn();
 const mockSetAutoStatus = vi.fn();
 const mockClearAutoStatus = vi.fn();
 
+const mockGetIceConfig = vi.fn().mockResolvedValue({ data: { iceServers: [] } });
+
 vi.mock('../api', () => ({
     getActiveCall: (...args) => mockGetActiveCall(...args),
+    getIceConfig: (...args) => mockGetIceConfig(...args),
 }));
 
 vi.mock('../CallContext', () => ({
