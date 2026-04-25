@@ -80,6 +80,32 @@ async function getUserOrg(userId, db) {
 }
 
 /**
+ * GET /api/chat/ice-config
+ * Returns WebRTC ICE server configuration.
+ * Falls back to Google STUN if no TURN env vars are set.
+ */
+router.get('/ice-config', auth, (req, res) => {
+    const iceServers = [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+    ];
+
+    const turnUrl = process.env.TURN_SERVER_URL;
+    const turnUser = process.env.TURN_SERVER_USERNAME;
+    const turnCred = process.env.TURN_SERVER_CREDENTIAL;
+
+    if (turnUrl && turnUser && turnCred) {
+        iceServers.push({
+            urls: turnUrl,
+            username: turnUser,
+            credential: turnCred,
+        });
+    }
+
+    res.json({ iceServers });
+});
+
+/**
  * GET /api/chat/search?q=term
  */
 router.get('/search', auth, async (req, res) => {

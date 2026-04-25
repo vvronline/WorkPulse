@@ -350,6 +350,7 @@ export const toggleFavouriteConversation = (convId) => API.post(`/chat/conversat
 export const getCallHistory = (convId) => API.get(`/chat/conversations/${convId}/calls`);
 export const getAllCallHistory = () => API.get('/chat/calls');
 export const getActiveCall = () => API.get('/chat/calls/active');
+export const getIceConfig = () => API.get('/chat/ice-config');
 
 // Meetings
 export const createMeeting = (data) => API.post('/meetings', data);

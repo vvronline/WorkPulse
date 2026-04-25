@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { getIceConfig } from '../../../api';
 
-const ICE_SERVERS = [
+const FALLBACK_ICE_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
@@ -33,6 +34,14 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     const iceRestartAttemptedRef = useRef(false);
     const disconnectTimerRef = useRef(null);
     const pendingIceCandidatesRef = useRef([]);
+    const iceServersRef = useRef(FALLBACK_ICE_SERVERS);
+
+    // Fetch ICE config (STUN + optional TURN) once on mount
+    useEffect(() => {
+        getIceConfig()
+            .then(({ data }) => { if (data?.iceServers?.length) iceServersRef.current = data.iceServers; })
+            .catch(() => { /* fallback already set */ });
+    }, []);
 
     const stopRingtone = useCallback(() => {
         if (ringtoneRef.current) {
@@ -96,7 +105,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
 
     const createPeerConnection = useCallback((stream, targetUserId) => {
         const pc = new RTCPeerConnection({
-            iceServers: ICE_SERVERS,
+            iceServers: iceServersRef.current,
             iceCandidatePoolSize: 10
         });
         pcRef.current = pc;

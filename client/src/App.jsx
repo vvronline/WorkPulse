@@ -57,6 +57,10 @@ function KeepAliveRoutes() {
     '/', '/attendance', '/tasks',
     '/calendar', '/notes', '/chat', '/admin', '/manager',
     '/organization', '/set-email', '/tenants',
+    // Legacy redirect paths — must stay in this list so KeepAlive remains mounted
+    // during the brief redirect transition; without it Chat unmounts and resets
+    // call state / closes the WebSocket, breaking in-progress calls.
+    '/leaves', '/analytics', '/manual-entry', '/leave-policy',
   ];
 
   const isKeepAlivePath = KEEP_ALIVE_PATHS.includes(pathname);
