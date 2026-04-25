@@ -1,12 +1,17 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { getIceConfig } from '../../../api';
 
+// Default ICE servers used when the server's /ice-config request fails.
+// Includes the free Metered Open Relay TURN service so calls still work for
+// peers behind restrictive NATs (same-NAT-no-hairpinning, symmetric NAT, etc.)
+// even if the backend hasn't exposed a TURN configuration.
 const FALLBACK_ICE_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' }
+    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
 ];
 
 export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatusChange }) {

@@ -100,6 +100,18 @@ router.get('/ice-config', auth, (req, res) => {
             username: turnUser,
             credential: turnCred,
         });
+    } else if (process.env.DISABLE_PUBLIC_TURN !== 'true') {
+        // Fallback to Metered Open Relay — a free, no-signup public TURN service.
+        // Required so peers behind the same NAT (no hairpinning) or different
+        // restrictive networks can still establish media. To opt out, set
+        // DISABLE_PUBLIC_TURN=true. For production reliability, host your own
+        // coturn and configure TURN_SERVER_URL/USERNAME/CREDENTIAL.
+        // Refs: https://www.metered.ca/tools/openrelay/
+        iceServers.push(
+            { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+            { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+            { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+        );
     }
 
     res.json({ iceServers });
