@@ -306,23 +306,76 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         };
 
         pc.ontrack = (e) => {
-            const remoteStream = e.streams[0];
+            // Defensively build the remote stream:
+            //   • Some browsers/SFU configurations fire ontrack with an empty
+            //     `e.streams` array — we must never let that drop the track.
+            //   • ontrack fires once per kind (audio, then video). We must add
+            //     each new track to the SAME MediaStream so the <video> tag
+            //     plays both, instead of replacing the stream and losing audio.
+            let remoteStream = remoteStreamRef.current;
+            if (e.streams && e.streams[0]) {
+                // Browser gave us a real stream — adopt it.
+                remoteStream = e.streams[0];
+            } else if (!remoteStream) {
+                // Fallback: build our own stream container.
+                remoteStream = new MediaStream();
+            }
+            // Make sure THIS track is in the stream (replaceTrack on an existing
+            // transceiver does NOT add the track to e.streams[0] in some paths).
+            if (e.track && !remoteStream.getTracks().some(t => t.id === e.track.id)) {
+                remoteStream.addTrack(e.track);
+            }
             remoteStreamRef.current = remoteStream;
-            if (remoteAudioRef.current) {
+
+            console.log('[call-webrtc] ontrack:', e.track?.kind, 'muted=', e.track?.muted, 'streamTracks=', remoteStream.getTracks().map(t => t.kind).join(','));
+
+            // Attach to audio sink (always — covers both video and audio calls).
+            if (remoteAudioRef.current && remoteAudioRef.current.srcObject !== remoteStream) {
                 remoteAudioRef.current.srcObject = remoteStream;
                 remoteAudioRef.current.volume = 1.0;
-                remoteAudioRef.current.play().catch(() => { });
+                remoteAudioRef.current.play().catch(err => console.warn('[call-webrtc] remote audio autoplay blocked:', err?.message || err));
             }
+
+            // Attach to video sink. We re-assign srcObject on EVERY ontrack
+            // even if it's the same stream object — some browsers (Safari,
+            // older Chromium) only render the new track after a fresh
+            // assignment, otherwise the <video> stays black.
             if (remoteVideoRef.current) {
+                remoteVideoRef.current.srcObject = null; // force a teardown
                 remoteVideoRef.current.srcObject = remoteStream;
-                if (isMobile) remoteVideoRef.current.muted = true;
+                if (isMobile) remoteVideoRef.current.muted = true; // mobile autoplay needs muted
+                remoteVideoRef.current.play().catch(err => console.warn('[call-webrtc] remote video autoplay blocked:', err?.message || err));
             }
+
             if (e.track.kind === 'video') {
                 setRemoteHasVideo(true);
-                setRemoteVideoOff(e.track.muted);
-                e.track.onmute = () => setRemoteVideoOff(true);
-                e.track.onunmute = () => setRemoteVideoOff(false);
-                e.track.onended = () => setRemoteHasVideo(false);
+                // IMPORTANT: do NOT seed remoteVideoOff from e.track.muted —
+                // per spec, a freshly received track is muted until the first
+                // RTP packet arrives. Treating that as "video off" hides the
+                // video forever if the unmute event is dropped (which happens
+                // on some Android Chrome builds and Firefox-on-Linux). Start
+                // optimistic; the onmute handler below catches the real case
+                // where the remote turns their camera off mid-call.
+                setRemoteVideoOff(false);
+                e.track.onmute = () => {
+                    console.log('[call-webrtc] remote video track muted');
+                    setRemoteVideoOff(true);
+                };
+                e.track.onunmute = () => {
+                    console.log('[call-webrtc] remote video track unmuted');
+                    setRemoteVideoOff(false);
+                    // Re-attach srcObject — some browsers need this to actually
+                    // start rendering frames after the first unmute.
+                    if (remoteVideoRef.current && remoteStreamRef.current) {
+                        remoteVideoRef.current.srcObject = null;
+                        remoteVideoRef.current.srcObject = remoteStreamRef.current;
+                        remoteVideoRef.current.play().catch(() => { });
+                    }
+                };
+                e.track.onended = () => {
+                    console.log('[call-webrtc] remote video track ended');
+                    setRemoteHasVideo(false);
+                };
             }
         };
 
