@@ -1,4 +1,4 @@
-/* ── Call Overlay ── */
+ turn of /* ── Call Overlay ── */
 .overlay {
     position: fixed;
     inset: 0;
@@ -165,6 +165,12 @@
 
 .remoteVideo.swapped {
     position: absolute;
+    /* Reset the fullscreen `inset: 0` from .remoteVideo BEFORE applying
+       the PiP anchors — otherwise the `inset` shorthand wipes out
+       bottom/left and the PiP floats centered in the overlay. */
+    inset: auto;
+    top: auto;
+    right: auto;
     bottom: 8rem;
     left: 1rem;
     width: 180px;
@@ -175,7 +181,6 @@
     z-index: 10;
     box-shadow: 0 4px 20px rgba(0,0,0,0.5);
     cursor: pointer;
-    inset: auto;
     transition: box-shadow 0.2s, border-color 0.2s;
 }
 

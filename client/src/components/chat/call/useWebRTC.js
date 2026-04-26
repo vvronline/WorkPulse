@@ -55,6 +55,10 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     const [remoteVideoOff, setRemoteVideoOff] = useState(false);
     const [remoteHasVideo, setRemoteHasVideo] = useState(false);
 
+    // Track whether the *local* user has their camera explicitly off, so the
+    // peer can be told and render an avatar instead of a frozen black frame.
+    const [localVideoOff, setLocalVideoOff] = useState(false);
+
     const pcRef = useRef(null);
     const localStreamRef = useRef(null);
     const screenStreamRef = useRef(null);
@@ -542,6 +546,12 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 } else {
                     pendingIceCandidatesRef.current.push(signal.candidate);
                 }
+            } else if (signal.type === 'video-state') {
+                // Peer told us they toggled their camera. Browsers' track.onmute
+                // is unreliable (Chrome lags 5–10s, Firefox often never fires),
+                // so we use this explicit signal to flip the avatar overlay
+                // immediately on both sides.
+                setRemoteVideoOff(!!signal.videoOff);
             }
         } catch (err) {
             console.error('[call-webrtc] Signal handling error:', err);
@@ -762,12 +772,38 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         return () => clearTimeout(connectionTimeoutRef.current);
     }, []);
 
+    // ─── Send our local camera on/off state to the peer ───
+    const sendLocalVideoState = useCallback((isVideoOff) => {
+        setLocalVideoOff(isVideoOff);
+        const target = isIncoming ? callerId : (acceptedBy || reconnectTo);
+        if (!target) return;
+        wsSend('call_signal', {
+            conversationId, targetUserId: target,
+            signal: { type: 'video-state', videoOff: !!isVideoOff }
+        });
+    }, [conversationId, wsSend, isIncoming, callerId, acceptedBy, reconnectTo]);
+
+    // When the peer (re)connects, re-announce our current camera state so they
+    // render the right thing immediately (avoids stale "video on" after reconnect).
+    useEffect(() => {
+        if (!pcRef.current) return;
+        const pc = pcRef.current;
+        const handler = () => {
+            if (pc.connectionState === 'connected') {
+                sendLocalVideoState(localVideoOff);
+            }
+        };
+        pc.addEventListener('connectionstatechange', handler);
+        return () => pc.removeEventListener('connectionstatechange', handler);
+    }, [sendLocalVideoState, localVideoOff]);
+
     return {
         pcRef, localStreamRef, screenStreamRef, remoteStreamRef,
         localVideoRef, remoteVideoRef, remoteAudioRef,
         screenSenderRef, connectionTimeoutRef, ringtoneRef,
         handleAccept, handleReject, handleEnd,
         stopRingtone, startMedia, createPeerConnection,
-        isMobile, remoteVideoOff, remoteHasVideo
+        isMobile, remoteVideoOff, remoteHasVideo,
+        sendLocalVideoState
     };
 }

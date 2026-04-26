@@ -8,6 +8,15 @@ const { setupUpdater } = require('./updater');
 app.setAppUserModelId('com.workpulse.desktop');
 app.name = 'WorkPulse';
 
+// Safety net: log uncaught errors instead of letting Electron show the
+// fatal "A JavaScript error occurred in the main process" dialog and exit.
+process.on('uncaughtException', (err) => {
+    console.error('[WorkPulse] Uncaught exception in main process:', err);
+});
+process.on('unhandledRejection', (reason) => {
+    console.error('[WorkPulse] Unhandled promise rejection in main process:', reason);
+});
+
 // ─── Configuration ───
 const RAILWAY_URL = process.env.API_SERVER || 'https://workpulse-prod.up.railway.app';
 // In packaged build, client/dist is in extraResources; in dev, it's adjacent
@@ -107,6 +116,18 @@ app.whenReady().then(async () => {
     // ─── Screen sharing: show picker so user can choose which screen/window ───
     let pendingSourceSelection = null;
 
+    // Safely invoke the displayMedia callback. Recent Electron versions throw
+    // "Video was requested, but no video stream was provided" if you call
+    // callback({}) to cancel — wrap in try/catch so a user cancel doesn't
+    // crash the main process.
+    const safeInvokeCallback = (callback, streams) => {
+        try {
+            callback(streams);
+        } catch (err) {
+            console.warn('[WorkPulse] displayMedia callback error (likely user cancel):', err?.message);
+        }
+    };
+
     session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
         try {
             const sources = await desktopCapturer.getSources({
@@ -126,7 +147,7 @@ app.whenReady().then(async () => {
             // Wait for user to pick a source or cancel
             pendingSourceSelection = { sources, callback };
         } catch {
-            callback({});
+            safeInvokeCallback(callback, {});
         }
     });
 
@@ -135,14 +156,14 @@ app.whenReady().then(async () => {
         const { sources, callback } = pendingSourceSelection;
         pendingSourceSelection = null;
         if (!sourceId) {
-            callback({}); // user cancelled
+            safeInvokeCallback(callback, {}); // user cancelled
             return;
         }
         const selected = sources.find(s => s.id === sourceId);
         if (selected) {
-            callback({ video: selected, audio: 'loopback' });
+            safeInvokeCallback(callback, { video: selected, audio: 'loopback' });
         } else {
-            callback({});
+            safeInvokeCallback(callback, {});
         }
     });
 

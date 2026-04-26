@@ -123,6 +123,19 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     const isConnected = status === 'connected';
     const isVideoCall = callType === 'video';
 
+    // ─── Tell the peer whenever our camera turns on/off ───
+    // Browsers' RTCRtpReceiver.track.onmute is unreliable (Chrome lags 5–10s,
+    // Firefox sometimes never fires), so we send an explicit `video-state`
+    // signal. While screen-sharing the outgoing video track is the screen,
+    // not the cam, so the peer should NOT see our avatar in that case — only
+    // when controls.videoOff is true and we are not screen-sharing.
+    useEffect(() => {
+        if (status !== 'connected') return;
+        if (!isVideoCall) return;
+        const peerSeesNoCamera = controls.videoOff && !controls.screenSharing;
+        webrtc.sendLocalVideoState?.(peerSeesNoCamera);
+    }, [status, isVideoCall, controls.videoOff, controls.screenSharing]);
+
     return (
         <div
             ref={overlayRef}
