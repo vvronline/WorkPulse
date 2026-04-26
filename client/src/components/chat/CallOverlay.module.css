@@ -1,4 +1,4 @@
- turn of /* ── Call Overlay ── */
+/* ── Call Overlay ── */
 .overlay {
     position: fixed;
     inset: 0;
@@ -320,9 +320,18 @@
 .controls {
     position: absolute;
     bottom: 3rem;
+    /* Center horizontally — required because position:absolute removes the
+       element from the flex flow of `.overlay`, so its parent's
+       justify-content no longer applies. Without these the bar can end up
+       off-screen on some browsers/Electron versions. */
+    left: 50%;
+    transform: translateX(-50%);
     display: flex;
     gap: 0.75rem;
     align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    max-width: calc(100vw - 2rem);
     z-index: 10;
     padding: 0.75rem 1.5rem;
     border-radius: 40px;

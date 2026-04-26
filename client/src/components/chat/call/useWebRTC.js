@@ -773,29 +773,23 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     }, []);
 
     // ─── Send our local camera on/off state to the peer ───
+    // The renderer calls this whenever the user toggles the camera button.
+    // Browsers' RTCRtpReceiver.track.onmute event is unreliable (Chrome lags
+    // 5–10 s, Firefox often never fires), so we send an explicit signal over
+    // the same `call_signal` WebSocket channel that already carries SDP / ICE.
     const sendLocalVideoState = useCallback((isVideoOff) => {
         setLocalVideoOff(isVideoOff);
         const target = isIncoming ? callerId : (acceptedBy || reconnectTo);
         if (!target) return;
-        wsSend('call_signal', {
-            conversationId, targetUserId: target,
-            signal: { type: 'video-state', videoOff: !!isVideoOff }
-        });
+        try {
+            wsSend('call_signal', {
+                conversationId, targetUserId: target,
+                signal: { type: 'video-state', videoOff: !!isVideoOff }
+            });
+        } catch (err) {
+            console.warn('[call-webrtc] sendLocalVideoState failed:', err?.message || err);
+        }
     }, [conversationId, wsSend, isIncoming, callerId, acceptedBy, reconnectTo]);
-
-    // When the peer (re)connects, re-announce our current camera state so they
-    // render the right thing immediately (avoids stale "video on" after reconnect).
-    useEffect(() => {
-        if (!pcRef.current) return;
-        const pc = pcRef.current;
-        const handler = () => {
-            if (pc.connectionState === 'connected') {
-                sendLocalVideoState(localVideoOff);
-            }
-        };
-        pc.addEventListener('connectionstatechange', handler);
-        return () => pc.removeEventListener('connectionstatechange', handler);
-    }, [sendLocalVideoState, localVideoOff]);
 
     return {
         pcRef, localStreamRef, screenStreamRef, remoteStreamRef,
