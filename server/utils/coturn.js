@@ -106,12 +106,35 @@ async function fetchCloudflareCreds(userId) {
             console.warn('[coturn] Cloudflare TURN API returned unexpected shape:', JSON.stringify(data).slice(0, 200));
             return null;
         }
+
+        // Augment Cloudflare's URL list with the corporate-firewall escape hatch.
+        // Cloudflare's TURN service DOES accept `turns:turn.cloudflare.com:443`
+        // but their /credentials/generate response doesn't return it by default.
+        // Without 443/TLS, users behind enterprise proxies that only allow
+        // outbound 443 can't open a TURN allocation at all → call fails.
+        // We also explicitly add tcp variants on 5349 in case the default list
+        // ever changes.
+        const cfUrls = Array.isArray(ice.urls) ? ice.urls : [ice.urls];
+        const augmented = [...new Set([
+            ...cfUrls,
+            'turn:turn.cloudflare.com:3478?transport=udp',
+            'turn:turn.cloudflare.com:3478?transport=tcp',
+            'turns:turn.cloudflare.com:5349?transport=tcp',
+            'turns:turn.cloudflare.com:443?transport=tcp', // corporate proxy lifeline
+        ])];
+
         const result = {
-            iceServers: [{
-                urls: Array.isArray(ice.urls) ? ice.urls : [ice.urls],
-                username: ice.username,
-                credential: ice.credential,
-            }],
+            iceServers: [
+                // Keep STUN as a separate entry (some browsers ignore stun: URLs
+                // that share an entry with TURN credentials).
+                { urls: 'stun:stun.cloudflare.com:3478' },
+                { urls: 'stun:stun.l.google.com:19302' },
+                {
+                    urls: augmented,
+                    username: ice.username,
+                    credential: ice.credential,
+                },
+            ],
             expiresAt: now + CF_TOKEN_TTL,
         };
         cfCredCache.set(userId || 'guest', result);

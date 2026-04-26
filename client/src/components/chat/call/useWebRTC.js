@@ -549,6 +549,27 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     }, [conversationId, wsSend, flushPendingIceCandidates, addIceCandidateSafe]);
 
     const handleSignal = useCallback((signal, fromUserId) => {
+        // Detect a "fresh session" offer that requires us to tear down our
+        // current PC and start over. Cases:
+        //   • Our PC is in `failed` / `closed` (peer is rebuilding after ICE failure)
+        //   • Our PC is in `stable` but stuck disconnected for >2s (peer doing relay rebuild)
+        //   • The incoming offer's o= line shows a new session-id (peer recreated PC)
+        if (signal.type === 'offer' && pcRef.current) {
+            const cs = pcRef.current.connectionState;
+            const ics = pcRef.current.iceConnectionState;
+            const needsRebuild = cs === 'failed' || cs === 'closed' ||
+                ics === 'failed' || ics === 'closed';
+            if (needsRebuild) {
+                console.warn('[call-webrtc] received offer while PC is', cs, '/', ics, '— rebuilding (peer is doing relay-only escalation)');
+                // Mirror the peer: if they had to escalate, our network is
+                // probably the one with the problem. Force relay-only too so
+                // both sides converge on a TURN-over-TLS path.
+                relayOnlyRef.current = true;
+                try { pcRef.current.close(); } catch { /* ignore */ }
+                pcRef.current = null;
+                pendingIceCandidatesRef.current = []; // candidates from the dead PC are useless
+            }
+        }
         if (!pcRef.current && signal.type === 'offer' && localStreamRef.current) {
             // Answerer-side fast path: create PC WITHOUT tracks; tracks will be
             // attached after setRemoteDescription inside handleSignalInternal.
