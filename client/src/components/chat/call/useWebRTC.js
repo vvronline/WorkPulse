@@ -14,6 +14,37 @@ const FALLBACK_ICE_SERVERS = [
     { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
 ];
 
+/**
+ * Progressively-relaxed audio/video constraints. Each step is attempted in
+ * order until getUserMedia succeeds. This is essential on mobile networks /
+ * older devices where ideal constraints (1280x720@30fps) often fail.
+ */
+function buildMediaConstraintProfiles(isVideoCall) {
+    const audio = {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+    };
+    if (!isVideoCall) {
+        return [
+            { audio, video: false },
+            { audio: true, video: false }, // last-resort: bare audio
+        ];
+    }
+    return [
+        // 1. HD ideal — works on desktops with good cameras
+        { audio, video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 }, facingMode: 'user' } },
+        // 2. SD — typical mobile / weaker cameras
+        { audio, video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 }, facingMode: 'user' } },
+        // 3. Low — congested networks, older webcams
+        { audio, video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 15, max: 24 }, facingMode: 'user' } },
+        // 4. Bare video flag — let the browser pick anything that works
+        { audio, video: true },
+        // 5. Audio-only fallback — better than dropping the call entirely
+        { audio, video: false },
+    ];
+}
+
 export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatusChange }) {
     const {
         callId, conversationId, isIncoming, callerId, acceptedBy,
@@ -40,13 +71,38 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     const disconnectTimerRef = useRef(null);
     const pendingIceCandidatesRef = useRef([]);
     const iceServersRef = useRef(FALLBACK_ICE_SERVERS);
+    const iceExpiresAtRef = useRef(0);
+    const relayOnlyRef = useRef(false); // set true after a UDP-relay failure to force TURN/TCP/TLS only
+    const networkOnlineRef = useRef(navigator.onLine);
+    const initialIceConfigLoadedRef = useRef(false);
 
-    // Fetch ICE config (STUN + optional TURN) once on mount
-    useEffect(() => {
-        getIceConfig()
-            .then(({ data }) => { if (data?.iceServers?.length) iceServersRef.current = data.iceServers; })
-            .catch(() => { /* fallback already set */ });
+    // Fetch ICE config (STUN + optional TURN). Re-fetch when credentials are
+    // about to expire (coturn ephemeral REST API issues short-lived creds).
+    const refreshIceConfig = useCallback(async () => {
+        try {
+            const { data } = await getIceConfig();
+            if (data?.iceServers?.length) {
+                iceServersRef.current = data.iceServers;
+                iceExpiresAtRef.current = data.expiresAt || 0;
+                initialIceConfigLoadedRef.current = true;
+                console.log('[call-webrtc] ICE config refreshed (mode:', data.mode || 'unknown', ', expiresAt:', data.expiresAt || 'never', ')');
+            }
+        } catch (err) {
+            console.warn('[call-webrtc] ICE config fetch failed, using fallback:', err?.message || err);
+        }
     }, []);
+
+    useEffect(() => {
+        refreshIceConfig();
+        // Periodically check if creds are about to expire and refresh proactively.
+        const checkInterval = setInterval(() => {
+            const expiresAt = iceExpiresAtRef.current;
+            if (expiresAt && expiresAt - Math.floor(Date.now() / 1000) < 300) {
+                refreshIceConfig();
+            }
+        }, 60_000);
+        return () => clearInterval(checkInterval);
+    }, [refreshIceConfig]);
 
     const stopRingtone = useCallback(() => {
         if (ringtoneRef.current) {
@@ -56,30 +112,50 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     }, []);
 
     // ─── Media helpers ───
+    // Tries progressively-relaxed constraint profiles so the call still
+    // succeeds on weak mobile networks, low-end webcams, or when the user has
+    // an audio device but no working camera. Bubbles up a single useful error
+    // message rather than silently dropping the call.
     const startMedia = useCallback(async () => {
-        try {
-            const constraints = {
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true
-                },
-                video: callType === 'video' ? { width: 1280, height: 720, facingMode: 'user' } : false
-            };
-            const stream = await navigator.mediaDevices.getUserMedia(constraints);
-            localStreamRef.current = stream;
-            if (localVideoRef.current && callType === 'video') {
-                localVideoRef.current.srcObject = stream;
-            }
-            return stream;
-        } catch (err) {
-            console.error('Failed to get media:', err);
-            const device = callType === 'video' ? 'camera/microphone' : 'microphone';
-            if (err?.name === 'NotAllowedError') {
-                alert(`${device} access is blocked.\n\n1. Click the lock/tune icon in the address bar → allow ${device}\n2. If the setting is locked, your organization may be blocking it — contact your IT admin to whitelist this site`);
-            }
+        if (!navigator.mediaDevices?.getUserMedia) {
+            alert('Your browser does not support audio/video calls. Please use Chrome, Edge, Firefox or Safari over HTTPS.');
             return null;
         }
+        const profiles = buildMediaConstraintProfiles(callType === 'video');
+        let lastError = null;
+
+        for (let i = 0; i < profiles.length; i++) {
+            const constraints = profiles[i];
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                if (i > 0) {
+                    console.warn('[call-webrtc] media acquired with reduced profile #' + i, constraints);
+                }
+                localStreamRef.current = stream;
+                if (localVideoRef.current && callType === 'video' && stream.getVideoTracks().length) {
+                    localVideoRef.current.srcObject = stream;
+                }
+                return stream;
+            } catch (err) {
+                lastError = err;
+                console.warn('[call-webrtc] getUserMedia profile', i, 'failed:', err?.name, err?.message);
+                // Permission denial / device unavailable are unrecoverable — stop early.
+                if (err?.name === 'NotAllowedError' || err?.name === 'SecurityError') break;
+            }
+        }
+
+        console.error('[call-webrtc] getUserMedia exhausted all profiles:', lastError);
+        const device = callType === 'video' ? 'camera/microphone' : 'microphone';
+        if (lastError?.name === 'NotAllowedError') {
+            alert(`${device} access is blocked.\n\n1. Click the lock/tune icon in the address bar → allow ${device}\n2. If the setting is locked, your organization may be blocking it — contact your IT admin to whitelist this site`);
+        } else if (lastError?.name === 'NotFoundError' || lastError?.name === 'OverconstrainedError') {
+            alert(`No usable ${device} found on this device.\n\nCheck:\n• Camera/mic is plugged in and not used by another app\n• Browser tab has permission (lock icon → Site Settings)\n• On Windows: Settings → Privacy → Camera/Microphone → Allow desktop apps`);
+        } else if (lastError?.name === 'NotReadableError' || lastError?.name === 'TrackStartError') {
+            alert(`Your ${device} is in use by another application (e.g. Zoom, Teams, Skype). Please close that app and try again.`);
+        } else if (lastError) {
+            alert(`Could not access ${device}: ${lastError.message || lastError.name}`);
+        }
+        return null;
     }, [callType]);
 
     const cleanup = useCallback(() => {
@@ -175,10 +251,21 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     }, []);
 
     const createPeerConnection = useCallback((stream, targetUserId, addTracksNow = true) => {
-        const pc = new RTCPeerConnection({
+        // When relayOnlyRef is true (after a previous host/srflx ICE failure), force
+        // RTCPeerConnection to ignore host candidates and use TURN exclusively. This
+        // is the lifeline for restrictive corporate networks that block UDP/STUN.
+        const pcConfig = {
             iceServers: iceServersRef.current,
-            iceCandidatePoolSize: 10
-        });
+            iceCandidatePoolSize: 10,
+            // bundlePolicy=max-bundle reduces port usage — better with corporate firewalls
+            bundlePolicy: 'max-bundle',
+            rtcpMuxPolicy: 'require',
+        };
+        if (relayOnlyRef.current) {
+            pcConfig.iceTransportPolicy = 'relay';
+            console.log('[call-webrtc] creating PC in RELAY-ONLY mode (TURN-only) — corporate proxy fallback');
+        }
+        const pc = new RTCPeerConnection(pcConfig);
         pcRef.current = pc;
 
         // Track whether initial negotiation is done to avoid duplicate offers
@@ -190,7 +277,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
             return urls.some(u => typeof u === 'string' && u.startsWith('turn'));
         });
         if (!hasTurn) {
-            console.warn('[call-webrtc] No TURN server configured — calls may fail on restrictive networks. Configure TURN_SERVER_URL/USERNAME/CREDENTIAL on the server.');
+            console.warn('[call-webrtc] No TURN server configured — calls may fail on restrictive networks. Configure TURN_HOST + TURN_STATIC_AUTH_SECRET (coturn) on the server.');
         }
 
         // For the OFFERER we need tracks before createOffer. For the ANSWERER,
@@ -260,7 +347,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         pc.oniceconnectionstatechange = () => {
             console.log('[call-webrtc] ICE connection state:', pc.iceConnectionState);
             if (pc.iceConnectionState === 'failed') {
-                console.warn('[call-webrtc] ICE failed — will attempt ICE restart. If this persists, a TURN server is likely required for your network.');
+                console.warn('[call-webrtc] ICE failed — will attempt restart. Persistent failures usually mean a TURN server is required (corporate proxy / symmetric NAT).');
                 // Dump candidate-pair stats for diagnosis
                 try {
                     pc.getStats().then(stats => {
@@ -271,6 +358,24 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                         console.warn('[call-webrtc] candidate pairs:', pairs);
                     }).catch(() => { });
                 } catch { /* ignore */ }
+            } else if (pc.iceConnectionState === 'disconnected') {
+                // Brief network blip on mobile / VPN — try a fast ICE restart proactively
+                // before the connectionState=failed handler tears the call down.
+                if (initialNegotiationDone && !iceRestartAttemptedRef.current) {
+                    setTimeout(() => {
+                        if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+                            console.log('[call-webrtc] still disconnected after 2s — issuing ICE restart');
+                            iceRestartAttemptedRef.current = true;
+                            pc.createOffer({ iceRestart: true })
+                                .then(o => pc.setLocalDescription(o))
+                                .then(() => wsSend('call_signal', {
+                                    conversationId, targetUserId,
+                                    signal: { type: 'offer', sdp: pc.localDescription.sdp }
+                                }))
+                                .catch(err => console.warn('[call-webrtc] ICE restart failed:', err));
+                        }
+                    }, 2000);
+                }
             }
         };
 
@@ -294,7 +399,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 }, 5000);
             } else if (pc.connectionState === 'failed') {
                 clearTimeout(disconnectTimerRef.current);
-                // Attempt ICE restart once before giving up
+                // Strategy: ICE restart → relay-only rebuild → give up.
                 if (!iceRestartAttemptedRef.current && initialNegotiationDone) {
                     iceRestartAttemptedRef.current = true;
                     pc.createOffer({ iceRestart: true }).then(offer => {
@@ -307,6 +412,27 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                     }).catch(() => {
                         if (handleEndRef.current) handleEndRef.current();
                     });
+                } else if (!relayOnlyRef.current && hasTurn) {
+                    // ICE restart failed too — escalate to relay-only and rebuild
+                    // the connection. This is the corporate-proxy escape hatch:
+                    // every byte goes through TURN over TCP/TLS so even networks
+                    // that block UDP/STUN entirely can complete the call.
+                    console.warn('[call-webrtc] escalating to RELAY-ONLY mode after ICE restart failed');
+                    relayOnlyRef.current = true;
+                    onStatusChange('reconnecting');
+                    refreshIceConfig().finally(() => {
+                        if (pcRef.current) { try { pcRef.current.close(); } catch { } pcRef.current = null; }
+                        const newPc = createPeerConnection(localStreamRef.current, targetUserId, true);
+                        newPc.createOffer().then(o => newPc.setLocalDescription(o)).then(() => {
+                            wsSend('call_signal', {
+                                conversationId, targetUserId,
+                                signal: { type: 'offer', sdp: newPc.localDescription.sdp }
+                            });
+                        }).catch(err => {
+                            console.error('[call-webrtc] relay-only rebuild failed:', err);
+                            if (handleEndRef.current) handleEndRef.current();
+                        });
+                    });
                 } else {
                     if (handleEndRef.current) handleEndRef.current();
                 }
@@ -314,7 +440,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         };
 
         return pc;
-    }, [conversationId, wsSend, stopRingtone, isMobile, onStatusChange]);
+    }, [conversationId, wsSend, stopRingtone, isMobile, onStatusChange, refreshIceConfig]);
 
     // ─── Signal handling with buffering ───
     const flushPendingSignals = useCallback(() => {
@@ -494,6 +620,56 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
             onEnd();
         };
     }, [onEnd, stopRingtone, cleanup, onEndExternal]);
+
+    // ─── Network change handling (mobile: WiFi ↔ cellular handoff, VPN connect/disconnect) ───
+    // The browser's `online`/`offline` events fire on network adapter changes.
+    // Connection.onchange (when available) catches more (e.g. WiFi→4G on Android).
+    // On any of these we issue a fast ICE restart so the call survives.
+    useEffect(() => {
+        const triggerIceRestart = (reason) => {
+            if (!pcRef.current) return;
+            if (pcRef.current.connectionState !== 'connected' && pcRef.current.connectionState !== 'disconnected') return;
+            console.log('[call-webrtc] network change detected (', reason, ') — issuing ICE restart');
+            iceRestartAttemptedRef.current = false; // allow another restart
+            const pc = pcRef.current;
+            pc.createOffer({ iceRestart: true })
+                .then(o => pc.setLocalDescription(o))
+                .then(() => {
+                    const target = isIncoming ? callerId : (acceptedBy || reconnectTo);
+                    if (!target) return;
+                    wsSend('call_signal', {
+                        conversationId, targetUserId: target,
+                        signal: { type: 'offer', sdp: pc.localDescription.sdp }
+                    });
+                })
+                .catch(err => console.warn('[call-webrtc] network-change ICE restart failed:', err));
+        };
+
+        const onOnline = () => {
+            networkOnlineRef.current = true;
+            triggerIceRestart('navigator.online');
+        };
+        const onOffline = () => { networkOnlineRef.current = false; };
+        const onConnChange = () => triggerIceRestart('connection.change');
+        const onVisibility = () => {
+            if (document.visibilityState === 'visible' && pcRef.current?.iceConnectionState === 'disconnected') {
+                triggerIceRestart('visibility');
+            }
+        };
+
+        window.addEventListener('online', onOnline);
+        window.addEventListener('offline', onOffline);
+        document.addEventListener('visibilitychange', onVisibility);
+        const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+        conn?.addEventListener?.('change', onConnChange);
+
+        return () => {
+            window.removeEventListener('online', onOnline);
+            window.removeEventListener('offline', onOffline);
+            document.removeEventListener('visibilitychange', onVisibility);
+            conn?.removeEventListener?.('change', onConnChange);
+        };
+    }, [conversationId, wsSend, callerId, acceptedBy, reconnectTo, isIncoming]);
 
     // ─── Cleanup on unmount ───
     useEffect(() => cleanup, [cleanup]);

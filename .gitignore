@@ -1,5 +1,4 @@
 node_modules/
-.env
 *.db
 *.db-shm
 *.db-wal
@@ -12,7 +11,28 @@ server/data/
 data/
 .vite/
 
+# ── Environment / secrets ─────────────────────────────
+# All real .env files (and any per-tier variant) MUST stay local.
+# Only `.env.example` (no secrets) belongs in git.
+.env
+.env.*
+!.env.example
+!**/.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
 # Local development config (not for production)
 .env.dev
 docker-compose.dev.yml
 Caddyfile.dev
+
+# ── coturn deployment (infra/coturn) ──────────────────
+# Never commit the runtime turnserver.conf (it has the static-auth-secret
+# substituted in), TLS certs, or the per-environment .env file.
+infra/coturn/.env
+infra/coturn/certs/
+infra/coturn/turnserver.runtime.conf
+*.pem
+*.key
+!infra/coturn/turnserver.conf

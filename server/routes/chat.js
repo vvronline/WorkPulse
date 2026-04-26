@@ -82,39 +82,31 @@ async function getUserOrg(userId, db) {
 /**
  * GET /api/chat/ice-config
  * Returns WebRTC ICE server configuration.
- * Falls back to Google STUN if no TURN env vars are set.
+ *
+ * Server selection order (see server/utils/coturn.js):
+ *   1. Self-hosted coturn with ephemeral HMAC creds (TURN_HOST + TURN_STATIC_AUTH_SECRET)
+ *   2. Static TURN creds (TURN_SERVER_URL/USERNAME/CREDENTIAL)
+ *   3. Public Metered Open Relay (dev only — set DISABLE_PUBLIC_TURN=true to disable)
+ *
+ * The response includes an `expiresAt` field (epoch seconds) so the client can
+ * refresh credentials before they lapse during long calls.
  */
-router.get('/ice-config', auth, (req, res) => {
-    const iceServers = [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-    ];
-
-    const turnUrl = process.env.TURN_SERVER_URL;
-    const turnUser = process.env.TURN_SERVER_USERNAME;
-    const turnCred = process.env.TURN_SERVER_CREDENTIAL;
-
-    if (turnUrl && turnUser && turnCred) {
-        iceServers.push({
-            urls: turnUrl,
-            username: turnUser,
-            credential: turnCred,
-        });
-    } else if (process.env.DISABLE_PUBLIC_TURN !== 'true') {
-        // Fallback to Metered Open Relay — a free, no-signup public TURN service.
-        // Required so peers behind the same NAT (no hairpinning) or different
-        // restrictive networks can still establish media. To opt out, set
-        // DISABLE_PUBLIC_TURN=true. For production reliability, host your own
-        // coturn and configure TURN_SERVER_URL/USERNAME/CREDENTIAL.
-        // Refs: https://www.metered.ca/tools/openrelay/
-        iceServers.push(
-            { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-            { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-            { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
-        );
+const { buildIceServers } = require('../utils/coturn');
+router.get('/ice-config', auth, async (req, res) => {
+    try {
+        const { iceServers, ttl, mode, expiresAt } = await buildIceServers(req.userId);
+        const payload = { iceServers, mode };
+        // expiresAt is set directly by the Cloudflare path (absolute epoch);
+        // for everything else we derive it from the relative ttl.
+        if (expiresAt) payload.expiresAt = expiresAt;
+        else if (ttl) payload.expiresAt = Math.floor(Date.now() / 1000) + ttl;
+        // Prevent caching so each call gets fresh ephemeral creds
+        res.set('Cache-Control', 'no-store');
+        res.json(payload);
+    } catch (err) {
+        req.log.error({ err }, 'ice-config error');
+        res.status(500).json({ error: 'Failed to build ICE config' });
     }
-
-    res.json({ iceServers });
 });
 
 /**

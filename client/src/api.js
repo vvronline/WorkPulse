@@ -363,4 +363,10 @@ export const getMeetingParticipants = (id) => API.get(`/meetings/${id}/participa
 export const addMeetingParticipant = (id, userId) => API.post(`/meetings/${id}/participants`, { user_id: userId });
 export const removeMeetingParticipant = (id, userId) => API.delete(`/meetings/${id}/participants/${userId}`);
 
+// Meeting HLS broadcast (videosdk-hls-style large-meeting mode)
+export const startMeetingHlsBroadcast = (code) => API.post(`/meetings/${code}/hls/start`);
+export const stopMeetingHlsBroadcast = (code, broadcastId) =>
+    API.post(`/meetings/${code}/hls/stop`, { broadcastId });
+export const getMeetingHlsStatus = (code) => API.get(`/meetings/${code}/hls/status`);
+
 export default API;

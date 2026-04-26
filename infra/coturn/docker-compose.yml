@@ -1,0 +1,52 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# coturn — TURN/STUN server for WorkPulse audio/video calls
+# ─────────────────────────────────────────────────────────────────────────────
+# Quick start:
+#   1. Set TURN_STATIC_AUTH_SECRET and TURN_EXTERNAL_IP in your .env
+#   2. Drop a TLS cert + key into ./certs/ (fullchain.pem + privkey.pem)
+#   3. docker compose -f infra/coturn/docker-compose.yml up -d
+#   4. Set the matching env vars on the WorkPulse server (TURN_HOST,
+#      TURN_STATIC_AUTH_SECRET, TURN_USE_TLS_443=true) and restart.
+#
+# Why network_mode=host?
+#   coturn needs to see real client IPs (not the docker-bridge SNAT'd ones)
+#   to issue the right ICE candidates, AND it needs to bind a wide UDP relay
+#   range. host networking is simplest. If you must run bridged, publish:
+#     - 3478:3478/udp, 3478:3478/tcp
+#     - 5349:5349/tcp, 443:443/tcp     (TLS)
+#     - 49152-49200:49152-49200/udp    (relay range)
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  coturn:
+    image: coturn/coturn:4.6
+    container_name: workpulse-coturn
+    restart: unless-stopped
+    network_mode: host
+    # If you cannot use host networking, uncomment ports: below and remove
+    # network_mode: host above.
+    # ports:
+    #   - "3478:3478/udp"
+    #   - "3478:3478/tcp"
+    #   - "5349:5349/tcp"
+    #   - "443:443/tcp"
+    #   - "49152-49200:49152-49200/udp"
+    volumes:
+      # turnserver.conf is templated at startup so the static-auth-secret /
+      # external-ip can come from environment without baking secrets into the
+      # image. See entrypoint.sh in this directory.
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - ./certs:/etc/coturn/certs:ro
+      - ./entrypoint.sh:/usr/local/bin/coturn-entrypoint.sh:ro
+    environment:
+      # REQUIRED — must match TURN_STATIC_AUTH_SECRET on the WorkPulse server
+      - TURN_STATIC_AUTH_SECRET=${TURN_STATIC_AUTH_SECRET:-please-change-me-in-prod}
+      # REQUIRED on cloud / NAT'd hosts — public IP coturn should advertise
+      - TURN_EXTERNAL_IP=${TURN_EXTERNAL_IP:-}
+    entrypoint: ["/usr/local/bin/coturn-entrypoint.sh"]
+    healthcheck:
+      # Poll the STUN port; coturn replies even without auth.
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 3478 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

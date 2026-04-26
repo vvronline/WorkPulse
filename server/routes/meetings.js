@@ -6,10 +6,16 @@ const { sendToUser } = require('../utils/ws');
 const { notifyByEmail } = require('../utils/mailer');
 const redis = require('../redis');
 const { requireTenant } = require('../middleware/tenant');
+const { provisionBroadcast } = require('../utils/hlsBroadcast');
 
 const router = express.Router();
 router.use(auth, requireTenant);
 router.use(loadUserContext);
+
+// In-memory registry of active HLS broadcasts per meeting (single-process). For
+// multi-instance deployments swap this for Redis keys: hls:meeting:<id>.
+// Schema: meetingId -> { broadcastId, hlsUrl, hostId, startedAt, mediaServer }
+const activeBroadcasts = new Map();
 
 /** Generate a unique meeting code: XXX-XXXX-XXX */
 async function generateMeetingCode(db) {
@@ -534,6 +540,169 @@ router.post('/:id/participants', async (req, res) => {
     } catch (err) {
         req.log.error({ err }, 'Add participant error');
         res.status(500).json({ error: 'Failed to add participant' });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HLS BROADCAST — videosdk-hls-style large-meeting mode
+// ─────────────────────────────────────────────────────────────────────────────
+// Provisions an HLS broadcast slot on the configured media server (see
+// server/utils/hlsBroadcast.js for the supported back-ends). One broadcast
+// per meeting; only the meeting organizer (or any participant with the
+// `canBroadcast` flag) may start one. The publisher uploads chunks via
+// useHlsBroadcast on the client; viewers stream the m3u8 via <HlsViewer />.
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.post('/:code/hls/start', async (req, res) => {
+    try {
+        const code = req.params.code;
+        const meeting = (await req.db.query(
+            'SELECT * FROM meetings WHERE meeting_code = $1', [code]
+        )).rows[0];
+        if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
+
+        // Only organizer may start the broadcast (allow any participant if
+        // the meeting settings explicitly opt-in via `allowAnyBroadcaster`).
+        const settings = meeting.settings || {};
+        const isOrganizer = meeting.created_by === req.userId;
+        if (!isOrganizer && !settings.allowAnyBroadcaster) {
+            return res.status(403).json({ error: 'Only the meeting organizer can start a broadcast' });
+        }
+
+        // Must be a participant
+        const isParticipant = (await req.db.query(
+            'SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2',
+            [meeting.id, req.userId]
+        )).rows[0];
+        if (!isParticipant && !isOrganizer) {
+            return res.status(403).json({ error: 'Not a participant' });
+        }
+
+        // Already broadcasting? Return existing info (idempotent).
+        const existing = activeBroadcasts.get(meeting.id);
+        if (existing) {
+            // Same publisher — return existing creds
+            if (existing.hostId === req.userId) {
+                return res.json(existing);
+            }
+            return res.status(409).json({
+                error: 'A broadcast is already active for this meeting',
+                hlsUrl: existing.hlsUrl,
+            });
+        }
+
+        const broadcast = provisionBroadcast({ meetingId: meeting.id, userId: req.userId });
+        if (!broadcast) {
+            return res.status(501).json({
+                error: 'HLS broadcasting is not configured on this server. Set HLS_MEDIA_SERVER, HLS_INGEST_BASE_URL and HLS_PLAYBACK_BASE_URL.',
+            });
+        }
+
+        const record = {
+            ...broadcast,
+            hostId: req.userId,
+            startedAt: new Date().toISOString(),
+        };
+        activeBroadcasts.set(meeting.id, record);
+
+        // Notify all participants so HlsViewer can mount automatically.
+        const parts = (await req.db.query(
+            'SELECT user_id FROM meeting_participants WHERE meeting_id = $1', [meeting.id]
+        )).rows;
+        for (const p of parts) {
+            sendToUser(req.tenantId, p.user_id, 'meeting_hls_started', {
+                meetingId: meeting.id,
+                meetingCode: code,
+                hlsUrl: broadcast.hlsUrl,
+                hostId: req.userId,
+            });
+        }
+
+        // Return ingest creds ONLY to the publisher; viewers get hlsUrl via WS event.
+        res.json({
+            broadcastId: broadcast.broadcastId,
+            ingestUrl: broadcast.ingestUrl,
+            hlsUrl: broadcast.hlsUrl,
+            mediaServer: broadcast.mediaServer,
+            expiresAt: broadcast.expiresAt,
+        });
+    } catch (err) {
+        req.log.error({ err }, 'HLS start error');
+        res.status(500).json({ error: 'Failed to start broadcast' });
+    }
+});
+
+router.post('/:code/hls/stop', async (req, res) => {
+    try {
+        const code = req.params.code;
+        const meeting = (await req.db.query(
+            'SELECT id, created_by FROM meetings WHERE meeting_code = $1', [code]
+        )).rows[0];
+        if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
+
+        const existing = activeBroadcasts.get(meeting.id);
+        if (!existing) return res.json({ ok: true, alreadyStopped: true });
+
+        // Allow either the host who started it, or the meeting organizer, to stop it.
+        if (existing.hostId !== req.userId && meeting.created_by !== req.userId) {
+            return res.status(403).json({ error: 'Only the broadcasting host or organizer can stop' });
+        }
+        // Optional broadcastId check prevents stopping a different broadcast that was
+        // started after a quick restart.
+        if (req.body?.broadcastId && req.body.broadcastId !== existing.broadcastId) {
+            return res.status(409).json({ error: 'broadcastId does not match the active broadcast' });
+        }
+
+        activeBroadcasts.delete(meeting.id);
+
+        const parts = (await req.db.query(
+            'SELECT user_id FROM meeting_participants WHERE meeting_id = $1', [meeting.id]
+        )).rows;
+        for (const p of parts) {
+            sendToUser(req.tenantId, p.user_id, 'meeting_hls_stopped', {
+                meetingId: meeting.id,
+                meetingCode: code,
+                broadcastId: existing.broadcastId,
+            });
+        }
+
+        res.json({ ok: true });
+    } catch (err) {
+        req.log.error({ err }, 'HLS stop error');
+        res.status(500).json({ error: 'Failed to stop broadcast' });
+    }
+});
+
+router.get('/:code/hls/status', async (req, res) => {
+    try {
+        const code = req.params.code;
+        const meeting = (await req.db.query(
+            'SELECT id FROM meetings WHERE meeting_code = $1', [code]
+        )).rows[0];
+        if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
+
+        const isParticipant = (await req.db.query(
+            'SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2',
+            [meeting.id, req.userId]
+        )).rows[0];
+        if (!isParticipant) return res.status(403).json({ error: 'Not a participant' });
+
+        const existing = activeBroadcasts.get(meeting.id);
+        if (!existing) return res.json({ live: false });
+
+        // Viewers only need hlsUrl; never leak ingest creds to non-publishers.
+        const isHost = existing.hostId === req.userId;
+        res.json({
+            live: true,
+            hlsUrl: existing.hlsUrl,
+            hostId: existing.hostId,
+            startedAt: existing.startedAt,
+            mediaServer: existing.mediaServer,
+            ...(isHost ? { ingestUrl: existing.ingestUrl, broadcastId: existing.broadcastId } : {}),
+        });
+    } catch (err) {
+        req.log.error({ err }, 'HLS status error');
+        res.status(500).json({ error: 'Failed to get broadcast status' });
     }
 });
 

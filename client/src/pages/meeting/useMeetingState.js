@@ -1,13 +1,56 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useAuth } from '../../AuthContext';
+import { getIceConfig } from '../../api';
+
+// Default ICE servers used until the /chat/ice-config request resolves.
+// Includes the public Open Relay TURN service so meetings still work for peers
+// behind restrictive NATs / corporate proxies even before the server config arrives.
+const DEFAULT_ICE_SERVERS = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+];
 
 const ICE_CONFIG = {
-    iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-    ]
+    iceServers: DEFAULT_ICE_SERVERS,
+    bundlePolicy: 'max-bundle',
+    rtcpMuxPolicy: 'require',
+    iceCandidatePoolSize: 4,
 };
+
+/**
+ * Progressive constraint profiles — see useWebRTC.js for the same pattern.
+ * Order: HD desktop → SD mobile → Low → bare → audio-only fallback.
+ */
+function buildMeetingMediaProfiles(wantVideo) {
+    const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+    if (!wantVideo) return [{ audio, video: false }];
+    return [
+        { audio, video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } } },
+        { audio, video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 } } },
+        { audio, video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 15, max: 24 } } },
+        { audio, video: true },
+        { audio, video: false }, // audio-only fallback
+    ];
+}
+
+async function acquireMeetingMedia(wantVideo) {
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error('NoMediaDevices');
+    const profiles = buildMeetingMediaProfiles(wantVideo);
+    let lastError;
+    for (let i = 0; i < profiles.length; i++) {
+        try {
+            const st = await navigator.mediaDevices.getUserMedia(profiles[i]);
+            if (i > 0) console.warn('[meeting] media acquired with reduced profile #' + i);
+            return st;
+        } catch (err) {
+            lastError = err;
+            if (err?.name === 'NotAllowedError' || err?.name === 'SecurityError') break;
+        }
+    }
+    throw lastError;
+}
 
 /**
  * useMeetingState — WebRTC mesh hook for multi-participant meetings.
@@ -49,6 +92,11 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     const qualityTimerRef = useRef(null);
     const wsRef = useRef(ws);
     wsRef.current = ws;
+    // Dynamic ICE config — populated from /api/chat/ice-config (coturn ephemeral creds)
+    const iceServersRef = useRef(DEFAULT_ICE_SERVERS);
+    const iceExpiresAtRef = useRef(0);
+    const relayOnlyPeersRef = useRef(new Set()); // peer IDs we should rebuild as relay-only
+    const iceRestartCountsRef = useRef(new Map()); // peer -> # ICE restarts attempted
 
     // Keep refs in sync with state to avoid stale closures in toggleMute/toggleVideo/toggleScreenShare
     const mutedRef = useRef(muted);
@@ -65,7 +113,9 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         }
     }, []);
 
-    // Acquire local media on mount (skip if existingStream is provided)
+    // Acquire local media on mount (skip if existingStream is provided).
+    // Uses the progressive-constraints helper so weaker mobile devices /
+    // congested networks still produce a usable stream instead of failing.
     useEffect(() => {
         if (existingStream) {
             localStreamRef.current = existingStream;
@@ -74,42 +124,61 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             return;
         }
         let stream;
-        const constraints = {
-            audio: true,
-            video: !initialVideoOff,
-        };
-        navigator.mediaDevices.getUserMedia(constraints)
-            .then(st => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const st = await acquireMeetingMedia(!initialVideoOff);
+                if (cancelled) { st.getTracks().forEach(t => t.stop()); return; }
                 stream = st;
                 st.getAudioTracks().forEach(t => { t.enabled = !initialMuted; });
+                if (st.getVideoTracks().length === 0) setVideoOff(true);
                 localStreamRef.current = st;
                 setLocalStream(st);
                 setMediaReady(true);
-            })
-            .catch(() => {
-                navigator.mediaDevices.getUserMedia({ audio: true })
-                    .then(st => {
-                        stream = st;
-                        st.getAudioTracks().forEach(t => { t.enabled = !initialMuted; });
-                        localStreamRef.current = st;
-                        setLocalStream(st);
-                        setVideoOff(true);
-                        setMediaReady(true);
-                    })
-                    .catch(err => {
-                        setMuted(true);
-                        setVideoOff(true);
-                        setMediaReady(true);
-                        if (err?.name === 'NotAllowedError') {
-                            alert('Camera/microphone access is blocked.\n\n1. Click the lock/tune icon in the address bar → allow camera & microphone\n2. If the setting is locked, your organization may be blocking it — contact your IT admin to whitelist this site');
-                        }
-                    });
-            });
+            } catch (err) {
+                if (cancelled) return;
+                console.error('[meeting] all media profiles failed:', err);
+                setMuted(true);
+                setVideoOff(true);
+                setMediaReady(true);
+                if (err?.name === 'NotAllowedError') {
+                    alert('Camera/microphone access is blocked.\n\n1. Click the lock/tune icon in the address bar → allow camera & microphone\n2. If the setting is locked, your organization may be blocking it — contact your IT admin to whitelist this site');
+                } else if (err?.name === 'NotReadableError' || err?.name === 'TrackStartError') {
+                    alert('Your camera/microphone is in use by another application. Please close that app and rejoin the meeting.');
+                } else if (err?.name === 'NotFoundError') {
+                    alert('No camera/microphone was found. You will join muted with video off.');
+                }
+            }
+        })();
         return () => {
+            cancelled = true;
             // Only stop tracks if not keeping alive for PiP
             if (!keepAliveOnUnmount && stream) stream.getTracks().forEach(t => t.stop());
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // Fetch ICE config (coturn ephemeral creds) and refresh before expiry.
+    // Done in parallel with media acquisition so we don't add startup latency.
+    useEffect(() => {
+        const refresh = async () => {
+            try {
+                const { data } = await getIceConfig();
+                if (data?.iceServers?.length) {
+                    iceServersRef.current = data.iceServers;
+                    iceExpiresAtRef.current = data.expiresAt || 0;
+                    console.log('[meeting] ICE config loaded (mode:', data.mode || 'unknown', ')');
+                }
+            } catch (err) {
+                console.warn('[meeting] ICE config fetch failed, using defaults:', err?.message || err);
+            }
+        };
+        refresh();
+        const t = setInterval(() => {
+            const expiresAt = iceExpiresAtRef.current;
+            if (expiresAt && expiresAt - Math.floor(Date.now() / 1000) < 300) refresh();
+        }, 60_000);
+        return () => clearInterval(t);
     }, []);
 
     // Device change detection — re-enumerate when devices are added/removed
@@ -177,13 +246,30 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         return () => clearInterval(qualityTimerRef.current);
     }, []);
 
-    // Create a peer connection to a remote user
+    // Create a peer connection to a remote user.
+    // Uses the freshly-fetched coturn ICE config and applies iceTransportPolicy=relay
+    // for peers we previously failed to reach over UDP/STUN (corporate proxy escape).
     const createPeerConnection = useCallback((remoteUserId, isInitiator) => {
-        if (pcsRef.current.has(remoteUserId)) return pcsRef.current.get(remoteUserId);
+        const existing = pcsRef.current.get(remoteUserId);
+        if (existing && existing.connectionState !== 'closed' && existing.connectionState !== 'failed') {
+            return existing;
+        }
+        if (existing) { try { existing.close(); } catch { } }
+
+        const pcConfig = {
+            iceServers: iceServersRef.current,
+            bundlePolicy: 'max-bundle',
+            rtcpMuxPolicy: 'require',
+            iceCandidatePoolSize: 4,
+        };
+        if (relayOnlyPeersRef.current.has(remoteUserId)) {
+            pcConfig.iceTransportPolicy = 'relay';
+            console.log('[meeting] peer', remoteUserId, '→ relay-only mode (corporate proxy fallback)');
+        }
 
         let pc;
         try {
-            pc = new RTCPeerConnection(ICE_CONFIG);
+            pc = new RTCPeerConnection(pcConfig);
         } catch (err) {
             console.error('Failed to create RTCPeerConnection:', err);
             return null;
@@ -219,18 +305,61 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             }
         };
 
+        pc.oniceconnectionstatechange = () => {
+            // Fast ICE restart on transient mobile / VPN drops
+            if (pc.iceConnectionState === 'disconnected') {
+                setTimeout(() => {
+                    if (pc.iceConnectionState === 'disconnected' && pc.signalingState === 'stable') {
+                        const cnt = (iceRestartCountsRef.current.get(remoteUserId) || 0);
+                        if (cnt < 3) {
+                            iceRestartCountsRef.current.set(remoteUserId, cnt + 1);
+                            console.log('[meeting] ICE restart for peer', remoteUserId, '(attempt', cnt + 1, ')');
+                            pc.createOffer({ iceRestart: true })
+                                .then(o => pc.setLocalDescription(o))
+                                .then(() => wsSend('meeting_signal', {
+                                    meetingId, targetUserId: remoteUserId,
+                                    signal: { type: 'offer', sdp: pc.localDescription },
+                                }))
+                                .catch(err => console.warn('[meeting] ICE restart failed:', err));
+                        }
+                    }
+                }, 2000);
+            }
+        };
+
         pc.onconnectionstatechange = () => {
-            if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+            if (pc.connectionState === 'connected') {
+                setStatus('connected');
+                iceRestartCountsRef.current.delete(remoteUserId);
+                setParticipants(prev => {
+                    const next = new Map(prev);
+                    const p = next.get(remoteUserId);
+                    if (p && !p.stream) next.set(remoteUserId, { ...p });
+                    return next;
+                });
+            } else if (pc.connectionState === 'failed') {
                 setParticipants(prev => {
                     const next = new Map(prev);
                     const p = next.get(remoteUserId);
                     if (p) next.set(remoteUserId, { ...p, stream: null });
                     return next;
                 });
-            }
-            // Update status to connected once at least one peer is connected
-            if (pc.connectionState === 'connected') {
-                setStatus('connected');
+                // Escalate to relay-only and rebuild — the corporate-proxy lifeline.
+                if (!relayOnlyPeersRef.current.has(remoteUserId)) {
+                    console.warn('[meeting] peer', remoteUserId, 'failed — rebuilding in relay-only mode');
+                    relayOnlyPeersRef.current.add(remoteUserId);
+                    try { pc.close(); } catch { }
+                    pcsRef.current.delete(remoteUserId);
+                    iceRestartCountsRef.current.delete(remoteUserId);
+                    setTimeout(() => createPeerConnection(remoteUserId, true), 500);
+                }
+            } else if (pc.connectionState === 'disconnected') {
+                setParticipants(prev => {
+                    const next = new Map(prev);
+                    const p = next.get(remoteUserId);
+                    if (p) next.set(remoteUserId, { ...p, stream: null });
+                    return next;
+                });
             }
         };
 
@@ -249,6 +378,33 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         }
 
         return pc;
+    }, [meetingId, wsSend]);
+
+    // Network change handling — mobile WiFi↔cellular, VPN connect/disconnect.
+    // Issue ICE restart on every connected peer so the meeting survives.
+    useEffect(() => {
+        const restartAll = (reason) => {
+            console.log('[meeting] network change (', reason, ') — issuing ICE restart on', pcsRef.current.size, 'peers');
+            for (const [peerId, pc] of pcsRef.current) {
+                if (pc.signalingState !== 'stable') continue;
+                pc.createOffer({ iceRestart: true })
+                    .then(o => pc.setLocalDescription(o))
+                    .then(() => wsSend('meeting_signal', {
+                        meetingId, targetUserId: peerId,
+                        signal: { type: 'offer', sdp: pc.localDescription },
+                    }))
+                    .catch(err => console.warn('[meeting] network-change ICE restart failed for', peerId, err));
+            }
+        };
+        const onOnline = () => restartAll('online');
+        const onConn = () => restartAll('connection.change');
+        window.addEventListener('online', onOnline);
+        const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+        conn?.addEventListener?.('change', onConn);
+        return () => {
+            window.removeEventListener('online', onOnline);
+            conn?.removeEventListener?.('change', onConn);
+        };
     }, [meetingId, wsSend]);
 
     // Flush any buffered signals for a peer
