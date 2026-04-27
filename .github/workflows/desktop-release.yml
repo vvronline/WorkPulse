@@ -123,11 +123,12 @@ jobs:
 
           # Create a DRAFT release so parallel electron-builder jobs can find it and upload
           # without racing each other to create the release. The release-notes job publishes it.
-          # Use list endpoint — /releases/tags/{tag} returns 404 for draft releases.
-          EXISTING_RELEASE_ID=$(curl -s \
-            -H "Authorization: token $GH_TOKEN" \
-            "https://api.github.com/repos/vvronline/WorkPulse-releases/releases?per_page=100" \
-            | jq -r --arg v "v${VERSION}" '.[] | select(.tag_name == $v) | .id | tostring' | head -1)
+          # Use gh CLI with --paginate — /releases/tags/{tag} returns 404 for draft releases,
+          # and the bare list endpoint is capped at 100 results without pagination.
+          EXISTING_RELEASE_ID=$(gh api \
+            "repos/vvronline/WorkPulse-releases/releases" \
+            --paginate \
+            --jq ".[] | select(.tag_name == \"v${VERSION}\") | .id" | head -1)
           if [ -z "$EXISTING_RELEASE_ID" ]; then
             CREATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
               -H "Authorization: token $GH_TOKEN" \
@@ -268,11 +269,12 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          # /releases/tags/{tag} only returns published releases; use list to find drafts too
-          RELEASE_ID=$(curl -s \
-            -H "Authorization: token $GH_TOKEN" \
-            "https://api.github.com/repos/vvronline/WorkPulse-releases/releases?per_page=100" \
-            | jq -r --arg v "v${VERSION}" '.[] | select(.tag_name == $v) | .id | tostring' | head -1)
+          # /releases/tags/{tag} only returns published releases; use gh CLI with --paginate
+          # to find drafts too and avoid the 100-result cap on the list endpoint.
+          RELEASE_ID=$(gh api \
+            "repos/vvronline/WorkPulse-releases/releases" \
+            --paginate \
+            --jq ".[] | select(.tag_name == \"v${VERSION}\") | .id" | head -1)
           
           if [ -n "$RELEASE_ID" ]; then
             BODY=$(jq -Rs '.' < release-notes.md)
@@ -291,11 +293,20 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          # /releases/tags/{tag} only returns published releases; use list to find drafts too
-          RELEASE_ID=$(curl -s \
-            -H "Authorization: token $GH_TOKEN" \
-            "https://api.github.com/repos/vvronline/WorkPulse-releases/releases?per_page=100" \
-            | jq -r --arg v "v${VERSION}" '.[] | select(.tag_name == $v) | .id | tostring' | head -1)
+          # /releases/tags/{tag} only returns published releases; use gh CLI with --paginate
+          # to find drafts too and avoid the 100-result cap on the list endpoint.
+          RELEASE_ID=$(gh api \
+            "repos/vvronline/WorkPulse-releases/releases" \
+            --paginate \
+            --jq ".[] | select(.tag_name == \"v${VERSION}\") | .id" | head -1)
+
+          # Fallback: if not found via list (e.g. token lacks draft visibility), try the
+          # tag endpoint which returns published releases.
+          if [ -z "$RELEASE_ID" ]; then
+            RELEASE_ID=$(gh api \
+              "repos/vvronline/WorkPulse-releases/releases/tags/v${VERSION}" \
+              --jq '.id' 2>/dev/null || true)
+          fi
 
           if [ -n "$RELEASE_ID" ]; then
             PUBLISH_RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH \
