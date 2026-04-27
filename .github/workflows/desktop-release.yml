@@ -121,17 +121,24 @@ jobs:
           fi
           BODY_JSON=$(echo -e "$BODY" | jq -Rs '.')
 
-          # Create a release so parallel electron-builder jobs don't race to create one
+          # Create a DRAFT release so parallel electron-builder jobs can find it and upload
+          # without racing each other to create the release. The release-notes job publishes it.
           RELEASE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Authorization: token $GH_TOKEN" \
             "https://api.github.com/repos/vvronline/WorkPulse-releases/releases/tags/v${VERSION}")
           if [ "$RELEASE_STATUS" != "200" ]; then
-            curl -s -X POST \
+            CREATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
               -H "Authorization: token $GH_TOKEN" \
               -H "Content-Type: application/json" \
               "https://api.github.com/repos/vvronline/WorkPulse-releases/releases" \
-              -d "{\"tag_name\": \"v${VERSION}\", \"name\": \"v${VERSION}\", \"body\": $BODY_JSON, \"draft\": false, \"prerelease\": false}"
-            echo "Created release v${VERSION} on WorkPulse-releases with notes"
+              -d "{\"tag_name\": \"v${VERSION}\", \"name\": \"v${VERSION}\", \"body\": $BODY_JSON, \"draft\": true, \"prerelease\": false}")
+            CREATE_HTTP_CODE=$(echo "$CREATE_RESPONSE" | tail -n1)
+            if [ "$CREATE_HTTP_CODE" != "201" ]; then
+              echo "::error::Failed to create release v${VERSION} on WorkPulse-releases (HTTP $CREATE_HTTP_CODE)"
+              echo "$CREATE_RESPONSE" | head -n-1
+              exit 1
+            fi
+            echo "Created draft release v${VERSION} on WorkPulse-releases with notes"
           else
             echo "Release v${VERSION} already exists on WorkPulse-releases"
           fi
@@ -274,4 +281,32 @@ jobs:
             echo "Updated release notes for v${VERSION}"
           else
             echo "Release v${VERSION} not found yet, skipping notes update"
+          fi
+
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          RELEASE_ID=$(curl -s \
+            -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/vvronline/WorkPulse-releases/releases/tags/v${VERSION}" \
+            | jq -r '.id // empty')
+
+          if [ -n "$RELEASE_ID" ]; then
+            PUBLISH_RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH \
+              -H "Authorization: token $GH_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.github.com/repos/vvronline/WorkPulse-releases/releases/${RELEASE_ID}" \
+              -d '{"draft": false}')
+            PUBLISH_HTTP_CODE=$(echo "$PUBLISH_RESPONSE" | tail -n1)
+            if [ "$PUBLISH_HTTP_CODE" != "200" ]; then
+              echo "::error::Failed to publish release v${VERSION} (HTTP $PUBLISH_HTTP_CODE)"
+              echo "$PUBLISH_RESPONSE" | head -n-1
+              exit 1
+            fi
+            echo "Published release v${VERSION}"
+          else
+            echo "::error::Release v${VERSION} not found, cannot publish"
+            exit 1
           fi
