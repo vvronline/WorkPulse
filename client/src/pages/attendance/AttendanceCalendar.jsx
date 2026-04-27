@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon } from 'lucide-react';
-import { getHistory, getLeaves, getHolidays, getLocalToday, getCurrentOrg } from '../../api';
+import { getHistory, getLeaves, getHolidays, getLocalToday, getCurrentOrg, getStatus } from '../../api';
+import { useLiveTimer } from '../../hooks/useLiveTimer';
+import { STATUS_POLL_INTERVAL } from '../../constants';
 import s from './AttendanceCalendar.module.css';
 
 /* ---------- helpers ---------- */
@@ -32,6 +34,43 @@ export default function AttendanceCalendar({ refreshKey = 0 }) {
     const [org, setOrg] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+
+    /* Live session tracking — poll /tracker/status so today's cell flips to
+       present as soon as the threshold is reached, without waiting for a page reload. */
+    const [liveStatus, setLiveStatus] = useState(null);
+    const { liveFloorSec } = useLiveTimer(liveStatus);
+
+    useEffect(() => {
+        let cancelled = false;
+        const fetchLiveStatus = async () => {
+            if (cancelled) return;
+            try {
+                const res = await getStatus();
+                if (!cancelled) setLiveStatus(res.data || null);
+            } catch { /* keep previous value */ }
+        };
+        fetchLiveStatus();
+        const poll = setInterval(() => {
+            if (!document.hidden && !cancelled) fetchLiveStatus();
+        }, STATUS_POLL_INTERVAL);
+        const onVisible = () => { if (!document.hidden && !cancelled) fetchLiveStatus(); };
+        document.addEventListener('visibilitychange', onVisible);
+        return () => {
+            cancelled = true;
+            clearInterval(poll);
+            document.removeEventListener('visibilitychange', onVisible);
+        };
+    }, []);
+
+    /* Live floor minutes: ticks every second when on_floor, otherwise uses last
+       stored value from the server. Mirrors the same formula in useFloatingTimer. */
+    const liveFloorMinutes = useMemo(() => {
+        const state = liveStatus?.state || 'logged_out';
+        const sec = state === 'logged_out'
+            ? (liveStatus?.floorMinutes || 0) * 60
+            : liveFloorSec;
+        return Math.floor(sec / 60);
+    }, [liveStatus, liveFloorSec]);
 
     /* Minimum hours an employee must log to be considered Present.
        Sourced from organization settings (min_hours_present). Falls back to
@@ -78,6 +117,9 @@ export default function AttendanceCalendar({ refreshKey = 0 }) {
 
     useEffect(() => { fetchAll(); }, [fetchAll, refreshKey]);
 
+    const cells = useMemo(() => buildMonthMatrix(year, month), [year, month]);
+    const todayStr = fmtYMD(today);
+
     /* index by date for O(1) lookup — present means at least minHoursPresent worked */
     const presentMap = useMemo(() => {
         const minMinutes = minHoursPresent * 60;
@@ -85,8 +127,17 @@ export default function AttendanceCalendar({ refreshKey = 0 }) {
         history.forEach(d => {
             if ((d.floorMinutes || 0) >= minMinutes) m.set(d.date, d);
         });
+        // Also check the live session: if today is in the current month view and the
+        // user has already reached the threshold, mark today as present immediately
+        // (history may not include the in-progress session yet).
+        const isCurrentMonth = year === today.getFullYear() && month === today.getMonth();
+        if (isCurrentMonth && liveFloorMinutes >= minHoursPresent * 60) {
+            if (!m.has(todayStr)) {
+                m.set(todayStr, { date: todayStr, floorMinutes: liveFloorMinutes });
+            }
+        }
         return m;
-    }, [history, minHoursPresent]);
+    }, [history, minHoursPresent, liveFloorMinutes, year, month, today, todayStr]);
 
     /* Normalize date values that may arrive as ISO strings, Date objects, or YYYY-MM-DD */
     const toYMD = (v) => {
@@ -117,9 +168,6 @@ export default function AttendanceCalendar({ refreshKey = 0 }) {
         });
         return m;
     }, [holidays]);
-
-    const cells = useMemo(() => buildMonthMatrix(year, month), [year, month]);
-    const todayStr = fmtYMD(today);
 
     /* statistics */
     const stats = useMemo(() => {
@@ -165,7 +213,10 @@ export default function AttendanceCalendar({ refreshKey = 0 }) {
 
         if (present) {
             kind = 'present';
-            const hrs = (present.floorMinutes / 60).toFixed(1);
+            // For today's live entry the floorMinutes might be the live count;
+            // use liveFloorMinutes for today so the tooltip stays current.
+            const displayMin = isToday ? Math.max(present.floorMinutes, liveFloorMinutes) : present.floorMinutes;
+            const hrs = (displayMin / 60).toFixed(1);
             title += ` • Present (${hrs}h, min ${minHoursPresent}h)`;
         } else if (leave) {
             kind = leave.status === 'approved' ? 'leave' : 'leave-pending';
