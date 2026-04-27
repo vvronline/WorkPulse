@@ -123,10 +123,12 @@ jobs:
 
           # Create a DRAFT release so parallel electron-builder jobs can find it and upload
           # without racing each other to create the release. The release-notes job publishes it.
-          RELEASE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+          # Use list endpoint — /releases/tags/{tag} returns 404 for draft releases.
+          EXISTING_RELEASE_ID=$(curl -s \
             -H "Authorization: token $GH_TOKEN" \
-            "https://api.github.com/repos/vvronline/WorkPulse-releases/releases/tags/v${VERSION}")
-          if [ "$RELEASE_STATUS" != "200" ]; then
+            "https://api.github.com/repos/vvronline/WorkPulse-releases/releases?per_page=100" \
+            | jq -r --arg v "v${VERSION}" '.[] | select(.tag_name == $v) | .id | tostring' | head -1)
+          if [ -z "$EXISTING_RELEASE_ID" ]; then
             CREATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
               -H "Authorization: token $GH_TOKEN" \
               -H "Content-Type: application/json" \
@@ -266,10 +268,11 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
+          # /releases/tags/{tag} only returns published releases; use list to find drafts too
           RELEASE_ID=$(curl -s \
             -H "Authorization: token $GH_TOKEN" \
-            "https://api.github.com/repos/vvronline/WorkPulse-releases/releases/tags/v${VERSION}" \
-            | jq -r '.id // empty')
+            "https://api.github.com/repos/vvronline/WorkPulse-releases/releases?per_page=100" \
+            | jq -r --arg v "v${VERSION}" '.[] | select(.tag_name == $v) | .id | tostring' | head -1)
           
           if [ -n "$RELEASE_ID" ]; then
             BODY=$(jq -Rs '.' < release-notes.md)
@@ -288,10 +291,11 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
+          # /releases/tags/{tag} only returns published releases; use list to find drafts too
           RELEASE_ID=$(curl -s \
             -H "Authorization: token $GH_TOKEN" \
-            "https://api.github.com/repos/vvronline/WorkPulse-releases/releases/tags/v${VERSION}" \
-            | jq -r '.id // empty')
+            "https://api.github.com/repos/vvronline/WorkPulse-releases/releases?per_page=100" \
+            | jq -r --arg v "v${VERSION}" '.[] | select(.tag_name == $v) | .id | tostring' | head -1)
 
           if [ -n "$RELEASE_ID" ]; then
             PUBLISH_RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH \
