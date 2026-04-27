@@ -269,21 +269,26 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          # /releases/tags/{tag} only returns published releases; use gh CLI with --paginate
-          # to find drafts too and avoid the 100-result cap on the list endpoint.
+          # Use gh CLI throughout — it sets the correct Accept/User-Agent/auth headers,
+          # handles pagination, and gives clearer errors than hand-rolled curl PATCHes.
+          # /releases/tags/{tag} only returns published releases, so we list (paginated)
+          # to find drafts too.
           RELEASE_ID=$(gh api \
             "repos/vvronline/WorkPulse-releases/releases" \
             --paginate \
             --jq ".[] | select(.tag_name == \"v${VERSION}\") | .id" | head -1)
-          
+          echo "Lookup result for v${VERSION}: RELEASE_ID='${RELEASE_ID}'"
+
           if [ -n "$RELEASE_ID" ]; then
-            BODY=$(jq -Rs '.' < release-notes.md)
-            curl -s -X PATCH \
-              -H "Authorization: token $GH_TOKEN" \
-              -H "Content-Type: application/json" \
-              "https://api.github.com/repos/vvronline/WorkPulse-releases/releases/${RELEASE_ID}" \
-              -d "{\"body\": $BODY}"
-            echo "Updated release notes for v${VERSION}"
+            # gh api -F reads the body from a file and JSON-encodes it correctly.
+            if gh api \
+              -X PATCH \
+              "repos/vvronline/WorkPulse-releases/releases/${RELEASE_ID}" \
+              -F body=@release-notes.md; then
+              echo "Updated release notes for v${VERSION}"
+            else
+              echo "::warning::Failed to update release notes for v${VERSION} (id=${RELEASE_ID}); continuing to publish"
+            fi
           else
             echo "Release v${VERSION} not found yet, skipping notes update"
           fi
@@ -293,35 +298,42 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          # /releases/tags/{tag} only returns published releases; use gh CLI with --paginate
-          # to find drafts too and avoid the 100-result cap on the list endpoint.
+          # Prefer gh release edit — it works directly off the tag (including drafts),
+          # uses correct headers, and handles auth uniformly.
+          if gh release view "v${VERSION}" --repo vvronline/WorkPulse-releases >/dev/null 2>&1; then
+            echo "Found release v${VERSION} via gh release view"
+            if gh release edit "v${VERSION}" \
+              --repo vvronline/WorkPulse-releases \
+              --draft=false; then
+              echo "Published release v${VERSION}"
+              exit 0
+            fi
+            echo "::warning::gh release edit failed; falling back to direct API call"
+          fi
+
+          # Fallback: look up the release ID via the list endpoint (handles drafts that
+          # gh release view sometimes can't see depending on token type) and PATCH via gh api.
           RELEASE_ID=$(gh api \
             "repos/vvronline/WorkPulse-releases/releases" \
             --paginate \
             --jq ".[] | select(.tag_name == \"v${VERSION}\") | .id" | head -1)
+          echo "Fallback lookup: RELEASE_ID='${RELEASE_ID}'"
 
-          # Fallback: if not found via list (e.g. token lacks draft visibility), try the
-          # tag endpoint which returns published releases.
           if [ -z "$RELEASE_ID" ]; then
-            RELEASE_ID=$(gh api \
-              "repos/vvronline/WorkPulse-releases/releases/tags/v${VERSION}" \
-              --jq '.id' 2>/dev/null || true)
-          fi
-
-          if [ -n "$RELEASE_ID" ]; then
-            PUBLISH_RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH \
-              -H "Authorization: token $GH_TOKEN" \
-              -H "Content-Type: application/json" \
-              "https://api.github.com/repos/vvronline/WorkPulse-releases/releases/${RELEASE_ID}" \
-              -d '{"draft": false}')
-            PUBLISH_HTTP_CODE=$(echo "$PUBLISH_RESPONSE" | tail -n1)
-            if [ "$PUBLISH_HTTP_CODE" != "200" ]; then
-              echo "::error::Failed to publish release v${VERSION} (HTTP $PUBLISH_HTTP_CODE)"
-              echo "$PUBLISH_RESPONSE" | head -n-1
-              exit 1
-            fi
-            echo "Published release v${VERSION}"
-          else
             echo "::error::Release v${VERSION} not found, cannot publish"
+            echo "Visible releases on WorkPulse-releases (most recent 10):"
+            gh api "repos/vvronline/WorkPulse-releases/releases?per_page=10" \
+              --jq '.[] | {id, tag_name, draft, name}' || true
             exit 1
           fi
+
+          if ! gh api \
+            -X PATCH \
+            "repos/vvronline/WorkPulse-releases/releases/${RELEASE_ID}" \
+            -F draft=false; then
+            echo "::error::Failed to publish release v${VERSION} (id=${RELEASE_ID})"
+            echo "Token scope check (whoami):"
+            gh api user --jq '.login' || true
+            exit 1
+          fi
+          echo "Published release v${VERSION} (id=${RELEASE_ID})"
