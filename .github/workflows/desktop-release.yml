@@ -478,43 +478,38 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.validate.outputs.version }}
+          # Use the RELEASE_ID we already captured when we created/found the
+          # draft. This is critical because GitHub returns tag_name="untagged-XXX"
+          # for draft releases — the real tag is only attached at publish time.
+          # That makes both `gh release view v${VERSION}` and
+          # `select(.tag_name == "v${VERSION}")` fail to find the draft.
+          # We MUST go straight to the release id.
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
         run: |
-          # Prefer gh release edit — it works directly off the tag (including drafts),
-          # uses correct headers, and handles auth uniformly.
-          if gh release view "v${VERSION}" --repo ${{ github.repository }} >/dev/null 2>&1; then
-            echo "Found release v${VERSION} via gh release view"
-            if gh release edit "v${VERSION}" \
-              --repo ${{ github.repository }} \
-              --draft=false; then
-              echo "Published release v${VERSION}"
-              exit 0
-            fi
-            echo "::warning::gh release edit failed; falling back to direct API call"
-          fi
-
-          # Fallback: look up the release ID via the list endpoint (handles drafts that
-          # gh release view sometimes can't see depending on token type) and PATCH via gh api.
-          RELEASE_ID=$(gh api \
-            "repos/${{ github.repository }}/releases" \
-            --paginate \
-            --jq ".[] | select(.tag_name == \"v${VERSION}\") | .id" | head -1)
-          echo "Fallback lookup: RELEASE_ID='${RELEASE_ID}'"
-
           if [ -z "$RELEASE_ID" ]; then
-            echo "::error::Release v${VERSION} not found, cannot publish"
-            echo "Visible releases (most recent 10):"
-            gh api "repos/${{ github.repository }}/releases?per_page=10" \
-              --jq '.[] | {id, tag_name, draft, name}' || true
+            echo "::error::No RELEASE_ID was passed in from the create-or-find step"
             exit 1
           fi
 
-          if ! gh api \
-            -X PATCH \
-            "repos/${{ github.repository }}/releases/${RELEASE_ID}" \
-            -F draft=false; then
-            echo "::error::Failed to publish release v${VERSION} (id=${RELEASE_ID})"
-            echo "Token scope check (whoami):"
-            gh api user --jq '.login' || true
-            exit 1
+          echo "Publishing release id=${RELEASE_ID} for v${VERSION}"
+
+          # Patch the release: set draft=false AND re-assert tag_name so that
+          # GitHub binds it to the actual git tag (otherwise GitHub leaves the
+          # synthetic "untagged-XXX" tag on the published release).
+          if gh api \
+              -X PATCH \
+              "repos/${{ github.repository }}/releases/${RELEASE_ID}" \
+              -f tag_name="v${VERSION}" \
+              -f name="v${VERSION}" \
+              -F draft=false; then
+            echo "Published release v${VERSION} (id=${RELEASE_ID})"
+            exit 0
           fi
-          echo "Published release v${VERSION} (id=${RELEASE_ID})"
+
+          echo "::error::Failed to publish release v${VERSION} (id=${RELEASE_ID})"
+          echo "Current state of release id=${RELEASE_ID}:"
+          gh api "repos/${{ github.repository }}/releases/${RELEASE_ID}" \
+            --jq '{id, tag_name, draft, name}' || true
+          echo "Token scope check (whoami):"
+          gh api user --jq '.login' || true
+          exit 1
