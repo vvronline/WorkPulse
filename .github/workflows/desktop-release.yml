@@ -98,15 +98,14 @@ jobs:
         working-directory: desktop
         run: npm ci
 
+      # IMPORTANT: do NOT pass GH_TOKEN to this step — we don't want electron-builder
+      # to publish directly. When it does, parallel matrix jobs each create their OWN
+      # duplicate draft release (named "1.4.x" without the "v" prefix) that they
+      # can't find via /releases/tags/{tag}, scattering assets across 3-4 duplicate
+      # drafts. Instead we collect artifacts and upload them all once from the single
+      # release-notes job below, against a release WE control.
       - name: Build Electron app
         working-directory: desktop
-        env:
-          # IMPORTANT: do NOT pass GH_TOKEN here — we don't want electron-builder to
-          # publish directly. When it does, parallel matrix jobs each create their
-          # OWN duplicate draft release (named "1.4.x" without the "v" prefix) that
-          # they can't find via /releases/tags/{tag}, scattering assets across 3-4
-          # duplicate drafts. Instead we collect artifacts and upload them all once
-          # from the single release-notes job below, against a release WE control.
         run: npx electron-builder ${{ matrix.args }} --publish never
 
       - name: Generate checksums
