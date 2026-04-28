@@ -61,93 +61,8 @@ jobs:
           path: client/dist
           retention-days: 1
 
-  prepare-release:
-    needs: [validate, build-client]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Create tag and release on releases repo
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
-          VERSION: ${{ needs.validate.outputs.version }}
-        run: |
-          # Create the tag on WorkPulse-releases so electron-builder can publish against it
-          # First check if tag already exists
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: token $GH_TOKEN" \
-            "https://api.github.com/repos/vvronline/WorkPulse-releases/git/ref/tags/v${VERSION}")
-          if [ "$STATUS" != "200" ]; then
-            # Get the default branch SHA to anchor the tag
-            DEFAULT_SHA=$(curl -s \
-              -H "Authorization: token $GH_TOKEN" \
-              "https://api.github.com/repos/vvronline/WorkPulse-releases/git/ref/heads/main" \
-              | jq -r '.object.sha // empty')
-            if [ -z "$DEFAULT_SHA" ]; then
-              DEFAULT_SHA=$(curl -s \
-                -H "Authorization: token $GH_TOKEN" \
-                "https://api.github.com/repos/vvronline/WorkPulse-releases/git/ref/heads/master" \
-                | jq -r '.object.sha // empty')
-            fi
-            if [ -z "$DEFAULT_SHA" ]; then
-              echo "::error::Could not find default branch SHA on WorkPulse-releases"
-              exit 1
-            fi
-            # Create a lightweight tag
-            curl -s -X POST \
-              -H "Authorization: token $GH_TOKEN" \
-              -H "Content-Type: application/json" \
-              "https://api.github.com/repos/vvronline/WorkPulse-releases/git/refs" \
-              -d "{\"ref\": \"refs/tags/v${VERSION}\", \"sha\": \"${DEFAULT_SHA}\"}"
-            echo "Created tag v${VERSION} on WorkPulse-releases"
-          else
-            echo "Tag v${VERSION} already exists on WorkPulse-releases"
-          fi
-
-          # Build initial release notes from git log so electron-updater has content immediately
-          PREV_TAG=$(git tag --sort=-creatordate | grep '^v' | sed -n '2p' || true)
-          BODY="## WorkPulse Desktop v${VERSION}\n\n"
-          if [ -n "$PREV_TAG" ]; then
-            FEATURES=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --grep="^feat" --no-merges 2>/dev/null || true)
-            FIXES=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --grep="^fix" --no-merges 2>/dev/null || true)
-            if [ -n "$FEATURES" ]; then BODY+="### ✨ Features\n${FEATURES}\n\n"; fi
-            if [ -n "$FIXES" ]; then BODY+="### 🐛 Bug Fixes\n${FIXES}\n\n"; fi
-            if [ -z "$FEATURES" ] && [ -z "$FIXES" ]; then
-              COMMITS=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --no-merges 2>/dev/null | head -10 || true)
-              if [ -n "$COMMITS" ]; then BODY+="### Changes\n${COMMITS}\n\n"; fi
-            fi
-          fi
-          BODY_JSON=$(echo -e "$BODY" | jq -Rs '.')
-
-          # Create a DRAFT release so parallel electron-builder jobs can find it and upload
-          # without racing each other to create the release. The release-notes job publishes it.
-          # Use gh CLI with --paginate — /releases/tags/{tag} returns 404 for draft releases,
-          # and the bare list endpoint is capped at 100 results without pagination.
-          EXISTING_RELEASE_ID=$(gh api \
-            "repos/vvronline/WorkPulse-releases/releases" \
-            --paginate \
-            --jq ".[] | select(.tag_name == \"v${VERSION}\") | .id" | head -1)
-          if [ -z "$EXISTING_RELEASE_ID" ]; then
-            CREATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-              -H "Authorization: token $GH_TOKEN" \
-              -H "Content-Type: application/json" \
-              "https://api.github.com/repos/vvronline/WorkPulse-releases/releases" \
-              -d "{\"tag_name\": \"v${VERSION}\", \"name\": \"v${VERSION}\", \"body\": $BODY_JSON, \"draft\": true, \"prerelease\": false}")
-            CREATE_HTTP_CODE=$(echo "$CREATE_RESPONSE" | tail -n1)
-            if [ "$CREATE_HTTP_CODE" != "201" ]; then
-              echo "::error::Failed to create release v${VERSION} on WorkPulse-releases (HTTP $CREATE_HTTP_CODE)"
-              echo "$CREATE_RESPONSE" | head -n-1
-              exit 1
-            fi
-            echo "Created draft release v${VERSION} on WorkPulse-releases with notes"
-          else
-            echo "Release v${VERSION} already exists on WorkPulse-releases"
-          fi
-
   build:
-    needs: [validate, build-client, prepare-release]
+    needs: [validate, build-client]
     permissions:
       contents: write
     strategy:
@@ -186,11 +101,13 @@ jobs:
       - name: Build Electron app
         working-directory: desktop
         env:
-          # GH_TOKEN still set so electron-builder's `--publish always` can also upload
-          # directly. The final `release-notes` job re-uploads from artifacts as a safety
-          # net so a silent publish failure here can't leave the release without assets.
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
-        run: npx electron-builder ${{ matrix.args }} --publish always
+          # IMPORTANT: do NOT pass GH_TOKEN here — we don't want electron-builder to
+          # publish directly. When it does, parallel matrix jobs each create their
+          # OWN duplicate draft release (named "1.4.x" without the "v" prefix) that
+          # they can't find via /releases/tags/{tag}, scattering assets across 3-4
+          # duplicate drafts. Instead we collect artifacts and upload them all once
+          # from the single release-notes job below, against a release WE control.
+        run: npx electron-builder ${{ matrix.args }} --publish never
 
       - name: Generate checksums
         shell: bash
@@ -311,64 +228,105 @@ jobs:
           echo "Total size:"
           du -sh installers/ || true
 
-      - name: Update release notes on releases repo
+      - name: Ensure tag exists on releases repo
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          # Use gh CLI throughout — it sets the correct Accept/User-Agent/auth headers,
-          # handles pagination, and gives clearer errors than hand-rolled curl PATCHes.
-          # /releases/tags/{tag} only returns published releases, so we list (paginated)
-          # to find drafts too.
-          RELEASE_ID=$(gh api \
-            "repos/vvronline/WorkPulse-releases/releases" \
-            --paginate \
-            --jq ".[] | select(.tag_name == \"v${VERSION}\") | .id" | head -1)
-          echo "Lookup result for v${VERSION}: RELEASE_ID='${RELEASE_ID}'"
+          # Make sure the tag exists on WorkPulse-releases (electron-updater fetches
+          # /releases/tag/v${VERSION}/... so the tag must be there).
+          if gh api "repos/vvronline/WorkPulse-releases/git/ref/tags/v${VERSION}" >/dev/null 2>&1; then
+            echo "Tag v${VERSION} already exists on WorkPulse-releases"
+            exit 0
+          fi
+          DEFAULT_SHA=$(gh api "repos/vvronline/WorkPulse-releases/git/ref/heads/main" \
+            --jq '.object.sha' 2>/dev/null \
+            || gh api "repos/vvronline/WorkPulse-releases/git/ref/heads/master" \
+            --jq '.object.sha' 2>/dev/null)
+          if [ -z "$DEFAULT_SHA" ]; then
+            echo "::error::Could not find default branch on WorkPulse-releases"
+            exit 1
+          fi
+          gh api -X POST "repos/vvronline/WorkPulse-releases/git/refs" \
+            -f ref="refs/tags/v${VERSION}" \
+            -f sha="${DEFAULT_SHA}"
+          echo "Created tag v${VERSION} on WorkPulse-releases"
 
-          if [ -n "$RELEASE_ID" ]; then
-            # gh api -F reads the body from a file and JSON-encodes it correctly.
-            if gh api \
-              -X PATCH \
-              "repos/vvronline/WorkPulse-releases/releases/${RELEASE_ID}" \
-              -F body=@release-notes.md; then
-              echo "Updated release notes for v${VERSION}"
-            else
-              echo "::warning::Failed to update release notes for v${VERSION} (id=${RELEASE_ID}); continuing"
-            fi
+      - name: Clean up any duplicate / orphaned drafts for this version
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          # Previous runs of this workflow (when electron-builder --publish always was
+          # racing) left behind duplicate draft releases named "${VERSION}" (no v) and
+          # "v${VERSION}" with overlapping/missing assets. Delete every draft that
+          # references this version so we start from a clean slate.
+          DRAFTS=$(gh api --paginate "repos/vvronline/WorkPulse-releases/releases" \
+            --jq ".[] | select(.draft == true) | select(.tag_name == \"v${VERSION}\" or .name == \"v${VERSION}\" or .name == \"${VERSION}\") | .id")
+          if [ -z "$DRAFTS" ]; then
+            echo "No leftover drafts for v${VERSION}"
           else
-            echo "Release v${VERSION} not found yet, skipping notes update"
+            for id in $DRAFTS; do
+              echo "Deleting orphan draft id=${id}"
+              gh api -X DELETE "repos/vvronline/WorkPulse-releases/releases/${id}" || true
+            done
+          fi
+
+      - name: Create or find the release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          # If a PUBLISHED release for this tag already exists (e.g. someone re-ran
+          # this job after a successful publish), reuse it. Otherwise create one as
+          # draft so the upload step below can populate it before we flip it live.
+          RELEASE_ID=$(gh api "repos/vvronline/WorkPulse-releases/releases/tags/v${VERSION}" \
+            --jq '.id' 2>/dev/null || true)
+          if [ -n "$RELEASE_ID" ]; then
+            echo "Reusing published release id=${RELEASE_ID} for v${VERSION}"
+          else
+            echo "Creating fresh draft release for v${VERSION}"
+            RELEASE_ID=$(gh api -X POST \
+              "repos/vvronline/WorkPulse-releases/releases" \
+              -f tag_name="v${VERSION}" \
+              -f name="v${VERSION}" \
+              -F draft=true \
+              -F prerelease=false \
+              --jq '.id')
+            echo "Created release id=${RELEASE_ID}"
+          fi
+          if [ -z "$RELEASE_ID" ]; then
+            echo "::error::Failed to obtain a release ID for v${VERSION}"
+            exit 1
+          fi
+          echo "release_id=${RELEASE_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Update release notes on releases repo
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: |
+          if gh api -X PATCH \
+            "repos/vvronline/WorkPulse-releases/releases/${RELEASE_ID}" \
+            -F body=@release-notes.md; then
+            echo "Updated release notes for v${VERSION}"
+          else
+            echo "::warning::Failed to update release notes for v${VERSION} (id=${RELEASE_ID}); continuing"
           fi
 
       - name: Ensure all installer assets are attached to the release
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
         run: |
-          # Safety net: even if electron-builder's --publish always failed silently in
-          # one of the matrix jobs, this step guarantees every required installer file
-          # is attached to the release.
           if ! ls installers/* >/dev/null 2>&1; then
             echo "::error::No installer files were downloaded from the build jobs"
             exit 1
           fi
-
-          # `gh release upload`/`gh release view` resolve the release via
-          # /releases/tags/{tag}, which 404s for DRAFT releases. We have to look up
-          # the release id via the list endpoint (which does see drafts) and upload
-          # directly to the per-id assets endpoint on uploads.github.com.
-          RELEASE_ID=$(gh api \
-            "repos/vvronline/WorkPulse-releases/releases" \
-            --paginate \
-            --jq ".[] | select(.tag_name == \"v${VERSION}\") | .id" | head -1)
-          echo "Resolved RELEASE_ID='${RELEASE_ID}' for v${VERSION}"
-          if [ -z "$RELEASE_ID" ]; then
-            echo "::error::Could not find release v${VERSION} on WorkPulse-releases"
-            echo "Most recent visible releases:"
-            gh api "repos/vvronline/WorkPulse-releases/releases?per_page=10" \
-              --jq '.[] | {id, tag_name, draft, name}' || true
-            exit 1
-          fi
+          echo "Uploading to release id=${RELEASE_ID} (v${VERSION})"
 
           # Build a set of names already attached so we know whether to delete-then-upload
           # (the assets API returns 422 on duplicate names; there is no PATCH).
