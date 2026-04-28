@@ -66,5 +66,5 @@ linux:
 publish:
   provider: github
   owner: vvronline
-  repo: WorkPulse-releases
+  repo: WorkPulse
   releaseType: draft

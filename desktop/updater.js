@@ -171,7 +171,7 @@ function setupUpdater(mainWindow) {
             const https = require('https');
             const data = await new Promise((resolve, reject) => {
                 const req = https.get(
-                    `https://api.github.com/repos/vvronline/WorkPulse-releases/releases/tags/${tag}`,
+                    `https://api.github.com/repos/vvronline/WorkPulse/releases/tags/${tag}`,
                     { headers: { 'User-Agent': 'WorkPulse-Desktop', Accept: 'application/vnd.github.v3+json' } },
                     (res) => {
                         let body = '';

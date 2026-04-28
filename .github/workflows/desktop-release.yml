@@ -98,15 +98,84 @@ jobs:
         working-directory: desktop
         run: npm ci
 
+      # ──────────────────────────────────────────────────────────────────────
+      # Cache the electron binary downloads (and app-builder helper binaries)
+      # so that flaky 502s from github.com/electron/electron/releases/download
+      # don't fail the build on every retry. The cache key includes the
+      # electron version so a version bump invalidates the cache automatically.
+      # ──────────────────────────────────────────────────────────────────────
+      - name: Read electron version
+        id: electron_ver
+        shell: bash
+        working-directory: desktop
+        run: |
+          EV=$(node -p "require('electron/package.json').version")
+          echo "version=$EV" >> "$GITHUB_OUTPUT"
+          echo "Electron version: $EV"
+
+      - name: Cache electron binaries (Linux/macOS)
+        if: runner.os != 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+          key: ${{ runner.os }}-electron-${{ steps.electron_ver.outputs.version }}-v2
+          restore-keys: |
+            ${{ runner.os }}-electron-${{ steps.electron_ver.outputs.version }}-
+            ${{ runner.os }}-electron-
+
+      - name: Cache electron binaries (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: ${{ runner.os }}-electron-${{ steps.electron_ver.outputs.version }}-v2
+          restore-keys: |
+            ${{ runner.os }}-electron-${{ steps.electron_ver.outputs.version }}-
+            ${{ runner.os }}-electron-
+
       # IMPORTANT: do NOT pass GH_TOKEN to this step — we don't want electron-builder
       # to publish directly. When it does, parallel matrix jobs each create their OWN
       # duplicate draft release (named "1.4.x" without the "v" prefix) that they
       # can't find via /releases/tags/{tag}, scattering assets across 3-4 duplicate
       # drafts. Instead we collect artifacts and upload them all once from the single
       # release-notes job below, against a release WE control.
-      - name: Build Electron app
+      #
+      # The retry loop guards against transient 502s from
+      # github.com/electron/electron/releases/download/... which periodically
+      # bombs out and kills the macOS leg of the build.
+      - name: Build Electron app (with retries)
+        shell: bash
         working-directory: desktop
-        run: npx electron-builder ${{ matrix.args }} --publish never
+        env:
+          # Quiet down electron-builder native dependency rebuild noise on CI
+          USE_HARD_LINKS: 'false'
+        run: |
+          set -e
+          MAX_ATTEMPTS=4
+          ATTEMPT=1
+          until [ "$ATTEMPT" -gt "$MAX_ATTEMPTS" ]; do
+            echo "── electron-builder attempt ${ATTEMPT}/${MAX_ATTEMPTS} ──"
+            if npx electron-builder ${{ matrix.args }} --publish never; then
+              echo "Build succeeded on attempt ${ATTEMPT}"
+              exit 0
+            fi
+            EXIT=$?
+            echo "::warning::electron-builder failed on attempt ${ATTEMPT} (exit ${EXIT})"
+            if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then
+              echo "::error::electron-builder failed after ${MAX_ATTEMPTS} attempts"
+              exit "$EXIT"
+            fi
+            SLEEP=$(( ATTEMPT * 30 ))
+            echo "Sleeping ${SLEEP}s before retry…"
+            sleep "$SLEEP"
+            ATTEMPT=$(( ATTEMPT + 1 ))
+          done
 
       - name: Generate checksums
         shell: bash
@@ -174,21 +243,21 @@ jobs:
       - name: Generate release notes
         id: notes
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           # Find previous tag
           PREV_TAG=$(git tag --sort=-creatordate | grep '^v' | sed -n '2p')
-          
+
           NOTES="## WorkPulse Desktop v${VERSION}\n\n"
-          
+
           if [ -n "$PREV_TAG" ]; then
             NOTES+="### Changes since ${PREV_TAG}\n\n"
             # Group commits by type
             FEATURES=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --grep="^feat" --no-merges 2>/dev/null || true)
             FIXES=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --grep="^fix" --no-merges 2>/dev/null || true)
             OTHER=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --invert-grep --grep="^feat" --grep="^fix" --no-merges 2>/dev/null | head -20 || true)
-            
+
             if [ -n "$FEATURES" ]; then
               NOTES+="### ✨ Features\n${FEATURES}\n\n"
             fi
@@ -199,7 +268,7 @@ jobs:
               NOTES+="### 📝 Other Changes\n${OTHER}\n\n"
             fi
           fi
-          
+
           # Append checksums
           NOTES+="### 🔒 Checksums (SHA-256)\n\`\`\`\n"
           for f in checksums/checksums-*/checksums.txt; do
@@ -208,7 +277,7 @@ jobs:
             fi
           done
           NOTES+="\`\`\`\n"
-          
+
           # Write to file for the GitHub release
           echo -e "$NOTES" > release-notes.md
           cat release-notes.md
@@ -227,54 +296,30 @@ jobs:
           echo "Total size:"
           du -sh installers/ || true
 
-      - name: Ensure tag exists on releases repo
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
-          VERSION: ${{ needs.validate.outputs.version }}
-        run: |
-          # Make sure the tag exists on WorkPulse-releases (electron-updater fetches
-          # /releases/tag/v${VERSION}/... so the tag must be there).
-          if gh api "repos/vvronline/WorkPulse-releases/git/ref/tags/v${VERSION}" >/dev/null 2>&1; then
-            echo "Tag v${VERSION} already exists on WorkPulse-releases"
-            exit 0
-          fi
-          DEFAULT_SHA=$(gh api "repos/vvronline/WorkPulse-releases/git/ref/heads/main" \
-            --jq '.object.sha' 2>/dev/null \
-            || gh api "repos/vvronline/WorkPulse-releases/git/ref/heads/master" \
-            --jq '.object.sha' 2>/dev/null)
-          if [ -z "$DEFAULT_SHA" ]; then
-            echo "::error::Could not find default branch on WorkPulse-releases"
-            exit 1
-          fi
-          gh api -X POST "repos/vvronline/WorkPulse-releases/git/refs" \
-            -f ref="refs/tags/v${VERSION}" \
-            -f sha="${DEFAULT_SHA}"
-          echo "Created tag v${VERSION} on WorkPulse-releases"
-
       - name: Clean up any duplicate / orphaned drafts for this version
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           # Previous runs of this workflow (when electron-builder --publish always was
           # racing) left behind duplicate draft releases named "${VERSION}" (no v) and
           # "v${VERSION}" with overlapping/missing assets. Delete every draft that
           # references this version so we start from a clean slate.
-          DRAFTS=$(gh api --paginate "repos/vvronline/WorkPulse-releases/releases" \
+          DRAFTS=$(gh api --paginate "repos/${{ github.repository }}/releases" \
             --jq ".[] | select(.draft == true) | select(.tag_name == \"v${VERSION}\" or .name == \"v${VERSION}\" or .name == \"${VERSION}\") | .id")
           if [ -z "$DRAFTS" ]; then
             echo "No leftover drafts for v${VERSION}"
           else
             for id in $DRAFTS; do
               echo "Deleting orphan draft id=${id}"
-              gh api -X DELETE "repos/vvronline/WorkPulse-releases/releases/${id}" || true
+              gh api -X DELETE "repos/${{ github.repository }}/releases/${id}" || true
             done
           fi
 
       - name: Create or find the release
         id: release
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           # If a release for this tag already exists (published OR draft), reuse it.
@@ -288,13 +333,13 @@ jobs:
           # check the exit code explicitly, and only then parse out .id.
           RELEASE_ID=""
           TMP=$(mktemp)
-          if gh api "repos/vvronline/WorkPulse-releases/releases/tags/v${VERSION}" >"$TMP" 2>/dev/null; then
+          if gh api "repos/${{ github.repository }}/releases/tags/v${VERSION}" >"$TMP" 2>/dev/null; then
             RELEASE_ID=$(jq -r '.id // empty' <"$TMP")
             echo "Reusing existing release id=${RELEASE_ID} for v${VERSION} (via tag lookup)"
           else
             # Tag lookup only finds PUBLISHED releases. Draft releases must be
             # discovered via the list endpoint.
-            RELEASE_ID=$(gh api --paginate "repos/vvronline/WorkPulse-releases/releases" \
+            RELEASE_ID=$(gh api --paginate "repos/${{ github.repository }}/releases" \
               --jq ".[] | select(.tag_name == \"v${VERSION}\") | .id" | head -1)
             if [ -n "$RELEASE_ID" ]; then
               echo "Reusing existing draft release id=${RELEASE_ID} for v${VERSION} (via list)"
@@ -305,7 +350,7 @@ jobs:
           if [ -z "$RELEASE_ID" ]; then
             echo "Creating fresh draft release for v${VERSION}"
             RELEASE_ID=$(gh api -X POST \
-              "repos/vvronline/WorkPulse-releases/releases" \
+              "repos/${{ github.repository }}/releases" \
               -f tag_name="v${VERSION}" \
               -f name="v${VERSION}" \
               -F draft=true \
@@ -323,14 +368,14 @@ jobs:
           fi
           echo "release_id=${RELEASE_ID}" >> "$GITHUB_OUTPUT"
 
-      - name: Update release notes on releases repo
+      - name: Update release notes
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.validate.outputs.version }}
           RELEASE_ID: ${{ steps.release.outputs.release_id }}
         run: |
           if gh api -X PATCH \
-            "repos/vvronline/WorkPulse-releases/releases/${RELEASE_ID}" \
+            "repos/${{ github.repository }}/releases/${RELEASE_ID}" \
             -F body=@release-notes.md; then
             echo "Updated release notes for v${VERSION}"
           else
@@ -339,7 +384,7 @@ jobs:
 
       - name: Ensure all installer assets are attached to the release
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.validate.outputs.version }}
           RELEASE_ID: ${{ steps.release.outputs.release_id }}
         run: |
@@ -352,7 +397,7 @@ jobs:
           # Build a set of names already attached so we know whether to delete-then-upload
           # (the assets API returns 422 on duplicate names; there is no PATCH).
           EXISTING=$(gh api --paginate \
-            "repos/vvronline/WorkPulse-releases/releases/${RELEASE_ID}/assets" \
+            "repos/${{ github.repository }}/releases/${RELEASE_ID}/assets" \
             --jq '.[] | "\(.id)\t\(.name)"' || true)
           echo "Existing assets on release:"
           echo "$EXISTING"
@@ -368,7 +413,7 @@ jobs:
             if [ -n "$existing_id" ]; then
               echo "Deleting existing asset id=${existing_id} name=${name}"
               gh api -X DELETE \
-                "repos/vvronline/WorkPulse-releases/releases/assets/${existing_id}" || true
+                "repos/${{ github.repository }}/releases/assets/${existing_id}" || true
             fi
 
             # Detect content type so GitHub serves the file correctly.
@@ -396,7 +441,7 @@ jobs:
               -H "Accept: application/vnd.github+json" \
               -H "Content-Type: ${ctype}" \
               --data-binary "@${f}" \
-              "https://uploads.github.com/repos/vvronline/WorkPulse-releases/releases/${RELEASE_ID}/assets?name=${name}")
+              "https://uploads.github.com/repos/${{ github.repository }}/releases/${RELEASE_ID}/assets?name=${name}")
             if [ "$HTTP_CODE" != "201" ]; then
               echo "::error::Failed to upload ${name} (HTTP ${HTTP_CODE})"
               cat /tmp/upload-resp.json || true
@@ -409,27 +454,27 @@ jobs:
             echo "::error::One or more asset uploads failed for v${VERSION}"
             echo "Currently attached assets:"
             gh api --paginate \
-              "repos/vvronline/WorkPulse-releases/releases/${RELEASE_ID}/assets" \
+              "repos/${{ github.repository }}/releases/${RELEASE_ID}/assets" \
               --jq '.[].name' || true
             exit 1
           fi
 
           echo "All assets uploaded. Final asset list on release:"
           gh api --paginate \
-            "repos/vvronline/WorkPulse-releases/releases/${RELEASE_ID}/assets" \
+            "repos/${{ github.repository }}/releases/${RELEASE_ID}/assets" \
             --jq '.[] | {name, size, download_count}'
 
       - name: Publish draft release
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           # Prefer gh release edit — it works directly off the tag (including drafts),
           # uses correct headers, and handles auth uniformly.
-          if gh release view "v${VERSION}" --repo vvronline/WorkPulse-releases >/dev/null 2>&1; then
+          if gh release view "v${VERSION}" --repo ${{ github.repository }} >/dev/null 2>&1; then
             echo "Found release v${VERSION} via gh release view"
             if gh release edit "v${VERSION}" \
-              --repo vvronline/WorkPulse-releases \
+              --repo ${{ github.repository }} \
               --draft=false; then
               echo "Published release v${VERSION}"
               exit 0
@@ -440,22 +485,22 @@ jobs:
           # Fallback: look up the release ID via the list endpoint (handles drafts that
           # gh release view sometimes can't see depending on token type) and PATCH via gh api.
           RELEASE_ID=$(gh api \
-            "repos/vvronline/WorkPulse-releases/releases" \
+            "repos/${{ github.repository }}/releases" \
             --paginate \
             --jq ".[] | select(.tag_name == \"v${VERSION}\") | .id" | head -1)
           echo "Fallback lookup: RELEASE_ID='${RELEASE_ID}'"
 
           if [ -z "$RELEASE_ID" ]; then
             echo "::error::Release v${VERSION} not found, cannot publish"
-            echo "Visible releases on WorkPulse-releases (most recent 10):"
-            gh api "repos/vvronline/WorkPulse-releases/releases?per_page=10" \
+            echo "Visible releases (most recent 10):"
+            gh api "repos/${{ github.repository }}/releases?per_page=10" \
               --jq '.[] | {id, tag_name, draft, name}' || true
             exit 1
           fi
 
           if ! gh api \
             -X PATCH \
-            "repos/vvronline/WorkPulse-releases/releases/${RELEASE_ID}" \
+            "repos/${{ github.repository }}/releases/${RELEASE_ID}" \
             -F draft=false; then
             echo "::error::Failed to publish release v${VERSION} (id=${RELEASE_ID})"
             echo "Token scope check (whoami):"
