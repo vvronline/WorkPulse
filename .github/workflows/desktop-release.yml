@@ -186,6 +186,9 @@ jobs:
       - name: Build Electron app
         working-directory: desktop
         env:
+          # GH_TOKEN still set so electron-builder's `--publish always` can also upload
+          # directly. The final `release-notes` job re-uploads from artifacts as a safety
+          # net so a silent publish failure here can't leave the release without assets.
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: npx electron-builder ${{ matrix.args }} --publish always
 
@@ -205,6 +208,36 @@ jobs:
           name: checksums-${{ matrix.os }}
           path: desktop/dist/checksums.txt
           retention-days: 30
+
+      - name: Stage installers for upload
+        shell: bash
+        working-directory: desktop/dist
+        run: |
+          # Collect only the files that need to be on the GitHub release. We deliberately
+          # exclude the unpacked app bundles (linux-unpacked/, win-unpacked/, mac/, etc.)
+          # which are huge and not needed by electron-updater.
+          mkdir -p ../../release-assets/${{ matrix.os }}
+          shopt -s nullglob
+          for f in *.exe *.exe.blockmap \
+                   *.dmg *.dmg.blockmap *.zip *.zip.blockmap \
+                   *.AppImage *.deb \
+                   latest.yml latest-mac.yml latest-linux.yml; do
+            if [ -f "$f" ]; then
+              cp "$f" "../../release-assets/${{ matrix.os }}/"
+              echo "Staged: $f"
+            fi
+          done
+          echo "---"
+          echo "Total staged files:"
+          ls -la "../../release-assets/${{ matrix.os }}/"
+
+      - name: Upload installers as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          path: release-assets/${{ matrix.os }}/
+          retention-days: 7
+          if-no-files-found: error
 
   release-notes:
     needs: [validate, build]
@@ -264,6 +297,20 @@ jobs:
           echo -e "$NOTES" > release-notes.md
           cat release-notes.md
 
+      - name: Download all installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: installers-*
+          path: installers
+          merge-multiple: true
+
+      - name: List downloaded installers
+        run: |
+          echo "Files staged for upload to v${{ needs.validate.outputs.version }}:"
+          ls -la installers/ || true
+          echo "Total size:"
+          du -sh installers/ || true
+
       - name: Update release notes on releases repo
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
@@ -287,11 +334,43 @@ jobs:
               -F body=@release-notes.md; then
               echo "Updated release notes for v${VERSION}"
             else
-              echo "::warning::Failed to update release notes for v${VERSION} (id=${RELEASE_ID}); continuing to publish"
+              echo "::warning::Failed to update release notes for v${VERSION} (id=${RELEASE_ID}); continuing"
             fi
           else
             echo "Release v${VERSION} not found yet, skipping notes update"
           fi
+
+      - name: Ensure all installer assets are attached to the release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          # Safety net: even if electron-builder's --publish always failed silently in
+          # one of the matrix jobs, this step guarantees every required installer file
+          # is attached to the release. --clobber overwrites any existing asset of the
+          # same name (no-op if file is identical to what was uploaded earlier).
+          if ! ls installers/* >/dev/null 2>&1; then
+            echo "::error::No installer files were downloaded from the build jobs"
+            exit 1
+          fi
+
+          echo "Attaching $(ls installers/ | wc -l) files to v${VERSION}..."
+          # Use gh release upload — it handles the multipart upload to the GitHub
+          # uploads endpoint correctly (different host than api.github.com).
+          if ! gh release upload "v${VERSION}" \
+              --repo vvronline/WorkPulse-releases \
+              --clobber \
+              installers/*; then
+            echo "::error::Failed to upload one or more assets to release v${VERSION}"
+            echo "Currently attached assets:"
+            gh release view "v${VERSION}" --repo vvronline/WorkPulse-releases \
+              --json assets --jq '.assets[].name' || true
+            exit 1
+          fi
+
+          echo "All assets uploaded. Final asset list on release:"
+          gh release view "v${VERSION}" --repo vvronline/WorkPulse-releases \
+            --json assets --jq '.assets[] | {name, size, downloadCount}'
 
       - name: Publish draft release
         env:
