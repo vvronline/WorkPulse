@@ -347,30 +347,90 @@ jobs:
         run: |
           # Safety net: even if electron-builder's --publish always failed silently in
           # one of the matrix jobs, this step guarantees every required installer file
-          # is attached to the release. --clobber overwrites any existing asset of the
-          # same name (no-op if file is identical to what was uploaded earlier).
+          # is attached to the release.
           if ! ls installers/* >/dev/null 2>&1; then
             echo "::error::No installer files were downloaded from the build jobs"
             exit 1
           fi
 
-          echo "Attaching $(ls installers/ | wc -l) files to v${VERSION}..."
-          # Use gh release upload — it handles the multipart upload to the GitHub
-          # uploads endpoint correctly (different host than api.github.com).
-          if ! gh release upload "v${VERSION}" \
-              --repo vvronline/WorkPulse-releases \
-              --clobber \
-              installers/*; then
-            echo "::error::Failed to upload one or more assets to release v${VERSION}"
+          # `gh release upload`/`gh release view` resolve the release via
+          # /releases/tags/{tag}, which 404s for DRAFT releases. We have to look up
+          # the release id via the list endpoint (which does see drafts) and upload
+          # directly to the per-id assets endpoint on uploads.github.com.
+          RELEASE_ID=$(gh api \
+            "repos/vvronline/WorkPulse-releases/releases" \
+            --paginate \
+            --jq ".[] | select(.tag_name == \"v${VERSION}\") | .id" | head -1)
+          echo "Resolved RELEASE_ID='${RELEASE_ID}' for v${VERSION}"
+          if [ -z "$RELEASE_ID" ]; then
+            echo "::error::Could not find release v${VERSION} on WorkPulse-releases"
+            echo "Most recent visible releases:"
+            gh api "repos/vvronline/WorkPulse-releases/releases?per_page=10" \
+              --jq '.[] | {id, tag_name, draft, name}' || true
+            exit 1
+          fi
+
+          # Build a set of names already attached so we know whether to delete-then-upload
+          # (the assets API returns 422 on duplicate names; there is no PATCH).
+          EXISTING=$(gh api --paginate \
+            "repos/vvronline/WorkPulse-releases/releases/${RELEASE_ID}/assets" \
+            --jq '.[] | "\(.id)\t\(.name)"' || true)
+          echo "Existing assets on release:"
+          echo "$EXISTING"
+
+          FILE_COUNT=$(ls -1 installers/ | wc -l)
+          echo "Attaching ${FILE_COUNT} files to release id=${RELEASE_ID} (v${VERSION})..."
+
+          FAIL=0
+          for f in installers/*; do
+            name=$(basename "$f")
+            # Delete existing asset with same name if present (clobber behaviour).
+            existing_id=$(echo "$EXISTING" | awk -F'\t' -v n="$name" '$2 == n { print $1; exit }')
+            if [ -n "$existing_id" ]; then
+              echo "Deleting existing asset id=${existing_id} name=${name}"
+              gh api -X DELETE \
+                "repos/vvronline/WorkPulse-releases/releases/assets/${existing_id}" || true
+            fi
+
+            # Detect content type so GitHub serves the file correctly.
+            case "$name" in
+              *.yml|*.yaml) ctype="text/yaml" ;;
+              *.json)       ctype="application/json" ;;
+              *.exe)        ctype="application/vnd.microsoft.portable-executable" ;;
+              *.dmg)        ctype="application/x-apple-diskimage" ;;
+              *.zip|*.blockmap) ctype="application/zip" ;;
+              *.AppImage)   ctype="application/x-executable" ;;
+              *.deb)        ctype="application/vnd.debian.binary-package" ;;
+              *)            ctype="application/octet-stream" ;;
+            esac
+
+            echo "Uploading ${name} (${ctype})..."
+            # Upload directly to uploads.github.com via gh api. --hostname keeps the
+            # token+headers from gh, but routes to the upload endpoint.
+            if ! gh api \
+                --hostname uploads.github.com \
+                -X POST \
+                -H "Content-Type: ${ctype}" \
+                "repos/vvronline/WorkPulse-releases/releases/${RELEASE_ID}/assets?name=${name}" \
+                --input "$f" >/dev/null; then
+              echo "::error::Failed to upload ${name}"
+              FAIL=1
+            fi
+          done
+
+          if [ "$FAIL" -ne 0 ]; then
+            echo "::error::One or more asset uploads failed for v${VERSION}"
             echo "Currently attached assets:"
-            gh release view "v${VERSION}" --repo vvronline/WorkPulse-releases \
-              --json assets --jq '.assets[].name' || true
+            gh api --paginate \
+              "repos/vvronline/WorkPulse-releases/releases/${RELEASE_ID}/assets" \
+              --jq '.[].name' || true
             exit 1
           fi
 
           echo "All assets uploaded. Final asset list on release:"
-          gh release view "v${VERSION}" --repo vvronline/WorkPulse-releases \
-            --json assets --jq '.assets[] | {name, size, downloadCount}'
+          gh api --paginate \
+            "repos/vvronline/WorkPulse-releases/releases/${RELEASE_ID}/assets" \
+            --jq '.[] | {name, size, download_count}'
 
       - name: Publish draft release
         env:
