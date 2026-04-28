@@ -277,14 +277,32 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          # If a PUBLISHED release for this tag already exists (e.g. someone re-ran
-          # this job after a successful publish), reuse it. Otherwise create one as
-          # draft so the upload step below can populate it before we flip it live.
-          RELEASE_ID=$(gh api "repos/vvronline/WorkPulse-releases/releases/tags/v${VERSION}" \
-            --jq '.id' 2>/dev/null || true)
-          if [ -n "$RELEASE_ID" ]; then
-            echo "Reusing published release id=${RELEASE_ID} for v${VERSION}"
+          # If a release for this tag already exists (published OR draft), reuse it.
+          # Otherwise create one as draft so the upload step below can populate it
+          # before we flip it live.
+          #
+          # IMPORTANT: `gh api` writes the raw response body to stdout on HTTP errors
+          # (e.g. 404) and does NOT apply --jq in that case. Capturing without
+          # checking the exit code would put a JSON error blob into RELEASE_ID and
+          # poison every subsequent API call. So we run gh api into a tempfile,
+          # check the exit code explicitly, and only then parse out .id.
+          RELEASE_ID=""
+          TMP=$(mktemp)
+          if gh api "repos/vvronline/WorkPulse-releases/releases/tags/v${VERSION}" >"$TMP" 2>/dev/null; then
+            RELEASE_ID=$(jq -r '.id // empty' <"$TMP")
+            echo "Reusing existing release id=${RELEASE_ID} for v${VERSION} (via tag lookup)"
           else
+            # Tag lookup only finds PUBLISHED releases. Draft releases must be
+            # discovered via the list endpoint.
+            RELEASE_ID=$(gh api --paginate "repos/vvronline/WorkPulse-releases/releases" \
+              --jq ".[] | select(.tag_name == \"v${VERSION}\") | .id" | head -1)
+            if [ -n "$RELEASE_ID" ]; then
+              echo "Reusing existing draft release id=${RELEASE_ID} for v${VERSION} (via list)"
+            fi
+          fi
+          rm -f "$TMP"
+
+          if [ -z "$RELEASE_ID" ]; then
             echo "Creating fresh draft release for v${VERSION}"
             RELEASE_ID=$(gh api -X POST \
               "repos/vvronline/WorkPulse-releases/releases" \
@@ -295,8 +313,12 @@ jobs:
               --jq '.id')
             echo "Created release id=${RELEASE_ID}"
           fi
-          if [ -z "$RELEASE_ID" ]; then
-            echo "::error::Failed to obtain a release ID for v${VERSION}"
+
+          # Sanity check: RELEASE_ID must be purely numeric. If it isn't, we picked
+          # up an error blob somewhere and need to fail fast rather than poison
+          # downstream URL construction.
+          if ! [[ "$RELEASE_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::Got non-numeric RELEASE_ID='${RELEASE_ID}' for v${VERSION}"
             exit 1
           fi
           echo "release_id=${RELEASE_ID}" >> "$GITHUB_OUTPUT"
@@ -362,15 +384,23 @@ jobs:
             esac
 
             echo "Uploading ${name} (${ctype})..."
-            # Upload directly to uploads.github.com via gh api. --hostname keeps the
-            # token+headers from gh, but routes to the upload endpoint.
-            if ! gh api \
-                --hostname uploads.github.com \
-                -X POST \
-                -H "Content-Type: ${ctype}" \
-                "repos/vvronline/WorkPulse-releases/releases/${RELEASE_ID}/assets?name=${name}" \
-                --input "$f" >/dev/null; then
-              echo "::error::Failed to upload ${name}"
+            # Upload directly to uploads.github.com. We use curl here (rather than
+            # `gh api --hostname uploads.github.com`) because gh's Go HTTP client
+            # was producing `unsupported protocol scheme ""` for the upload host —
+            # it was treating the path as a relative URL. curl with an explicit
+            # absolute https:// URL is unambiguous and matches what electron-builder
+            # / hub / the GitHub docs all recommend.
+            HTTP_CODE=$(curl -sS -o /tmp/upload-resp.json -w "%{http_code}" \
+              -X POST \
+              -H "Authorization: token ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: ${ctype}" \
+              --data-binary "@${f}" \
+              "https://uploads.github.com/repos/vvronline/WorkPulse-releases/releases/${RELEASE_ID}/assets?name=${name}")
+            if [ "$HTTP_CODE" != "201" ]; then
+              echo "::error::Failed to upload ${name} (HTTP ${HTTP_CODE})"
+              cat /tmp/upload-resp.json || true
+              echo
               FAIL=1
             fi
           done
