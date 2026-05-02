@@ -215,7 +215,10 @@ router.post('/tickets', async (req, res) => {
             const defaultTenant = await getDefaultTenantDb();
             if (defaultTenant) {
                 const typeLabel = TICKET_TYPE_LABELS[ticket_type] || ticket_type;
-                const tenantName = req.tenant.org_name || req.tenant.slug || 'Unknown';
+                const submittingTenantIsDefault = req.tenant.id === defaultTenant.tenantId;
+                const tenantName = submittingTenantIsDefault
+                    ? 'Internal'
+                    : (req.tenant.org_name || req.tenant.slug || 'Unknown');
                 const taskTitle = `[Service Desk #${ticket.id}] ${typeLabel}: ${title.trim()}`;
                 const taskDesc = `**Service Desk Ticket #${ticket.id}**\n` +
                     `**Type:** ${typeLabel}\n` +
@@ -226,15 +229,50 @@ router.post('/tickets', async (req, res) => {
                 // Map service desk priority to task priority (critical → high)
                 const taskPriority = (priority === 'critical') ? 'high' : (priority || 'medium');
 
-                // Get the first org in the default tenant to scope the task
-                const orgRes = await defaultTenant.db.query('SELECT id FROM organizations LIMIT 1');
-                const orgId = orgRes.rows[0]?.id || null;
+                let creatorId = null;
+                let orgId = null;
 
-                // Get a super_admin or first user to be the task creator
-                const adminRes = await defaultTenant.db.query(
-                    `SELECT id FROM users WHERE is_active = TRUE ORDER BY CASE role WHEN 'super_admin' THEN 1 WHEN 'hr_admin' THEN 2 ELSE 3 END LIMIT 1`
-                );
-                const creatorId = adminRes.rows[0]?.id;
+                if (submittingTenantIsDefault) {
+                    // Submitter belongs to the default tenant — use their own user record
+                    // and org so the task is immediately visible in their backlog.
+                    const meRes = await defaultTenant.db.query(
+                        'SELECT id, org_id FROM users WHERE id = $1 AND is_active = TRUE',
+                        [req.userId]
+                    );
+                    if (meRes.rows[0]) {
+                        creatorId = meRes.rows[0].id;
+                        orgId = meRes.rows[0].org_id || null;
+                    }
+                }
+
+                if (!creatorId) {
+                    // Fallback (cross-tenant ticket, or submitter not found in default tenant DB):
+                    // pick the highest-ranked active admin in the default tenant and use THAT
+                    // user's org so the task lines up with org-scoped backlog visibility.
+                    const adminRes = await defaultTenant.db.query(
+                        `SELECT id, org_id FROM users
+                         WHERE is_active = TRUE
+                         ORDER BY CASE role
+                            WHEN 'super_admin' THEN 1
+                            WHEN 'hr_admin' THEN 2
+                            WHEN 'manager' THEN 3
+                            WHEN 'team_lead' THEN 4
+                            ELSE 5
+                         END,
+                         id ASC
+                         LIMIT 1`
+                    );
+                    if (adminRes.rows[0]) {
+                        creatorId = adminRes.rows[0].id;
+                        orgId = adminRes.rows[0].org_id || null;
+                    }
+                }
+
+                // Last-ditch fallback for org_id if the chosen creator has none
+                if (creatorId && !orgId) {
+                    const orgFallback = await defaultTenant.db.query('SELECT id FROM organizations ORDER BY id ASC LIMIT 1');
+                    orgId = orgFallback.rows[0]?.id || null;
+                }
 
                 if (creatorId) {
                     await defaultTenant.db.query(

@@ -92,7 +92,7 @@ async function enrichTasks(tasks, db) {
 }
 
 // Helper: check if user can access task within tenant boundary
-async function canAccessTask(task, userId, requesterOrgId, db) {
+async function canAccessTask(task, userId, requesterOrgId, db, requesterRole) {
     if (!task) return false;
     if (!requesterOrgId) {
         // Users without an organization can only access their own direct tasks.
@@ -105,6 +105,12 @@ async function canAccessTask(task, userId, requesterOrgId, db) {
 
     if (!taskOrgId || taskOrgId !== requesterOrgId) return false;
     if (task.user_id === userId || task.assigned_to === userId) return true;
+
+    // Org-level admins can access any task within their org (needed for service-desk
+    // tickets that get mirrored as backlog tasks for cross-team triage).
+    if (requesterRole === 'super_admin' || requesterRole === 'hr_admin' || requesterRole === 'platform_admin') {
+        return true;
+    }
 
     const userRes = await db.query('SELECT team_id, org_id FROM users WHERE id = $1', [userId]);
     const user = userRes.rows[0];
@@ -176,6 +182,9 @@ router.get('/', auth, loadUserContext, async (req, res) => {
             conditions.push(`(t.user_id = $${pi} OR t.assigned_to = $${pi})`);
             params.push(req.userId);
             pi++;
+        } else if (req.userOrgId && (req.userRole === 'super_admin' || req.userRole === 'hr_admin' || req.userRole === 'platform_admin')) {
+            // Org-wide visibility for org admins (covers service desk tickets created by/for any team)
+            // No additional creator/assignee constraint beyond the org filter already added above.
         } else {
             if (req.userTeamId) {
                 conditions.push(`(t.user_id = $${pi} OR t.assigned_to = $${pi} OR t.user_id IN (SELECT id FROM users WHERE team_id = $${pi + 1}))`);
@@ -279,7 +288,8 @@ router.post('/', auth, loadUserContext, async (req, res) => {
                 'SELECT s.id, s.team_id, s.end_date FROM sprints s JOIN teams t ON t.id = s.team_id WHERE s.id = $1 AND t.org_id = $2',
                 [sprint_id, req.userOrgId]
             )).rows[0];
-            if (sprint && sprint.team_id === req.userTeamId) {
+            const isOrgAdmin = req.userRole === 'super_admin' || req.userRole === 'hr_admin' || req.userRole === 'platform_admin';
+            if (sprint && (sprint.team_id === req.userTeamId || isOrgAdmin)) {
                 validSprintId = sprint.id;
                 if (!validDueDate) validDueDate = sprint.end_date;
             } else {
@@ -332,7 +342,7 @@ router.patch('/:id/status', auth, loadUserContext, async (req, res) => {
         }
 
         const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
-        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db, req.userRole)) return res.status(404).json({ error: 'Task not found' });
 
         const completedAt = status === 'done' ? new Date().toISOString() : null;
         await req.db.query('UPDATE tasks SET status = $1, completed_at = $2 WHERE id = $3', [status, completedAt, id]);
@@ -356,7 +366,7 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
         const { title, description, priority, assigned_to, due_date, label_ids, sprint_id } = req.body;
 
         const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
-        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db, req.userRole)) return res.status(404).json({ error: 'Task not found' });
 
         const newTitle = title?.trim() || task.title;
         const newDesc = description !== undefined ? (description?.trim() || null) : task.description;
@@ -390,7 +400,8 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
                     'SELECT s.id, s.team_id, s.end_date FROM sprints s JOIN teams t ON t.id = s.team_id WHERE s.id = $1 AND t.org_id = $2',
                     [sprint_id, req.userOrgId]
                 )).rows[0];
-                if (sprint && sprint.team_id === req.userTeamId) {
+                const isOrgAdmin = req.userRole === 'super_admin' || req.userRole === 'hr_admin' || req.userRole === 'platform_admin';
+                if (sprint && (sprint.team_id === req.userTeamId || isOrgAdmin)) {
                     newSprintId = sprint_id;
                     newDueDate = sprint.end_date;
                 } else {
@@ -460,7 +471,7 @@ router.delete('/:id', auth, loadUserContext, async (req, res) => {
         const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
         if (!task) return res.status(404).json({ error: 'Task not found' });
         if (task.user_id !== req.userId) return res.status(403).json({ error: 'Only task creator can delete task' });
-        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db, req.userRole)) return res.status(404).json({ error: 'Task not found' });
 
         await logHistory(id, req.userId, 'deleted', null, task.title, null, null, req.db);
         await req.db.query('DELETE FROM tasks WHERE id = $1', [id]);
@@ -689,6 +700,21 @@ router.delete('/labels/:id', auth, loadUserContext, requireRole('manager'), asyn
 // ─── Get available sprints for user's team (current + future) ────────────
 router.get('/available-sprints', auth, loadUserContext, async (req, res) => {
     try {
+        const isOrgAdmin = req.userOrgId && (req.userRole === 'super_admin' || req.userRole === 'hr_admin' || req.userRole === 'platform_admin');
+
+        // Org admins see every active/planned sprint across all teams in their org
+        // (so they can move service-desk tickets into any team's sprint).
+        if (isOrgAdmin) {
+            const orgSprints = (await req.db.query(`
+                SELECT s.id, s.name, s.start_date, s.end_date, s.status, s.goal, s.team_id, t.name as team_name
+                FROM sprints s
+                JOIN teams t ON t.id = s.team_id
+                WHERE t.org_id = $1 AND s.status IN ('active', 'planned')
+                ORDER BY t.name ASC, s.start_date ASC
+            `, [req.userOrgId])).rows;
+            return res.json(orgSprints);
+        }
+
         if (!req.userTeamId) return res.json([]);
 
         const sprints = (await req.db.query(`
@@ -763,15 +789,22 @@ router.patch('/:id/assign-sprint', auth, loadUserContext, async (req, res) => {
         const { sprint_id } = req.body;
 
         const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
-        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db, req.userRole)) return res.status(404).json({ error: 'Task not found' });
 
         if (sprint_id === null || sprint_id === undefined || sprint_id === '') {
             const oldSprint = task.sprint_id ? (await req.db.query('SELECT name FROM sprints WHERE id = $1', [task.sprint_id])).rows[0] : null;
             await req.db.query('UPDATE tasks SET sprint_id = NULL WHERE id = $1', [id]);
             await logHistory(id, req.userId, 'updated', 'sprint', oldSprint?.name || 'none', 'none', null, req.db);
         } else {
-            const sprint = (await req.db.query('SELECT id, team_id, name, end_date FROM sprints WHERE id = $1', [sprint_id])).rows[0];
-            if (!sprint || sprint.team_id !== req.userTeamId) {
+            // Org admins can assign to any sprint within their org; others limited to own team.
+            const isOrgAdmin = req.userRole === 'super_admin' || req.userRole === 'hr_admin' || req.userRole === 'platform_admin';
+            const sprint = isOrgAdmin
+                ? (await req.db.query(
+                    'SELECT s.id, s.team_id, s.name, s.end_date FROM sprints s JOIN teams t ON t.id = s.team_id WHERE s.id = $1 AND t.org_id = $2',
+                    [sprint_id, req.userOrgId]
+                )).rows[0]
+                : (await req.db.query('SELECT id, team_id, name, end_date FROM sprints WHERE id = $1', [sprint_id])).rows[0];
+            if (!sprint || (!isOrgAdmin && sprint.team_id !== req.userTeamId)) {
                 return res.status(400).json({ error: 'Invalid sprint or sprint does not belong to your team' });
             }
             const oldSprint = task.sprint_id ? (await req.db.query('SELECT name FROM sprints WHERE id = $1', [task.sprint_id])).rows[0] : null;
@@ -795,7 +828,7 @@ router.patch('/:id/assign-sprint', auth, loadUserContext, async (req, res) => {
 router.get('/:id/comments', auth, loadUserContext, async (req, res) => {
     try {
         const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [req.params.id])).rows[0];
-        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db, req.userRole)) return res.status(404).json({ error: 'Task not found' });
 
         const comments = (await req.db.query(`
             SELECT tc.*, u.username, u.full_name, u.avatar
@@ -817,7 +850,7 @@ router.get('/:id/comments', auth, loadUserContext, async (req, res) => {
 router.post('/:id/comments', auth, loadUserContext, async (req, res) => {
     try {
         const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [req.params.id])).rows[0];
-        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db, req.userRole)) return res.status(404).json({ error: 'Task not found' });
 
         const { content } = req.body;
         if (!content || !content.trim()) return res.status(400).json({ error: 'Comment cannot be empty' });
@@ -884,7 +917,7 @@ router.post('/:id/comments', auth, loadUserContext, async (req, res) => {
 router.put('/:id/comments/:commentId', auth, loadUserContext, async (req, res) => {
     try {
         const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [req.params.id])).rows[0];
-        if (!task || !(await canAccessTask(task, req.userId, req.userOrgId, req.db))) {
+        if (!task || !(await canAccessTask(task, req.userId, req.userOrgId, req.db, req.userRole))) {
             return res.status(404).json({ error: 'Task not found' });
         }
         const comment = (await req.db.query('SELECT * FROM task_comments WHERE id = $1 AND task_id = $2', [req.params.commentId, req.params.id])).rows[0];
@@ -915,7 +948,7 @@ router.put('/:id/comments/:commentId', auth, loadUserContext, async (req, res) =
 router.delete('/:id/comments/:commentId', auth, loadUserContext, async (req, res) => {
     try {
         const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [req.params.id])).rows[0];
-        if (!task || !(await canAccessTask(task, req.userId, req.userOrgId, req.db))) {
+        if (!task || !(await canAccessTask(task, req.userId, req.userOrgId, req.db, req.userRole))) {
             return res.status(404).json({ error: 'Task not found' });
         }
         const comment = (await req.db.query('SELECT * FROM task_comments WHERE id = $1 AND task_id = $2', [req.params.commentId, req.params.id])).rows[0];
@@ -948,7 +981,10 @@ router.get('/backlog', auth, loadUserContext, async (req, res) => {
             conditions.push('t.org_id IS NULL');
         }
 
-        if (req.userTeamId) {
+        const isOrgAdmin = req.userOrgId && (req.userRole === 'super_admin' || req.userRole === 'hr_admin' || req.userRole === 'platform_admin');
+        if (isOrgAdmin) {
+            // Org-wide backlog visibility (covers service desk tickets across teams)
+        } else if (req.userTeamId) {
             conditions.push(`(t.user_id = $${pi} OR t.assigned_to = $${pi} OR t.user_id IN (SELECT id FROM users WHERE team_id = $${pi + 1}))`);
             params.push(req.userId, req.userTeamId);
             pi += 2;
@@ -1045,8 +1081,14 @@ router.post('/backlog', auth, loadUserContext, async (req, res) => {
 
         let validSprintId = null;
         if (sprint_id) {
-            const sprint = (await req.db.query('SELECT id, team_id, end_date FROM sprints WHERE id = $1', [sprint_id])).rows[0];
-            if (sprint && sprint.team_id === req.userTeamId) {
+            const isOrgAdmin = req.userRole === 'super_admin' || req.userRole === 'hr_admin' || req.userRole === 'platform_admin';
+            const sprint = isOrgAdmin
+                ? (await req.db.query(
+                    'SELECT s.id, s.team_id, s.end_date FROM sprints s JOIN teams t ON t.id = s.team_id WHERE s.id = $1 AND t.org_id = $2',
+                    [sprint_id, req.userOrgId]
+                )).rows[0]
+                : (await req.db.query('SELECT id, team_id, end_date FROM sprints WHERE id = $1', [sprint_id])).rows[0];
+            if (sprint && (isOrgAdmin || sprint.team_id === req.userTeamId)) {
                 validSprintId = sprint.id;
                 if (!validDueDate) validDueDate = sprint.end_date;
             } else {
@@ -1098,7 +1140,7 @@ router.patch('/:id/schedule', auth, loadUserContext, async (req, res) => {
         }
 
         const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
-        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db, req.userRole)) return res.status(404).json({ error: 'Task not found' });
 
         await req.db.query('UPDATE tasks SET date = $1 WHERE id = $2', [date, id]);
         await logHistory(id, req.userId, 'scheduled', 'date', task.date || 'backlog', date, null, req.db);
@@ -1118,7 +1160,7 @@ router.patch('/:id/unschedule', auth, loadUserContext, async (req, res) => {
         const { id } = req.params;
 
         const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
-        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db, req.userRole)) return res.status(404).json({ error: 'Task not found' });
 
         await req.db.query('UPDATE tasks SET date = NULL WHERE id = $1', [id]);
         await logHistory(id, req.userId, 'unscheduled', 'date', task.date, 'backlog', null, req.db);
@@ -1136,7 +1178,7 @@ router.patch('/:id/unschedule', auth, loadUserContext, async (req, res) => {
 router.get('/:id/detail', auth, loadUserContext, async (req, res) => {
     try {
         const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [req.params.id])).rows[0];
-        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db, req.userRole)) return res.status(404).json({ error: 'Task not found' });
 
         const enriched = await enrichTasks([task], req.db);
 
@@ -1160,7 +1202,7 @@ router.get('/:id/history', auth, loadUserContext, async (req, res) => {
     try {
         const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [req.params.id])).rows[0];
         if (!task) return res.status(404).json({ error: 'Task not found' });
-        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db, req.userRole)) return res.status(404).json({ error: 'Task not found' });
 
         const history = (await req.db.query(`
             SELECT th.*, u.username, u.full_name, u.avatar
