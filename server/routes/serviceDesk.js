@@ -162,6 +162,16 @@ router.post('/tickets', async (req, res) => {
             return res.status(400).json({ error: `Invalid priority. Must be one of: ${VALID_PRIORITIES.join(', ')}` });
         }
 
+        // Fetch submitter details from tenant DB
+        const userRes = await req.db.query(
+            'SELECT id, username, full_name, email FROM users WHERE id = $1',
+            [req.userId]
+        );
+        const submitter = userRes.rows[0];
+        if (!submitter) {
+            return res.status(400).json({ error: 'User not found' });
+        }
+
         const result = await masterQuery(
             `INSERT INTO service_desk_tickets
              (tenant_id, submitted_by_user_id, submitted_by_name, submitted_by_email, ticket_type, title, description, priority)
@@ -169,9 +179,9 @@ router.post('/tickets', async (req, res) => {
              RETURNING *`,
             [
                 req.tenant.id,
-                req.user.id,
-                req.user.full_name || req.user.username,
-                req.user.email || null,
+                submitter.id,
+                submitter.full_name || submitter.username,
+                submitter.email || null,
                 ticket_type,
                 title.trim(),
                 description?.trim() || null,
@@ -195,7 +205,7 @@ router.patch('/tickets/:id', async (req, res) => {
         if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
 
         const isAdmin = await isDefaultTenant(req);
-        const isOwner = req.tenant && ticket.tenant_id === req.tenant.id && ticket.submitted_by_user_id === req.user.id;
+        const isOwner = req.tenant && ticket.tenant_id === req.tenant.id && ticket.submitted_by_user_id === req.userId;
 
         if (!isAdmin && !isOwner) {
             return res.status(403).json({ error: 'Access denied' });
