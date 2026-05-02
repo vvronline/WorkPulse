@@ -18,6 +18,7 @@ const { masterQuery } = require('../db');
 const auth = require('../middleware/auth');
 const { loadUserContext } = require('../middleware/rbac');
 const { logger } = require('../utils/logger');
+const { getTenantPool } = require('../utils/tenantManager');
 
 const router = express.Router();
 router.use(auth, loadUserContext);
@@ -34,6 +35,24 @@ async function isDefaultTenant(req) {
     const res = await masterQuery('SELECT is_default FROM tenants WHERE id = $1', [req.tenant.id]);
     return res.rows[0]?.is_default === true;
 }
+
+/**
+ * Get the default tenant's DB pool for inserting backlog tasks.
+ */
+async function getDefaultTenantDb() {
+    const res = await masterQuery('SELECT id, db_name, db_host FROM tenants WHERE is_default = TRUE LIMIT 1');
+    const tenant = res.rows[0];
+    if (!tenant) return null;
+    const db = await getTenantPool(tenant.db_name, tenant.db_host);
+    return { db, tenantId: tenant.id };
+}
+
+const TICKET_TYPE_LABELS = {
+    bug: '🐛 Bug',
+    feature_request: '✨ Feature Request',
+    access_issue: '🔑 Access Issue',
+    other: '📋 Other',
+};
 
 // GET /service-desk/tickets — list tickets
 router.get('/tickets', async (req, res) => {
@@ -189,7 +208,48 @@ router.post('/tickets', async (req, res) => {
             ]
         );
 
-        res.status(201).json(result.rows[0]);
+        const ticket = result.rows[0];
+
+        // Create a corresponding backlog task in the default tenant's DB
+        try {
+            const defaultTenant = await getDefaultTenantDb();
+            if (defaultTenant) {
+                const typeLabel = TICKET_TYPE_LABELS[ticket_type] || ticket_type;
+                const tenantName = req.tenant.org_name || req.tenant.slug || 'Unknown';
+                const taskTitle = `[Service Desk #${ticket.id}] ${typeLabel}: ${title.trim()}`;
+                const taskDesc = `**Service Desk Ticket #${ticket.id}**\n` +
+                    `**Type:** ${typeLabel}\n` +
+                    `**Submitted by:** ${submitter.full_name || submitter.username} (${tenantName})\n` +
+                    `**Priority:** ${priority || 'medium'}\n\n` +
+                    (description?.trim() ? `---\n${description.trim()}` : '');
+
+                // Map service desk priority to task priority (critical → high)
+                const taskPriority = (priority === 'critical') ? 'high' : (priority || 'medium');
+
+                // Get the first org in the default tenant to scope the task
+                const orgRes = await defaultTenant.db.query('SELECT id FROM organizations LIMIT 1');
+                const orgId = orgRes.rows[0]?.id || null;
+
+                // Get a super_admin or first user to be the task creator
+                const adminRes = await defaultTenant.db.query(
+                    `SELECT id FROM users WHERE is_active = TRUE ORDER BY CASE role WHEN 'super_admin' THEN 1 WHEN 'hr_admin' THEN 2 ELSE 3 END LIMIT 1`
+                );
+                const creatorId = adminRes.rows[0]?.id;
+
+                if (creatorId) {
+                    await defaultTenant.db.query(
+                        `INSERT INTO tasks (user_id, date, title, description, priority, org_id, status)
+                         VALUES ($1, NULL, $2, $3, $4, $5, 'pending')`,
+                        [creatorId, taskTitle.substring(0, 200), taskDesc.substring(0, 5000), taskPriority, orgId]
+                    );
+                }
+            }
+        } catch (backlogErr) {
+            // Don't fail the ticket creation if backlog sync fails
+            logger.error({ err: backlogErr }, 'Failed to create backlog task for service desk ticket');
+        }
+
+        res.status(201).json(ticket);
     } catch (err) {
         logger.error({ err }, 'Create service desk ticket error');
         res.status(500).json({ error: 'Failed to submit ticket' });
