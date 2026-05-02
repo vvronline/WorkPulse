@@ -124,14 +124,39 @@ async function initMasterDB() {
             max_users        INTEGER,
             max_storage_mb   INTEGER,
             features         JSONB NOT NULL DEFAULT '{}',
+            is_default       BOOLEAN NOT NULL DEFAULT FALSE,
             suspended_at     TIMESTAMPTZ,
             suspended_reason TEXT,
             created_at       TIMESTAMPTZ DEFAULT NOW(),
             updated_at       TIMESTAMPTZ DEFAULT NOW()
         )
     `);
+    await masterQuery(`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT FALSE`);
     await masterQuery(`CREATE INDEX IF NOT EXISTS idx_tenants_domain ON tenants(custom_domain)`);
     await masterQuery(`CREATE INDEX IF NOT EXISTS idx_tenants_status ON tenants(status)`);
+
+    // ---- Service Desk Tickets (cross-tenant, managed by default tenant) ----
+    await masterQuery(`
+        CREATE TABLE IF NOT EXISTS service_desk_tickets (
+            id               SERIAL PRIMARY KEY,
+            tenant_id        INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+            submitted_by_user_id INTEGER NOT NULL,
+            submitted_by_name    TEXT NOT NULL,
+            submitted_by_email   TEXT,
+            ticket_type      TEXT NOT NULL CHECK(ticket_type IN ('bug','feature_request','access_issue','other')),
+            title            TEXT NOT NULL,
+            description      TEXT,
+            priority         TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('low','medium','high','critical')),
+            status           TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','acknowledged','in_progress','resolved','closed')),
+            assigned_to      TEXT,
+            admin_notes      TEXT,
+            resolved_at      TIMESTAMPTZ,
+            created_at       TIMESTAMPTZ DEFAULT NOW(),
+            updated_at       TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    await masterQuery(`CREATE INDEX IF NOT EXISTS idx_service_desk_tenant ON service_desk_tickets(tenant_id, status)`);
+    await masterQuery(`CREATE INDEX IF NOT EXISTS idx_service_desk_status ON service_desk_tickets(status, created_at)`);
 
     // ---- User directory for cross-tenant login resolution ----
     await masterQuery(`

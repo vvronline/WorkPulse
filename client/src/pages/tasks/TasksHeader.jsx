@@ -3,7 +3,7 @@ import { PRIORITIES, COLUMNS } from './constants.js';
 import { formatDate } from './utils.jsx';
 import { getLocalToday } from '../../api';
 import { useTaskCtx } from './TaskContext.jsx';
-import { CalendarDays, Package, Search } from 'lucide-react';
+import { CalendarDays, Package, Search, Headset } from 'lucide-react';
 import s from './TasksHeader.module.css';
 
 export default function TasksHeader({
@@ -81,9 +81,15 @@ export default function TasksHeader({
           ) : (
             <>
               <h2>
-                <span className="page-icon"><Package size={18} style={{verticalAlign:'middle'}} /></span> Backlog
+                <span className="page-icon">{activeTab === 'service-desk'
+                  ? <Headset size={18} style={{verticalAlign:'middle'}} />
+                  : <Package size={18} style={{verticalAlign:'middle'}} />
+                }</span> {activeTab === 'service-desk' ? 'Service Desk' : 'Backlog'}
               </h2>
-              <p>Unscheduled items waiting to be planned</p>
+              <p>{activeTab === 'service-desk'
+                ? 'Report bugs, request features, or raise access issues'
+                : 'Unscheduled items waiting to be planned'
+              }</p>
             </>
           )}
         </div>
@@ -114,6 +120,12 @@ export default function TasksHeader({
                 <span className={s['tab-badge']}>{backlogTasks.length}</span>
               )}
             </button>
+            <button
+              className={`${s['tab-btn']} ${activeTab === 'service-desk' ? s['tab-active'] : ''}`}
+              onClick={() => setActiveTab('service-desk')}
+            >
+              <Headset size={14} style={{verticalAlign:'middle',marginRight:4}} />Service Desk
+            </button>
           </div>
 
           {/* Sprint select (when multiple sprints) */}
@@ -131,12 +143,14 @@ export default function TasksHeader({
             </select>
           )}
 
-          <button
-            className={`btn btn-secondary ${s['filter-toggle-btn']} ${filterCount > 0 ? s['has-filters'] : ''}`}
-            onClick={() => setFiltersOpen((o) => !o)}
-          >
-            <Search size={14} style={{verticalAlign:'middle',marginRight:4}} />{filterCount > 0 ? `Filters (${filterCount})` : 'Filters'}
-          </button>
+          {activeTab !== 'service-desk' && (
+            <button
+              className={`btn btn-secondary ${s['filter-toggle-btn']} ${filterCount > 0 ? s['has-filters'] : ''}`}
+              onClick={() => setFiltersOpen((o) => !o)}
+            >
+              <Search size={14} style={{verticalAlign:'middle',marginRight:4}} />{filterCount > 0 ? `Filters (${filterCount})` : 'Filters'}
+            </button>
+          )}
 
           {activeTab === 'backlog' && (
             <button
@@ -162,6 +176,7 @@ export default function TasksHeader({
       </div>
 
       {/* Global Search */}
+      {activeTab !== 'service-desk' && (
       <div className={s['global-search-wrapper']} ref={globalSearchRef}>
         <div className={s['global-search-input-row']}>
           <span className={s['global-search-icon']}><Search size={15} /></span>
@@ -253,9 +268,10 @@ export default function TasksHeader({
           </div>
         )}
       </div>
+      )}
 
       {/* Filter Bar */}
-      {filtersOpen && (
+      {filtersOpen && activeTab !== 'service-desk' && (
         <div className={s['filter-bar']}>
           <div className={s['filter-row']}>
             <div className={s['filter-group']}>

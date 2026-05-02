@@ -18,6 +18,7 @@ import BacklogTab from './tasks/BacklogTab.jsx';
 import TasksHeader from './tasks/TasksHeader.jsx';
 import TaskDetailModal from './tasks/TaskDetailModal.jsx';
 import InlineCommentPanel from './tasks/InlineCommentPanel.jsx';
+import ServiceDeskTab from './tasks/ServiceDeskTab.jsx';
 import { TaskProvider } from './tasks/TaskContext.jsx';
 
 import { useConfirmDialog } from './tasks/hooks/useConfirmDialog.js';
@@ -342,6 +343,10 @@ export default function Tasks() {
           onHandleSummaryPriority={handleSummaryPriority}
           onToggleLabel={toggleLabel}
         />
+      )}
+
+      {activeTab === 'service-desk' && (
+        <ServiceDeskTab />
       )}
 
       <InlineCommentPanel

@@ -387,6 +387,13 @@ router.put('/:id/reactivate', async (req, res) => {
 router.delete('/:id', async (req, res) => {
     try {
         const tid = Number(req.params.id);
+
+        // Prevent deletion of the default (master) tenant
+        const defaultCheck = await masterQuery('SELECT is_default FROM tenants WHERE id = $1', [tid]);
+        if (defaultCheck.rows[0]?.is_default) {
+            return res.status(403).json({ error: 'The default platform tenant cannot be deleted.' });
+        }
+
         const hard = req.query.hard === 'true';
         const result = await deleteTenant(tid, hard);
         if (!result) return res.status(404).json({ error: 'Tenant not found' });

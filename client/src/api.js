@@ -148,6 +148,14 @@ export const updateSprint = (id, data) => API.put(`/sprints/${id}`, data);
 export const deleteSprint = (id) => API.delete(`/sprints/${id}`);
 export const getSprintTasks = (id) => API.get(`/sprints/${id}/tasks`);
 
+// Service Desk
+export const getServiceDeskTickets = (params) => API.get('/service-desk/tickets', { params });
+export const getServiceDeskTicket = (id) => API.get(`/service-desk/tickets/${id}`);
+export const createServiceDeskTicket = (data) => API.post('/service-desk/tickets', data);
+export const updateServiceDeskTicket = (id, data) => API.patch(`/service-desk/tickets/${id}`, data);
+export const deleteServiceDeskTicket = (id) => API.delete(`/service-desk/tickets/${id}`);
+export const getServiceDeskStats = () => API.get('/service-desk/stats');
+
 // Profile
 export const getProfile = (config) => API.get('/profile', config);
 export const updateProfile = (data) => API.put('/profile', data);

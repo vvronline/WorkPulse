@@ -43,6 +43,7 @@ const chatRoutes = require('./routes/chat');
 const searchRoutes = require('./routes/search');
 const meetingsRoutes = require('./routes/meetings');
 const tenantRoutes = require('./routes/tenants');
+const serviceDeskRoutes = require('./routes/serviceDesk');
 const { setupWebSocket } = require('./utils/ws');
 const { initJobs, shutdownJobs } = require('./jobs');
 
@@ -228,6 +229,7 @@ app.use('/api/notifications', apiLimiter, notificationsRoutes);
 app.use('/api/export', apiLimiter, exportRoutes);
 app.use('/api/chat', apiLimiter, chatRoutes);
 app.use('/api/search', apiLimiter, searchRoutes);
+app.use('/api/service-desk', apiLimiter, serviceDeskRoutes);
 
 app.get('/api/health', async (req, res) => {
     try {

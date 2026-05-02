@@ -152,6 +152,15 @@ router.delete('/organizations/:id', requireRole('platform_admin'), async (req, r
         const orgRes = await req.db.query('SELECT id, name FROM organizations WHERE id = $1', [id]);
         const org = orgRes.rows[0];
         if (!org) return res.status(404).json({ error: 'Organization not found' });
+
+        // Prevent deletion of the default (master) tenant
+        if (req.tenant) {
+            const tenantRes = await masterQuery('SELECT is_default FROM tenants WHERE id = $1', [req.tenant.id]);
+            if (tenantRes.rows[0]?.is_default) {
+                return res.status(403).json({ error: 'The default platform organization cannot be deleted.' });
+            }
+        }
+
         const activeRes = await req.db.query('SELECT COUNT(*) as count FROM users WHERE org_id = $1 AND is_active = TRUE', [id]);
         const activeUsers = parseInt(activeRes.rows[0].count, 10);
         if (activeUsers > 0) return res.status(400).json({ error: `Cannot delete organization with ${activeUsers} active user(s). Deactivate or reassign users first.` });
