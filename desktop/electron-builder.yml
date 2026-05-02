@@ -37,6 +37,7 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: WorkPulse
+  artifactName: "${productName}-Setup-${version}.${ext}"
 
 mac:
   target:
@@ -67,4 +68,4 @@ publish:
   provider: github
   owner: vvronline
   repo: WorkPulse
-  releaseType: draft
+  releaseType: release
