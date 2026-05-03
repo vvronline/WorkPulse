@@ -456,6 +456,9 @@ async function initTenantSchema(q) {
     await q(`CREATE INDEX IF NOT EXISTS idx_tasks_org ON tasks(org_id)`);
     // Backfill org_id from the task owner's org
     await q(`UPDATE tasks t SET org_id = u.org_id FROM users u WHERE u.id = t.user_id AND t.org_id IS NULL AND u.org_id IS NOT NULL`);
+    // Migration: add service_desk_ticket_id to tasks for linking service desk tickets to backlog
+    await q(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS service_desk_ticket_id INTEGER`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_tasks_service_desk ON tasks(service_desk_ticket_id) WHERE service_desk_ticket_id IS NOT NULL`);
     // Migration: update role CHECK to include platform_admin on existing databases
     await q(`
         DO $do$ BEGIN

@@ -215,7 +215,7 @@ router.post('/tickets', async (req, res) => {
             const defaultTenant = await getDefaultTenantDb();
             if (defaultTenant) {
                 const typeLabel = TICKET_TYPE_LABELS[ticket_type] || ticket_type;
-                const submittingTenantIsDefault = req.tenant.id === defaultTenant.tenantId;
+                const submittingTenantIsDefault = await isDefaultTenant(req);
                 const tenantName = submittingTenantIsDefault
                     ? 'Internal'
                     : (req.tenant.org_name || req.tenant.slug || 'Unknown');
@@ -233,22 +233,16 @@ router.post('/tickets', async (req, res) => {
                 let orgId = null;
 
                 if (submittingTenantIsDefault) {
-                    // Submitter belongs to the default tenant — use their own user record
-                    // and org so the task is immediately visible in their backlog.
-                    const meRes = await defaultTenant.db.query(
-                        'SELECT id, org_id FROM users WHERE id = $1 AND is_active = TRUE',
-                        [req.userId]
-                    );
-                    if (meRes.rows[0]) {
-                        creatorId = meRes.rows[0].id;
-                        orgId = meRes.rows[0].org_id || null;
-                    }
+                    // Submitter belongs to the default tenant — use req.userId and
+                    // req.userOrgId directly (already validated by auth + loadUserContext).
+                    // This guarantees the task's org_id matches the backlog filter.
+                    creatorId = req.userId;
+                    orgId = req.userOrgId || null;
                 }
 
                 if (!creatorId) {
-                    // Fallback (cross-tenant ticket, or submitter not found in default tenant DB):
-                    // pick the highest-ranked active admin in the default tenant and use THAT
-                    // user's org so the task lines up with org-scoped backlog visibility.
+                    // Cross-tenant ticket: pick the highest-ranked active admin in
+                    // the default tenant so the task is visible in their backlog.
                     const adminRes = await defaultTenant.db.query(
                         `SELECT id, org_id FROM users
                          WHERE is_active = TRUE
@@ -268,7 +262,7 @@ router.post('/tickets', async (req, res) => {
                     }
                 }
 
-                // Last-ditch fallback for org_id if the chosen creator has none
+                // Fallback for org_id: use the primary organization in the default tenant
                 if (creatorId && !orgId) {
                     const orgFallback = await defaultTenant.db.query('SELECT id FROM organizations ORDER BY id ASC LIMIT 1');
                     orgId = orgFallback.rows[0]?.id || null;
@@ -276,9 +270,9 @@ router.post('/tickets', async (req, res) => {
 
                 if (creatorId) {
                     await defaultTenant.db.query(
-                        `INSERT INTO tasks (user_id, date, title, description, priority, org_id, status)
-                         VALUES ($1, NULL, $2, $3, $4, $5, 'pending')`,
-                        [creatorId, taskTitle.substring(0, 200), taskDesc.substring(0, 5000), taskPriority, orgId]
+                        `INSERT INTO tasks (user_id, date, title, description, priority, org_id, status, service_desk_ticket_id)
+                         VALUES ($1, NULL, $2, $3, $4, $5, 'pending', $6)`,
+                        [creatorId, taskTitle.substring(0, 200), taskDesc.substring(0, 5000), taskPriority, orgId, ticket.id]
                     );
                 }
             }

@@ -379,7 +379,14 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
             } else {
                 const targetUser = (await req.db.query('SELECT id, org_id, is_active FROM users WHERE id = $1', [assigned_to])).rows[0];
                 if (!targetUser || !targetUser.is_active) return res.status(400).json({ error: 'Assigned user not found or inactive' });
-                if (targetUser.org_id && req.userOrgId !== targetUser.org_id) {
+                // Service desk tasks (linked via service_desk_ticket_id) can be assigned
+                // to any active user in the tenant by org admins for cross-team resolution.
+                const isServiceDeskTask = !!task.service_desk_ticket_id;
+                const isOrgAdminUser = req.userRole === 'super_admin' || req.userRole === 'hr_admin' || req.userRole === 'platform_admin';
+                if (!isServiceDeskTask && targetUser.org_id && req.userOrgId !== targetUser.org_id) {
+                    return res.status(400).json({ error: 'Cannot assign tasks to users in a different organization' });
+                }
+                if (isServiceDeskTask && !isOrgAdminUser && targetUser.org_id && req.userOrgId !== targetUser.org_id) {
                     return res.status(400).json({ error: 'Cannot assign tasks to users in a different organization' });
                 }
                 newAssignedTo = assigned_to;
