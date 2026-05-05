@@ -1,7 +1,8 @@
-import React, { memo, useState, useEffect } from 'react';
+import React, { memo, useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Zap, Inbox } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
+import useWebSocket from '../../hooks/useWebSocket';
 import { getActiveSprint, getSprintTasks, getBacklog } from '../../api';
 import s from './SprintProgressCard.module.css';
 
@@ -15,40 +16,64 @@ const SprintProgressCard = memo(function SprintProgressCard() {
   const [backlogTasks, setBacklogTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [noSprint, setNoSprint] = useState(false);
+  const cancelledRef = useRef(false);
+
+  const loadCard = useCallback(async () => {
+    try {
+      const { data } = await getActiveSprint();
+      if (cancelledRef.current) return;
+      if (!data.sprint) {
+        setNoSprint(true);
+        setSprint(null);
+        // Fetch backlog tasks assigned to current user
+        try {
+          const blRes = await getBacklog({ assignee: 'me' });
+          if (!cancelledRef.current) {
+            const myBacklog = (blRes.data.tasks || [])
+              .filter(t => t.status !== 'done')
+              .sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 3) - (PRIORITY_ORDER[b.priority] ?? 3))
+              .slice(0, 5);
+            setBacklogTasks(myBacklog);
+          }
+        } catch { /* silent */ }
+        return;
+      }
+      setNoSprint(false);
+      setSprint(data.sprint);
+      const taskRes = await getSprintTasks(data.sprint.id);
+      if (!cancelledRef.current) setTasks(taskRes.data.tasks || []);
+    } catch {
+      if (!cancelledRef.current) setNoSprint(true);
+    } finally {
+      if (!cancelledRef.current) setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const { data } = await getActiveSprint();
-        if (cancelled) return;
-        if (!data.sprint) {
-          setNoSprint(true);
-          // Fetch backlog tasks assigned to current user
-          try {
-            const blRes = await getBacklog({ assignee: 'me' });
-            if (!cancelled) {
-              const myBacklog = (blRes.data.tasks || [])
-                .filter(t => t.status !== 'done')
-                .sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 3) - (PRIORITY_ORDER[b.priority] ?? 3))
-                .slice(0, 5);
-              setBacklogTasks(myBacklog);
-            }
-          } catch { /* silent */ }
-          setLoading(false);
-          return;
-        }
-        setSprint(data.sprint);
-        const taskRes = await getSprintTasks(data.sprint.id);
-        if (!cancelled) setTasks(taskRes.data.tasks || []);
-      } catch {
-        if (!cancelled) setNoSprint(true);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+    cancelledRef.current = false;
+    loadCard();
+    return () => { cancelledRef.current = true; };
+  }, [loadCard]);
+
+  // Refresh when the window regains focus or becomes visible — covers the case
+  // where the user reassigns a ticket in another tab/page and returns here.
+  useEffect(() => {
+    const onFocus = () => { loadCard(); };
+    const onVisibility = () => { if (!document.hidden) loadCard(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [loadCard]);
+
+  // Refresh on real-time task assignment events broadcast over WebSocket.
+  useWebSocket(useCallback((msg) => {
+    if (msg.type === 'task_assigned' || msg.type === 'task_updated') {
+      loadCard();
+    }
+  }, [loadCard]));
 
   if (loading) {
     return (

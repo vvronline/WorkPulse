@@ -199,7 +199,9 @@ router.get('/', auth, loadUserContext, async (req, res) => {
 
         if (assignee) {
             if (assignee === 'me') {
-                conditions.push(`(t.user_id = $${pi} OR t.assigned_to = $${pi})`);
+                // "My tasks" = tasks assigned to me, OR tasks I created that are still unassigned.
+                // Tasks I created but reassigned to someone else should NOT appear under "me".
+                conditions.push(`(t.assigned_to = $${pi} OR (t.user_id = $${pi} AND t.assigned_to IS NULL))`);
                 params.push(req.userId);
                 pi++;
             } else {
@@ -1003,7 +1005,9 @@ router.get('/backlog', auth, loadUserContext, async (req, res) => {
 
         if (assignee) {
             if (assignee === 'me') {
-                conditions.push(`(t.user_id = $${pi} OR t.assigned_to = $${pi})`);
+                // "My backlog" = tickets assigned to me, OR tickets I created that are still unassigned.
+                // A ticket I created and reassigned to someone else should NOT show under "me".
+                conditions.push(`(t.assigned_to = $${pi} OR (t.user_id = $${pi} AND t.assigned_to IS NULL))`);
                 params.push(req.userId);
                 pi++;
             } else {
