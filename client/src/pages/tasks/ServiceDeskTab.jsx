@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Bug, Sparkles, ShieldAlert, HelpCircle, Plus, X, Send, ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
+import ReactQuill from 'react-quill-new';
+import 'react-quill-new/dist/quill.snow.css';
+import { Bug, Sparkles, ShieldAlert, HelpCircle, Plus, X, ChevronDown, ChevronUp, Trash2, Tag } from 'lucide-react';
 import { getServiceDeskTickets, createServiceDeskTicket, getServiceDeskStats, deleteServiceDeskTicket } from '../../api';
 import { useAuth } from '../../AuthContext';
 import s from './ServiceDeskTab.module.css';
+import b from './BacklogTab.module.css';
 
 const TICKET_TYPES = [
   { value: 'bug', label: 'Bug Report', icon: <Bug size={14} />, color: '#ef4444' },
@@ -180,64 +183,85 @@ export default function ServiceDeskTab() {
         </button>
       </div>
 
-      {/* New Ticket Form */}
+      {/* New Ticket Form — mirrors the "New Backlog Ticket" model with an extra Type field */}
       {formOpen && (
-        <form className={s['ticket-form']} onSubmit={handleSubmit}>
-          <div className={s['form-row']}>
-            <div className={s['form-group']} style={{ flex: 2 }}>
-              <label>Title *</label>
+        <div className={b['tasks-form-card']}>
+          <div className={b['form-card-header']}>
+            <h3>
+              <Plus size={16} style={{ marginRight: 5, verticalAlign: 'middle' }} />
+              New Service Desk Ticket
+            </h3>
+            <button
+              className={b['close-form-btn']}
+              onClick={() => setFormOpen(false)}
+              title="Close"
+              type="button"
+            >
+              <X size={14} />
+            </button>
+          </div>
+          <form onSubmit={handleSubmit} className={b['add-form']}>
+            <div className="form-group">
               <input
                 type="text"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="Brief description of the issue or request..."
+                placeholder="Ticket title..."
                 maxLength={200}
                 required
-                className={s['form-input']}
+                autoFocus
               />
             </div>
-            <div className={s['form-group']}>
-              <label>Type</label>
-              <select
-                value={ticketType}
-                onChange={(e) => setTicketType(e.target.value)}
-                className={s['form-select']}
-              >
-                {TICKET_TYPES.map((t) => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
-                ))}
-              </select>
+            <div className={`form-group ${b['quill-wrapper']}`}>
+              <ReactQuill
+                theme="snow"
+                value={description}
+                onChange={setDescription}
+                placeholder="Provide details: steps to reproduce (for bugs), expected behavior, etc."
+              />
             </div>
-            <div className={s['form-group']}>
-              <label>Priority</label>
-              <select
-                value={priority}
-                onChange={(e) => setPriority(e.target.value)}
-                className={s['form-select']}
-              >
+            <div className={b['form-extras']}>
+              <div className={b['form-extra-group']}>
+                <label>
+                  <Tag size={13} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+                  Type
+                </label>
+                <select
+                  value={ticketType}
+                  onChange={(e) => setTicketType(e.target.value)}
+                >
+                  {TICKET_TYPES.map((t) => (
+                    <option key={t.value} value={t.value}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className={b['form-bottom']}>
+              <div className={b['priority-selector']}>
                 {PRIORITIES.map((p) => (
-                  <option key={p.value} value={p.value}>{p.label}</option>
+                  <button
+                    key={p.value}
+                    type="button"
+                    className={`${b['priority-btn']} ${priority === p.value ? b.active : ''}`}
+                    style={{ '--pri-color': p.color }}
+                    onClick={() => setPriority(p.value)}
+                  >
+                    {p.label}
+                  </button>
                 ))}
-              </select>
+              </div>
+              <button
+                type="submit"
+                className="btn btn-primary btn-fullwidth"
+                disabled={submitting || !title.trim()}
+              >
+                {submitting ? 'Submitting...' : 'Create Ticket'}
+              </button>
             </div>
-          </div>
-          <div className={s['form-group']}>
-            <label>Description</label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Provide details: steps to reproduce (for bugs), expected behavior, screenshots info, etc."
-              maxLength={5000}
-              rows={4}
-              className={s['form-textarea']}
-            />
-          </div>
-          <div className={s['form-actions']}>
-            <button type="submit" className="btn btn-primary" disabled={submitting || !title.trim()}>
-              <Send size={14} /> {submitting ? 'Submitting...' : 'Submit Ticket'}
-            </button>
-          </div>
-        </form>
+          </form>
+        </div>
       )}
 
       {/* Tickets List */}
