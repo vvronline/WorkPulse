@@ -296,6 +296,16 @@ export default function useChatState() {
     // Load conversations on mount
     useEffect(() => { loadConversations(); }, []);
 
+    // Sync current user's avatar into self-chat conversation
+    useEffect(() => {
+        setConversations(prev => prev.map(c =>
+            c.is_self_chat ? { ...c, other_avatar: user?.avatar || null } : c
+        ));
+        if (activeConv?.is_self_chat) {
+            setActiveConv(prev => prev ? { ...prev, other_avatar: user?.avatar || null } : prev);
+        }
+    }, [user?.avatar]);
+
     // Ctrl+F shortcut
     useEffect(() => {
         const handler = (e) => {
