@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Bug, Sparkles, ShieldAlert, HelpCircle, Plus, X, Send, ChevronDown, ChevronUp } from 'lucide-react';
-import { getServiceDeskTickets, createServiceDeskTicket, getServiceDeskStats } from '../../api';
+import { Bug, Sparkles, ShieldAlert, HelpCircle, Plus, X, Send, ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
+import { getServiceDeskTickets, createServiceDeskTicket, getServiceDeskStats, deleteServiceDeskTicket } from '../../api';
+import { useAuth } from '../../AuthContext';
 import s from './ServiceDeskTab.module.css';
 
 const TICKET_TYPES = [
@@ -36,6 +37,7 @@ function getStatus(st) {
 }
 
 export default function ServiceDeskTab() {
+  const { user } = useAuth();
   const [tickets, setTickets] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -45,6 +47,7 @@ export default function ServiceDeskTab() {
   const [filterStatus, setFilterStatus] = useState('');
   const [filterType, setFilterType] = useState('');
   const [expandedTicket, setExpandedTicket] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
 
   // Form fields
   const [title, setTitle] = useState('');
@@ -78,6 +81,26 @@ export default function ServiceDeskTab() {
     fetchTickets();
     fetchStats();
   }, [fetchTickets, fetchStats]);
+
+  const handleDelete = async (ticket, e) => {
+    e.stopPropagation();
+    const isOwn = ticket.submitted_by_user_id === user?.id;
+    const msg = isOwn && ticket.status === 'open'
+      ? `Cancel ticket "${ticket.title}"? This will also remove it from the platform team's backlog.`
+      : `Delete ticket "${ticket.title}"? This cannot be undone.`;
+    if (!window.confirm(msg)) return;
+    setDeletingId(ticket.id);
+    setError('');
+    try {
+      await deleteServiceDeskTicket(ticket.id);
+      setTickets((prev) => prev.filter((t) => t.id !== ticket.id));
+      fetchStats();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to delete ticket');
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -233,6 +256,8 @@ export default function ServiceDeskTab() {
             const pri = getPriority(ticket.priority);
             const st = getStatus(ticket.status);
             const isExpanded = expandedTicket === ticket.id;
+            const isOwner = ticket.submitted_by_user_id === user?.id;
+            const canDelete = isOwner && ticket.status === 'open';
             return (
               <div key={ticket.id} className={s['ticket-card']}>
                 <div
@@ -255,6 +280,17 @@ export default function ServiceDeskTab() {
                     <span className={s['ticket-date']}>
                       {new Date(ticket.created_at).toLocaleDateString()}
                     </span>
+                    {canDelete && (
+                      <button
+                        type="button"
+                        className={s['ticket-delete-btn']}
+                        title="Cancel this ticket"
+                        disabled={deletingId === ticket.id}
+                        onClick={(e) => handleDelete(ticket, e)}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
                     {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                   </div>
                 </div>

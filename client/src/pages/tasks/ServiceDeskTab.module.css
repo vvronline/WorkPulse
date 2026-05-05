@@ -41,6 +41,26 @@
 .ticket-priority { font-size: 0.75rem; font-weight: 700; }
 .ticket-status-badge { padding: 0.2rem 0.55rem; border-radius: 99px; font-size: 0.7rem; font-weight: 600; background: color-mix(in srgb, var(--status-color) 15%, transparent); color: var(--status-color); white-space: nowrap; }
 .ticket-date { font-size: 0.72rem; color: var(--text-muted); white-space: nowrap; }
+.ticket-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+.ticket-delete-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, #ef4444 14%, transparent);
+  border-color: color-mix(in srgb, #ef4444 30%, transparent);
+  color: #ef4444;
+}
+.ticket-delete-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Expanded Details */
 .ticket-details { padding: 0.75rem 1rem 1rem; border-top: 1px solid var(--glass-border); animation: slideDown 0.15s ease; }

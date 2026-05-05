@@ -250,12 +250,32 @@ router.post('/tickets', async (req, res) => {
                 const tenantName = submittingTenantIsDefault
                     ? 'Internal'
                     : (req.tenant.org_name || req.tenant.slug || 'Unknown');
-                const taskTitle = `[Service Desk #${ticket.id}] ${typeLabel}: ${title.trim()}`;
-                const taskDesc = `**Service Desk Ticket #${ticket.id}**\n` +
-                    `**Type:** ${typeLabel}\n` +
-                    `**Submitted by:** ${submitter.full_name || submitter.username} (${tenantName})\n` +
-                    `**Priority:** ${priority || 'medium'}\n\n` +
-                    (description?.trim() ? `---\n${description.trim()}` : '');
+
+                const escapeHtml = (str) => String(str || '')
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+
+                const taskTitle = `[SD #${ticket.id}] ${typeLabel}: ${title.trim()}`;
+
+                // Render description as proper HTML so the backlog/task detail
+                // modal (which uses HighlightedHtml) displays it formatted.
+                const submitterName = escapeHtml(submitter.full_name || submitter.username);
+                const priorityLabel = escapeHtml(priority || 'medium');
+                const userDescHtml = description?.trim()
+                    ? escapeHtml(description.trim()).replace(/\n/g, '<br />')
+                    : '';
+
+                const taskDesc =
+                    `<div class="sd-meta" style="background:#f3f4f6;border-left:3px solid #6366f1;padding:10px 12px;border-radius:6px;margin-bottom:12px;font-size:13px;line-height:1.6">` +
+                    `<div><strong>🎫 Service Desk Ticket #${ticket.id}</strong></div>` +
+                    `<div><strong>Type:</strong> ${escapeHtml(typeLabel)}</div>` +
+                    `<div><strong>Submitted by:</strong> ${submitterName} <em>(${escapeHtml(tenantName)})</em></div>` +
+                    `<div><strong>Priority:</strong> ${priorityLabel}</div>` +
+                    `</div>` +
+                    (userDescHtml ? `<div class="sd-body">${userDescHtml}</div>` : '');
 
                 // Map service desk priority to task priority (critical → high)
                 const taskPriority = (priority === 'critical') ? 'high' : (priority || 'medium');
@@ -424,20 +444,46 @@ router.patch('/tickets/:id', async (req, res) => {
     }
 });
 
-// DELETE /service-desk/tickets/:id — delete (default tenant admin only)
+// DELETE /service-desk/tickets/:id
+//   - Default-tenant admins can delete any ticket.
+//   - The ticket's submitter can delete/cancel their own ticket while it is
+//     still 'open' (i.e. before the platform team has acknowledged it).
+//   The corresponding mirrored backlog task (if any) is cleaned up best-effort.
 router.delete('/tickets/:id', async (req, res) => {
     try {
-        const isAdmin = await isDefaultTenant(req);
-        if (!isAdmin) {
-            return res.status(403).json({ error: 'Only the platform team can delete tickets' });
-        }
-
         const { id } = req.params;
-        const result = await masterQuery('DELETE FROM service_desk_tickets WHERE id = $1 RETURNING id', [id]);
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Ticket not found' });
+        const ticketRes = await masterQuery('SELECT * FROM service_desk_tickets WHERE id = $1', [id]);
+        const ticket = ticketRes.rows[0];
+        if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+
+        const isAdmin = await isDefaultTenant(req);
+        const isOwner = req.tenant
+            && ticket.tenant_id === req.tenant.id
+            && ticket.submitted_by_user_id === req.userId;
+
+        if (!isAdmin && !isOwner) {
+            return res.status(403).json({ error: 'You can only delete tickets you submitted.' });
+        }
+        if (!isAdmin && isOwner && ticket.status !== 'open') {
+            return res.status(400).json({
+                error: 'You can only cancel a ticket while it is still open. Once the platform team has started working on it, contact them to remove it.',
+            });
         }
 
+        // Best-effort: remove the mirrored backlog task in the default tenant DB
+        try {
+            const defaultTenant = await getDefaultTenantDb(req);
+            if (defaultTenant) {
+                await defaultTenant.db.query(
+                    'DELETE FROM tasks WHERE service_desk_ticket_id = $1',
+                    [ticket.id]
+                );
+            }
+        } catch (cleanupErr) {
+            logger.error({ err: cleanupErr, ticketId: ticket.id }, 'Failed to clean up backlog task for deleted service desk ticket');
+        }
+
+        await masterQuery('DELETE FROM service_desk_tickets WHERE id = $1', [ticket.id]);
         res.json({ message: 'Ticket deleted' });
     } catch (err) {
         logger.error({ err }, 'Delete service desk ticket error');
