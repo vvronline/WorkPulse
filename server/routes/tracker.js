@@ -62,6 +62,7 @@ router.get('/status', auth, async (req, res) => {
         const result = await req.db.query(
             `SELECT * FROM time_entries
              WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
+               AND (approval_status IS NULL OR approval_status != 'rejected')
              ORDER BY timestamp ASC, id ASC`,
             [req.userId, today],
         );
@@ -70,8 +71,11 @@ router.get('/status', auth, async (req, res) => {
         const status = computeStatus(entries);
 
         // Auto clock-out when daily target is met and user is still active
+        // Only auto-clock-out for live sessions (non-manual entries)
         let autoLoggedOut = false;
-        if (status.state !== 'logged_out' && status.floorMinutes >= targetMinutes) {
+        const lastEntry = entries.length > 0 ? entries[entries.length - 1] : null;
+        const isLiveSession = lastEntry && !lastEntry.is_manual;
+        if (isLiveSession && status.state !== 'logged_out' && status.floorMinutes >= targetMinutes) {
             // Use transaction with row lock to prevent duplicate clock-outs from concurrent requests
             const didClockOut = await req.db.transaction(async (client) => {
                 const latest = (await client.query(
@@ -92,6 +96,7 @@ router.get('/status', auth, async (req, res) => {
                 const refreshed = await req.db.query(
                     `SELECT * FROM time_entries
                      WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
+                       AND (approval_status IS NULL OR approval_status != 'rejected')
                      ORDER BY timestamp ASC, id ASC`,
                     [req.userId, today],
                 );
@@ -138,6 +143,7 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
             const todayEntries = (await req.db.query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
+                   AND (approval_status IS NULL OR approval_status != 'rejected')
                  ORDER BY timestamp ASC, id ASC`,
                 [req.userId, today],
             )).rows;
@@ -173,6 +179,7 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
             const lastRes = await client.query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
+                   AND (is_manual IS NOT TRUE)
                  ORDER BY timestamp DESC, id DESC LIMIT 1`,
                 [req.userId, today],
             );
@@ -208,6 +215,7 @@ router.post('/break-start', auth, async (req, res) => {
             const lastRes = await client.query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
+                   AND (is_manual IS NOT TRUE)
                  ORDER BY timestamp DESC, id DESC LIMIT 1`,
                 [req.userId, today],
             );
@@ -240,6 +248,7 @@ router.post('/break-end', auth, async (req, res) => {
             const lastRes = await client.query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
+                   AND (is_manual IS NOT TRUE)
                  ORDER BY timestamp DESC, id DESC LIMIT 1`,
                 [req.userId, today],
             );
@@ -271,6 +280,7 @@ router.post('/clock-out', auth, async (req, res) => {
             const lastRes = await client.query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
+                   AND (is_manual IS NOT TRUE)
                  ORDER BY timestamp DESC, id DESC LIMIT 1`,
                 [req.userId, today],
             );
@@ -315,6 +325,7 @@ router.get('/history', auth, async (req, res) => {
             `SELECT * FROM time_entries
              WHERE user_id = $1
                AND ${pgDateInTz('timestamp', tzMod)} BETWEEN $2::date AND $3::date
+               AND (approval_status IS NULL OR approval_status != 'rejected')
              ORDER BY timestamp ASC`,
             [req.userId, fromDate, toDate],
         );
@@ -353,6 +364,7 @@ router.get('/analytics', auth, async (req, res) => {
             `SELECT * FROM time_entries
              WHERE user_id = $1
                AND ${pgDateInTz('timestamp', tzMod)} BETWEEN $2::date AND $3::date
+               AND (approval_status IS NULL OR approval_status != 'rejected')
              ORDER BY timestamp ASC`,
             [req.userId, fromDate, toDate],
         );

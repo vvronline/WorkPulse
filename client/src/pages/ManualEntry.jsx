@@ -12,7 +12,17 @@ const DEFAULT_OFFICE_START = '09:00';
 /** Validate an HH:MM 24-hour time string. */
 const isValidHHMM = (v) => typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
 
-export default function ManualEntry() {
+/** Check if the user has a live (non-manual) active session */
+const isLiveActiveSession = (statusData) => {
+  if (!statusData || statusData.state === 'logged_out') return false;
+  // If the last entry that makes it "active" is a manual entry, it's not a live session
+  const entries = statusData.entries || [];
+  if (entries.length === 0) return false;
+  const last = entries[entries.length - 1];
+  return !last.is_manual;
+};
+
+export default function ManualEntry({ isActive, onEntryChanged }) {
   const [date, setDate] = useState('');
   // Default clock-in time pulls from the organization's "Regular Office Start Time"
   // (org.office_start_time) so admins can match local working hours instead of
@@ -69,6 +79,20 @@ export default function ManualEntry() {
     return () => { cancelled = true; };
   }, []);
 
+  // Re-check the current status when this tab becomes active (handles stale state
+  // after the user clocks out on the Dashboard and switches back here)
+  useEffect(() => {
+    if (!isActive || !date) return;
+    const today = getLocalToday();
+    if (date !== today) return;
+    let cancelled = false;
+    getStatus().then((statusRes) => {
+      if (cancelled) return;
+      setCurrentlyClocked(isLiveActiveSession(statusRes.data));
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [isActive, date]);
+
   const addBreak = () => setBreaks([...breaks, { start: '', end: '' }]);
   const removeBreak = (index) => setBreaks(breaks.filter((_, i) => i !== index));
   const updateBreak = (index, field, value) => {
@@ -121,11 +145,11 @@ export default function ManualEntry() {
         setLeaveOnDate(leavesRes.data[0]);
       }
 
-      // If today is selected, check if currently clocked in
+      // If today is selected, check if currently clocked in (live session only)
       if (dateVal === today) {
         const statusRes = await getStatus();
         if (reqId !== checkDateReqId.current) return;
-        if (statusRes.data.state !== 'logged_out') {
+        if (isLiveActiveSession(statusRes.data)) {
           setCurrentlyClocked(true);
         }
       }
@@ -195,6 +219,8 @@ export default function ManualEntry() {
       setDate('');
       // Re-fetch pending requests
       getManualEntryRequests().then(r => setPendingRequests(r.data)).catch(e => console.error(e));
+      // Notify parent (Attendance) to refresh calendar/overview
+      if (onEntryChanged) onEntryChanged();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save entry');
     } finally {

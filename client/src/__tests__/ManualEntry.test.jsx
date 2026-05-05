@@ -21,6 +21,7 @@ const mockGetLocalToday = vi.fn();
 const mockGetManualEntryRequests = vi.fn();
 const mockSubmitOvertimeRequest = vi.fn();
 const mockGetOvertimeRequests = vi.fn();
+const mockGetCurrentOrg = vi.fn();
 
 vi.mock('../api', () => ({
     addManualEntry: (...args) => mockAddManualEntry(...args),
@@ -33,6 +34,7 @@ vi.mock('../api', () => ({
     getManualEntryRequests: (...args) => mockGetManualEntryRequests(...args),
     submitOvertimeRequest: (...args) => mockSubmitOvertimeRequest(...args),
     getOvertimeRequests: (...args) => mockGetOvertimeRequests(...args),
+    getCurrentOrg: (...args) => mockGetCurrentOrg(...args),
 }));
 
 import ManualEntry from '../pages/ManualEntry';
@@ -51,6 +53,7 @@ describe('ManualEntry page - rendering', () => {
     beforeEach(() => {
         mockGetManualEntryRequests.mockReset().mockResolvedValue({ data: [] });
         mockGetOvertimeRequests.mockReset().mockResolvedValue({ data: [] });
+        mockGetCurrentOrg.mockReset().mockResolvedValue({ data: {} });
     });
 
     test('renders date input', async () => {
@@ -96,6 +99,7 @@ describe('ManualEntry page - form validation', () => {
     beforeEach(() => {
         mockGetManualEntryRequests.mockReset().mockResolvedValue({ data: [] });
         mockGetOvertimeRequests.mockReset().mockResolvedValue({ data: [] });
+        mockGetCurrentOrg.mockReset().mockResolvedValue({ data: {} });
         mockGetEntries.mockReset().mockResolvedValue({ data: [] });
         mockGetLeaves.mockReset().mockResolvedValue({ data: [] });
         mockGetStatus.mockReset().mockResolvedValue({ data: { state: 'logged_out' } });
@@ -120,6 +124,7 @@ describe('ManualEntry page - form validation', () => {
 describe('ManualEntry page - pending requests display', () => {
     beforeEach(() => {
         mockGetOvertimeRequests.mockReset().mockResolvedValue({ data: [] });
+        mockGetCurrentOrg.mockReset().mockResolvedValue({ data: {} });
     });
 
     test('displays pending manual entry requests', async () => {

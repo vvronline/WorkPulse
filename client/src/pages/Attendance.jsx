@@ -96,7 +96,7 @@ export default function Attendance() {
                 {mounted.has('manual') && (
                     <div style={{ display: active === 'manual' ? 'block' : 'none' }}>
                         <Suspense fallback={<PageSkeleton />}>
-                            <ManualEntry />
+                            <ManualEntry isActive={active === 'manual'} onEntryChanged={() => setCalRefresh(k => k + 1)} />
                         </Suspense>
                     </div>
                 )}
