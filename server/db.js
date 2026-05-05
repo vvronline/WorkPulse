@@ -298,6 +298,12 @@ async function initTenantSchema(q) {
     // work_hours_per_day / 2 as a sensible default at query time.
     await q(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS min_hours_present NUMERIC(4,2)`);
 
+    // Migration: regular office start time (HH:MM, 24h). Used as the default
+    // clock-in time on manual time-entry forms and as the reference point for
+    // attendance/presence calculations (instead of midnight). NULL = no
+    // configured office hours, fall back to '09:00' on the client.
+    await q(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS office_start_time TEXT`);
+
     await q(`
         CREATE TABLE IF NOT EXISTS users (
             id                   SERIAL PRIMARY KEY,

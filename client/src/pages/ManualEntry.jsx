@@ -1,15 +1,24 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { FileEdit, Ban, AlertCircle, Building2, House, ArrowRight, ClipboardList, Timer } from 'lucide-react';
-import { addManualEntry, updateManualEntry, getEntries, getLeaves, getStatus, getLocalToday, getManualEntryRequests, getOvertimeRequests } from '../api';
+import { addManualEntry, updateManualEntry, getEntries, getLeaves, getStatus, getLocalToday, getManualEntryRequests, getOvertimeRequests, getCurrentOrg } from '../api';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
 import { tsToLocalTime, parseEntries, entryTypeLabels, entryTypeIcons } from './manualEntry/manualEntryUtils';
 import PendingRequestsList from './manualEntry/PendingRequestsList';
 import OvertimeRequestForm from './manualEntry/OvertimeRequestForm';
 import s from './ManualEntry.module.css';
 
+const DEFAULT_OFFICE_START = '09:00';
+
+/** Validate an HH:MM 24-hour time string. */
+const isValidHHMM = (v) => typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
+
 export default function ManualEntry() {
   const [date, setDate] = useState('');
-  const [clockIn, setClockIn] = useState('09:00');
+  // Default clock-in time pulls from the organization's "Regular Office Start Time"
+  // (org.office_start_time) so admins can match local working hours instead of
+  // a hard-coded 09:00. Falls back to 09:00 when not configured.
+  const [officeStart, setOfficeStart] = useState(DEFAULT_OFFICE_START);
+  const [clockIn, setClockIn] = useState(DEFAULT_OFFICE_START);
   const [clockOut, setClockOut] = useState('');
   const [skipClockOut, setSkipClockOut] = useState(false);
   const [breaks, setBreaks] = useState([{ start: '', end: '' }]);
@@ -42,6 +51,24 @@ export default function ManualEntry() {
     ]).catch(() => setError('Failed to load pending requests'));
   }, []);
 
+  // Pull the org's regular office start time once and use it as the default
+  // clock-in. We only seed the form value when it's still on the previous
+  // default, so we never overwrite a value the user has already typed.
+  useEffect(() => {
+    let cancelled = false;
+    getCurrentOrg()
+      .then((res) => {
+        if (cancelled) return;
+        const t = res?.data?.office_start_time;
+        if (isValidHHMM(t)) {
+          setOfficeStart(t);
+          setClockIn((prev) => (prev === DEFAULT_OFFICE_START ? t : prev));
+        }
+      })
+      .catch(() => { /* silent — fall back to default */ });
+    return () => { cancelled = true; };
+  }, []);
+
   const addBreak = () => setBreaks([...breaks, { start: '', end: '' }]);
   const removeBreak = (index) => setBreaks(breaks.filter((_, i) => i !== index));
   const updateBreak = (index, field, value) => {
@@ -51,7 +78,7 @@ export default function ManualEntry() {
   };
 
   const resetForm = () => {
-    setClockIn('09:00');
+    setClockIn(officeStart);
     setClockOut('');
     setSkipClockOut(false);
     setBreaks([{ start: '', end: '' }]);

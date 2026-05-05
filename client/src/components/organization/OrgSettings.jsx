@@ -16,6 +16,9 @@ export default function OrgSettings({ org, onUpdate, userRole }) {
         // Minimum hours an employee must log on a working day to be marked Present.
         // Empty string = "use default" (server falls back to work_hours_per_day / 2).
         min_hours_present: org.min_hours_present ?? '',
+        // Regular office start time (HH:MM, 24h). Empty string = no override
+        // (manual-entry forms fall back to '09:00').
+        office_start_time: org.office_start_time ?? '',
     });
     const [msg, setMsg] = useAutoDismiss('');
     const canEdit = ['hr_admin', 'super_admin', 'platform_admin'].includes(userRole);
@@ -23,10 +26,12 @@ export default function OrgSettings({ org, onUpdate, userRole }) {
     const handleSave = async (e) => {
         e.preventDefault();
         try {
-            // Send min_hours_present as null when blank so the server clears the override
+            // Send min_hours_present and office_start_time as null when blank so
+            // the server clears the override.
             const payload = {
                 ...form,
                 min_hours_present: form.min_hours_present === '' ? null : Number(form.min_hours_present),
+                office_start_time: form.office_start_time === '' ? null : form.office_start_time,
             };
             await updateOrgSettings(payload);
             setMsg('Settings saved');
@@ -85,6 +90,22 @@ export default function OrgSettings({ org, onUpdate, userRole }) {
                 <small style={{ color: 'var(--text-muted)', display: 'block', marginTop: 4 }}>
                     Employees logging fewer than this many hours on a working day are considered absent
                     in attendance reports. Leave blank to use half the daily work hours ({defaultMinHours}h).
+                </small>
+            </div>
+            <div className={sf.formGroup}>
+                <label>
+                    Regular Office Start Time
+                    <span style={{ fontWeight: 400, color: 'var(--text-muted)', marginLeft: 6 }}>(optional)</span>
+                </label>
+                <input
+                    type="time"
+                    value={form.office_start_time}
+                    onChange={e => setForm({ ...form, office_start_time: e.target.value })}
+                />
+                <small style={{ color: 'var(--text-muted)', display: 'block', marginTop: 4 }}>
+                    Used as the default clock-in time when employees add a manual time entry,
+                    and as the reference point for attendance/presence checks (instead of midnight).
+                    Leave blank to fall back to 09:00.
                 </small>
             </div>
             <button type="submit" className={s.btnPrimary}>Save Settings</button>

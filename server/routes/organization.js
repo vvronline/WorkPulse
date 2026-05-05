@@ -83,7 +83,7 @@ router.get('/current', async (req, res) => {
 
 router.put('/settings', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
     try {
-        const { name, work_hours_per_day, work_days, timezone, fiscal_year_start, min_hours_present } = req.body;
+        const { name, work_hours_per_day, work_days, timezone, fiscal_year_start, min_hours_present, office_start_time } = req.body;
         const updates = [];
         const params = [];
         let pi = 1;
@@ -113,6 +113,19 @@ router.put('/settings', requireRole('hr_admin'), requireSameOrg, async (req, res
                     return res.status(400).json({ error: 'Minimum hours present must be between 0 and 24' });
                 }
                 updates.push(`min_hours_present = $${pi++}`); params.push(mhp);
+            }
+        }
+        // Regular office start time (HH:MM, 24h). Used as the default clock-in
+        // time on manual-entry forms and as the reference for presence checks.
+        // null/empty clears the override.
+        if (office_start_time !== undefined) {
+            if (office_start_time === null || office_start_time === '') {
+                updates.push(`office_start_time = NULL`);
+            } else {
+                if (typeof office_start_time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(office_start_time)) {
+                    return res.status(400).json({ error: 'Office start time must be in HH:MM (24h) format, e.g. 09:30' });
+                }
+                updates.push(`office_start_time = $${pi++}`); params.push(office_start_time);
             }
         }
         updates.push('updated_at = CURRENT_TIMESTAMP');

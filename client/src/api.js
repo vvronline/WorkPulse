@@ -98,7 +98,13 @@ export const getTheme = () => API.get('/tracker/theme');
 export const updateTheme = (theme) => API.put('/tracker/theme', { theme });
 
 // Leaves
-export const getLeaves = (from, to) => API.get('/leaves', { params: { from, to } });
+// The server's GET /leaves endpoint filters by `start_date` / `end_date`
+// (see server/routes/leaves.js). The earlier `from` / `to` aliases were
+// silently ignored, which made the manual-entry page think every date had
+// a leave on it (it would pick the first leave from the unfiltered list).
+export const getLeaves = (from, to) => API.get('/leaves', {
+    params: { start_date: from, end_date: to },
+});
 export const addLeave = (data) => API.post('/leaves', data);
 export const addLeavesBatch = (data) => API.post('/leaves', data);
 export const deleteLeave = (id) => API.delete(`/leaves/${id}`);
