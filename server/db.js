@@ -135,6 +135,31 @@ async function initMasterDB() {
     await masterQuery(`CREATE INDEX IF NOT EXISTS idx_tenants_domain ON tenants(custom_domain)`);
     await masterQuery(`CREATE INDEX IF NOT EXISTS idx_tenants_status ON tenants(status)`);
 
+    // Migration: ensure exactly one tenant is flagged as the default (platform)
+    // tenant. If none is flagged, promote the tenant whose slug is 'default',
+    // or fall back to the oldest active tenant. The default tenant's backlog
+    // receives all service-desk tickets from every tenant.
+    await masterQuery(`
+        DO $do$
+        DECLARE
+            target_id INTEGER;
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM tenants WHERE is_default = TRUE) THEN
+                SELECT id INTO target_id FROM tenants
+                 WHERE status != 'deleted' AND slug = 'default'
+                 ORDER BY id ASC LIMIT 1;
+                IF target_id IS NULL THEN
+                    SELECT id INTO target_id FROM tenants
+                     WHERE status != 'deleted'
+                     ORDER BY id ASC LIMIT 1;
+                END IF;
+                IF target_id IS NOT NULL THEN
+                    UPDATE tenants SET is_default = TRUE WHERE id = target_id;
+                END IF;
+            END IF;
+        END $do$;
+    `);
+
     // ---- Service Desk Tickets (cross-tenant, managed by default tenant) ----
     await masterQuery(`
         CREATE TABLE IF NOT EXISTS service_desk_tickets (

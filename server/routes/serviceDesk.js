@@ -28,20 +28,51 @@ const VALID_PRIORITIES = ['low', 'medium', 'high', 'critical'];
 const VALID_STATUSES = ['open', 'acknowledged', 'in_progress', 'resolved', 'closed'];
 
 /**
+ * Resolve the default (platform) tenant record. If `is_default` is not flagged
+ * on any tenant (legacy deployments), fall back to the tenant with slug='default',
+ * and finally to the oldest non-deleted tenant. Cached per request so repeated
+ * calls within one request hit the master DB at most once.
+ */
+async function resolveDefaultTenant(req) {
+    if (req && req._defaultTenantCache !== undefined) return req._defaultTenantCache;
+    let tenant = null;
+    const flagged = await masterQuery(
+        `SELECT id, db_name, db_host, slug, org_name FROM tenants
+         WHERE is_default = TRUE AND status != 'deleted' LIMIT 1`
+    );
+    tenant = flagged.rows[0] || null;
+    if (!tenant) {
+        const bySlug = await masterQuery(
+            `SELECT id, db_name, db_host, slug, org_name FROM tenants
+             WHERE slug = 'default' AND status != 'deleted' LIMIT 1`
+        );
+        tenant = bySlug.rows[0] || null;
+    }
+    if (!tenant) {
+        const oldest = await masterQuery(
+            `SELECT id, db_name, db_host, slug, org_name FROM tenants
+             WHERE status != 'deleted' ORDER BY id ASC LIMIT 1`
+        );
+        tenant = oldest.rows[0] || null;
+    }
+    if (req) req._defaultTenantCache = tenant;
+    return tenant;
+}
+
+/**
  * Check if the current user belongs to the default (platform) tenant.
  */
 async function isDefaultTenant(req) {
     if (!req.tenant) return false;
-    const res = await masterQuery('SELECT is_default FROM tenants WHERE id = $1', [req.tenant.id]);
-    return res.rows[0]?.is_default === true;
+    const def = await resolveDefaultTenant(req);
+    return !!def && def.id === req.tenant.id;
 }
 
 /**
  * Get the default tenant's DB pool for inserting backlog tasks.
  */
-async function getDefaultTenantDb() {
-    const res = await masterQuery('SELECT id, db_name, db_host FROM tenants WHERE is_default = TRUE LIMIT 1');
-    const tenant = res.rows[0];
+async function getDefaultTenantDb(req) {
+    const tenant = await resolveDefaultTenant(req);
     if (!tenant) return null;
     const db = await getTenantPool(tenant.db_name, tenant.db_host);
     return { db, tenantId: tenant.id };
@@ -212,7 +243,7 @@ router.post('/tickets', async (req, res) => {
 
         // Create a corresponding backlog task in the default tenant's DB
         try {
-            const defaultTenant = await getDefaultTenantDb();
+            const defaultTenant = await getDefaultTenantDb(req);
             if (defaultTenant) {
                 const typeLabel = TICKET_TYPE_LABELS[ticket_type] || ticket_type;
                 const submittingTenantIsDefault = await isDefaultTenant(req);

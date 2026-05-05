@@ -456,6 +456,17 @@ router.post('/login', async (req, res) => {
             let newTenant, newDb;
             try {
                 ({ tenant: newTenant, db: newDb } = await createTenant({ orgName, slug }));
+                // Mark this tenant as the default (platform) tenant so that
+                // service-desk tickets from every tenant get mirrored here.
+                try {
+                    await masterQuery(
+                        `UPDATE tenants SET is_default = TRUE WHERE id = $1`,
+                        [newTenant.id]
+                    );
+                    newTenant.is_default = true;
+                } catch (flagErr) {
+                    logger.warn({ err: flagErr, tenantId: newTenant.id }, 'Failed to flag tenant as default (non-fatal)');
+                }
             } catch (err) {
                 logger.error({ err }, 'Auto-provision default tenant failed');
                 return res.json({
