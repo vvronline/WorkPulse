@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { FileEdit, Ban, AlertCircle, Building2, House, ArrowRight, ClipboardList, Timer } from 'lucide-react';
 import { addManualEntry, updateManualEntry, getEntries, getLeaves, getStatus, getLocalToday, getManualEntryRequests, getOvertimeRequests, getCurrentOrg } from '../api';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
+import { useUserStatus } from '../UserStatusContext';
 import { tsToLocalTime, parseEntries, entryTypeLabels, entryTypeIcons } from './manualEntry/manualEntryUtils';
 import PendingRequestsList from './manualEntry/PendingRequestsList';
 import OvertimeRequestForm from './manualEntry/OvertimeRequestForm';
@@ -23,6 +24,7 @@ const isLiveActiveSession = (statusData) => {
 };
 
 export default function ManualEntry({ isActive, onEntryChanged }) {
+  const { setManualStatus } = useUserStatus();
   const [date, setDate] = useState('');
   // Default clock-in time pulls from the organization's "Regular Office Start Time"
   // (org.office_start_time) so admins can match local working hours instead of
@@ -215,6 +217,21 @@ export default function ManualEntry({ isActive, onEntryChanged }) {
       }
 
       setSuccess(`${isEditMode ? 'Entry updated' : 'Manual entry submitted'} for ${date}!`);
+
+      // If the manual entry is for today and is still open ("Still working" /
+      // no clock-out), reflect that in the user's profile status so the
+      // navbar/profile dot shows them as working instead of offline. If a
+      // clock-out time was provided, mark them as offline since their day
+      // is done.
+      const today = getLocalToday();
+      if (date === today) {
+        if (skipClockOut) {
+          setManualStatus('available');
+        } else {
+          setManualStatus('offline');
+        }
+      }
+
       resetForm();
       setDate('');
       // Re-fetch pending requests

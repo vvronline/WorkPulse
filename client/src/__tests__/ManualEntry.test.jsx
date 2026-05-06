@@ -13,6 +13,18 @@ vi.mock('../ThemeContext', () => ({
     useTheme: () => ({ theme: 'light' }),
 }));
 
+vi.mock('../UserStatusContext', () => ({
+    useUserStatus: () => ({
+        myStatus: 'available',
+        myStatusText: null,
+        manualStatus: null,
+        setManualStatus: vi.fn(),
+        setAutoStatus: vi.fn(),
+        clearAutoStatus: vi.fn(),
+        otherStatuses: {},
+    }),
+}));
+
 const mockAddManualEntry = vi.fn();
 const mockGetEntries = vi.fn();
 const mockGetLeaves = vi.fn();

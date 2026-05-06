@@ -212,10 +212,13 @@ router.post('/break-start', auth, async (req, res) => {
         const tzMod = getTzModifier(req);
 
         const txResult = await req.db.transaction(async (client) => {
+            // Consider both live and manual entries so that a user with a
+            // "still working" manual entry can still take a break / clock
+            // out from the dashboard.
             const lastRes = await client.query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
-                   AND (is_manual IS NOT TRUE)
+                   AND (approval_status IS NULL OR approval_status != 'rejected')
                  ORDER BY timestamp DESC, id DESC LIMIT 1`,
                 [req.userId, today],
             );
@@ -245,10 +248,12 @@ router.post('/break-end', auth, async (req, res) => {
         const tzMod = getTzModifier(req);
 
         const txResult = await req.db.transaction(async (client) => {
+            // Consider both live and manual entries so manual sessions
+            // remain operable from the dashboard.
             const lastRes = await client.query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
-                   AND (is_manual IS NOT TRUE)
+                   AND (approval_status IS NULL OR approval_status != 'rejected')
                  ORDER BY timestamp DESC, id DESC LIMIT 1`,
                 [req.userId, today],
             );
@@ -277,10 +282,12 @@ router.post('/clock-out', auth, async (req, res) => {
         const tzMod = getTzModifier(req);
 
         const txResult = await req.db.transaction(async (client) => {
+            // Consider both live and manual entries so a user with a
+            // "still working" manual entry can clock out from the dashboard.
             const lastRes = await client.query(
                 `SELECT * FROM time_entries
                  WHERE user_id = $1 AND ${pgDateInTz('timestamp', tzMod)} = $2::date
-                   AND (is_manual IS NOT TRUE)
+                   AND (approval_status IS NULL OR approval_status != 'rejected')
                  ORDER BY timestamp DESC, id DESC LIMIT 1`,
                 [req.userId, today],
             );
