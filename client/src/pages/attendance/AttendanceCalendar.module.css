@@ -293,6 +293,15 @@
     color: var(--text-muted);
 }
 
+.kind_in_progress {
+    background: var(--surface);
+    border-color: var(--border);
+}
+
+.kind_in_progress .dayNum {
+    color: var(--text);
+}
+
 .kind_future {
     background: var(--surface);
     opacity: 0.65;

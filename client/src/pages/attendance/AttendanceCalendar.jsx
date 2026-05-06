@@ -177,6 +177,7 @@ export default function AttendanceCalendar({ refreshKey = 0 }) {
             const dt = new Date(year, month, d);
             const ymd = fmtYMD(dt);
             if (dt > today) continue; // future days don't count
+            const isToday = ymd === todayStr;
             const isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
             const leave = leaveMap.get(ymd);
             const isHoliday = holidayMap.has(ymd);
@@ -185,10 +186,12 @@ export default function AttendanceCalendar({ refreshKey = 0 }) {
             if (isPresent) { present++; continue; }
             if (leave && leave.status === 'approved') { leaveCount++; continue; }
             if (isHoliday || isWeekend) { holidayCount++; continue; }
+            // Today is still in progress — don't count as absent yet.
+            if (isToday) continue;
             absent++;
         }
         return { present, absent, leave: leaveCount, holiday: holidayCount };
-    }, [year, month, presentMap, leaveMap, holidayMap, today]);
+    }, [year, month, presentMap, leaveMap, holidayMap, today, todayStr]);
 
     const goPrev = () => setCursor(new Date(year, month - 1, 1));
     const goNext = () => setCursor(new Date(year, month + 1, 1));
@@ -227,6 +230,13 @@ export default function AttendanceCalendar({ refreshKey = 0 }) {
         } else if (isWeekend) {
             kind = 'weekend';
             title += ' • Weekend';
+        } else if (isToday) {
+            // Today is still in progress. Don't mark absent — keep neutral
+            // until the user reaches the present threshold (then it turns green)
+            // or until the day ends.
+            kind = 'in_progress';
+            const hrs = (liveFloorMinutes / 60).toFixed(1);
+            title += ` • In progress (${hrs}h / ${minHoursPresent}h target)`;
         } else if (!isFuture) {
             kind = 'absent';
             title += ' • Absent';
