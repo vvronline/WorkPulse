@@ -1,7 +1,12 @@
 @keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
+/* Notes page wrapper.
+   The Home view gets comfortable horizontal padding; the editor
+   stretches edge-to-edge so the writing surface is maximised. */
 .page {
-  width: 100%; margin: 0 auto; padding: 0.5rem 1rem 0.5rem;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0.5rem 1rem;
   animation: fadeInUp 0.3s ease;
   height: calc(100vh - 72px);
   display: flex; flex-direction: column;
@@ -9,6 +14,11 @@
   min-height: 0; overflow: hidden;
 }
 
-@media (min-width: 1600px) { .page { padding: 0.5rem 2rem 0.5rem; } }
-@media (min-width: 2200px) { .page { padding: 0.5rem 3rem 0.5rem; } }
-@media (max-width: 768px)  { .page { height: calc(100vh - 56px - 60px); padding: 0.5rem 0.5rem 0.5rem; } }
+/* Edge-to-edge variant (used by the editor) */
+.pageEditor {
+  padding: 0;
+}
+
+@media (min-width: 1600px) { .page { padding: 0.5rem 2rem; } .pageEditor { padding: 0; } }
+@media (min-width: 2200px) { .page { padding: 0.5rem 3rem; } .pageEditor { padding: 0; } }
+@media (max-width: 768px)  { .page { height: calc(100vh - 56px - 60px); padding: 0.5rem 0.5rem; } .pageEditor { padding: 0; } }

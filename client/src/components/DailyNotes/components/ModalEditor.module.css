@@ -1,74 +1,198 @@
-.editorArea { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+/* ModalEditor — centered, Notion-style content column */
+
+.editorArea {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+    background: var(--bg-primary);
+}
+
+/* All editor children are constrained to a comfortable column. */
+.titleRow,
+.metaRow,
+.editorScroll,
+.wordCount {
+    box-sizing: border-box;
+}
 
 .titleRow {
-  display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.6rem 1.2rem 0.2rem; flex-shrink: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    width: 100%;
+    padding: 1.2rem 1.5rem 0.4rem;
+    flex-shrink: 0;
+    box-sizing: border-box;
 }
+
 .titleInput {
-  flex: 1; background: transparent; border: none; outline: none;
-  font-size: 1.35rem; font-weight: 700; color: var(--text-primary); min-width: 0;
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    min-width: 0;
+    line-height: 1.2;
+    padding: 0;
+    letter-spacing: -0.01em;
 }
-.titleInput::placeholder { color: var(--text-muted); font-weight: 400; }
+.titleInput::placeholder {
+    color: var(--text-muted);
+    font-weight: 500;
+    opacity: 0.6;
+}
 
-.actions     { display: flex; gap: 0.25rem; flex-shrink: 0; }
+/* Action buttons — inline with title */
+.actions {
+    display: flex;
+    gap: 0.2rem;
+    flex-shrink: 0;
+    align-items: center;
+    padding-top: 0.55rem; /* baseline-align with the big title text */
+    opacity: 0;
+    transition: opacity 0.18s;
+}
+.editorArea:hover .actions,
+.actions:focus-within { opacity: 1; }
+
 .actBtn {
-  background: none; border: 1px solid transparent; border-radius: 6px;
-  padding: 0.2rem 0.35rem; cursor: pointer; font-size: 0.82rem;
-  opacity: 0.55; transition: opacity 0.15s, background 0.15s, border-color 0.15s; line-height: 1;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    padding: 0.32rem 0.45rem;
+    cursor: pointer;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    transition: opacity 0.15s, background 0.15s, border-color 0.15s, color 0.15s;
+    line-height: 1;
 }
-.actBtn:hover     { opacity: 1; background: var(--bg-hover, rgba(255,255,255,0.06)); border-color: var(--border); }
-.actBtnActive     { opacity: 1; background: var(--primary-dim, rgba(14, 165, 233, 0.12)); border-color: rgba(14, 165, 233, 0.25); }
-.actBtnDanger:hover { background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.25); }
+.actBtn:hover {
+    background: var(--bg-hover, rgba(255,255,255,0.06));
+    border-color: var(--border);
+    color: var(--text-primary);
+}
+.actBtnActive {
+    background: var(--primary-dim, rgba(14, 165, 233, 0.14));
+    border-color: rgba(14, 165, 233, 0.35);
+    color: var(--primary, #0ea5e9);
+}
+.actBtnDanger:hover {
+    background: rgba(248, 113, 113, 0.1);
+    border-color: rgba(248, 113, 113, 0.3);
+    color: #f87171;
+}
 
+/* Meta row — folder + tags + last edited */
 .metaRow {
-  display: flex; align-items: center; gap: 0.6rem;
-  padding: 0.1rem 1.2rem 0.5rem; flex-shrink: 0; flex-wrap: wrap;
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    flex-wrap: wrap;
+    width: 100%;
+    padding: 0.1rem 1.5rem 0.85rem;
+    flex-shrink: 0;
+    box-sizing: border-box;
 }
 .folderSelect {
-  font-size: 0.73rem; padding: 0.2rem 0.35rem;
-  border: 1px solid var(--border); border-radius: 5px;
-  background: var(--bg-secondary); color: var(--text-primary);
-  cursor: pointer; outline: none;
+    font-size: 0.76rem;
+    padding: 0.28rem 0.55rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.15s;
 }
-.folderSelect:focus { border-color: var(--primary); }
+.folderSelect:focus,
+.folderSelect:hover { border-color: var(--primary); }
 
+/* Editor scroll container — Quill gets the full available width */
+.editorScroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0;
+    width: 100%;
+    box-sizing: border-box;
+}
+.editorScroll > * {
+    width: 100%;
+    padding: 0 1.5rem;
+    box-sizing: border-box;
+}
+
+/* Word-count footer — full width, low contrast */
 .wordCount {
-  padding: 0.3rem 1rem; font-size: 0.7rem; color: var(--text-muted);
-  border-top: 1px solid var(--border); background: var(--bg-secondary);
-  flex-shrink: 0; display: flex; align-items: center; gap: 0.25rem;
+    padding: 0.5rem 1.5rem;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    background: var(--bg-secondary);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    box-sizing: border-box;
+}
+.wordCountInner {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
 }
 .wordCountMeta { opacity: 0.7; }
 
 .empty {
-  flex: 1; display: flex; flex-direction: column;
-  align-items: center; justify-content: center;
-  gap: 0.75rem; color: var(--text-muted); font-size: 0.88rem;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.85rem;
+    color: var(--text-muted);
+    font-size: 0.92rem;
 }
 
 [data-theme="light"] .folderSelect { background: #fff; }
+[data-theme="light"] .editorArea { background: #fff; }
 
-/* ── Mobile adjustments ── */
+/* ── Tablet ── */
+@media (max-width: 900px) {
+    .titleRow,
+    .metaRow,
+    .wordCount,
+    .editorScroll > * {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+    .titleInput { font-size: 1.7rem; }
+    .actions { opacity: 1; }
+}
+
+/* ── Mobile ── */
 @media (max-width: 640px) {
-  .titleRow {
-    padding: 0.6rem 0.85rem 0.15rem;
-  }
-  .titleInput {
-    font-size: 1.15rem;
-  }
-  .metaRow {
-    padding: 0.1rem 0.85rem 0.4rem;
-    gap: 0.5rem;
-  }
-  .actions {
-    gap: 0.15rem;
-  }
-  .actBtn {
-    padding: 0.3rem 0.4rem;
-    font-size: 0.85rem;
-    opacity: 1; /* always visible on touch */
-  }
-  .wordCount {
-    padding: 0.3rem 0.85rem;
-    font-size: 0.72rem;
-  }
+    .titleRow {
+        padding: 0.85rem 0.85rem 0.25rem;
+        gap: 0.35rem;
+    }
+    .titleInput { font-size: 1.35rem; }
+    .actions { padding-top: 0.3rem; opacity: 1; }
+    .actBtn { padding: 0.35rem 0.4rem; font-size: 0.85rem; }
+    .metaRow {
+        padding: 0.1rem 0.85rem 0.5rem;
+        gap: 0.5rem;
+    }
+    .editorScroll > * {
+        padding: 0 0.85rem;
+    }
+    .wordCount {
+        padding: 0.4rem 0.85rem;
+        font-size: 0.72rem;
+    }
 }

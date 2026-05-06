@@ -1,0 +1,446 @@
+/* ─────────────────────────────────────────────────────────
+   NotesHome — dashboard styling.
+   Uses the global CSS variables already defined in global.css.
+   ───────────────────────────────────────────────────────── */
+
+@keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.home {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 1.25rem 1.5rem 2rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    animation: fadeInUp 0.25s ease;
+    box-sizing: border-box;
+}
+
+/* ── Header ──────────────────────────────────────────────── */
+.header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+    flex-wrap: wrap;
+}
+.greeting {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0 0 0.25rem;
+    line-height: 1.2;
+}
+.name {
+    background: linear-gradient(135deg, var(--primary, #0ea5e9), #8b5cf6);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+.meta {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin: 0;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+.dot { opacity: 0.5; }
+
+.headerActions { display: flex; gap: 0.5rem; }
+
+.newPageBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: var(--primary, #0ea5e9);
+    color: #fff;
+    border: 1px solid var(--primary, #0ea5e9);
+    border-radius: 8px;
+    padding: 0.55rem 1rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.12s, box-shadow 0.12s, background 0.15s;
+}
+.newPageBtn svg { width: 14px; height: 14px; }
+.newPageBtn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(14, 165, 233, 0.3);
+}
+
+/* ── Search ──────────────────────────────────────────────── */
+.searchWrap {
+    position: relative;
+    margin-bottom: 1.5rem;
+}
+.searchIcon {
+    position: absolute;
+    left: 0.85rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 16px; height: 16px;
+    color: var(--text-muted);
+    pointer-events: none;
+}
+.searchInput {
+    width: 100%;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    border-radius: 10px;
+    padding: 0.7rem 2.5rem 0.7rem 2.4rem;
+    font-size: 0.9rem;
+    transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+    box-sizing: border-box;
+}
+.searchInput:focus {
+    outline: none;
+    border-color: var(--primary, #0ea5e9);
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.15);
+}
+.searchInput::placeholder { color: var(--text-muted); }
+.searchClear {
+    position: absolute;
+    right: 0.6rem;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.2rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+}
+.searchClear:hover { color: var(--text-primary); background: var(--bg-hover, rgba(255,255,255,0.06)); }
+
+/* ── Section ─────────────────────────────────────────────── */
+.section { margin-bottom: 1.75rem; }
+.sectionHeadRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.65rem;
+}
+.sectionTitle {
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+    margin: 0 0 0.65rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+.sectionEmoji { font-size: 1rem; }
+.viewAll {
+    background: none; border: none; color: var(--primary, #0ea5e9);
+    font-size: 0.78rem; font-weight: 600; cursor: pointer; padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+}
+.viewAll:hover { background: rgba(14, 165, 233, 0.08); }
+
+/* ── Quick actions grid ──────────────────────────────────── */
+.quickGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 0.75rem;
+}
+.quickTile {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem 0.9rem;
+    cursor: pointer;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    transition: transform 0.12s, border-color 0.15s, box-shadow 0.15s, background 0.15s;
+    color: var(--text-primary);
+    position: relative;
+    overflow: hidden;
+}
+.quickTile::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(14,165,233,0.08), rgba(139,92,246,0.06));
+    opacity: 0;
+    transition: opacity 0.18s;
+    pointer-events: none;
+}
+.quickTile:hover {
+    transform: translateY(-2px);
+    border-color: rgba(14, 165, 233, 0.45);
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.16);
+}
+.quickTile:hover::before { opacity: 1; }
+.quickIcon {
+    font-size: 1.5rem;
+    line-height: 1;
+    margin-bottom: 0.2rem;
+}
+.quickName {
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.quickDesc {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
+/* ── Empty state ─────────────────────────────────────────── */
+.emptyState {
+    text-align: center;
+    padding: 1.5rem 1rem;
+    background: var(--bg-secondary);
+    border: 1px dashed var(--border);
+    border-radius: 12px;
+    margin-bottom: 1.75rem;
+}
+.emptyIcon { font-size: 2.4rem; margin-bottom: 0.5rem; }
+.emptyTitle {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 0.3rem;
+}
+.emptySub {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin: 0;
+}
+
+/* ── Pinned list ─────────────────────────────────────────── */
+.list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+.listRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.55rem 0.8rem;
+    cursor: pointer;
+    text-align: left;
+    color: var(--text-primary);
+    transition: border-color 0.15s, background 0.15s, transform 0.1s;
+}
+.listRow:hover {
+    border-color: rgba(14,165,233,0.45);
+    background: var(--bg-hover, rgba(255,255,255,0.04));
+    transform: translateX(2px);
+}
+.listTitle {
+    font-size: 0.88rem;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+}
+.listDate {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin-left: 0.6rem;
+    flex-shrink: 0;
+}
+
+/* ── Two-col layout (recent + tags) ──────────────────────── */
+.twoCol {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 1.25rem;
+    margin-bottom: 1.75rem;
+}
+.col { margin-bottom: 0; }
+
+/* ── Recent ──────────────────────────────────────────────── */
+.recentList {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+.recentRow {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    width: 100%;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.6rem 0.85rem;
+    cursor: pointer;
+    text-align: left;
+    color: var(--text-primary);
+    transition: border-color 0.15s, background 0.15s, transform 0.1s;
+}
+.recentRow:hover {
+    border-color: rgba(14,165,233,0.45);
+    background: var(--bg-hover, rgba(255,255,255,0.04));
+    transform: translateX(2px);
+}
+.recentMain {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    width: 100%;
+}
+.recentTitle {
+    font-size: 0.88rem;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+}
+.recentDate {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+.recentSnippet {
+    font-size: 0.76rem;
+    color: var(--text-muted);
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    line-height: 1.35;
+}
+
+/* ── Tag cloud ───────────────────────────────────────────── */
+.tagCloud {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+.tagChip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.3rem 0.65rem;
+    font-size: 0.76rem;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s, transform 0.1s;
+}
+.tagChip:hover {
+    border-color: var(--tag-color, var(--primary));
+    background: color-mix(in srgb, var(--tag-color, #0ea5e9) 12%, transparent);
+    transform: translateY(-1px);
+}
+.tagDot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--tag-color, var(--primary, #0ea5e9));
+    flex-shrink: 0;
+}
+.tagName { font-weight: 500; }
+.tagCount {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+/* ── Folders grid ────────────────────────────────────────── */
+.folderGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 0.7rem;
+}
+.folderCard {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.85rem 0.8rem;
+    cursor: pointer;
+    text-align: left;
+    color: var(--text-primary);
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    transition: transform 0.12s, border-color 0.15s, box-shadow 0.15s;
+}
+.folderCard:hover {
+    transform: translateY(-2px);
+    border-color: rgba(245, 158, 11, 0.45);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
+}
+.folderIcon { font-size: 1.3rem; line-height: 1; }
+.folderName {
+    font-size: 0.85rem;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.folderCount {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+.newFolderCard {
+    border-style: dashed;
+    color: var(--text-muted);
+    align-items: flex-start;
+    justify-content: center;
+}
+.newFolderCard:hover {
+    border-color: var(--primary, #0ea5e9);
+    color: var(--primary, #0ea5e9);
+}
+
+/* ── Footer ──────────────────────────────────────────────── */
+.footer {
+    margin-top: 1rem;
+    text-align: center;
+}
+.footerHint {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+
+/* ── Responsive ──────────────────────────────────────────── */
+@media (max-width: 900px) {
+    .twoCol { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+    .home { padding: 1rem 0.85rem 1.5rem; border-radius: 8px; }
+    .greeting { font-size: 1.3rem; }
+    .quickGrid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.6rem; }
+    .folderGrid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+    .footerHint { font-size: 0.68rem; }
+    .header { gap: 0.6rem; }
+    .newPageBtn { padding: 0.45rem 0.8rem; font-size: 0.8rem; }
+}

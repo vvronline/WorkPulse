@@ -9,6 +9,7 @@ import { newPage, newFolder, getDescendantFolderIds } from './notesUtils';
 import { useNotesPersistence } from './useNotesPersistence';
 import { useNotesFilters } from './useNotesFilters';
 import { useClickOutside } from '../../hooks/useClickOutside';
+import { getTemplate } from './templates';
 
 export function useNotesStore(userId) {
     const {
@@ -24,6 +25,12 @@ export function useNotesStore(userId) {
     const [maximized, setMaximized] = useState(false);
     const [embedded, setEmbedded] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
+    // 'home' = dashboard landing view, 'editor' = page editing view.
+    // Only meaningful when embedded (full /notes route). Defaults to 'home'.
+    const [view, setView] = useState('home');
+    // Floating popovers / palettes (replace the always-visible sidebar)
+    const [switcherOpen, setSwitcherOpen] = useState(false);
+    const [paletteOpen, setPaletteOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [showArchived, setShowArchived] = useState(false);
     const [folderFilter, setFolderFilter] = useState('all');
@@ -117,6 +124,22 @@ export function useNotesStore(userId) {
             if (ctrl && e.shiftKey && (e.key === 'A' || e.key === 'a') && activePageId) {
                 e.preventDefault(); handleToggleArchive(activePageId);
             }
+            if (ctrl && (e.key === 'h' || e.key === 'H') && !e.shiftKey && embedded) {
+                e.preventDefault(); openHome();
+            }
+            // Ctrl+K → command palette (works in editor view, embedded or modal)
+            if (ctrl && (e.key === 'k' || e.key === 'K') && !e.shiftKey) {
+                e.preventDefault();
+                setPaletteOpen(p => !p);
+            }
+            // Ctrl+P (without other meta) → page switcher (when not in INPUT/TEXTAREA)
+            if (ctrl && e.shiftKey && (e.key === 'O' || e.key === 'o')) {
+                // Ctrl+Shift+O → page switcher (avoids conflict with browser print)
+                if (!['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) {
+                    e.preventDefault();
+                    setSwitcherOpen(p => !p);
+                }
+            }
         };
         document.addEventListener('keydown', h);
         return () => document.removeEventListener('keydown', h);
@@ -156,6 +179,7 @@ export function useNotesStore(userId) {
         setActivePageId(page.id);
         persist(updated, folders, page.id);
         setMenuOpen(false);
+        setView('editor');
         if (!inlineTitle) {
             setTimeout(() => { setRenamingId(page.id); setRenameValue(title); }, 50);
         }
@@ -165,6 +189,74 @@ export function useNotesStore(userId) {
         setActivePageId(id);
         persist(pages, folders, id);
         setMenuOpen(false);
+        setView('editor');
+    };
+
+    /* ── Home / Editor view switching ────────────────────────── */
+    const openHome = () => {
+        setView('home');
+        setMenuOpen(false);
+    };
+
+    const openEditor = (id) => {
+        if (id) {
+            setActivePageId(id);
+            persist(pages, folders, id);
+        }
+        setView('editor');
+        setMenuOpen(false);
+    };
+
+    /* ── Create page from a template (used by Home quick actions) ── */
+    const handleNewFromTemplate = (templateId) => {
+        const tpl = getTemplate(templateId);
+        const title = (typeof tpl.title === 'function' ? tpl.title() : tpl.title) || 'Untitled';
+        const html = (typeof tpl.html === 'function' ? tpl.html() : tpl.html) || '';
+
+        // If template specifies a folder name, find or create it.
+        let folderId = null;
+        if (tpl.folderName) {
+            const existing = folders.find(f => f.name.toLowerCase() === tpl.folderName.toLowerCase() && !f.parentId);
+            if (existing) {
+                folderId = existing.id;
+            } else {
+                const f = newFolder(tpl.folderName, null);
+                const updatedFolders = [...folders, f];
+                setFolders(updatedFolders);
+                folderId = f.id;
+                // Note: we'll persist together with the new page below.
+            }
+        }
+
+        const page = { ...newPage(title, folderId), content: html };
+        const updatedPages = [...pages, page];
+        const finalFolders = tpl.folderName && !folders.some(f => f.id === folderId)
+            ? [...folders, { id: folderId, name: tpl.folderName, parentId: null, sortOrder: Date.now() }]
+            : folders.some(f => f.id === folderId) || !folderId
+                ? folders
+                : folders;
+        setPages(updatedPages);
+        setActivePageId(page.id);
+        persist(updatedPages, finalFolders, page.id);
+        setView('editor');
+        setMenuOpen(false);
+
+        // Only blank pages get auto-rename — others have meaningful titles.
+        if (templateId === 'blank') {
+            setTimeout(() => { setRenamingId(page.id); setRenameValue(title); }, 50);
+        }
+    };
+
+    /* ── Open or create today's journal entry ───────────────── */
+    const handleOpenTodayJournal = () => {
+        const tpl = getTemplate('journal');
+        const title = tpl.title();
+        const existing = pages.find(p => p.title === title && !p.archived);
+        if (existing) {
+            openEditor(existing.id);
+            return;
+        }
+        handleNewFromTemplate('journal');
     };
 
     const handleDeletePage = () => setConfirmDelete(true);
@@ -349,6 +441,7 @@ export function useNotesStore(userId) {
         pages, folders, activePage, activePageId, setActivePageId, processedPages, dropdownPages, wc,
         // ui state
         savedFlash, expanded, setExpanded, maximized, setMaximized, embedded, setEmbedded,
+        view, setView,
         menuOpen, setMenuOpen, searchQuery, setSearchQuery,
         sortBy, showArchived, setShowArchived,
         folderFilter, setFolderFilter,
@@ -376,6 +469,12 @@ export function useNotesStore(userId) {
         handleSortChange,
         handleRestoreSnapshot,
         handleDragStart, handleDragOver, handleDrop, handleDragEnd,
+        // home / editor view switching
+        openHome, openEditor,
+        handleNewFromTemplate, handleOpenTodayJournal,
+        // floating navigation
+        switcherOpen, setSwitcherOpen,
+        paletteOpen, setPaletteOpen,
         persist,
     };
 }

@@ -102,35 +102,42 @@ export default function ModalEditor({
         />
       </div>
 
-      {/* Version history panel (replaces editor when open) */}
-      {showHistory ? (
-        <VersionHistory
-          pageId={activePage.id}
-          pageTitle={activePage.title}
-          onRestore={(content, title) => {
-            onRestoreSnapshot(content, title);
-            setEditorResetKey(k => k + 1);
-            setShowHistory(false);
-          }}
-          onClose={() => setShowHistory(false)}
-        />
-      ) : (
-        <QuillEditor
-          pageId={activePage.id}
-          defaultContent={activePage.content}
-          quillRef={modalQuillRef}
-          onChange={onContentChange}
-          variant="modal"
-          resetKey={editorResetKey}
-        />
-      )}
-
-      {/* Word count */}
-      <div className={s.wordCount}>
-        {wc.words} words · {wc.chars} chars
-        {activePage.createdAt && (
-          <span className={s.wordCountMeta}> · Created {formatDate(activePage.createdAt)}</span>
+      {/* Editor / version-history scroll area */}
+      <div className={s.editorScroll}>
+        {showHistory ? (
+          <VersionHistory
+            pageId={activePage.id}
+            pageTitle={activePage.title}
+            onRestore={(content, title) => {
+              onRestoreSnapshot(content, title);
+              setEditorResetKey(k => k + 1);
+              setShowHistory(false);
+            }}
+            onClose={() => setShowHistory(false)}
+          />
+        ) : (
+          <QuillEditor
+            pageId={activePage.id}
+            defaultContent={activePage.content}
+            quillRef={modalQuillRef}
+            onChange={onContentChange}
+            variant="modal"
+            resetKey={editorResetKey}
+          />
         )}
+      </div>
+
+      {/* Word count footer */}
+      <div className={s.wordCount}>
+        <div className={s.wordCountInner}>
+          <span>{wc.words} words · {wc.chars} chars</span>
+          {activePage.createdAt && (
+            <span className={s.wordCountMeta}>· Created {formatDate(activePage.createdAt)}</span>
+          )}
+          {activePage.updatedAt && (
+            <span className={s.wordCountMeta}>· Edited {formatDate(activePage.updatedAt)}</span>
+          )}
+        </div>
       </div>
     </div>
   );
