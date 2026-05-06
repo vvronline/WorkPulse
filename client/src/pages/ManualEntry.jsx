@@ -221,6 +221,9 @@ export default function ManualEntry({ isActive, onEntryChanged }) {
       getManualEntryRequests().then(r => setPendingRequests(r.data)).catch(e => console.error(e));
       // Notify parent (Attendance) to refresh calendar/overview
       if (onEntryChanged) onEntryChanged();
+      // Notify other parts of the app (e.g. Dashboard's WorkTimerCard) so they
+      // re-fetch /tracker/status immediately instead of waiting for the next poll.
+      window.dispatchEvent(new CustomEvent('workpulse:entry-changed', { detail: { date } }));
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save entry');
     } finally {

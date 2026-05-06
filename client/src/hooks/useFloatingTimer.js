@@ -40,9 +40,21 @@ export function useFloatingTimer() {
         let cancelled = false;
         fetchStatus();
         const handleVisibility = () => { if (!document.hidden && !cancelled) fetchStatus(); };
+        // Refresh immediately when a time-entry change happens elsewhere
+        // (e.g. user submitted a manual entry on the Manual Entry tab).
+        // Without this the WorkTimerCard would show stale data until the
+        // next poll (up to STATUS_POLL_INTERVAL later) because KeepAlive
+        // keeps the Dashboard mounted across SPA navigations.
+        const handleEntryChanged = () => { if (!cancelled) fetchStatus(); };
         document.addEventListener('visibilitychange', handleVisibility);
+        window.addEventListener('workpulse:entry-changed', handleEntryChanged);
         const poll = setInterval(() => { if (!document.hidden && !cancelled) fetchStatus(); }, STATUS_POLL_INTERVAL);
-        return () => { cancelled = true; document.removeEventListener('visibilitychange', handleVisibility); clearInterval(poll); };
+        return () => {
+            cancelled = true;
+            document.removeEventListener('visibilitychange', handleVisibility);
+            window.removeEventListener('workpulse:entry-changed', handleEntryChanged);
+            clearInterval(poll);
+        };
     }, [fetchStatus]);
 
     const state = status?.state || 'logged_out';
