@@ -2,6 +2,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import DOMPurify from 'dompurify';
 import { getPageHistory, getHistorySnapshot } from '../../../api';
+import { History, X, FileText, RotateCcw } from '../../../constants/icons';
 import s from './VersionHistory.module.css';
 
 function fmtDate(str) {
@@ -59,15 +60,11 @@ export default function VersionHistory({ pageId, pageTitle, onRestore, onClose }
       {/* Panel header */}
       <div className={s.header}>
         <div className={s.headerLeft}>
-          <svg viewBox="0 0 16 16" fill="currentColor" className={s.icon}>
-            <path d="M8 1a7 7 0 100 14A7 7 0 008 1zM0 8a8 8 0 1116 0A8 8 0 010 8zm8-4a.75.75 0 01.75.75v3.69l2.28 1.32a.75.75 0 01-.75 1.3l-2.5-1.44A.75.75 0 017.25 9V4.75A.75.75 0 018 4z"/>
-          </svg>
+          <History size={14} className={s.icon} aria-hidden="true" />
           <span className={s.headerTitle}>Version History</span>
         </div>
-        <button className={s.closeBtn} onClick={onClose} title="Close history">
-          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M2 2l10 10M12 2L2 12"/>
-          </svg>
+        <button className={s.closeBtn} onClick={onClose} title="Close history" aria-label="Close history">
+          <X size={14} />
         </button>
       </div>
 
@@ -109,9 +106,7 @@ export default function VersionHistory({ pageId, pageTitle, onRestore, onClose }
         <div className={s.preview}>
           {!preview && !previewLoading && (
             <div className={s.previewEmpty}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 12h6M9 8h6m-9 8h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v8a2 2 0 002 2z"/>
-              </svg>
+              <FileText size={36} strokeWidth={1.5} aria-hidden="true" />
               <p>Select a version to preview it</p>
             </div>
           )}
@@ -133,7 +128,14 @@ export default function VersionHistory({ pageId, pageTitle, onRestore, onClose }
                   disabled={restoring}
                   title="Replace current content with this version"
                 >
-                  {restoring ? 'Restoring…' : '↩ Restore this version'}
+                  {restoring ? (
+                    'Restoring…'
+                  ) : (
+                    <>
+                      <RotateCcw size={12} style={{ verticalAlign: '-2px', marginRight: 4 }} />
+                      Restore this version
+                    </>
+                  )}
                 </button>
               </div>
               <div

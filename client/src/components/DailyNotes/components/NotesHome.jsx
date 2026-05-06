@@ -1,12 +1,34 @@
 /* ─────────────────────────────────────────────────────────
-   NotesHome — landing dashboard for the /notes route.
-   Shows greeting, quick-action templates, pinned, recent,
-   tags, folders. Switches to the editor view on selection.
+   NotesHome — modernized landing dashboard for the /notes route.
+   Layout:
+     ┌─────────────────────────────────────────────────────┐
+     │ Hero (greeting + meta + combined command bar)        │
+     ├─────────────────────────────────────────────────────┤
+     │ "Continue writing" hero card (full-width)           │
+     ├─────────────────────────────────────┬───────────────┤
+     │ Recent grid (3 cols)                │ Pinned        │
+     ├─────────────────────────────────────┼───────────────┤
+     │ Quick actions (template chips)      │ Tags / Folders│
+     └─────────────────────────────────────┴───────────────┘
    ───────────────────────────────────────────────────────── */
 import React, { useMemo, useState } from 'react';
 import { useAuth } from '../../../AuthContext';
 import { TEMPLATES } from '../templates';
 import { formatDate, tagColor, stripHtml } from '../notesUtils';
+import {
+    Plus,
+    Search,
+    StickyNote,
+    Pin,
+    Clock,
+    Tag,
+    Folder,
+    FolderPlus,
+    ArrowUpRight,
+    Sparkles,
+    Command,
+    FileText,
+} from '../../../constants/icons';
 import s from './NotesHome.module.css';
 
 function getGreeting() {
@@ -24,10 +46,24 @@ function todayLong() {
     });
 }
 
-function snippetOf(html, max = 110) {
+function snippetOf(html, max = 140) {
     const text = stripHtml(html || '').trim();
     if (!text) return '';
     return text.length > max ? text.slice(0, max).trim() + '…' : text;
+}
+
+function relativeFromNow(iso) {
+    if (!iso) return '';
+    const then = new Date(iso).getTime();
+    const diff = Date.now() - then;
+    const min = Math.round(diff / 60000);
+    if (min < 1) return 'just now';
+    if (min < 60) return `${min} min ago`;
+    const hr = Math.round(min / 60);
+    if (hr < 24) return `${hr} hr ago`;
+    const d = Math.round(hr / 24);
+    if (d < 7) return `${d}d ago`;
+    return formatDate(iso);
 }
 
 export default function NotesHome({ store }) {
@@ -38,6 +74,7 @@ export default function NotesHome({ store }) {
         openEditor,
         setSearchQuery, setFolderFilter, setShowArchived,
         setNewFolderOpen,
+        setPaletteOpen,
     } = store;
 
     const [search, setSearch] = useState('');
@@ -45,16 +82,19 @@ export default function NotesHome({ store }) {
     const activePages = useMemo(() => pages.filter(p => !p.archived), [pages]);
 
     const pinned = useMemo(
-        () => activePages.filter(p => p.pinned).slice(0, 5),
+        () => activePages.filter(p => p.pinned).slice(0, 6),
         [activePages]
     );
 
     const recent = useMemo(
         () => [...activePages]
             .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
-            .slice(0, 6),
+            .slice(0, 9),
         [activePages]
     );
+
+    const continueWriting = recent[0] || null;
+    const otherRecent = recent.slice(1, 7);
 
     const tagCounts = useMemo(() => {
         const counts = {};
@@ -63,7 +103,7 @@ export default function NotesHome({ store }) {
         }));
         return Object.entries(counts)
             .sort((a, b) => b[1] - a[1])
-            .slice(0, 12);
+            .slice(0, 14);
     }, [activePages]);
 
     const topFolders = useMemo(() => {
@@ -76,6 +116,16 @@ export default function NotesHome({ store }) {
             .sort((a, b) => b.count - a.count);
     }, [folders, activePages]);
 
+    /* Live filter for the hero command bar */
+    const liveMatches = useMemo(() => {
+        const q = search.trim().toLowerCase();
+        if (!q) return [];
+        return activePages
+            .filter(p => (p.title || '').toLowerCase().includes(q)
+                || stripHtml(p.content || '').toLowerCase().includes(q))
+            .slice(0, 5);
+    }, [search, activePages]);
+
     const isEmpty = activePages.length === 0;
 
     const firstName = (user?.full_name || user?.username || 'there').split(' ')[0];
@@ -83,6 +133,7 @@ export default function NotesHome({ store }) {
     const onSearchSubmit = (e) => {
         e.preventDefault();
         const q = search.trim();
+        if (!q) return;
         setSearchQuery(q);
         openEditor();
     };
@@ -106,233 +157,345 @@ export default function NotesHome({ store }) {
 
     return (
         <div className={s.home}>
-            {/* ── Header ─────────────────────────────────────────── */}
-            <header className={s.header}>
-                <div>
-                    <h1 className={s.greeting}>
-                        {getGreeting()}, <span className={s.name}>{firstName}</span>
-                    </h1>
-                    <p className={s.meta}>
-                        {todayLong()}
-                        <span className={s.dot}>·</span>
-                        {activePages.length} {activePages.length === 1 ? 'page' : 'pages'}
-                        {folders.length > 0 && (
-                            <>
-                                <span className={s.dot}>·</span>
-                                {folders.length} {folders.length === 1 ? 'folder' : 'folders'}
-                            </>
-                        )}
-                    </p>
+            {/* ── Hero ────────────────────────────────────────────── */}
+            <header className={s.hero}>
+                <div className={s.heroGrad} aria-hidden="true" />
+
+                <div className={s.heroTop}>
+                    <div className={s.heroText}>
+                        <p className={s.heroDate}>{todayLong()}</p>
+                        <h1 className={s.greeting}>
+                            {getGreeting()}, <span className={s.name}>{firstName}</span>
+                        </h1>
+                        <p className={s.meta}>
+                            {activePages.length} {activePages.length === 1 ? 'page' : 'pages'}
+                            {folders.length > 0 && (
+                                <>
+                                    <span className={s.dot}>·</span>
+                                    {folders.length} {folders.length === 1 ? 'folder' : 'folders'}
+                                </>
+                            )}
+                            {pinned.length > 0 && (
+                                <>
+                                    <span className={s.dot}>·</span>
+                                    {pinned.length} pinned
+                                </>
+                            )}
+                        </p>
+                    </div>
+
+                    <div className={s.heroActions}>
+                        <button
+                            type="button"
+                            className={s.heroBtnGhost}
+                            onClick={() => setPaletteOpen?.(true)}
+                            title="Open command palette (Ctrl+K)"
+                        >
+                            <Command size={14} />
+                            <span>Commands</span>
+                            <kbd className={s.kbd}>⌘K</kbd>
+                        </button>
+                        <button
+                            type="button"
+                            className={s.heroBtnPrimary}
+                            onClick={() => handleNewPage()}
+                            title="Create a new blank page"
+                        >
+                            <Plus size={14} />
+                            <span>New page</span>
+                        </button>
+                    </div>
                 </div>
-                <div className={s.headerActions}>
-                    <button
-                        className={s.newPageBtn}
-                        onClick={() => handleNewPage()}
-                        title="Create a new blank page"
-                    >
-                        <svg viewBox="0 0 14 14" fill="currentColor" aria-hidden="true">
-                            <path d="M7 1a1 1 0 011 1v4h4a1 1 0 010 2H8v4a1 1 0 01-2 0V8H2a1 1 0 010-2h4V2a1 1 0 011-1z" />
-                        </svg>
-                        New page
-                    </button>
-                </div>
+
+                <form className={s.cmdBar} onSubmit={onSearchSubmit} role="search">
+                    <Search className={s.cmdIcon} size={17} aria-hidden="true" />
+                    <input
+                        className={s.cmdInput}
+                        placeholder="Search notes, jump to a page, or type to filter…"
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        aria-label="Search notes"
+                    />
+                    {search && (
+                        <button
+                            type="button"
+                            className={s.cmdClear}
+                            onClick={() => setSearch('')}
+                            aria-label="Clear search"
+                        >×</button>
+                    )}
+                    <kbd className={s.cmdKbd}>Enter</kbd>
+
+                    {/* Inline live results dropdown */}
+                    {search.trim() && (
+                        <div className={s.cmdResults} role="listbox">
+                            {liveMatches.length === 0 ? (
+                                <button
+                                    type="button"
+                                    className={s.cmdResultRow}
+                                    onClick={() => { handleNewPage(search.trim()); setSearch(''); }}
+                                >
+                                    <span className={s.cmdResultIcon}><Plus size={14} /></span>
+                                    <span className={s.cmdResultText}>
+                                        Create page <strong>"{search.trim()}"</strong>
+                                    </span>
+                                </button>
+                            ) : (
+                                liveMatches.map(p => (
+                                    <button
+                                        type="button"
+                                        key={p.id}
+                                        className={s.cmdResultRow}
+                                        onClick={() => { openEditor(p.id); setSearch(''); }}
+                                    >
+                                        <span className={s.cmdResultIcon}>
+                                            {p.pinned ? <Pin size={14} /> : <FileText size={14} />}
+                                        </span>
+                                        <span className={s.cmdResultText}>
+                                            {p.title || 'Untitled'}
+                                        </span>
+                                        <span className={s.cmdResultMeta}>
+                                            {relativeFromNow(p.updatedAt)}
+                                        </span>
+                                    </button>
+                                ))
+                            )}
+                        </div>
+                    )}
+                </form>
             </header>
 
-            {/* ── Search ─────────────────────────────────────────── */}
-            <form className={s.searchWrap} onSubmit={onSearchSubmit} role="search">
-                <svg className={s.searchIcon} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="7" cy="7" r="5" />
-                    <path d="M11 11l3 3" />
-                </svg>
-                <input
-                    className={s.searchInput}
-                    placeholder="Search all notes…"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    aria-label="Search notes"
-                />
-                {search && (
+            {/* ── Continue writing — hero card ───────────────────── */}
+            {continueWriting && (
+                <section className={s.continue}>
                     <button
-                        type="button"
-                        className={s.searchClear}
-                        onClick={() => setSearch('')}
-                        aria-label="Clear search"
+                        className={s.continueCard}
+                        onClick={() => openEditor(continueWriting.id)}
+                        title="Resume editing"
                     >
-                        ×
+                        <div className={s.continueLeft}>
+                            <span className={s.continueLabel}>
+                                <Sparkles size={12} />
+                                Continue writing
+                            </span>
+                            <h2 className={s.continueTitle}>
+                                {continueWriting.title || 'Untitled'}
+                            </h2>
+                            {snippetOf(continueWriting.content) && (
+                                <p className={s.continueSnippet}>
+                                    {snippetOf(continueWriting.content)}
+                                </p>
+                            )}
+                            <p className={s.continueMeta}>
+                                Edited {relativeFromNow(continueWriting.updatedAt)}
+                                {continueWriting.tags?.length > 0 && (
+                                    <>
+                                        <span className={s.dot}>·</span>
+                                        {continueWriting.tags.slice(0, 3).map(t => (
+                                            <span key={t} className={s.continueTag}>#{t}</span>
+                                        ))}
+                                    </>
+                                )}
+                            </p>
+                        </div>
+                        <span className={s.continueCta} aria-hidden="true">
+                            <ArrowUpRight size={18} />
+                        </span>
                     </button>
-                )}
-            </form>
-
-            {/* ── Quick actions (templates) ─────────────────────── */}
-            <section className={s.section}>
-                <h2 className={s.sectionTitle}>Quick actions</h2>
-                <div className={s.quickGrid}>
-                    {TEMPLATES.map(tpl => (
-                        <button
-                            key={tpl.id}
-                            className={s.quickTile}
-                            onClick={() =>
-                                tpl.id === 'journal'
-                                    ? handleOpenTodayJournal()
-                                    : tpl.id === 'blank'
-                                        ? handleNewPage()
-                                        : handleNewFromTemplate(tpl.id)
-                            }
-                            title={tpl.description}
-                        >
-                            <span className={s.quickIcon} aria-hidden="true">{tpl.icon}</span>
-                            <span className={s.quickName}>{tpl.name}</span>
-                            <span className={s.quickDesc}>{tpl.description}</span>
-                        </button>
-                    ))}
-                </div>
-            </section>
-
-            {/* ── Empty state ────────────────────────────────────── */}
-            {isEmpty && (
-                <div className={s.emptyState}>
-                    <div className={s.emptyIcon} aria-hidden="true">📝</div>
-                    <h3 className={s.emptyTitle}>You don't have any notes yet</h3>
-                    <p className={s.emptySub}>
-                        Pick a template above, or start from a blank page.
-                    </p>
-                </div>
-            )}
-
-            {/* ── Pinned ─────────────────────────────────────────── */}
-            {pinned.length > 0 && (
-                <section className={s.section}>
-                    <div className={s.sectionHeadRow}>
-                        <h2 className={s.sectionTitle}>
-                            <span className={s.sectionEmoji}>📌</span> Pinned
-                        </h2>
-                        {pinned.length >= 5 && (
-                            <button className={s.viewAll} onClick={onPinnedAllClick}>
-                                View all
-                            </button>
-                        )}
-                    </div>
-                    <ul className={s.list}>
-                        {pinned.map(p => (
-                            <li key={p.id}>
-                                <button
-                                    className={s.listRow}
-                                    onClick={() => openEditor(p.id)}
-                                    title={p.title}
-                                >
-                                    <span className={s.listTitle}>{p.title || 'Untitled'}</span>
-                                    <span className={s.listDate}>{formatDate(p.updatedAt)}</span>
-                                </button>
-                            </li>
-                        ))}
-                    </ul>
                 </section>
             )}
 
-            {/* ── Recent + Tags two-column row ───────────────────── */}
-            {(recent.length > 0 || tagCounts.length > 0) && (
-                <div className={s.twoCol}>
-                    {/* Recent */}
-                    {recent.length > 0 && (
-                        <section className={`${s.section} ${s.col}`}>
-                            <h2 className={s.sectionTitle}>
-                                <span className={s.sectionEmoji}>🕒</span> Recent
-                            </h2>
-                            <ul className={s.recentList}>
-                                {recent.map(p => (
-                                    <li key={p.id}>
-                                        <button
-                                            className={s.recentRow}
-                                            onClick={() => openEditor(p.id)}
-                                            title={p.title}
-                                        >
-                                            <div className={s.recentMain}>
-                                                <span className={s.recentTitle}>
-                                                    {p.title || 'Untitled'}
-                                                </span>
-                                                <span className={s.recentDate}>
-                                                    {formatDate(p.updatedAt)}
-                                                </span>
-                                            </div>
-                                            {snippetOf(p.content) && (
-                                                <span className={s.recentSnippet}>
-                                                    {snippetOf(p.content)}
-                                                </span>
-                                            )}
-                                        </button>
-                                    </li>
-                                ))}
-                            </ul>
-                        </section>
-                    )}
-
-                    {/* Tags */}
-                    {tagCounts.length > 0 && (
-                        <section className={`${s.section} ${s.col}`}>
-                            <h2 className={s.sectionTitle}>
-                                <span className={s.sectionEmoji}>🏷</span> Tags
-                            </h2>
-                            <div className={s.tagCloud}>
-                                {tagCounts.map(([tag, count]) => (
-                                    <button
-                                        key={tag}
-                                        className={s.tagChip}
-                                        style={{
-                                            '--tag-color': tagColor(tag),
-                                        }}
-                                        onClick={() => onTagClick(tag)}
-                                        title={`${count} ${count === 1 ? 'page' : 'pages'} tagged #${tag}`}
-                                    >
-                                        <span className={s.tagDot} />
-                                        <span className={s.tagName}>#{tag}</span>
-                                        <span className={s.tagCount}>{count}</span>
-                                    </button>
-                                ))}
-                            </div>
-                        </section>
-                    )}
+            {/* ── Empty state (only when literally no pages) ─────── */}
+            {isEmpty && (
+                <div className={s.emptyState}>
+                    <div className={s.emptyIcon} aria-hidden="true">
+                        <StickyNote size={44} strokeWidth={1.5} />
+                    </div>
+                    <h3 className={s.emptyTitle}>You don't have any notes yet</h3>
+                    <p className={s.emptySub}>
+                        Pick a template below, or start from a blank page.
+                    </p>
                 </div>
             )}
 
-            {/* ── Folders ────────────────────────────────────────── */}
-            <section className={s.section}>
-                <h2 className={s.sectionTitle}>
-                    <span className={s.sectionEmoji}>📁</span> Folders
-                </h2>
-                <div className={s.folderGrid}>
-                    {topFolders.map(f => (
-                        <button
-                            key={f.id}
-                            className={s.folderCard}
-                            onClick={() => onFolderClick(f.id)}
-                            title={`Open folder ${f.name}`}
-                        >
-                            <span className={s.folderIcon} aria-hidden="true">📁</span>
-                            <span className={s.folderName}>{f.name}</span>
-                            <span className={s.folderCount}>
-                                {f.count} {f.count === 1 ? 'page' : 'pages'}
-                            </span>
-                        </button>
-                    ))}
-                    <button
-                        className={`${s.folderCard} ${s.newFolderCard}`}
-                        onClick={() => {
-                            setNewFolderOpen(true);
-                            openEditor();
-                        }}
-                        title="Create a new folder"
-                    >
-                        <span className={s.folderIcon} aria-hidden="true">＋</span>
-                        <span className={s.folderName}>New folder</span>
-                    </button>
-                </div>
-            </section>
+            {/* ── Bento grid ──────────────────────────────────────── */}
+            <div className={s.bento}>
+                {/* Recent — wide */}
+                {otherRecent.length > 0 && (
+                    <section className={`${s.card} ${s.colWide}`}>
+                        <div className={s.cardHead}>
+                            <h2 className={s.cardTitle}>
+                                <Clock size={14} /> Recently edited
+                            </h2>
+                        </div>
+                        <ul className={s.recentGrid}>
+                            {otherRecent.map(p => (
+                                <li key={p.id}>
+                                    <button
+                                        className={s.recentTile}
+                                        onClick={() => openEditor(p.id)}
+                                        title={p.title}
+                                    >
+                                        <span className={s.recentTileIcon}>
+                                            <FileText size={14} />
+                                        </span>
+                                        <span className={s.recentTileTitle}>
+                                            {p.title || 'Untitled'}
+                                        </span>
+                                        {snippetOf(p.content, 70) && (
+                                            <span className={s.recentTileSnippet}>
+                                                {snippetOf(p.content, 70)}
+                                            </span>
+                                        )}
+                                        <span className={s.recentTileMeta}>
+                                            {relativeFromNow(p.updatedAt)}
+                                        </span>
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                    </section>
+                )}
 
-            <footer className={s.footer}>
-                <span className={s.footerHint}>
-                    Ctrl+N new page · Ctrl+Shift+F search · Ctrl+H back to home
-                </span>
-            </footer>
+                {/* Pinned — narrow */}
+                {pinned.length > 0 && (
+                    <section className={`${s.card} ${s.colNarrow}`}>
+                        <div className={s.cardHead}>
+                            <h2 className={s.cardTitle}>
+                                <Pin size={14} /> Pinned
+                            </h2>
+                            {pinned.length >= 5 && (
+                                <button className={s.viewAll} onClick={onPinnedAllClick}>
+                                    View all
+                                </button>
+                            )}
+                        </div>
+                        <ul className={s.pinList}>
+                            {pinned.map(p => (
+                                <li key={p.id}>
+                                    <button
+                                        className={s.pinRow}
+                                        onClick={() => openEditor(p.id)}
+                                        title={p.title}
+                                    >
+                                        <span
+                                            className={s.pinAccent}
+                                            style={{
+                                                background: p.tags?.[0]
+                                                    ? tagColor(p.tags[0])
+                                                    : 'var(--notes-accent)',
+                                            }}
+                                        />
+                                        <span className={s.pinTitle}>{p.title || 'Untitled'}</span>
+                                        <span className={s.pinDate}>{relativeFromNow(p.updatedAt)}</span>
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                    </section>
+                )}
+
+                {/* Quick actions — wide */}
+                <section className={`${s.card} ${s.colWide}`}>
+                    <div className={s.cardHead}>
+                        <h2 className={s.cardTitle}>
+                            <Sparkles size={14} /> Start something new
+                        </h2>
+                    </div>
+                    <div className={s.quickGrid}>
+                        {TEMPLATES.map(tpl => {
+                            const Icon = tpl.icon;
+                            return (
+                                <button
+                                    key={tpl.id}
+                                    className={s.quickTile}
+                                    onClick={() =>
+                                        tpl.id === 'journal'
+                                            ? handleOpenTodayJournal()
+                                            : tpl.id === 'blank'
+                                                ? handleNewPage()
+                                                : handleNewFromTemplate(tpl.id)
+                                    }
+                                    title={tpl.description}
+                                >
+                                    <span className={s.quickIcon} aria-hidden="true">
+                                        {Icon ? <Icon size={18} /> : null}
+                                    </span>
+                                    <span className={s.quickName}>{tpl.name}</span>
+                                    <span className={s.quickDesc}>{tpl.description}</span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </section>
+
+                {/* Tags — narrow */}
+                {tagCounts.length > 0 && (
+                    <section className={`${s.card} ${s.colNarrow}`}>
+                        <div className={s.cardHead}>
+                            <h2 className={s.cardTitle}>
+                                <Tag size={14} /> Tags
+                            </h2>
+                        </div>
+                        <div className={s.tagCloud}>
+                            {tagCounts.map(([tag, count]) => (
+                                <button
+                                    key={tag}
+                                    className={s.tagChip}
+                                    style={{ '--tag-color': tagColor(tag) }}
+                                    onClick={() => onTagClick(tag)}
+                                    title={`${count} ${count === 1 ? 'page' : 'pages'} tagged #${tag}`}
+                                >
+                                    <span className={s.tagDot} />
+                                    <span className={s.tagName}>#{tag}</span>
+                                    <span className={s.tagCount}>{count}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </section>
+                )}
+
+                {/* Folders — full row */}
+                <section className={`${s.card} ${s.colFull}`}>
+                    <div className={s.cardHead}>
+                        <h2 className={s.cardTitle}>
+                            <Folder size={14} /> Folders
+                        </h2>
+                    </div>
+                    <div className={s.folderGrid}>
+                        {topFolders.map(f => (
+                            <button
+                                key={f.id}
+                                className={s.folderCard}
+                                onClick={() => onFolderClick(f.id)}
+                                title={`Open folder ${f.name}`}
+                            >
+                                <span className={s.folderIcon} aria-hidden="true">
+                                    <Folder size={20} />
+                                </span>
+                                <span className={s.folderName}>{f.name}</span>
+                                <span className={s.folderCount}>
+                                    {f.count} {f.count === 1 ? 'page' : 'pages'}
+                                </span>
+                            </button>
+                        ))}
+                        <button
+                            className={`${s.folderCard} ${s.newFolderCard}`}
+                            onClick={() => {
+                                setNewFolderOpen(true);
+                                openEditor();
+                            }}
+                            title="Create a new folder"
+                        >
+                            <span className={s.folderIcon} aria-hidden="true">
+                                <FolderPlus size={20} />
+                            </span>
+                            <span className={s.folderName}>New folder</span>
+                        </button>
+                    </div>
+                </section>
+            </div>
+
         </div>
     );
 }

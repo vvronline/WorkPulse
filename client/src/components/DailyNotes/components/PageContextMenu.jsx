@@ -1,6 +1,6 @@
 /* PageContextMenu — ⋯ dropdown for a single page item in the sidebar */
 import React from 'react';
-import { Pin, Copy, Archive, ArchiveRestore, FolderOpen, Trash2, Pencil } from 'lucide-react';
+import { Pin, Copy, Archive, ArchiveRestore, FolderOpen, Trash2, Pencil } from '../../../constants/icons';
 import { buildFolderTree } from '../notesUtils';
 import s from './PageContextMenu.module.css';
 

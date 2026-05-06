@@ -4,6 +4,9 @@ import ConfirmDialog from '../components/common/ConfirmDialog';
 import { useNotesStore } from '../components/DailyNotes/useNotesStore';
 import NotesModal from '../components/DailyNotes/components/NotesModal';
 import NotesHome from '../components/DailyNotes/components/NotesHome';
+import CommandPalette from '../components/DailyNotes/components/CommandPalette';
+import PageSwitcherPopover from '../components/DailyNotes/components/PageSwitcherPopover';
+import '../components/DailyNotes/notesTokens.css';
 import s from './NotesPage.module.css';
 
 export default function NotesPage() {
@@ -20,10 +23,25 @@ export default function NotesPage() {
   const isEditor = store.view !== 'home';
 
   return (
-    <div className={`${s.page} ${isEditor ? s.pageEditor : ''}`}>
+    <div className={`notesScope ${s.page} ${isEditor ? s.pageEditor : ''}`}>
       {isEditor
         ? <NotesModal store={store} embedded />
         : <NotesHome store={store} />}
+
+      {/* Floating overlays — rendered at page level so they work on
+          both Home and Editor views (Ctrl+K must work everywhere). */}
+      {store.paletteOpen && (
+        <CommandPalette
+          store={store}
+          onClose={() => store.setPaletteOpen(false)}
+        />
+      )}
+      {store.switcherOpen && (
+        <PageSwitcherPopover
+          store={store}
+          onClose={() => store.setSwitcherOpen(false)}
+        />
+      )}
 
       <ConfirmDialog
         isOpen={store.confirmDelete}

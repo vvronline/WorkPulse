@@ -6,6 +6,20 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { TEMPLATES } from '../templates';
 import { getFolderPath } from '../notesUtils';
+import {
+    Home,
+    Folder,
+    FileText,
+    ChevronDown,
+    Check,
+    Search,
+    Plus,
+    LayoutTemplate,
+    MoreHorizontal,
+    X,
+    Inbox,
+    Command,
+} from '../../../constants/icons';
 import s from './EditorTopBar.module.css';
 
 export default function EditorTopBar({ store, embedded, onClose }) {
@@ -47,10 +61,7 @@ export default function EditorTopBar({ store, embedded, onClose }) {
                         title="Back to home (Ctrl+H)"
                         aria-label="Back to notes home"
                     >
-                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M2 7l6-5 6 5" />
-                            <path d="M4 6.5V13a1 1 0 001 1h2.5v-4h1V14H11a1 1 0 001-1V6.5" />
-                        </svg>
+                        <Home size={13} />
                         <span>Home</span>
                     </button>
                 )}
@@ -63,7 +74,7 @@ export default function EditorTopBar({ store, embedded, onClose }) {
                                 onClick={() => setSwitcherOpen(true)}
                                 title={`Open switcher for ${folderPath}`}
                             >
-                                <span className={s.crumbIcon}>📁</span>
+                                <Folder size={13} className={s.crumbIcon} />
                                 <span className={s.crumbText}>{folderPath}</span>
                             </button>
                             <span className={s.crumbSep}>›</span>
@@ -74,15 +85,18 @@ export default function EditorTopBar({ store, embedded, onClose }) {
                         onClick={() => setSwitcherOpen(true)}
                         title="Switch page (Ctrl+Shift+O)"
                     >
-                        <span className={s.crumbIcon}>📄</span>
+                        <FileText size={13} className={s.crumbIcon} />
                         <span className={s.crumbText}>{activePage?.title || 'Untitled'}</span>
-                        <svg className={s.chevron} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M3 4.5l3 3 3-3" />
-                        </svg>
+                        <ChevronDown size={11} className={s.chevron} />
                     </button>
                 </div>
 
-                {savedFlash && <span className={s.savedBadge}>✓ Saved</span>}
+                {savedFlash && (
+                    <span className={s.savedBadge}>
+                        <Check size={11} style={{ verticalAlign: '-2px', marginRight: 3 }} />
+                        Saved
+                    </span>
+                )}
             </div>
 
             {/* Right cluster — actions */}
@@ -93,18 +107,13 @@ export default function EditorTopBar({ store, embedded, onClose }) {
                     title="Search and run commands (Ctrl+K)"
                     aria-label="Open command palette"
                 >
-                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="7" cy="7" r="5" />
-                        <path d="M11 11l3 3" />
-                    </svg>
+                    <Search size={13} />
                     <span className={s.kbdLabel}>Quick find</span>
                     <kbd className={s.kbd}>Ctrl K</kbd>
                 </button>
 
                 <button className={s.primaryBtn} onClick={handleNewPage} title="New page (Ctrl+N)">
-                    <svg viewBox="0 0 14 14" fill="currentColor">
-                        <path d="M7 1a1 1 0 011 1v4h4a1 1 0 010 2H8v4a1 1 0 01-2 0V8H2a1 1 0 010-2h4V2a1 1 0 011-1z" />
-                    </svg>
+                    <Plus size={13} />
                     <span>New page</span>
                 </button>
 
@@ -117,35 +126,36 @@ export default function EditorTopBar({ store, embedded, onClose }) {
                         aria-haspopup="menu"
                         aria-expanded={tplOpen}
                     >
-                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                            <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
-                            <path d="M2.5 6h11" />
-                            <path d="M6 6v7.5" />
-                        </svg>
+                        <LayoutTemplate size={13} />
                         <span>Template</span>
                     </button>
                     {tplOpen && (
-                        <div className={s.menu} role="menu">
+                        <div className={`${s.menu} ${s.menuRight}`} role="menu">
                             <div className={s.menuLabel}>New from template</div>
-                            {TEMPLATES.map(t => (
-                                <button
-                                    key={t.id}
-                                    className={s.menuItem}
-                                    role="menuitem"
-                                    onClick={() => {
-                                        setTplOpen(false);
-                                        if (t.id === 'journal') handleOpenTodayJournal();
-                                        else if (t.id === 'blank') handleNewPage();
-                                        else handleNewFromTemplate(t.id);
-                                    }}
-                                >
-                                    <span className={s.menuIcon}>{t.icon}</span>
-                                    <span className={s.menuText}>
-                                        <span className={s.menuTitle}>{t.name}</span>
-                                        <span className={s.menuDesc}>{t.description}</span>
-                                    </span>
-                                </button>
-                            ))}
+                            {TEMPLATES.map(t => {
+                                const Icon = t.icon;
+                                return (
+                                    <button
+                                        key={t.id}
+                                        className={s.menuItem}
+                                        role="menuitem"
+                                        onClick={() => {
+                                            setTplOpen(false);
+                                            if (t.id === 'journal') handleOpenTodayJournal();
+                                            else if (t.id === 'blank') handleNewPage();
+                                            else handleNewFromTemplate(t.id);
+                                        }}
+                                    >
+                                        <span className={s.menuIcon}>
+                                            {Icon ? <Icon size={15} /> : null}
+                                        </span>
+                                        <span className={s.menuText}>
+                                            <span className={s.menuTitle}>{t.name}</span>
+                                            <span className={s.menuDesc}>{t.description}</span>
+                                        </span>
+                                    </button>
+                                );
+                            })}
                         </div>
                     )}
                 </div>
@@ -159,11 +169,7 @@ export default function EditorTopBar({ store, embedded, onClose }) {
                         aria-haspopup="menu"
                         aria-expanded={overflowOpen}
                     >
-                        <svg viewBox="0 0 16 16" fill="currentColor">
-                            <circle cx="3.5" cy="8" r="1.4" />
-                            <circle cx="8" cy="8" r="1.4" />
-                            <circle cx="12.5" cy="8" r="1.4" />
-                        </svg>
+                        <MoreHorizontal size={15} />
                     </button>
                     {overflowOpen && (
                         <div className={`${s.menu} ${s.menuRight}`} role="menu">
@@ -172,7 +178,7 @@ export default function EditorTopBar({ store, embedded, onClose }) {
                                 role="menuitem"
                                 onClick={() => { setOverflowOpen(false); setSwitcherOpen(true); }}
                             >
-                                <span className={s.menuIcon}>🗂</span>
+                                <span className={s.menuIcon}><Inbox size={15} /></span>
                                 <span className={s.menuText}>
                                     <span className={s.menuTitle}>Page switcher</span>
                                     <span className={s.menuDesc}>Browse and search all pages</span>
@@ -184,7 +190,7 @@ export default function EditorTopBar({ store, embedded, onClose }) {
                                 role="menuitem"
                                 onClick={() => { setOverflowOpen(false); setPaletteOpen(true); }}
                             >
-                                <span className={s.menuIcon}>⌘</span>
+                                <span className={s.menuIcon}><Command size={15} /></span>
                                 <span className={s.menuText}>
                                     <span className={s.menuTitle}>Command palette</span>
                                     <span className={s.menuDesc}>Search pages and actions</span>
@@ -206,9 +212,7 @@ export default function EditorTopBar({ store, embedded, onClose }) {
 
                 {!embedded && onClose && (
                     <button className={s.iconBtnSquare} onClick={onClose} title="Close (Esc)" aria-label="Close">
-                        <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                            <path d="M2 2l10 10M12 2L2 12" />
-                        </svg>
+                        <X size={14} />
                     </button>
                 )}
             </div>

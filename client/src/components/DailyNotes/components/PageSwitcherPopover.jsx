@@ -9,6 +9,13 @@ import { createPortal } from 'react-dom';
 import { buildFolderTree } from '../notesUtils';
 import PageItem from './PageItem';
 import FolderManager from './FolderManager';
+import {
+    Search,
+    X,
+    Plus,
+    Folder,
+    FolderPlus,
+} from '../../../constants/icons';
 import s from './PageSwitcherPopover.module.css';
 
 export default function PageSwitcherPopover({ store, onClose }) {
@@ -78,10 +85,7 @@ export default function PageSwitcherPopover({ store, onClose }) {
                 {/* Header — search + close */}
                 <div className={s.header}>
                     <div className={s.searchWrap}>
-                        <svg className={s.searchIcon} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                            <circle cx="7" cy="7" r="5" />
-                            <path d="M11 11l3 3" />
-                        </svg>
+                        <Search className={s.searchIcon} size={16} aria-hidden="true" />
                         <input
                             ref={inputRef}
                             className={s.searchInput}
@@ -95,9 +99,7 @@ export default function PageSwitcherPopover({ store, onClose }) {
                         )}
                     </div>
                     <button className={s.closeBtn} onClick={onClose} title="Close (Esc)" aria-label="Close switcher">
-                        <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                            <path d="M2 2l10 10M12 2L2 12" />
-                        </svg>
+                        <X size={14} />
                     </button>
                 </div>
 
@@ -142,7 +144,8 @@ export default function PageSwitcherPopover({ store, onClose }) {
                                 aria-selected={folderFilter === f.id}
                                 title={f.name}
                             >
-                                📁 {f.name}
+                                <Folder size={12} style={{ verticalAlign: '-2px', marginRight: 4 }} />
+                                {f.name}
                             </button>
                         ))}
                     </div>
@@ -217,14 +220,11 @@ export default function PageSwitcherPopover({ store, onClose }) {
                 {/* Footer actions */}
                 <div className={s.footer}>
                     <button className={s.footerBtn} onClick={() => { handleNewPage(); onClose(); }}>
-                        <svg viewBox="0 0 14 14" fill="currentColor"><path d="M7 1a1 1 0 011 1v4h4a1 1 0 010 2H8v4a1 1 0 01-2 0V8H2a1 1 0 010-2h4V2a1 1 0 011-1z" /></svg>
+                        <Plus size={13} />
                         New page
                     </button>
                     <button className={`${s.footerBtn} ${s.footerBtnGhost}`} onClick={() => setNewFolderOpen(true)}>
-                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M2 5h5l1.5-2H14a1 1 0 011 1v7a1 1 0 01-1 1H2a1 1 0 01-1-1V4" />
-                            <path d="M8 7v4M6 9h4" />
-                        </svg>
+                        <FolderPlus size={14} />
                         New folder
                     </button>
                     <span className={s.footerHint}>Esc to close · Ctrl+Shift+O to toggle</span>

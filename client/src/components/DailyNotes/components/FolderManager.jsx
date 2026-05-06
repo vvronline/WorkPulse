@@ -1,6 +1,6 @@
 /* FolderManager — nested folder tree with create-subfolder + create-page actions */
 import React, { useState } from 'react';
-import { Folder } from 'lucide-react';
+import { Folder, FolderPlus, Plus, X, Check, ChevronDown, ChevronRight } from '../../../constants/icons';
 import { buildFolderTree } from '../notesUtils';
 import s from './FolderManager.module.css';
 
@@ -27,22 +27,23 @@ function FolderNode({ folder, folders, onNewPageInFolder, onDeleteFolder, onNewF
   return (
     <>
       <div className={s.folderItem} style={indent}>
-        <button className={s.expandBtn} onClick={() => setExpanded(p => !p)} title={expanded ? 'Collapse' : 'Expand'}>
-          {hasChildren ? (expanded ? '▾' : '▸') : '·'}
+        <button className={s.expandBtn} onClick={() => setExpanded(p => !p)} title={expanded ? 'Collapse' : 'Expand'} aria-label={expanded ? 'Collapse' : 'Expand'}>
+          {hasChildren
+            ? (expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />)
+            : <span className={s.expandDot}>·</span>}
         </button>
-        <span className={s.folderItemName} onClick={() => setExpanded(p => !p)}><Folder size={13} style={{marginRight:5,verticalAlign:'middle'}} />{folder.name}</span>
+        <span className={s.folderItemName} onClick={() => setExpanded(p => !p)}>
+          <Folder size={13} style={{marginRight:5,verticalAlign:'middle'}} />{folder.name}
+        </span>
         <div className={s.folderItemActions}>
-          <button className={s.folderAddBtn} onClick={() => { setCreating('folder'); setExpanded(true); }} title="New subfolder">
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M2 5h5l1.5-2H14a1 1 0 011 1v8a1 1 0 01-1 1H2a1 1 0 01-1-1V4"/>
-              <path d="M8 7v4M6 9h4"/>
-            </svg>
+          <button className={s.folderAddBtn} onClick={() => { setCreating('folder'); setExpanded(true); }} title="New subfolder" aria-label="New subfolder">
+            <FolderPlus size={12} />
           </button>
-          <button className={s.folderAddBtn} onClick={() => { setCreating('page'); setExpanded(true); }} title={`New page in "${folder.name}"`}>
-            +
+          <button className={s.folderAddBtn} onClick={() => { setCreating('page'); setExpanded(true); }} title={`New page in "${folder.name}"`} aria-label="New page in folder">
+            <Plus size={12} />
           </button>
-          <button className={s.folderDeleteBtn} onClick={() => onDeleteFolder(folder.id)} title="Delete folder">
-            ×
+          <button className={s.folderDeleteBtn} onClick={() => onDeleteFolder(folder.id)} title="Delete folder" aria-label="Delete folder">
+            <X size={12} />
           </button>
         </div>
       </div>
@@ -60,7 +61,7 @@ function FolderNode({ folder, folders, onNewPageInFolder, onDeleteFolder, onNewF
             placeholder={creating === 'folder' ? 'Subfolder name…' : 'Page title…'}
             autoFocus
           />
-          <button className={s.newFolderOk} onClick={handleCreate}>✓</button>
+          <button className={s.newFolderOk} onClick={handleCreate} aria-label="Create"><Check size={12} /></button>
         </div>
       )}
 
@@ -137,11 +138,11 @@ export default function FolderManager({
             placeholder="Folder name…"
             autoFocus
           />
-          <button className={s.newFolderOk} onClick={() => onNewFolder(null)}>✓</button>
+          <button className={s.newFolderOk} onClick={() => onNewFolder(null)} aria-label="Create folder"><Check size={12} /></button>
         </div>
       ) : (
         <button className={s.newFolderBtn} onClick={() => setNewFolderOpen(true)}>
-          + New Folder
+          <Plus size={12} style={{verticalAlign:'-2px',marginRight:4}} />New Folder
         </button>
       )}
     </div>

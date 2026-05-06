@@ -3,12 +3,17 @@
 .bar {
     display: flex; align-items: center; justify-content: space-between;
     gap: 0.75rem;
-    padding: 0.55rem 0.85rem;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-elevated, rgba(255,255,255,0.02));
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid var(--notes-border, var(--border));
+    background: color-mix(in srgb, var(--notes-surface-elev, var(--bg-secondary)) 80%, transparent);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     flex-shrink: 0;
-    min-height: 48px;
+    min-height: 52px;
     box-sizing: border-box;
+    position: sticky;
+    top: 0;
+    z-index: 5;
 }
 
 .left {
@@ -23,70 +28,82 @@
 
 /* ── Buttons ── */
 .iconBtn {
-    display: inline-flex; align-items: center; gap: 0.3rem;
-    background: none; border: 1px solid var(--border); color: var(--text-secondary);
-    border-radius: 7px; padding: 0.32rem 0.55rem;
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    background: var(--notes-surface-1, transparent);
+    border: 1px solid var(--notes-border, var(--border));
+    color: var(--notes-text-soft, var(--text-secondary));
+    border-radius: 8px; padding: 0.38rem 0.6rem;
     font-size: 0.78rem; font-weight: 600; cursor: pointer;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.12s var(--notes-ease, ease);
 }
 .iconBtn svg { width: 13px; height: 13px; flex-shrink: 0; }
 .iconBtn:hover {
-    background: var(--primary-dim, rgba(14, 165, 233, 0.12));
-    color: var(--primary, #0ea5e9);
-    border-color: rgba(14, 165, 233, 0.35);
+    background: var(--notes-accent-soft, var(--primary-dim, rgba(14, 165, 233, 0.12)));
+    color: var(--notes-accent, var(--primary, #0ea5e9));
+    border-color: color-mix(in srgb, var(--notes-accent, #0ea5e9) 35%, transparent);
+    transform: translateY(-1px);
 }
 
 .iconBtnSquare {
     display: inline-flex; align-items: center; justify-content: center;
-    background: none; border: 1px solid transparent; color: var(--text-muted);
-    border-radius: 7px; padding: 0.35rem 0.4rem;
+    background: none; border: 1px solid transparent;
+    color: var(--notes-text-muted, var(--text-muted));
+    border-radius: 8px; padding: 0.4rem 0.45rem;
     cursor: pointer;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.12s var(--notes-ease, ease);
 }
 .iconBtnSquare svg { width: 14px; height: 14px; }
 .iconBtnSquare:hover {
-    background: var(--bg-hover, rgba(255,255,255,0.06));
-    color: var(--text-primary);
-    border-color: var(--border);
+    background: var(--notes-surface-1, var(--bg-hover, rgba(255,255,255,0.06)));
+    color: var(--notes-text, var(--text-primary));
+    border-color: var(--notes-border, var(--border));
+    transform: translateY(-1px);
 }
 
 .primaryBtn {
-    display: inline-flex; align-items: center; gap: 0.35rem;
-    background: var(--primary-dim, rgba(14, 165, 233, 0.1));
-    border: 1px solid rgba(14, 165, 233, 0.25); color: var(--primary, #0ea5e9);
-    border-radius: 7px; padding: 0.32rem 0.7rem;
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    background: var(--notes-accent, var(--primary, #0ea5e9));
+    border: 1px solid var(--notes-accent, var(--primary, #0ea5e9));
+    color: #fff;
+    border-radius: 8px; padding: 0.38rem 0.8rem;
     font-size: 0.78rem; font-weight: 600; cursor: pointer;
-    transition: background 0.15s;
+    transition: transform 0.15s var(--notes-ease, ease), box-shadow 0.15s var(--notes-ease, ease), background 0.15s;
+    box-shadow: 0 4px 10px color-mix(in srgb, var(--notes-accent, #0ea5e9) 25%, transparent);
 }
 .primaryBtn svg { width: 13px; height: 13px; }
-.primaryBtn:hover { background: var(--primary-dim, rgba(14, 165, 233, 0.18)); }
+.primaryBtn:hover {
+    transform: translateY(-1px);
+    background: var(--notes-accent-strong, var(--notes-accent, var(--primary, #0ea5e9)));
+    box-shadow: 0 8px 18px color-mix(in srgb, var(--notes-accent, #0ea5e9) 38%, transparent);
+}
 
 /* ── Quick-find button (Ctrl+K) ── */
 .kbdBtn {
-    display: inline-flex; align-items: center; gap: 0.4rem;
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    color: var(--text-muted);
-    border-radius: 7px;
-    padding: 0.3rem 0.55rem;
+    display: inline-flex; align-items: center; gap: 0.45rem;
+    background: var(--notes-surface-0, var(--bg-primary));
+    border: 1px solid var(--notes-border, var(--border));
+    color: var(--notes-text-muted, var(--text-muted));
+    border-radius: 8px;
+    padding: 0.38rem 0.6rem;
     font-size: 0.78rem;
     cursor: pointer;
-    min-width: 180px;
-    transition: border-color 0.15s, color 0.15s;
+    min-width: 200px;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
 }
 .kbdBtn svg { width: 13px; height: 13px; flex-shrink: 0; }
 .kbdLabel { flex: 1; text-align: left; }
 .kbdBtn:hover {
-    border-color: rgba(14, 165, 233, 0.4);
-    color: var(--text-primary);
+    border-color: color-mix(in srgb, var(--notes-accent, #0ea5e9) 45%, transparent);
+    color: var(--notes-text, var(--text-primary));
+    background: var(--notes-surface-1, var(--bg-primary));
 }
 .kbd {
-    font-size: 0.66rem; font-weight: 600;
-    color: var(--text-muted);
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
+    font-size: 0.66rem; font-weight: 700;
+    color: var(--notes-text-muted, var(--text-muted));
+    background: var(--notes-surface-1, var(--bg-secondary));
+    border: 1px solid var(--notes-border, var(--border));
     border-radius: 4px;
-    padding: 0.05rem 0.32rem;
+    padding: 0.05rem 0.36rem;
     line-height: 1.2;
     flex-shrink: 0;
 }
@@ -99,23 +116,23 @@
     overflow: hidden;
 }
 .crumb {
-    display: inline-flex; align-items: center; gap: 0.3rem;
+    display: inline-flex; align-items: center; gap: 0.35rem;
     background: none; border: 1px solid transparent;
-    color: var(--text-secondary);
-    border-radius: 6px;
-    padding: 0.25rem 0.5rem;
-    font-size: 0.84rem;
+    color: var(--notes-text-soft, var(--text-secondary));
+    border-radius: 7px;
+    padding: 0.3rem 0.55rem;
+    font-size: 0.86rem;
     cursor: pointer;
     min-width: 0;
     transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 .crumb:hover {
-    background: var(--bg-hover, rgba(255,255,255,0.06));
-    color: var(--text-primary);
-    border-color: var(--border);
+    background: var(--notes-surface-1, var(--bg-hover, rgba(255,255,255,0.06)));
+    color: var(--notes-text, var(--text-primary));
+    border-color: var(--notes-border, var(--border));
 }
 .crumbActive {
-    color: var(--text-primary);
+    color: var(--notes-text, var(--text-primary));
     font-weight: 600;
 }
 .crumbIcon { font-size: 0.92rem; flex-shrink: 0; }
@@ -134,27 +151,41 @@
 .chevron { width: 11px; height: 11px; opacity: 0.7; flex-shrink: 0; }
 
 .savedBadge {
-    font-size: 0.7rem; color: var(--success, #22c55e);
-    background: rgba(34, 197, 94, 0.12); border-radius: 20px;
-    padding: 0.1rem 0.5rem; white-space: nowrap;
+    font-size: 0.72rem; color: var(--success, #22c55e);
+    background: color-mix(in srgb, #22c55e 14%, transparent);
+    border: 1px solid color-mix(in srgb, #22c55e 24%, transparent);
+    border-radius: 999px;
+    padding: 0.15rem 0.55rem;
+    white-space: nowrap;
     flex-shrink: 0;
+    display: inline-flex; align-items: center;
+    animation: badgePop 0.18s var(--notes-ease, ease);
+}
+@keyframes badgePop {
+    from { opacity: 0; transform: scale(0.94); }
+    to   { opacity: 1; transform: scale(1); }
 }
 
 /* ── Dropdown menus ── */
 .menuWrap { position: relative; }
 .menu {
     position: absolute;
-    top: calc(100% + 6px);
+    top: calc(100% + 8px);
     left: 0;
     z-index: 50;
-    min-width: 240px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: 9px;
-    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32);
-    padding: 0.35rem;
+    min-width: 260px;
+    background: var(--notes-surface-elev, var(--bg-secondary));
+    border: 1px solid var(--notes-border, var(--border));
+    border-radius: var(--notes-radius-md, 12px);
+    box-shadow: var(--notes-shadow-lg, 0 10px 28px rgba(0, 0, 0, 0.32));
+    padding: 0.4rem;
     display: flex; flex-direction: column;
     gap: 0.05rem;
+    animation: menuIn 0.14s var(--notes-ease, ease);
+}
+@keyframes menuIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
 }
 .menuRight { left: auto; right: 0; min-width: 280px; }
 .menuLabel {

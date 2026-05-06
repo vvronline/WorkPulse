@@ -1,6 +1,6 @@
 /* PageItem — a single row in the modal sidebar page list */
 import React from 'react';
-import { Pin, FolderOpen } from 'lucide-react';
+import { Pin, FolderOpen, FileText, MoreHorizontal } from '../../../constants/icons';
 import { formatDate } from '../notesUtils';
 import TagDots from './TagDots';
 import PageContextMenu from './PageContextMenu';
@@ -53,9 +53,7 @@ export default function PageItem({
     >
       <div className={s.pageRow}>
         {page.pinned && <span className={s.pinIcon} title="Pinned"><Pin size={12} /></span>}
-        <svg className={s.pageIcon} viewBox="0 0 14 14" fill="currentColor">
-          <path d="M3 2a1 1 0 011-1h4.586a1 1 0 01.707.293l2.414 2.414A1 1 0 0112 4.414V12a1 1 0 01-1 1H4a1 1 0 01-1-1V2zm2 5a.5.5 0 000 1h4a.5.5 0 000-1H5zm0 2a.5.5 0 000 1h4a.5.5 0 000-1H5z"/>
-        </svg>
+        <FileText className={s.pageIcon} size={13} aria-hidden="true" />
 
         <div className={s.pageInfo}>
           {renamingId === page.id ? (
@@ -93,8 +91,9 @@ export default function PageItem({
           className={s.menuBtn}
           onClick={e => { e.stopPropagation(); setPageMenu(pageMenu === page.id ? null : page.id); }}
           title="More actions"
+          aria-label="More actions"
         >
-          ⋯
+          <MoreHorizontal size={14} />
         </button>
       </div>
 

@@ -1,13 +1,11 @@
 /* NotesModal — full-width editor with floating navigation
    (no permanent sidebar). Renders the EditorTopBar above the
-   ModalEditor and mounts the PageSwitcherPopover + CommandPalette
-   as portal-based overlays. */
+   ModalEditor. PageSwitcherPopover + CommandPalette are mounted
+   one level up (NotesPage) so they work on the Home view too. */
 import React from 'react';
 import { createPortal } from 'react-dom';
 import EditorTopBar from './EditorTopBar';
 import ModalEditor from './ModalEditor';
-import PageSwitcherPopover from './PageSwitcherPopover';
-import CommandPalette from './CommandPalette';
 import s from './NotesModal.module.css';
 
 export default function NotesModal({ store, embedded = false }) {
@@ -23,8 +21,6 @@ export default function NotesModal({ store, embedded = false }) {
     handleAddTag, handleRemoveTag,
     handleContentChange, handleTitleChange,
     handleRestoreSnapshot,
-    switcherOpen, setSwitcherOpen,
-    paletteOpen, setPaletteOpen,
   } = store;
 
   const onClose = () => setMaximized(false);
@@ -65,18 +61,6 @@ export default function NotesModal({ store, embedded = false }) {
         </div>
       </div>
 
-      {switcherOpen && (
-        <PageSwitcherPopover
-          store={store}
-          onClose={() => setSwitcherOpen(false)}
-        />
-      )}
-      {paletteOpen && (
-        <CommandPalette
-          store={store}
-          onClose={() => setPaletteOpen(false)}
-        />
-      )}
     </div>
   );
 

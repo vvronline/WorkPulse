@@ -6,6 +6,16 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { TEMPLATES } from '../templates';
 import { formatDate } from '../notesUtils';
+import {
+    Search,
+    Home,
+    Plus,
+    BookMarked,
+    Inbox,
+    Pin,
+    Archive,
+    FileText,
+} from '../../../constants/icons';
 import s from './CommandPalette.module.css';
 
 /* ── Fuzzy match: returns score + character indices, or null if no match ── */
@@ -66,27 +76,27 @@ export default function CommandPalette({ store, onClose }) {
             id: 'home',
             label: 'Go to home',
             hint: 'Ctrl+H',
-            icon: '🏠',
+            icon: Home,
             run: () => { openHome(); onClose(); },
         },
         {
             id: 'new-page',
             label: 'New page',
             hint: 'Ctrl+N',
-            icon: '＋',
+            icon: Plus,
             run: () => { handleNewPage(); onClose(); },
         },
         {
             id: 'today-journal',
             label: "Open today's journal",
-            icon: '📓',
+            icon: BookMarked,
             run: () => { handleOpenTodayJournal(); onClose(); },
         },
         {
             id: 'switcher',
             label: 'Open page switcher',
             hint: 'Ctrl+Shift+O',
-            icon: '🗂',
+            icon: Inbox,
             run: () => { setSwitcherOpen(true); onClose(); },
         },
         ...TEMPLATES
@@ -101,14 +111,14 @@ export default function CommandPalette({ store, onClose }) {
             id: 'pin',
             label: 'Pin / unpin current page',
             hint: 'Ctrl+P',
-            icon: '📌',
+            icon: Pin,
             run: () => { handleTogglePin(activePageId); onClose(); },
         },
         activePageId && {
             id: 'archive',
             label: 'Archive / unarchive current page',
             hint: 'Ctrl+Shift+A',
-            icon: '📦',
+            icon: Archive,
             run: () => { handleToggleArchive(activePageId); onClose(); },
         },
     ].filter(Boolean)), [openHome, openEditor, handleNewPage, handleOpenTodayJournal, setSwitcherOpen, handleNewFromTemplate, handleTogglePin, handleToggleArchive, activePageId, onClose]);
@@ -122,7 +132,7 @@ export default function CommandPalette({ store, onClose }) {
                 id: p.id,
                 label: p.title || 'Untitled',
                 meta: formatDate(p.updatedAt),
-                icon: p.pinned ? '📌' : '📄',
+                icon: p.pinned ? Pin : FileText,
                 run: () => { openEditor(p.id); onClose(); },
             }));
         const actionItems = actions.map(a => ({
@@ -189,10 +199,7 @@ export default function CommandPalette({ store, onClose }) {
         <div className={s.overlay} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
             <div className={s.palette} role="dialog" aria-label="Command palette">
                 <div className={s.inputWrap}>
-                    <svg className={s.searchIcon} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="7" cy="7" r="5" />
-                        <path d="M11 11l3 3" />
-                    </svg>
+                    <Search className={s.searchIcon} size={16} aria-hidden="true" />
                     <input
                         ref={inputRef}
                         className={s.input}
@@ -209,22 +216,27 @@ export default function CommandPalette({ store, onClose }) {
                     {filtered.length === 0 && (
                         <div className={s.empty}>No matches</div>
                     )}
-                    {filtered.map((item, idx) => (
-                        <button
-                            key={`${item.kind}-${item.id}`}
-                            data-idx={idx}
-                            className={`${s.row} ${idx === active ? s.rowActive : ''}`}
-                            onMouseEnter={() => setActive(idx)}
-                            onClick={item.run}
-                            role="option"
-                            aria-selected={idx === active}
-                        >
-                            <span className={s.rowIcon} aria-hidden="true">{item.icon}</span>
-                            <span className={s.rowLabel}>{highlight(item.label, item.indices)}</span>
-                            <span className={s.rowMeta}>{item.meta}</span>
-                            {idx === active && <span className={s.enterHint}>↵</span>}
-                        </button>
-                    ))}
+                    {filtered.map((item, idx) => {
+                        const Icon = item.icon;
+                        return (
+                            <button
+                                key={`${item.kind}-${item.id}`}
+                                data-idx={idx}
+                                className={`${s.row} ${idx === active ? s.rowActive : ''}`}
+                                onMouseEnter={() => setActive(idx)}
+                                onClick={item.run}
+                                role="option"
+                                aria-selected={idx === active}
+                            >
+                                <span className={s.rowIcon} aria-hidden="true">
+                                    {Icon ? <Icon size={15} /> : null}
+                                </span>
+                                <span className={s.rowLabel}>{highlight(item.label, item.indices)}</span>
+                                <span className={s.rowMeta}>{item.meta}</span>
+                                {idx === active && <span className={s.enterHint}>↵</span>}
+                            </button>
+                        );
+                    })}
                 </div>
 
                 <div className={s.footer}>

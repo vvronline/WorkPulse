@@ -1,5 +1,6 @@
 /* NotesHeader — compact widget launcher card */
 import React from 'react';
+import { FileText, Check, ArrowUpRight } from '../../../constants/icons';
 import s from './NotesHeader.module.css';
 
 export default function NotesHeader({ activePage, pages = [], savedFlash, onOpen }) {
@@ -8,9 +9,7 @@ export default function NotesHeader({ activePage, pages = [], savedFlash, onOpen
   return (
     <button className={s.header} onClick={onOpen} title="Open notes">
       {/* Icon */}
-      <svg className={s.icon} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-        <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
-      </svg>
+      <FileText className={s.icon} size={18} aria-hidden="true" />
 
       {/* Text */}
       <div className={s.text}>
@@ -21,12 +20,15 @@ export default function NotesHeader({ activePage, pages = [], savedFlash, onOpen
         </span>
       </div>
 
-      {savedFlash && <span className={s.savedBadge}>✓ Saved</span>}
+      {savedFlash && (
+        <span className={s.savedBadge}>
+          <Check size={11} style={{ verticalAlign: '-2px', marginRight: 3 }} />
+          Saved
+        </span>
+      )}
 
       {/* Open arrow */}
-      <svg className={s.openIcon} viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M5 2h7v7M12 2L2 12"/>
-      </svg>
+      <ArrowUpRight className={s.openIcon} size={14} aria-hidden="true" />
     </button>
   );
 }
