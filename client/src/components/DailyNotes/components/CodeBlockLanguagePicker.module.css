@@ -1,0 +1,103 @@
+/* Language badge appearing inside each <pre> code block */
+.langBadge {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #cbd5e1;
+    font-size: 0.66rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0.2rem 0.55rem 0.2rem 0.6rem;
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+    line-height: 1;
+    z-index: 1;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.langBadge:hover {
+    background: rgba(255, 255, 255, 0.18);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.26);
+}
+
+[data-theme="light"] .langBadge {
+    background: rgba(15, 23, 42, 0.08);
+    border-color: rgba(15, 23, 42, 0.14);
+    color: #475569;
+}
+[data-theme="light"] .langBadge:hover {
+    background: rgba(15, 23, 42, 0.16);
+    color: #0f172a;
+}
+
+/* Floating language menu */
+.menu {
+    position: fixed;
+    z-index: 1300;
+    min-width: 220px;
+    max-height: 320px;
+    display: flex;
+    flex-direction: column;
+    background: var(--notes-surface-elev, var(--bg-secondary));
+    border: 1px solid var(--notes-border, var(--border));
+    border-radius: var(--notes-radius-md, 12px);
+    box-shadow: var(--notes-shadow-lg, 0 22px 48px rgba(0, 0, 0, 0.32));
+    overflow: hidden;
+}
+
+.menuHead {
+    padding: 0.45rem 0.65rem;
+    border-bottom: 1px solid var(--notes-border, var(--border));
+    font-size: 0.66rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--notes-text-muted, var(--text-muted));
+}
+
+.menuList {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0.3rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.05rem;
+}
+
+.menuItem {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    background: none;
+    border: none;
+    text-align: left;
+    color: var(--notes-text, var(--text-primary));
+    padding: 0.45rem 0.55rem;
+    border-radius: var(--notes-radius-sm, 8px);
+    cursor: pointer;
+    font-size: 0.85rem;
+}
+.menuItem:hover {
+    background: var(--notes-accent-soft, rgba(14, 165, 233, 0.12));
+}
+.menuItemActive {
+    background: var(--notes-accent-soft, rgba(14, 165, 233, 0.12));
+    color: var(--notes-accent, var(--primary, #0ea5e9));
+    font-weight: 600;
+}
+.menuLabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menuId {
+    font-size: 0.7rem;
+    color: var(--notes-text-muted, var(--text-muted));
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    margin-left: 0.6rem;
+    flex-shrink: 0;
+}
+
+[data-theme="light"] .menu { background: #fff; }

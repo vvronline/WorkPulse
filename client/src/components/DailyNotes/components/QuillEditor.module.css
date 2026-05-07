@@ -49,6 +49,81 @@
   border-left: 3px solid var(--primary); padding-left: 0.85rem;
   color: var(--text-secondary, var(--text-muted)); margin: 0.4em 0;
 }
+
+/* ── Callout blocks (slash command: /callout-info|tip|warn|success) ── */
+.inlineWrap :global(.ql-editor .ql-callout),
+.modalWrap  :global(.ql-editor .ql-callout) {
+  position: relative;
+  border-radius: 10px;
+  padding: 0.7rem 0.85rem 0.7rem 2.4rem;
+  margin: 0.6em 0;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary, rgba(255,255,255,0.03));
+  line-height: 1.55;
+}
+.inlineWrap :global(.ql-editor .ql-callout)::before,
+.modalWrap  :global(.ql-editor .ql-callout)::before {
+  position: absolute;
+  left: 0.85rem; top: 0.7rem;
+  font-size: 1rem; line-height: 1.2;
+  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
+}
+
+.inlineWrap :global(.ql-editor .ql-callout[data-callout="info"]),
+.modalWrap  :global(.ql-editor .ql-callout[data-callout="info"]) {
+  background: rgba(14, 165, 233, 0.10);
+  border-color: rgba(14, 165, 233, 0.35);
+  color: inherit;
+}
+.inlineWrap :global(.ql-editor .ql-callout[data-callout="info"])::before,
+.modalWrap  :global(.ql-editor .ql-callout[data-callout="info"])::before { content: 'ℹ️'; }
+
+.inlineWrap :global(.ql-editor .ql-callout[data-callout="tip"]),
+.modalWrap  :global(.ql-editor .ql-callout[data-callout="tip"]) {
+  background: rgba(168, 85, 247, 0.10);
+  border-color: rgba(168, 85, 247, 0.35);
+}
+.inlineWrap :global(.ql-editor .ql-callout[data-callout="tip"])::before,
+.modalWrap  :global(.ql-editor .ql-callout[data-callout="tip"])::before { content: '💡'; }
+
+.inlineWrap :global(.ql-editor .ql-callout[data-callout="warn"]),
+.modalWrap  :global(.ql-editor .ql-callout[data-callout="warn"]) {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.40);
+}
+.inlineWrap :global(.ql-editor .ql-callout[data-callout="warn"])::before,
+.modalWrap  :global(.ql-editor .ql-callout[data-callout="warn"])::before { content: '⚠️'; }
+
+.inlineWrap :global(.ql-editor .ql-callout[data-callout="success"]),
+.modalWrap  :global(.ql-editor .ql-callout[data-callout="success"]) {
+  background: rgba(34, 197, 94, 0.10);
+  border-color: rgba(34, 197, 94, 0.35);
+}
+.inlineWrap :global(.ql-editor .ql-callout[data-callout="success"])::before,
+.modalWrap  :global(.ql-editor .ql-callout[data-callout="success"])::before { content: '✅'; }
+
+/* ── Code blocks: monospace card ── */
+.inlineWrap :global(.ql-editor pre.ql-syntax),
+.inlineWrap :global(.ql-editor pre),
+.modalWrap  :global(.ql-editor pre.ql-syntax),
+.modalWrap  :global(.ql-editor pre) {
+  background: rgba(15, 23, 42, 0.55);
+  color: #e5e7eb;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.7rem 0.95rem;
+  margin: 0.5em 0;
+  overflow-x: auto;
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.85em;
+  line-height: 1.6;
+}
+[data-theme="light"] .inlineWrap :global(.ql-editor pre),
+[data-theme="light"] .inlineWrap :global(.ql-editor pre.ql-syntax),
+[data-theme="light"] .modalWrap  :global(.ql-editor pre),
+[data-theme="light"] .modalWrap  :global(.ql-editor pre.ql-syntax) {
+  background: #f4f5f7; color: #1a1a2e;
+}
 .inlineWrap :global(.ql-editor ul),
 .inlineWrap :global(.ql-editor ol),
 .modalWrap  :global(.ql-editor ul),
