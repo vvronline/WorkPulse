@@ -187,16 +187,6 @@ export default function NotesHome({ store }) {
                     <div className={s.heroActions}>
                         <button
                             type="button"
-                            className={s.heroBtnGhost}
-                            onClick={() => setPaletteOpen?.(true)}
-                            title="Open command palette (Ctrl+K)"
-                        >
-                            <Command size={14} />
-                            <span>Commands</span>
-                            <kbd className={s.kbd}>⌘K</kbd>
-                        </button>
-                        <button
-                            type="button"
                             className={s.heroBtnPrimary}
                             onClick={() => handleNewPage()}
                             title="Create a new blank page"

@@ -7,6 +7,7 @@
 import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { buildFolderTree } from '../notesUtils';
+import { SMART_FOLDER_IDS } from '../useNotesFilters';
 import PageItem from './PageItem';
 import FolderManager from './FolderManager';
 import {
@@ -15,8 +16,20 @@ import {
     Plus,
     Folder,
     FolderPlus,
+    Tag,
+    CheckSquare,
+    Clock,
+    CalendarDays,
 } from '../../../constants/icons';
 import s from './PageSwitcherPopover.module.css';
+
+/* Smart-folder definitions surfaced as filter chips. */
+const SMART_FOLDERS = [
+    { id: SMART_FOLDER_IDS.TODAY, label: 'Today', icon: Clock, hint: 'Edited in the last 24 h' },
+    { id: SMART_FOLDER_IDS.WEEK, label: 'This week', icon: CalendarDays, hint: 'Edited in the last 7 days' },
+    { id: SMART_FOLDER_IDS.TODOS, label: 'Open todos', icon: CheckSquare, hint: 'Pages with checklist items' },
+    { id: SMART_FOLDER_IDS.UNTAGGED, label: 'Untagged', icon: Tag, hint: 'Pages without any tags' },
+];
 
 export default function PageSwitcherPopover({ store, onClose }) {
     const {
@@ -126,6 +139,23 @@ export default function PageSwitcherPopover({ store, onClose }) {
                         >
                             All
                         </button>
+                        {/* Smart folders — virtual filters that derive from page metadata */}
+                        {SMART_FOLDERS.map(sf => {
+                            const Icon = sf.icon;
+                            return (
+                                <button
+                                    key={sf.id}
+                                    className={`${s.chip} ${folderFilter === sf.id ? s.chipActive : ''}`}
+                                    onClick={() => setFolderFilter(sf.id)}
+                                    role="tab"
+                                    aria-selected={folderFilter === sf.id}
+                                    title={sf.hint}
+                                >
+                                    <Icon size={12} style={{ verticalAlign: '-2px', marginRight: 4 }} />
+                                    {sf.label}
+                                </button>
+                            );
+                        })}
                         <button
                             className={`${s.chip} ${folderFilter === 'none' ? s.chipActive : ''}`}
                             onClick={() => setFolderFilter('none')}

@@ -93,7 +93,9 @@ function makeCommands() {
         {
             id: 'todo', label: 'To-do list', hint: 'Checkbox list',
             icon: CheckSquare, keys: ['todo', 'check', 'task', 'checkbox'],
-            run: (q) => blockFormat('list', 'check')(q),
+            // Quill 2 (react-quill-new) uses 'unchecked' / 'checked' as the
+            // list-format values for checkbox items — *not* 'check'.
+            run: (q) => blockFormat('list', 'unchecked')(q),
         },
         {
             id: 'quote', label: 'Quote', hint: 'Blockquote',

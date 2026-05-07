@@ -10,6 +10,7 @@ import { useNotesPersistence } from './useNotesPersistence';
 import { useNotesFilters } from './useNotesFilters';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { getTemplate } from './templates';
+import { savePageAsPdf } from './notesExport';
 
 export function useNotesStore(userId) {
     const {
@@ -37,6 +38,7 @@ export function useNotesStore(userId) {
     const [confirmDelete, setConfirmDelete] = useState(false);
     const [pageMenu, setPageMenu] = useState(null);
     const [dropdownSearch, setDropdownSearch] = useState('');
+    const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
 
     /* ── Rename ─────────────────────────────────────────────── */
     const [renamingId, setRenamingId] = useState(null);
@@ -131,6 +133,11 @@ export function useNotesStore(userId) {
             if (ctrl && (e.key === 'k' || e.key === 'K') && !e.shiftKey) {
                 e.preventDefault();
                 setPaletteOpen(p => !p);
+            }
+            // Ctrl+Shift+N → quick capture into Inbox page
+            if (ctrl && e.shiftKey && (e.key === 'N' || e.key === 'n')) {
+                e.preventDefault();
+                setQuickCaptureOpen(p => !p);
             }
             // Ctrl+P (without other meta) → page switcher (when not in INPUT/TEXTAREA)
             if (ctrl && e.shiftKey && (e.key === 'O' || e.key === 'o')) {
@@ -422,6 +429,48 @@ export function useNotesStore(userId) {
 
     const handleDragEnd = () => { dragRef.current = null; setDragOverId(null); };
 
+    /* ── Quick capture ───────────────────────────────────────
+       Append a snippet to (or create) the user's "Inbox" page.
+       Each capture becomes a timestamped block so the inbox
+       stays chronological and easy to triage. */
+    const appendToInbox = (text) => {
+        const value = (text || '').trim();
+        if (!value) return;
+        const inboxName = 'Inbox';
+        let inbox = pages.find(p => !p.archived && p.title.toLowerCase() === inboxName.toLowerCase());
+        let updatedPages = pages;
+        if (!inbox) {
+            inbox = { ...newPage(inboxName), pinned: true };
+            updatedPages = [...pages, inbox];
+        }
+        const ts = new Date().toLocaleString(undefined, {
+            month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+        });
+        // Convert plain newlines to <br> so multi-line captures keep shape.
+        const safe = value
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\n/g, '<br>');
+        const block =
+            `<p><strong>${ts}</strong></p>` +
+            `<p>${safe}</p>` +
+            `<p><br></p>`;
+        const now = new Date().toISOString();
+        updatedPages = updatedPages.map(p =>
+            p.id === inbox.id
+                ? { ...p, content: (p.content || '') + block, updatedAt: now }
+                : p,
+        );
+        setPages(updatedPages);
+        persist(updatedPages, folders, activePageId);
+    };
+
+    /* ── Export the active page as a downloadable PDF ───── */
+    const handleExportPdf = (page) => {
+        savePageAsPdf(page || activePage);
+    };
+
     const handleRestoreSnapshot = (content, title) => {
         const now = new Date().toISOString();
         const updated = pages.map(p =>
@@ -448,6 +497,7 @@ export function useNotesStore(userId) {
         confirmDelete, setConfirmDelete,
         pageMenu, setPageMenu,
         dropdownSearch, setDropdownSearch,
+        quickCaptureOpen, setQuickCaptureOpen,
         dragRef, dragOverId,
         // rename
         renamingId, setRenamingId, renameValue, setRenameValue,
@@ -472,6 +522,9 @@ export function useNotesStore(userId) {
         // home / editor view switching
         openHome, openEditor,
         handleNewFromTemplate, handleOpenTodayJournal,
+        // quick capture + export
+        appendToInbox,
+        handleExportPdf,
         // floating navigation
         switcherOpen, setSwitcherOpen,
         paletteOpen, setPaletteOpen,

@@ -38,6 +38,8 @@ export {
     Edit,
     Download,
     Upload,
+    Printer,
+    Zap,
     RefreshCw,
     ArrowLeft,
     ArrowRight,

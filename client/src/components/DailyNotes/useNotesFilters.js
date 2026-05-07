@@ -1,6 +1,37 @@
 import { useMemo } from 'react';
 import { getWordCount, stripHtml } from './notesUtils';
 
+/* Smart-folder filter ids understood by `folderFilter`. */
+export const SMART_FOLDER_IDS = {
+    UNTAGGED: 'view:untagged',
+    TODOS: 'view:todos',
+    TODAY: 'view:today',
+    WEEK: 'view:week',
+};
+
+/* Apply a smart-folder filter to a list of pages. Returns the
+   list unchanged if the filter id isn't a smart-folder id. */
+function applySmartFolder(list, filterId) {
+    if (!filterId || !filterId.startsWith('view:')) return list;
+    const dayMs = 24 * 60 * 60 * 1000;
+    switch (filterId) {
+        case SMART_FOLDER_IDS.UNTAGGED:
+            return list.filter(p => !p.tags || p.tags.length === 0);
+        case SMART_FOLDER_IDS.TODOS:
+            return list.filter(p => /data-list="(?:un)?checked"/.test(p.content || ''));
+        case SMART_FOLDER_IDS.TODAY: {
+            const cutoff = Date.now() - dayMs;
+            return list.filter(p => new Date(p.updatedAt || 0).getTime() >= cutoff);
+        }
+        case SMART_FOLDER_IDS.WEEK: {
+            const cutoff = Date.now() - 7 * dayMs;
+            return list.filter(p => new Date(p.updatedAt || 0).getTime() >= cutoff);
+        }
+        default:
+            return list;
+    }
+}
+
 /**
  * Derives filtered/sorted page views from raw state.
  * Pure computation — no side-effects, no I/O.
@@ -26,9 +57,13 @@ export function useNotesFilters({
     const processedPages = useMemo(() => {
         let list = pages.filter(p => showArchived ? p.archived : !p.archived);
         if (folderFilter !== 'all') {
-            list = folderFilter === 'none'
-                ? list.filter(p => !p.folderId)
-                : list.filter(p => p.folderId === folderFilter);
+            if (folderFilter && folderFilter.startsWith('view:')) {
+                list = applySmartFolder(list, folderFilter);
+            } else if (folderFilter === 'none') {
+                list = list.filter(p => !p.folderId);
+            } else {
+                list = list.filter(p => p.folderId === folderFilter);
+            }
         }
         if (searchQuery.trim()) {
             const q = searchQuery.toLowerCase();

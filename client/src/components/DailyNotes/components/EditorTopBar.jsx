@@ -1,7 +1,7 @@
 /* ─────────────────────────────────────────────────────────
    EditorTopBar — replaces the modal sidebar.
    Holds: Home button, breadcrumbs, page-switcher trigger,
-   command-palette trigger, new-page, and overflow menu.
+   new-page button, templates dropdown, and overflow menu.
    ───────────────────────────────────────────────────────── */
 import React, { useEffect, useRef, useState } from 'react';
 import { TEMPLATES } from '../templates';
@@ -12,13 +12,13 @@ import {
     FileText,
     ChevronDown,
     Check,
-    Search,
     Plus,
     LayoutTemplate,
     MoreHorizontal,
     X,
     Inbox,
-    Command,
+    Download,
+    Zap,
 } from '../../../constants/icons';
 import s from './EditorTopBar.module.css';
 
@@ -27,10 +27,11 @@ export default function EditorTopBar({ store, embedded, onClose }) {
         activePage, folders, savedFlash,
         openHome,
         setSwitcherOpen,
-        setPaletteOpen,
+        setQuickCaptureOpen,
         handleNewPage,
         handleNewFromTemplate,
         handleOpenTodayJournal,
+        handleExportPdf,
         showArchived, setShowArchived,
     } = store;
 
@@ -101,17 +102,6 @@ export default function EditorTopBar({ store, embedded, onClose }) {
 
             {/* Right cluster — actions */}
             <div className={s.right}>
-                <button
-                    className={s.kbdBtn}
-                    onClick={() => setPaletteOpen(true)}
-                    title="Search and run commands (Ctrl+K)"
-                    aria-label="Open command palette"
-                >
-                    <Search size={13} />
-                    <span className={s.kbdLabel}>Quick find</span>
-                    <kbd className={s.kbd}>Ctrl K</kbd>
-                </button>
-
                 <button className={s.primaryBtn} onClick={handleNewPage} title="New page (Ctrl+N)">
                     <Plus size={13} />
                     <span>New page</span>
@@ -188,14 +178,27 @@ export default function EditorTopBar({ store, embedded, onClose }) {
                             <button
                                 className={s.menuItem}
                                 role="menuitem"
-                                onClick={() => { setOverflowOpen(false); setPaletteOpen(true); }}
+                                onClick={() => { setOverflowOpen(false); setQuickCaptureOpen?.(true); }}
                             >
-                                <span className={s.menuIcon}><Command size={15} /></span>
+                                <span className={s.menuIcon}><Zap size={15} /></span>
                                 <span className={s.menuText}>
-                                    <span className={s.menuTitle}>Command palette</span>
-                                    <span className={s.menuDesc}>Search pages and actions</span>
+                                    <span className={s.menuTitle}>Quick capture</span>
+                                    <span className={s.menuDesc}>Append a note to your Inbox</span>
                                 </span>
-                                <kbd className={s.menuKbd}>Ctrl K</kbd>
+                                <kbd className={s.menuKbd}>Ctrl Shift N</kbd>
+                            </button>
+                            <div className={s.menuSep} />
+                            <button
+                                className={s.menuItem}
+                                role="menuitem"
+                                onClick={() => { setOverflowOpen(false); handleExportPdf?.(); }}
+                                disabled={!activePage}
+                            >
+                                <span className={s.menuIcon}><Download size={15} /></span>
+                                <span className={s.menuText}>
+                                    <span className={s.menuTitle}>Download as PDF</span>
+                                    <span className={s.menuDesc}>Save this page as a <code>.pdf</code> file</span>
+                                </span>
                             </button>
                             <div className={s.menuSep} />
                             <label className={s.menuToggle}>

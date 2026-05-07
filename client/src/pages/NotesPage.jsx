@@ -6,6 +6,7 @@ import NotesModal from '../components/DailyNotes/components/NotesModal';
 import NotesHome from '../components/DailyNotes/components/NotesHome';
 import CommandPalette from '../components/DailyNotes/components/CommandPalette';
 import PageSwitcherPopover from '../components/DailyNotes/components/PageSwitcherPopover';
+import QuickCapture from '../components/DailyNotes/components/QuickCapture';
 import '../components/DailyNotes/notesTokens.css';
 import s from './NotesPage.module.css';
 
@@ -40,6 +41,12 @@ export default function NotesPage() {
         <PageSwitcherPopover
           store={store}
           onClose={() => store.setSwitcherOpen(false)}
+        />
+      )}
+      {store.quickCaptureOpen && (
+        <QuickCapture
+          store={store}
+          onClose={() => store.setQuickCaptureOpen(false)}
         />
       )}
 
