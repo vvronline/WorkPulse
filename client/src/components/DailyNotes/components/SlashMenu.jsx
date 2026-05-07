@@ -31,8 +31,16 @@ import {
     AlertTriangle,
     Sparkles,
     Clock,
+    Table2,
+    ChevronRight,
+    Sigma,
+    GitBranch,
+    Link2,
+    ListTree,
+    CalendarDays,
 } from 'lucide-react';
 import { CODE_LANGUAGES } from '../quillConfig';
+import { extractHeadings } from '../notesUtils';
 import s from './SlashMenu.module.css';
 
 /* ──────────────────────────────────────────────────────────
@@ -47,15 +55,16 @@ import s from './SlashMenu.module.css';
               the original "/" trigger range so commands can
               clear the typed query before inserting.
    ────────────────────────────────────────────────────────── */
-function makeCommands() {
+function makeCommands(opts = {}) {
+    const { onPickPageLink, onInsertToc } = opts;
     const blockFormat = (format, value = true) => (q) => {
         const range = q.getSelection(true);
         q.formatLine(range.index, 1, format, value, 'user');
     };
 
-    const insertEmbed = (kind) => (q) => {
+    const insertEmbed = (kind, value = true) => (q) => {
         const range = q.getSelection(true);
-        q.insertEmbed(range.index, kind, true, 'user');
+        q.insertEmbed(range.index, kind, value, 'user');
         q.setSelection(range.index + 1, 'silent');
     };
 
@@ -155,6 +164,99 @@ function makeCommands() {
             },
         },
         {
+            id: 'today', label: 'Today', hint: 'Insert today\'s date as a chip',
+            icon: CalendarDays, keys: ['today', 'date', 'now'],
+            run: (q) => {
+                const range = q.getSelection(true);
+                const d = new Date();
+                const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                q.insertText(range.index, ' ', 'user');
+                q.formatText(range.index, 1, 'datechip', iso, 'user');
+                q.insertText(range.index + 1, ' ', 'user');
+                q.setSelection(range.index + 2, 'silent');
+            },
+        },
+        {
+            id: 'table', label: 'Table', hint: 'Insert a 3×3 editable table',
+            icon: Table2, keys: ['table', 'grid', 'rows'],
+            run: insertEmbed('simpletable', { rows: 3, cols: 3 }),
+        },
+        {
+            id: 'toggle', label: 'Toggle', hint: 'Collapsible block',
+            icon: ChevronRight, keys: ['toggle', 'collapse', 'collapsible', 'details'],
+            run: (q) => {
+                const range = q.getSelection(true);
+                q.formatLine(range.index, 1, 'toggle', true, 'user');
+            },
+        },
+        {
+            id: 'math', label: 'Math (LaTeX)', hint: 'Inline LaTeX expression',
+            icon: Sigma, keys: ['math', 'latex', 'tex', 'equation', 'formula'],
+            run: (q) => {
+                const range = q.getSelection(true);
+                const tex = (typeof window !== 'undefined' ? window.prompt('LaTeX expression:', 'E = mc^2') : 'E = mc^2');
+                if (tex == null) return;
+                q.insertEmbed(range.index, 'math', tex, 'user');
+                q.setSelection(range.index + 1, 'silent');
+            },
+        },
+        {
+            id: 'drawio', label: 'Draw.io diagram', hint: 'Flowcharts, sequence, ER, and more',
+            icon: GitBranch, keys: ['drawio', 'diagram', 'flowchart', 'graph', 'mermaid', 'mxgraph'],
+            run: (q) => {
+                const range = q.getSelection(true);
+                q.insertEmbed(range.index, 'drawio', { xml: '', svg: '' }, 'user');
+                q.setSelection(range.index + 1, 'silent');
+                // Open the editor immediately so the user can start drawing.
+                setTimeout(() => {
+                    const root = q.root;
+                    const blocks = root?.querySelectorAll('.ql-drawio') || [];
+                    const node = blocks[blocks.length - 1];
+                    if (node) {
+                        node.dispatchEvent(new CustomEvent('notes:drawio-edit', {
+                            bubbles: true,
+                            detail: { node },
+                        }));
+                    }
+                }, 50);
+            },
+        },
+        {
+            id: 'pagelink', label: 'Link to page', hint: 'Insert link to another note',
+            icon: Link2, keys: ['link', 'page', 'pagelink', 'wiki'],
+            run: (q) => {
+                if (typeof onPickPageLink === 'function') {
+                    const range = q.getSelection(true);
+                    onPickPageLink(q, range);
+                } else {
+                    const range = q.getSelection(true);
+                    q.insertText(range.index, '[[]]', 'user');
+                    q.setSelection(range.index + 2, 'silent');
+                }
+            },
+        },
+        {
+            id: 'toc', label: 'Table of contents', hint: 'Auto-generate from headings',
+            icon: ListTree, keys: ['toc', 'contents', 'outline'],
+            run: (q) => {
+                if (typeof onInsertToc === 'function') {
+                    onInsertToc(q);
+                    return;
+                }
+                // Fallback: read current editor headings and insert a bullet list
+                const html = q.root?.innerHTML || '';
+                const headings = extractHeadings(html);
+                if (headings.length === 0) {
+                    if (typeof window !== 'undefined') window.alert('Add some headings (H1/H2/H3) first.');
+                    return;
+                }
+                const range = q.getSelection(true);
+                let text = '';
+                headings.forEach(h => { text += `${'  '.repeat(h.level - 1)}• ${h.text}\n`; });
+                q.insertText(range.index, '\n— Table of contents —\n' + text + '\n', 'user');
+            },
+        },
+        {
             id: 'image', label: 'Image', hint: 'Pick an image to upload',
             icon: ImageIcon, keys: ['image', 'img', 'picture', 'photo'],
             run: (q) => {
@@ -187,8 +289,11 @@ function makeCommands() {
 /* ──────────────────────────────────────────────────────────
    Hook + component
    ────────────────────────────────────────────────────────── */
-export default function SlashMenu({ quillRef }) {
-    const COMMANDS = useMemo(makeCommands, []);
+export default function SlashMenu({ quillRef, pageId, resetKey, onPickPageLink, onInsertToc }) {
+    const COMMANDS = useMemo(
+        () => makeCommands({ onPickPageLink, onInsertToc }),
+        [onPickPageLink, onInsertToc]
+    );
 
     /* Combined state — render only when we have a position so the
        menu never flashes at (0, 0) during the first paint. */
@@ -325,7 +430,10 @@ export default function SlashMenu({ quillRef }) {
 
         q.on('text-change', onChange);
         return () => { q.off('text-change', onChange); };
-    }, [quillRef]);
+        // Re-bind when ReactQuill remounts (page change / snapshot restore)
+        // — quillRef.current points to a brand-new editor instance then.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [quillRef, pageId, resetKey]);
 
     /* ── Reposition on resize/scroll while open ──────────── */
     useEffect(() => {

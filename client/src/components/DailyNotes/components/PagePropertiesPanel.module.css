@@ -1,0 +1,99 @@
+.panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px 14px;
+  padding: 10px 14px;
+  margin: 8px 0 14px;
+  background: var(--notes-surface-1, var(--bg-secondary));
+  border: 1px solid var(--notes-border, var(--border));
+  color: var(--notes-text, var(--text-primary));
+  border-radius: 8px;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--notes-text-muted, var(--text-muted));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.icon { opacity: 0.85; color: var(--notes-text-muted, var(--text-muted)); }
+
+.value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.statusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--notes-text) 22%, transparent);
+}
+.select,
+.input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 9px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--notes-text, var(--text-primary));
+  background: var(--notes-surface-0, var(--bg-primary));
+  border: 1px solid var(--notes-border, var(--border));
+  border-radius: 5px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.select:focus,
+.input:focus {
+  border-color: var(--notes-accent, var(--primary));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--notes-accent, #0ea5e9) 18%, transparent);
+}
+.select:disabled,
+.input:disabled {
+  background: var(--notes-surface-1, var(--bg-secondary));
+  color: var(--notes-text-muted, var(--text-muted));
+  cursor: not-allowed;
+}
+
+/* Make the native browser dropdown chevron readable in dark mode */
+.select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 9px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 24px;
+  color: var(--notes-text, var(--text-primary));
+}
+/* Native <option>s inherit the OS popup; force readable colors */
+.select option {
+  background: var(--notes-surface-0, var(--bg-primary));
+  color: var(--notes-text, var(--text-primary));
+}
+
+/* Date inputs: make the calendar picker icon readable on dark backgrounds */
+.input[type="date"]::-webkit-calendar-picker-indicator {
+  opacity: 0.75;
+  cursor: pointer;
+  filter: invert(0);
+}
+[data-theme="dark"] .input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+}

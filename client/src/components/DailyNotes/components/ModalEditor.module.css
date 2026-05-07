@@ -7,6 +7,7 @@
     min-width: 0;
     overflow: hidden;
     background: var(--notes-surface-0, var(--bg-primary));
+    position: relative; /* anchor for the diagram overlay */
 }
 
 /* Centered writing column — applied to all top-level children. */
@@ -170,6 +171,123 @@
 }
 
 [data-theme="light"] .folderSelect { background: #fff; }
+
+/* ── Diagram-focused (full-bleed) overlay ───────────────────
+   When the user is editing a draw.io diagram we float a full
+   coverage overlay above the editor area. The Quill editor and
+   the live blot DOM node stay mounted underneath, which is what
+   makes save / delete actually persist. */
+.diagramOverlay {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-primary);
+}
+.editorAreaDiagram { /* hook for any future header dimming etc. */ }
+.diagramContextBar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--notes-border, var(--border));
+    background: var(--notes-surface-1, var(--bg-secondary));
+    font-size: 12.5px;
+    color: var(--notes-text-muted, var(--text-muted));
+    flex-shrink: 0;
+}
+.diagramContextIcon { font-size: 14px; line-height: 1; }
+.diagramContextTitle {
+    color: var(--notes-text, var(--text-primary));
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 40vw;
+}
+.diagramContextSep { opacity: 0.55; }
+.diagramFill {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    background: var(--bg-primary);
+}
+.diagramFill > * {
+    flex: 1;
+    min-height: 0;
+}
+
+/* ── New: breadcrumbs row, icon picker, editor + TOC layout ── */
+
+.crumbsRow {
+    padding: 0.7rem 2rem 0;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.iconPickerWrap {
+    position: relative;
+    flex-shrink: 0;
+    padding-top: 0.45rem;
+}
+.iconBtn {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    padding: 4px 6px;
+    line-height: 1;
+    font-size: 1.6rem;
+    transition: background 0.12s, border-color 0.12s;
+}
+.iconBtn:hover {
+    background: var(--notes-surface-1, var(--bg-hover));
+    border-color: var(--notes-border, var(--border));
+}
+.iconChar {
+    display: inline-block;
+    line-height: 1;
+}
+
+.editorWithToc {
+    display: flex;
+    align-items: flex-start;
+    gap: 1.5rem;
+    width: 100%;
+    box-sizing: border-box;
+}
+.editorMain {
+    flex: 1;
+    min-width: 0;
+}
+.tocCol {
+    flex-shrink: 0;
+    width: 220px;
+    position: sticky;
+    top: 12px;
+    align-self: flex-start;
+    margin-top: 8px;
+}
+
+@media (max-width: 1100px) {
+    .editorWithToc { gap: 0; }
+    .tocCol { display: none; }
+}
+
+@media (max-width: 900px) {
+    .crumbsRow {
+        padding-left: 1.25rem;
+        padding-right: 1.25rem;
+    }
+}
+@media (max-width: 640px) {
+    .crumbsRow {
+        padding: 0.55rem 0.95rem 0;
+    }
+    .iconBtn { font-size: 1.3rem; }
+}
 
 /* ── Tablet ── */
 @media (max-width: 900px) {

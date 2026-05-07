@@ -5,7 +5,7 @@
    passed down as props to child components.
    ───────────────────────────────────────────────────────── */
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { newPage, newFolder, getDescendantFolderIds } from './notesUtils';
+import { newPage, newFolder, getDescendantFolderIds, getDescendantPageIds, extractHeadings } from './notesUtils';
 import { useNotesPersistence } from './useNotesPersistence';
 import { useNotesFilters } from './useNotesFilters';
 import { useClickOutside } from '../../hooks/useClickOutside';
@@ -39,6 +39,11 @@ export function useNotesStore(userId) {
     const [pageMenu, setPageMenu] = useState(null);
     const [dropdownSearch, setDropdownSearch] = useState('');
     const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
+    /* Floating page-link picker (slash-menu → /pagelink) */
+    const [pageLinkPicker, setPageLinkPicker] = useState(null); // { quill, range, position }
+    /* Draw.io diagram editor (full-screen modal). When non-null,
+       NotesPage renders <DrawioEditor> with this state. */
+    const [drawioEditor, setDrawioEditor] = useState(null); // { node, initialXml }
 
     /* ── Rename ─────────────────────────────────────────────── */
     const [renamingId, setRenamingId] = useState(null);
@@ -277,12 +282,231 @@ export function useNotesStore(userId) {
             persist([fresh], folders, fresh.id);
             return;
         }
-        const updated = pages.filter(p => p.id !== activePageId);
+        // Cascade: also delete descendant pages so the tree stays consistent.
+        const descendantIds = getDescendantPageIds(activePageId, pages);
+        const removeIds = new Set([activePageId, ...descendantIds]);
+        const updated = pages.filter(p => !removeIds.has(p.id));
         const remaining = updated.filter(p => !p.archived);
         const newActive = remaining[0]?.id || updated[0]?.id;
         setPages(updated);
         setActivePageId(newActive);
         persist(updated, folders, newActive);
+    };
+
+    /* ── Update page metadata (icon, cover, readOnly, properties, parentPageId) ── */
+    const updatePageMeta = (pageId, patch) => {
+        const updated = pages.map(p =>
+            p.id === pageId
+                ? { ...p, ...patch, updatedAt: new Date().toISOString() }
+                : p,
+        );
+        setPages(updated);
+        persist(updated, folders, activePageId);
+    };
+
+    const handleSetPageIcon = (pageId, icon, coverColor) => {
+        updatePageMeta(pageId, {
+            ...(icon !== undefined ? { icon } : {}),
+            ...(coverColor !== undefined ? { coverColor } : {}),
+        });
+    };
+
+    const handleSetPageProperties = (pageId, properties) => {
+        updatePageMeta(pageId, { properties });
+    };
+
+    const handleToggleReadOnly = (pageId) => {
+        const p = pages.find(x => x.id === pageId);
+        if (!p) return;
+        updatePageMeta(pageId, { readOnly: !p.readOnly });
+    };
+
+    const handleToggleReaction = (pageId, emoji, userId) => {
+        if (!pageId || !emoji || !userId) return;
+        const updated = pages.map(p => {
+            if (p.id !== pageId) return p;
+            const reactions = { ...(p.reactions || {}) };
+            const list = reactions[emoji] ? [...reactions[emoji]] : [];
+            const idx = list.indexOf(userId);
+            if (idx >= 0) list.splice(idx, 1);
+            else list.push(userId);
+            if (list.length === 0) delete reactions[emoji];
+            else reactions[emoji] = list;
+            return { ...p, reactions };
+        });
+        setPages(updated);
+        persist(updated, folders, activePageId);
+    };
+
+    /* ── Sub-pages ───────────────────────────────────────── */
+    const handleNewSubPage = (parentPageId, title = 'Untitled') => {
+        const parent = pages.find(p => p.id === parentPageId);
+        const folderId = parent?.folderId || null;
+        const child = newPage(title, folderId, parentPageId);
+        const updated = [...pages, child];
+        setPages(updated);
+        setActivePageId(child.id);
+        persist(updated, folders, child.id);
+        setView('editor');
+        setTimeout(() => { setRenamingId(child.id); setRenameValue(title); }, 50);
+    };
+
+    const handleMovePageToParent = (pageId, parentPageId) => {
+        // Prevent cycles: a page cannot be a descendant of itself.
+        if (pageId === parentPageId) return;
+        const descendants = getDescendantPageIds(pageId, pages);
+        if (parentPageId && descendants.includes(parentPageId)) return;
+        updatePageMeta(pageId, { parentPageId: parentPageId || null });
+    };
+
+    /* ── Page-link picker (slash-menu helper) ───────────── */
+    const openPageLinkPicker = (quill, range) => {
+        if (!quill) return;
+        let position = null;
+        try {
+            const bounds = quill.getBounds(range?.index ?? quill.getLength());
+            const editorRect = quill.root.getBoundingClientRect();
+            position = {
+                top: editorRect.top + bounds.bottom + 6,
+                left: editorRect.left + bounds.left,
+            };
+        } catch { /* ignore */ }
+        setPageLinkPicker({ quill, range, position });
+    };
+
+    const closePageLinkPicker = () => setPageLinkPicker(null);
+
+    const insertPageLink = (target) => {
+        const ctx = pageLinkPicker;
+        if (!ctx || !ctx.quill || !target) { closePageLinkPicker(); return; }
+        const q = ctx.quill;
+        const idx = ctx.range?.index ?? q.getLength();
+        const title = target.title || 'Untitled';
+        q.insertText(idx, title, 'user');
+        q.formatText(idx, title.length, 'pagelink', { id: target.id, title }, 'user');
+        q.insertText(idx + title.length, ' ', 'user');
+        q.setSelection(idx + title.length + 1, 'silent');
+        closePageLinkPicker();
+    };
+
+    const insertPageLinkForNew = (title) => {
+        const ctx = pageLinkPicker;
+        if (!ctx || !ctx.quill || !title) { closePageLinkPicker(); return; }
+        // Create the new page first, then insert the link to it. Stay on the
+        // current page (don't switch the active page) so the link operation
+        // feels uninterrupted.
+        const created = newPage(title, activePage?.folderId || null);
+        const updated = [...pages, created];
+        setPages(updated);
+        persist(updated, folders, activePageId);
+        // Wait one tick so React flushes; then insert.
+        setTimeout(() => {
+            insertPageLink(created);
+        }, 0);
+    };
+
+    /* ── Draw.io diagram editor ─────────────────────────────
+       The DrawioBlot dispatches a 'notes:drawio-edit' custom
+       event when its block is clicked. We listen for it on the
+       document and open the modal with the XML pre-loaded. */
+    useEffect(() => {
+        const onEdit = (e) => {
+            const node = e?.detail?.node;
+            if (!node || !(node instanceof Element)) return;
+            const enc = node.getAttribute('data-xml') || '';
+            let xml = '';
+            try { xml = decodeURIComponent(enc); } catch { xml = enc; }
+            setDrawioEditor({ node, initialXml: xml });
+        };
+        document.addEventListener('notes:drawio-edit', onEdit);
+        return () => document.removeEventListener('notes:drawio-edit', onEdit);
+    }, []);
+
+    const closeDrawioEditor = () => setDrawioEditor(null);
+
+    const deleteDrawioBlock = () => {
+        const ctx = drawioEditor;
+        if (!ctx?.node) { closeDrawioEditor(); return; }
+        const q = modalQuillRef?.current?.getEditor
+            ? modalQuillRef.current.getEditor()
+            : modalQuillRef?.current;
+        if (q && q.scroll && typeof q.scroll.find === 'function') {
+            try {
+                const blot = q.scroll.find(ctx.node);
+                if (blot) {
+                    const idx = q.getIndex(blot);
+                    q.deleteText(idx, blot.length(), 'user');
+                }
+            } catch { /* ignore */ }
+        } else if (ctx.node.parentNode) {
+            // Fallback: yank from DOM and re-read HTML
+            ctx.node.parentNode.removeChild(ctx.node);
+        }
+        if (q && q.root) {
+            const html = q.root.innerHTML;
+            const updated = pages.map(p =>
+                p.id === activePageId
+                    ? { ...p, content: html, updatedAt: new Date().toISOString() }
+                    : p,
+            );
+            setPages(updated);
+            persist(updated, folders, activePageId);
+        }
+        closeDrawioEditor();
+    };
+
+    const saveDrawioEditor = ({ xml, svg }) => {
+        const ctx = drawioEditor;
+        if (!ctx?.node) { closeDrawioEditor(); return; }
+        const node = ctx.node;
+        // Update DOM in-place so changes are visible immediately.
+        if (xml != null) node.setAttribute('data-xml', encodeURIComponent(xml));
+        if (svg) {
+            node.innerHTML = svg + '<div class="ql-drawio-overlay">Click to edit</div>';
+        } else if (xml) {
+            node.innerHTML = '<div class="ql-drawio-empty">📐 Draw.io diagram — click to edit</div>';
+        }
+        // Persist by reading the active page's content out of Quill (which
+        // owns the DOM that the blot lives in).
+        const q = modalQuillRef?.current?.getEditor
+            ? modalQuillRef.current.getEditor()
+            : modalQuillRef?.current;
+        if (q && q.root) {
+            const html = q.root.innerHTML;
+            const updated = pages.map(p =>
+                p.id === activePageId
+                    ? { ...p, content: html, updatedAt: new Date().toISOString() }
+                    : p,
+            );
+            setPages(updated);
+            persist(updated, folders, activePageId);
+        }
+        closeDrawioEditor();
+    };
+
+    /* ── Insert TOC into the current editor ─────────────── */
+    const insertTocIntoEditor = (quill) => {
+        if (!quill) return;
+        const html = quill.root?.innerHTML || '';
+        const headings = extractHeadings(html);
+        if (headings.length === 0) {
+            if (typeof window !== 'undefined') window.alert('Add some H1 / H2 / H3 headings first.');
+            return;
+        }
+        const range = quill.getSelection(true) || { index: 0 };
+        // Insert a "Table of contents" heading then a bulleted list of headings.
+        let pos = range.index;
+        quill.insertText(pos, 'Table of contents\n', 'user');
+        quill.formatLine(pos, 1, 'header', 3, 'user');
+        pos += 'Table of contents\n'.length;
+        headings.forEach(h => {
+            const indent = '  '.repeat(Math.max(0, h.level - 1));
+            const line = `${indent}${h.text}\n`;
+            quill.insertText(pos, line, 'user');
+            quill.formatLine(pos, 1, 'list', 'bullet', 'user');
+            pos += line.length;
+        });
+        quill.setSelection(pos, 'silent');
     };
 
     const handleStartRename = (page) => {
@@ -528,6 +752,19 @@ export function useNotesStore(userId) {
         // floating navigation
         switcherOpen, setSwitcherOpen,
         paletteOpen, setPaletteOpen,
+        // page metadata + new features
+        handleSetPageIcon,
+        handleSetPageProperties,
+        handleToggleReadOnly,
+        handleToggleReaction,
+        handleNewSubPage,
+        handleMovePageToParent,
+        // page-link picker (slash-menu → /link)
+        pageLinkPicker, openPageLinkPicker, closePageLinkPicker,
+        insertPageLink, insertPageLinkForNew,
+        insertTocIntoEditor,
+        // draw.io diagram editor (slash-menu → /drawio)
+        drawioEditor, closeDrawioEditor, saveDrawioEditor, deleteDrawioBlock,
         persist,
     };
 }

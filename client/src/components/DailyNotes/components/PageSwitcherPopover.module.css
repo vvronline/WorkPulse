@@ -225,3 +225,29 @@
     .filters { gap: 0.4rem; }
     .footerHint { display: none; }
 }
+/* View toggle (list / tree) */
+.viewToggle {
+    display: inline-flex;
+    border: 1px solid var(--notes-border, var(--border));
+    border-radius: 7px;
+    overflow: hidden;
+    background: var(--notes-surface-1, var(--bg-secondary));
+}
+.viewBtn {
+    background: transparent;
+    border: none;
+    color: var(--notes-text-muted, var(--text-muted));
+    font: inherit;
+    font-size: 0.74rem;
+    padding: 4px 9px;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+    display: inline-flex;
+    align-items: center;
+}
+.viewBtn + .viewBtn { border-left: 1px solid var(--notes-border, var(--border)); }
+.viewBtn:hover { background: var(--notes-surface-2, var(--bg-hover)); color: var(--notes-text, var(--text-primary)); }
+.viewBtnActive {
+    background: var(--notes-accent-soft, rgba(14, 165, 233, 0.16));
+    color: var(--notes-accent, var(--primary));
+}

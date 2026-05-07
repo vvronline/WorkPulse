@@ -248,3 +248,89 @@
   opacity: 0.6;
   pointer-events: none;
 }
+
+/* ── Preview header actions: mode toggle + restore button ── */
+.previewActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.modeToggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+.modeBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.modeBtn + .modeBtn { border-left: 1px solid var(--border); }
+.modeBtn:hover { background: var(--bg-hover, rgba(0,0,0,0.04)); color: var(--text-primary); }
+.modeBtnActive {
+  background: var(--accent-soft, rgba(14, 165, 233, 0.12));
+  color: var(--accent);
+}
+
+/* ── Diff view ── */
+.diffView {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--bg-primary);
+}
+.diffEmpty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.diffPre {
+  margin: 0;
+  padding: 12px 0;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.diffLine {
+  display: flex;
+  align-items: flex-start;
+  padding: 0 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.diffMarker {
+  display: inline-block;
+  width: 18px;
+  flex-shrink: 0;
+  text-align: center;
+  user-select: none;
+  font-weight: 700;
+  opacity: 0.65;
+}
+.diffText {
+  flex: 1;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.diffEq { color: var(--text-primary); }
+.diffAdd {
+  background: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
+}
+.diffDel {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+  text-decoration: line-through;
+}
+[data-theme="dark"] .diffAdd { color: #4ade80; }
+[data-theme="dark"] .diffDel { color: #fca5a5; }

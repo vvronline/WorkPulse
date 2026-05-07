@@ -4,12 +4,13 @@
    folder filter chips, archive toggle, and the page list.
    Reuses the existing PageItem + FolderManager components.
    ───────────────────────────────────────────────────────── */
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { buildFolderTree } from '../notesUtils';
 import { SMART_FOLDER_IDS } from '../useNotesFilters';
 import PageItem from './PageItem';
 import FolderManager from './FolderManager';
+import PageTree from './PageTree';
 import {
     Search,
     X,
@@ -20,6 +21,7 @@ import {
     CheckSquare,
     Clock,
     CalendarDays,
+    ListTree,
 } from '../../../constants/icons';
 import s from './PageSwitcherPopover.module.css';
 
@@ -33,7 +35,7 @@ const SMART_FOLDERS = [
 
 export default function PageSwitcherPopover({ store, onClose }) {
     const {
-        folders, processedPages, activePageId,
+        pages, folders, processedPages, activePageId,
         searchQuery, setSearchQuery,
         sortBy, handleSortChange,
         folderFilter, setFolderFilter,
@@ -50,10 +52,12 @@ export default function PageSwitcherPopover({ store, onClose }) {
         handleMoveToFolder, handleDeletePage, setActivePageId,
         handleNewFolder, handleDeleteFolder,
         handleNewPage,
+        handleNewSubPage,
     } = store;
 
     const inputRef = useRef(null);
     const panelRef = useRef(null);
+    const [view, setView] = useState('list'); // 'list' | 'tree'
 
     // Auto-focus the search input on open
     useEffect(() => {
@@ -129,6 +133,22 @@ export default function PageSwitcherPopover({ store, onClose }) {
                         <option value="name">Name</option>
                         <option value="manual">Manual</option>
                     </select>
+                    <div className={s.viewToggle} role="tablist" aria-label="View mode">
+                        <button
+                            className={`${s.viewBtn} ${view === 'list' ? s.viewBtnActive : ''}`}
+                            onClick={() => setView('list')}
+                            role="tab"
+                            aria-selected={view === 'list'}
+                            title="Flat list"
+                        >List</button>
+                        <button
+                            className={`${s.viewBtn} ${view === 'tree' ? s.viewBtnActive : ''}`}
+                            onClick={() => setView('tree')}
+                            role="tab"
+                            aria-selected={view === 'tree'}
+                            title="Sub-page hierarchy"
+                        ><ListTree size={11} style={{ verticalAlign: '-1px', marginRight: 3 }} />Tree</button>
+                    </div>
 
                     <div className={s.chips} role="tablist" aria-label="Folder filter">
                         <button
@@ -202,48 +222,60 @@ export default function PageSwitcherPopover({ store, onClose }) {
                     onNewPageInFolder={handleNewPage}
                 />
 
-                {/* Page list */}
+                {/* Page list / tree */}
                 <div className={s.list}>
-                    {(processedPages ?? []).map(page => (
-                        <PageItem
-                            key={page.id}
-                            page={page}
-                            isActive={page.id === activePageId}
-                            isDragOver={dragOverId === page.id && dragRef.current !== page.id}
-                            isDragging={dragRef.current === page.id}
-                            folders={folders}
-                            folderName={folderName}
-                            renamingId={renamingId}
-                            renameValue={renameValue}
-                            setRenameValue={setRenameValue}
-                            renameRef={renameRef}
-                            pageMenu={pageMenu}
-                            setPageMenu={setPageMenu}
-                            pageMenuRef={pageMenuRef}
-                            onSelect={() => closeAndSelect(page.id)}
-                            onDragStart={handleDragStart}
-                            onDragOver={handleDragOver}
-                            onDrop={handleDrop}
-                            onDragEnd={handleDragEnd}
-                            onCommitRename={handleCommitRename}
-                            onCancelRename={() => setRenamingId(null)}
-                            onStartRename={handleStartRename}
-                            onTogglePin={handleTogglePin}
-                            onDuplicate={handleDuplicatePage}
-                            onToggleArchive={handleToggleArchive}
-                            onMoveToFolder={handleMoveToFolder}
-                            onDelete={handleDeletePage}
-                            setActivePageId={setActivePageId}
+                    {view === 'tree' ? (
+                        <PageTree
+                            pages={pages}
+                            activePageId={activePageId}
+                            onSelect={(id) => closeAndSelect(id)}
+                            onAddChild={(pid) => { handleNewSubPage(pid); onClose(); }}
+                            onAddRoot={() => { handleNewPage(); onClose(); }}
                         />
-                    ))}
-                    {(processedPages ?? []).length === 0 && (
-                        <div className={s.empty}>
-                            {searchQuery
-                                ? 'No pages match your search'
-                                : showArchived
-                                    ? 'No archived pages'
-                                    : 'No pages yet'}
-                        </div>
+                    ) : (
+                        <>
+                            {(processedPages ?? []).map(page => (
+                                <PageItem
+                                    key={page.id}
+                                    page={page}
+                                    isActive={page.id === activePageId}
+                                    isDragOver={dragOverId === page.id && dragRef.current !== page.id}
+                                    isDragging={dragRef.current === page.id}
+                                    folders={folders}
+                                    folderName={folderName}
+                                    renamingId={renamingId}
+                                    renameValue={renameValue}
+                                    setRenameValue={setRenameValue}
+                                    renameRef={renameRef}
+                                    pageMenu={pageMenu}
+                                    setPageMenu={setPageMenu}
+                                    pageMenuRef={pageMenuRef}
+                                    onSelect={() => closeAndSelect(page.id)}
+                                    onDragStart={handleDragStart}
+                                    onDragOver={handleDragOver}
+                                    onDrop={handleDrop}
+                                    onDragEnd={handleDragEnd}
+                                    onCommitRename={handleCommitRename}
+                                    onCancelRename={() => setRenamingId(null)}
+                                    onStartRename={handleStartRename}
+                                    onTogglePin={handleTogglePin}
+                                    onDuplicate={handleDuplicatePage}
+                                    onToggleArchive={handleToggleArchive}
+                                    onMoveToFolder={handleMoveToFolder}
+                                    onDelete={handleDeletePage}
+                                    setActivePageId={setActivePageId}
+                                />
+                            ))}
+                            {(processedPages ?? []).length === 0 && (
+                                <div className={s.empty}>
+                                    {searchQuery
+                                        ? 'No pages match your search'
+                                        : showArchived
+                                            ? 'No archived pages'
+                                            : 'No pages yet'}
+                                </div>
+                            )}
+                        </>
                     )}
                 </div>
 

@@ -1,8 +1,12 @@
-/* VersionHistory — slide-in panel showing saved snapshots for a page */
-import React, { useEffect, useState, useCallback } from 'react';
+/* VersionHistory — slide-in panel showing saved snapshots for a page.
+   Now offers two preview modes:
+     - Preview  → sanitised rendered HTML
+     - Diff     → line-based diff against the *current* page content. */
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import DOMPurify from 'dompurify';
 import { getPageHistory, getHistorySnapshot } from '../../../api';
-import { History, X, FileText, RotateCcw } from '../../../constants/icons';
+import { History, X, FileText, RotateCcw, GitBranch } from '../../../constants/icons';
+import { lineDiff } from '../notesUtils';
 import s from './VersionHistory.module.css';
 
 function fmtDate(str) {
@@ -18,13 +22,14 @@ function stripHtml(html) {
   return html ? html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : '';
 }
 
-export default function VersionHistory({ pageId, pageTitle, onRestore, onClose }) {
+export default function VersionHistory({ pageId, pageTitle, currentContent, onRestore, onClose }) {
   const [history, setHistory]       = useState([]);
   const [loading, setLoading]       = useState(true);
   const [error, setError]           = useState(null);
   const [preview, setPreview]       = useState(null); // { id, page_title, content, saved_at }
   const [previewLoading, setPL]     = useState(false);
   const [restoring, setRestoring]   = useState(false);
+  const [mode, setMode]             = useState('preview'); // 'preview' | 'diff'
 
   useEffect(() => {
     if (!pageId) return;
@@ -54,6 +59,11 @@ export default function VersionHistory({ pageId, pageTitle, onRestore, onClose }
     onRestore(preview.content, preview.page_title);
     onClose();
   };
+
+  const diffRows = useMemo(
+    () => preview ? lineDiff(preview.content || '', currentContent || '') : [],
+    [preview, currentContent]
+  );
 
   return (
     <div className={s.panel}>
@@ -122,26 +132,74 @@ export default function VersionHistory({ pageId, pageTitle, onRestore, onClose }
                   <div className={s.previewTitle}>{preview.page_title || 'Untitled'}</div>
                   <div className={s.previewDate}>{fmtDate(preview.saved_at)}</div>
                 </div>
-                <button
-                  className={`btn btn-primary btn-sm ${restoring ? s.restoring : ''}`}
-                  onClick={handleRestore}
-                  disabled={restoring}
-                  title="Replace current content with this version"
-                >
-                  {restoring ? (
-                    'Restoring…'
-                  ) : (
-                    <>
-                      <RotateCcw size={12} style={{ verticalAlign: '-2px', marginRight: 4 }} />
-                      Restore this version
-                    </>
-                  )}
-                </button>
+                <div className={s.previewActions}>
+                  <div className={s.modeToggle} role="tablist" aria-label="View mode">
+                    <button
+                      type="button"
+                      className={`${s.modeBtn} ${mode === 'preview' ? s.modeBtnActive : ''}`}
+                      onClick={() => setMode('preview')}
+                      role="tab"
+                      aria-selected={mode === 'preview'}
+                    >
+                      <FileText size={11} /> Preview
+                    </button>
+                    <button
+                      type="button"
+                      className={`${s.modeBtn} ${mode === 'diff' ? s.modeBtnActive : ''}`}
+                      onClick={() => setMode('diff')}
+                      role="tab"
+                      aria-selected={mode === 'diff'}
+                    >
+                      <GitBranch size={11} /> Diff vs current
+                    </button>
+                  </div>
+                  <button
+                    className={`btn btn-primary btn-sm ${restoring ? s.restoring : ''}`}
+                    onClick={handleRestore}
+                    disabled={restoring}
+                    title="Replace current content with this version"
+                  >
+                    {restoring ? (
+                      'Restoring…'
+                    ) : (
+                      <>
+                        <RotateCcw size={12} style={{ verticalAlign: '-2px', marginRight: 4 }} />
+                        Restore
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
-              <div
-                className={s.previewContent}
-                dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(preview.content) || '<em>Empty page</em>' }}
-              />
+              {mode === 'preview' ? (
+                <div
+                  className={s.previewContent}
+                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(preview.content) || '<em>Empty page</em>' }}
+                />
+              ) : (
+                <div className={s.diffView}>
+                  {diffRows.length === 0 || diffRows.every(r => r.type === 'eq') ? (
+                    <div className={s.diffEmpty}>No differences vs current content.</div>
+                  ) : (
+                    <pre className={s.diffPre}>
+                      {diffRows.map((r, i) => (
+                        <div
+                          key={i}
+                          className={`${s.diffLine} ${
+                            r.type === 'add' ? s.diffAdd
+                              : r.type === 'del' ? s.diffDel
+                                : s.diffEq
+                          }`}
+                        >
+                          <span className={s.diffMarker}>
+                            {r.type === 'add' ? '+' : r.type === 'del' ? '−' : ' '}
+                          </span>
+                          <span className={s.diffText}>{r.text || ' '}</span>
+                        </div>
+                      ))}
+                    </pre>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>

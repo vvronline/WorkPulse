@@ -60,6 +60,9 @@ app.use(helmet({
             ...helmet.contentSecurityPolicy.getDefaultDirectives(),
             // upgrade-insecure-requests omitted: serving over plain HTTP (no TLS)
             "upgrade-insecure-requests": null,
+            // Allow embedding the official draw.io editor in an <iframe> so
+            // the Notes feature can use it for diagram editing.
+            "frame-src": ["'self'", "https://embed.diagrams.net", "https://www.diagrams.net"],
         }
     },
     crossOriginOpenerPolicy: false,

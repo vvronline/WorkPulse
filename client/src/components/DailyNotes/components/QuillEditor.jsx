@@ -12,6 +12,7 @@ import ImageResizer from '../../common/ImageResizer';
 import SlashMenu from './SlashMenu';
 import CodeBlockLanguagePicker from './CodeBlockLanguagePicker';
 import { QUILL_MODULES } from '../quillConfig';
+import { loadKatex } from '../notesAssetsSetup';
 import s from './QuillEditor.module.css';
 
 function getEditor(ref) {
@@ -49,8 +50,19 @@ export default function QuillEditor({
   onChange,
   variant = 'inline', // 'inline' | 'modal'
   resetKey = 0,        // increment to force re-init (e.g. after snapshot restore)
+  readOnly = false,
+  onPickPageLink,
+  onInsertToc,
+  onPageLinkClick,
+  onToggleClick,
 }) {
   const wrapClass = variant === 'modal' ? s.modalWrap : s.inlineWrap;
+
+  /* Lazy-load math runtime once. (Diagrams use the draw.io
+     iframe — no client lib needed.) */
+  useEffect(() => {
+    loadKatex();
+  }, []);
 
   /* ── Paste / drop image → embed as data URL ─────────────── */
   useEffect(() => {
@@ -107,8 +119,44 @@ export default function QuillEditor({
     // Re-bind whenever Quill is re-created (pageId / resetKey)
   }, [quillRef, pageId, resetKey]);
 
+  /* ── Page-link click + toggle expand/collapse ───────────── */
+  useEffect(() => {
+    const quill = getEditor(quillRef);
+    if (!quill) return;
+    const root = quill.root;
+    if (!root) return;
+
+    const onClick = (e) => {
+      // Internal page link
+      const link = e.target.closest?.('a.ql-pagelink');
+      if (link) {
+        e.preventDefault();
+        const id = link.getAttribute('data-page-id');
+        if (id && onPageLinkClick) onPageLinkClick(id);
+        return;
+      }
+      // Toggle block: clicking the chevron region toggles open state
+      const toggle = e.target.closest?.('.ql-toggle');
+      if (toggle && e.offsetX < 28) {
+        e.preventDefault();
+        const open = toggle.getAttribute('data-open') !== 'false';
+        toggle.setAttribute('data-open', open ? 'false' : 'true');
+        if (onToggleClick) onToggleClick();
+      }
+    };
+    root.addEventListener('click', onClick);
+    return () => root.removeEventListener('click', onClick);
+  }, [quillRef, pageId, resetKey, onPageLinkClick, onToggleClick]);
+
+  /* ── Apply read-only state ──────────────────────────────── */
+  useEffect(() => {
+    const quill = getEditor(quillRef);
+    if (!quill) return;
+    quill.enable(!readOnly);
+  }, [quillRef, pageId, resetKey, readOnly]);
+
   return (
-    <div className={wrapClass}>
+    <div className={`${wrapClass} ${readOnly ? 'notes-readonly' : ''}`}>
       <ReactQuill
         key={`${pageId}-${resetKey}`}
         ref={quillRef}
@@ -116,10 +164,17 @@ export default function QuillEditor({
         defaultValue={defaultContent}
         onChange={onChange}
         modules={QUILL_MODULES}
+        readOnly={readOnly}
         placeholder="Start writing… or press / for commands"
       />
       <ImageResizer quillRef={quillRef} />
-      <SlashMenu quillRef={quillRef} />
+      <SlashMenu
+        quillRef={quillRef}
+        pageId={pageId}
+        resetKey={resetKey}
+        onPickPageLink={onPickPageLink}
+        onInsertToc={onInsertToc}
+      />
       <CodeBlockLanguagePicker
         quillRef={quillRef}
         pageId={pageId}

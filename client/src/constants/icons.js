@@ -117,6 +117,11 @@ export {
     MessageSquareText,
     Repeat,
     FilePlus,
+    Sigma,
+    Link2,
+    ListTree,
+    ChevronsRight,
+    Smile,
 
     // Chat / Communication
     Phone,

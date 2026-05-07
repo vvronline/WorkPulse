@@ -10,7 +10,7 @@ import s from './NotesModal.module.css';
 
 export default function NotesModal({ store, embedded = false }) {
   const {
-    activePage, folders, wc,
+    activePage, pages, folders, wc,
     modalQuillRef,
     tagInput, setTagInput, showTagInput, setShowTagInput, tagInputRef,
     setMaximized,
@@ -21,6 +21,12 @@ export default function NotesModal({ store, embedded = false }) {
     handleAddTag, handleRemoveTag,
     handleContentChange, handleTitleChange,
     handleRestoreSnapshot,
+    openEditor, setFolderFilter,
+    handleSetPageIcon, handleSetPageProperties,
+    handleToggleReadOnly, handleToggleReaction,
+    handleNewSubPage,
+    openPageLinkPicker, insertTocIntoEditor,
+    drawioEditor, saveDrawioEditor, closeDrawioEditor, deleteDrawioBlock,
   } = store;
 
   const onClose = () => setMaximized(false);
@@ -40,6 +46,7 @@ export default function NotesModal({ store, embedded = false }) {
         <div className={s.body}>
           <ModalEditor
             activePage={activePage}
+            pages={pages}
             folders={folders}
             wc={wc}
             modalQuillRef={modalQuillRef}
@@ -57,6 +64,19 @@ export default function NotesModal({ store, embedded = false }) {
             onRemoveTag={handleRemoveTag}
             onNewPage={handleNewPage}
             onRestoreSnapshot={handleRestoreSnapshot}
+            onSelectPage={openEditor}
+            onSelectFolder={(fid) => { setFolderFilter(fid || 'all'); }}
+            onSetPageIcon={handleSetPageIcon}
+            onSetPageProperties={handleSetPageProperties}
+            onToggleReadOnly={handleToggleReadOnly}
+            onToggleReaction={handleToggleReaction}
+            onNewSubPage={handleNewSubPage}
+            onPickPageLink={openPageLinkPicker}
+            onInsertToc={insertTocIntoEditor}
+            drawioEditor={drawioEditor}
+            onDrawioSave={saveDrawioEditor}
+            onDrawioCancel={closeDrawioEditor}
+            onDeleteDiagram={deleteDrawioBlock}
           />
         </div>
       </div>
