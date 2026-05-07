@@ -258,6 +258,54 @@ SimpleTableBlot.tagName = 'div';
 SimpleTableBlot.className = 'ql-simpletable';
 Quill.register(SimpleTableBlot, true);
 
+/* ── Custom blot: audio recording ─────────────────────────
+   Renders an <audio controls> element backed by a base64
+   data URL. The data URL is stored on `data-src` so it round-
+   trips through Quill's HTML-based persistence. The blot is
+   contenteditable=false so the audio controls stay clickable.
+
+   For larger recordings we could later swap the data URL for
+   an attachments-table reference (see Tier 1 §7), but for now
+   inline base64 keeps everything in the existing notebook
+   blob with no schema changes.
+   ───────────────────────────────────────────────────────── */
+class AudioBlot extends BlockEmbed {
+  static create(value) {
+    const node = super.create();
+    const v = (typeof value === 'object' && value) || { src: value || '' };
+    node.setAttribute('contenteditable', 'false');
+    node.classList.add('ql-audio');
+    node.setAttribute('data-src', v.src || '');
+    if (v.label) node.setAttribute('data-label', v.label);
+    AudioBlot.renderInner(node);
+    return node;
+  }
+  static value(node) {
+    return {
+      src: node.getAttribute('data-src') || '',
+      label: node.getAttribute('data-label') || '',
+    };
+  }
+  static renderInner(node) {
+    const src = node.getAttribute('data-src') || '';
+    const label = node.getAttribute('data-label') || 'Recording';
+    if (!src) {
+      node.innerHTML = '<div class="ql-audio-empty">🎙️ No recording</div>';
+      return;
+    }
+    node.innerHTML =
+      `<div class="ql-audio-row">
+         <span class="ql-audio-icon" aria-hidden="true">🎙️</span>
+         <span class="ql-audio-label">${label.replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</span>
+       </div>
+       <audio controls preload="metadata" src="${src}"></audio>`;
+  }
+}
+AudioBlot.blotName = 'audio';
+AudioBlot.tagName = 'div';
+AudioBlot.className = 'ql-audio';
+Quill.register(AudioBlot, true);
+
 /* ── Custom blot: callout (Notion-style info card) ──────────
    Renders as <div data-callout="info|warn|success|tip">…</div>
    Variant is read from the data attribute and styled in

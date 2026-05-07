@@ -48,6 +48,50 @@
     --notes-shadow-lg: 0 22px 48px rgba(15, 23, 42, 0.10), 0 4px 12px rgba(15, 23, 42, 0.04);
 }
 
+/* ─────────────────────────────────────────────────────────
+   Audio block (AudioBlot) — Tier 3 voice notes
+   ───────────────────────────────────────────────────────── */
+.ql-editor .ql-audio,
+.ql-audio {
+    display: block;
+    margin: 12px 0;
+    padding: 10px 12px;
+    border: 1px solid var(--notes-border, #e5e7eb);
+    border-radius: var(--notes-radius-md, 12px);
+    background: var(--notes-surface-1, #f8fafc);
+    user-select: none;
+}
+
+.ql-audio .ql-audio-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--notes-text-soft, #6b7280);
+    margin-bottom: 6px;
+}
+
+.ql-audio .ql-audio-icon {
+    color: #ef4444;
+    font-size: 14px;
+}
+
+.ql-audio .ql-audio-label {
+    font-weight: 500;
+}
+
+.ql-audio audio {
+    display: block;
+    width: 100%;
+    height: 36px;
+}
+
+.ql-audio .ql-audio-empty {
+    color: var(--notes-text-muted, #94a3b8);
+    font-size: 12px;
+    font-style: italic;
+}
+
 @media (prefers-reduced-motion: reduce) {
     .notesScope * {
         animation-duration: 0.001ms !important;

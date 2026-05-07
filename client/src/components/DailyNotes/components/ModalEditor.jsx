@@ -14,6 +14,8 @@ import SubPagesPanel from './SubPagesPanel';
 import BacklinksPanel from './BacklinksPanel';
 import TableOfContents from './TableOfContents';
 import DrawioEditor from './DrawioEditor';
+import AIAssistPanel from './AIAssistPanel';
+import SmartSuggestionsPanel from './SmartSuggestionsPanel';
 import { useAuth } from '../../../AuthContext';
 import {
     Pin, Copy, ArchiveRestore, Archive, Trash2, History,

@@ -1,0 +1,238 @@
+/* AudioRecorder — modal portal. Uses global theme tokens because
+   it renders at document level (outside .notesScope). */
+.overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
+    z-index: 1300;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+[data-theme="light"] .overlay {
+    background: rgba(15, 23, 42, 0.45);
+}
+
+.panel {
+    width: 100%;
+    max-width: 460px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border-radius: 14px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.32);
+    border: 1px solid var(--border);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+[data-theme="light"] .panel {
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.20);
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+.iconBtn {
+    background: transparent;
+    border: 1px solid transparent;
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.iconBtn:hover {
+    background: var(--bg-hover, color-mix(in srgb, var(--text-primary) 6%, transparent));
+    color: var(--text-primary);
+    border-color: var(--border);
+}
+
+.body {
+    padding: 22px 18px 18px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    min-height: 220px;
+    justify-content: center;
+}
+
+.muted {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin: 0;
+    text-align: center;
+}
+
+.error {
+    color: var(--danger, #dc2626);
+    font-size: 13px;
+    margin: 0;
+    text-align: center;
+}
+
+.idle {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.recordBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    color: #fff;
+    border: none;
+    border-radius: 999px;
+    padding: 10px 18px;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    box-shadow: 0 6px 18px rgba(220, 38, 38, 0.35);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.recordBtn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 22px rgba(220, 38, 38, 0.45);
+}
+
+.activeWrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+.indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.indicatorOn {
+    color: var(--danger, #dc2626);
+}
+
+.dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: var(--text-muted);
+    opacity: 0.4;
+}
+
+.indicatorOn .dot {
+    background: var(--danger, #dc2626);
+    opacity: 1;
+    animation: pulse 1.2s infinite;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+
+    50% {
+        opacity: 0.5;
+        transform: scale(0.85);
+    }
+}
+
+.timer {
+    font: 600 32px/1 'JetBrains Mono', ui-monospace, monospace;
+    letter-spacing: 0.04em;
+    color: var(--text-primary);
+}
+
+.controls {
+    display: inline-flex;
+    gap: 12px;
+    margin-top: 6px;
+}
+
+.iconBtnLg {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    width: 44px;
+    height: 44px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.iconBtnLg:hover {
+    background: var(--bg-hover, color-mix(in srgb, var(--text-primary) 6%, transparent));
+    border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+}
+
+.iconBtnLgStop {
+    background: color-mix(in srgb, var(--danger, #ef4444) 14%, transparent);
+    border-color: color-mix(in srgb, var(--danger, #ef4444) 38%, transparent);
+    color: var(--danger, #dc2626);
+}
+
+.iconBtnLgStop:hover {
+    background: color-mix(in srgb, var(--danger, #ef4444) 22%, transparent);
+}
+
+.previewWrap {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.previewLabel {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.audio {
+    width: 100%;
+}
+
+.previewActions {
+    display: inline-flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 6px;
+}

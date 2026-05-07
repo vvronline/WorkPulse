@@ -38,6 +38,7 @@ import {
     Link2,
     ListTree,
     CalendarDays,
+    Mic,
 } from 'lucide-react';
 import { CODE_LANGUAGES } from '../quillConfig';
 import { extractHeadings } from '../notesUtils';
@@ -254,6 +255,18 @@ function makeCommands(opts = {}) {
                 let text = '';
                 headings.forEach(h => { text += `${'  '.repeat(h.level - 1)}• ${h.text}\n`; });
                 q.insertText(range.index, '\n— Table of contents —\n' + text + '\n', 'user');
+            },
+        },
+        {
+            id: 'record', label: 'Record audio', hint: 'Capture a voice note',
+            icon: Mic, keys: ['record', 'audio', 'voice', 'mic', 'recording'],
+            run: (q) => {
+                const range = q.getSelection(true);
+                if (typeof document !== 'undefined') {
+                    document.dispatchEvent(new CustomEvent('notes:open-audio-recorder', {
+                        detail: { quill: q, range },
+                    }));
+                }
             },
         },
         {

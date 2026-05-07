@@ -10,7 +10,14 @@ import { useNotesPersistence } from './useNotesPersistence';
 import { useNotesFilters } from './useNotesFilters';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { getTemplate } from './templates';
-import { savePageAsPdf } from './notesExport';
+import {
+    savePageAsPdf,
+    savePageAsMarkdown,
+    savePageAsHtml,
+    exportAllPagesAsMarkdown,
+    readFileAsText,
+} from './notesExport';
+import { markdownToHtml } from './notesMarkdown';
 
 export function useNotesStore(userId) {
     const {
@@ -44,6 +51,12 @@ export function useNotesStore(userId) {
     /* Draw.io diagram editor (full-screen modal). When non-null,
        NotesPage renders <DrawioEditor> with this state. */
     const [drawioEditor, setDrawioEditor] = useState(null); // { node, initialXml }
+    /* Audio recorder modal — open via slash menu /record */
+    const [audioRecorder, setAudioRecorder] = useState(null); // { quill, range } | null
+    /* Tier 3/4 side panels (only one open at a time on the right) */
+    const [aiPanelOpen, setAiPanelOpen] = useState(false);
+    const [suggestionsPanelOpen, setSuggestionsPanelOpen] = useState(false);
+    const [activityFeedOpen, setActivityFeedOpen] = useState(false);
 
     /* ── Rename ─────────────────────────────────────────────── */
     const [renamingId, setRenamingId] = useState(null);
@@ -690,6 +703,109 @@ export function useNotesStore(userId) {
         persist(updatedPages, folders, activePageId);
     };
 
+    /* ── Audio recorder ───────────────────────────────────
+       Slash command /record dispatches via a custom event so
+       the SlashMenu doesn't need a direct reference to the
+       store. We listen on the document and open the modal. */
+    useEffect(() => {
+        const onOpen = (e) => {
+            const detail = e?.detail || {};
+            setAudioRecorder({ quill: detail.quill || null, range: detail.range || null });
+        };
+        document.addEventListener('notes:open-audio-recorder', onOpen);
+        return () => document.removeEventListener('notes:open-audio-recorder', onOpen);
+    }, []);
+
+    const closeAudioRecorder = () => setAudioRecorder(null);
+
+    const insertAudioRecording = ({ src, label }) => {
+        const ctx = audioRecorder;
+        const q = ctx?.quill || (
+            modalQuillRef?.current?.getEditor
+                ? modalQuillRef.current.getEditor()
+                : modalQuillRef?.current
+        );
+        if (!q || !src) { closeAudioRecorder(); return; }
+        const idx = ctx?.range?.index ?? q.getLength();
+        try {
+            q.insertEmbed(idx, 'audio', { src, label }, 'user');
+            q.setSelection(idx + 1, 'silent');
+        } catch { /* ignore */ }
+        // Persist explicitly because the Quill embed insertion may not always
+        // trigger our debounced auto-save in time.
+        try {
+            const html = q.root?.innerHTML;
+            if (html != null) {
+                const updated = pages.map(p =>
+                    p.id === activePageId
+                        ? { ...p, content: html, updatedAt: new Date().toISOString() }
+                        : p,
+                );
+                setPages(updated);
+                persist(updated, folders, activePageId);
+            }
+        } catch { /* ignore */ }
+        closeAudioRecorder();
+    };
+
+    /* ── Markdown / HTML export + import ────────────────── */
+    const handleExportMarkdown = (page) => {
+        savePageAsMarkdown(page || activePage);
+    };
+    const handleExportHtml = (page) => {
+        savePageAsHtml(page || activePage);
+    };
+    const handleExportAllMarkdown = () => {
+        exportAllPagesAsMarkdown(pages, folders);
+    };
+
+    /** Import one or more .md / .markdown files as new pages. */
+    const handleImportMarkdownFiles = async (fileList) => {
+        if (!fileList || fileList.length === 0) return;
+        const created = [];
+        for (const file of Array.from(fileList)) {
+            try {
+                const text = await readFileAsText(file);
+                // Title precedence: first H1 (#) line, else file name
+                let title = file.name.replace(/\.(md|markdown|txt)$/i, '');
+                const firstHeading = text.match(/^\s*#\s+(.+)$/m);
+                if (firstHeading) title = firstHeading[1].trim();
+                const html = markdownToHtml(text);
+                created.push({
+                    ...newPage(title, activePage?.folderId || null),
+                    content: html,
+                });
+            } catch (e) {
+                console.warn('[notes] failed to import', file.name, e);
+            }
+        }
+        if (created.length === 0) return;
+        const updated = [...pages, ...created];
+        setPages(updated);
+        // Open the first imported page so the user sees the result immediately.
+        const firstId = created[0].id;
+        setActivePageId(firstId);
+        persist(updated, folders, firstId);
+        setView('editor');
+    };
+
+    /* ── Tier 3/4 panel toggles (only one open at a time) ── */
+    const toggleAiPanel = () => {
+        setAiPanelOpen(o => {
+            const next = !o;
+            if (next) { setSuggestionsPanelOpen(false); }
+            return next;
+        });
+    };
+    const toggleSuggestionsPanel = () => {
+        setSuggestionsPanelOpen(o => {
+            const next = !o;
+            if (next) { setAiPanelOpen(false); }
+            return next;
+        });
+    };
+    const toggleActivityFeed = () => setActivityFeedOpen(o => !o);
+
     /* ── Export the active page as a downloadable PDF ───── */
     const handleExportPdf = (page) => {
         savePageAsPdf(page || activePage);
@@ -765,6 +881,15 @@ export function useNotesStore(userId) {
         insertTocIntoEditor,
         // draw.io diagram editor (slash-menu → /drawio)
         drawioEditor, closeDrawioEditor, saveDrawioEditor, deleteDrawioBlock,
+        // Tier 3 — audio recorder
+        audioRecorder, closeAudioRecorder, insertAudioRecording,
+        // Tier 5 — Markdown / HTML import & export
+        handleExportMarkdown, handleExportHtml, handleExportAllMarkdown,
+        handleImportMarkdownFiles,
+        // Tier 4 — AI / suggestions / activity panels
+        aiPanelOpen, setAiPanelOpen, toggleAiPanel,
+        suggestionsPanelOpen, setSuggestionsPanelOpen, toggleSuggestionsPanel,
+        activityFeedOpen, setActivityFeedOpen, toggleActivityFeed,
         persist,
     };
 }

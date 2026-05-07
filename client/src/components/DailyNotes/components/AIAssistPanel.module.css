@@ -1,0 +1,273 @@
+/* AIAssistPanel — floating chat-window (Notion / Intercom style).
+   Uses *global* theme tokens because the window renders via
+   createPortal at document level. */
+.window {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 380px;
+    max-width: calc(100vw - 32px);
+    height: 560px;
+    max-height: calc(100vh - 64px);
+    z-index: 1240;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.32),
+        0 4px 12px rgba(0, 0, 0, 0.16);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: chatPop 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+    transform-origin: bottom right;
+}
+
+[data-theme="light"] .window {
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18),
+        0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+@keyframes chatPop {
+    from {
+        opacity: 0;
+        transform: translateY(16px) scale(0.96);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.header {
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(135deg,
+            color-mix(in srgb, var(--primary) 10%, transparent),
+            color-mix(in srgb, var(--primary) 4%, transparent));
+    flex-shrink: 0;
+}
+
+.titleWrap {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 700;
+    font-size: 13.5px;
+    color: var(--primary);
+}
+
+.subtitle {
+    font-size: 10.5px;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.closeBtn {
+    background: transparent;
+    border: 1px solid transparent;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+    flex-shrink: 0;
+}
+
+.closeBtn:hover {
+    background: var(--bg-hover, color-mix(in srgb, var(--text-primary) 8%, transparent));
+    color: var(--text-primary);
+    border-color: var(--border);
+}
+
+.tools {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--text-primary) 2%, transparent);
+    flex-shrink: 0;
+}
+
+.tool {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+    text-align: left;
+}
+
+.tool:hover {
+    background: var(--bg-hover, color-mix(in srgb, var(--text-primary) 6%, transparent));
+    border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+    transform: translateY(-1px);
+}
+
+.toolOn {
+    border-color: var(--primary);
+    background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+.toolIcon {
+    color: var(--primary);
+}
+
+.toolLabel {
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--text-primary);
+}
+
+.toolHint {
+    font-size: 10.5px;
+    color: var(--text-muted);
+}
+
+.body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 14px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.muted {
+    color: var(--text-muted);
+    font-size: 12.5px;
+    margin: 8px 0;
+    line-height: 1.5;
+}
+
+.resultText {
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--text-primary);
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin: 0;
+    white-space: pre-wrap;
+}
+
+.list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.list li {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 12.5px;
+    line-height: 1.4;
+    padding: 7px 10px;
+    border-radius: 8px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+}
+
+.itemBox {
+    color: var(--text-muted);
+    font-family: 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.itemDone {
+    text-decoration: line-through;
+    color: var(--text-muted);
+}
+
+.outline {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.outlineItem {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    padding: 5px 7px;
+    border-radius: 6px;
+    color: var(--text-primary);
+}
+
+.outlineItem:hover {
+    background: var(--bg-hover, color-mix(in srgb, var(--text-primary) 6%, transparent));
+}
+
+.outlineLevel {
+    font-size: 9.5px;
+    font-weight: 700;
+    color: var(--primary);
+    background: color-mix(in srgb, var(--primary) 12%, transparent);
+    border-radius: 4px;
+    padding: 1px 5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+}
+
+.polishPre {
+    font: 12.5px/1.55 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin: 0;
+    white-space: pre-wrap;
+    color: var(--text-primary);
+    max-height: 280px;
+    overflow-y: auto;
+}
+
+.actions {
+    display: inline-flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 4px;
+}
+
+@media (max-width: 480px) {
+    .window {
+        width: calc(100vw - 24px);
+        height: calc(100vh - 96px);
+        bottom: 12px;
+        right: 12px;
+    }
+}

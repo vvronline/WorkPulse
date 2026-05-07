@@ -1,18 +1,32 @@
 /* ─────────────────────────────────────────────────────────
-   notesExport — utilities for exporting Notes pages to PDF.
-   Uses html2pdf.js (jsPDF + html2canvas under the hood) so
-   the user gets a real downloadable .pdf file directly,
-   without relying on the OS print dialog.
+   notesExport — utilities for exporting Notes pages.
+   Supported targets:
+     • PDF      — via html2pdf.js (jsPDF + html2canvas)
+     • Markdown — via notesMarkdown.htmlToMarkdown
+     • HTML     — self-contained .html file with print stylesheet
+     • Bulk Markdown — every page concatenated into one .md file
    ───────────────────────────────────────────────────────── */
 import html2pdf from 'html2pdf.js';
+import { htmlToMarkdown, safeFileName as safeName } from './notesMarkdown';
 
 /* ── File-name sanitization ─────────────────────────────── */
 function safeFileName(title) {
-    return (title || 'untitled')
-        .replace(/[\\/:*?"<>|]+/g, '-')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 120) || 'untitled';
+  return safeName(title);
+}
+
+/* ── Trigger a Blob download from the browser ───────────── */
+function downloadBlob(blob, filename) {
+  if (typeof window === 'undefined') return;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, 100);
 }
 
 /* ── Print stylesheet for the rendered page ─────────────── */
@@ -79,25 +93,25 @@ li[data-list="checked"]::before { content: '☑ '; margin-right: 4px; }
 
 /* ── Build the printable HTML document fragment ─────────── */
 function buildPrintable(page) {
-    const title = (page.title || 'Untitled').replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
-    const meta = page.updatedAt
-        ? `<div class="meta">Edited ${new Date(page.updatedAt).toLocaleString()}</div>`
-        : '';
-    const body = page.content || '<p><em>This page is empty.</em></p>';
+  const title = (page.title || 'Untitled').replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+  const meta = page.updatedAt
+    ? `<div class="meta">Edited ${new Date(page.updatedAt).toLocaleString()}</div>`
+    : '';
+  const body = page.content || '<p><em>This page is empty.</em></p>';
 
-    const wrap = document.createElement('div');
-    wrap.style.position = 'fixed';
-    wrap.style.left = '-99999px';
-    wrap.style.top = '0';
-    wrap.style.width = '760px';
-    wrap.style.background = '#fff';
-    wrap.innerHTML = `
+  const wrap = document.createElement('div');
+  wrap.style.position = 'fixed';
+  wrap.style.left = '-99999px';
+  wrap.style.top = '0';
+  wrap.style.width = '760px';
+  wrap.style.background = '#fff';
+  wrap.innerHTML = `
         <style>${PDF_CSS}</style>
         <h1 class="title">${title}</h1>
         ${meta}
         ${body}
     `;
-    return wrap;
+  return wrap;
 }
 
 /* ── Public API ───────────────────────────────────────────
@@ -105,28 +119,103 @@ function buildPrintable(page) {
    when the file has been generated (the actual download is
    triggered by the browser as a Blob save). */
 export async function savePageAsPdf(page) {
-    if (!page) return;
-    const node = buildPrintable(page);
-    document.body.appendChild(node);
-    try {
-        const opts = {
-            margin: [10, 12, 14, 12],
-            filename: `${safeFileName(page.title)}.pdf`,
-            image: { type: 'jpeg', quality: 0.95 },
-            html2canvas: {
-                scale: 2,
-                useCORS: true,
-                logging: false,
-                backgroundColor: '#ffffff',
-            },
-            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-            pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
-        };
-        await html2pdf().set(opts).from(node).save();
-    } finally {
-        node.remove();
-    }
+  if (!page) return;
+  const node = buildPrintable(page);
+  document.body.appendChild(node);
+  try {
+    const opts = {
+      margin: [10, 12, 14, 12],
+      filename: `${safeFileName(page.title)}.pdf`,
+      image: { type: 'jpeg', quality: 0.95 },
+      html2canvas: {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+      },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
+    };
+    await html2pdf().set(opts).from(node).save();
+  } finally {
+    node.remove();
+  }
 }
 
 /* Backwards-compatible alias used by the editor menu. */
 export const downloadPdf = savePageAsPdf;
+
+/* ── Markdown export (single page) ──────────────────────── */
+export function savePageAsMarkdown(page) {
+  if (!page) return;
+  const md = `# ${page.title || 'Untitled'}\n\n` + htmlToMarkdown(page.content || '');
+  const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+  downloadBlob(blob, `${safeFileName(page.title)}.md`);
+}
+
+/* ── HTML export (single page, self-contained) ──────────── */
+export function savePageAsHtml(page) {
+  if (!page) return;
+  const title = (page.title || 'Untitled').replace(/[<>&]/g, c =>
+    ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]),
+  );
+  const meta = page.updatedAt
+    ? `<div class="meta">Edited ${new Date(page.updatedAt).toLocaleString()}</div>`
+    : '';
+  const body = page.content || '<p><em>This page is empty.</em></p>';
+  const html =
+    `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>${title}</title>
+  <style>${PDF_CSS}
+  body { max-width: 880px; margin: 0 auto; }
+  </style>
+</head>
+<body>
+  <h1 class="title">${title}</h1>
+  ${meta}
+  ${body}
+</body>
+</html>
+`;
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  downloadBlob(blob, `${safeFileName(page.title)}.html`);
+}
+
+/* ── Bulk Markdown export — every active page in one .md ─ */
+export function exportAllPagesAsMarkdown(pages, folders) {
+  if (!Array.isArray(pages) || pages.length === 0) return;
+  const folderName = (id) =>
+    id ? (folders.find(f => f.id === id)?.name || 'Folder') : '';
+  const sections = pages
+    .filter(p => !p.archived)
+    .map(p => {
+      const folder = folderName(p.folderId);
+      const head = `# ${p.title || 'Untitled'}`;
+      const meta = [
+        folder ? `*Folder: ${folder}*` : '',
+        p.tags?.length ? `*Tags: ${p.tags.map(t => `#${t}`).join(' ')}*` : '',
+        p.updatedAt ? `*Edited ${new Date(p.updatedAt).toLocaleString()}*` : '',
+      ].filter(Boolean).join('  \n');
+      return `${head}\n\n${meta ? meta + '\n\n' : ''}${htmlToMarkdown(p.content || '')}\n\n---\n`;
+    });
+  const out = `# WorkPulse Notes export\n\n` +
+    `Exported ${new Date().toLocaleString()} · ${sections.length} pages\n\n---\n\n` +
+    sections.join('\n');
+  const blob = new Blob([out], { type: 'text/markdown;charset=utf-8' });
+  const stamp = new Date().toISOString().slice(0, 10);
+  downloadBlob(blob, `workpulse-notes-${stamp}.md`);
+}
+
+/* ── Read a user-selected file as text (Promise) ────────── */
+export function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result || ''));
+    r.onerror = reject;
+    r.readAsText(file);
+  });
+}

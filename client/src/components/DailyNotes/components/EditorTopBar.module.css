@@ -59,6 +59,11 @@
     border-color: var(--notes-border, var(--border));
     transform: translateY(-1px);
 }
+.iconBtnSquareActive {
+    background: var(--notes-accent-soft, color-mix(in srgb, var(--primary, #0ea5e9) 14%, transparent)) !important;
+    color: var(--notes-accent, var(--primary, #0ea5e9)) !important;
+    border-color: color-mix(in srgb, var(--primary, #0ea5e9) 35%, transparent) !important;
+}
 
 .primaryBtn {
     display: inline-flex; align-items: center; gap: 0.4rem;
