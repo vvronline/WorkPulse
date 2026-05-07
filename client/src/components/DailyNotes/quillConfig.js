@@ -7,6 +7,7 @@ import ReactQuill from 'react-quill-new';
 
 const Quill = ReactQuill.Quill;
 const BlockEmbed = Quill.import('blots/block/embed');
+const InlineEmbed = Quill.import('blots/embed');
 const Inline = Quill.import('blots/inline');
 const Block = Quill.import('blots/block');
 
@@ -76,6 +77,35 @@ DateChipBlot.blotName = 'datechip';
 DateChipBlot.tagName = 'span';
 DateChipBlot.className = 'ql-datechip';
 Quill.register(DateChipBlot, true);
+
+/* ── Custom blot: @mention chip ───────────────────────────
+   Renders as <span class="ql-mention" data-user-id="…" data-user-name="…">@Name</span>
+   Uses inline Embed so it is atomic — Quill treats it as a
+   single unit and won't duplicate inner text on reload.
+   ───────────────────────────────────────────────────────── */
+class MentionBlot extends InlineEmbed {
+  static create(value) {
+    const node = super.create();
+    const v = (typeof value === 'object') ? value : { id: value, name: '' };
+    node.setAttribute('data-user-id', v.id || '');
+    node.setAttribute('data-user-name', v.name || '');
+    if (v.avatar) node.setAttribute('data-user-avatar', v.avatar);
+    node.setAttribute('contenteditable', 'false');
+    node.innerText = `@${v.name || 'user'}`;
+    return node;
+  }
+  static value(node) {
+    return {
+      id: node.getAttribute('data-user-id') || '',
+      name: node.getAttribute('data-user-name') || '',
+      avatar: node.getAttribute('data-user-avatar') || '',
+    };
+  }
+}
+MentionBlot.blotName = 'mention';
+MentionBlot.tagName = 'span';
+MentionBlot.className = 'ql-mention';
+Quill.register(MentionBlot, true);
 
 /* ── Custom blot: collapsible toggle block ────────────────
    Renders as

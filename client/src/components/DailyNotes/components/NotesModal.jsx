@@ -27,6 +27,9 @@ export default function NotesModal({ store, embedded = false }) {
     handleNewSubPage,
     openPageLinkPicker, insertTocIntoEditor,
     drawioEditor, saveDrawioEditor, closeDrawioEditor, deleteDrawioBlock,
+    // Collaboration
+    mentionableUsers, handleMention,
+    collabUsers, collabConnected,
   } = store;
 
   const onClose = () => setMaximized(false);
@@ -77,6 +80,10 @@ export default function NotesModal({ store, embedded = false }) {
             onDrawioSave={saveDrawioEditor}
             onDrawioCancel={closeDrawioEditor}
             onDeleteDiagram={deleteDrawioBlock}
+            mentionableUsers={mentionableUsers}
+            onMention={handleMention}
+            collabUsers={collabUsers}
+            collabConnected={collabConnected}
           />
         </div>
       </div>

@@ -1,6 +1,7 @@
 const express = require('express');
 const auth = require('../middleware/auth');
 const { logger } = require('../utils/logger');
+const { handleMention } = require('../utils/collaboration');
 
 const router = express.Router();
 const { requireTenant } = require('../middleware/tenant');
@@ -102,6 +103,43 @@ router.get('/history/snapshot/:id', async (req, res) => {
     } catch (e) {
         req.log.error({ err: e }, 'GET /notes/history/snapshot error');
         res.status(500).json({ error: 'Failed to fetch snapshot' });
+    }
+});
+
+// @mention notification endpoint
+router.post('/mention', async (req, res) => {
+    try {
+        const { mentionedUserId, pageId, pageTitle } = req.body;
+        if (!mentionedUserId || !pageId) {
+            return res.status(400).json({ error: 'mentionedUserId and pageId are required' });
+        }
+        const uid = parseInt(mentionedUserId, 10);
+        if (!uid || uid <= 0) return res.status(400).json({ error: 'Invalid user ID' });
+
+        await handleMention(req.db, req.tenantId, req.userId, uid, pageId, pageTitle || 'Untitled');
+        res.json({ ok: true });
+    } catch (e) {
+        req.log.error({ err: e }, 'POST /notes/mention error');
+        res.status(500).json({ error: 'Failed to send mention notification' });
+    }
+});
+
+// Get mentionable users (same org)
+router.get('/mentionable-users', async (req, res) => {
+    try {
+        const user = (await req.db.query('SELECT org_id FROM users WHERE id = $1', [req.userId])).rows[0];
+        if (!user?.org_id) return res.json({ users: [] });
+
+        const rows = (await req.db.query(
+            `SELECT id, full_name, avatar, username FROM users
+             WHERE org_id = $1 AND is_active = TRUE AND id != $2
+             ORDER BY full_name`,
+            [user.org_id, req.userId]
+        )).rows;
+        res.json({ users: rows });
+    } catch (e) {
+        req.log.error({ err: e }, 'GET /notes/mentionable-users error');
+        res.status(500).json({ error: 'Failed to fetch users' });
     }
 });
 

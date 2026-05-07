@@ -18,8 +18,12 @@ import {
     readFileAsText,
 } from './notesExport';
 import { markdownToHtml } from './notesMarkdown';
+import { getMentionableUsers, sendNoteMention } from '../../api';
+import useCollaboration from './useCollaboration';
+import { useAuth } from '../../AuthContext';
 
 export function useNotesStore(userId) {
+    const { user } = useAuth();
     const {
         pages, setPages, folders, setFolders,
         activePageId, setActivePageId,
@@ -824,6 +828,37 @@ export function useNotesStore(userId) {
         setTimeout(() => setSavedFlash(false), 2000);
     };
 
+    /* ── Collaboration: @mentions + real-time editing ──────── */
+    const [mentionableUsers, setMentionableUsers] = useState([]);
+
+    // Load mentionable users (org members)
+    useEffect(() => {
+        if (!userId) return;
+        let cancelled = false;
+        getMentionableUsers().then(res => {
+            if (!cancelled && res.data?.users) {
+                setMentionableUsers(res.data.users);
+            }
+        }).catch(() => { /* ignore */ });
+        return () => { cancelled = true; };
+    }, [userId]);
+
+    // Real-time collaboration via Yjs
+    const { connected: collabConnected, users: collabUsers } = useCollaboration({
+        pageId: activePageId,
+        tenantId: user?.tenant_id || null,
+        user,
+        quillRef: modalQuillRef,
+        enabled: !!maximized && !!activePageId,
+    });
+
+    // Handle @mention — send notification to mentioned user
+    const handleMention = useCallback((mentionedUser) => {
+        if (!mentionedUser?.id || !activePageId) return;
+        const page = pages.find(p => p.id === activePageId);
+        sendNoteMention(mentionedUser.id, activePageId, page?.title || 'Untitled').catch(() => { /* best effort */ });
+    }, [activePageId, pages]);
+
     /* ── Return everything consumers need ─────────────────── */
     return {
         // data
@@ -891,5 +926,8 @@ export function useNotesStore(userId) {
         suggestionsPanelOpen, setSuggestionsPanelOpen, toggleSuggestionsPanel,
         activityFeedOpen, setActivityFeedOpen, toggleActivityFeed,
         persist,
+        // Collaboration — @mentions + presence
+        mentionableUsers, handleMention,
+        collabUsers, collabConnected,
     };
 }

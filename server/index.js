@@ -45,6 +45,7 @@ const meetingsRoutes = require('./routes/meetings');
 const tenantRoutes = require('./routes/tenants');
 const serviceDeskRoutes = require('./routes/serviceDesk');
 const { setupWebSocket } = require('./utils/ws');
+const { createCollaborationServer } = require('./utils/collaboration');
 const { initJobs, shutdownJobs } = require('./jobs');
 
 const app = express();
@@ -384,6 +385,10 @@ if (require.main === module) {
         redis.initRedis();
         const httpServer = http.createServer(app);
         setupWebSocket(httpServer);
+
+        // Collaboration WebSocket server (Yjs/Hocuspocus) on /collab path
+        createCollaborationServer(httpServer);
+
         httpServer.listen(PORT, () => {
             logger.info({ port: PORT }, 'Server running');
         });

@@ -1,6 +1,7 @@
 /* QuillEditor — thin wrapper around ReactQuill with consistent styling.
    Wires in:
      • SlashMenu  — Notion-style "/" command popover.
+     • MentionMenu — @mention user autocomplete.
      • Image paste — drop or paste images get embedded as data URLs
        (works immediately with no backend; can be swapped for an
        upload pipeline later by replacing the FileReader with an
@@ -8,8 +9,10 @@
 import React, { useEffect } from 'react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
+import '../collabCursors.css';
 import ImageResizer from '../../common/ImageResizer';
 import SlashMenu from './SlashMenu';
+import MentionMenu from './MentionMenu';
 import CodeBlockLanguagePicker from './CodeBlockLanguagePicker';
 import { QUILL_MODULES } from '../quillConfig';
 import { loadKatex } from '../notesAssetsSetup';
@@ -55,6 +58,8 @@ export default function QuillEditor({
   onInsertToc,
   onPageLinkClick,
   onToggleClick,
+  mentionableUsers,
+  onMention,
 }) {
   const wrapClass = variant === 'modal' ? s.modalWrap : s.inlineWrap;
 
@@ -174,6 +179,13 @@ export default function QuillEditor({
         resetKey={resetKey}
         onPickPageLink={onPickPageLink}
         onInsertToc={onInsertToc}
+      />
+      <MentionMenu
+        quillRef={quillRef}
+        pageId={pageId}
+        resetKey={resetKey}
+        users={mentionableUsers || []}
+        onMention={onMention}
       />
       <CodeBlockLanguagePicker
         quillRef={quillRef}

@@ -16,6 +16,7 @@ import TableOfContents from './TableOfContents';
 import DrawioEditor from './DrawioEditor';
 import AIAssistPanel from './AIAssistPanel';
 import SmartSuggestionsPanel from './SmartSuggestionsPanel';
+import PresenceAvatars from './PresenceAvatars';
 import { useAuth } from '../../../AuthContext';
 import {
     Pin, Copy, ArchiveRestore, Archive, Trash2, History,
@@ -57,6 +58,11 @@ export default function ModalEditor({
     onDrawioSave,
     onDrawioCancel,
     onDeleteDiagram,
+    // Collaboration
+    mentionableUsers,
+    onMention,
+    collabUsers,
+    collabConnected,
 }) {
     const { user } = useAuth();
     const [showHistory, setShowHistory] = useState(false);
@@ -97,6 +103,8 @@ export default function ModalEditor({
                     onSelectPage={onSelectPage}
                     onSelectFolder={onSelectFolder}
                 />
+                <div style={{ flex: 1 }} />
+                <PresenceAvatars users={collabUsers || []} connected={!!collabConnected} />
             </div>
 
             {/* Optional cover band */}
@@ -249,6 +257,8 @@ export default function ModalEditor({
                                 onPickPageLink={onPickPageLink}
                                 onInsertToc={onInsertToc}
                                 onPageLinkClick={onSelectPage}
+                                mentionableUsers={mentionableUsers}
+                                onMention={onMention}
                             />
 
                             <SubPagesPanel

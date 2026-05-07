@@ -1,0 +1,70 @@
+.menu {
+    position: absolute;
+    z-index: 1000;
+    background: var(--card-bg, rgba(255, 255, 255, 0.025));
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+    border-radius: var(--radius-sm, 10px);
+    box-shadow: var(--shadow, 0 4px 32px rgba(0, 0, 0, 0.55));
+    max-height: 240px;
+    overflow-y: auto;
+    min-width: 220px;
+    max-width: 300px;
+    padding: 4px;
+    backdrop-filter: blur(12px);
+}
+
+.item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background var(--transition-fast, 0.15s);
+}
+
+.item:hover,
+.selected {
+    background: var(--surface-hover, rgba(255, 255, 255, 0.05));
+}
+
+.avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    overflow: hidden;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--primary, #2159bb);
+    color: var(--on-accent, #f8fbff);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary, #f0f0f5);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.username {
+    font-size: 11px;
+    color: var(--text-muted, #6b6b80);
+}

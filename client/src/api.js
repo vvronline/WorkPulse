@@ -290,6 +290,9 @@ export const getNotes = () => API.get('/notes');
 export const saveNotes = (data) => API.put('/notes', { data });
 export const getPageHistory = (pageId) => API.get(`/notes/history/${encodeURIComponent(pageId)}`);
 export const getHistorySnapshot = (snapshotId) => API.get(`/notes/history/snapshot/${snapshotId}`);
+export const getMentionableUsers = () => API.get('/notes/mentionable-users');
+export const sendNoteMention = (mentionedUserId, pageId, pageTitle) =>
+    API.post('/notes/mention', { mentionedUserId, pageId, pageTitle });
 
 // Calendar
 export const getCalendarEvents = (from, to) => API.get('/calendar', { params: { from, to } });

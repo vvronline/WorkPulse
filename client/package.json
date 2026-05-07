@@ -14,6 +14,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@hocuspocus/provider": "^4.0.0",
     "axios": "^1.13.5",
     "chart.js": "^4.5.1",
     "dompurify": "^3.3.1",
@@ -26,7 +27,10 @@
     "react-chartjs-2": "^5.3.1",
     "react-dom": "^19.2.4",
     "react-quill-new": "^3.8.3",
-    "react-router-dom": "^7.13.0"
+    "react-router-dom": "^7.13.0",
+    "y-protocols": "^1.0.7",
+    "y-quill": "^1.0.0",
+    "yjs": "^13.6.30"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",

@@ -1050,6 +1050,19 @@ async function initTenantSchema(q) {
         ON CONFLICT (key) DO NOTHING
     `);
 
+    // ---- Collaborative Notes (Yjs CRDT state per page) ----
+    await q(`
+        CREATE TABLE IF NOT EXISTS notebook_pages (
+            page_id    TEXT PRIMARY KEY,
+            tenant_id  INTEGER NOT NULL DEFAULT 0,
+            yjs_state  BYTEA,
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    await q(`
+        CREATE INDEX IF NOT EXISTS idx_nb_pages_tenant ON notebook_pages(tenant_id)
+    `);
+
     logger.info('Tenant schema initialised');
 }
 
