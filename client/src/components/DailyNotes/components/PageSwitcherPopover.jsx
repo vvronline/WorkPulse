@@ -22,6 +22,7 @@ import {
     Clock,
     CalendarDays,
     ListTree,
+    Heart,
 } from '../../../constants/icons';
 import s from './PageSwitcherPopover.module.css';
 
@@ -31,6 +32,7 @@ const SMART_FOLDERS = [
     { id: SMART_FOLDER_IDS.WEEK, label: 'This week', icon: CalendarDays, hint: 'Edited in the last 7 days' },
     { id: SMART_FOLDER_IDS.TODOS, label: 'Open todos', icon: CheckSquare, hint: 'Pages with checklist items' },
     { id: SMART_FOLDER_IDS.UNTAGGED, label: 'Untagged', icon: Tag, hint: 'Pages without any tags' },
+    { id: SMART_FOLDER_IDS.LIKED, label: 'Liked', icon: Heart, hint: 'Pages you liked' },
 ];
 
 export default function PageSwitcherPopover({ store, onClose }) {

@@ -1,26 +1,28 @@
 ﻿/* ModalEditor — right panel of the maximized modal.
    Now also renders breadcrumbs, page metadata (icon/cover/properties),
-   reactions, sub-pages, backlinks and a sticky table of contents. */
-import React, { useState, useRef } from 'react';
+   reactions, sub-pages, backlinks, linked entities, and a sticky table of contents. */
+import React, { useState, useRef, useCallback } from 'react';
 import { formatDate, buildFolderTree } from '../notesUtils';
 import QuillEditor from './QuillEditor';
 import TagEditor from './TagEditor';
 import VersionHistory from './VersionHistory';
 import Breadcrumbs from './Breadcrumbs';
 import IconPicker from './IconPicker';
-import PagePropertiesPanel from './PagePropertiesPanel';
 import ReactionsBar from './ReactionsBar';
 import SubPagesPanel from './SubPagesPanel';
 import BacklinksPanel from './BacklinksPanel';
+import LinkedEntitiesPanel from './LinkedEntitiesPanel';
 import TableOfContents from './TableOfContents';
 import DrawioEditor from './DrawioEditor';
 import AIAssistPanel from './AIAssistPanel';
 import SmartSuggestionsPanel from './SmartSuggestionsPanel';
 import PresenceAvatars from './PresenceAvatars';
+import SprintEmbedBlock from './SprintEmbedBlock';
+import TimeTrackingBlock from './TimeTrackingBlock';
 import { useAuth } from '../../../AuthContext';
 import {
     Pin, Copy, ArchiveRestore, Archive, Trash2, History,
-    Lock, Unlock, Plus, Settings,
+    Lock, Unlock, Plus,
 } from '../../../constants/icons';
 import s from './ModalEditor.module.css';
 
@@ -63,13 +65,72 @@ export default function ModalEditor({
     onMention,
     collabUsers,
     collabConnected,
+    // Tier 6 — WorkPulse integrations
+    onConvertToTask,
+    onNewOneOnOne,
 }) {
     const { user } = useAuth();
     const [showHistory, setShowHistory] = useState(false);
     const [editorResetKey, setEditorResetKey] = useState(0);
     const [iconOpen, setIconOpen] = useState(false);
-    const [propertiesOpen, setPropertiesOpen] = useState(false);
+    const [activeTab, setActiveTab] = useState(null); // null | 'subpages' | 'linked'
     const editorScrollRef = useRef(null);
+
+    // Tier 6: embedded sprint/time blocks (rendered as React components below the editor)
+    const [sprintEmbeds, setSprintEmbeds] = useState([]);
+    const [timeEmbeds, setTimeEmbeds] = useState([]);
+
+    // Slash command callback: insert a sprint embed placeholder in Quill + render live component
+    const handleInsertSprintEmbed = useCallback((q) => {
+        const range = q.getSelection(true);
+        q.insertText(range.index, '\n', 'user');
+        q.insertEmbed(range.index + 1, 'divider', true, 'user');
+        q.insertText(range.index + 2, ' 📊 Sprint Board (live embed below) ', 'user');
+        q.insertEmbed(range.index + 2 + ' 📊 Sprint Board (live embed below) '.length, 'divider', true, 'user');
+        q.setSelection(range.index + 2 + ' 📊 Sprint Board (live embed below) '.length + 1, 'silent');
+        setSprintEmbeds(prev => [...prev, { id: Date.now() }]);
+    }, []);
+
+    // Slash command callback: insert a time tracking placeholder
+    const handleInsertTimeBlock = useCallback((q) => {
+        const range = q.getSelection(true);
+        q.insertText(range.index, '\n', 'user');
+        q.insertEmbed(range.index + 1, 'divider', true, 'user');
+        q.insertText(range.index + 2, ' ⏱ Time Tracking (live embed below) ', 'user');
+        q.insertEmbed(range.index + 2 + ' ⏱ Time Tracking (live embed below) '.length, 'divider', true, 'user');
+        q.setSelection(range.index + 2 + ' ⏱ Time Tracking (live embed below) '.length + 1, 'silent');
+        setTimeEmbeds(prev => [...prev, { id: Date.now() }]);
+    }, []);
+
+    // Slash command callback: convert current checklist item to task
+    const handleSlashConvertToTask = useCallback(async (q, range, lineText) => {
+        if (!lineText || !onConvertToTask) return;
+        const task = await onConvertToTask(lineText);
+        if (!task) return;
+        try {
+            // Mark the line as checked after conversion
+            q.formatLine(range.index, 1, 'list', 'checked', 'user');
+            // Append " → Task #ID" to the END of the line. `q.getLine(index)` returns
+            // [lineBlot, offsetWithinLine], NOT the line length — so we need to derive
+            // the end-of-line index from the line blot's length.
+            const [lineBlot, offsetInLine] = q.getLine(range.index) || [];
+            if (!lineBlot) return;
+            const lineStart = range.index - offsetInLine;
+            // `lineBlot.length()` includes the trailing newline; subtract it so we
+            // insert *before* the \n rather than on the next line.
+            const lineEnd = lineStart + Math.max(0, lineBlot.length() - 1);
+            const suffix = ` → Task #${task.id}`;
+            q.insertText(lineEnd, suffix, { italic: true, color: '#10b981' }, 'user');
+        } catch { /* ignore — Quill APIs throw if the editor was unmounted mid-await */ }
+    }, [onConvertToTask]);
+
+    // Slash command callback: 1-on-1 with prefill
+    const handleSlashNewOneOnOne = useCallback((q) => {
+        if (typeof onNewOneOnOne === 'function') {
+            // Dispatch event so the store can pick it up and show a report picker
+            document.dispatchEvent(new CustomEvent('notes:open-oneonone-picker'));
+        }
+    }, [onNewOneOnOne]);
 
     if (!activePage) {
         return (
@@ -143,12 +204,6 @@ export default function ModalEditor({
                 />
                 <div className={s.actions}>
                     <button
-                        className={`${s.actBtn} ${propertiesOpen ? s.actBtnActive : ''}`}
-                        onClick={() => setPropertiesOpen(o => !o)}
-                        title="Page properties"
-                        aria-label="Page properties"
-                    ><Settings size={13} /></button>
-                    <button
                         className={`${s.actBtn} ${activePage.pinned ? s.actBtnActive : ''}`}
                         onClick={() => onTogglePin(activePage.id)}
                         title={activePage.pinned ? 'Unpin' : 'Pin to top'}
@@ -205,21 +260,50 @@ export default function ModalEditor({
                 />
             </div>
 
-            {/* Properties panel (collapsible) */}
-            {propertiesOpen && (
-                <PagePropertiesPanel
-                    page={activePage}
-                    readOnly={readOnly}
-                    onChange={(properties) => onSetPageProperties?.(activePage.id, properties)}
+            {/* Reactions + Sub-pages & Linked items tabs — single row */}
+            <div className={s.tabsRow}>
+                <ReactionsBar
+                    reactions={activePage.reactions || {}}
+                    currentUserId={user?.id}
+                    onToggle={(emoji) => onToggleReaction?.(activePage.id, emoji, user?.id)}
+                    mentionableUsers={mentionableUsers}
                 />
+                <div className={s.tabsDivider} />
+                <button
+                    type="button"
+                    className={`${s.tab} ${activeTab === 'subpages' ? s.tabActive : ''}`}
+                    onClick={() => setActiveTab(activeTab === 'subpages' ? null : 'subpages')}
+                >
+                    Sub-pages
+                    {pages.filter(p => p.parentPageId === activePage.id && !p.archived).length > 0 && (
+                        <span className={s.tabBadge}>
+                            {pages.filter(p => p.parentPageId === activePage.id && !p.archived).length}
+                        </span>
+                    )}
+                </button>
+                <button
+                    type="button"
+                    className={`${s.tab} ${activeTab === 'linked' ? s.tabActive : ''}`}
+                    onClick={() => setActiveTab(activeTab === 'linked' ? null : 'linked')}
+                >
+                    Linked items
+                </button>
+            </div>
+            {activeTab === 'subpages' && (
+                <div className={s.tabPanel}>
+                    <SubPagesPanel
+                        activePage={activePage}
+                        pages={pages}
+                        onSelectPage={onSelectPage}
+                        onAddChild={onNewSubPage}
+                    />
+                </div>
             )}
-
-            {/* Reactions */}
-            <ReactionsBar
-                reactions={activePage.reactions || {}}
-                currentUserId={user?.id}
-                onToggle={(emoji) => onToggleReaction?.(activePage.id, emoji, user?.id)}
-            />
+            {activeTab === 'linked' && (
+                <div className={s.tabPanel}>
+                    <LinkedEntitiesPanel pageId={activePage.id} />
+                </div>
+            )}
 
             {/* Read-only banner */}
             {readOnly && (
@@ -259,14 +343,21 @@ export default function ModalEditor({
                                 onPageLinkClick={onSelectPage}
                                 mentionableUsers={mentionableUsers}
                                 onMention={onMention}
+                                onInsertSprintEmbed={handleInsertSprintEmbed}
+                                onInsertTimeBlock={handleInsertTimeBlock}
+                                onConvertToTask={handleSlashConvertToTask}
+                                onNewOneOnOne={handleSlashNewOneOnOne}
                             />
 
-                            <SubPagesPanel
-                                activePage={activePage}
-                                pages={pages}
-                                onSelectPage={onSelectPage}
-                                onAddChild={onNewSubPage}
-                            />
+                            {/* Tier 6 — live embedded blocks */}
+                            {sprintEmbeds.map(e => (
+                                <SprintEmbedBlock key={e.id}
+                                    onRemove={() => setSprintEmbeds(prev => prev.filter(p => p.id !== e.id))} />
+                            ))}
+                            {timeEmbeds.map(e => (
+                                <TimeTrackingBlock key={e.id}
+                                    onRemove={() => setTimeEmbeds(prev => prev.filter(p => p.id !== e.id))} />
+                            ))}
 
                             <BacklinksPanel
                                 activePage={activePage}
@@ -289,10 +380,24 @@ export default function ModalEditor({
                 <div className={s.wordCountInner}>
                     <span>{wc.words} words · {wc.chars} chars</span>
                     {activePage.createdAt && (
-                        <span className={s.wordCountMeta}>· Created {formatDate(activePage.createdAt)}</span>
+                        <span className={s.wordCountMeta}>
+                            · Created {formatDate(activePage.createdAt)}
+                            {activePage.createdBy && (() => {
+                                const u = mentionableUsers.find(m => m.id === activePage.createdBy);
+                                const name = activePage.createdBy === user?.id ? 'you' : (u?.name || u?.full_name || null);
+                                return name ? ` by ${name}` : '';
+                            })()}
+                        </span>
                     )}
                     {activePage.updatedAt && (
-                        <span className={s.wordCountMeta}>· Edited {formatDate(activePage.updatedAt)}</span>
+                        <span className={s.wordCountMeta}>
+                            · Edited {formatDate(activePage.updatedAt)}
+                            {activePage.lastEditedBy && (() => {
+                                const u = mentionableUsers.find(m => m.id === activePage.lastEditedBy);
+                                const name = activePage.lastEditedBy === user?.id ? 'you' : (u?.name || u?.full_name || null);
+                                return name ? ` by ${name}` : '';
+                            })()}
+                        </span>
                     )}
                 </div>
             </div>

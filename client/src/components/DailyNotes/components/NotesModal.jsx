@@ -6,6 +6,7 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import EditorTopBar from './EditorTopBar';
 import ModalEditor from './ModalEditor';
+import ReportPickerModal from './ReportPickerModal';
 import s from './NotesModal.module.css';
 
 export default function NotesModal({ store, embedded = false }) {
@@ -30,6 +31,10 @@ export default function NotesModal({ store, embedded = false }) {
     // Collaboration
     mentionableUsers, handleMention,
     collabUsers, collabConnected,
+    // Tier 6 integrations
+    handleNewOneOnOneWithPrefill,
+    handleConvertToTask,
+    reportPickerOpen, setReportPickerOpen,
   } = store;
 
   const onClose = () => setMaximized(false);
@@ -84,10 +89,17 @@ export default function NotesModal({ store, embedded = false }) {
             onMention={handleMention}
             collabUsers={collabUsers}
             collabConnected={collabConnected}
+            onConvertToTask={handleConvertToTask}
+            onNewOneOnOne={handleNewOneOnOneWithPrefill}
           />
         </div>
       </div>
 
+      <ReportPickerModal
+        isOpen={reportPickerOpen}
+        onClose={() => setReportPickerOpen(false)}
+        onSelect={(reportUserId) => handleNewOneOnOneWithPrefill(reportUserId)}
+      />
     </div>
   );
 

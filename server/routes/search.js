@@ -73,14 +73,29 @@ router.get('/', async (req, res) => {
                 noteResults = nb.pages
                     .filter(p =>
                         (p.title || '').toLowerCase().includes(lower) ||
-                        (p.content || '').replace(/<[^>]*>/g, '').toLowerCase().includes(lower)
+                        (p.content || '').replace(/<[^>]*>/g, '').toLowerCase().includes(lower) ||
+                        (p.tags || []).some(t => t.toLowerCase().includes(lower))
                     )
-                    .slice(0, 10)
-                    .map(p => ({
-                        id: p.id,
-                        title: p.title || 'Untitled',
-                        snippet: (p.content || '').replace(/<[^>]*>/g, '').slice(0, 120),
-                    }));
+                    .slice(0, 15)
+                    .map(p => {
+                        // Generate a context snippet around the match
+                        const plainText = (p.content || '').replace(/<[^>]*>/g, '');
+                        let snippet = plainText.slice(0, 120);
+                        const matchIdx = plainText.toLowerCase().indexOf(lower);
+                        if (matchIdx > 20) {
+                            const start = Math.max(0, matchIdx - 40);
+                            snippet = '…' + plainText.slice(start, start + 120);
+                        }
+                        return {
+                            id: p.id,
+                            title: p.title || 'Untitled',
+                            snippet,
+                            tags: (p.tags || []).slice(0, 5),
+                            pinned: !!p.pinned,
+                            folderId: p.folderId || null,
+                            updatedAt: p.updatedAt || null,
+                        };
+                    });
             }
         }
 

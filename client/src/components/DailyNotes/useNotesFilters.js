@@ -7,11 +7,12 @@ export const SMART_FOLDER_IDS = {
     TODOS: 'view:todos',
     TODAY: 'view:today',
     WEEK: 'view:week',
+    LIKED: 'view:liked',
 };
 
 /* Apply a smart-folder filter to a list of pages. Returns the
    list unchanged if the filter id isn't a smart-folder id. */
-function applySmartFolder(list, filterId) {
+function applySmartFolder(list, filterId, currentUserId) {
     if (!filterId || !filterId.startsWith('view:')) return list;
     const dayMs = 24 * 60 * 60 * 1000;
     switch (filterId) {
@@ -27,6 +28,11 @@ function applySmartFolder(list, filterId) {
             const cutoff = Date.now() - 7 * dayMs;
             return list.filter(p => new Date(p.updatedAt || 0).getTime() >= cutoff);
         }
+        case SMART_FOLDER_IDS.LIKED:
+            return list.filter(p => {
+                const likes = p.reactions?.['👍'];
+                return Array.isArray(likes) && likes.includes(currentUserId);
+            });
         default:
             return list;
     }
@@ -45,6 +51,7 @@ export function useNotesFilters({
     folderFilter,
     searchQuery,
     dropdownSearch,
+    currentUserId,
 }) {
     const activePage = pages.find(p => p.id === activePageId) || null;
 
@@ -58,7 +65,7 @@ export function useNotesFilters({
         let list = pages.filter(p => showArchived ? p.archived : !p.archived);
         if (folderFilter !== 'all') {
             if (folderFilter && folderFilter.startsWith('view:')) {
-                list = applySmartFolder(list, folderFilter);
+                list = applySmartFolder(list, folderFilter, currentUserId);
             } else if (folderFilter === 'none') {
                 list = list.filter(p => !p.folderId);
             } else {
@@ -82,7 +89,7 @@ export function useNotesFilters({
                 default: return new Date(b.updatedAt) - new Date(a.updatedAt);
             }
         });
-    }, [pages, showArchived, folderFilter, searchQuery, sortBy]);
+    }, [pages, showArchived, folderFilter, searchQuery, sortBy, currentUserId]);
 
     const dropdownPages = useMemo(() => {
         let list = pages.filter(p => !p.archived);

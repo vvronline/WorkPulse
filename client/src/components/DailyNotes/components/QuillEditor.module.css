@@ -1,6 +1,6 @@
-/* Shared Quill wrapper styles for both inline and modal variants */
+/* QuillEditor — clean writing surface */
 
-/* ── Shared base ────────────────────────────────────────── */
+/* ── Shared base ── */
 .inlineWrap,
 .modalWrap {
   flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0;
@@ -11,7 +11,9 @@
 }
 .inlineWrap :global(.ql-toolbar.ql-snow),
 .modalWrap  :global(.ql-toolbar.ql-snow) {
-  border: none; border-bottom: 1px solid var(--border); flex-shrink: 0;
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  flex-shrink: 0;
 }
 .inlineWrap :global(.ql-container.ql-snow),
 .modalWrap  :global(.ql-container.ql-snow) {
@@ -20,29 +22,31 @@
 }
 .inlineWrap :global(.ql-editor),
 .modalWrap  :global(.ql-editor) {
-  flex: 1; line-height: 1.75; color: var(--text-primary);
+  flex: 1; line-height: 1.7; color: var(--text-primary);
   box-sizing: border-box;
 }
 .inlineWrap :global(.ql-editor.ql-blank::before),
 .modalWrap  :global(.ql-editor.ql-blank::before) {
-  color: var(--text-muted); font-style: italic;
+  color: var(--text-muted); font-style: italic; opacity: 0.5;
 }
 
-/* ── Inline-specific ────────────────────────────────────── */
+/* ── Inline ── */
 .inlineWrap :global(.ql-toolbar.ql-snow) {
-  background: var(--bg-secondary); padding: 5px 8px;
+  background: var(--bg-secondary); padding: 4px 8px;
 }
-.inlineWrap :global(.ql-editor) { font-size: 0.88rem; padding: 0.85rem 1rem; min-height: 180px; }
+.inlineWrap :global(.ql-editor) { font-size: 0.88rem; padding: 0.75rem 1rem; min-height: 180px; }
 
-/* ── Modal-specific ─────────────────────────────────────── */
+/* ── Modal ── */
 .modalWrap :global(.ql-toolbar.ql-snow) {
-  background: var(--bg-elevated, rgba(255,255,255,0.02)); padding: 6px 12px;
+  background: transparent; padding: 4px 0;
 }
-.modalWrap :global(.ql-editor) { font-size: 0.95rem; padding: 1.25rem 1.5rem; min-height: 300px; }
+.modalWrap :global(.ql-editor) {
+  font-size: 0.95rem; padding: 0.35rem 0; min-height: 300px;
+}
 
-/* ── Content styles (shared) ────────────────────────────── */
+/* ── Content styles ── */
 .inlineWrap :global(.ql-editor p),
-.modalWrap  :global(.ql-editor p) { margin-bottom: 0.3em; }
+.modalWrap  :global(.ql-editor p) { margin-bottom: 0.25em; }
 
 .inlineWrap :global(.ql-editor blockquote),
 .modalWrap  :global(.ql-editor blockquote) {
@@ -50,13 +54,13 @@
   color: var(--text-secondary, var(--text-muted)); margin: 0.4em 0;
 }
 
-/* ── Callout blocks (slash command: /callout-info|tip|warn|success) ── */
+/* ── Callout blocks ── */
 .inlineWrap :global(.ql-editor .ql-callout),
 .modalWrap  :global(.ql-editor .ql-callout) {
   position: relative;
-  border-radius: 10px;
-  padding: 0.7rem 0.85rem 0.7rem 2.4rem;
-  margin: 0.6em 0;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem 0.6rem 2.2rem;
+  margin: 0.5em 0;
   border: 1px solid var(--border);
   background: var(--bg-secondary, rgba(255,255,255,0.03));
   line-height: 1.55;
@@ -64,66 +68,66 @@
 .inlineWrap :global(.ql-editor .ql-callout)::before,
 .modalWrap  :global(.ql-editor .ql-callout)::before {
   position: absolute;
-  left: 0.85rem; top: 0.7rem;
+  left: 0.7rem; top: 0.6rem;
   font-size: 1rem; line-height: 1.2;
   font-family: 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
 }
 
 .inlineWrap :global(.ql-editor .ql-callout[data-callout="info"]),
 .modalWrap  :global(.ql-editor .ql-callout[data-callout="info"]) {
-  background: rgba(14, 165, 233, 0.10);
-  border-color: rgba(14, 165, 233, 0.35);
-  color: inherit;
+  background: rgba(14, 165, 233, 0.08);
+  border-color: rgba(14, 165, 233, 0.25);
 }
 .inlineWrap :global(.ql-editor .ql-callout[data-callout="info"])::before,
 .modalWrap  :global(.ql-editor .ql-callout[data-callout="info"])::before { content: 'ℹ️'; }
 
 .inlineWrap :global(.ql-editor .ql-callout[data-callout="tip"]),
 .modalWrap  :global(.ql-editor .ql-callout[data-callout="tip"]) {
-  background: rgba(168, 85, 247, 0.10);
-  border-color: rgba(168, 85, 247, 0.35);
+  background: rgba(168, 85, 247, 0.08);
+  border-color: rgba(168, 85, 247, 0.25);
 }
 .inlineWrap :global(.ql-editor .ql-callout[data-callout="tip"])::before,
 .modalWrap  :global(.ql-editor .ql-callout[data-callout="tip"])::before { content: '💡'; }
 
 .inlineWrap :global(.ql-editor .ql-callout[data-callout="warn"]),
 .modalWrap  :global(.ql-editor .ql-callout[data-callout="warn"]) {
-  background: rgba(245, 158, 11, 0.12);
-  border-color: rgba(245, 158, 11, 0.40);
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.28);
 }
 .inlineWrap :global(.ql-editor .ql-callout[data-callout="warn"])::before,
 .modalWrap  :global(.ql-editor .ql-callout[data-callout="warn"])::before { content: '⚠️'; }
 
 .inlineWrap :global(.ql-editor .ql-callout[data-callout="success"]),
 .modalWrap  :global(.ql-editor .ql-callout[data-callout="success"]) {
-  background: rgba(34, 197, 94, 0.10);
-  border-color: rgba(34, 197, 94, 0.35);
+  background: rgba(34, 197, 94, 0.08);
+  border-color: rgba(34, 197, 94, 0.25);
 }
 .inlineWrap :global(.ql-editor .ql-callout[data-callout="success"])::before,
 .modalWrap  :global(.ql-editor .ql-callout[data-callout="success"])::before { content: '✅'; }
 
-/* ── Code blocks: monospace card ── */
+/* ── Code blocks ── */
 .inlineWrap :global(.ql-editor pre.ql-syntax),
 .inlineWrap :global(.ql-editor pre),
 .modalWrap  :global(.ql-editor pre.ql-syntax),
 .modalWrap  :global(.ql-editor pre) {
-  background: rgba(15, 23, 42, 0.55);
+  background: rgba(15, 23, 42, 0.5);
   color: #e5e7eb;
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
   border-radius: 8px;
-  padding: 0.7rem 0.95rem;
-  margin: 0.5em 0;
+  padding: 0.65rem 0.9rem;
+  margin: 0.4em 0;
   overflow-x: auto;
   font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.85em;
+  font-size: 0.84em;
   line-height: 1.6;
 }
 [data-theme="light"] .inlineWrap :global(.ql-editor pre),
 [data-theme="light"] .inlineWrap :global(.ql-editor pre.ql-syntax),
 [data-theme="light"] .modalWrap  :global(.ql-editor pre),
 [data-theme="light"] .modalWrap  :global(.ql-editor pre.ql-syntax) {
-  background: #f4f5f7; color: #1a1a2e;
+  background: #f5f6f8; color: #1a1a2e;
 }
+
 .inlineWrap :global(.ql-editor ul),
 .inlineWrap :global(.ql-editor ol),
 .modalWrap  :global(.ql-editor ul),
@@ -131,26 +135,27 @@
 
 .inlineWrap :global(.ql-editor hr),
 .modalWrap  :global(.ql-editor hr) {
-  border: none; border-top: 2px solid var(--border); margin: 1em 0;
+  border: none; border-top: 1px solid var(--border); margin: 0.8em 0; opacity: 0.5;
 }
+
 .inlineWrap :global(.ql-editor h1),
-.modalWrap  :global(.ql-editor h1) { font-size: 1.6em; font-weight: 700; margin: 0.5em 0 0.3em; }
+.modalWrap  :global(.ql-editor h1) { font-size: 1.5em; font-weight: 700; margin: 0.5em 0 0.2em; letter-spacing: -0.01em; }
 .inlineWrap :global(.ql-editor h2),
-.modalWrap  :global(.ql-editor h2) { font-size: 1.3em; font-weight: 700; margin: 0.45em 0 0.25em; }
+.modalWrap  :global(.ql-editor h2) { font-size: 1.25em; font-weight: 600; margin: 0.4em 0 0.2em; }
 .inlineWrap :global(.ql-editor h3),
-.modalWrap  :global(.ql-editor h3) { font-size: 1.1em; font-weight: 600; margin: 0.4em 0 0.2em; }
+.modalWrap  :global(.ql-editor h3) { font-size: 1.05em; font-weight: 600; margin: 0.35em 0 0.15em; }
 
 .inlineWrap :global(.ql-editor img),
 .modalWrap  :global(.ql-editor img) {
   max-width: 100%; height: auto; display: block; cursor: pointer;
-  border-radius: 4px; transition: box-shadow 0.15s;
+  border-radius: 6px; transition: box-shadow 0.12s;
 }
 .inlineWrap :global(.ql-editor img:hover),
 .modalWrap  :global(.ql-editor img:hover) {
-  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.5);
+  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.4);
 }
 
-/* ── Toolbar icon colours ───────────────────────────────── */
+/* ── Toolbar icons ── */
 .inlineWrap :global(.ql-toolbar .ql-stroke),
 .modalWrap  :global(.ql-toolbar .ql-stroke) { stroke: var(--text-secondary, #9ca3af); }
 .inlineWrap :global(.ql-toolbar .ql-fill),
@@ -175,7 +180,7 @@
   color: var(--text-primary); border-radius: 6px;
 }
 
-/* ── Custom toolbar buttons: divider + timestamp ─────────── */
+/* ── Custom toolbar buttons ── */
 .inlineWrap :global(button.ql-divider),
 .modalWrap  :global(button.ql-divider) { width: 28px !important; position: relative; font-size: 0; }
 .inlineWrap :global(button.ql-divider)::after,
@@ -190,7 +195,7 @@
 .inlineWrap :global(button.ql-timestamp)::after,
 .modalWrap  :global(button.ql-timestamp)::after { content: '🕐'; font-size: 13px; line-height: 1; }
 
-/* ── Light theme overrides ──────────────────────────────── */
+/* ── Light theme ── */
 [data-theme="light"] .inlineWrap :global(.ql-toolbar.ql-snow) { background: #f8f9fc; }
 [data-theme="light"] .inlineWrap :global(.ql-toolbar .ql-stroke),
 [data-theme="light"] .modalWrap  :global(.ql-toolbar .ql-stroke) { stroke: #555; }
@@ -198,4 +203,4 @@
 [data-theme="light"] .modalWrap  :global(.ql-toolbar .ql-fill)   { fill:  #555; }
 [data-theme="light"] .inlineWrap :global(.ql-editor),
 [data-theme="light"] .modalWrap  :global(.ql-editor) { color: #1a1a2e; }
-[data-theme="light"] .modalWrap  :global(.ql-toolbar.ql-snow) { background: #f8f9fc; }
+[data-theme="light"] .modalWrap  :global(.ql-toolbar.ql-snow) { background: transparent; }

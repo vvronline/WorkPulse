@@ -29,6 +29,8 @@ export function newPage(title = 'Untitled', folderId = null, parentPageId = null
     content: '',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    createdBy: null,
+    lastEditedBy: null,
     pinned: false,
     tags: [],
     folderId,
@@ -39,7 +41,7 @@ export function newPage(title = 'Untitled', folderId = null, parentPageId = null
     coverColor: '',      // optional hex/css colour for cover band
     readOnly: false,     // locked from editing
     properties: {},      // { status, priority, dueDate, owner, ... }
-    reactions: {},       // { '👍': [userId, ...], '🎉': [...] }
+    reactions: {},       // { '👍': [userId, ...] }
   };
 }
 

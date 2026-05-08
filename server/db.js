@@ -1063,6 +1063,23 @@ async function initTenantSchema(q) {
         CREATE INDEX IF NOT EXISTS idx_nb_pages_tenant ON notebook_pages(tenant_id)
     `);
 
+    // ---- Note ↔ Entity links (Tier 6 integrations) ----
+    await q(`
+        CREATE TABLE IF NOT EXISTS note_links (
+            id           SERIAL PRIMARY KEY,
+            user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            page_id      TEXT NOT NULL,
+            entity_type  TEXT NOT NULL CHECK(entity_type IN ('task','calendar_event','meeting')),
+            entity_id    INTEGER NOT NULL,
+            created_at   TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(page_id, entity_type, entity_id)
+        )
+    `);
+    await q(`
+        CREATE INDEX IF NOT EXISTS idx_note_links_page   ON note_links(page_id);
+        CREATE INDEX IF NOT EXISTS idx_note_links_entity ON note_links(entity_type, entity_id);
+    `);
+
     logger.info('Tenant schema initialised');
 }
 

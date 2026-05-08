@@ -122,6 +122,7 @@ export {
     ListTree,
     ChevronsRight,
     Smile,
+    Heart,
 
     // Chat / Communication
     Phone,

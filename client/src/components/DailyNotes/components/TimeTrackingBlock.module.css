@@ -1,0 +1,132 @@
+/* TimeTrackingBlock styles */
+.card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin: 12px 0;
+    background: var(--bg-card, var(--bg-secondary));
+    user-select: none;
+}
+.header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 10px;
+    color: var(--text-primary);
+}
+.title {
+    font-weight: 700;
+    font-size: 14px;
+    flex: 1;
+}
+.activeBadge {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.12);
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+.doneBadge {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: var(--bg-hover);
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+.refreshBtn {
+    background: none;
+    border: none;
+    padding: 3px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-radius: 4px;
+}
+.refreshBtn:hover { color: var(--accent, #6366f1); background: var(--bg-hover); }
+.removeBtn {
+    background: none;
+    border: none;
+    padding: 3px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-radius: 4px;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.card:hover .removeBtn { opacity: 1; }
+.removeBtn:hover { color: var(--danger, #ef4444); background: var(--bg-hover); }
+.ctxMenu {
+    background: var(--bg-card, var(--bg-secondary));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+    padding: 4px;
+    min-width: 160px;
+}
+.ctxItem {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 10px;
+    font-size: 12px;
+    background: none;
+    border: none;
+    border-radius: 5px;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+}
+.ctxItem:hover { background: var(--bg-hover); }
+.ctxDanger:hover { background: rgba(239,68,68,0.1); color: var(--danger, #ef4444); }
+.grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.metric {
+    text-align: center;
+    padding: 6px 4px;
+    background: var(--bg-hover, rgba(0,0,0,0.1));
+    border-radius: 8px;
+}
+.metricValue {
+    display: block;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+.metricLabel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    font-size: 10px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+.mode {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+.loading, .empty {
+    font-size: 12px;
+    color: var(--text-secondary);
+    text-align: center;
+    padding: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}

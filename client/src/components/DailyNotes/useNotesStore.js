@@ -9,7 +9,7 @@ import { newPage, newFolder, getDescendantFolderIds, getDescendantPageIds, extra
 import { useNotesPersistence } from './useNotesPersistence';
 import { useNotesFilters } from './useNotesFilters';
 import { useClickOutside } from '../../hooks/useClickOutside';
-import { getTemplate } from './templates';
+import { getTemplate, buildJournalPrefillHtml, buildOneOnOnePrefillHtml } from './templates';
 import {
     savePageAsPdf,
     savePageAsMarkdown,
@@ -18,7 +18,10 @@ import {
     readFileAsText,
 } from './notesExport';
 import { markdownToHtml } from './notesMarkdown';
-import { getMentionableUsers, sendNoteMention } from '../../api';
+import {
+    getMentionableUsers, sendNoteMention,
+    getDailyPrefill, getOneOnOnePrefill, convertToTask,
+} from '../../api';
 import useCollaboration from './useCollaboration';
 import { useAuth } from '../../AuthContext';
 
@@ -90,6 +93,7 @@ export function useNotesStore(userId) {
     /* ── Derived values ─────────────────────────────────────── */
     const { activePage, wc, processedPages, dropdownPages } = useNotesFilters({
         pages, activePageId, sortBy, showArchived, folderFilter, searchQuery, dropdownSearch,
+        currentUserId: user?.id,
     });
 
     /* ── Focus rename input when it mounts ──────────────────── */
@@ -179,7 +183,7 @@ export function useNotesStore(userId) {
 
     const handleContentChange = (content) => {
         const updated = pages.map(p =>
-            p.id === activePageId ? { ...p, content, updatedAt: new Date().toISOString() } : p,
+            p.id === activePageId ? { ...p, content, updatedAt: new Date().toISOString(), lastEditedBy: user?.id || null } : p,
         );
         setPages(updated);
         scheduleAutoSave(updated, folders, activePageId);
@@ -203,6 +207,8 @@ export function useNotesStore(userId) {
             : (folderFilter !== 'all' && folderFilter !== 'none' ? folderFilter : null);
         const title = (typeof inlineTitle === 'string' && inlineTitle.trim()) ? inlineTitle.trim() : 'Untitled';
         const page = newPage(title, folderId);
+        page.createdBy = user?.id || null;
+        page.lastEditedBy = user?.id || null;
         const updated = [...pages, page];
         setPages(updated);
         setActivePageId(page.id);
@@ -243,30 +249,30 @@ export function useNotesStore(userId) {
         const html = (typeof tpl.html === 'function' ? tpl.html() : tpl.html) || '';
 
         // If template specifies a folder name, find or create it.
+        // Build the next folders list once so we can persist it consistently —
+        // the previous nested-ternary version always returned `folders` (stale)
+        // for the persist call, so newly-created template folders weren't saved.
         let folderId = null;
+        let nextFolders = folders;
         if (tpl.folderName) {
             const existing = folders.find(f => f.name.toLowerCase() === tpl.folderName.toLowerCase() && !f.parentId);
             if (existing) {
                 folderId = existing.id;
             } else {
                 const f = newFolder(tpl.folderName, null);
-                const updatedFolders = [...folders, f];
-                setFolders(updatedFolders);
+                nextFolders = [...folders, f];
+                setFolders(nextFolders);
                 folderId = f.id;
-                // Note: we'll persist together with the new page below.
             }
         }
 
         const page = { ...newPage(title, folderId), content: html };
+        page.createdBy = user?.id || null;
+        page.lastEditedBy = user?.id || null;
         const updatedPages = [...pages, page];
-        const finalFolders = tpl.folderName && !folders.some(f => f.id === folderId)
-            ? [...folders, { id: folderId, name: tpl.folderName, parentId: null, sortOrder: Date.now() }]
-            : folders.some(f => f.id === folderId) || !folderId
-                ? folders
-                : folders;
         setPages(updatedPages);
         setActivePageId(page.id);
-        persist(updatedPages, finalFolders, page.id);
+        persist(updatedPages, nextFolders, page.id);
         setView('editor');
         setMenuOpen(false);
 
@@ -276,8 +282,8 @@ export function useNotesStore(userId) {
         }
     };
 
-    /* ── Open or create today's journal entry ───────────────── */
-    const handleOpenTodayJournal = () => {
+    /* ── Open or create today's journal entry (with auto-prefill) ─ */
+    const handleOpenTodayJournal = async () => {
         const tpl = getTemplate('journal');
         const title = tpl.title();
         const existing = pages.find(p => p.title === title && !p.archived);
@@ -285,7 +291,93 @@ export function useNotesStore(userId) {
             openEditor(existing.id);
             return;
         }
-        handleNewFromTemplate('journal');
+        // Fetch daily prefill data from server, then create the page
+        let html = tpl.html();
+        try {
+            const res = await getDailyPrefill();
+            if (res.data) {
+                html = buildJournalPrefillHtml(res.data);
+            }
+        } catch { /* fall back to static template */ }
+
+        // Find or create Journal folder. Build the next folders list once so
+        // we set state and persist using the same value (the previous version
+        // used an inconsistent `finalFolders` derivation).
+        let folderId = null;
+        let nextFolders = folders;
+        if (tpl.folderName) {
+            const existingFolder = folders.find(f => f.name.toLowerCase() === tpl.folderName.toLowerCase() && !f.parentId);
+            if (existingFolder) {
+                folderId = existingFolder.id;
+            } else {
+                const f = newFolder(tpl.folderName, null);
+                nextFolders = [...folders, f];
+                setFolders(nextFolders);
+                folderId = f.id;
+            }
+        }
+
+        const page = { ...newPage(title, folderId), content: html };
+        page.createdBy = user?.id || null;
+        page.lastEditedBy = user?.id || null;
+        const updatedPages = [...pages, page];
+        setPages(updatedPages);
+        setActivePageId(page.id);
+        persist(updatedPages, nextFolders, page.id);
+        setView('editor');
+        setMenuOpen(false);
+    };
+
+    /* ── Create 1-on-1 page with auto-prefill for a direct report ──
+       If a 1-on-1 with this report already exists for today, open it
+       instead of creating a duplicate. Without this guard, repeatedly
+       clicking the slash-menu entry produces a stack of identical pages. */
+    const handleNewOneOnOneWithPrefill = async (reportUserId) => {
+        const tpl = getTemplate('oneonone');
+        let html = tpl.html();
+        let reportName = 'Team member';
+        try {
+            const res = await getOneOnOnePrefill(reportUserId);
+            if (res.data) {
+                reportName = res.data.report?.fullName || reportName;
+                html = buildOneOnOnePrefillHtml(res.data);
+            }
+        } catch { /* fall back to static template */ }
+
+        const dateLabel = new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+        const title = `1-on-1 with ${reportName} — ${dateLabel}`;
+
+        // Reuse an existing page with the same title for today if present.
+        const existing = pages.find(p => !p.archived && p.title === title);
+        if (existing) {
+            openEditor(existing.id);
+            return;
+        }
+
+        const page = { ...newPage(title, activePage?.folderId || null), content: html };
+        page.createdBy = user?.id || null;
+        page.lastEditedBy = user?.id || null;
+        const updated = [...pages, page];
+        setPages(updated);
+        setActivePageId(page.id);
+        persist(updated, folders, page.id);
+        setView('editor');
+        setMenuOpen(false);
+    };
+
+    /* ── Convert a checklist item text into a real Task ── */
+    const handleConvertToTask = async (taskTitle) => {
+        if (!taskTitle?.trim()) return null;
+        try {
+            const res = await convertToTask(
+                taskTitle.trim(),
+                activePageId,
+                activePage?.title || 'Untitled',
+            );
+            return res.data?.task || null;
+        } catch {
+            return null;
+        }
     };
 
     const handleDeletePage = () => setConfirmDelete(true);
@@ -360,6 +452,8 @@ export function useNotesStore(userId) {
         const parent = pages.find(p => p.id === parentPageId);
         const folderId = parent?.folderId || null;
         const child = newPage(title, folderId, parentPageId);
+        child.createdBy = user?.id || null;
+        child.lastEditedBy = user?.id || null;
         const updated = [...pages, child];
         setPages(updated);
         setActivePageId(child.id);
@@ -828,6 +922,15 @@ export function useNotesStore(userId) {
         setTimeout(() => setSavedFlash(false), 2000);
     };
 
+    /* ── Tier 6: 1-on-1 report picker ─────────────────────── */
+    const [reportPickerOpen, setReportPickerOpen] = useState(false);
+
+    useEffect(() => {
+        const onOpen = () => setReportPickerOpen(true);
+        document.addEventListener('notes:open-oneonone-picker', onOpen);
+        return () => document.removeEventListener('notes:open-oneonone-picker', onOpen);
+    }, []);
+
     /* ── Collaboration: @mentions + real-time editing ──────── */
     const [mentionableUsers, setMentionableUsers] = useState([]);
 
@@ -929,5 +1032,9 @@ export function useNotesStore(userId) {
         // Collaboration — @mentions + presence
         mentionableUsers, handleMention,
         collabUsers, collabConnected,
+        // Tier 6 — WorkPulse integrations
+        handleNewOneOnOneWithPrefill,
+        handleConvertToTask,
+        reportPickerOpen, setReportPickerOpen,
     };
 }

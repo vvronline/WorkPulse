@@ -35,3 +35,11 @@ jest.mock('./utils/tenantManager', () => ({
     reactivateTenant: jest.fn(),
     provisionTenant: jest.fn(),
 }));
+
+// Mock the collaboration module — it pulls in @hocuspocus/server which ships
+// as ESM and breaks Jest's CommonJS loader. The notes route only uses
+// `handleMention`, so a tiny stub is enough for tests.
+jest.mock('./utils/collaboration', () => ({
+    setupCollaborationServer: jest.fn(),
+    handleMention: jest.fn().mockResolvedValue(undefined),
+}));

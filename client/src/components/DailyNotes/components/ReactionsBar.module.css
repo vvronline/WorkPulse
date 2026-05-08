@@ -1,86 +1,99 @@
 .bar {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin: 6px 0 4px;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
-.chip {
+.likeBtn {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 2px 8px 2px 6px;
-  border: 1px solid var(--notes-border, var(--border));
-  background: var(--notes-surface-1, var(--bg-secondary));
-  color: var(--notes-text, var(--text-primary));
-  border-radius: 99px;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
-}
-.chip:hover {
-  background: var(--notes-surface-2, var(--bg-hover));
-  border-color: color-mix(in srgb, var(--notes-accent, #0ea5e9) 35%, transparent);
-}
-.chipActive {
-  background: var(--notes-accent-soft, color-mix(in srgb, var(--primary) 14%, transparent));
-  border-color: color-mix(in srgb, var(--notes-accent, var(--primary)) 50%, transparent);
-  color: var(--notes-accent, var(--primary));
-}
-.chipEmoji { font-size: 14px; line-height: 1; }
-.chipCount { font-weight: 500; }
-
-.pickerWrap { position: relative; display: inline-flex; }
-.addBtn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 9px;
-  border: 1px dashed var(--notes-border, var(--border));
+  padding: 4px 10px;
+  border: none;
   background: transparent;
   color: var(--notes-text-muted, var(--text-muted));
-  border-radius: 99px;
+  border-radius: 6px;
   font: inherit;
   font-size: 12px;
   cursor: pointer;
-  transition: background 0.12s, color 0.12s, border-style 0.12s, border-color 0.12s;
+  transition: background 0.12s, color 0.12s;
 }
-.addBtn:hover {
-  background: var(--notes-surface-1, var(--bg-hover));
+.likeBtn:hover {
+  background: var(--notes-surface-1, var(--bg-hover, rgba(255,255,255,0.06)));
   color: var(--notes-text, var(--text-primary));
-  border-style: solid;
-  border-color: color-mix(in srgb, var(--notes-accent, var(--primary)) 45%, transparent);
 }
-.addLabel { font-size: 11px; }
+.likeBtnActive {
+  color: #ef4444;
+}
+.likeBtnActive:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
 
-.picker {
+.heartEmpty { opacity: 0.6; }
+.heartFilled { fill: #ef4444; color: #ef4444; opacity: 1; }
+
+.likeCount {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.namesWrap { position: relative; display: inline-flex; }
+.namesBtn {
+  background: none;
+  border: none;
+  color: var(--notes-text-muted, var(--text-muted));
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background 0.1s, color 0.1s;
+}
+.namesBtn:hover {
+  background: var(--notes-surface-1, var(--bg-hover, rgba(255,255,255,0.06)));
+  color: var(--notes-text, var(--text-primary));
+}
+
+.usersList {
   position: absolute;
   z-index: 60;
-  bottom: calc(100% + 6px);
+  bottom: calc(100% + 4px);
   left: 0;
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 2px;
-  padding: 6px;
+  min-width: 140px;
+  max-width: 220px;
+  padding: 6px 4px;
   background: var(--notes-surface-elev, var(--bg-secondary));
   border: 1px solid var(--notes-border, var(--border));
   border-radius: 8px;
-  box-shadow: var(--notes-shadow-md, 0 6px 24px rgba(0, 0, 0, 0.18));
+  box-shadow: 0 6px 20px rgba(0,0,0,0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: fadeIn 0.1s ease;
 }
-.pickerEmoji {
-  background: transparent;
-  border: none;
-  color: var(--notes-text, var(--text-primary));
-  font-size: 20px;
-  width: 32px;
-  height: 32px;
-  border-radius: 5px;
-  cursor: pointer;
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.userItem {
   display: flex;
   align-items: center;
-  justify-content: center;
-  transition: background 0.12s;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--notes-text, var(--text-primary));
+  border-radius: 4px;
 }
-.pickerEmoji:hover { background: var(--notes-surface-2, var(--bg-hover)); }
+.userDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ef4444;
+  flex-shrink: 0;
+}
+
+[data-theme="light"] .usersList { background: #fff; }
+

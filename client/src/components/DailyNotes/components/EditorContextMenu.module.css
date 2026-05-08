@@ -1,0 +1,108 @@
+/* EditorContextMenu styles */
+
+.overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+}
+
+.menu {
+    background: var(--bg-card, var(--bg-secondary));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.08);
+    padding: 4px;
+    min-width: 180px;
+    max-width: 240px;
+    animation: ctxFadeIn 0.1s ease-out;
+}
+
+@keyframes ctxFadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px 4px;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-tertiary, var(--text-secondary));
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 2px;
+    pointer-events: none;
+    user-select: none;
+}
+
+.item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 10px;
+    font-size: 12px;
+    background: none;
+    border: none;
+    border-radius: 5px;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.1s;
+    position: relative;
+}
+
+.item:hover {
+    background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+}
+
+.item.danger:hover {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--danger, #ef4444);
+}
+
+.shortcut {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--text-tertiary, var(--text-secondary));
+    opacity: 0.6;
+    font-family: monospace;
+}
+
+.separator {
+    height: 1px;
+    background: var(--border);
+    margin: 3px 6px;
+}
+
+.subMenuWrap {
+    position: relative;
+}
+
+.subArrow {
+    margin-left: auto;
+    opacity: 0.5;
+}
+
+.subMenu {
+    position: absolute;
+    left: 100%;
+    top: -4px;
+    background: var(--bg-card, var(--bg-secondary));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    padding: 4px;
+    min-width: 140px;
+    z-index: 1;
+}
+
+.check {
+    margin-left: auto;
+    color: var(--accent, #6366f1);
+    font-weight: 700;
+    font-size: 13px;
+}

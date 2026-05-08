@@ -14,6 +14,7 @@ import ImageResizer from '../../common/ImageResizer';
 import SlashMenu from './SlashMenu';
 import MentionMenu from './MentionMenu';
 import CodeBlockLanguagePicker from './CodeBlockLanguagePicker';
+import EditorContextMenu from './EditorContextMenu';
 import { QUILL_MODULES } from '../quillConfig';
 import { loadKatex } from '../notesAssetsSetup';
 import s from './QuillEditor.module.css';
@@ -60,6 +61,10 @@ export default function QuillEditor({
   onToggleClick,
   mentionableUsers,
   onMention,
+  onInsertSprintEmbed,
+  onInsertTimeBlock,
+  onConvertToTask,
+  onNewOneOnOne,
 }) {
   const wrapClass = variant === 'modal' ? s.modalWrap : s.inlineWrap;
 
@@ -179,6 +184,10 @@ export default function QuillEditor({
         resetKey={resetKey}
         onPickPageLink={onPickPageLink}
         onInsertToc={onInsertToc}
+        onInsertSprintEmbed={onInsertSprintEmbed}
+        onInsertTimeBlock={onInsertTimeBlock}
+        onConvertToTask={onConvertToTask}
+        onNewOneOnOne={onNewOneOnOne}
       />
       <MentionMenu
         quillRef={quillRef}
@@ -191,6 +200,12 @@ export default function QuillEditor({
         quillRef={quillRef}
         pageId={pageId}
         resetKey={resetKey}
+      />
+      <EditorContextMenu
+        quillRef={quillRef}
+        pageId={pageId}
+        resetKey={resetKey}
+        readOnly={readOnly}
       />
     </div>
   );

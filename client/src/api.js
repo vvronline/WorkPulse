@@ -294,6 +294,23 @@ export const getMentionableUsers = () => API.get('/notes/mentionable-users');
 export const sendNoteMention = (mentionedUserId, pageId, pageTitle) =>
     API.post('/notes/mention', { mentionedUserId, pageId, pageTitle });
 
+// Notes — Tier 6 integrations
+export const getNoteLinks = (pageId) => API.get(`/notes/links/${encodeURIComponent(pageId)}`);
+export const addNoteLink = (pageId, entityType, entityId) =>
+    API.post('/notes/links', { pageId, entityType, entityId });
+export const removeNoteLink = (pageId, entityType, entityId) =>
+    API.delete('/notes/links', { data: { pageId, entityType, entityId } });
+export const getDailyPrefill = () => API.get('/notes/daily-prefill');
+export const getOneOnOnePrefill = (userId) => API.get(`/notes/oneonone-prefill/${userId}`);
+export const getTimeSummary = () => API.get('/notes/time-summary');
+export const convertToTask = (title, pageId, pageTitle) =>
+    API.post('/notes/convert-to-task', { title, pageId, pageTitle });
+export const getSprintEmbed = () => API.get('/notes/sprint-embed');
+export const searchNoteTasks = (q) => API.get('/notes/search-tasks', { params: { q } });
+export const searchNoteMeetings = (q) => API.get('/notes/search-meetings', { params: { q } });
+export const searchNoteEvents = (q) => API.get('/notes/search-events', { params: { q } });
+export const getDirectReports = () => API.get('/notes/direct-reports');
+
 // Calendar
 export const getCalendarEvents = (from, to) => API.get('/calendar', { params: { from, to } });
 export const createCalendarEvent = (data) => API.post('/calendar', data);

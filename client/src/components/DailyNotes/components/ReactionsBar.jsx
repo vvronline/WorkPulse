@@ -1,70 +1,65 @@
 /* ─────────────────────────────────────────────────────────
-   ReactionsBar — emoji reactions on a page.
-   Stores `page.reactions = { '👍': [userId, ...], ... }`.
-   Click toggles the current user's reaction.
+   ReactionsBar — simple like button with user names.
+   Stores `page.reactions = { '👍': [userId, ...] }`.
    ───────────────────────────────────────────────────────── */
 import React, { useState, useRef } from 'react';
-import { Smile } from '../../../constants/icons';
+import { Heart } from 'lucide-react';
 import { useClickOutside } from '../../../hooks/useClickOutside';
 import s from './ReactionsBar.module.css';
 
-const QUICK_REACTIONS = ['👍', '🎉', '❤️', '👀', '🚀', '🔥', '✅', '❓', '💡', '😄'];
-
-export default function ReactionsBar({ reactions, currentUserId, onToggle }) {
-    const [pickerOpen, setPickerOpen] = useState(false);
+export default function ReactionsBar({ reactions, currentUserId, onToggle, mentionableUsers = [] }) {
+    const [showUsers, setShowUsers] = useState(false);
     const ref = useRef(null);
-    useClickOutside(ref, () => setPickerOpen(false), pickerOpen);
+    useClickOutside(ref, () => setShowUsers(false), showUsers);
 
-    const entries = Object.entries(reactions || {})
-        .filter(([, ids]) => Array.isArray(ids) && ids.length > 0);
+    const likedIds = reactions?.['👍'] || [];
+    const liked = likedIds.includes(currentUserId);
+    const count = likedIds.length;
 
-    const handleToggle = (emoji) => {
-        onToggle?.(emoji);
-        setPickerOpen(false);
+    const getUserName = (id) => {
+        const u = mentionableUsers.find(m => m.id === id);
+        return u?.name || u?.full_name || 'Unknown';
     };
 
     return (
-        <div className={s.bar} aria-label="Reactions">
-            {entries.map(([emoji, ids]) => {
-                const mine = ids.includes(currentUserId);
-                return (
+        <div className={s.bar}>
+            <button
+                type="button"
+                className={`${s.likeBtn} ${liked ? s.likeBtnActive : ''}`}
+                onClick={() => onToggle?.('👍')}
+                title={liked ? 'Unlike this page' : 'Like this page'}
+            >
+                <Heart size={14} className={liked ? s.heartFilled : s.heartEmpty} />
+                {count > 0 && <span className={s.likeCount}>{count}</span>}
+            </button>
+            {count > 0 && (
+                <div ref={ref} className={s.namesWrap}>
                     <button
-                        key={emoji}
                         type="button"
-                        className={`${s.chip} ${mine ? s.chipActive : ''}`}
-                        onClick={() => handleToggle(emoji)}
-                        title={mine ? 'Remove your reaction' : 'Add reaction'}
+                        className={s.namesBtn}
+                        onClick={() => setShowUsers(o => !o)}
                     >
-                        <span className={s.chipEmoji}>{emoji}</span>
-                        <span className={s.chipCount}>{ids.length}</span>
+                        {count === 1
+                            ? `${liked ? 'You' : getUserName(likedIds[0])} liked this`
+                            : liked
+                                ? count === 2
+                                    ? `You and ${getUserName(likedIds.find(id => id !== currentUserId))} liked this`
+                                    : `You and ${count - 1} other${count - 1 > 1 ? 's' : ''} liked this`
+                                : `${count} people liked this`
+                        }
                     </button>
-                );
-            })}
-            <div ref={ref} className={s.pickerWrap}>
-                <button
-                    type="button"
-                    className={s.addBtn}
-                    onClick={() => setPickerOpen(o => !o)}
-                    title="Add reaction"
-                    aria-label="Add reaction"
-                >
-                    <Smile size={14} />
-                    {entries.length === 0 && <span className={s.addLabel}>React</span>}
-                </button>
-                {pickerOpen && (
-                    <div className={s.picker} role="menu">
-                        {QUICK_REACTIONS.map(e => (
-                            <button
-                                key={e}
-                                type="button"
-                                className={s.pickerEmoji}
-                                onClick={() => handleToggle(e)}
-                                title={e}
-                            >{e}</button>
-                        ))}
-                    </div>
-                )}
-            </div>
+                    {showUsers && (
+                        <div className={s.usersList}>
+                            {likedIds.map(id => (
+                                <div key={id} className={s.userItem}>
+                                    <span className={s.userDot} />
+                                    <span>{id === currentUserId ? 'You' : getUserName(id)}</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 }

@@ -39,6 +39,10 @@ import {
     ListTree,
     CalendarDays,
     Mic,
+    Rocket,
+    Timer,
+    ClipboardCheck,
+    Users,
 } from 'lucide-react';
 import { CODE_LANGUAGES } from '../quillConfig';
 import { extractHeadings } from '../notesUtils';
@@ -57,7 +61,7 @@ import s from './SlashMenu.module.css';
               clear the typed query before inserting.
    ────────────────────────────────────────────────────────── */
 function makeCommands(opts = {}) {
-    const { onPickPageLink, onInsertToc } = opts;
+    const { onPickPageLink, onInsertToc, onInsertSprintEmbed, onInsertTimeBlock, onConvertToTask, onNewOneOnOne } = opts;
     const blockFormat = (format, value = true) => (q) => {
         const range = q.getSelection(true);
         q.formatLine(range.index, 1, format, value, 'user');
@@ -269,6 +273,58 @@ function makeCommands(opts = {}) {
                 }
             },
         },
+        // ── Tier 6: WorkPulse integrations ──────────────────────
+        {
+            id: 'sprint', label: 'Sprint board', hint: 'Embed live sprint board & burndown',
+            icon: Rocket, keys: ['sprint', 'board', 'burndown', 'kanban', 'scrum'],
+            run: (q) => {
+                if (typeof onInsertSprintEmbed === 'function') {
+                    onInsertSprintEmbed(q);
+                } else {
+                    const range = q.getSelection(true);
+                    q.insertText(range.index, '\n📊 [Sprint Board — use the full editor to render live]\n', 'user');
+                }
+            },
+        },
+        {
+            id: 'time', label: 'Time tracking', hint: 'Insert today\'s tracked time summary',
+            icon: Timer, keys: ['time', 'hours', 'clock', 'track', 'timer', 'timesheet'],
+            run: (q) => {
+                if (typeof onInsertTimeBlock === 'function') {
+                    onInsertTimeBlock(q);
+                } else {
+                    const range = q.getSelection(true);
+                    q.insertText(range.index, '\n⏱ [Time Tracking — use the full editor to render live]\n', 'user');
+                }
+            },
+        },
+        {
+            id: 'promote-task', label: 'Convert to task', hint: 'Promote checklist item to a real task',
+            icon: ClipboardCheck, keys: ['task', 'promote', 'convert', 'todo', 'create task'],
+            run: (q) => {
+                if (typeof onConvertToTask === 'function') {
+                    // Get the text of the current line
+                    const range = q.getSelection(true);
+                    if (!range) return;
+                    const [line] = q.getLine(range.index);
+                    const lineText = line?.domNode?.textContent?.trim() || '';
+                    onConvertToTask(q, range, lineText);
+                } else {
+                    if (typeof window !== 'undefined') window.alert('Convert to task is not available in this context.');
+                }
+            },
+        },
+        {
+            id: 'oneonone', label: '1-on-1 with prefill', hint: 'Auto-prefilled 1-on-1 for a direct report',
+            icon: Users, keys: ['oneonone', '1on1', '1-on-1', 'one on one', 'manager', 'report'],
+            run: (q) => {
+                if (typeof onNewOneOnOne === 'function') {
+                    onNewOneOnOne(q);
+                } else {
+                    if (typeof window !== 'undefined') window.alert('1-on-1 prefill is not available in this context.');
+                }
+            },
+        },
         {
             id: 'image', label: 'Image', hint: 'Pick an image to upload',
             icon: ImageIcon, keys: ['image', 'img', 'picture', 'photo'],
@@ -302,10 +358,10 @@ function makeCommands(opts = {}) {
 /* ──────────────────────────────────────────────────────────
    Hook + component
    ────────────────────────────────────────────────────────── */
-export default function SlashMenu({ quillRef, pageId, resetKey, onPickPageLink, onInsertToc }) {
+export default function SlashMenu({ quillRef, pageId, resetKey, onPickPageLink, onInsertToc, onInsertSprintEmbed, onInsertTimeBlock, onConvertToTask, onNewOneOnOne }) {
     const COMMANDS = useMemo(
-        () => makeCommands({ onPickPageLink, onInsertToc }),
-        [onPickPageLink, onInsertToc]
+        () => makeCommands({ onPickPageLink, onInsertToc, onInsertSprintEmbed, onInsertTimeBlock, onConvertToTask, onNewOneOnOne }),
+        [onPickPageLink, onInsertToc, onInsertSprintEmbed, onInsertTimeBlock, onConvertToTask, onNewOneOnOne]
     );
 
     /* Combined state — render only when we have a position so the

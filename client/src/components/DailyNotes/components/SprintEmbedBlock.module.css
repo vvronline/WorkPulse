@@ -1,0 +1,158 @@
+/* SprintEmbedBlock styles */
+.card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin: 12px 0;
+    background: var(--bg-card, var(--bg-secondary));
+    user-select: none;
+}
+.header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+    color: var(--text-primary);
+}
+.sprintName {
+    font-weight: 700;
+    font-size: 14px;
+    flex: 1;
+}
+.dates {
+    font-size: 11px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+.refreshBtn {
+    background: none;
+    border: none;
+    padding: 3px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-radius: 4px;
+}
+.refreshBtn:hover { color: var(--accent, #6366f1); background: var(--bg-hover); }
+.removeBtn {
+    background: none;
+    border: none;
+    padding: 3px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-radius: 4px;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.card:hover .removeBtn { opacity: 1; }
+.removeBtn:hover { color: var(--danger, #ef4444); background: var(--bg-hover); }
+.ctxMenu {
+    background: var(--bg-card, var(--bg-secondary));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+    padding: 4px;
+    min-width: 160px;
+}
+.ctxItem {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 10px;
+    font-size: 12px;
+    background: none;
+    border: none;
+    border-radius: 5px;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+}
+.ctxItem:hover { background: var(--bg-hover); }
+.ctxDanger:hover { background: rgba(239,68,68,0.1); color: var(--danger, #ef4444); }
+.goal {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    font-style: italic;
+}
+.progressBar {
+    display: flex;
+    height: 6px;
+    border-radius: 3px;
+    overflow: hidden;
+    background: var(--bg-hover, #1e293b);
+    margin-bottom: 8px;
+}
+.progressSeg {
+    height: 100%;
+    transition: width 0.3s ease;
+}
+.statRow {
+    display: flex;
+    gap: 12px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+.stat {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+}
+.toggleBtn {
+    background: none;
+    border: none;
+    color: var(--accent, #6366f1);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 2px 0;
+    margin-bottom: 4px;
+}
+.toggleBtn:hover { text-decoration: underline; }
+.taskList { margin-top: 4px; }
+.taskGroup { margin-bottom: 6px; }
+.groupLabel {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 2px;
+}
+.taskRow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 4px;
+    font-size: 12px;
+    color: var(--text-primary);
+    border-radius: 4px;
+}
+.taskRow:hover { background: var(--bg-hover); }
+.taskDot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.taskTitle {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.assignee {
+    font-size: 10px;
+    color: var(--text-tertiary, var(--text-secondary));
+    white-space: nowrap;
+}
+.loading, .empty {
+    font-size: 12px;
+    color: var(--text-secondary);
+    text-align: center;
+    padding: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
