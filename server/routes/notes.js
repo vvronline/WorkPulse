@@ -549,13 +549,22 @@ router.get('/sprint-embed', async (req, res) => {
         )).rows[0];
         if (!sprint) return res.json({ sprint: null, tasks: [] });
 
+        // Sort by priority weight (high → medium → low) so the embedded sprint
+        // board mirrors the main backlog order. Plain `ORDER BY priority DESC`
+        // would sort alphabetically and put 'medium' before 'low' before 'high'.
         const tasks = (await req.db.query(
             `SELECT t.id, t.title, t.status, t.priority, t.assigned_to,
                     u.full_name AS assignee_name
              FROM tasks t
              LEFT JOIN users u ON u.id = t.assigned_to
              WHERE t.sprint_id = $1
-             ORDER BY t.priority DESC, t.created_at ASC`,
+             ORDER BY CASE t.priority
+                          WHEN 'high'   THEN 1
+                          WHEN 'medium' THEN 2
+                          WHEN 'low'    THEN 3
+                          ELSE 4
+                      END,
+                      t.created_at ASC`,
             [sprint.id]
         )).rows;
 

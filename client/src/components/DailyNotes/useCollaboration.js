@@ -20,7 +20,12 @@ const CURSOR_COLORS = [
 ];
 
 function getColor(userId) {
-    return CURSOR_COLORS[Math.abs(userId) % CURSOR_COLORS.length];
+    // Coerce to a finite integer; fall back to 0 so non-numeric / missing
+    // user ids still get a deterministic color rather than indexing the
+    // array with NaN (which yields `undefined`).
+    const n = Number(userId);
+    const idx = Number.isFinite(n) ? Math.abs(Math.trunc(n)) : 0;
+    return CURSOR_COLORS[idx % CURSOR_COLORS.length];
 }
 
 /**

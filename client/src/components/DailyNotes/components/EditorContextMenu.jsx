@@ -125,13 +125,15 @@ export default function EditorContextMenu({ quillRef, pageId, resetKey, readOnly
         if (!menu) return;
         const close = () => { setMenu(null); setSubMenu(null); };
         const onKey = (e) => { if (e.key === 'Escape') close(); };
-        document.addEventListener('mousedown', (e) => {
+        // Use a named handler so we can actually remove it on cleanup.
+        const onMouseDown = (e) => {
             if (menuRef.current && !menuRef.current.contains(e.target)) close();
-        });
+        };
+        document.addEventListener('mousedown', onMouseDown);
         document.addEventListener('scroll', close, true);
         document.addEventListener('keydown', onKey);
         return () => {
-            document.removeEventListener('mousedown', close);
+            document.removeEventListener('mousedown', onMouseDown);
             document.removeEventListener('scroll', close, true);
             document.removeEventListener('keydown', onKey);
         };

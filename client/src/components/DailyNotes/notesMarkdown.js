@@ -317,16 +317,22 @@ export function markdownToHtml(md) {
                 rows.push(lines[i]); i++;
             }
             const sepIdx = 1;
-            let html = '<div class="ql-simpletable" contenteditable="true"><table>';
-            rows.forEach((r, idx) => {
-                if (idx === sepIdx) return;
+            const dataRows = rows.filter((_, idx) => idx !== sepIdx);
+            const headerRow = dataRows[0];
+            const bodyRows = dataRows.slice(1);
+            const renderRow = (r, tag) => {
                 const cells = r.replace(/^\s*\||\|\s*$/g, '').split('|').map(c => c.trim());
-                const tag = idx === 0 ? 'th' : 'td';
-                const wrap = idx === 0 ? '<thead><tr>' : (idx === 2 ? '</thead><tbody><tr>' : '<tr>');
-                const closeRow = '</tr>';
-                html += wrap + cells.map(c => `<${tag}>${inlineMd(c)}</${tag}>`).join('') + closeRow;
-            });
-            html += '</tbody></table></div>';
+                return '<tr>' + cells.map(c => `<${tag}>${inlineMd(c)}</${tag}>`).join('') + '</tr>';
+            };
+            let html = '<div class="ql-simpletable" contenteditable="true"><table>';
+            if (headerRow) html += `<thead>${renderRow(headerRow, 'th')}</thead>`;
+            // Only emit <tbody> when there are data rows; previously the closing
+            // </tbody> was always emitted even with no body rows, producing
+            // malformed HTML when a table had only a header.
+            if (bodyRows.length > 0) {
+                html += '<tbody>' + bodyRows.map(r => renderRow(r, 'td')).join('') + '</tbody>';
+            }
+            html += '</table></div>';
             out.push(html);
             continue;
         }
