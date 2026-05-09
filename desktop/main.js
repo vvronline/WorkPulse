@@ -167,8 +167,29 @@ app.whenReady().then(async () => {
         }
     });
 
-    // Content Security Policy — restrict what can run in the renderer
+    // Content Security Policy — restrict what can run in the renderer.
+    // NOTE: `frame-src` must allow https://embed.diagrams.net so the
+    // draw.io diagram editor (loaded as an <iframe> inside the notes
+    // editor) can render. Without it the iframe is silently blocked
+    // and the spinner appears to "load forever".
+    //
+    // We only apply CSP to top-level documents served by our own
+    // workpulse:// protocol. Sub-resources fetched by the embed
+    // iframe (which is on https://embed.diagrams.net) bring their
+    // own CSP from diagrams.net and should NOT have ours injected
+    // — doing so would break their script loading and make the
+    // editor either fail or load very slowly while it retries.
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+        const isAppDocument =
+            details.resourceType === 'mainFrame' &&
+            typeof details.url === 'string' &&
+            details.url.startsWith('workpulse://');
+
+        if (!isAppDocument) {
+            callback({ responseHeaders: details.responseHeaders });
+            return;
+        }
+
         callback({
             responseHeaders: {
                 ...details.responseHeaders,
@@ -176,11 +197,11 @@ app.whenReady().then(async () => {
                     "default-src 'self' workpulse://app; " +
                     "script-src 'self' workpulse://app 'unsafe-inline'; " +
                     "style-src 'self' workpulse://app 'unsafe-inline'; " +
-                    `connect-src 'self' workpulse://app ${RAILWAY_URL} wss://${new URL(RAILWAY_URL).host}; ` +
-                    "img-src 'self' workpulse://app data: blob:; " +
+                    `connect-src 'self' workpulse://app ${RAILWAY_URL} wss://${new URL(RAILWAY_URL).host} https://embed.diagrams.net; ` +
+                    "img-src 'self' workpulse://app data: blob: https://embed.diagrams.net; " +
                     "media-src 'self' workpulse://app blob:; " +
                     "font-src 'self' workpulse://app; " +
-                    "frame-src 'none'; " +
+                    "frame-src https://embed.diagrams.net; " +
                     "object-src 'none';"
                 ],
             },
