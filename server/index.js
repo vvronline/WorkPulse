@@ -158,20 +158,45 @@ app.use(requestLogger);
 app.use(resolveTenant);
 
 const authMiddleware = require('./middleware/auth');
+// Per-tenant uploads enforcement.
+//
+// Canonical layout (written by server/utils/uploadPath.js):
+//   /uploads/tenant_<tenantId>/org_<orgId>/<kind>/<file>
+//
+// Rules:
+//   1. Path must stay inside the uploads root (no traversal).
+//   2. If the path has a `tenant_<id>` segment, it MUST equal req.tenantId.
+//   3. If the path has an `org_<id>` segment, it MUST equal the user's org.
+//   4. Legacy paths without a tenant prefix (e.g. /uploads/org_X/avatars/...
+//      or the very old /uploads/chat/...) are still served, but only with
+//      the org check above. New uploads always carry the tenant prefix.
 app.use('/uploads', authMiddleware, async (req, res, next) => {
     const resolved = path.resolve(__dirname, 'uploads', req.path.replace(/^\//, ''));
     if (!resolved.startsWith(path.resolve(__dirname, 'uploads'))) {
         return res.status(403).json({ error: 'Forbidden' });
     }
-    // Enforce tenant isolation: tenant-scoped paths like /uploads/tenant_5/org_42/...
+
+    // Enforce tenant isolation when the URL is tenant-prefixed.
     const tenantMatch = req.path.match(/^\/tenant_(\d+)\//);
     if (tenantMatch) {
         const pathTenantId = parseInt(tenantMatch[1], 10);
         if (!req.tenantId || req.tenantId !== pathTenantId) {
             return res.status(403).json({ error: 'Forbidden' });
         }
+    } else if (req.tenantId) {
+        // The user is in a tenant context but the requested file lives at a
+        // legacy non-tenant path. Only allow if no other tenant could have
+        // written there — i.e. it's an org-scoped legacy path. Reject any
+        // request that has neither a tenant_ nor org_ segment, because
+        // those files (e.g. /uploads/chat/foo) are not safe to share
+        // across tenants.
+        const hasOrgSegment = /\/org_(\d+)\//.test(req.path);
+        if (!hasOrgSegment) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
     }
-    // Enforce org isolation: org-scoped paths like /uploads/tenant_5/org_42/... must match user's org
+
+    // Enforce org isolation whenever the URL contains an `org_<id>` segment.
     const orgMatch = req.path.match(/\/org_(\d+)\//);
     if (orgMatch) {
         const pathOrgId = parseInt(orgMatch[1], 10);

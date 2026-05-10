@@ -13,25 +13,24 @@ const { logAction } = require('../utils/audit');
 const { validatePassword, validateUsername, BCRYPT_ROUNDS } = require('../utils/password');
 const { logger } = require('../utils/logger');
 const { requireTenant } = require('../middleware/tenant');
+const { getUploadDir, getUploadUrl, UPLOADS_ROOT } = require('../utils/uploadPath');
 
 const router = express.Router();
 router.use(requireTenant);
 
 const { cookieOptions } = require('../utils/cookie');
 
-const uploadDir = path.join(__dirname, '..', 'uploads', 'avatars');
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-}
-
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        const orgId = req.userOrgId;
-        const dir = orgId
-            ? path.join(__dirname, '..', 'uploads', `org_${orgId}`, 'avatars')
-            : uploadDir;
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        cb(null, dir);
+        try {
+            // Per-tenant layout: uploads/tenant_<tid>/org_<oid>/avatars/
+            // The route's middleware chain (auth → loadUserContext → upload)
+            // guarantees req.tenantId and req.userOrgId are set here.
+            const dir = getUploadDir(req.tenantId, req.userOrgId, 'avatars');
+            cb(null, dir);
+        } catch (err) {
+            cb(err);
+        }
     },
     filename: (req, file, cb) => {
         // Use MIME type to determine extension, not the user-provided filename
@@ -51,13 +50,16 @@ const upload = multer({
     }
 });
 
-const uploadsRoot = path.resolve(__dirname, '..', 'uploads');
+const uploadsRoot = UPLOADS_ROOT;
 
 function safeAvatarPath(avatarRelative) {
     if (!avatarRelative || avatarRelative.includes('..') || avatarRelative.includes('\0')) {
         throw new Error('Invalid avatar path');
     }
-    const resolved = path.resolve(__dirname, '..', avatarRelative);
+    // Strip leading slash so we resolve relative to server/, where avatar
+    // URLs are stored as "/uploads/tenant_X/org_Y/avatars/foo.png".
+    const stripped = avatarRelative.replace(/^\/+/, '');
+    const resolved = path.resolve(__dirname, '..', stripped);
     const normalizedRoot = fs.realpathSync(uploadsRoot);
     if (!resolved.startsWith(normalizedRoot)) {
         throw new Error('Invalid avatar path');
@@ -68,8 +70,7 @@ function safeAvatarPath(avatarRelative) {
 router.post('/avatar', auth, loadUserContext, upload.single('avatar'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    const orgDir = req.userOrgId ? `org_${req.userOrgId}/` : '';
-    const avatarPath = `/uploads/${orgDir}avatars/${req.file.filename}`;
+    const avatarPath = getUploadUrl(req.tenantId, req.userOrgId, 'avatars', req.file.filename);
 
     let oldAvatarPath = null;
     await req.db.transaction(async (client) => {

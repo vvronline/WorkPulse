@@ -7,15 +7,10 @@ const { loadUserContext } = require('../middleware/rbac');
 const { sendToUser } = require('../utils/ws');
 const redis = require('../redis');
 const { requireTenant } = require('../middleware/tenant');
+const { getUploadDir, getUploadUrl } = require('../utils/uploadPath');
 
 const router = express.Router();
 router.use(requireTenant);
-
-// ─── File upload setup ───
-const uploadDir = path.join(__dirname, '..', 'uploads', 'chat');
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-}
 
 // Allowlist of safe MIME types → canonical extension
 const ALLOWED_TYPES = {
@@ -36,15 +31,15 @@ const ALLOWED_TYPES = {
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        const tenantId = req.tenantId;
-        const orgId = req.userOrgId;
-        const dir = tenantId && orgId
-            ? path.join(__dirname, '..', 'uploads', `tenant_${tenantId}`, `org_${orgId}`, 'chat')
-            : orgId
-                ? path.join(__dirname, '..', 'uploads', `org_${orgId}`, 'chat')
-                : uploadDir;
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        cb(null, dir);
+        try {
+            // Per-tenant layout: uploads/tenant_<tid>/org_<oid>/chat/
+            // requireTenant guarantees req.tenantId; loadUserContext on the
+            // route handler guarantees req.userOrgId.
+            const dir = getUploadDir(req.tenantId, req.userOrgId, 'chat');
+            cb(null, dir);
+        } catch (err) {
+            cb(err);
+        }
     },
     filename: (req, file, cb) => {
         // Use canonical extension from MIME type — never trust originalname extension
@@ -696,8 +691,7 @@ router.post('/conversations/:id/files', auth, loadUserContext, chatUpload.single
             .replace(/[/\\]/g, '_')                         // no path separators
             .slice(0, 255) || 'file';
 
-        const orgDir = req.userOrgId ? `org_${req.userOrgId}/` : '';
-        const fileUrl = `/uploads/${orgDir}chat/${req.file.filename}`;
+        const fileUrl = getUploadUrl(req.tenantId, req.userOrgId, 'chat', req.file.filename);
         const content = req.body.content || null;
         const replyToId = req.body.replyToId ? parseInt(req.body.replyToId, 10) : null;
 

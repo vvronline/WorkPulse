@@ -220,7 +220,7 @@ export default function GlobalSearch({ onClose }) {
                                             onMouseEnter={() => setActiveIdx(idx)}
                                         >
                                             {u.avatar
-                                                ? <img src={`/uploads/avatars/${u.avatar}`} alt="" className={s.avatar} />
+                                                ? <img src={u.avatar.startsWith('/') ? u.avatar : `/uploads/avatars/${u.avatar}`} alt="" className={s.avatar} />
                                                 : <span className={s.itemIcon}><User size={16} /></span>
                                             }
                                             <div className={s.itemBody}>
