@@ -4,6 +4,7 @@ import useWebRTC from './useWebRTC';
 import useCallControls from './useCallControls';
 import { QualityBadge, DeviceSelector } from './CallWidgets';
 import { AddParticipantPopup } from './AddParticipantPopup';
+import { useNotificationPrefs } from '../../../NotificationPrefsContext';
 import {
     MicIcon, MicOffIcon, CamIcon, CamOffIcon, PhoneIcon,
     ScreenShareIcon, ScreenShareOffIcon, FullscreenIcon, ExitFullscreenIcon,
@@ -24,9 +25,12 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     const [swapped, setSwapped] = useState(false);
     const canScreenShare = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
 
+    const { playRingtone, playOutgoing } = useNotificationPrefs();
+
     const overlayRef = useRef(null);
     const timerRef = useRef(null);
     const handleEndRef = useRef(null);
+    const stopRingtoneRef = useRef(null);
 
     const webrtc = useWebRTC({
         callState, callType, wsSend, onEnd,
@@ -81,30 +85,29 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
         }
     }, [status]);
 
-    // ─── Ringtone ───
+    // ─── Ringtone / outgoing tone ───
+    // Uses the user-selected preset / volume / mute toggle from
+    // NotificationPrefsContext (Profile menu → Notification Sounds).
+    //   • status === 'incoming' → incoming-call ringtone
+    //   • status === 'ringing'  → outgoing dial ring-back tone
     useEffect(() => {
-        if (status === 'ringing' || status === 'incoming') {
-            try {
-                const ctx = new (window.AudioContext || window.webkitAudioContext)();
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.connect(gain);
-                gain.connect(ctx.destination);
-                osc.frequency.value = status === 'incoming' ? 440 : 480;
-                gain.gain.value = 0.1;
-                osc.start();
-                webrtc.ringtoneRef.current = { ctx, osc, gain };
-                const pulse = () => {
-                    if (!webrtc.ringtoneRef.current) return;
-                    gain.gain.setValueAtTime(0.1, ctx.currentTime);
-                    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
-                    setTimeout(pulse, 1000);
-                };
-                pulse();
-            } catch { /* audio not available */ }
+        let stop = null;
+        if (status === 'incoming') {
+            stop = playRingtone();
+        } else if (status === 'ringing') {
+            stop = playOutgoing();
         }
-        return () => webrtc.stopRingtone();
-    }, [status]);
+        stopRingtoneRef.current = stop;
+        return () => {
+            if (stopRingtoneRef.current) {
+                try { stopRingtoneRef.current(); } catch { /* ignore */ }
+                stopRingtoneRef.current = null;
+            }
+            // Also clear any legacy ringtone left on the webrtc ref so older
+            // code paths that still call stopRingtone() are a no-op.
+            try { webrtc.stopRingtone(); } catch { /* ignore */ }
+        };
+    }, [status, playRingtone, playOutgoing]);
 
     // ─── Cleanup timer on unmount ───
     useEffect(() => () => clearInterval(timerRef.current), []);

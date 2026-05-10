@@ -175,6 +175,10 @@ export const uploadAvatar = (file) => {
 };
 export const removeAvatar = () => API.delete('/profile/avatar');
 
+// Notification & sound preferences
+export const getNotificationPrefs = () => API.get('/profile/notification-prefs');
+export const updateNotificationPrefs = (prefs) => API.put('/profile/notification-prefs', prefs);
+
 // ==================== ENTERPRISE API ====================
 
 // Organization

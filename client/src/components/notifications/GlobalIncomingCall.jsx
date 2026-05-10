@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGlobalCall } from '../../CallContext';
+import { useNotificationPrefs } from '../../NotificationPrefsContext';
 import s from './GlobalIncomingCall.module.css';
 
 const PhoneIcon = ({ size = 18 }) => (
@@ -18,8 +19,9 @@ const VideoIcon = () => (
 
 export default function GlobalIncomingCall() {
   const { globalIncomingCall, acceptGlobalCall, rejectGlobalCall } = useGlobalCall();
+  const { playRingtone } = useNotificationPrefs();
   const navigate = useNavigate();
-  const ringtoneRef = useRef(null);
+  const stopRingtoneRef = useRef(null);
   const pipRef = useRef(null);
   const dragState = useRef(null);
   const notifRef = useRef(null);
@@ -64,36 +66,18 @@ export default function GlobalIncomingCall() {
     };
   }, [globalIncomingCall]);
 
-  // Ringtone
+  // Ringtone — uses the user-selected preset / volume / mute toggle from
+  // NotificationPrefsContext (see Profile menu → Notification Sounds).
   useEffect(() => {
     if (!globalIncomingCall) return;
-    let pulseTimer = null;
-    try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.frequency.value = 440;
-      gain.gain.value = 0.1;
-      osc.start();
-      ringtoneRef.current = { ctx, osc, gain };
-      const pulse = () => {
-        if (!ringtoneRef.current) return;
-        gain.gain.setValueAtTime(0.1, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
-        pulseTimer = setTimeout(pulse, 1000);
-      };
-      pulse();
-    } catch { /* audio not available */ }
+    stopRingtoneRef.current = playRingtone();
     return () => {
-      clearTimeout(pulseTimer);
-      if (ringtoneRef.current) {
-        try { ringtoneRef.current.osc.stop(); ringtoneRef.current.ctx.close(); } catch {}
-        ringtoneRef.current = null;
+      if (stopRingtoneRef.current) {
+        try { stopRingtoneRef.current(); } catch { /* ignore */ }
+        stopRingtoneRef.current = null;
       }
     };
-  }, [globalIncomingCall]);
+  }, [globalIncomingCall, playRingtone]);
 
   // Dragging
   useEffect(() => {

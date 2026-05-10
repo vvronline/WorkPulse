@@ -125,11 +125,26 @@ router.get('/', auth, async (req, res) => {
             });
         }
 
-        const user = (await req.db.query(`
-            SELECT u.id, u.username, u.full_name, u.email, u.avatar, u.role, u.org_id, u.team_id, u.department_id, u.must_change_password,
-                   t.name as team_name
-            FROM users u LEFT JOIN teams t ON u.team_id = t.id WHERE u.id = $1
-        `, [req.userId])).rows[0];
+        // Try to fetch notification_prefs alongside the rest of the profile.
+        // If the column hasn't been added on this tenant DB yet (older
+        // deployments before the migration runs), fall back to the same
+        // query without it so the app keeps working.
+        let user;
+        try {
+            user = (await req.db.query(`
+                SELECT u.id, u.username, u.full_name, u.email, u.avatar, u.role, u.org_id, u.team_id, u.department_id, u.must_change_password,
+                       u.notification_prefs,
+                       t.name as team_name
+                FROM users u LEFT JOIN teams t ON u.team_id = t.id WHERE u.id = $1
+            `, [req.userId])).rows[0];
+        } catch (colErr) {
+            req.log.warn({ err: colErr }, 'GET /profile: notification_prefs column missing, falling back');
+            user = (await req.db.query(`
+                SELECT u.id, u.username, u.full_name, u.email, u.avatar, u.role, u.org_id, u.team_id, u.department_id, u.must_change_password,
+                       t.name as team_name
+                FROM users u LEFT JOIN teams t ON u.team_id = t.id WHERE u.id = $1
+            `, [req.userId])).rows[0];
+        }
         if (!user) return res.status(404).json({ error: 'User not found' });
         user.must_change_password = !!user.must_change_password;
         // Platform admins with tenant context should retain platform_admin role for the UI
@@ -253,6 +268,118 @@ router.put('/password', auth, loadUserContext, async (req, res) => {
     } catch (err) {
         req.log.error({ err }, 'PUT /profile/password error');
         res.status(500).json({ error: 'Failed to change password' });
+    }
+});
+
+/* ─── Notification & sound preferences ───────────────────────────────── */
+
+// Allowed preset IDs per category. Anything else is rejected so the JSONB
+// blob can never grow unbounded from client-supplied junk.
+const ALLOWED_PRESETS = {
+    ringtone: ['classic', 'calm', 'dynamic', 'urgent', 'boop', 'marimba', 'none'],
+    outgoingTone: ['ringback', 'pulse', 'soft', 'none'],
+    messageTone: ['ding', 'pop', 'chime', 'knock', 'subtle', 'none'],
+    mentionTone: ['mention', 'chime', 'urgent', 'none'],
+    reactionTone: ['subtle', 'pop', 'none'],
+};
+
+function validateNotificationPrefs(input) {
+    if (!input || typeof input !== 'object') return { error: 'Invalid payload' };
+    const out = { v: 1 };
+
+    const clampVol = (v) => {
+        const n = Number(v);
+        if (!Number.isFinite(n)) return null;
+        return Math.max(0, Math.min(1, n));
+    };
+
+    const idFields = ['ringtone', 'outgoingTone', 'messageTone', 'mentionTone', 'reactionTone'];
+    for (const f of idFields) {
+        if (input[f] !== undefined) {
+            if (typeof input[f] !== 'string' || !ALLOWED_PRESETS[f].includes(input[f])) {
+                return { error: `Invalid value for ${f}` };
+            }
+            out[f] = input[f];
+        }
+    }
+
+    const volFields = ['ringtoneVolume', 'outgoingVolume', 'messageVolume', 'mentionVolume', 'reactionVolume'];
+    for (const f of volFields) {
+        if (input[f] !== undefined) {
+            const v = clampVol(input[f]);
+            if (v === null) return { error: `Invalid value for ${f}` };
+            out[f] = v;
+        }
+    }
+
+    const boolFields = ['muteAll', 'playWhenFocused', 'playOnSend'];
+    for (const f of boolFields) {
+        if (input[f] !== undefined) {
+            if (typeof input[f] !== 'boolean') return { error: `Invalid value for ${f}` };
+            out[f] = input[f];
+        }
+    }
+
+    return { prefs: out };
+}
+
+// One-time per-process flag: have we already verified the column exists
+// on this tenant DB? Prevents running the ALTER on every request.
+const _notificationPrefsColumnReady = new WeakSet();
+
+async function ensureNotificationPrefsColumn(req) {
+    if (_notificationPrefsColumnReady.has(req.db)) return;
+    try {
+        await req.db.query(
+            `ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_prefs JSONB NOT NULL DEFAULT '{}'::jsonb`
+        );
+        _notificationPrefsColumnReady.add(req.db);
+    } catch (err) {
+        // Don't block the request — log and let the SELECT/UPDATE fall back.
+        req.log?.warn({ err }, 'ensureNotificationPrefsColumn failed');
+    }
+}
+
+router.get('/notification-prefs', auth, async (req, res) => {
+    try {
+        await ensureNotificationPrefsColumn(req);
+        const row = (await req.db.query(
+            'SELECT notification_prefs FROM users WHERE id = $1',
+            [req.userId]
+        )).rows[0];
+        res.json(row?.notification_prefs || {});
+    } catch (err) {
+        // If the column is missing on a tenant DB that hasn't been migrated
+        // yet, fall back to empty object so the client uses its defaults
+        // rather than surfacing a 500.
+        req.log.warn({ err }, 'GET /profile/notification-prefs: returning defaults');
+        res.json({});
+    }
+});
+
+router.put('/notification-prefs', auth, async (req, res) => {
+    try {
+        const { prefs, error } = validateNotificationPrefs(req.body);
+        if (error) return res.status(400).json({ error });
+
+        await ensureNotificationPrefsColumn(req);
+
+        // Merge with existing prefs so partial updates from the client do not
+        // wipe out unrelated keys (e.g. saving just the volume slider).
+        const existing = (await req.db.query(
+            'SELECT notification_prefs FROM users WHERE id = $1',
+            [req.userId]
+        )).rows[0]?.notification_prefs || {};
+        const merged = { ...existing, ...prefs, v: 1 };
+
+        await req.db.query(
+            'UPDATE users SET notification_prefs = $1::jsonb WHERE id = $2',
+            [JSON.stringify(merged), req.userId]
+        );
+        res.json(merged);
+    } catch (err) {
+        req.log.error({ err }, 'PUT /profile/notification-prefs error');
+        res.status(500).json({ error: 'Failed to save notification preferences' });
     }
 });
 

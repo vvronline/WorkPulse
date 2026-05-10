@@ -4,8 +4,9 @@ import { useTheme } from '../../ThemeContext';
 import { useWorkState } from '../../WorkStateContext';
 import { useUserStatus } from '../../UserStatusContext';
 import { clockOut as apiClockOut, uploadAvatar, removeAvatar, baseURL } from '../../api';
-import { Camera, Building2, House } from 'lucide-react';
+import { Camera, Building2, House, Bell } from 'lucide-react';
 import EditProfileModal from '../profile/EditProfileModal';
+import NotificationSoundsModal from '../profile/NotificationSoundsModal';
 import ConfirmDialog from '../common/ConfirmDialog';
 import StatusPicker from '../common/StatusPicker';
 import { useClickOutside } from '../../hooks/useClickOutside';
@@ -20,6 +21,7 @@ export default function ProfileMenu() {
     const [profileOpen, setProfileOpen] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [editModalOpen, setEditModalOpen] = useState(false);
+    const [soundsModalOpen, setSoundsModalOpen] = useState(false);
     const [signoutConfirming, setSignoutConfirming] = useState(false);
     const [removeAvatarConfirming, setRemoveAvatarConfirming] = useState(false);
 
@@ -218,6 +220,12 @@ export default function ProfileMenu() {
                                 Remove Photo
                             </button>
                         )}
+                        <button className={s['profile-dropdown-item']} onClick={() => { setProfileOpen(false); setSoundsModalOpen(true); }}>
+                            <span className={s['dd-item-icon']}>
+                                <Bell size={14} />
+                            </span>
+                            Notification Sounds
+                        </button>
                         <button className={s['profile-dropdown-item']} onClick={toggleTheme}>
                             <span className={s['dd-item-icon']}>
                                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -254,6 +262,7 @@ export default function ProfileMenu() {
             )}
 
             {editModalOpen && <EditProfileModal onClose={() => setEditModalOpen(false)} />}
+            {soundsModalOpen && <NotificationSoundsModal onClose={() => setSoundsModalOpen(false)} />}
 
             <ConfirmDialog
                 isOpen={signoutConfirming}

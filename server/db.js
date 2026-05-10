@@ -1037,6 +1037,12 @@ async function initTenantSchema(q) {
     await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS user_status TEXT NOT NULL DEFAULT 'available' CHECK(user_status IN ('available','busy','dnd','away','offline','in_call','in_meeting'))`);
     await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS user_status_text TEXT`);
 
+    // Per-user notification & sound preferences (ringtones, message tones,
+    // mute toggle, volumes). Stored as JSONB so we can evolve the schema
+    // without a follow-up migration. See client/src/utils/sounds.js for the
+    // canonical default shape (DEFAULT_PREFS).
+    await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_prefs JSONB NOT NULL DEFAULT '{}'::jsonb`);
+
     // Tenant-level app settings (registration_mode, etc.)
     await q(`
         CREATE TABLE IF NOT EXISTS app_settings (

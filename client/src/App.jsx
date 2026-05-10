@@ -17,6 +17,7 @@ import { ChatProvider } from './ChatContext';
 import { CallProvider } from './CallContext';
 import { MeetingProvider } from './MeetingContext';
 import { UserStatusProvider } from './UserStatusContext';
+import { NotificationPrefsProvider } from './NotificationPrefsContext';
 import MeetingPiP from './components/meeting/MeetingPiP';
 import GlobalIncomingCall from './components/notifications/GlobalIncomingCall';
 import GlobalMeetingNotification from './components/notifications/GlobalMeetingNotification';
@@ -206,18 +207,20 @@ export default function App() {
           <ToastProvider>
             <BrowserRouter>
               <AxiosInterceptor>
-                <ChatProvider>
-                  <UserStatusProvider>
-                  <CallProvider>
-                    <MeetingProvider>
-                      <AppRoutes />
-                      <MeetingPiP />
-                      <GlobalIncomingCall />
-                      <GlobalMeetingNotification />
-                    </MeetingProvider>
-                  </CallProvider>
-                  </UserStatusProvider>
-                </ChatProvider>
+                <NotificationPrefsProvider>
+                  <ChatProvider>
+                    <UserStatusProvider>
+                    <CallProvider>
+                      <MeetingProvider>
+                        <AppRoutes />
+                        <MeetingPiP />
+                        <GlobalIncomingCall />
+                        <GlobalMeetingNotification />
+                      </MeetingProvider>
+                    </CallProvider>
+                    </UserStatusProvider>
+                  </ChatProvider>
+                </NotificationPrefsProvider>
               </AxiosInterceptor>
             </BrowserRouter>
           </ToastProvider>
