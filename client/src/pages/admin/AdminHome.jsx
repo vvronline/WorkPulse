@@ -214,8 +214,7 @@ export default function AdminHome({ user, onNavigate }) {
                 <div className={s.panel}>
                     <h3 className={s.panelTitle}><UserPlus size={16} />Quick actions</h3>
                     <div className={s.quickRow}>
-                        <button className={s.quickBtn} onClick={() => onNavigate('create')}><UserPlus size={14} />Add a user</button>
-                        <button className={s.quickBtn} onClick={() => onNavigate('import')}><Download size={14} />Import users</button>
+                        <button className={s.quickBtn} onClick={() => onNavigate('add')}><UserPlus size={14} />Add people</button>
                         {user?.org_id && (
                             <button className={s.quickBtn} onClick={() => onNavigate('departments')}><Building size={14} />New department</button>
                         )}
@@ -225,9 +224,6 @@ export default function AdminHome({ user, onNavigate }) {
                         <button className={s.quickBtn} onClick={() => onNavigate('payroll')}><DollarSign size={14} />Lock pay period</button>
                         <button className={s.quickBtn} onClick={() => onNavigate('labels')}><Tag size={14} />Manage labels</button>
                         <button className={s.quickBtn} onClick={() => onNavigate('audit')}><ScrollText size={14} />View audit logs</button>
-                        {(user?.role === 'super_admin' || user?.role === 'platform_admin') && (
-                            <button className={s.quickBtn} onClick={() => onNavigate('announcements')}><Megaphone size={14} />New announcement</button>
-                        )}
                     </div>
                 </div>
 

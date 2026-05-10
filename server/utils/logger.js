@@ -29,13 +29,38 @@ function requestLogger(req, res, next) {
     req.log = logger.child({ reqId: req.id });
 
     const start = Date.now();
+
+    // Multi-tenant log enrichment: once tenant resolution / auth middleware
+    // populates req.tenant or req.userId, expose a helper that swaps in a
+    // richer child logger so subsequent log lines automatically carry
+    // tenantId / slug / userId.
+    req.enrichLogger = function enrichLogger() {
+        const ctx = { reqId: req.id };
+        if (req.tenant) {
+            ctx.tenantId = req.tenant.id;
+            ctx.slug = req.tenant.slug;
+        } else if (req.tenantId) {
+            ctx.tenantId = req.tenantId;
+        } else {
+            ctx.tenantId = 'master';
+        }
+        if (req.userId) ctx.userId = req.userId;
+        if (req.userRole) ctx.role = req.userRole;
+        req.log = logger.child(ctx);
+    };
+
     res.on('finish', () => {
         const duration = Date.now() - start;
+        // Best-effort enrichment if downstream middleware didn't call enrichLogger
+        const tenantId = req.tenant?.id ?? req.tenantId ?? 'master';
+        const slug = req.tenant?.slug ?? undefined;
         const line = {
             method: req.method,
             url: req.originalUrl,
             status: res.statusCode,
             duration,
+            tenantId,
+            slug,
             userId: req.userId || undefined,
         };
         if (res.statusCode >= 500) {

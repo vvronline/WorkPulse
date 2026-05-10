@@ -5,11 +5,11 @@ import {
     getAdminOrganizations, createAdminOrganization, updateAdminOrganization, deleteAdminOrganization
 } from '../../api';
 import OrgModal from './OrgModal';
+import TypedConfirm from './TypedConfirm';
 import Departments from '../../components/organization/Departments';
 import Teams from '../../components/organization/Teams';
 import OrgChartView from '../../components/organization/OrgChartView';
 import s from '../Admin.module.css';
-import sf from './AdminForms.module.css';
 import su from './AdminUtils.module.css';
 
 export default function OrganizationsManagement({ onOrgChange, onManageOrg }) {
@@ -105,20 +105,16 @@ export default function OrganizationsManagement({ onOrgChange, onManageOrg }) {
             {creating && <OrgModal onClose={() => setCreating(false)} onSave={handleCreate} />}
             {editing && <OrgModal org={editing} onClose={() => setEditing(null)} onSave={(data) => handleUpdate(editing.id, data)} />}
             {deleting && (
-                <div className={sf.modalOverlay} onClick={() => setDeleting(null)}>
-                    <div className={sf.modal} onClick={e => e.stopPropagation()}>
-                        <h2>Delete Organization</h2>
-                        <p>Are you sure you want to delete <strong>{deleting.name}</strong>?</p>
-                        <p className={su['org-delete-info']}>
-                            This will remove all departments, teams, and clear org assignments for inactive users.
-                            Organizations with active users cannot be deleted.
-                        </p>
-                        <div className={sf.formActions}>
-                            <button className={sf.btnCancel} onClick={() => setDeleting(null)}>Cancel</button>
-                            <button className={`${s.btnPrimary} ${s.btnDanger}`} onClick={() => handleDelete(deleting.id)}>Delete Organization</button>
-                        </div>
-                    </div>
-                </div>
+                <TypedConfirm
+                    title="Delete organization"
+                    message={`This will permanently delete the organization "${deleting.name}", along with all its departments, teams, and clear assignments for inactive users. Organizations with active users cannot be deleted.`}
+                    hint="This action cannot be undone. Type the organization name to confirm."
+                    confirmLabel="Delete organization"
+                    requireText={deleting.name}
+                    danger
+                    onConfirm={() => handleDelete(deleting.id)}
+                    onCancel={() => setDeleting(null)}
+                />
             )}
 
             {/* Drill-down: Manage org departments/teams/chart */}

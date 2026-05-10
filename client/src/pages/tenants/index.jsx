@@ -1,61 +1,260 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Building2, Users, Shield, Settings2, ScrollText } from 'lucide-react';
+import {
+    Building2, Plus, Shield, Settings2, ScrollText, Activity,
+    Menu, X, ChevronDown, ArrowLeft,
+} from 'lucide-react';
+import { useAuth } from '../../AuthContext';
 import TenantList from './TenantList';
 import TenantDetail from './TenantDetail';
 import CreateTenant from './CreateTenant';
 import PlatformAdmins from './PlatformAdmins';
 import PlatformSettings from './PlatformSettings';
 import PlatformAuditLogs from './PlatformAuditLogs';
-import s from './Tenants.module.css';
+import s from '../admin/AdminLayout.module.css';
+
+// ─── Section registry ────────────────────────────────────────────────────────
+//
+// Each section: { key, label, icon, group }
+//
+// Mirrors the admin panel structure so the platform console feels familiar
+// to anyone already comfortable with /admin.
+
+const SECTIONS = [
+    { key: 'tenants',  label: 'Tenants',         icon: Building2, group: 'Tenants' },
+    { key: 'create',   label: 'New Tenant',      icon: Plus,      group: 'Tenants' },
+
+    { key: 'admins',   label: 'Platform Admins', icon: Shield,    group: 'Access' },
+    { key: 'settings', label: 'Platform Settings', icon: Settings2, group: 'Access' },
+
+    { key: 'audit',    label: 'Audit Trail',     icon: ScrollText, group: 'Compliance' },
+];
+
+const GROUP_ORDER = ['Tenants', 'Access', 'Compliance'];
 
 export default function TenantsPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const initialTab = searchParams.get('tab') || 'tenants';
-  const [tab, setTab] = useState(initialTab);
+    const { user } = useAuth();
+    const [searchParams, setSearchParams] = useSearchParams();
 
-  // Tenant detail view — when a tenant ID is selected
-  const [selectedTenantId, setSelectedTenantId] = useState(null);
+    const initialSection = searchParams.get('tab') || 'tenants';
+    const [section, setSection] = useState(initialSection);
 
-  const changeTab = (t) => {
-    setTab(t);
-    setSelectedTenantId(null);
-    setSearchParams(t === 'tenants' ? {} : { tab: t });
-  };
+    // Selected tenant for the drill-down detail view
+    const [selectedTenantId, setSelectedTenantId] = useState(null);
 
-  // If viewing a specific tenant detail, show full detail page
-  if (selectedTenantId) {
-    return <TenantDetail tenantId={selectedTenantId} onBack={() => setSelectedTenantId(null)} />;
-  }
+    // Sidebar group collapsed state (persisted)
+    const [collapsed, setCollapsed] = useState(() => {
+        try {
+            const raw = localStorage.getItem('platform_groups_collapsed');
+            return raw ? JSON.parse(raw) : {};
+        } catch { return {}; }
+    });
+    useEffect(() => {
+        try { localStorage.setItem('platform_groups_collapsed', JSON.stringify(collapsed)); } catch {}
+    }, [collapsed]);
 
-  return (
-    <div className={s.tenantsPage}>
-      <h1>Platform Management</h1>
-      <p className={s.subtitle}>Manage tenants, platform admins, and global settings</p>
+    // Mobile drawer
+    const [mobileOpen, setMobileOpen] = useState(false);
 
-      <div className={s.tabs}>
-        <button className={`${s.tab} ${tab === 'tenants' ? s.active : ''}`} onClick={() => changeTab('tenants')}>
-          <span><Building2 size={14} /></span> Tenants
-        </button>
-        <button className={`${s.tab} ${tab === 'create' ? s.active : ''}`} onClick={() => changeTab('create')}>
-          <span><Building2 size={14} /></span> New Tenant
-        </button>
-        <button className={`${s.tab} ${tab === 'admins' ? s.active : ''}`} onClick={() => changeTab('admins')}>
-          <span><Shield size={14} /></span> Platform Admins
-        </button>
-        <button className={`${s.tab} ${tab === 'settings' ? s.active : ''}`} onClick={() => changeTab('settings')}>
-          <span><Settings2 size={14} /></span> Platform Settings
-        </button>
-        <button className={`${s.tab} ${tab === 'audit' ? s.active : ''}`} onClick={() => changeTab('audit')}>
-          <span><ScrollText size={14} /></span> Audit Trail
-        </button>
-      </div>
+    // Sync ?tab= changes from outside (e.g. global search deep-links)
+    useEffect(() => {
+        const t = searchParams.get('tab') || 'tenants';
+        if (t !== section) setSection(t);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [searchParams]);
 
-      {tab === 'tenants' && <TenantList onSelectTenant={setSelectedTenantId} />}
-      {tab === 'create' && <CreateTenant onCreated={(id) => { setSelectedTenantId(id); }} />}
-      {tab === 'admins' && <PlatformAdmins />}
-      {tab === 'settings' && <PlatformSettings />}
-      {tab === 'audit' && <PlatformAuditLogs />}
-    </div>
-  );
+    const goSection = useCallback((key) => {
+        setSection(key);
+        setSelectedTenantId(null);
+        setMobileOpen(false);
+        const next = new URLSearchParams(searchParams);
+        if (key === 'tenants') next.delete('tab');
+        else next.set('tab', key);
+        setSearchParams(next, { replace: true });
+    }, [searchParams, setSearchParams]);
+
+    // Build navigation grouped by group label
+    const navGroups = useMemo(() => {
+        const groups = new Map();
+        for (const sec of SECTIONS) {
+            if (!groups.has(sec.group)) groups.set(sec.group, []);
+            groups.get(sec.group).push(sec);
+        }
+        return GROUP_ORDER.filter(g => groups.has(g)).map(g => ({ name: g, items: groups.get(g) }));
+    }, []);
+
+    const currentSection = SECTIONS.find(sec => sec.key === section) || SECTIONS[0];
+    const currentTitle = selectedTenantId ? 'Tenant Details' : currentSection.label;
+
+    // Access check: only platform_admin and super_admin can see this console
+    if (!user || !['super_admin', 'platform_admin'].includes(user.role)) {
+        return (
+            <div className={s.shell}>
+                <div className={s.content}>
+                    <h1>Platform Console</h1>
+                    <div className={s.accessDenied}>
+                        Access denied. Platform Admin role required.
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    const toggleGroup = (groupName) => {
+        setCollapsed(c => ({ ...c, [groupName]: !c[groupName] }));
+    };
+
+    // ─── Section renderer ────────────────────────────────────────────────
+    const renderSection = () => {
+        if (selectedTenantId) {
+            return (
+                <TenantDetail
+                    tenantId={selectedTenantId}
+                    onBack={() => setSelectedTenantId(null)}
+                />
+            );
+        }
+        switch (section) {
+            case 'tenants':
+                return <TenantList onSelectTenant={setSelectedTenantId} />;
+            case 'create':
+                return <CreateTenant onCreated={(id) => setSelectedTenantId(id)} />;
+            case 'admins':
+                return <PlatformAdmins />;
+            case 'settings':
+                return <PlatformSettings />;
+            case 'audit':
+                return <PlatformAuditLogs />;
+            default:
+                return <TenantList onSelectTenant={setSelectedTenantId} />;
+        }
+    };
+
+    return (
+        <div className={s.shell}>
+            {/* Mobile top bar */}
+            <div className={s.mobileBar}>
+                <button className={s.mobileToggle} onClick={() => setMobileOpen(true)} aria-label="Open platform menu">
+                    <Menu size={16} /> Menu
+                </button>
+                <div className={s.mobileTitle}>{currentTitle}</div>
+                <span style={{ width: 70 }} />
+            </div>
+
+            {/* Mobile scrim */}
+            <div
+                className={`${s.scrim} ${mobileOpen ? s.open : ''}`}
+                onClick={() => setMobileOpen(false)}
+                aria-hidden="true"
+            />
+
+            {/* ─── Sidebar ─── */}
+            <aside className={`${s.sidebar} ${mobileOpen ? s.open : ''}`} aria-label="Platform navigation">
+                <div className={s.brandRow}>
+                    <Activity size={18} />
+                    <div>
+                        <div className={s.brandTitle}>Platform Console</div>
+                        <div className={s.brandSubtitle}>
+                            {user.role === 'platform_admin' ? 'Platform Admin' : 'Super Admin'}
+                        </div>
+                    </div>
+                    <button
+                        className={s.mobileToggle}
+                        style={{ marginLeft: 'auto', padding: '0.25rem 0.4rem', display: 'none' }}
+                        onClick={() => setMobileOpen(false)}
+                        aria-label="Close menu"
+                    >
+                        <X size={14} />
+                    </button>
+                </div>
+
+                {navGroups.map(group => {
+                    const isCollapsed = !!collapsed[group.name];
+                    return (
+                        <div className={s.group} key={group.name}>
+                            <button
+                                type="button"
+                                className={`${s.groupLabel} ${isCollapsed ? s.collapsed : ''}`}
+                                onClick={() => toggleGroup(group.name)}
+                            >
+                                <span>{group.name}</span>
+                                <ChevronDown size={12} className={s.chev} />
+                            </button>
+                            {!isCollapsed && (
+                                <div className={s.groupItems}>
+                                    {group.items.map(item => {
+                                        const Icon = item.icon;
+                                        const isActive = section === item.key && !selectedTenantId;
+                                        return (
+                                            <button
+                                                key={item.key}
+                                                className={`${s.navItem} ${isActive ? s.active : ''}`}
+                                                onClick={() => goSection(item.key)}
+                                            >
+                                                <span className={s.navIcon}><Icon size={16} /></span>
+                                                <span className={s.navLabel}>{item.label}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+
+                {/* Back to /admin link */}
+                <div className={s.group}>
+                    <div className={s.groupLabel} style={{ cursor: 'default' }}>
+                        <span>Switch</span>
+                    </div>
+                    <div className={s.groupItems}>
+                        <button
+                            className={s.navItem}
+                            onClick={() => { window.location.href = '/admin'; }}
+                            title="Back to your organization's admin panel"
+                        >
+                            <span className={s.navIcon}><ArrowLeft size={16} /></span>
+                            <span className={s.navLabel}>Back to Admin</span>
+                        </button>
+                    </div>
+                </div>
+            </aside>
+
+            {/* ─── Content ─── */}
+            <main className={s.content}>
+                <div className={s.contentHeader}>
+                    <div>
+                        <h1 className={s.contentTitle}>{currentTitle}</h1>
+                        {!selectedTenantId && currentSection.key === 'tenants' && (
+                            <p className={s.contentDesc}>
+                                Manage every tenant on the platform. Suspend, restore, impersonate,
+                                or drill into a tenant's resources.
+                            </p>
+                        )}
+                        {!selectedTenantId && currentSection.key === 'create' && (
+                            <p className={s.contentDesc}>
+                                Provision a new tenant. A dedicated database is created and the schema initialised.
+                            </p>
+                        )}
+                        {!selectedTenantId && currentSection.key === 'admins' && (
+                            <p className={s.contentDesc}>
+                                Manage platform-level administrators (these accounts can act across all tenants).
+                            </p>
+                        )}
+                        {!selectedTenantId && currentSection.key === 'settings' && (
+                            <p className={s.contentDesc}>
+                                Global settings that apply across every tenant.
+                            </p>
+                        )}
+                        {!selectedTenantId && currentSection.key === 'audit' && (
+                            <p className={s.contentDesc}>
+                                Platform-wide audit trail across every tenant.
+                            </p>
+                        )}
+                    </div>
+                </div>
+                {renderSection()}
+            </main>
+        </div>
+    );
 }

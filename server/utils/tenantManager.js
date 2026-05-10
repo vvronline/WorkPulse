@@ -14,9 +14,13 @@ const { Pool } = require('pg');
 const { masterQuery, masterTransaction, makePoolQuery, makePoolTransaction, initTenantSchema } = require('../db');
 const { logger } = require('./logger');
 
-const MAX_POOLS = 10;
-const POOL_SIZE = 8;
-const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+// Configurable via env so Railway/prod deployments can be tuned without a rebuild.
+//   TENANT_MAX_POOLS       — max number of cached tenant pools (default 10)
+//   TENANT_POOL_SIZE       — max connections per pool                (default 8)
+//   TENANT_POOL_IDLE_MS    — idle pool eviction threshold in ms      (default 5 min)
+const MAX_POOLS = Math.max(1, parseInt(process.env.TENANT_MAX_POOLS, 10) || 10);
+const POOL_SIZE = Math.max(1, parseInt(process.env.TENANT_POOL_SIZE, 10) || 8);
+const IDLE_TIMEOUT_MS = Math.max(30_000, parseInt(process.env.TENANT_POOL_IDLE_MS, 10) || 5 * 60 * 1000);
 
 // ── LRU pool cache ──────────────────────────────────────────────────────────
 
@@ -129,14 +133,24 @@ async function getTenantPool(dbName, dbHost) {
 
         poolCache.set(dbName, entry);
 
-        // Run idempotent schema migrations (non-fatal) so existing tenant DBs
-        // pick up new tables/columns added since the DB was first provisioned.
+        // Note: implicit `initTenantSchema(entry.query)` on first pool use was
+        // removed in favor of the startup-time `sweepAllTenants()` migration
+        // runner (see server/utils/migrationRunner.js). Cold-start latency for
+        // new tenants is now bounded by the connection itself, not by an
+        // entire schema script. Newly-created tenants still get
+        // `initTenantSchema()` called explicitly in `createTenant()` below.
+        //
+        // Apply versioned migrations on first touch of a tenant pool this
+        // process lifetime — cheap, idempotent, and ensures any tenant DB
+        // touched at runtime (e.g. via custom-domain hit) is up to date even
+        // if it was provisioned before the most recent deploy.
         if (!migratedDbs.has(dbName)) {
+            migratedDbs.add(dbName);
             try {
-                await initTenantSchema(entry.query);
-                migratedDbs.add(dbName);
+                const { runTenantMigrations } = require('./migrationRunner');
+                await runTenantMigrations(entry.query, { label: dbName });
             } catch (err) {
-                logger.error({ err, dbName }, 'Tenant schema migration failed (non-fatal)');
+                logger.error({ err: err.message, dbName }, 'Per-pool migrations failed (non-fatal)');
             }
         }
 
@@ -339,6 +353,88 @@ async function listActiveTenants() {
 }
 
 /**
+ * Iterate every active tenant and invoke `fn(db, tenant)` for each.
+ *
+ * - Errors are caught per-tenant so one failing tenant doesn't abort the
+ *   whole sweep.
+ * - Optionally also runs `fn` against the master DB if it isn't covered by
+ *   any active tenant (legacy single-DB deployments still on the pre-
+ *   migration `users` table).
+ *
+ * @param {(db: {query, transaction}, tenant: object) => Promise<any>} fn
+ * @param {object}  [opts]
+ * @param {string}  [opts.label]              – job label for log lines
+ * @param {boolean} [opts.includeLegacyMaster=true]
+ *        Also invoke `fn` against the master pool when no active tenant
+ *        points at that DB. Set false for jobs that strictly need a tenant
+ *        DB schema.
+ * @returns {Promise<{ ok: number, failed: number }>}
+ */
+async function forEachTenant(fn, opts = {}) {
+    const { label = 'job', includeLegacyMaster = true } = opts;
+    let ok = 0;
+    let failed = 0;
+
+    let tenants = [];
+    try {
+        tenants = await listActiveTenants();
+    } catch (err) {
+        logger.error({ err: err.message, label }, 'forEachTenant: failed to list tenants');
+        return { ok, failed };
+    }
+
+    for (const tenant of tenants) {
+        try {
+            const db = await getTenantPool(tenant.db_name, tenant.db_host);
+            await fn(db, tenant);
+            ok++;
+        } catch (err) {
+            failed++;
+            logger.error({
+                err: err.message,
+                stack: err.stack,
+                tenantId: tenant.id,
+                slug: tenant.slug,
+                label,
+            }, 'forEachTenant: tenant iteration failed');
+        }
+    }
+
+    if (includeLegacyMaster) {
+        try {
+            const masterDbName = new URL(process.env.DATABASE_URL).pathname.slice(1);
+            const masterCovered = tenants.some(t => t.db_name === masterDbName);
+            if (!masterCovered) {
+                // Only run against master if it actually has a `users` table
+                // (i.e. legacy single-DB deployment pre-migration).
+                const hasUsers = (await masterQuery(`
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_name = 'users' LIMIT 1
+                `)).rows.length > 0;
+                if (hasUsers) {
+                    try {
+                        await fn(
+                            { query: masterQuery, transaction: masterTransaction },
+                            { id: null, slug: 'master', db_name: masterDbName },
+                        );
+                        ok++;
+                    } catch (err) {
+                        failed++;
+                        logger.error({
+                            err: err.message,
+                            stack: err.stack,
+                            label,
+                        }, 'forEachTenant: master legacy iteration failed');
+                    }
+                }
+            }
+        } catch { /* ignore – best-effort master coverage */ }
+    }
+
+    return { ok, failed };
+}
+
+/**
  * Get pool size info for monitoring.
  */
 function getPoolStats() {
@@ -370,4 +466,5 @@ module.exports = {
     getTenantBySlug,
     getTenantByDomain,
     listActiveTenants,
+    forEachTenant,
 };

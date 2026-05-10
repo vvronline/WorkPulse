@@ -23,7 +23,7 @@ const cookieParser = require('cookie-parser');
 const { pool, initDB, masterQuery, masterTransaction } = require('./db');
 const redis = require('./redis');
 const { resolveTenant } = require('./middleware/tenant');
-const { listActiveTenants, getTenantPool, destroyAllPools } = require('./utils/tenantManager');
+const { listActiveTenants, getTenantPool, destroyAllPools, forEachTenant } = require('./utils/tenantManager');
 const authRoutes = require('./routes/auth');
 const trackerRoutes = require('./routes/tracker');
 const leaveRoutes = require('./routes/leaves');
@@ -247,30 +247,12 @@ app.get('/api/health', async (req, res) => {
 
 // ============= AUTO CLOCK-OUT (multi-tenant) =============
 async function autoClockOut() {
-    try {
-        const tenants = await listActiveTenants();
-        for (const tenant of tenants) {
-            try {
-                const db = await getTenantPool(tenant.db_name, tenant.db_host);
-                await autoClockOutForDb(db);
-            } catch (e) {
-                logger.error({ tenantId: tenant.id, err: e }, 'Auto clock-out failed for tenant');
-            }
-        }
-
-        // Also handle legacy users still in the master DB (pre-migration)
-        const masterDbName = new URL(process.env.DATABASE_URL).pathname.slice(1);
-        const masterCoveredByTenant = tenants.some(t => t.db_name === masterDbName);
-        if (!masterCoveredByTenant) {
-            try {
-                const hasUsers = (await masterQuery('SELECT 1 FROM users LIMIT 1')).rows.length > 0;
-                if (hasUsers) {
-                    await autoClockOutForDb({ query: masterQuery, transaction: masterTransaction });
-                }
-            } catch { /* users table may not exist in fresh master-only DB */ }
-        }
-    } catch (e) {
-        logger.error({ err: e }, 'autoClockOut iteration error');
+    const result = await forEachTenant(
+        async (db) => { await autoClockOutForDb(db); },
+        { label: 'autoClockOut' },
+    );
+    if (result.failed > 0) {
+        logger.warn({ ok: result.ok, failed: result.failed }, 'autoClockOut completed with failures');
     }
 }
 
@@ -342,24 +324,15 @@ async function autoClockOutUser(db, user) {
 
 // Cleanup expired/used password reset tokens every hour (multi-tenant)
 async function cleanupTokens() {
-    try {
-        const tenants = await listActiveTenants();
-        for (const tenant of tenants) {
-            try {
-                const db = await getTenantPool(tenant.db_name, tenant.db_host);
-                await db.query("DELETE FROM password_reset_tokens WHERE used = TRUE OR expires_at < NOW()");
-            } catch (e) { logger.error({ tenantId: tenant.id, err: e }, 'Token cleanup error for tenant'); }
-        }
-
-        // Also clean up legacy master DB tokens (pre-migration)
-        const masterDbName = new URL(process.env.DATABASE_URL).pathname.slice(1);
-        const masterCoveredByTenant = tenants.some(t => t.db_name === masterDbName);
-        if (!masterCoveredByTenant) {
-            try {
-                await masterQuery("DELETE FROM password_reset_tokens WHERE used = TRUE OR expires_at < NOW()");
-            } catch { /* table may not exist */ }
-        }
-    } catch (e) { logger.error({ err: e }, 'Token cleanup iteration error'); }
+    const result = await forEachTenant(
+        async (db) => {
+            await db.query("DELETE FROM password_reset_tokens WHERE used = TRUE OR expires_at < NOW()");
+        },
+        { label: 'cleanupTokens' },
+    );
+    if (result.failed > 0) {
+        logger.warn({ ok: result.ok, failed: result.failed }, 'cleanupTokens completed with failures');
+    }
 }
 
 // SPA fallback: only serve index.html for navigation requests, not file/asset requests
@@ -383,6 +356,15 @@ if (require.main === module) {
     (async () => {
         await initDB();
         redis.initRedis();
+        // Apply pending versioned migrations across every active tenant once
+        // at startup. Failures per-tenant are non-fatal — they're logged and
+        // retried on the next deploy.
+        try {
+            const { sweepAllTenants } = require('./utils/migrationRunner');
+            await sweepAllTenants();
+        } catch (err) {
+            logger.warn({ err: err.message }, 'Migration sweep failed (non-fatal)');
+        }
         const httpServer = http.createServer(app);
         setupWebSocket(httpServer);
 

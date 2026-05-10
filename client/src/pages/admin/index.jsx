@@ -1,42 +1,39 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
     Home, Users, UserPlus, Building, UsersRound, GitBranch, ScrollText,
-    RefreshCw, Download, DollarSign, Megaphone, Tag, Settings as SettingsIcon,
-    Menu, X, ChevronDown
+    RefreshCw, DollarSign, Tag, Settings as SettingsIcon,
+    Menu, X, ChevronDown, ExternalLink,
 } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { getRoleChangeRequests, getCurrentOrg } from '../../api';
 import UserManagement from './UserManagement';
-import CreateUser from './CreateUser';
+import AddPeopleWizard from './AddPeopleWizard';
 import MyOrganization from './MyOrganization';
 import AuditLogs from './AuditLogs';
 import RoleRequests from './RoleRequests';
-import ImportUsers from './ImportUsers';
 import PayPeriods from './PayPeriods';
-import AnnouncementsTab from './AnnouncementsTab';
-import OrgSettings from './OrgSettings';
 import TaskLabelsTab from './TaskLabelsTab';
 import AdminHome from './AdminHome';
+import OrgSettingsPage from './OrgSettingsPage';
 import Departments from '../../components/organization/Departments';
 import Teams from '../../components/organization/Teams';
 import OrgChartView from '../../components/organization/OrgChartView';
-import OrgGeneralSettings from '../../components/organization/OrgSettings';
 import s from './AdminLayout.module.css';
 
 // ─── Section registry ─────────────────────────────────────────────────────
 //
-// Each section: { key, label, icon, group, requires?, hidden?, badge? }
-//   requires: 'orgId' | 'super_admin' | 'platform_admin' | function(user) => boolean
+// Each section: { key, label, icon, group, requires?, hidden?, badgeKey? }
+//   requires: 'orgId' | 'super' | function(user) => boolean
 //
-// Groups are rendered in the order they appear here.
+// Note: tenant management, announcements, and platform-wide registration
+// settings have moved to /platform — they are not listed here.
 
 const SECTIONS = [
     { key: 'home',           label: 'Home',              icon: Home,         group: 'Overview' },
 
     { key: 'users',          label: 'Users',             icon: Users,        group: 'People' },
-    { key: 'create',         label: 'Add User',          icon: UserPlus,     group: 'People' },
-    { key: 'import',         label: 'Import Users',      icon: Download,     group: 'People' },
+    { key: 'add',            label: 'Add People',        icon: UserPlus,     group: 'People' },
     { key: 'role-requests',  label: 'Role Requests',     icon: RefreshCw,    group: 'People', badgeKey: 'roleRequests' },
 
     { key: 'departments',    label: 'Departments',       icon: Building,     group: 'Structure', requires: 'orgId' },
@@ -48,20 +45,19 @@ const SECTIONS = [
 
     { key: 'audit',          label: 'Audit Logs',        icon: ScrollText,   group: 'Compliance' },
     { key: 'org-settings',   label: 'Org Settings',      icon: SettingsIcon, group: 'Compliance', requires: 'orgId' },
-    { key: 'settings',       label: 'Registration',      icon: SettingsIcon, group: 'Compliance', requires: 'super' },
-
-    { key: 'announcements',  label: 'Announcements',     icon: Megaphone,    group: 'Platform', requires: 'super' },
-    // Legacy/back-compat key — accepts ?tab=structure and routes to departments
 ];
 
 // Back-compat alias map (old ?tab= values → new section keys)
 const TAB_ALIASES = {
-    structure: 'departments',
+    structure:     'departments',
+    create:        'add',     // legacy "Create User" key → unified wizard
+    import:        'add',     // legacy "Import Users" key → unified wizard
+    settings:      'org-settings',  // legacy registration-settings key → unified org settings
+    announcements: 'home',    // moved to /platform
 };
 
-const GROUP_ORDER = ['Overview', 'People', 'Structure', 'Operations', 'Compliance', 'Platform'];
+const GROUP_ORDER = ['Overview', 'People', 'Structure', 'Operations', 'Compliance'];
 
-// Determine which sections this user is allowed to see
 function isAllowed(section, user) {
     if (!section.requires) return true;
     if (section.requires === 'orgId') return !!user?.org_id;
@@ -75,7 +71,9 @@ function isAllowed(section, user) {
 export default function AdminPanel() {
     const { user } = useAuth();
     const [searchParams, setSearchParams] = useSearchParams();
+    const navigate = useNavigate();
     const isPlatform = user?.role === 'platform_admin';
+    const isSuper = user?.role === 'super_admin' || isPlatform;
 
     // Resolve current section from URL (back-compat with old ?tab= values)
     const initialSection = (() => {
@@ -107,7 +105,7 @@ export default function AdminPanel() {
     }, []);
     useEffect(() => { refreshBadges(); }, [refreshBadges]);
 
-    // Org-id for structure sub-pages — single fetch shared across them
+    // Org-id for structure sub-pages
     const [orgId, setOrgId] = useState(null);
     useEffect(() => {
         if (!user?.org_id) { setOrgId(null); return; }
@@ -123,14 +121,13 @@ export default function AdminPanel() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [searchParams]);
 
-    const navigate = useCallback((key) => {
+    const goSection = useCallback((key) => {
         setSection(key);
         setMobileOpen(false);
         const next = new URLSearchParams(searchParams);
         if (key === 'home') next.delete('tab');
         else next.set('tab', key);
         setSearchParams(next, { replace: true });
-        // refresh role-request badge after returning from that section
         if (key === 'home' || key === 'role-requests' || key === 'users') refreshBadges();
     }, [searchParams, setSearchParams, refreshBadges]);
 
@@ -142,14 +139,12 @@ export default function AdminPanel() {
             if (!groups.has(sec.group)) groups.set(sec.group, []);
             groups.get(sec.group).push(sec);
         }
-        // return in GROUP_ORDER
         return GROUP_ORDER.filter(g => groups.has(g)).map(g => ({ name: g, items: groups.get(g) }));
     }, [user]);
 
     const currentSection = SECTIONS.find(sec => sec.key === section) || SECTIONS[0];
     const currentTitle = currentSection.label === 'Home' ? 'Admin Panel' : currentSection.label;
 
-    // Access guard
     if (!user || !['hr_admin', 'super_admin', 'platform_admin'].includes(user.role)) {
         return (
             <div className={s.shell}>
@@ -171,15 +166,18 @@ export default function AdminPanel() {
     const renderSection = () => {
         switch (section) {
             case 'home':
-                return <AdminHome user={user} onNavigate={navigate} />;
+                return <AdminHome user={user} onNavigate={goSection} />;
             case 'users':
                 return <UserManagement userRole={user.role} />;
-            case 'create':
-                return <CreateUser userRole={user.role} onCreated={() => navigate('users')} />;
+            case 'add':
+                return (
+                    <AddPeopleWizard
+                        userRole={user.role}
+                        onCompleted={() => { refreshBadges(); }}
+                    />
+                );
             case 'role-requests':
                 return <RoleRequests userRole={user.role} />;
-            case 'import':
-                return <ImportUsers />;
             case 'payroll':
                 return <PayPeriods />;
             case 'labels':
@@ -197,23 +195,13 @@ export default function AdminPanel() {
             case 'org-chart':
                 return user.org_id ? <OrgChartView /> : <p>You are not assigned to an organization.</p>;
             case 'org-settings':
-                // The OrganizationSettings (general: timezone, work hours, holidays) lives in components/organization
                 return user.org_id
-                    ? <OrgSettingsWrapper userRole={user.role} />
+                    ? <OrgSettingsPage userRole={user.role} />
                     : <p>You are not assigned to an organization.</p>;
-            case 'settings':
-                return (user.role === 'super_admin' || isPlatform)
-                    ? <OrgSettings />
-                    : <div className={s.accessDenied}>Insufficient permissions.</div>;
-            case 'announcements':
-                return (user.role === 'super_admin' || isPlatform)
-                    ? <AnnouncementsTab userRole={user.role} />
-                    : <div className={s.accessDenied}>Insufficient permissions.</div>;
-            // Back-compat: old MyOrganization view (departments + teams + chart + general)
             case 'my-org':
                 return user.org_id ? <MyOrganization userRole={user.role} /> : null;
             default:
-                return <AdminHome user={user} onNavigate={navigate} />;
+                return <AdminHome user={user} onNavigate={goSection} />;
         }
     };
 
@@ -251,7 +239,6 @@ export default function AdminPanel() {
                         style={{ marginLeft: 'auto', padding: '0.25rem 0.4rem', display: 'none' }}
                         onClick={() => setMobileOpen(false)}
                         aria-label="Close menu"
-                        // shown via CSS only when needed; harmless on desktop
                     >
                         <X size={14} />
                     </button>
@@ -259,7 +246,6 @@ export default function AdminPanel() {
 
                 {navGroups.map(group => {
                     const isCollapsed = !!collapsed[group.name];
-                    // 'Overview' is single-item; render without group label for cleanliness
                     if (group.items.length === 1 && group.name === 'Overview') {
                         const item = group.items[0];
                         const Icon = item.icon;
@@ -268,7 +254,7 @@ export default function AdminPanel() {
                             <div className={s.groupItems} key={group.name}>
                                 <button
                                     className={`${s.navItem} ${isActive ? s.active : ''}`}
-                                    onClick={() => navigate(item.key)}
+                                    onClick={() => goSection(item.key)}
                                 >
                                     <span className={s.navIcon}><Icon size={16} /></span>
                                     <span className={s.navLabel}>{item.label}</span>
@@ -297,7 +283,7 @@ export default function AdminPanel() {
                                             <button
                                                 key={item.key}
                                                 className={`${s.navItem} ${isActive ? s.active : ''}`}
-                                                onClick={() => navigate(item.key)}
+                                                onClick={() => goSection(item.key)}
                                             >
                                                 <span className={s.navIcon}><Icon size={16} /></span>
                                                 <span className={s.navLabel}>{item.label}</span>
@@ -312,6 +298,25 @@ export default function AdminPanel() {
                         </div>
                     );
                 })}
+
+                {/* Platform Console link (super / platform admin only) */}
+                {isSuper && (
+                    <div className={s.group}>
+                        <div className={s.groupLabel} style={{ cursor: 'default' }}>
+                            <span>Platform</span>
+                        </div>
+                        <div className={s.groupItems}>
+                            <button
+                                className={s.navItem}
+                                onClick={() => navigate('/tenants')}
+                                title="Open the platform-wide console (tenants, plans, system settings)"
+                            >
+                                <span className={s.navIcon}><ExternalLink size={16} /></span>
+                                <span className={s.navLabel}>Platform Console</span>
+                            </button>
+                        </div>
+                    </div>
+                )}
             </aside>
 
             {/* ─── Content ─── */}
@@ -330,26 +335,4 @@ export default function AdminPanel() {
             </main>
         </div>
     );
-}
-
-/**
- * Thin wrapper that loads the current org and renders the general OrgSettings
- * component (timezone / work hours / fiscal year) without the full
- * MyOrganization sub-tab strip.
- */
-function OrgSettingsWrapper({ userRole }) {
-    const [org, setOrg] = useState(null);
-    const [loading, setLoading] = useState(true);
-
-    const fetchOrg = useCallback(() => {
-        setLoading(true);
-        getCurrentOrg().then(r => { setOrg(r.data); setLoading(false); }).catch(() => setLoading(false));
-    }, []);
-
-    useEffect(() => { fetchOrg(); }, [fetchOrg]);
-
-    if (loading) return <div>Loading…</div>;
-    if (!org) return <p>You are not assigned to any organization yet.</p>;
-
-    return <OrgGeneralSettings org={org} onUpdate={fetchOrg} userRole={userRole} />;
 }

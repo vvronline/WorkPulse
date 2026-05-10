@@ -1,0 +1,149 @@
+/* ========================================================================
+   OrgSettingsPage — anchor-scrolled single page
+   ======================================================================== */
+
+.layout {
+    display: grid;
+    grid-template-columns: 200px minmax(0, 1fr);
+    gap: 1.25rem;
+    align-items: start;
+}
+
+/* ---------- Sticky anchor rail ---------- */
+.rail {
+    position: sticky;
+    top: 1rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 0.55rem 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.railItem {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.5rem 0.7rem;
+    border-radius: 8px;
+    border: none;
+    background: none;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.86rem;
+    font-weight: 500;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.15s, color 0.15s;
+}
+
+.railItem:hover {
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.railItem .railIcon {
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+
+.railActive {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.railActive .railIcon { color: var(--accent); }
+
+/* ---------- Body / sections ---------- */
+.body {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    min-width: 0;
+}
+
+.section {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1.1rem 1.25rem 1.25rem;
+    /* Anchor scrolling: leave room above when scrolled into view */
+    scroll-margin-top: 1rem;
+}
+
+.sectionHead {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.7rem;
+    padding-bottom: 0.85rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1rem;
+}
+
+.sectionIcon {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    padding: 9px;
+    flex-shrink: 0;
+}
+
+.sectionTitle {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0;
+    line-height: 1.2;
+}
+
+.sectionDesc {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    margin: 4px 0 0;
+    line-height: 1.5;
+}
+
+.sectionBody {
+    /* Sub-components carry their own padding/spacing */
+}
+
+.placeholder {
+    background: var(--bg-secondary);
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    padding: 1.25rem;
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+    line-height: 1.55;
+}
+
+.empty {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+/* ---------- Mobile ---------- */
+@media (max-width: 760px) {
+    .layout {
+        grid-template-columns: 1fr;
+    }
+
+    .rail {
+        position: static;
+        flex-direction: row;
+        overflow-x: auto;
+        gap: 4px;
+    }
+
+    .railItem {
+        white-space: nowrap;
+    }
+}

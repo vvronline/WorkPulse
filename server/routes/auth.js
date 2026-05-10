@@ -62,18 +62,14 @@ async function resolveDefaultDomainUser(identifier) {
         return { user: platRes.rows[0], db: { query: masterQuery }, tenantId: null, isPlatformUser: true };
     }
 
-    // 3. Legacy fallback: check users table in master DB (pre-migration shared database)
-    //    This allows login to work before tenants have been migrated.
-    try {
-        const legacyRes = await masterQuery(
-            'SELECT * FROM users WHERE username = $1 OR email = $1',
-            [identifier]
-        );
-        if (legacyRes.rows[0]) {
-            return { user: legacyRes.rows[0], db: { query: masterQuery }, tenantId: null };
-        }
-    } catch { /* users table may not exist in a fresh master-only DB — ignore */ }
-
+    // Legacy single-DB fallback removed (was: SELECT * FROM users in master DB).
+    // After migration to per-tenant databases, every real user lives in either
+    // user_directory (mapped to a tenant DB) or platform_users. Falling back
+    // to a master-DB users lookup masked routing bugs and added attack surface
+    // (an unbounded auth lookup against the master pool).
+    //
+    // If you are still on a pre-migration deployment, run the migration script
+    // to backfill user_directory rows before upgrading.
     return { user: null };
 }
 

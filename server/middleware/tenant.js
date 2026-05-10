@@ -82,6 +82,7 @@ async function resolveFromDomain(host) {
  */
 async function attachTenantDb(req, tenant) {
     req.tenant = tenant;
+    req.tenantId = tenant.id; // back-compat for code that reads req.tenantId
     req.isMasterRoute = false;
 
     const db = await getTenantPool(tenant.db_name, tenant.db_host);
@@ -90,6 +91,9 @@ async function attachTenantDb(req, tenant) {
         transaction: db.transaction,
         pool: db.pool,
     };
+
+    // Swap req.log for a child logger that carries tenantId/slug on every line
+    if (typeof req.enrichLogger === 'function') req.enrichLogger();
 }
 
 /**
