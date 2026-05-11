@@ -33,8 +33,11 @@
     width: 100%;
     max-width: 560px;
     max-height: 90vh;
+    /* `min-height: 0` is needed so the inner flex children can shrink. */
+    min-height: 0;
     display: flex;
     flex-direction: column;
+    overflow: hidden; /* clip rounded corners over the scroll area */
     animation: modalIn 0.2s cubic-bezier(.4, 0, .2, 1);
 }
 
@@ -102,7 +105,12 @@
 .body {
     padding: 1rem 1.5rem 0.5rem;
     overflow-y: auto;
-    flex: 1;
+    -webkit-overflow-scrolling: touch;
+    /* CRITICAL: min-height:0 lets the flex child actually shrink so the
+       footer stays pinned and the body becomes the scrollable region.
+       Without this, on small viewports the footer is pushed off-screen. */
+    flex: 1 1 auto;
+    min-height: 0;
 }
 
 /* ============= MUTE CARD ============= */
@@ -453,9 +461,21 @@
 
 /* ============= RESPONSIVE ============= */
 @media (max-width: 520px) {
+    .overlay {
+        /* Use the full viewport on phones — no outer padding so the modal
+           gets every available pixel and the footer never falls below the
+           on-screen keyboard / browser chrome. */
+        padding: 0;
+        align-items: stretch;
+    }
+
     .modal {
-        max-height: 95vh;
-        border-radius: 16px;
+        max-width: 100%;
+        max-height: 100dvh; /* dvh accounts for mobile browser address-bar */
+        height: 100dvh;
+        border-radius: 0;
+        border-left: none;
+        border-right: none;
     }
 
     .header,
@@ -464,7 +484,15 @@
     }
 
     .body {
-        padding: 0.75rem 1rem 0.5rem;
+        padding: 0.75rem 1rem 0.75rem;
+        /* Add safe-area padding so the bottom of the scroll list isn't
+           hidden behind iOS home-indicator / Android nav gestures. */
+        padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+    }
+
+    .footer {
+        /* Pin the footer above iOS home-indicator with safe-area inset. */
+        padding-bottom: calc(0.9rem + env(safe-area-inset-bottom, 0px));
     }
 
     .rowControls {
@@ -474,5 +502,33 @@
     .volumeWrap {
         flex-basis: 100%;
         order: 3;
+    }
+
+    .resetBtn,
+    .doneBtn {
+        font-size: 0.85rem;
+    }
+}
+
+/* Fallback for very short viewports (landscape phones) — ensure footer
+   actions stay visible by allowing the body to scroll within whatever
+   height is left. */
+@media (max-height: 520px) {
+    .modal {
+        max-height: 100dvh;
+        height: 100dvh;
+        border-radius: 0;
+    }
+
+    .header {
+        padding: 0.6rem 1rem;
+    }
+
+    .footer {
+        padding: 0.6rem 1rem;
+    }
+
+    .body {
+        padding: 0.6rem 1rem;
     }
 }

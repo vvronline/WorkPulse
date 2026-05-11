@@ -1,4 +1,5 @@
 import { useCallback, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Volume2, VolumeX, Play, Bell, MessageCircle, AtSign, Smile, PhoneOutgoing, PhoneCall, RotateCcw } from 'lucide-react';
 import { useNotificationPrefs } from '../../NotificationPrefsContext';
 import {
@@ -77,7 +78,7 @@ export default function NotificationSoundsModal({ onClose }) {
         resetPrefs();
     }, [resetPrefs]);
 
-    return (
+    return createPortal((
         <div ref={overlayRef} className={s.overlay} onMouseDown={onOverlayClick}>
             <div className={s.modal} role="dialog" aria-modal="true" aria-labelledby="ns-title">
                 <div className={s.header}>
@@ -221,5 +222,5 @@ export default function NotificationSoundsModal({ onClose }) {
                 </div>
             </div>
         </div>
-    );
+    ), document.body);
 }
