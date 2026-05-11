@@ -91,14 +91,20 @@ export default function Tasks() {
   useEffect(() => {
     getAssignableUsers().then((r) => setAssignableUsers(r.data)).catch(() => {});
     getTaskLabels().then((r) => setOrgLabels(r.data)).catch(() => {});
-    if (currentUser?.team_id) {
-      getAvailableSprints().then((r) => {
+    // Always ask the backend — it knows about platform_admin / super_admin /
+    // hr_admin who can see every team's sprints, and will correctly return
+    // [] for users with no team. Don't gate on currentUser.team_id here:
+    // the cached profile may be stale (especially in the desktop app where
+    // the renderer doesn't auto-reload after a team is assigned).
+    getAvailableSprints()
+      .then((r) => {
         setAvailableSprints(r.data);
         const active = r.data.find((sp) => sp.status === 'active');
         if (active) setSelectedSprintId(active.id);
-      }).catch(() => {});
-    }
-  }, [currentUser?.team_id]);
+        else if (r.data.length > 0) setSelectedSprintId(r.data[0].id);
+      })
+      .catch(() => {});
+  }, [currentUser?.id, currentUser?.team_id]);
 
   useEffect(() => {
     const taskId = searchParams.get('task');

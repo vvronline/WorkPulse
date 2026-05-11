@@ -97,7 +97,7 @@ export default function TasksHeader({
         <div className={s['tasks-header-actions']}>
           {/* Tab switcher */}
           <div className={s['tab-switcher']}>
-            {currentUser?.team_id && availableSprints.length > 0 && (
+            {availableSprints.length > 0 && (
               <button
                 className={`${s['tab-btn']} ${activeTab === 'sprint' ? s['tab-active'] : ''}`}
                 onClick={() => {

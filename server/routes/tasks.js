@@ -711,9 +711,81 @@ router.get('/available-sprints', auth, loadUserContext, async (req, res) => {
     try {
         const isOrgAdmin = req.userOrgId && (req.userRole === 'super_admin' || req.userRole === 'hr_admin' || req.userRole === 'platform_admin');
 
+        // ── Helper: figure out today's date in the caller's local timezone ──
+        const getTodayStr = () => {
+            const tzOffset = req.headers['x-timezone-offset'];
+            if (tzOffset !== undefined) {
+                const now = new Date();
+                const localNow = new Date(now.getTime() - Number(tzOffset) * 60000);
+                return localNow.toISOString().split('T')[0];
+            }
+            const now = new Date();
+            return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        };
+        const fmt = (ms) => {
+            const d = new Date(ms);
+            return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+        };
+
+        // ── Helper: ensure the current + next sprint exist for a team that has
+        //    sprint_start_date / sprint_duration_weeks configured. Returns
+        //    the materialised sprint rows (existing or newly inserted). ──
+        const materialiseTeamSprints = async (team) => {
+            if (!team?.sprint_start_date || !team.sprint_duration_weeks) return [];
+            const todayStr = getTodayStr();
+            const [sy, sm, sd] = team.sprint_start_date.split('-').map(Number);
+            const [ty, tm, td] = todayStr.split('-').map(Number);
+            const startMs = Date.UTC(sy, sm - 1, sd);
+            const todayMs = Date.UTC(ty, tm - 1, td);
+            const daysSinceStart = Math.floor((todayMs - startMs) / 86400000);
+            const sprintDurationDays = team.sprint_duration_weeks * 7;
+            const sprintNumber = daysSinceStart < 0 ? 1 : Math.floor(daysSinceStart / sprintDurationDays) + 1;
+
+            const out = [];
+            for (let i = 0; i < 2; i++) {
+                const num = sprintNumber + i;
+                const sprintStartDays = (num - 1) * sprintDurationDays;
+                const sMs = startMs + sprintStartDays * 86400000;
+                const eMs = sMs + (sprintDurationDays - 1) * 86400000;
+                const name = `Sprint #${num}`;
+                const existing = (await req.db.query(
+                    'SELECT id, name, start_date, end_date, status, goal FROM sprints WHERE team_id = $1 AND name = $2',
+                    [team.id, name]
+                )).rows[0];
+                if (existing) {
+                    out.push(existing);
+                } else {
+                    const inserted = await req.db.query(
+                        'INSERT INTO sprints (team_id, name, start_date, end_date, status) VALUES ($1, $2, $3, $4, $5) RETURNING id, name, start_date, end_date, status, goal',
+                        [team.id, name, fmt(sMs), fmt(eMs), i === 0 ? 'active' : 'planned']
+                    );
+                    out.push(inserted.rows[0]);
+                }
+            }
+            return out;
+        };
+
         // Org admins see every active/planned sprint across all teams in their org
-        // (so they can move service-desk tickets into any team's sprint).
+        // (so they can move service-desk tickets into any team's sprint). For any
+        // team in the org that has a sprint_start_date configured but no sprint
+        // rows yet, auto-materialise the current + next sprint so admins don't
+        // have to wait for a team member to visit the Tasks page first.
         if (isOrgAdmin) {
+            // Auto-create sprints for every configured-but-empty team in the org
+            const teamsNeedingSprints = (await req.db.query(`
+                SELECT t.id, t.name, t.sprint_start_date, t.sprint_duration_weeks
+                FROM teams t
+                LEFT JOIN sprints s
+                       ON s.team_id = t.id AND s.status IN ('active', 'planned')
+                WHERE t.org_id = $1
+                  AND t.sprint_start_date IS NOT NULL
+                  AND s.id IS NULL
+            `, [req.userOrgId])).rows;
+            for (const team of teamsNeedingSprints) {
+                try { await materialiseTeamSprints(team); }
+                catch (e) { req.log.warn({ err: e, teamId: team.id }, 'Failed to auto-materialise sprints for team'); }
+            }
+
             const orgSprints = (await req.db.query(`
                 SELECT s.id, s.name, s.start_date, s.end_date, s.status, s.goal, s.team_id, t.name as team_name
                 FROM sprints s
@@ -734,54 +806,12 @@ router.get('/available-sprints', auth, loadUserContext, async (req, res) => {
         `, [req.userTeamId])).rows;
 
         if (sprints.length === 0) {
-            const team = (await req.db.query('SELECT sprint_start_date, sprint_duration_weeks FROM teams WHERE id = $1', [req.userTeamId])).rows[0];
-            if (team?.sprint_start_date) {
-                const tzOffset = req.headers['x-timezone-offset'];
-                let todayStr;
-                if (tzOffset !== undefined) {
-                    const now = new Date();
-                    const localNow = new Date(now.getTime() - Number(tzOffset) * 60000);
-                    todayStr = localNow.toISOString().split('T')[0];
-                } else {
-                    const now = new Date();
-                    todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-                }
-
-                const [sy, sm, sd] = team.sprint_start_date.split('-').map(Number);
-                const [ty, tm, td] = todayStr.split('-').map(Number);
-                const startMs = Date.UTC(sy, sm - 1, sd);
-                const todayMs = Date.UTC(ty, tm - 1, td);
-                const daysSinceStart = Math.floor((todayMs - startMs) / 86400000);
-                const sprintDurationDays = team.sprint_duration_weeks * 7;
-                const sprintNumber = daysSinceStart < 0 ? 1 : Math.floor(daysSinceStart / sprintDurationDays) + 1;
-
-                const fmt = (ms) => {
-                    const d = new Date(ms);
-                    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-                };
-
-                const autoSprints = [];
-                for (let i = 0; i < 2; i++) {
-                    const num = sprintNumber + i;
-                    const sprintStartDays = (num - 1) * sprintDurationDays;
-                    const sMs = startMs + sprintStartDays * 86400000;
-                    const eMs = sMs + (sprintDurationDays - 1) * 86400000;
-                    const name = `Sprint #${num}`;
-
-                    const existing = (await req.db.query('SELECT id FROM sprints WHERE team_id = $1 AND name = $2', [req.userTeamId, name])).rows[0];
-                    if (!existing) {
-                        const result = await req.db.query(
-                            'INSERT INTO sprints (team_id, name, start_date, end_date, status) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-                            [req.userTeamId, name, fmt(sMs), fmt(eMs), i === 0 ? 'active' : 'planned']
-                        );
-                        autoSprints.push({ id: result.rows[0].id, name, start_date: fmt(sMs), end_date: fmt(eMs), status: i === 0 ? 'active' : 'planned', goal: null });
-                    } else {
-                        const sprint = (await req.db.query('SELECT id, name, start_date, end_date, status, goal FROM sprints WHERE id = $1', [existing.id])).rows[0];
-                        autoSprints.push(sprint);
-                    }
-                }
-                return res.json(autoSprints);
-            }
+            const team = (await req.db.query(
+                'SELECT id, sprint_start_date, sprint_duration_weeks FROM teams WHERE id = $1',
+                [req.userTeamId]
+            )).rows[0];
+            const autoSprints = await materialiseTeamSprints(team);
+            return res.json(autoSprints);
         }
 
         res.json(sprints);
