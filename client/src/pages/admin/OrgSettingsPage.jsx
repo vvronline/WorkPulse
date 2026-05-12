@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings as SettingsIcon, Palette, Plug, ShieldCheck } from 'lucide-react';
+import { Settings as SettingsIcon, Palette, Plug, ShieldCheck, UserCog } from 'lucide-react';
 import { getCurrentOrg } from '../../api';
 import OrgGeneralSettings from '../../components/organization/OrgSettings';
 import OrgRegistrationSettings from './OrgSettings';
+import OrgRoleLabels from './OrgRoleLabels';
 import s from './OrgSettingsPage.module.css';
 
 /**
@@ -39,6 +40,7 @@ export default function OrgSettingsPage({ userRole }) {
     const sections = useMemo(() => ([
         { id: 'general',      label: 'General',      icon: SettingsIcon },
         ...(isSuper ? [{ id: 'registration', label: 'Registration', icon: ShieldCheck }] : []),
+        { id: 'roles',        label: 'Roles',        icon: UserCog },
         { id: 'branding',     label: 'Branding',     icon: Palette },
         { id: 'integrations', label: 'Integrations', icon: Plug },
     ]), [isSuper]);
@@ -131,6 +133,29 @@ export default function OrgSettingsPage({ userRole }) {
                         </div>
                     </section>
                 )}
+
+                <section
+                    id="roles"
+                    data-section-id="roles"
+                    ref={el => (sectionRefs.current.roles = el)}
+                    className={s.section}
+                >
+                    <header className={s.sectionHead}>
+                        <UserCog size={18} className={s.sectionIcon} />
+                        <div>
+                            <h2 className={s.sectionTitle}>Roles</h2>
+                            <p className={s.sectionDesc}>
+                                Define your organisation's roles. Each role is pinned to one of four
+                                permission levels (Standard&nbsp;member, Team&nbsp;lead, Manager,
+                                HR&nbsp;admin) which controls what they can see and do. Add, rename,
+                                recolour, or remove unused roles freely.
+                            </p>
+                        </div>
+                    </header>
+                    <div className={s.sectionBody}>
+                        <OrgRoleLabels canEdit={isSuper} />
+                    </div>
+                </section>
 
                 <section
                     id="branding"

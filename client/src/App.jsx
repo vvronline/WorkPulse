@@ -19,6 +19,7 @@ import { MeetingProvider } from './MeetingContext';
 import { UserStatusProvider } from './UserStatusContext';
 import { NotificationPrefsProvider } from './NotificationPrefsContext';
 import { AgileConfigProvider } from './AgileConfigContext';
+import { RoleLabelsProvider } from './RoleLabelsContext';
 import MeetingPiP from './components/meeting/MeetingPiP';
 import GlobalIncomingCall from './components/notifications/GlobalIncomingCall';
 import GlobalMeetingNotification from './components/notifications/GlobalMeetingNotification';
@@ -32,7 +33,6 @@ import KeepAlive from './components/common/KeepAlive';
 // Lazy-load pages that are NOT part of keep-alive (meetings use dynamic params)
 const MeetingJoin = lazy(() => import('./pages/MeetingJoin'));
 const MeetingRoom = lazy(() => import('./pages/MeetingRoom'));
-const AgileSettings = lazy(() => import('./pages/AgileSettings'));
 const SprintInsights = lazy(() => import('./pages/SprintInsights'));
 
 function ProtectedRoute({ children, minRole }) {
@@ -98,11 +98,19 @@ function AppRoutes() {
           <Route path="/reset-password/:token" element={<PublicRoute><ResetPassword /></PublicRoute>} />
           <Route path="/meeting/:code" element={<ProtectedRoute><MeetingJoin /></ProtectedRoute>} />
           <Route path="/meeting/:code/room" element={<ProtectedRoute><MeetingRoom /></ProtectedRoute>} />
-          {/* Agile config — every authenticated user can view & request edit access.
-              Admins (Admin Panel route guard) get the same page from inside the
-              admin shell; this standalone route is the discoverable entry point
-              for non-admin team members. */}
-          <Route path="/agile-settings" element={<ProtectedRoute><AgileSettings /></ProtectedRoute>} />
+          {/* Agile config is now ONLY editable from inside the admin panel
+              (Admin → Structure → Agile Config). The standalone /agile-settings
+              route redirects any non-admin to the tasks page; admins get
+              forwarded to the equivalent admin section so there's a single
+              entry point. */}
+          <Route
+            path="/agile-settings"
+            element={
+              <ProtectedRoute minRole="hr_admin">
+                <Navigate to="/admin?tab=agile" replace />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/sprint-insights" element={<ProtectedRoute><SprintInsights /></ProtectedRoute>} />
           {/* Legacy redirects — old standalone pages now live under /attendance */}
           <Route path="/leaves" element={<Navigate to="/attendance#leaves" replace />} />
@@ -217,6 +225,7 @@ export default function App() {
             <BrowserRouter>
               <AxiosInterceptor>
                 <NotificationPrefsProvider>
+                  <RoleLabelsProvider>
                   <AgileConfigProvider>
                   <ChatProvider>
                     <UserStatusProvider>
@@ -231,6 +240,7 @@ export default function App() {
                     </UserStatusProvider>
                   </ChatProvider>
                   </AgileConfigProvider>
+                  </RoleLabelsProvider>
                 </NotificationPrefsProvider>
               </AxiosInterceptor>
             </BrowserRouter>

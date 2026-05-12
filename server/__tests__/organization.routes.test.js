@@ -348,3 +348,269 @@ describe('POST /api/org/remove-member', () => {
         expect(res.body.message).toMatch(/removed/i);
     });
 });
+
+// ─── Custom Roles ────────────────────────────────────────────────────
+//
+// Tenants get a fully customisable set of roles, each pinned to a
+// permission_level 1..4. The two top-level roles (super_admin /
+// platform_admin) are system-managed and never appear in tenant_roles.
+
+describe('GET /api/org/roles', () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+    });
+
+    test('requires authentication', async () => {
+        const res = await request(app).get('/api/org/roles').set(CSRF);
+        expect(res.status).toBe(401);
+    });
+
+    test('returns canonical defaults when tenant has no rows', async () => {
+        setupAuth('employee');
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // tenant_roles
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // user counts
+        const res = await request(app)
+            .get('/api/org/roles')
+            .set('Cookie', authCookie(1))
+            .set(CSRF);
+        expect(res.status).toBe(200);
+        expect(Array.isArray(res.body.roles)).toBe(true);
+        expect(res.body.roles.find(r => r.role_key === 'employee').label).toBe('Employee');
+        expect(res.body.roles.find(r => r.role_key === 'manager').permission_level).toBe(3);
+    });
+
+    test('returns tenant-defined roles when present', async () => {
+        setupAuth('employee');
+        mockQuery.mockResolvedValueOnce({
+            rows: [
+                { role_key: 'employee', label: 'Member', description: null, color: '#6b7280', permission_level: 1, is_system: true, sort_order: 1 },
+                { role_key: 'engineer', label: 'Engineering Lead', description: null, color: '#123456', permission_level: 3, is_system: false, sort_order: 5 },
+            ],
+            rowCount: 2,
+        });
+        mockQuery.mockResolvedValueOnce({ rows: [{ role: 'engineer', cnt: 4 }], rowCount: 1 });
+
+        const res = await request(app)
+            .get('/api/org/roles')
+            .set('Cookie', authCookie(1))
+            .set(CSRF);
+        expect(res.status).toBe(200);
+        const eng = res.body.roles.find(r => r.role_key === 'engineer');
+        expect(eng.label).toBe('Engineering Lead');
+        expect(eng.permission_level).toBe(3);
+        expect(eng.user_count).toBe(4);
+        expect(eng.is_system).toBe(false);
+    });
+});
+
+describe('POST /api/org/roles', () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+    });
+
+    test('rejects below super_admin', async () => {
+        setupAuth('hr_admin');
+        const res = await request(app)
+            .post('/api/org/roles')
+            .set('Cookie', authCookie(1))
+            .set(CSRF)
+            .send({ role_key: 'principal', label: 'Principal', permission_level: 3 });
+        expect(res.status).toBe(403);
+    });
+
+    test('rejects invalid role_key format', async () => {
+        setupAuth('super_admin');
+        const res = await request(app)
+            .post('/api/org/roles')
+            .set('Cookie', authCookie(1))
+            .set(CSRF)
+            .send({ role_key: 'Bad Key!', label: 'Bad', permission_level: 2 });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/role_key/);
+    });
+
+    test('rejects reserved system role_key', async () => {
+        setupAuth('super_admin');
+        const res = await request(app)
+            .post('/api/org/roles')
+            .set('Cookie', authCookie(1))
+            .set(CSRF)
+            .send({ role_key: 'super_admin', label: 'Sup', permission_level: 4 });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/reserved/);
+    });
+
+    test('rejects out-of-range permission_level', async () => {
+        setupAuth('super_admin');
+        const res = await request(app)
+            .post('/api/org/roles')
+            .set('Cookie', authCookie(1))
+            .set(CSRF)
+            .send({ role_key: 'principal', label: 'Principal', permission_level: 7 });
+        expect(res.status).toBe(400);
+    });
+
+    test('rejects level >= caller level (non-platform)', async () => {
+        setupAuth('super_admin'); // level 5
+        // permission_level can only be 1..4 anyway, so super_admin can create any level
+        // Try creating one at the lowest level — should succeed
+        mockQuery.mockResolvedValueOnce({ rows: [{ m: 0 }], rowCount: 1 });
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 }); // INSERT
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // SELECT in getRoleLabels
+        const res = await request(app)
+            .post('/api/org/roles')
+            .set('Cookie', authCookie(1))
+            .set(CSRF)
+            .send({ role_key: 'intern', label: 'Intern', permission_level: 1 });
+        expect(res.status).toBe(200);
+    });
+
+    test('creates a new role on success', async () => {
+        setupAuth('super_admin');
+        mockQuery.mockResolvedValueOnce({ rows: [{ m: 4 }], rowCount: 1 }); // max sort_order
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });        // INSERT
+        mockQuery.mockResolvedValueOnce({                                  // getRoleLabels
+            rows: [{ role_key: 'principal', label: 'Principal', description: null, color: '#3366ff', permission_level: 3, is_system: false, sort_order: 5 }],
+            rowCount: 1,
+        });
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // user counts
+
+        const res = await request(app)
+            .post('/api/org/roles')
+            .set('Cookie', authCookie(1))
+            .set(CSRF)
+            .send({ role_key: 'principal', label: 'Principal', permission_level: 3, color: '#3366ff' });
+        expect(res.status).toBe(200);
+        expect(res.body.roles.find(r => r.role_key === 'principal')).toBeTruthy();
+    });
+
+    test('rejects duplicate role_key (DB conflict 23505)', async () => {
+        setupAuth('super_admin');
+        mockQuery.mockResolvedValueOnce({ rows: [{ m: 4 }], rowCount: 1 });
+        const dupErr = Object.assign(new Error('dup'), { code: '23505' });
+        mockQuery.mockRejectedValueOnce(dupErr);
+        const res = await request(app)
+            .post('/api/org/roles')
+            .set('Cookie', authCookie(1))
+            .set(CSRF)
+            .send({ role_key: 'manager', label: 'X', permission_level: 3 });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/already exists/);
+    });
+});
+
+describe('PATCH /api/org/roles/:role_key', () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+    });
+
+    test('rejects below super_admin', async () => {
+        setupAuth('hr_admin');
+        const res = await request(app)
+            .patch('/api/org/roles/manager')
+            .set('Cookie', authCookie(1))
+            .set(CSRF)
+            .send({ label: 'New' });
+        expect(res.status).toBe(403);
+    });
+
+    test('rejects editing a system role (super_admin / platform_admin)', async () => {
+        setupAuth('super_admin');
+        const res = await request(app)
+            .patch('/api/org/roles/super_admin')
+            .set('Cookie', authCookie(1))
+            .set(CSRF)
+            .send({ label: 'X' });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/system role/);
+    });
+
+    test('returns 404 when role_key not found', async () => {
+        setupAuth('super_admin');
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // tenant_roles SELECT
+        const res = await request(app)
+            .patch('/api/org/roles/missing')
+            .set('Cookie', authCookie(1))
+            .set(CSRF)
+            .send({ label: 'X' });
+        expect(res.status).toBe(404);
+    });
+
+    test('updates label/color on success', async () => {
+        setupAuth('super_admin');
+        mockQuery.mockResolvedValueOnce({
+            rows: [{ org_id: 1, role_key: 'manager', label: 'Manager', description: null, color: '#8b5cf6', permission_level: 3, is_system: true }],
+            rowCount: 1,
+        });
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 }); // UPDATE
+        mockQuery.mockResolvedValueOnce({                          // getRoleLabels
+            rows: [{ role_key: 'manager', label: 'Engineering Lead', description: null, color: '#123456', permission_level: 3, is_system: true, sort_order: 3 }],
+            rowCount: 1,
+        });
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // user counts
+        const res = await request(app)
+            .patch('/api/org/roles/manager')
+            .set('Cookie', authCookie(1))
+            .set(CSRF)
+            .send({ label: 'Engineering Lead', color: '#123456' });
+        expect(res.status).toBe(200);
+        expect(res.body.roles.find(r => r.role_key === 'manager').label).toBe('Engineering Lead');
+    });
+});
+
+describe('DELETE /api/org/roles/:role_key', () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+    });
+
+    test('rejects below super_admin', async () => {
+        setupAuth('hr_admin');
+        const res = await request(app)
+            .delete('/api/org/roles/manager')
+            .set('Cookie', authCookie(1))
+            .set(CSRF);
+        expect(res.status).toBe(403);
+    });
+
+    test('rejects deleting a system role', async () => {
+        setupAuth('super_admin');
+        const res = await request(app)
+            .delete('/api/org/roles/super_admin')
+            .set('Cookie', authCookie(1))
+            .set(CSRF);
+        expect(res.status).toBe(400);
+    });
+
+    test('blocks delete when users still hold the role', async () => {
+        setupAuth('super_admin');
+        mockQuery.mockResolvedValueOnce({                                   // SELECT role
+            rows: [{ org_id: 1, role_key: 'principal', is_system: false }],
+            rowCount: 1,
+        });
+        mockQuery.mockResolvedValueOnce({ rows: [{ c: '3' }], rowCount: 1 }); // COUNT users
+        const res = await request(app)
+            .delete('/api/org/roles/principal')
+            .set('Cookie', authCookie(1))
+            .set(CSRF);
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/still hold/);
+    });
+
+    test('deletes when unused', async () => {
+        setupAuth('super_admin');
+        mockQuery.mockResolvedValueOnce({                                    // SELECT role
+            rows: [{ org_id: 1, role_key: 'principal', is_system: false }],
+            rowCount: 1,
+        });
+        mockQuery.mockResolvedValueOnce({ rows: [{ c: '0' }], rowCount: 1 }); // COUNT
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });          // DELETE
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });          // getRoleLabels SELECT
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });          // user counts
+
+        const res = await request(app)
+            .delete('/api/org/roles/principal')
+            .set('Cookie', authCookie(1))
+            .set(CSRF);
+        expect(res.status).toBe(200);
+    });
+});

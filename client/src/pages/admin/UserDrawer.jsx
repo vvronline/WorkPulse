@@ -7,6 +7,7 @@ import {
     cancelRoleChange,
 } from '../../api';
 import { ROLES, ROLE_LABELS } from './constants';
+import { useRoleLabels } from '../../RoleLabelsContext';
 import s from './UserManagement.module.css';
 
 /**
@@ -36,6 +37,12 @@ export default function UserDrawer({
     const isPlatform = userRole === 'platform_admin';
     const isSelf = currentUser?.id === user.id;
     const isPlatformTarget = user.role === 'platform_admin';
+    const { labelFor: roleLabel, roles: tenantRoles } = useRoleLabels();
+    // Build the role-key list used by the role <select> from the tenant
+    // catalogue, falling back to the canonical defaults for legacy tenants.
+    const assignableRoleKeys = (tenantRoles && tenantRoles.length)
+        ? tenantRoles.map(r => r.role_key)
+        : ROLES;
 
     const [orgId, setOrgId] = useState(user.org_id || '');
     const [deptId, setDeptId] = useState(user.department_id || '');
@@ -193,8 +200,8 @@ export default function UserDrawer({
                         }}>
                             <AlertTriangle size={16} color="var(--warning)" />
                             <span style={{ fontSize: 13 }}>
-                                Pending role change: <strong>{ROLE_LABELS[pendingRequest.from_role || pendingRequest.current_role]}</strong> →{' '}
-                                <strong>{ROLE_LABELS[pendingRequest.requested_role || pendingRequest.to_role]}</strong>
+                                Pending role change: <strong>{roleLabel(pendingRequest.from_role || pendingRequest.current_role)}</strong> →{' '}
+                                <strong>{roleLabel(pendingRequest.requested_role || pendingRequest.to_role)}</strong>
                             </span>
                             <button
                                 className={`${s.btn} ${s.secondary}`}
@@ -214,7 +221,7 @@ export default function UserDrawer({
                             <>
                                 <div className={s.field}>
                                     <select value={role} onChange={e => setRole(e.target.value)} disabled={busy || !!pendingRequest}>
-                                        {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+                                        {assignableRoleKeys.map(r => <option key={r} value={r}>{roleLabel(r)}</option>)}
                                     </select>
                                 </div>
                                 {roleDirty && userRole !== 'super_admin' && userRole !== 'platform_admin' && (
@@ -244,7 +251,7 @@ export default function UserDrawer({
                             </>
                         ) : (
                             <div className={s.lockedField}>
-                                {ROLE_LABELS[user.role] || user.role}
+                                {roleLabel(user.role)}
                                 {isSelf && <span style={{ marginLeft: 8, fontSize: 12, opacity: 0.8 }}>(you can't change your own role)</span>}
                                 {isPlatformTarget && <span style={{ marginLeft: 8, fontSize: 12, opacity: 0.8 }}>(platform admin)</span>}
                             </div>
@@ -300,7 +307,7 @@ export default function UserDrawer({
                                     <option value="">— None —</option>
                                     {managerOptions.map(m => (
                                         <option key={m.id} value={m.id}>
-                                            {m.full_name} ({ROLE_LABELS[m.role] || m.role})
+                                            {m.full_name} ({roleLabel(m.role)})
                                         </option>
                                     ))}
                                 </select>

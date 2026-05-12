@@ -7,6 +7,7 @@ import {
     getOrgDepartments, getOrgTeams, getAdminOrganizations, getRoleChangeRequests,
 } from '../../api';
 import { useAuth } from '../../AuthContext';
+import { useRoleLabels } from '../../RoleLabelsContext';
 import { ROLES, ROLE_LABELS } from './constants';
 import UserDrawer from './UserDrawer';
 import TypedConfirm from './TypedConfirm';
@@ -27,6 +28,7 @@ const SAVED_VIEWS = [
 
 export default function UserManagement({ userRole }) {
     const { user: currentUser } = useAuth();
+    const { labelFor: roleLabel, roles: tenantRoles } = useRoleLabels();
 
     // ─── Server-side filter state ────────────────────────────────────────
     const [search, setSearch] = useState('');
@@ -230,8 +232,11 @@ export default function UserManagement({ userRole }) {
                 />
                 <select value={filterRole} onChange={e => setFilterRole(e.target.value)} aria-label="Role filter">
                     <option value="">All roles</option>
-                    {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
-                    <option value="platform_admin">{ROLE_LABELS.platform_admin}</option>
+                    {(tenantRoles?.length ? tenantRoles.map(r => r.role_key) : ROLES).map(r => (
+                        <option key={r} value={r}>{roleLabel(r)}</option>
+                    ))}
+                    <option value="super_admin">{roleLabel('super_admin')}</option>
+                    <option value="platform_admin">{roleLabel('platform_admin')}</option>
                 </select>
                 <select value={filterActive} onChange={e => setFilterActive(e.target.value)} aria-label="Status filter">
                     <option value="">All status</option>
@@ -346,7 +351,7 @@ export default function UserManagement({ userRole }) {
                             </div>
                             <div>
                                 <span className={s.roleBadge} data-role={u.role}>
-                                    {ROLE_LABELS[u.role] || u.role}
+                                    {roleLabel(u.role)}
                                 </span>
                             </div>
                             <div className={s.cellText}>

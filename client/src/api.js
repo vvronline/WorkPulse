@@ -242,6 +242,12 @@ export const getTeamSprintConfig = (teamId) => API.get(`/org/teams/${teamId}/spr
 export const updateTeamSprintConfig = (teamId, data) => API.put(`/org/teams/${teamId}/sprint-config`, data);
 export const getOrgChart = (params) => API.get('/org/chart', { params });
 
+// Custom Roles (tenant-defined roles with permission_level 1..4)
+export const getOrgRoles = (params) => API.get('/org/roles', { params });
+export const createOrgRole = (data) => API.post('/org/roles', data);
+export const updateOrgRole = (roleKey, data) => API.patch(`/org/roles/${roleKey}`, data);
+export const deleteOrgRole = (roleKey, params) => API.delete(`/org/roles/${roleKey}`, { params });
+
 // Admin
 export const getAdminOrganizations = () => API.get('/admin/organizations');
 export const getAdminOrganization = (id) => API.get(`/admin/organizations/${id}`);

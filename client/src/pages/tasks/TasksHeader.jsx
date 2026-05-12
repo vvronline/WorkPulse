@@ -3,7 +3,7 @@ import { PRIORITIES, COLUMNS } from './constants.js';
 import { formatDate } from './utils.jsx';
 import { getLocalToday } from '../../api';
 import { useTaskCtx } from './TaskContext.jsx';
-import { CalendarDays, Package, Search, Headset, Settings as SettingsIcon, BarChart3 } from 'lucide-react';
+import { CalendarDays, Package, Search, Headset, BarChart3 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import s from './TasksHeader.module.css';
 
@@ -129,10 +129,11 @@ export default function TasksHeader({
             </button>
           </div>
 
-          {/* Agile config — discoverable for every user. Admins still get the
-              same page from inside the Admin shell; this gives team members
-              (devs, QA, etc.) a way to view the workflow / types and
-              request edit access. */}
+          {/* Sprint Insights stays visible to all team members so anyone can
+              read burndown / velocity / retro charts. The Agile Config editor
+              is intentionally NOT linked from here — it lives only inside
+              Admin → Structure → Agile Config so it doesn't leak through to
+              team members from the tasks page. */}
           <Link
             to="/sprint-insights"
             className={`btn btn-secondary btn-sm ${s['add-task-toggle']}`}
@@ -140,14 +141,6 @@ export default function TasksHeader({
             style={{ textDecoration: 'none' }}
           >
             <BarChart3 size={14} style={{verticalAlign:'middle',marginRight:4}} />Insights
-          </Link>
-          <Link
-            to="/agile-settings"
-            className={`btn btn-secondary btn-sm ${s['add-task-toggle']}`}
-            title="View Agile workflow / story-point scale / request edit access"
-            style={{ textDecoration: 'none' }}
-          >
-            <SettingsIcon size={14} style={{verticalAlign:'middle',marginRight:4}} />Agile Config
           </Link>
 
           {/* Sprint select (when multiple sprints) */}

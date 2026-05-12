@@ -1087,6 +1087,90 @@ async function initTenantSchema(q) {
         ON CONFLICT (key) DO NOTHING
     `);
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Tenant-customisable roles.
+    //
+    // Each tenant has its own set of roles, each pinned to one of four
+    // *permission levels* that drive RBAC:
+    //   1 = employee   (standard member)
+    //   2 = team_lead
+    //   3 = manager
+    //   4 = hr_admin
+    //
+    // Tenants can rename, recolour, add, and remove rows freely.
+    // The two top-level system roles — super_admin (level 5) and
+    // platform_admin (level 6) — are NOT stored in this table; they're
+    // hardcoded in middleware/rbac.js and apply across every organisation.
+    //
+    // Backwards-compat: every org is seeded with the four canonical keys
+    // (employee/team_lead/manager/hr_admin), all flagged is_system=true so
+    // the UI can warn before deleting them. Deletion still requires that
+    // no active users hold the role.
+    // ─────────────────────────────────────────────────────────────────────
+    await q(`
+        CREATE TABLE IF NOT EXISTS tenant_roles (
+            org_id           INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            role_key         TEXT    NOT NULL,
+            label            TEXT    NOT NULL,
+            description      TEXT,
+            color            TEXT    NOT NULL DEFAULT '#6366f1',
+            permission_level INTEGER NOT NULL CHECK(permission_level BETWEEN 1 AND 4),
+            is_system        BOOLEAN NOT NULL DEFAULT FALSE,
+            sort_order       INTEGER NOT NULL DEFAULT 0,
+            created_at       TIMESTAMPTZ DEFAULT NOW(),
+            updated_at       TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (org_id, role_key)
+        )
+    `);
+    await q(`CREATE INDEX IF NOT EXISTS idx_tenant_roles_org ON tenant_roles(org_id, permission_level)`);
+
+    // Migration: drop the old tenant_role_labels table from the previous
+    // iteration (it stored only labels, no permission_level). Idempotent.
+    await q(`DROP TABLE IF EXISTS tenant_role_labels CASCADE`);
+
+    // Seed canonical system roles for every org that doesn't yet have any.
+    await q(`
+        DO $do$
+        DECLARE rec RECORD;
+        BEGIN
+            FOR rec IN SELECT id FROM organizations LOOP
+                IF NOT EXISTS (SELECT 1 FROM tenant_roles WHERE org_id = rec.id) THEN
+                    INSERT INTO tenant_roles (org_id, role_key, label, description, color, permission_level, is_system, sort_order)
+                    VALUES
+                        (rec.id, 'employee',  'Employee',  'Standard team member.',                                              '#6b7280', 1, TRUE, 1),
+                        (rec.id, 'team_lead', 'Team Lead', 'Leads a single team, can review their team''s work.',                '#0ea5e9', 2, TRUE, 2),
+                        (rec.id, 'manager',   'Manager',   'Manages a department; approves leaves and tasks.',                   '#8b5cf6', 3, TRUE, 3),
+                        (rec.id, 'hr_admin',  'HR Admin',  'People-ops: invites, removes, manages org members.',                 '#f59e0b', 4, TRUE, 4)
+                    ON CONFLICT (org_id, role_key) DO NOTHING;
+                END IF;
+            END LOOP;
+        END $do$;
+    `);
+
+    // Migration: drop the hardcoded users.role CHECK so tenants can use
+    // custom role keys. Integrity is now enforced at the application layer
+    // (the role must exist in tenant_roles for the org, OR be one of the
+    // two system roles super_admin / platform_admin).
+    await q(`
+        DO $do$
+        DECLARE r record;
+        BEGIN
+            FOR r IN
+                SELECT con.conname
+                FROM   pg_constraint con
+                JOIN   pg_class       rel ON rel.oid = con.conrelid
+                JOIN   pg_attribute   att ON att.attrelid = rel.oid
+                                         AND att.attnum   = ANY(con.conkey)
+                WHERE  rel.relname = 'users'
+                  AND  con.contype = 'c'
+                  AND  att.attname = 'role'
+            LOOP
+                EXECUTE 'ALTER TABLE users DROP CONSTRAINT ' || quote_ident(r.conname);
+            END LOOP;
+        EXCEPTION WHEN others THEN NULL;
+        END $do$
+    `);
+
     // ---- Collaborative Notes (Yjs CRDT state per page) ----
     await q(`
         CREATE TABLE IF NOT EXISTS notebook_pages (

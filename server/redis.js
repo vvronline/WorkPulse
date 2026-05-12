@@ -256,6 +256,7 @@ const KEYS = {
     tokenVersion: (tenantId, userId) => tk(tenantId, 'user', userId, 'tv'),
     userContext: (tenantId, userId) => tk(tenantId, 'user', userId, 'ctx'),
     orgConfig: (tenantId, orgId) => tk(tenantId, 'org', orgId, 'config'),
+    orgRolesMap: (tenantId, orgId) => tk(tenantId, 'org', orgId, 'roles'),
     userSessions: (tenantId, userId) => tk(tenantId, 'user', userId, 'sessions'),
 };
 
@@ -293,6 +294,31 @@ async function setOrgConfig(tenantId, orgId, config) {
 
 async function invalidateOrgConfig(tenantId, orgId) {
     return del(KEYS.orgConfig(tenantId, orgId));
+}
+
+// -- Org tenant_roles map cache (used by rbac.js / tenant role admin endpoints) --
+
+async function getOrgRolesMap(tenantId, orgId) {
+    return get(KEYS.orgRolesMap(tenantId, orgId));
+}
+
+async function setOrgRolesMap(tenantId, orgId, map) {
+    return set(KEYS.orgRolesMap(tenantId, orgId), map, 5 * 60);
+}
+
+async function invalidateOrgRolesMap(tenantId, orgId) {
+    return del(KEYS.orgRolesMap(tenantId, orgId));
+}
+
+/**
+ * Drop every cached user-context row scoped to this tenant. Called after a
+ * tenant_roles mutation so the next request recomputes role_level from the
+ * fresh map. This is a coarse SCAN — fine for the low frequency of role
+ * config edits.
+ */
+async function invalidateOrgUserContexts(tenantId /* , orgId */) {
+    if (!isReady || !tenantId) return;
+    return delPattern(`t:${tenantId}:user:*:ctx`);
 }
 
 // -- Session helpers (max-2-device enforcement) --
@@ -342,6 +368,11 @@ module.exports = {
     getOrgConfig,
     setOrgConfig,
     invalidateOrgConfig,
+    // Org tenant_roles map cache
+    getOrgRolesMap,
+    setOrgRolesMap,
+    invalidateOrgRolesMap,
+    invalidateOrgUserContexts,
     // Sessions
     getUserSessions,
     setUserSessions,
