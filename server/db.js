@@ -1293,6 +1293,14 @@ async function initTenantSchema(q) {
             created_at  TIMESTAMPTZ DEFAULT NOW()
         )
     `);
+    // Backfill columns for tenants that already had an older sprint_retrospectives
+    // table (without category/content/votes) — CREATE TABLE IF NOT EXISTS skips
+    // these on existing tables, which would break the index below.
+    await q(`ALTER TABLE sprint_retrospectives ADD COLUMN IF NOT EXISTS category TEXT`);
+    await q(`ALTER TABLE sprint_retrospectives ADD COLUMN IF NOT EXISTS content TEXT`);
+    await q(`ALTER TABLE sprint_retrospectives ADD COLUMN IF NOT EXISTS author_id INTEGER REFERENCES users(id) ON DELETE SET NULL`);
+    await q(`ALTER TABLE sprint_retrospectives ADD COLUMN IF NOT EXISTS votes INTEGER NOT NULL DEFAULT 0`);
+    await q(`ALTER TABLE sprint_retrospectives ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
     await q(`CREATE INDEX IF NOT EXISTS idx_retro_sprint ON sprint_retrospectives(sprint_id, category)`);
 
     await q(`

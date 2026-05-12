@@ -134,13 +134,15 @@ const SprintProgressCard = memo(function SprintProgressCard() {
   const myTasks = tasks.filter(t => t.assigned_to === user?.id);
   const myDone = myTasks.filter(t => t.status === 'done').length;
 
+  const goToSprintBoard = () => navigate(`/tasks?tab=sprint&sprint_id=${sprint.id}`);
+
   return (
     <div
       className={`status-card ${s.card} ${s.clickable}`}
-      onClick={() => navigate('/sprints')}
+      onClick={goToSprintBoard}
       role="button"
       tabIndex={0}
-      onKeyDown={e => e.key === 'Enter' && navigate('/sprints')}
+      onKeyDown={e => e.key === 'Enter' && goToSprintBoard()}
     >
       <h3 className={s.title}>
         <span className="page-icon"><Zap size={18} /></span> {sprint.name}

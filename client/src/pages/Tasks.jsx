@@ -113,9 +113,24 @@ export default function Tasks() {
 
   useEffect(() => {
     const taskId = searchParams.get('task');
-    if (!taskId) return;
-    setSearchParams({}, { replace: true });
-    getTaskDetail(taskId).then((res) => detail.openTaskDetail(res.data)).catch(() => {});
+    const tabParam = searchParams.get('tab');
+    const sprintIdParam = searchParams.get('sprint_id');
+
+    let consumed = false;
+    if (tabParam && ['backlog', 'sprint', 'service-desk'].includes(tabParam)) {
+      setActiveTab(tabParam);
+      consumed = true;
+    }
+    if (sprintIdParam) {
+      const parsed = Number(sprintIdParam);
+      setSelectedSprintId(Number.isNaN(parsed) ? sprintIdParam : parsed);
+      consumed = true;
+    }
+    if (taskId) {
+      consumed = true;
+      getTaskDetail(taskId).then((res) => detail.openTaskDetail(res.data)).catch(() => {});
+    }
+    if (consumed) setSearchParams({}, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
