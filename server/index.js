@@ -34,6 +34,7 @@ const adminRoutes = require('./routes/admin');
 const managerRoutes = require('./routes/manager');
 const leavePolicyRoutes = require('./routes/leavePolicy');
 const sprintsRoutes = require('./routes/sprints');
+const agileRoutes = require('./routes/agile');
 const notesRoutes = require('./routes/notes');
 
 const calendarRoutes = require('./routes/calendar');
@@ -244,6 +245,7 @@ app.use('/api/tracker', apiLimiter, trackerRoutes);
 app.use('/api/leaves', apiLimiter, leaveRoutes);
 app.use('/api/tasks', apiLimiter, taskRoutes);
 app.use('/api/sprints', apiLimiter, sprintsRoutes);
+app.use('/api/agile', apiLimiter, agileRoutes);
 app.use('/api/profile/password', passwordLimiter);
 app.use('/api/profile', apiLimiter, profileRoutes);
 app.use('/api/org', apiLimiter, organizationRoutes);

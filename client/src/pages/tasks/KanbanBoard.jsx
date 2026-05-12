@@ -1,6 +1,6 @@
 import React from 'react';
-import { COLUMNS } from './constants.js';
 import TaskCard from './TaskCard.jsx';
+import { useAgileConfig } from '../../AgileConfigContext';
 import s from './KanbanBoard.module.css';
 
 export default function KanbanBoard({
@@ -15,31 +15,42 @@ export default function KanbanBoard({
   onOpenDetail,
   onOpenComments,
 }) {
-  const getColTasks = (colId) => tasks.filter((t) => t.status === colId);
+  const { workflowStates, features } = useAgileConfig();
+  // Match a task to a column either by workflow_state_id (preferred) or by the
+  // legacy `status` key (back-compat for tasks created pre-migration).
+  const getColTasks = (col) => tasks.filter((t) =>
+    (t.workflow_state_id && col.id && t.workflow_state_id === col.id) ||
+    (t.status && col.key && t.status === col.key)
+  );
 
   return (
     <div className={s['kanban-board']}>
-      {COLUMNS.map((col) => {
-        const colTasks = getColTasks(col.id);
-        const isDragOver = dragOverCol === col.id;
+      {workflowStates.map((col) => {
+        const colTasks = getColTasks(col);
+        // Drag-over compares against either id or key — useDragDrop passes whichever it has
+        const isDragOver = dragOverCol === col.id || dragOverCol === col.key;
+        const wipExceeded = features.wipLimits && col.wip_limit && colTasks.length > col.wip_limit;
 
         return (
           <div
-            key={col.id}
-            className={`${s['kanban-column']} ${isDragOver ? s['drag-over'] : ''}`}
+            key={col.id || col.key}
+            className={`${s['kanban-column']} ${isDragOver ? s['drag-over'] : ''} ${wipExceeded ? s['wip-exceeded'] : ''}`}
             style={{ '--col-color': col.color }}
-            onDragOver={(e) => onDragOver(e, col.id)}
+            onDragOver={(e) => onDragOver(e, col.id || col.key, col)}
             onDragLeave={onDragLeave}
-            onDrop={(e) => onDrop(e, col.id)}
+            onDrop={(e) => onDrop(e, col.id || col.key, col)}
           >
             <div className={s['column-header']}>
               <div className={s['column-header-left']}>
                 <span className={s['column-dot']} style={{ background: col.color }} />
                 <span className={s['column-label']}>
-                  {sprintMode && col.id === 'pending' ? 'New' : col.label}
+                  {sprintMode && col.is_initial ? 'New' : col.name}
                 </span>
               </div>
-              <span className={s['column-count']}>{colTasks.length}</span>
+              <span className={s['column-count']}>
+                {colTasks.length}
+                {features.wipLimits && col.wip_limit ? ` / ${col.wip_limit}` : ''}
+              </span>
             </div>
 
             {isDragOver && (

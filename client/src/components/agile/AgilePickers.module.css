@@ -1,0 +1,126 @@
+/* Story Point picker */
+.spPicker {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 4px 6px;
+    border-radius: 8px;
+    background: var(--bg-secondary, #f3f4f6);
+    border: 1px solid var(--border, #e5e7eb);
+}
+
+.spPickerCompact {
+    padding: 2px 4px;
+    gap: 2px;
+}
+
+.spPickerLabel {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--text-muted, #6b7280);
+    margin-right: 4px;
+    letter-spacing: 0.5px;
+}
+
+.spChip {
+    min-width: 28px;
+    height: 24px;
+    padding: 0 6px;
+    border: 1px solid var(--border, #d1d5db);
+    background: var(--bg, #ffffff);
+    color: var(--text, #111827);
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    line-height: 1;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.spChip:hover {
+    border-color: var(--primary, #3b82f6);
+    background: var(--bg-hover, #f9fafb);
+}
+
+.spChip:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.spChipActive,
+.spChipActive:hover {
+    background: var(--primary, #3b82f6);
+    border-color: var(--primary, #3b82f6);
+    color: #ffffff;
+}
+
+/* Story Point badge (read-only display) — number-only pill, unit revealed
+   only on hover via title attribute. Kept compact so it fits beside the
+   priority badge without crowding the card top row. */
+.spBadge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 20px;
+    padding: 0 7px;
+    background: var(--bg-secondary, #eef2ff);
+    color: var(--primary, #4338ca);
+    border: 1px solid color-mix(in srgb, var(--primary, #4338ca) 22%, transparent);
+    border-radius: 10px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: help;
+}
+
+/* Work Item Type select */
+.witSelect,
+.wsSelect {
+    padding: 5px 8px;
+    border: 1px solid var(--border, #d1d5db);
+    border-radius: 6px;
+    background: var(--bg, #ffffff);
+    color: var(--text, #111827);
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+
+/* Work Item Type badge */
+.witBadge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    background: color-mix(in srgb, var(--wit-color, #6366f1) 14%, transparent);
+    color: var(--wit-color, #6366f1);
+    border: 1px solid color-mix(in srgb, var(--wit-color, #6366f1) 30%, transparent);
+    white-space: nowrap;
+}
+
+.witDot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--wit-color, #6366f1);
+}
+
+/* Blocker badge */
+.blocker {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--danger, #ef4444) 14%, transparent);
+    color: var(--danger, #ef4444);
+    border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 30%, transparent);
+    font-size: 0.7rem;
+    font-weight: 700;
+    white-space: nowrap;
+}

@@ -13,6 +13,8 @@ export function useBacklog({ activeTab, backlogOpen, date, backlogFilters, selec
   const [backlogLabels, setBacklogLabels] = useState([]);
   const [backlogLabelDropdownOpen, setBacklogLabelDropdownOpen] = useState(false);
   const [backlogSprintId, setBacklogSprintId] = useState('');
+  const [backlogStoryPoints, setBacklogStoryPoints] = useState(null);
+  const [backlogWorkItemType, setBacklogWorkItemType] = useState('');
   const [scheduleTaskId, setScheduleTaskId] = useState(null);
   const [scheduleDate, setScheduleDate] = useState(() => getLocalToday());
   const [backlogSummary, setBacklogSummary] = useState({ total: 0, byStatus: {}, byPriority: {} });
@@ -68,10 +70,13 @@ export function useBacklog({ activeTab, backlogOpen, date, backlogFilters, selec
         assigned_to: backlogAssignedTo || null, due_date: backlogDueDate || null,
         label_ids: backlogLabels.length > 0 ? backlogLabels : undefined,
         sprint_id: backlogSprintId || null,
+        story_points: backlogStoryPoints,
+        work_item_type_id: backlogWorkItemType || null,
       });
       setBacklogTitle(''); setBacklogDesc(''); setBacklogPriority('medium');
       setBacklogAssignedTo(''); setBacklogDueDate(''); setBacklogLabels([]);
-      setBacklogSprintId(''); setBacklogFormOpen(false);
+      setBacklogSprintId(''); setBacklogStoryPoints(null); setBacklogWorkItemType('');
+      setBacklogFormOpen(false);
       fetchBacklog();
       if (backlogSprintId && activeTab === 'sprint') fetchTasks();
     } catch (err) {
@@ -140,6 +145,8 @@ export function useBacklog({ activeTab, backlogOpen, date, backlogFilters, selec
     backlogLabels, setBacklogLabels,
     backlogLabelDropdownOpen, setBacklogLabelDropdownOpen,
     backlogSprintId, setBacklogSprintId,
+    backlogStoryPoints, setBacklogStoryPoints,
+    backlogWorkItemType, setBacklogWorkItemType,
     scheduleTaskId, setScheduleTaskId,
     scheduleDate, setScheduleDate,
     backlogSummary,

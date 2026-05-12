@@ -7,6 +7,14 @@ import LabelSelector from './LabelSelector.jsx';
 import { PRIORITIES, COLUMNS } from './constants.js';
 import { HighlightedHtml, formatDueDate, isDueOverdue, getAvatarUrl } from './utils.jsx';
 import { useTaskCtx } from './TaskContext.jsx';
+import {
+  StoryPointPicker, WorkItemTypePicker, StoryPointBadge,
+  WorkItemTypeBadge, BlockerBadge,
+} from '../../components/agile/AgilePickers.jsx';
+import AcceptanceCriteria from '../../components/agile/AcceptanceCriteria.jsx';
+import { BlockerControl, DependenciesPanel, ParentChildPanel } from '../../components/agile/AgileWorkflowPanels.jsx';
+import { useAgileConfig } from '../../AgileConfigContext';
+import { getTaskDetail } from '../../api';
 import { X, Package, CalendarDays, Save, Pencil, MessageSquare, Clock, Trash2 } from 'lucide-react';
 import s from './TaskDetailModal.module.css';
 
@@ -37,6 +45,22 @@ export default function TaskDetailModal({
   setError,
 }) {
   const { assignableUsers, orgLabels, availableSprints, currentUser, activeTab } = useTaskCtx();
+  const { typeById } = useAgileConfig();
+  // Used to swap the dependencies panel for the Epic↔children panel and vice-versa.
+  const isEpic = !!(detailTask?.work_item_type_id && typeById[detailTask.work_item_type_id]?.is_epic);
+
+  // Helper used by the Parent/Child links — replaces the modal contents with
+  // the linked ticket so users can navigate parent ↔ child without losing
+  // context. Falls back to a query-string nav if the parent didn't supply
+  // an opener via the `detail` prop.
+  const swapToTask = (id) => {
+    getTaskDetail(id)
+      .then((res) => {
+        if (window.__openTaskDetail) window.__openTaskDetail(res.data);
+        else window.location.href = `/tasks?task=${id}`;
+      })
+      .catch(() => { window.location.href = `/tasks?task=${id}`; });
+  };
 
   // Edit state lives here — co-located with the form that uses it.
   const [editTitle, setEditTitle] = useState('');
@@ -47,6 +71,8 @@ export default function TaskDetailModal({
   const [editSprintId, setEditSprintId] = useState('');
   const [editLabels, setEditLabels] = useState([]);
   const [editLabelDropdownOpen, setEditLabelDropdownOpen] = useState(false);
+  const [editStoryPoints, setEditStoryPoints] = useState(null);
+  const [editWorkItemType, setEditWorkItemType] = useState('');
 
   // Initialise edit fields from detailTask whenever edit mode is entered.
   useEffect(() => {
@@ -59,6 +85,8 @@ export default function TaskDetailModal({
       setEditSprintId(detailTask.sprint_id || '');
       setEditLabels(detailTask.labels?.map(l => l.id) || []);
       setEditLabelDropdownOpen(false);
+      setEditStoryPoints(detailTask.story_points ?? null);
+      setEditWorkItemType(detailTask.work_item_type_id || '');
     }
   }, [detailEditing]);
 
@@ -71,6 +99,8 @@ export default function TaskDetailModal({
       dueDate: editDueDate,
       sprintId: editSprintId,
       labels: editLabels,
+      storyPoints: editStoryPoints,
+      workItemType: editWorkItemType,
     });
   };
 
@@ -83,7 +113,9 @@ export default function TaskDetailModal({
   const colInfo = COLUMNS.find(c => c.id === detailTask.status) || COLUMNS[0];
   const dueFmt = formatDueDate(detailTask.due_date);
   const overdue = isDueOverdue(detailTask.due_date) && detailTask.status !== 'done';
-  const isBacklogItem = !detailTask.date;
+  // A task is "backlog" only if it has neither a scheduled date nor a sprint
+  // assignment. Sprint tickets without a daily-planner date are NOT backlog.
+  const isBacklogItem = !detailTask.date && !detailTask.sprint_id;
 
   return (
     <div className={s['detail-overlay']} onClick={onClose}>
@@ -223,9 +255,15 @@ export default function TaskDetailModal({
                   open={editLabelDropdownOpen}
                   setOpen={setEditLabelDropdownOpen}
                 />
-
+                <div className={s['form-extra-group']}>
+                  <label>Type</label>
+                  <WorkItemTypePicker value={editWorkItemType} onChange={setEditWorkItemType} />
+                </div>
               </div>
-              <div className={s['detail-edit-buttons']}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                <StoryPointPicker value={editStoryPoints} onChange={setEditStoryPoints} />
+              </div>
+                <div className={s['detail-edit-buttons']}>
                 {isBacklogItem || activeTab === 'backlog' ? (
                   <button
                     className="btn btn-secondary btn-sm"
@@ -242,13 +280,35 @@ export default function TaskDetailModal({
                   </button>
                 )}
               </div>
+
+              {/* Pass 2 editors — only available while editing the ticket so
+                  the read-only view stays clean and changes are clustered with
+                  other edits. Clicking Save Changes closes edit mode (parent
+                  refresh re-fetches detail), so any saves done here also persist. */}
+              <BlockerControl
+                task={detailTask}
+                onChanged={() => fetchTasks && fetchTasks()}
+              />
+              <AcceptanceCriteria taskId={detailTask.id} />
+              {/* Epics show their child tickets; everything else shows its
+                  parent + dependencies. The panel decides what to render
+                  based on the work item type's is_epic flag. */}
+              <ParentChildPanel
+                task={detailTask}
+                onOpenTask={swapToTask}
+                onChanged={() => fetchTasks && fetchTasks()}
+              />
+              {!isEpic && <DependenciesPanel task={detailTask} />}
             </div>
           ) : (
             /* ─── VIEW MODE ─── */
             <>
               <div className={s['detail-title-row']}>
                 <span className={s['backlog-ticket-id']}>#{detailTask.id}</span>
+                <WorkItemTypeBadge value={detailTask.work_item_type_id} />
                 <h2 className={s['detail-title']}>{detailTask.title}</h2>
+                <StoryPointBadge value={detailTask.story_points} />
+                <BlockerBadge task={detailTask} />
                 {detailTask.labels && detailTask.labels.length > 0 && (
                   <div className={s['detail-labels']}>
                     {detailTask.labels.map((l) => (
@@ -269,6 +329,35 @@ export default function TaskDetailModal({
                   html={detailTask.description}
                   className={s['detail-description']}
                 />
+              )}
+
+              {/* Read-only summaries of Pass 2 fields. Editing these (toggle
+                  blocker, change criteria/dependencies) is gated to Edit mode
+                  so users batch their changes and the view stays scannable. */}
+              {detailTask.is_blocked && (
+                <div style={{ marginTop: 8 }}>
+                  <span className={s['detail-blocker-readonly']} title={detailTask.blocked_reason || 'Blocked'}>
+                    ⛔ Blocked{detailTask.blocked_reason ? `: ${detailTask.blocked_reason}` : ''}
+                  </span>
+                </div>
+              )}
+              {Array.isArray(detailTask.acceptance_criteria) && detailTask.acceptance_criteria.length > 0 && (
+                <div className={s['detail-readonly-section']}>
+                  <div className={s['detail-readonly-title']}>
+                    Acceptance Criteria
+                    {' '}
+                    <span className={s['detail-readonly-progress']}>
+                      ({detailTask.acceptance_criteria.filter(c => c.done).length}/{detailTask.acceptance_criteria.length})
+                    </span>
+                  </div>
+                  <ul className={s['detail-readonly-list']}>
+                    {detailTask.acceptance_criteria.map((c, i) => (
+                      <li key={c.id || i} className={c.done ? s['ac-done'] : ''}>
+                        <span className={s['ac-check']}>{c.done ? '☑' : '☐'}</span> {c.text}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
 
               {/* Meta grid */}

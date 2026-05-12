@@ -18,6 +18,7 @@ import { CallProvider } from './CallContext';
 import { MeetingProvider } from './MeetingContext';
 import { UserStatusProvider } from './UserStatusContext';
 import { NotificationPrefsProvider } from './NotificationPrefsContext';
+import { AgileConfigProvider } from './AgileConfigContext';
 import MeetingPiP from './components/meeting/MeetingPiP';
 import GlobalIncomingCall from './components/notifications/GlobalIncomingCall';
 import GlobalMeetingNotification from './components/notifications/GlobalMeetingNotification';
@@ -31,6 +32,8 @@ import KeepAlive from './components/common/KeepAlive';
 // Lazy-load pages that are NOT part of keep-alive (meetings use dynamic params)
 const MeetingJoin = lazy(() => import('./pages/MeetingJoin'));
 const MeetingRoom = lazy(() => import('./pages/MeetingRoom'));
+const AgileSettings = lazy(() => import('./pages/AgileSettings'));
+const SprintInsights = lazy(() => import('./pages/SprintInsights'));
 
 function ProtectedRoute({ children, minRole }) {
   const { isAuthenticated, user } = useAuth();
@@ -95,6 +98,12 @@ function AppRoutes() {
           <Route path="/reset-password/:token" element={<PublicRoute><ResetPassword /></PublicRoute>} />
           <Route path="/meeting/:code" element={<ProtectedRoute><MeetingJoin /></ProtectedRoute>} />
           <Route path="/meeting/:code/room" element={<ProtectedRoute><MeetingRoom /></ProtectedRoute>} />
+          {/* Agile config — every authenticated user can view & request edit access.
+              Admins (Admin Panel route guard) get the same page from inside the
+              admin shell; this standalone route is the discoverable entry point
+              for non-admin team members. */}
+          <Route path="/agile-settings" element={<ProtectedRoute><AgileSettings /></ProtectedRoute>} />
+          <Route path="/sprint-insights" element={<ProtectedRoute><SprintInsights /></ProtectedRoute>} />
           {/* Legacy redirects — old standalone pages now live under /attendance */}
           <Route path="/leaves" element={<Navigate to="/attendance#leaves" replace />} />
           <Route path="/manual-entry" element={<Navigate to="/attendance#manual-entry" replace />} />
@@ -208,6 +217,7 @@ export default function App() {
             <BrowserRouter>
               <AxiosInterceptor>
                 <NotificationPrefsProvider>
+                  <AgileConfigProvider>
                   <ChatProvider>
                     <UserStatusProvider>
                     <CallProvider>
@@ -220,6 +230,7 @@ export default function App() {
                     </CallProvider>
                     </UserStatusProvider>
                   </ChatProvider>
+                  </AgileConfigProvider>
                 </NotificationPrefsProvider>
               </AxiosInterceptor>
             </BrowserRouter>

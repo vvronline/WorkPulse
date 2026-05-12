@@ -78,6 +78,8 @@ export function useTaskDetail({ activeTab, showConfirm, closeConfirm, setTasks, 
             due_date: editData.dueDate || null,
             sprint_id: editData.sprintId || null,
             label_ids: editData.labels,
+            story_points: editData.storyPoints,
+            work_item_type_id: editData.workItemType || null,
           });
           setDetailEditing(false);
           const res = await getTaskDetail(detailTask.id);

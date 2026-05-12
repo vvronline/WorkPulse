@@ -20,6 +20,104 @@ async function logHistory(taskId, userId, action, field, oldValue, newValue, cli
     );
 }
 
+// ─── Agile helpers ──────────────────────────────────────────────────────────
+
+function validateStoryPoints(v) {
+    if (v === null || v === undefined || v === '') return null;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0 || n > 9999) return null;
+    return n;
+}
+
+/**
+ * Resolve work_item_type_id for an org. Accepts either a numeric id or a key.
+ * Returns the type row or null. Returns null if value is empty.
+ */
+async function resolveWorkItemType(value, orgId, db) {
+    if (value === null || value === undefined || value === '') return null;
+    if (!orgId) return null;
+    const num = Number(value);
+    let row;
+    if (Number.isFinite(num) && Number.isInteger(num)) {
+        row = (await db.query('SELECT * FROM work_item_types WHERE id = $1 AND org_id = $2 AND is_active = TRUE', [num, orgId])).rows[0];
+    } else {
+        row = (await db.query('SELECT * FROM work_item_types WHERE key = $1 AND org_id = $2 AND is_active = TRUE', [String(value), orgId])).rows[0];
+    }
+    return row || null;
+}
+
+/**
+ * Resolve workflow_state by id or key, scoped to the org.
+ */
+async function resolveWorkflowState(value, orgId, db) {
+    if (value === null || value === undefined || value === '') return null;
+    if (!orgId) return null;
+    const num = Number(value);
+    let row;
+    if (Number.isFinite(num) && Number.isInteger(num)) {
+        row = (await db.query('SELECT * FROM workflow_states WHERE id = $1 AND org_id = $2 AND is_active = TRUE', [num, orgId])).rows[0];
+    } else {
+        row = (await db.query('SELECT * FROM workflow_states WHERE key = $1 AND org_id = $2 AND is_active = TRUE', [String(value), orgId])).rows[0];
+    }
+    return row || null;
+}
+
+/**
+ * Get the org's initial workflow state (or first state by sort order). Used
+ * when creating a task without an explicit workflow_state_id.
+ */
+async function getInitialWorkflowState(orgId, db) {
+    if (!orgId) return null;
+    let row = (await db.query(
+        'SELECT * FROM workflow_states WHERE org_id = $1 AND is_active = TRUE AND is_initial = TRUE LIMIT 1',
+        [orgId]
+    )).rows[0];
+    if (!row) {
+        row = (await db.query(
+            "SELECT * FROM workflow_states WHERE org_id = $1 AND is_active = TRUE ORDER BY sort_order ASC, id ASC LIMIT 1",
+            [orgId]
+        )).rows[0];
+    }
+    return row || null;
+}
+
+/**
+ * Get the org's default work item type, falling back to the first active type.
+ */
+async function getDefaultWorkItemType(orgId, db) {
+    if (!orgId) return null;
+    let row = (await db.query(
+        'SELECT * FROM work_item_types WHERE org_id = $1 AND is_active = TRUE AND is_default = TRUE LIMIT 1',
+        [orgId]
+    )).rows[0];
+    if (!row) {
+        row = (await db.query(
+            'SELECT * FROM work_item_types WHERE org_id = $1 AND is_active = TRUE ORDER BY sort_order ASC, id ASC LIMIT 1',
+            [orgId]
+        )).rows[0];
+    }
+    return row || null;
+}
+
+/**
+ * Validate and normalise an acceptance_criteria array.
+ * Each item: { text, done, doneAt, doneBy }.
+ */
+function normalizeAcceptanceCriteria(value) {
+    if (value === null || value === undefined) return null;
+    if (!Array.isArray(value)) return null;
+    return value.slice(0, 50).map(it => {
+        const text = String(it?.text || '').slice(0, 500);
+        if (!text) return null;
+        return {
+            text,
+            done: !!it?.done,
+            doneAt: it?.doneAt || null,
+            doneBy: it?.doneBy != null ? Number(it.doneBy) : null,
+        };
+    }).filter(Boolean);
+}
+
 // Helper: get labels for a set of task IDs
 async function getLabelsForTasks(taskIds, db) {
     if (!taskIds.length) return {};
@@ -262,7 +360,9 @@ router.get('/', auth, loadUserContext, async (req, res) => {
 // ─── Add a task ──────────────────────────────────────────────────────────
 router.post('/', auth, loadUserContext, async (req, res) => {
     try {
-        const { title, description, priority, date, assigned_to, due_date, label_ids, sprint_id } = req.body;
+        const { title, description, priority, date, assigned_to, due_date, label_ids, sprint_id,
+            story_points, work_item_type_id, workflow_state_id, parent_task_id,
+            acceptance_criteria, is_blocked, blocked_reason } = req.body;
 
         if (!title || !title.trim()) return res.status(400).json({ error: 'Task title is required' });
         if (title.trim().length > 200) return res.status(400).json({ error: 'Task title must be 200 characters or less' });
@@ -299,9 +399,37 @@ router.post('/', auth, loadUserContext, async (req, res) => {
             }
         }
 
+        // Agile fields
+        const sp = validateStoryPoints(story_points);
+        const witRow = await resolveWorkItemType(work_item_type_id, req.userOrgId, req.db);
+        const wsRow = await resolveWorkflowState(workflow_state_id, req.userOrgId, req.db);
+        // Default work item type / workflow state when not supplied
+        const witId = witRow ? witRow.id : (await getDefaultWorkItemType(req.userOrgId, req.db))?.id || null;
+        const initialState = wsRow || (await getInitialWorkflowState(req.userOrgId, req.db));
+        const wsId = initialState ? initialState.id : null;
+        const statusKey = initialState ? initialState.key : 'pending';
+        const ac = normalizeAcceptanceCriteria(acceptance_criteria);
+        const isBlocked = !!is_blocked;
+        const blockedReason = isBlocked ? (blocked_reason ? String(blocked_reason).slice(0, 500) : null) : null;
+        let parentTaskId = null;
+        if (parent_task_id) {
+            const parentNum = parseInt(parent_task_id, 10);
+            if (!isNaN(parentNum)) {
+                const parent = (await req.db.query('SELECT id, org_id FROM tasks WHERE id = $1', [parentNum])).rows[0];
+                if (parent && parent.org_id === req.userOrgId) parentTaskId = parent.id;
+            }
+        }
+
         const result = await req.db.query(
-            'INSERT INTO tasks (user_id, date, title, description, priority, assigned_to, due_date, sprint_id, org_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id',
-            [req.userId, targetDate, title.trim(), description?.trim() || null, validPriority, assignedTo, validDueDate, validSprintId, req.userOrgId || null]
+            `INSERT INTO tasks
+                (user_id, date, title, description, priority, status, assigned_to, due_date,
+                 sprint_id, org_id, story_points, work_item_type_id, workflow_state_id,
+                 parent_task_id, acceptance_criteria, is_blocked, blocked_reason, lead_started_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW())
+             RETURNING id`,
+            [req.userId, targetDate, title.trim(), description?.trim() || null, validPriority,
+                statusKey, assignedTo, validDueDate, validSprintId, req.userOrgId || null,
+                sp, witId, wsId, parentTaskId, ac ? JSON.stringify(ac) : null, isBlocked, blockedReason]
         );
         const taskId = result.rows[0].id;
 
@@ -333,23 +461,84 @@ router.post('/', auth, loadUserContext, async (req, res) => {
 });
 
 // ─── Update task status ──────────────────────────────────────────────────
+//
+// Status can be supplied as either:
+//   - { status: <workflow_state.key> }   (legacy + tenants on default workflow)
+//   - { workflow_state_id: <id> }        (new tenant-customisable workflow)
+//
+// We resolve to the matching workflow_states row in the requester's org and
+// keep both `tasks.status` (key) and `tasks.workflow_state_id` (id) in sync.
+// The is_terminal flag drives `completed_at`.
 router.patch('/:id/status', auth, loadUserContext, async (req, res) => {
     try {
         const id = parseInt(req.params.id, 10);
         if (isNaN(id)) return res.status(400).json({ error: 'Invalid task ID' });
-        const { status } = req.body;
-
-        if (!['pending', 'in_progress', 'in_review', 'done'].includes(status)) {
-            return res.status(400).json({ error: 'Invalid status' });
-        }
+        const { status, workflow_state_id } = req.body;
 
         const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
         if (!await canAccessTask(task, req.userId, req.userOrgId, req.db, req.userRole)) return res.status(404).json({ error: 'Task not found' });
 
-        const completedAt = status === 'done' ? new Date().toISOString() : null;
-        await req.db.query('UPDATE tasks SET status = $1, completed_at = $2 WHERE id = $3', [status, completedAt, id]);
+        // Resolve target workflow state. Accept either a numeric workflow_state_id
+        // or a status key (back-compat with default 'pending'/'in_progress'/...).
+        let target = await resolveWorkflowState(workflow_state_id, req.userOrgId, req.db);
+        if (!target && status) target = await resolveWorkflowState(status, req.userOrgId, req.db);
+        // Fallback: legacy hard-coded keys when the org has no workflow_states yet
+        // (shouldn't happen post-seeding, but guards old tenants).
+        if (!target && status && ['pending', 'in_progress', 'in_review', 'done'].includes(status)) {
+            target = { id: null, key: status, is_terminal: status === 'done' };
+        }
+        if (!target) return res.status(400).json({ error: 'Invalid status / workflow state' });
 
-        if (task.status !== status) await logHistory(id, req.userId, 'status_change', 'status', task.status, status, null, req.db);
+        // ── Phase 3: WIP enforcement ────────────────────────────────────────
+        // If the org has WIP limits enabled and the destination state has a
+        // wip_limit, refuse the move when the column is already full. We don't
+        // count the task itself if it's already in the target state.
+        if (target.id) {
+            const settingsRow = (await req.db.query(
+                'SELECT enable_wip_limits FROM org_agile_settings WHERE org_id = $1',
+                [req.userOrgId]
+            )).rows[0];
+            const stateRow = (await req.db.query(
+                'SELECT wip_limit, name FROM workflow_states WHERE id = $1',
+                [target.id]
+            )).rows[0];
+            if (settingsRow?.enable_wip_limits && stateRow?.wip_limit) {
+                const occupancy = (await req.db.query(
+                    `SELECT COUNT(*)::int AS c FROM tasks
+                      WHERE workflow_state_id = $1 AND id != $2 AND org_id = $3`,
+                    [target.id, id, req.userOrgId]
+                )).rows[0].c;
+                if (occupancy >= stateRow.wip_limit) {
+                    return res.status(409).json({
+                        error: `WIP limit reached for "${stateRow.name}" (${occupancy}/${stateRow.wip_limit}). ` +
+                            `Move a ticket out of this column first.`,
+                        code: 'WIP_EXCEEDED',
+                        wip_limit: stateRow.wip_limit,
+                        occupancy,
+                    });
+                }
+            }
+        }
+
+        // ── Phase 3: cycle-time start marker ────────────────────────────────
+        // Record the moment the task first transitions out of an "open" state
+        // (i.e. work actually begins). This stamp is what we use later to
+        // compute cycle time = completed_at - cycle_started_at.
+        const completedAt = target.is_terminal ? new Date().toISOString() : null;
+        let cycleStartedAtClause = '';
+        const wasOpen = !task.cycle_started_at;
+        const startsCycle = wasOpen && target.id && !target.is_terminal && target.key !== 'pending';
+        if (startsCycle) cycleStartedAtClause = ', cycle_started_at = NOW()';
+
+        await req.db.query(
+            `UPDATE tasks SET status = $1, workflow_state_id = $2, completed_at = $3${cycleStartedAtClause}
+              WHERE id = $4`,
+            [target.key, target.id, completedAt, id]
+        );
+
+        if (task.status !== target.key) {
+            await logHistory(id, req.userId, 'status_change', 'status', task.status, target.key, null, req.db);
+        }
 
         const updated = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
         const enriched = await enrichTasks([updated], req.db);
@@ -365,7 +554,9 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
     try {
         const id = parseInt(req.params.id, 10);
         if (isNaN(id)) return res.status(400).json({ error: 'Invalid task ID' });
-        const { title, description, priority, assigned_to, due_date, label_ids, sprint_id } = req.body;
+        const { title, description, priority, assigned_to, due_date, label_ids, sprint_id,
+            story_points, work_item_type_id, workflow_state_id, parent_task_id,
+            acceptance_criteria, is_blocked, blocked_reason } = req.body;
 
         const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
         if (!await canAccessTask(task, req.userId, req.userOrgId, req.db, req.userRole)) return res.status(404).json({ error: 'Task not found' });
@@ -419,9 +610,74 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
             }
         }
 
+        // Resolve agile fields (only update if explicitly supplied)
+        let newStoryPoints = task.story_points;
+        if (story_points !== undefined) {
+            newStoryPoints = (story_points === null || story_points === '') ? null : validateStoryPoints(story_points);
+        }
+        let newWitId = task.work_item_type_id;
+        let newWitRow = null;
+        if (work_item_type_id !== undefined) {
+            if (work_item_type_id === null || work_item_type_id === '') {
+                newWitId = null;
+            } else {
+                newWitRow = await resolveWorkItemType(work_item_type_id, req.userOrgId, req.db);
+                if (!newWitRow) return res.status(400).json({ error: 'Invalid work_item_type' });
+                newWitId = newWitRow.id;
+            }
+        }
+        let newWsId = task.workflow_state_id;
+        let newStatusKey = task.status;
+        let newCompletedAt = task.completed_at;
+        let newWsRow = null;
+        if (workflow_state_id !== undefined) {
+            if (workflow_state_id === null || workflow_state_id === '') {
+                // Reset to initial state for the org
+                newWsRow = await getInitialWorkflowState(req.userOrgId, req.db);
+            } else {
+                newWsRow = await resolveWorkflowState(workflow_state_id, req.userOrgId, req.db);
+                if (!newWsRow) return res.status(400).json({ error: 'Invalid workflow_state' });
+            }
+            newWsId = newWsRow ? newWsRow.id : null;
+            newStatusKey = newWsRow ? newWsRow.key : task.status;
+            newCompletedAt = newWsRow?.is_terminal ? new Date().toISOString() : null;
+        }
+        let newParentTaskId = task.parent_task_id;
+        if (parent_task_id !== undefined) {
+            if (parent_task_id === null || parent_task_id === '') {
+                newParentTaskId = null;
+            } else {
+                const parentNum = parseInt(parent_task_id, 10);
+                if (isNaN(parentNum) || parentNum === id) return res.status(400).json({ error: 'Invalid parent_task_id' });
+                const parent = (await req.db.query('SELECT id, org_id FROM tasks WHERE id = $1', [parentNum])).rows[0];
+                if (!parent || parent.org_id !== req.userOrgId) return res.status(400).json({ error: 'Parent task not found' });
+                newParentTaskId = parent.id;
+            }
+        }
+        let newAc = task.acceptance_criteria;
+        if (acceptance_criteria !== undefined) {
+            newAc = (acceptance_criteria === null) ? null : normalizeAcceptanceCriteria(acceptance_criteria);
+        }
+        let newIsBlocked = task.is_blocked;
+        let newBlockedReason = task.blocked_reason;
+        if (is_blocked !== undefined) {
+            newIsBlocked = !!is_blocked;
+            if (!newIsBlocked) newBlockedReason = null;
+        }
+        if (blocked_reason !== undefined) {
+            newBlockedReason = blocked_reason ? String(blocked_reason).slice(0, 500) : null;
+        }
+
         await req.db.query(
-            'UPDATE tasks SET title = $1, description = $2, priority = $3, assigned_to = $4, due_date = $5, sprint_id = $6 WHERE id = $7',
-            [newTitle, newDesc, newPriority, newAssignedTo, newDueDate, newSprintId, id]
+            `UPDATE tasks SET title = $1, description = $2, priority = $3, assigned_to = $4,
+                due_date = $5, sprint_id = $6, story_points = $7, work_item_type_id = $8,
+                workflow_state_id = $9, status = $10, completed_at = $11, parent_task_id = $12,
+                acceptance_criteria = $13, is_blocked = $14, blocked_reason = $15
+              WHERE id = $16`,
+            [newTitle, newDesc, newPriority, newAssignedTo, newDueDate, newSprintId,
+                newStoryPoints, newWitId, newWsId, newStatusKey, newCompletedAt, newParentTaskId,
+                newAc !== null && newAc !== undefined ? JSON.stringify(newAc) : null,
+                newIsBlocked, newBlockedReason, id]
         );
 
         if (newTitle !== task.title) await logHistory(id, req.userId, 'updated', 'title', task.title, newTitle, null, req.db);
@@ -437,6 +693,23 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
             const oldSprint = task.sprint_id ? (await req.db.query('SELECT name FROM sprints WHERE id = $1', [task.sprint_id])).rows[0] : null;
             const newSprint = newSprintId ? (await req.db.query('SELECT name FROM sprints WHERE id = $1', [newSprintId])).rows[0] : null;
             await logHistory(id, req.userId, 'updated', 'sprint', oldSprint?.name || 'none', newSprint?.name || 'none', null, req.db);
+        }
+        if (String(newStoryPoints ?? '') !== String(task.story_points ?? '')) {
+            await logHistory(id, req.userId, 'updated', 'story_points', task.story_points, newStoryPoints, null, req.db);
+        }
+        if (String(newWitId ?? '') !== String(task.work_item_type_id ?? '')) {
+            const oldWit = task.work_item_type_id ? (await req.db.query('SELECT name FROM work_item_types WHERE id = $1', [task.work_item_type_id])).rows[0] : null;
+            const newWit = newWitId ? (newWitRow || (await req.db.query('SELECT name FROM work_item_types WHERE id = $1', [newWitId])).rows[0]) : null;
+            await logHistory(id, req.userId, 'updated', 'work_item_type', oldWit?.name || 'none', newWit?.name || 'none', null, req.db);
+        }
+        if (String(newStatusKey || '') !== String(task.status || '')) {
+            await logHistory(id, req.userId, 'status_change', 'status', task.status, newStatusKey, null, req.db);
+        }
+        if (String(newParentTaskId ?? '') !== String(task.parent_task_id ?? '')) {
+            await logHistory(id, req.userId, 'updated', 'parent', task.parent_task_id || 'none', newParentTaskId || 'none', null, req.db);
+        }
+        if (!!newIsBlocked !== !!task.is_blocked) {
+            await logHistory(id, req.userId, 'updated', 'is_blocked', String(task.is_blocked), String(newIsBlocked), null, req.db);
         }
 
         if (label_ids !== undefined) {
@@ -1099,7 +1372,9 @@ router.get('/backlog', auth, loadUserContext, async (req, res) => {
 // ─── Backlog: Create a backlog item (no date) ─────────────────────────────
 router.post('/backlog', auth, loadUserContext, async (req, res) => {
     try {
-        const { title, description, priority, assigned_to, due_date, label_ids, sprint_id } = req.body;
+        const { title, description, priority, assigned_to, due_date, label_ids, sprint_id,
+            story_points, work_item_type_id, workflow_state_id, parent_task_id,
+            acceptance_criteria, is_blocked, blocked_reason } = req.body;
 
         if (!title || !title.trim()) return res.status(400).json({ error: 'Task title is required' });
         if (title.trim().length > 200) return res.status(400).json({ error: 'Task title must be 200 characters or less' });
@@ -1137,9 +1412,36 @@ router.post('/backlog', auth, loadUserContext, async (req, res) => {
             }
         }
 
+        // Agile fields
+        const sp = validateStoryPoints(story_points);
+        const witRow = await resolveWorkItemType(work_item_type_id, req.userOrgId, req.db);
+        const wsRow = await resolveWorkflowState(workflow_state_id, req.userOrgId, req.db);
+        const witId = witRow ? witRow.id : (await getDefaultWorkItemType(req.userOrgId, req.db))?.id || null;
+        const initialState = wsRow || (await getInitialWorkflowState(req.userOrgId, req.db));
+        const wsId = initialState ? initialState.id : null;
+        const statusKey = initialState ? initialState.key : 'pending';
+        const ac = normalizeAcceptanceCriteria(acceptance_criteria);
+        const isBlocked = !!is_blocked;
+        const blockedReason = isBlocked ? (blocked_reason ? String(blocked_reason).slice(0, 500) : null) : null;
+        let parentTaskId = null;
+        if (parent_task_id) {
+            const parentNum = parseInt(parent_task_id, 10);
+            if (!isNaN(parentNum)) {
+                const parent = (await req.db.query('SELECT id, org_id FROM tasks WHERE id = $1', [parentNum])).rows[0];
+                if (parent && parent.org_id === req.userOrgId) parentTaskId = parent.id;
+            }
+        }
+
         const result = await req.db.query(
-            'INSERT INTO tasks (user_id, date, title, description, priority, assigned_to, due_date, sprint_id, org_id) VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
-            [req.userId, title.trim(), description?.trim() || null, validPriority, assignedTo, validDueDate, validSprintId, req.userOrgId || null]
+            `INSERT INTO tasks
+                (user_id, date, title, description, priority, status, assigned_to, due_date,
+                 sprint_id, org_id, story_points, work_item_type_id, workflow_state_id,
+                 parent_task_id, acceptance_criteria, is_blocked, blocked_reason, lead_started_at)
+             VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
+             RETURNING id`,
+            [req.userId, title.trim(), description?.trim() || null, validPriority, statusKey,
+                assignedTo, validDueDate, validSprintId, req.userOrgId || null,
+                sp, witId, wsId, parentTaskId, ac ? JSON.stringify(ac) : null, isBlocked, blockedReason]
         );
         const taskId = result.rows[0].id;
 
@@ -1258,6 +1560,357 @@ router.get('/:id/history', auth, loadUserContext, async (req, res) => {
     } catch (err) {
         req.log.error({ err: err }, 'Error fetching task history:');
         res.status(500).json({ error: 'Failed to fetch task history' });
+    }
+});
+
+// ─── Pass 2 helpers — task dependencies, acceptance criteria, blockers ──────
+//
+// Helper: ensure a task is visible to the caller (same org). Returns the
+// task row or sends a 404/403 and returns null.
+async function loadAccessibleTask(req, res, taskId) {
+    const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [taskId])).rows[0];
+    if (!task) { res.status(404).json({ error: 'Task not found' }); return null; }
+    // Cross-team admins (super_admin / hr_admin) and platform_admin can see anything in their org.
+    const isOrgAdmin = ['super_admin', 'hr_admin', 'platform_admin'].includes(req.userRole);
+    if (!isOrgAdmin && task.user_id !== req.userId && task.assigned_to !== req.userId) {
+        // Fall back: if creator/assignee both outside the user's team scope → block
+        // (the existing endpoints follow this pattern; replicate it here.)
+        // For simplicity we allow all team-members of the same team to see the task.
+        const sameTeam = (await req.db.query(
+            `SELECT 1 FROM users u WHERE u.id = $1 AND u.team_id = (SELECT team_id FROM users WHERE id = $2)`,
+            [req.userId, task.user_id]
+        )).rowCount > 0;
+        if (!sameTeam) { res.status(403).json({ error: 'Access denied' }); return null; }
+    }
+    return task;
+}
+
+// ── Dependencies ────────────────────────────────────────────────────────────
+// GET    /tasks/:id/dependencies   — list both directions (this task blocks / is blocked by)
+// POST   /tasks/:id/dependencies   — { depends_on_id, type? }   (default 'blocks')
+// DELETE /tasks/:id/dependencies/:depId — remove one link
+//
+// We deliberately disallow self-links and exact cycles (A blocks B blocks A).
+router.get('/:id/dependencies', auth, loadUserContext, async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) return res.status(400).json({ error: 'Invalid task id' });
+        const task = await loadAccessibleTask(req, res, id);
+        if (!task) return;
+
+        const blocking = (await req.db.query(
+            `SELECT d.id AS link_id, d.type, t.id, t.title, t.status, t.workflow_state_id, t.is_blocked
+               FROM task_dependencies d JOIN tasks t ON t.id = d.depends_on_id
+              WHERE d.task_id = $1
+              ORDER BY t.id`,
+            [id]
+        )).rows;
+
+        const blockedBy = (await req.db.query(
+            `SELECT d.id AS link_id, d.type, t.id, t.title, t.status, t.workflow_state_id, t.is_blocked
+               FROM task_dependencies d JOIN tasks t ON t.id = d.task_id
+              WHERE d.depends_on_id = $1
+              ORDER BY t.id`,
+            [id]
+        )).rows;
+
+        res.json({ blocks: blocking, blockedBy });
+    } catch (err) {
+        req.log.error({ err }, 'Error fetching dependencies');
+        res.status(500).json({ error: 'Failed to fetch dependencies' });
+    }
+});
+
+router.post('/:id/dependencies', auth, loadUserContext, async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        const { depends_on_id, type } = req.body || {};
+        if (isNaN(id)) return res.status(400).json({ error: 'Invalid task id' });
+        const otherId = parseInt(depends_on_id, 10);
+        if (isNaN(otherId)) return res.status(400).json({ error: 'depends_on_id is required' });
+        if (id === otherId) return res.status(400).json({ error: 'A task cannot depend on itself' });
+        const allowedTypes = ['blocks', 'relates', 'duplicates', 'clones'];
+        const linkType = allowedTypes.includes(type) ? type : 'blocks';
+
+        const task = await loadAccessibleTask(req, res, id);
+        if (!task) return;
+        const other = (await req.db.query('SELECT id FROM tasks WHERE id = $1', [otherId])).rows[0];
+        if (!other) return res.status(400).json({ error: 'Linked task not found' });
+
+        // Reject obvious 2-cycle: if other already blocks this one with same type
+        if (linkType === 'blocks') {
+            const reverse = (await req.db.query(
+                "SELECT 1 FROM task_dependencies WHERE task_id = $1 AND depends_on_id = $2 AND type = 'blocks'",
+                [otherId, id]
+            )).rowCount;
+            if (reverse > 0) return res.status(400).json({ error: 'Would create a circular blocks dependency' });
+        }
+
+        const r = await req.db.query(
+            `INSERT INTO task_dependencies (task_id, depends_on_id, type, created_by)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (task_id, depends_on_id, type) DO NOTHING
+             RETURNING id`,
+            [id, otherId, linkType, req.userId]
+        );
+        if (r.rowCount === 0) return res.status(409).json({ error: 'Dependency already exists' });
+
+        // History trace on both ends
+        await req.db.query(
+            `INSERT INTO task_history (task_id, action, field, new_value, user_id)
+             VALUES ($1, 'dependency_added', $2, $3, $4),
+                    ($5, 'dependency_added', $6, $7, $4)`,
+            [id, linkType, `→ #${otherId}`, req.userId, otherId, linkType, `← #${id}`]
+        ).catch(() => { });
+
+        res.json({ link_id: r.rows[0].id });
+    } catch (err) {
+        req.log.error({ err }, 'Error creating dependency');
+        res.status(500).json({ error: 'Failed to create dependency' });
+    }
+});
+
+router.delete('/:id/dependencies/:depId', auth, loadUserContext, async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        const linkId = parseInt(req.params.depId, 10);
+        if (isNaN(id) || isNaN(linkId)) return res.status(400).json({ error: 'Invalid id' });
+        const task = await loadAccessibleTask(req, res, id);
+        if (!task) return;
+        const r = await req.db.query(
+            'DELETE FROM task_dependencies WHERE id = $1 AND task_id = $2 RETURNING depends_on_id, type',
+            [linkId, id]
+        );
+        if (r.rowCount === 0) return res.status(404).json({ error: 'Dependency not found' });
+        await req.db.query(
+            `INSERT INTO task_history (task_id, action, field, new_value, user_id)
+             VALUES ($1, 'dependency_removed', $2, $3, $4)`,
+            [id, r.rows[0].type, `→ #${r.rows[0].depends_on_id}`, req.userId]
+        ).catch(() => { });
+        res.json({ ok: true });
+    } catch (err) {
+        req.log.error({ err }, 'Error deleting dependency');
+        res.status(500).json({ error: 'Failed to delete dependency' });
+    }
+});
+
+// ── Acceptance Criteria ─────────────────────────────────────────────────────
+// Stored as a JSONB array on tasks: [{ id, text, done }]
+// We expose targeted CRUD routes so the UI can update items without reading
+// the whole task.
+router.get('/:id/acceptance-criteria', auth, loadUserContext, async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) return res.status(400).json({ error: 'Invalid task id' });
+        const task = await loadAccessibleTask(req, res, id);
+        if (!task) return;
+        res.json({ criteria: task.acceptance_criteria || [] });
+    } catch (err) {
+        req.log.error({ err }, 'Error fetching criteria');
+        res.status(500).json({ error: 'Failed to fetch acceptance criteria' });
+    }
+});
+
+router.put('/:id/acceptance-criteria', auth, loadUserContext, async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) return res.status(400).json({ error: 'Invalid task id' });
+        const task = await loadAccessibleTask(req, res, id);
+        if (!task) return;
+        const { criteria } = req.body || {};
+        if (!Array.isArray(criteria)) return res.status(400).json({ error: 'criteria must be an array' });
+        // Normalise — assign monotonic ids if missing, drop empty rows
+        let nextId = Math.max(0, ...criteria.map(c => Number(c.id) || 0)) + 1;
+        const cleaned = criteria
+            .filter(c => c && typeof c.text === 'string' && c.text.trim())
+            .slice(0, 100)
+            .map(c => ({
+                id: Number(c.id) || nextId++,
+                text: String(c.text).trim().slice(0, 500),
+                done: !!c.done,
+            }));
+        await req.db.query(
+            'UPDATE tasks SET acceptance_criteria = $1::jsonb WHERE id = $2',
+            [JSON.stringify(cleaned), id]
+        );
+        await req.db.query(
+            `INSERT INTO task_history (task_id, action, field, new_value, user_id)
+             VALUES ($1, 'updated', 'acceptance_criteria', $2, $3)`,
+            [id, `${cleaned.length} item(s)`, req.userId]
+        ).catch(() => { });
+        res.json({ criteria: cleaned });
+    } catch (err) {
+        req.log.error({ err }, 'Error updating criteria');
+        res.status(500).json({ error: 'Failed to update acceptance criteria' });
+    }
+});
+
+// ── Block / Unblock ─────────────────────────────────────────────────────────
+router.patch('/:id/block', auth, loadUserContext, async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) return res.status(400).json({ error: 'Invalid task id' });
+        const task = await loadAccessibleTask(req, res, id);
+        if (!task) return;
+        const { is_blocked, blocked_reason } = req.body || {};
+        const flag = !!is_blocked;
+        const reason = flag ? (typeof blocked_reason === 'string' ? blocked_reason.slice(0, 500) : null) : null;
+        await req.db.query(
+            'UPDATE tasks SET is_blocked = $1, blocked_reason = $2 WHERE id = $3',
+            [flag, reason, id]
+        );
+        await req.db.query(
+            `INSERT INTO task_history (task_id, action, field, new_value, user_id)
+             VALUES ($1, $2, 'blocker', $3, $4)`,
+            [id, flag ? 'blocked' : 'unblocked', reason || (flag ? 'No reason given' : null), req.userId]
+        ).catch(() => { });
+        res.json({ id, is_blocked: flag, blocked_reason: reason });
+    } catch (err) {
+        req.log.error({ err }, 'Error toggling blocker');
+        res.status(500).json({ error: 'Failed to update blocker' });
+    }
+});
+
+// ── Parent / Children (Epic ↔ Story relationships) ─────────────────────────
+// GET /tasks/:id/children — list direct children of this task (any tickets
+// whose parent_task_id matches). Used by the Epic detail panel.
+router.get('/:id/children', auth, loadUserContext, async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) return res.status(400).json({ error: 'Invalid task id' });
+        const task = await loadAccessibleTask(req, res, id);
+        if (!task) return;
+        const children = (await req.db.query(
+            `SELECT t.id, t.title, t.status, t.workflow_state_id, t.is_blocked,
+                    t.story_points, t.work_item_type_id, t.priority, t.assigned_to,
+                    u.full_name AS assignee_name, u.username AS assignee_username,
+                    ws.name AS state_name, ws.color AS state_color, ws.is_terminal,
+                    wit.name AS type_name, wit.color AS type_color
+               FROM tasks t
+          LEFT JOIN users u ON u.id = t.assigned_to
+          LEFT JOIN workflow_states ws ON ws.id = t.workflow_state_id
+          LEFT JOIN work_item_types wit ON wit.id = t.work_item_type_id
+              WHERE t.parent_task_id = $1
+              ORDER BY
+                CASE t.priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END,
+                t.created_at ASC`,
+            [id]
+        )).rows;
+
+        // Total points + completion rollup so the Epic panel can show progress.
+        const num = v => (v == null ? 0 : Number(v));
+        const totalPoints = children.reduce((s, c) => s + num(c.story_points), 0);
+        const donePoints = children.filter(c => c.is_terminal).reduce((s, c) => s + num(c.story_points), 0);
+        const doneCount = children.filter(c => c.is_terminal).length;
+        res.json({
+            children,
+            rollup: {
+                totalChildren: children.length,
+                doneChildren: doneCount,
+                totalPoints,
+                donePoints,
+                percentByPoints: totalPoints > 0 ? Math.round((donePoints / totalPoints) * 100) : 0,
+                percentByCount: children.length > 0 ? Math.round((doneCount / children.length) * 100) : 0,
+            },
+        });
+    } catch (err) {
+        req.log.error({ err }, 'Error fetching children');
+        res.status(500).json({ error: 'Failed to fetch children' });
+    }
+});
+
+// GET /tasks/:id/parent — fetch the parent task summary (for non-epic tickets
+// to render a clickable "Part of" link).
+router.get('/:id/parent', auth, loadUserContext, async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) return res.status(400).json({ error: 'Invalid task id' });
+        const task = await loadAccessibleTask(req, res, id);
+        if (!task) return;
+        if (!task.parent_task_id) return res.json({ parent: null });
+        const parent = (await req.db.query(
+            `SELECT t.id, t.title, t.status, t.workflow_state_id, t.is_blocked, t.story_points,
+                    t.work_item_type_id,
+                    ws.name AS state_name, ws.color AS state_color,
+                    wit.name AS type_name, wit.color AS type_color, wit.is_epic
+               FROM tasks t
+          LEFT JOIN workflow_states ws ON ws.id = t.workflow_state_id
+          LEFT JOIN work_item_types wit ON wit.id = t.work_item_type_id
+              WHERE t.id = $1`,
+            [task.parent_task_id]
+        )).rows[0];
+        res.json({ parent: parent || null });
+    } catch (err) {
+        req.log.error({ err }, 'Error fetching parent');
+        res.status(500).json({ error: 'Failed to fetch parent' });
+    }
+});
+
+// PATCH /tasks/:id/parent — set/clear the parent. Body: { parent_task_id: <id|null> }
+// Validates the candidate parent exists in the same org, isn't the task itself,
+// and isn't a descendant (so we don't create cycles).
+router.patch('/:id/parent', auth, loadUserContext, async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id)) return res.status(400).json({ error: 'Invalid task id' });
+        const task = await loadAccessibleTask(req, res, id);
+        if (!task) return;
+        const raw = req.body?.parent_task_id;
+        let newParentId = null;
+        if (raw !== null && raw !== undefined && raw !== '') {
+            const num = parseInt(raw, 10);
+            if (isNaN(num) || num === id) return res.status(400).json({ error: 'Invalid parent_task_id' });
+            const parent = (await req.db.query('SELECT id, org_id FROM tasks WHERE id = $1', [num])).rows[0];
+            if (!parent || parent.org_id !== req.userOrgId) return res.status(400).json({ error: 'Parent task not found' });
+            // Cycle check: walk up the ancestor chain of the candidate parent and
+            // make sure we don't encounter `id`.
+            let cursor = parent.id;
+            for (let i = 0; i < 50 && cursor; i++) {
+                if (cursor === id) return res.status(400).json({ error: 'Would create a cycle (task is an ancestor of the candidate parent)' });
+                const next = (await req.db.query('SELECT parent_task_id FROM tasks WHERE id = $1', [cursor])).rows[0];
+                cursor = next?.parent_task_id || null;
+            }
+            newParentId = parent.id;
+        }
+        await req.db.query('UPDATE tasks SET parent_task_id = $1 WHERE id = $2', [newParentId, id]);
+        await logHistory(id, req.userId, 'updated', 'parent', task.parent_task_id || 'none', newParentId || 'none', null, req.db);
+        res.json({ id, parent_task_id: newParentId });
+    } catch (err) {
+        req.log.error({ err }, 'Error setting parent');
+        res.status(500).json({ error: 'Failed to set parent' });
+    }
+});
+
+// ── Task search (lightweight, used by the dependency picker) ────────────────
+// Returns up to 20 tasks matching `q` in title or id, scoped to the org.
+router.get('/lookup/quicksearch', auth, loadUserContext, async (req, res) => {
+    try {
+        const q = String(req.query.q || '').trim();
+        if (q.length < 1) return res.json({ tasks: [] });
+        const numericId = /^\d+$/.test(q) ? parseInt(q, 10) : null;
+        // PostgreSQL cannot infer the type of a NULL parameter when used in a
+        // comparison without context, so we cast both occurrences of $3 to int.
+        // Without these casts the driver throws "could not determine data type
+        // of parameter $3" → 500 to the client when the search term isn't a
+        // pure number (e.g. "test").
+        const rows = (await req.db.query(
+            `SELECT t.id, t.title, t.status, t.workflow_state_id, t.is_blocked, t.story_points,
+                    t.work_item_type_id
+               FROM tasks t
+               JOIN users u ON u.id = t.user_id
+              WHERE u.org_id = $1
+                AND (
+                    ($3::int IS NOT NULL AND t.id = $3::int)
+                    OR t.title ILIKE $2
+                )
+              ORDER BY t.id DESC
+              LIMIT 20`,
+            [req.userOrgId, `%${q}%`, numericId]
+        )).rows;
+        res.json({ tasks: rows });
+    } catch (err) {
+        req.log.error({ err }, 'Error in quicksearch');
+        res.status(500).json({ error: 'Failed to search tasks' });
     }
 });
 

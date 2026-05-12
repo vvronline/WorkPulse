@@ -9,6 +9,19 @@
 .detail-badges { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
 .detail-modal-body { flex: 1; overflow-y: auto; padding: 1.5rem; }
 .detail-title { font-size: 1.4rem; font-weight: 700; margin-bottom: 1rem; line-height: 1.3; color: var(--text); }
+
+/* Read-only summaries shown in view mode (Pass 2). The full editors live
+   inside Edit mode so users batch their changes. */
+.detail-blocker-readonly { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 999px; background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent); color: var(--danger, #ef4444); border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 30%, transparent); font-size: 0.75rem; font-weight: 600; }
+.detail-readonly-section { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--glass); }
+.detail-readonly-title { font-size: 0.78rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 6px; }
+.detail-readonly-progress { color: var(--primary); text-transform: none; letter-spacing: 0; font-size: 0.75rem; }
+.detail-readonly-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 0.85rem; }
+.detail-readonly-list li { display: flex; align-items: flex-start; gap: 6px; padding: 2px 0; color: var(--text); }
+.detail-readonly-list li.ac-done { text-decoration: line-through; color: var(--text-muted); }
+.ac-check { flex-shrink: 0; color: var(--text-muted); font-size: 0.95rem; line-height: 1.2; }
+.ac-done .ac-check { color: var(--success, #10b981); }
+
 .detail-description { color: var(--text-secondary); font-size: 0.92rem; line-height: 1.7; margin-bottom: 1.25rem; padding: 1rem; background: var(--glass); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); }
 .detail-description p { margin: 0 0 0.5rem; }
 .detail-description p:last-child { margin-bottom: 0; }

@@ -1,0 +1,315 @@
+/* SprintInsights — Phase 3 reporting view styles. Matches the visual
+   language of AgileSettings (cards, section titles, glossary blocks). */
+
+.page {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 24px 28px 80px;
+    color: var(--text, #111827);
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 18px;
+}
+
+.backLink {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-muted, #6b7280);
+    font-size: 0.8rem;
+    text-decoration: none;
+    margin-bottom: 6px;
+}
+.backLink:hover { color: var(--primary, #3b82f6); }
+
+.title { margin: 0 0 4px; font-size: 1.55rem; font-weight: 700; }
+.subtitle { margin: 0; color: var(--text-muted, #6b7280); font-size: 0.85rem; }
+
+.headerActions { display: flex; gap: 8px; align-items: center; }
+
+.sprintSelect {
+    padding: 7px 10px;
+    border: 1px solid var(--border, #d1d5db);
+    border-radius: 6px;
+    background: var(--bg, #fff);
+    color: var(--text, #111827);
+    font-size: 0.86rem;
+    min-width: 200px;
+}
+
+.empty, .loading {
+    text-align: center;
+    padding: 32px;
+    color: var(--text-muted, #6b7280);
+}
+
+.card {
+    background: var(--bg, #ffffff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 10px;
+    padding: 18px 20px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    margin-bottom: 16px;
+}
+
+.sectionTitle {
+    margin: 0 0 14px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text, #111827);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Two-up row for Burndown + Velocity */
+.row2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+.row2 .card { margin-bottom: 0; }
+
+/* ── Stats grid (top summary + cycle/lead summary) ──────────────────── */
+.summaryGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+}
+.statRow {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.stat {
+    background: var(--bg-secondary, #f9fafb);
+    border: 1px solid var(--border, #e5e7eb);
+    border-left: 3px solid var(--text-muted, #6b7280);
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+.stat-warning { border-left-color: var(--warning, #f59e0b); }
+.stat-danger  { border-left-color: var(--danger,  #ef4444); }
+.stat-ok      { border-left-color: var(--success, #10b981); }
+
+.statLabel {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--text-muted, #6b7280);
+    margin-bottom: 4px;
+}
+.statValue { font-size: 1.25rem; font-weight: 700; color: var(--text, #111827); }
+.statSub   { font-size: 0.72rem; color: var(--text-muted, #6b7280); margin-top: 3px; }
+
+/* ── Cumulative flow chart ──────────────────────────────────────────── */
+.chartWrap { width: 100%; }
+.chartEmpty {
+    text-align: center;
+    color: var(--text-muted, #6b7280);
+    font-size: 0.82rem;
+    padding: 20px;
+    background: var(--bg-secondary, #f9fafb);
+    border-radius: 6px;
+}
+.chartSvg {
+    width: 100%;
+    height: auto;
+    background: var(--bg-secondary, #f9fafb);
+    border-radius: 6px;
+}
+.legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 8px;
+    font-size: 0.75rem;
+    color: var(--text-muted, #6b7280);
+}
+.legendItem { display: inline-flex; align-items: center; gap: 5px; }
+.legendSwatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.gridLine { stroke: var(--border, #e5e7eb); stroke-width: 1; }
+.axisLabel { font-size: 10px; fill: var(--text-muted, #6b7280); }
+
+/* ── Cycle/Lead time table ─────────────────────────────────────────── */
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 4px;
+}
+.table th, .table td {
+    text-align: left;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border, #e5e7eb);
+    font-size: 0.84rem;
+}
+.table th {
+    background: var(--bg-secondary, #f9fafb);
+    color: var(--text-muted, #6b7280);
+    font-weight: 600;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+.taskLink { color: var(--primary, #3b82f6); text-decoration: none; }
+.taskLink:hover { text-decoration: underline; }
+.typeBadge {
+    display: inline-block;
+    padding: 2px 7px;
+    border: 1px solid;
+    border-radius: 99px;
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+
+/* ── Retrospective ──────────────────────────────────────────────────── */
+.retro { display: flex; flex-direction: column; gap: 14px; }
+.retroGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+.retroCol {
+    background: var(--bg-secondary, #f9fafb);
+    border: 1px solid var(--border, #e5e7eb);
+    border-top: 3px solid var(--accent, #6b7280);
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.retroColLabel {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--accent, #6b7280);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+.retroColInput {
+    flex: 1;
+    background: var(--bg, #fff);
+    border: 1px solid var(--border, #d1d5db);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-family: inherit;
+    font-size: 0.85rem;
+    color: var(--text, #111827);
+    resize: vertical;
+}
+
+.retroActions {
+    background: var(--bg-secondary, #f9fafb);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+.retroSubtitle {
+    margin: 0 0 8px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--text-muted, #6b7280);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.actionList { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.actionItem {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    background: var(--bg, #fff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 5px;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+.actionItem span { flex: 1; }
+.actionDone span { text-decoration: line-through; color: var(--text-muted, #6b7280); }
+.actionDelete {
+    border: none;
+    background: none;
+    color: var(--text-muted, #6b7280);
+    font-size: 1.05rem;
+    cursor: pointer;
+    line-height: 1;
+}
+.actionDelete:hover { color: var(--danger, #ef4444); }
+
+.actionAddRow { display: flex; gap: 6px; }
+.actionAddRow input {
+    flex: 1;
+    padding: 7px 10px;
+    border: 1px solid var(--border, #d1d5db);
+    border-radius: 5px;
+    background: var(--bg, #fff);
+    font-size: 0.85rem;
+}
+
+.retroFooter {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    padding-top: 4px;
+}
+.moodWrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.moodBtn {
+    background: var(--bg, #fff);
+    border: 1px solid var(--border, #d1d5db);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 1.1rem;
+    cursor: pointer;
+    transition: transform 0.1s, border-color 0.15s;
+}
+.moodBtn:hover { transform: scale(1.08); }
+.moodActive {
+    border-color: var(--primary, #3b82f6);
+    background: color-mix(in srgb, var(--primary, #3b82f6) 12%, transparent);
+}
+.summaryInput {
+    width: 100%;
+    padding: 7px 10px;
+    border: 1px solid var(--border, #d1d5db);
+    border-radius: 6px;
+    background: var(--bg, #fff);
+    font-family: inherit;
+    font-size: 0.85rem;
+    color: var(--text, #111827);
+    resize: vertical;
+}
+
+/* ── Responsive ─────────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+    .page { padding: 16px 14px 60px; }
+    .header { flex-direction: column; align-items: stretch; }
+    .row2 { grid-template-columns: 1fr; }
+    .retroGrid { grid-template-columns: 1fr; }
+    .table { display: block; overflow-x: auto; white-space: nowrap; }
+}
+
+@media (max-width: 480px) {
+    .title { font-size: 1.25rem; }
+    .summaryGrid { grid-template-columns: repeat(2, 1fr); }
+    .retroFooter { flex-direction: column; align-items: stretch; }
+    .moodWrap { justify-content: center; }
+}

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
     Home, Users, UserPlus, Building, UsersRound, GitBranch, ScrollText,
     RefreshCw, DollarSign, Tag, Settings as SettingsIcon,
-    Menu, X, ChevronDown, ExternalLink,
+    Menu, X, ChevronDown, ExternalLink, Workflow as WorkflowIcon,
 } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
 import { useSearchParams, useNavigate } from 'react-router-dom';
@@ -19,6 +19,7 @@ import OrgSettingsPage from './OrgSettingsPage';
 import Departments from '../../components/organization/Departments';
 import Teams from '../../components/organization/Teams';
 import OrgChartView from '../../components/organization/OrgChartView';
+import AgileSettings from '../AgileSettings';
 import s from './AdminLayout.module.css';
 
 // ─── Section registry ─────────────────────────────────────────────────────
@@ -39,9 +40,11 @@ const SECTIONS = [
     { key: 'departments',    label: 'Departments',       icon: Building,     group: 'Structure', requires: 'orgId' },
     { key: 'teams',          label: 'Teams',             icon: UsersRound,   group: 'Structure', requires: 'orgId' },
     { key: 'org-chart',      label: 'Org Chart',         icon: GitBranch,    group: 'Structure', requires: 'orgId' },
+    { key: 'agile',          label: 'Agile Config',      icon: WorkflowIcon, group: 'Structure', requires: 'orgId' },
 
     { key: 'payroll',        label: 'Payroll Periods',   icon: DollarSign,   group: 'Operations' },
-    { key: 'labels',         label: 'Task Labels',       icon: Tag,          group: 'Operations' },
+    // Task Labels moved into Agile Config → Labels tab; the legacy
+    // ?tab=labels URL still routes to the Agile Config page below.
 
     { key: 'audit',          label: 'Audit Logs',        icon: ScrollText,   group: 'Compliance' },
     { key: 'org-settings',   label: 'Org Settings',      icon: SettingsIcon, group: 'Compliance', requires: 'orgId' },
@@ -54,6 +57,7 @@ const TAB_ALIASES = {
     import:        'add',     // legacy "Import Users" key → unified wizard
     settings:      'org-settings',  // legacy registration-settings key → unified org settings
     announcements: 'home',    // moved to /platform
+    labels:        'agile',   // Task Labels merged into Agile Config (Labels tab)
 };
 
 const GROUP_ORDER = ['Overview', 'People', 'Structure', 'Operations', 'Compliance'];
@@ -180,8 +184,6 @@ export default function AdminPanel() {
                 return <RoleRequests userRole={user.role} />;
             case 'payroll':
                 return <PayPeriods />;
-            case 'labels':
-                return <TaskLabelsTab />;
             case 'audit':
                 return <AuditLogs />;
             case 'departments':
@@ -194,6 +196,8 @@ export default function AdminPanel() {
                     : <p>You are not assigned to an organization.</p>;
             case 'org-chart':
                 return user.org_id ? <OrgChartView /> : <p>You are not assigned to an organization.</p>;
+            case 'agile':
+                return user.org_id ? <AgileSettings /> : <p>You are not assigned to an organization.</p>;
             case 'org-settings':
                 return user.org_id
                     ? <OrgSettingsPage userRole={user.role} />

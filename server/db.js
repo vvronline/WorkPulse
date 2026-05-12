@@ -94,6 +94,13 @@ async function initDB() {
     // Legacy: also initialise tenant schema in master DB so existing single-DB
     // deployments keep working until fully migrated to per-tenant databases.
     await initTenantSchema(masterQuery);
+    // Seed Agile defaults (work item types, workflow states, settings) for any
+    // org in the master DB that hasn't been seeded yet. Idempotent.
+    try {
+        await seedAgileDefaults(masterQuery);
+    } catch (err) {
+        logger.warn({ err: err.message }, 'Agile defaults seeding failed in initDB (non-fatal)');
+    }
     logger.info('Database schema initialised (master + legacy tenant tables)');
 }
 
@@ -496,6 +503,30 @@ async function initTenantSchema(q) {
             ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
             ALTER TABLE users ADD CONSTRAINT users_role_check
                 CHECK(role IN ('employee','team_lead','manager','hr_admin','super_admin','platform_admin'));
+        EXCEPTION WHEN others THEN NULL;
+        END $do$
+    `);
+
+    // Migration: drop the hard-coded tasks.status CHECK so tenants can introduce
+    // custom workflow state keys via workflow_states. Status is now a mirror of
+    // the workflow state key; integrity is enforced at the application layer
+    // (the value must match an existing workflow_states.key for the org).
+    await q(`
+        DO $do$
+        DECLARE r record;
+        BEGIN
+            FOR r IN
+                SELECT con.conname
+                FROM   pg_constraint con
+                JOIN   pg_class       rel ON rel.oid = con.conrelid
+                JOIN   pg_attribute   att ON att.attrelid = rel.oid
+                                         AND att.attnum   = ANY(con.conkey)
+                WHERE  rel.relname = 'tasks'
+                  AND  con.contype = 'c'
+                  AND  att.attname = 'status'
+            LOOP
+                EXECUTE 'ALTER TABLE tasks DROP CONSTRAINT ' || quote_ident(r.conname);
+            END LOOP;
         EXCEPTION WHEN others THEN NULL;
         END $do$
     `);
@@ -1086,7 +1117,275 @@ async function initTenantSchema(q) {
         CREATE INDEX IF NOT EXISTS idx_note_links_entity ON note_links(entity_type, entity_id);
     `);
 
+    // ─────────────────────────────────────────────────────────────────────
+    // AGILE: tenant-customisable Work Item Types, Workflow States,
+    // Story Points scale, Epics, Acceptance Criteria, Dependencies,
+    // Sprint Retrospectives, plus a request/grant access-control model
+    // for who can edit Agile settings.
+    // ─────────────────────────────────────────────────────────────────────
+
+    // Org-wide agile settings (singleton row per org)
+    await q(`
+        CREATE TABLE IF NOT EXISTS org_agile_settings (
+            org_id                      INTEGER PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+            estimation_type             TEXT NOT NULL DEFAULT 'fibonacci'
+                CHECK(estimation_type IN ('fibonacci','linear','tshirt','hours','none','custom')),
+            estimation_values           JSONB NOT NULL DEFAULT '[0.5,1,2,3,5,8,13,21,34]'::jsonb,
+            estimation_unit_label       TEXT NOT NULL DEFAULT 'SP',
+            priority_scheme             JSONB NOT NULL DEFAULT '[{"key":"low","label":"Low","color":"#10b981"},{"key":"medium","label":"Medium","color":"#f59e0b"},{"key":"high","label":"High","color":"#ef4444"}]'::jsonb,
+            enable_story_points         BOOLEAN NOT NULL DEFAULT TRUE,
+            enable_epics                BOOLEAN NOT NULL DEFAULT TRUE,
+            enable_dependencies         BOOLEAN NOT NULL DEFAULT TRUE,
+            enable_acceptance_criteria  BOOLEAN NOT NULL DEFAULT TRUE,
+            enable_wip_limits           BOOLEAN NOT NULL DEFAULT FALSE,
+            enable_blockers             BOOLEAN NOT NULL DEFAULT TRUE,
+            enable_retrospectives       BOOLEAN NOT NULL DEFAULT TRUE,
+            require_estimate_for_sprint BOOLEAN NOT NULL DEFAULT FALSE,
+            default_dod                 TEXT,
+            updated_at                  TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+
+    // Customisable Work Item Types (Story / Bug / Task / Epic / Spike / ...)
+    await q(`
+        CREATE TABLE IF NOT EXISTS work_item_types (
+            id          SERIAL PRIMARY KEY,
+            org_id      INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            key         TEXT NOT NULL,
+            name        TEXT NOT NULL,
+            icon        TEXT,
+            color       TEXT NOT NULL DEFAULT '#6366f1',
+            description TEXT,
+            is_default  BOOLEAN NOT NULL DEFAULT FALSE,
+            is_epic     BOOLEAN NOT NULL DEFAULT FALSE,
+            is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+            sort_order  INTEGER NOT NULL DEFAULT 0,
+            created_at  TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(org_id, key)
+        )
+    `);
+    await q(`CREATE INDEX IF NOT EXISTS idx_work_item_types_org ON work_item_types(org_id, is_active, sort_order)`);
+
+    // Customisable Workflow States (Kanban columns).
+    // Categories: 'open' | 'in_progress' | 'in_review' | 'done'
+    // Every tenant must keep at least one state in each category.
+    await q(`
+        CREATE TABLE IF NOT EXISTS workflow_states (
+            id            SERIAL PRIMARY KEY,
+            org_id        INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            key           TEXT NOT NULL,
+            name          TEXT NOT NULL,
+            category      TEXT NOT NULL CHECK(category IN ('open','in_progress','in_review','done')),
+            color         TEXT NOT NULL DEFAULT '#6b7280',
+            icon          TEXT,
+            wip_limit     INTEGER,
+            is_initial    BOOLEAN NOT NULL DEFAULT FALSE,
+            is_terminal   BOOLEAN NOT NULL DEFAULT FALSE,
+            is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+            sort_order    INTEGER NOT NULL DEFAULT 0,
+            created_at    TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(org_id, key)
+        )
+    `);
+    await q(`CREATE INDEX IF NOT EXISTS idx_workflow_states_org ON workflow_states(org_id, is_active, sort_order)`);
+
+    // Optional: which states apply to which work item types
+    await q(`
+        CREATE TABLE IF NOT EXISTS workflow_state_type_map (
+            state_id INTEGER NOT NULL REFERENCES workflow_states(id) ON DELETE CASCADE,
+            type_id  INTEGER NOT NULL REFERENCES work_item_types(id) ON DELETE CASCADE,
+            PRIMARY KEY (state_id, type_id)
+        )
+    `);
+
+    // Allowed transitions between workflow states (governance, optional)
+    await q(`
+        CREATE TABLE IF NOT EXISTS workflow_transitions (
+            id            SERIAL PRIMARY KEY,
+            org_id        INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            from_state_id INTEGER NOT NULL REFERENCES workflow_states(id) ON DELETE CASCADE,
+            to_state_id   INTEGER NOT NULL REFERENCES workflow_states(id) ON DELETE CASCADE,
+            required_role TEXT,
+            UNIQUE(from_state_id, to_state_id)
+        )
+    `);
+    await q(`CREATE INDEX IF NOT EXISTS idx_workflow_transitions_org ON workflow_transitions(org_id)`);
+
+    // Per-team agile overrides (optional, falls back to org)
+    await q(`
+        CREATE TABLE IF NOT EXISTS team_agile_settings (
+            team_id            INTEGER PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE,
+            estimation_type    TEXT,
+            estimation_values  JSONB,
+            capacity_points    NUMERIC(7,1),
+            updated_at         TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+
+    // Access-control: who else (besides super_admin) can edit Agile settings.
+    await q(`
+        CREATE TABLE IF NOT EXISTS agile_editor_grants (
+            id          SERIAL PRIMARY KEY,
+            org_id      INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            granted_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            granted_at  TIMESTAMPTZ DEFAULT NOW(),
+            revoked_at  TIMESTAMPTZ,
+            UNIQUE(org_id, user_id)
+        )
+    `);
+    await q(`CREATE INDEX IF NOT EXISTS idx_agile_grants_active ON agile_editor_grants(org_id, user_id) WHERE revoked_at IS NULL`);
+
+    await q(`
+        CREATE TABLE IF NOT EXISTS agile_editor_requests (
+            id            SERIAL PRIMARY KEY,
+            org_id        INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            reason        TEXT,
+            status        TEXT NOT NULL DEFAULT 'pending'
+                CHECK(status IN ('pending','approved','rejected','cancelled')),
+            reviewed_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            reviewed_at   TIMESTAMPTZ,
+            reject_reason TEXT,
+            created_at    TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    await q(`CREATE INDEX IF NOT EXISTS idx_agile_requests_status ON agile_editor_requests(org_id, status, created_at)`);
+
+    // Task-level agile fields
+    await q(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS story_points NUMERIC(6,2)`);
+    await q(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS work_item_type_id INTEGER REFERENCES work_item_types(id) ON DELETE SET NULL`);
+    await q(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS workflow_state_id INTEGER REFERENCES workflow_states(id) ON DELETE SET NULL`);
+    await q(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS parent_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL`);
+    await q(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS rank_value NUMERIC(20,10)`);
+    await q(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS acceptance_criteria JSONB`);
+    await q(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN NOT NULL DEFAULT FALSE`);
+    await q(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS blocked_reason TEXT`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_tasks_workflow_state ON tasks(workflow_state_id) WHERE workflow_state_id IS NOT NULL`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_task_id) WHERE parent_task_id IS NOT NULL`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_tasks_sprint_points ON tasks(sprint_id) WHERE sprint_id IS NOT NULL`);
+
+    // Task dependencies graph
+    await q(`
+        CREATE TABLE IF NOT EXISTS task_dependencies (
+            id            SERIAL PRIMARY KEY,
+            task_id       INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            depends_on_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            type          TEXT NOT NULL DEFAULT 'blocks'
+                CHECK(type IN ('blocks','relates','duplicates','clones')),
+            created_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at    TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(task_id, depends_on_id, type)
+        )
+    `);
+    await q(`CREATE INDEX IF NOT EXISTS idx_task_deps_task ON task_dependencies(task_id)`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_task_deps_depends_on ON task_dependencies(depends_on_id)`);
+
+    // Sprint retrospectives
+    await q(`
+        CREATE TABLE IF NOT EXISTS sprint_retrospectives (
+            id          SERIAL PRIMARY KEY,
+            sprint_id   INTEGER NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
+            category    TEXT NOT NULL CHECK(category IN ('went_well','went_wrong','action_item','kudos')),
+            content     TEXT NOT NULL,
+            author_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            votes       INTEGER NOT NULL DEFAULT 0,
+            created_at  TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    await q(`CREATE INDEX IF NOT EXISTS idx_retro_sprint ON sprint_retrospectives(sprint_id, category)`);
+
+    await q(`
+        CREATE TABLE IF NOT EXISTS sprint_retro_votes (
+            retro_id INTEGER NOT NULL REFERENCES sprint_retrospectives(id) ON DELETE CASCADE,
+            user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            PRIMARY KEY (retro_id, user_id)
+        )
+    `);
+
     logger.info('Tenant schema initialised');
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Agile defaults seeding
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Seed default Agile config (work item types, workflow states, settings) for
+ * every org in the tenant DB that doesn't yet have org_agile_settings.
+ * Idempotent — safe to run on every boot.
+ *
+ * Also backfills tasks.workflow_state_id from the legacy tasks.status column
+ * by matching the seeded workflow state keys.
+ */
+async function seedAgileDefaults(q) {
+    const orgs = (await q(
+        `SELECT o.id FROM organizations o
+         LEFT JOIN org_agile_settings s ON s.org_id = o.id
+         WHERE s.org_id IS NULL`
+    )).rows;
+
+    for (const { id: orgId } of orgs) {
+        // 1. Settings row
+        await q(
+            `INSERT INTO org_agile_settings (org_id) VALUES ($1)
+             ON CONFLICT (org_id) DO NOTHING`,
+            [orgId]
+        );
+
+        // 2. Default work item types
+        const defaultTypes = [
+            { key: 'story', name: 'Story', icon: 'BookOpen', color: '#10b981', is_default: true, is_epic: false, sort_order: 1, description: 'A user-facing piece of value.' },
+            { key: 'bug', name: 'Bug', icon: 'Bug', color: '#ef4444', is_default: false, is_epic: false, sort_order: 2, description: 'Something broken to fix.' },
+            { key: 'task', name: 'Task', icon: 'Circle', color: '#6366f1', is_default: false, is_epic: false, sort_order: 3, description: 'Generic work item.' },
+            { key: 'epic', name: 'Epic', icon: 'Target', color: '#8b5cf6', is_default: false, is_epic: true, sort_order: 4, description: 'A large body of work that groups stories.' },
+        ];
+        for (const t of defaultTypes) {
+            await q(
+                `INSERT INTO work_item_types (org_id, key, name, icon, color, description, is_default, is_epic, sort_order)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 ON CONFLICT (org_id, key) DO NOTHING`,
+                [orgId, t.key, t.name, t.icon, t.color, t.description, t.is_default, t.is_epic, t.sort_order]
+            );
+        }
+
+        // 3. Default workflow states (one per category — matches legacy COLUMNS)
+        const defaultStates = [
+            { key: 'pending', name: 'To Do', category: 'open', color: '#6b7280', sort_order: 1, is_initial: true, is_terminal: false },
+            { key: 'in_progress', name: 'In Progress', category: 'in_progress', color: '#f59e0b', sort_order: 2, is_initial: false, is_terminal: false },
+            { key: 'in_review', name: 'In Review', category: 'in_review', color: '#3b82f6', sort_order: 3, is_initial: false, is_terminal: false },
+            { key: 'done', name: 'Done', category: 'done', color: '#10b981', sort_order: 4, is_initial: false, is_terminal: true },
+        ];
+        for (const st of defaultStates) {
+            await q(
+                `INSERT INTO workflow_states (org_id, key, name, category, color, sort_order, is_initial, is_terminal)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                 ON CONFLICT (org_id, key) DO NOTHING`,
+                [orgId, st.key, st.name, st.category, st.color, st.sort_order, st.is_initial, st.is_terminal]
+            );
+        }
+    }
+
+    // Backfill tasks.workflow_state_id from tasks.status (matching by key within the same org)
+    await q(`
+        UPDATE tasks t
+           SET workflow_state_id = ws.id
+          FROM workflow_states ws
+         WHERE t.workflow_state_id IS NULL
+           AND ws.org_id = t.org_id
+           AND ws.key   = t.status
+    `);
+
+    // Backfill tasks.work_item_type_id with the default 'story' type for tasks that
+    // don't have one yet, scoped to the same org.
+    await q(`
+        UPDATE tasks t
+           SET work_item_type_id = wit.id
+          FROM work_item_types wit
+         WHERE t.work_item_type_id IS NULL
+           AND wit.org_id = t.org_id
+           AND wit.is_default = TRUE
+    `);
 }
 
 module.exports = {
@@ -1104,4 +1403,5 @@ module.exports = {
     initDB,
     initMasterDB,
     initTenantSchema,
+    seedAgileDefaults,
 };

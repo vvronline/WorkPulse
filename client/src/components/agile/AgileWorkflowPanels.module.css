@@ -1,0 +1,210 @@
+/* ─── Blocker control ─────────────────────────────────────────────────── */
+.blockerControl { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.blockerBtn {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 4px 9px; border-radius: 8px;
+    background: var(--bg-secondary, #f3f4f6);
+    color: var(--text-muted, #6b7280);
+    border: 1px solid var(--border, #e5e7eb);
+    font-size: 0.75rem; font-weight: 600; cursor: pointer;
+    transition: all 0.15s;
+}
+.blockerBtn:hover { background: var(--bg-hover, #e5e7eb); }
+.blockerBtn.blocked {
+    color: var(--danger, #ef4444);
+    background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent);
+    border-color: color-mix(in srgb, var(--danger, #ef4444) 30%, transparent);
+}
+.blockerBtn:disabled { cursor: not-allowed; opacity: 0.6; }
+
+.blockerForm { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.blockerInput {
+    padding: 4px 8px; border: 1px solid var(--border, #d1d5db); border-radius: 6px;
+    background: var(--bg, #fff); color: var(--text, #111827); font-size: 0.8rem; width: 240px;
+}
+.blockerReason { font-size: 0.75rem; color: var(--danger, #ef4444); font-style: italic; }
+
+/* ─── Dependencies ────────────────────────────────────────────────────── */
+.depWrap {
+    border: 1px solid var(--border, #e5e7eb); border-radius: 8px;
+    background: var(--bg-secondary, #f9fafb);
+    padding: 10px 12px; margin-top: 12px;
+}
+.depHeader { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.depTitle {
+    font-size: 0.78rem; font-weight: 700; color: var(--text-muted, #6b7280);
+    text-transform: uppercase; letter-spacing: 0.4px;
+    display: inline-flex; align-items: center; gap: 6px;
+}
+
+.depAddBox { background: var(--bg, #fff); border: 1px solid var(--border, #e5e7eb); border-radius: 6px; padding: 8px; margin-bottom: 8px; }
+.depAddRow { display: flex; gap: 6px; align-items: center; }
+.depTypeSel {
+    padding: 5px 8px; border: 1px solid var(--border, #d1d5db); border-radius: 5px;
+    background: var(--bg, #fff); font-size: 0.78rem;
+}
+.depSearchWrap { flex: 1; position: relative; display: flex; align-items: center; }
+.depSearchIcon { position: absolute; left: 8px; color: var(--text-muted, #9ca3af); pointer-events: none; }
+.depSearchInput {
+    width: 100%; padding: 6px 8px 6px 26px; border: 1px solid var(--border, #d1d5db);
+    border-radius: 5px; background: var(--bg, #fff); font-size: 0.8rem;
+}
+.depHint { color: var(--text-muted, #9ca3af); font-size: 0.75rem; padding: 6px 4px 0; }
+.depResults {
+    list-style: none; margin: 6px 0 0; padding: 0; max-height: 200px; overflow-y: auto;
+    border-top: 1px dashed var(--border, #e5e7eb);
+}
+.depResults li {
+    padding: 6px 8px; cursor: pointer; font-size: 0.82rem; border-radius: 4px;
+    display: flex; gap: 6px; align-items: center;
+}
+.depResults li:hover { background: var(--bg-hover, #f3f4f6); }
+.depResultId { color: var(--text-muted, #6b7280); font-weight: 600; font-size: 0.7rem; }
+
+.depSection { margin-top: 8px; }
+.depSectionTitle { font-size: 0.7rem; font-weight: 700; color: var(--text-muted, #9ca3af); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.depEmpty { font-size: 0.78rem; color: var(--text-muted, #9ca3af); font-style: italic; padding: 4px 0; }
+.depList { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.depItem {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 6px; border-radius: 5px; font-size: 0.82rem;
+    background: var(--bg, #fff); border: 1px solid var(--border, #e5e7eb);
+}
+.depItem.itemBlocked { border-color: color-mix(in srgb, var(--danger, #ef4444) 30%, transparent); }
+.depBadge {
+    display: inline-flex; align-items: center; padding: 1px 6px; border-radius: 8px;
+    background: var(--bg-secondary, #f3f4f6); color: var(--text-muted, #6b7280);
+    font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;
+}
+.depBadge[data-type="blocks"] { color: var(--danger, #ef4444); background: color-mix(in srgb, var(--danger, #ef4444) 10%, transparent); }
+.depBadge[data-type="duplicates"] { color: #8b5cf6; background: color-mix(in srgb, #8b5cf6 10%, transparent); }
+.depBadge[data-type="clones"] { color: #0ea5e9; background: color-mix(in srgb, #0ea5e9 10%, transparent); }
+.depItemId { color: var(--text-muted, #6b7280); font-weight: 600; font-size: 0.72rem; }
+.depItemTitle { flex: 1; color: var(--text, #111827); }
+.depItemLink { flex: 1; color: var(--primary, #3b82f6); text-decoration: none; cursor: pointer; }
+.depItemLink:hover { text-decoration: underline; }
+.depRollup { font-size: 0.72rem; font-weight: 600; color: var(--primary, #3b82f6); text-transform: none; letter-spacing: 0; margin-left: 6px; }
+.depStatePill {
+    display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 999px;
+    background: color-mix(in srgb, var(--state-color, #6b7280) 14%, transparent);
+    color: var(--state-color, #6b7280); border: 1px solid color-mix(in srgb, var(--state-color, #6b7280) 30%, transparent);
+    font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;
+}
+.depPoints {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 20px; height: 18px; padding: 0 6px; border-radius: 9px;
+    background: var(--bg-secondary, #eef2ff); color: var(--primary, #4338ca);
+    border: 1px solid color-mix(in srgb, var(--primary, #4338ca) 22%, transparent);
+    font-size: 0.7rem; font-weight: 700;
+}
+.depResultEpic {
+    display: inline-flex; align-items: center;
+    padding: 1px 6px; margin-right: 4px; border-radius: 8px;
+    background: color-mix(in srgb, #8b5cf6 14%, transparent);
+    color: #8b5cf6; border: 1px solid color-mix(in srgb, #8b5cf6 30%, transparent);
+    font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;
+}
+
+/* ─── Inline Parent link (non-Epic tickets) ─────────────────────────────
+   Compact pill that sits in the edit form without a "Parent" header — the
+   chip itself communicates the relationship ("Part of #42 …"). */
+.parentInline {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin-top: 12px;
+}
+.parentChip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 999px;
+    background: color-mix(in srgb, #8b5cf6 12%, transparent);
+    color: var(--text, #111827);
+    border: 1px solid color-mix(in srgb, #8b5cf6 30%, transparent);
+    font-size: 0.78rem; max-width: 100%;
+}
+.parentChipIcon { color: #8b5cf6; flex-shrink: 0; }
+.parentChipLead { color: var(--text-muted, #6b7280); font-weight: 500; font-size: 0.72rem; }
+.parentChipLink {
+    color: #8b5cf6; font-weight: 600; text-decoration: none;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.parentChipLink:hover { text-decoration: underline; }
+.parentChipDetach {
+    background: none; border: none; padding: 1px; cursor: pointer;
+    color: var(--text-muted, #9ca3af); border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+}
+.parentChipDetach:hover { color: var(--danger, #ef4444); background: color-mix(in srgb, var(--danger, #ef4444) 14%, transparent); }
+.parentLinkBtn {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: none; border: 1px dashed var(--border, #d1d5db);
+    color: var(--text-muted, #6b7280);
+    font-size: 0.74rem; font-weight: 500;
+    padding: 4px 9px; border-radius: 999px; cursor: pointer;
+}
+.parentLinkBtn:hover { border-color: #8b5cf6; color: #8b5cf6; background: color-mix(in srgb, #8b5cf6 8%, transparent); }
+.depRemoveBtn {
+    background: none; border: none; padding: 2px; cursor: pointer;
+    color: var(--text-muted, #9ca3af); border-radius: 4px;
+}
+.depRemoveBtn:hover { color: var(--danger, #ef4444); background: color-mix(in srgb, var(--danger, #ef4444) 10%, transparent); }
+
+.depLoading { font-size: 0.8rem; color: var(--text-muted, #9ca3af); padding: 8px; text-align: center; }
+.depError {
+    margin-top: 6px; padding: 6px 8px;
+    background: color-mix(in srgb, var(--danger, #ef4444) 10%, transparent);
+    color: var(--danger, #ef4444); border-radius: 4px; font-size: 0.75rem;
+}
+
+/* ─── Charts ──────────────────────────────────────────────────────────── */
+.chartWrap {
+    border: 1px solid var(--border, #e5e7eb); border-radius: 8px;
+    background: var(--bg, #fff); padding: 12px 14px; margin-top: 12px;
+}
+.chartHeader {
+    display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;
+    font-size: 0.85rem; font-weight: 600; color: var(--text, #111827);
+}
+.chartHeader > span { display: inline-flex; align-items: center; gap: 6px; }
+.chartLegend { font-size: 0.75rem; color: var(--text-muted, #6b7280); display: inline-flex; align-items: center; gap: 8px; }
+.legIdeal, .legActual { width: 16px; height: 2px; display: inline-block; }
+.legIdeal { background: var(--text-muted, #9ca3af); }
+.legActual { background: var(--primary, #3b82f6); }
+
+.chartSvg { width: 100%; height: auto; display: block; }
+.chartLoading { padding: 30px; text-align: center; color: var(--text-muted, #9ca3af); font-size: 0.85rem; }
+.chartEmpty { padding: 30px; text-align: center; color: var(--text-muted, #9ca3af); font-size: 0.85rem; background: var(--bg-secondary, #f9fafb); border-radius: 8px; margin-top: 12px; }
+
+.gridLine { stroke: var(--border, #e5e7eb); stroke-width: 1; stroke-dasharray: 2 3; }
+.axisLine { stroke: var(--text-muted, #9ca3af); stroke-width: 1; }
+.axisLabel { font-size: 10px; fill: var(--text-muted, #9ca3af); font-family: inherit; }
+.idealLine { stroke: var(--text-muted, #9ca3af); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.actualLine { stroke: var(--primary, #3b82f6); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.actualDot { fill: var(--primary, #3b82f6); }
+
+.bar { fill: var(--primary, #3b82f6); transition: fill 0.15s; }
+.bar:hover { fill: color-mix(in srgb, var(--primary, #3b82f6) 80%, black); }
+.barLabel { font-size: 10px; fill: var(--text, #111827); font-weight: 600; font-family: inherit; }
+.barAxis { font-size: 10px; fill: var(--text-muted, #9ca3af); font-family: inherit; }
+.barSubAxis { font-size: 9px; fill: var(--text-muted, #9ca3af); font-family: inherit; }
+.avgLine { stroke: var(--success, #10b981); stroke-width: 1.5; stroke-dasharray: 4 3; }
+
+/* ─── Sprint lifecycle controls ──────────────────────────────────────── */
+.lifecycleWrap { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lifecycleForm { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.lifecycleLabel { font-size: 0.8rem; color: var(--text-muted, #6b7280); }
+.lifecycleSelect {
+    padding: 5px 8px; border: 1px solid var(--border, #d1d5db); border-radius: 6px;
+    background: var(--bg, #fff); font-size: 0.8rem;
+}
+.lifecycleError { color: var(--danger, #ef4444); font-size: 0.78rem; }
+.completedBadge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 999px;
+    background: color-mix(in srgb, var(--success, #10b981) 14%, transparent);
+    color: var(--success, #10b981); font-size: 0.75rem; font-weight: 600;
+}
+.velocityChip {
+    margin-left: 4px; padding: 2px 7px; border-radius: 10px;
+    background: color-mix(in srgb, var(--success, #10b981) 22%, transparent);
+    font-size: 0.7rem; font-weight: 700;
+}

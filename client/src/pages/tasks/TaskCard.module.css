@@ -25,7 +25,8 @@
 .task-card.editing { cursor: default; gap: 0.5rem; min-height: auto; }
 .clickable { cursor: pointer; }
 
-.task-card-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem; }
+.task-card-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem; gap: 0.4rem; }
+.task-card-top-left { display: flex; align-items: center; flex-wrap: wrap; gap: 0.35rem; flex: 1; min-width: 0; }
 .task-title-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .task-title-row .task-title { font-weight: 600; font-size: 0.9rem; color: var(--text); line-height: 1.4; flex: 1; min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
 .task-title-row .task-labels { margin-left: auto; margin-top: 0; margin-bottom: 0; }

@@ -4,7 +4,10 @@ import {
   getTasks, updateTaskStatus, deleteTask, carryForwardTasks,
   getAssignableUsers, getTaskLabels, addTaskComment, updateTaskComment,
   getLocalToday, getTaskDetail, getTeamSprintConfig, getAvailableSprints,
+  getSprintStats,
 } from '../api';
+import { useAgileConfig } from '../AgileConfigContext';
+import { SprintLifecycleControls } from '../components/agile/AgileWorkflowPanels.jsx';
 import { ArrowDownCircle, ClipboardList } from 'lucide-react';
 import ConfirmDialog from '../components/common/ConfirmDialog';
 import { useAuth } from '../AuthContext';
@@ -47,6 +50,8 @@ export default function Tasks() {
   const [sprintImportOpen, setSprintImportOpen] = useState(false);
   const [assignableUsers, setAssignableUsers] = useState([]);
   const [orgLabels, setOrgLabels] = useState([]);
+  const [sprintStats, setSprintStats] = useState(null);
+  const { unitLabel, features } = useAgileConfig();
   const autoCarriedRef = useRef(null); // stores the last date carry-forward ran
 
   // backlogOpen was always false — removed dead state
@@ -114,6 +119,15 @@ export default function Tasks() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
+  // Expose the detail-opener globally so deep-linked components (e.g. Epic
+  // child-ticket links inside the task detail modal) can swap the modal
+  // contents without unmounting / re-routing. Cleared on unmount so we
+  // don't leak across page-reloads.
+  useEffect(() => {
+    window.__openTaskDetail = (task) => detail.openTaskDetail(task);
+    return () => { try { delete window.__openTaskDetail; } catch { /* ignore */ } };
+  }, [detail.openTaskDetail]);
+
   useEffect(() => {
     if (activeTab === 'backlog') return;
     const controller = new AbortController();
@@ -150,6 +164,15 @@ export default function Tasks() {
   useEffect(() => {
     if (activeTab === 'backlog') backlog.fetchBacklog();
   }, [activeTab, backlog.fetchBacklog]);
+
+  // Refresh sprint stats whenever the sprint changes or its tasks update.
+  useEffect(() => {
+    if (activeTab !== 'sprint' || !selectedSprintId) {
+      setSprintStats(null);
+      return;
+    }
+    getSprintStats(selectedSprintId).then(r => setSprintStats(r.data)).catch(() => setSprintStats(null));
+  }, [activeTab, selectedSprintId, tasks.length, stats.done]);
 
   const handleDelete = (task) => setTaskToDelete(task);
   const confirmDeleteWithRefresh = async () => {
@@ -255,7 +278,51 @@ export default function Tasks() {
                 </span>
               ))}
             </div>
+            {features.storyPoints && sprintStats && sprintStats.totals.points > 0 && (
+              <div className={s['tasks-progress-counts']} style={{ marginTop: 6, fontWeight: 600 }}>
+                <span title="Story points: done / total">
+                  📊 {sprintStats.totals.donePoints} / {sprintStats.totals.points} {unitLabel}
+                  {' '}({sprintStats.totals.percentByPoints}%)
+                </span>
+                {sprintStats.totals.unestimatedTasks > 0 && (
+                  <span style={{ color: 'var(--warning, #f59e0b)' }}>
+                    ⚠ {sprintStats.totals.unestimatedTasks} unestimated
+                  </span>
+                )}
+                {sprintStats.totals.blockedTasks > 0 && (
+                  <span style={{ color: 'var(--danger, #ef4444)' }}>
+                    ⛔ {sprintStats.totals.blockedTasks} blocked
+                  </span>
+                )}
+              </div>
+            )}
+            {/* Sprint lifecycle controls (Start / Complete) — Pass 2 */}
+            {(() => {
+              const sp = availableSprints.find(x => x.id === selectedSprintId);
+              if (!sp) return null;
+              const canManageSprint = ['team_lead', 'manager', 'super_admin', 'hr_admin', 'platform_admin'].includes(currentUser?.role);
+              return (
+                <div style={{ marginTop: 10 }}>
+                  <SprintLifecycleControls
+                    sprint={sp}
+                    canEdit={canManageSprint}
+                    onChanged={() => {
+                      // Refresh the sprint list + active selection so the badge / lifecycle controls update.
+                      // Also force a fresh stats fetch.
+                      fetchTasks();
+                      if (selectedSprintId) {
+                        getSprintStats(selectedSprintId).then(r => setSprintStats(r.data)).catch(() => {});
+                      }
+                    }}
+                  />
+                </div>
+              );
+            })()}
           </div>
+
+          {/* Burndown / Velocity charts moved off the day-to-day Sprint board.
+              They live in a dedicated Insights view (TODO) so the planning
+              surface stays focused on tickets + lifecycle. */}
 
           {carriedCount > 0 && (
             <div className={s['carry-banner']}>
@@ -335,6 +402,10 @@ export default function Tasks() {
           setBacklogLabelDropdownOpen={backlog.setBacklogLabelDropdownOpen}
           backlogSprintId={backlog.backlogSprintId}
           setBacklogSprintId={backlog.setBacklogSprintId}
+          backlogStoryPoints={backlog.backlogStoryPoints}
+          setBacklogStoryPoints={backlog.setBacklogStoryPoints}
+          backlogWorkItemType={backlog.backlogWorkItemType}
+          setBacklogWorkItemType={backlog.setBacklogWorkItemType}
           scheduleTaskId={backlog.scheduleTaskId}
           setScheduleTaskId={backlog.setScheduleTaskId}
           scheduleDate={backlog.scheduleDate}

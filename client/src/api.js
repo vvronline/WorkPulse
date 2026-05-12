@@ -153,6 +153,48 @@ export const createSprint = (data) => API.post('/sprints', data);
 export const updateSprint = (id, data) => API.put(`/sprints/${id}`, data);
 export const deleteSprint = (id) => API.delete(`/sprints/${id}`);
 export const getSprintTasks = (id) => API.get(`/sprints/${id}/tasks`);
+export const getSprintStats = (id) => API.get(`/sprints/${id}/stats`);
+export const startSprint = (id) => API.post(`/sprints/${id}/start`);
+export const completeSprint = (id, rolloverTo) => API.post(`/sprints/${id}/complete`, { rolloverTo });
+export const getSprintBurndown = (id) => API.get(`/sprints/${id}/burndown`);
+export const getRecentVelocity = (limit) => API.get('/sprints/velocity/recent', { params: { limit } });
+// Phase 3 — Insights endpoints
+export const getSprintCumulativeFlow = (id) => API.get(`/sprints/${id}/cumulative-flow`);
+export const getSprintCycleTime = (id) => API.get(`/sprints/${id}/cycle-time`);
+export const getSprintRetrospective = (id) => API.get(`/sprints/${id}/retrospective`);
+export const updateSprintRetrospective = (id, data) => API.put(`/sprints/${id}/retrospective`, data);
+
+// Pass 2 — task dependencies, acceptance criteria, blockers
+export const getTaskDependencies = (id) => API.get(`/tasks/${id}/dependencies`);
+export const addTaskDependency = (id, depends_on_id, type) => API.post(`/tasks/${id}/dependencies`, { depends_on_id, type });
+export const removeTaskDependency = (id, depId) => API.delete(`/tasks/${id}/dependencies/${depId}`);
+export const getAcceptanceCriteria = (id) => API.get(`/tasks/${id}/acceptance-criteria`);
+export const updateAcceptanceCriteria = (id, criteria) => API.put(`/tasks/${id}/acceptance-criteria`, { criteria });
+export const setTaskBlocker = (id, is_blocked, blocked_reason) => API.patch(`/tasks/${id}/block`, { is_blocked, blocked_reason });
+export const quicksearchTasks = (q) => API.get('/tasks/lookup/quicksearch', { params: { q } });
+export const getTaskChildren = (id) => API.get(`/tasks/${id}/children`);
+export const getTaskParent = (id) => API.get(`/tasks/${id}/parent`);
+export const setTaskParent = (id, parent_task_id) => API.patch(`/tasks/${id}/parent`, { parent_task_id });
+
+// Agile (tenant-customisable Work Item Types, Workflow States, Story Points)
+export const getAgileConfig = () => API.get('/agile/config');
+export const getAgileSettings = () => API.get('/agile/settings');
+export const updateAgileSettings = (data) => API.put('/agile/settings', data);
+export const getWorkItemTypes = () => API.get('/agile/work-item-types');
+export const createWorkItemType = (data) => API.post('/agile/work-item-types', data);
+export const updateWorkItemType = (id, data) => API.put(`/agile/work-item-types/${id}`, data);
+export const deleteWorkItemType = (id) => API.delete(`/agile/work-item-types/${id}`);
+export const reorderWorkItemTypes = (order) => API.put('/agile/work-item-types/reorder', { order });
+export const getWorkflowStates = () => API.get('/agile/workflow-states');
+export const createWorkflowState = (data) => API.post('/agile/workflow-states', data);
+export const updateWorkflowState = (id, data) => API.put(`/agile/workflow-states/${id}`, data);
+export const deleteWorkflowState = (id) => API.delete(`/agile/workflow-states/${id}`);
+export const reorderWorkflowStates = (order) => API.put('/agile/workflow-states/reorder', { order });
+// Agile permissions are role-based — this endpoint just returns the caller's
+// effective access level (canEdit + role). The previous request/grant/review
+// flow was removed: edit access is granted purely by role membership in
+// server/middleware/agileEditor.js#ROLES_THAT_CAN_EDIT_AGILE.
+export const getAgilePermissions = () => API.get('/agile/permissions/me');
 
 // Service Desk
 export const getServiceDeskTickets = (params) => API.get('/service-desk/tickets', { params });

@@ -6,6 +6,10 @@ import SprintSelector from '../../components/common/SprintSelector';
 import LabelSelector from './LabelSelector.jsx';
 import { PRIORITIES, COLUMNS } from './constants.js';
 import { formatDueDate, formatRelativeTime, isDueOverdue, stripHtml, getAvatarUrl } from './utils.jsx';
+import {
+  StoryPointPicker, WorkItemTypePicker, StoryPointBadge,
+  WorkItemTypeBadge, BlockerBadge,
+} from '../../components/agile/AgilePickers.jsx';
 import { getLocalToday } from '../../api';
 import { useTaskCtx } from './TaskContext.jsx';
 import s from './BacklogTab.module.css';
@@ -39,6 +43,10 @@ export default function BacklogTab({
   setBacklogLabelDropdownOpen,
   backlogSprintId,
   setBacklogSprintId,
+  backlogStoryPoints,
+  setBacklogStoryPoints,
+  backlogWorkItemType,
+  setBacklogWorkItemType,
   scheduleTaskId,
   setScheduleTaskId,
   scheduleDate,
@@ -193,6 +201,13 @@ export default function BacklogTab({
                 open={backlogLabelDropdownOpen}
                 setOpen={setBacklogLabelDropdownOpen}
               />
+              <div className={s['form-extra-group']}>
+                <label>Type</label>
+                <WorkItemTypePicker value={backlogWorkItemType} onChange={setBacklogWorkItemType} />
+              </div>
+            </div>
+            <div className={s['form-extras']} style={{ marginTop: 4 }}>
+              <StoryPointPicker value={backlogStoryPoints} onChange={setBacklogStoryPoints} />
             </div>
             <div className={s['form-bottom']}>
               <div className={s['priority-selector']}>
@@ -273,6 +288,9 @@ export default function BacklogTab({
                     >
                       {pri.icon} {pri.label}
                     </span>
+                    <WorkItemTypeBadge value={task.work_item_type_id} />
+                    <StoryPointBadge value={task.story_points} />
+                    <BlockerBadge task={task} />
                     {task.labels &&
                       task.labels.length > 0 &&
                       task.labels.map((l) => (

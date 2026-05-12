@@ -1,0 +1,510 @@
+.page {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 24px 32px 80px;
+    color: var(--text, #111827);
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 18px;
+}
+
+.title {
+    margin: 0 0 4px;
+    font-size: 1.6rem;
+    font-weight: 700;
+}
+
+.subtitle {
+    margin: 0;
+    color: var(--text-muted, #6b7280);
+    font-size: 0.85rem;
+}
+
+.permsBadge .canEdit {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: color-mix(in srgb, var(--success, #10b981) 14%, transparent);
+    color: var(--success, #10b981);
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.permsBadge .readOnly {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: var(--bg-secondary, #f3f4f6);
+    color: var(--text-muted, #6b7280);
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border, #e5e7eb);
+    margin-bottom: 16px;
+}
+
+.tabBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 16px;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted, #6b7280);
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.12s;
+}
+
+.tabBtn:hover {
+    color: var(--text, #111827);
+    background: var(--bg-hover, #f9fafb);
+}
+
+.tabBtn.active {
+    color: var(--primary, #3b82f6);
+    border-bottom-color: var(--primary, #3b82f6);
+    background: none;
+}
+
+.card {
+    background: var(--bg, #ffffff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 10px;
+    padding: 22px 24px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.sectionTitle {
+    margin: 18px 0 10px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text, #111827);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sectionTitle:first-of-type {
+    margin-top: 0;
+}
+
+.sectionHead {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.helpText {
+    color: var(--text-muted, #6b7280);
+    font-size: 0.82rem;
+    margin: 0 0 16px;
+}
+
+/* Glossary block — explains column meanings (WIP / Initial / Terminal / Active)
+   so users don't have to hover headers to learn what each toggle does. */
+.helpGlossary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 10px 16px;
+    padding: 12px 14px;
+    margin: 0 0 16px;
+    background: var(--bg-secondary, #f9fafb);
+    border: 1px solid var(--border, #e5e7eb);
+    border-left: 3px solid var(--primary, #3b82f6);
+    border-radius: 8px;
+    font-size: 0.8rem;
+    color: var(--text-muted, #6b7280);
+    line-height: 1.45;
+}
+
+.helpGlossary strong {
+    color: var(--text, #111827);
+    font-weight: 700;
+}
+
+.formRow {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.formRow label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-muted, #6b7280);
+}
+
+.formRow input,
+.formRow select,
+.card textarea {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border, #d1d5db);
+    border-radius: 6px;
+    background: var(--bg, #ffffff);
+    color: var(--text, #111827);
+    font-size: 0.85rem;
+    font-family: inherit;
+}
+
+.formRow input:disabled,
+.formRow select:disabled,
+.card textarea:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+.flagGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 8px 16px;
+    margin-bottom: 12px;
+}
+
+.flag {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: var(--bg-secondary, #f9fafb);
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.flag:hover {
+    background: var(--bg-hover, #f3f4f6);
+}
+
+.formActions {
+    margin-top: 18px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.inlineForm {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    padding: 10px 12px;
+    background: var(--bg-secondary, #f9fafb);
+    border: 1px dashed var(--border, #d1d5db);
+    border-radius: 8px;
+    margin-bottom: 14px;
+}
+
+.inlineForm input,
+.inlineForm select {
+    padding: 6px 8px;
+    border: 1px solid var(--border, #d1d5db);
+    border-radius: 4px;
+    background: var(--bg, #fff);
+    font-size: 0.82rem;
+}
+
+.inlineForm input[type="color"] {
+    padding: 0;
+    width: 32px;
+    height: 28px;
+    cursor: pointer;
+}
+
+.inlineForm label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.8rem;
+    color: var(--text-muted, #6b7280);
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 8px;
+}
+
+.table th,
+.table td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border, #e5e7eb);
+    font-size: 0.85rem;
+}
+
+.table th {
+    background: var(--bg-secondary, #f9fafb);
+    color: var(--text-muted, #6b7280);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+.cellInput {
+    width: 100%;
+    padding: 4px 6px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    font-size: 0.85rem;
+    color: var(--text, #111827);
+}
+
+.cellInput:hover:not(:disabled),
+.cellInput:focus {
+    border-color: var(--border, #d1d5db);
+    background: var(--bg, #fff);
+    outline: none;
+}
+
+.wipInput {
+    width: 70px;
+    padding: 4px 6px;
+    border: 1px solid var(--border, #d1d5db);
+    border-radius: 4px;
+    background: var(--bg, #fff);
+    font-size: 0.82rem;
+}
+
+.categoryGroup {
+    margin-top: 18px;
+}
+
+.categoryTitle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 12px 0 4px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-muted, #6b7280);
+    padding-left: 10px;
+    border-left: 3px solid;
+}
+
+.dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+}
+
+.warn {
+    margin: 4px 0 8px;
+    padding: 8px 10px;
+    background: color-mix(in srgb, var(--warning, #f59e0b) 12%, transparent);
+    color: var(--warning, #f59e0b);
+    border-radius: 6px;
+    font-size: 0.78rem;
+}
+
+.error {
+    margin-bottom: 12px;
+    padding: 10px 14px;
+    background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent);
+    color: var(--danger, #ef4444);
+    border-radius: 8px;
+    font-size: 0.85rem;
+}
+
+.success {
+    padding: 10px 14px;
+    background: color-mix(in srgb, var(--success, #10b981) 12%, transparent);
+    color: var(--success, #10b981);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+}
+
+.pending {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 14px;
+    background: color-mix(in srgb, var(--warning, #f59e0b) 12%, transparent);
+    color: var(--warning, #f59e0b);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+}
+
+.requestForm {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.requestForm textarea {
+    padding: 8px 10px;
+    border: 1px solid var(--border, #d1d5db);
+    border-radius: 6px;
+    background: var(--bg, #fff);
+    font-family: inherit;
+    font-size: 0.85rem;
+    resize: vertical;
+}
+
+.refreshBtn {
+    padding: 4px 6px;
+    background: none;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--text-muted, #6b7280);
+    margin-left: 4px;
+}
+
+.empty {
+    color: var(--text-muted, #6b7280);
+    font-size: 0.85rem;
+    padding: 14px;
+    text-align: center;
+    background: var(--bg-secondary, #f9fafb);
+    border-radius: 6px;
+}
+
+.loading {
+    text-align: center;
+    padding: 60px 0;
+    color: var(--text-muted, #6b7280);
+}
+
+.reasonCell {
+    max-width: 320px;
+    color: var(--text-muted, #6b7280);
+}
+
+/* ─── Responsive layout ──────────────────────────────────────────────────
+   The Agile config page packs a lot in: 5 tabs, two-column form rows, wide
+   tables for Workflow States / Work Item Types, glossary cards. Below we
+   reflow each pattern for tablet and phone widths so nothing overflows. */
+@media (max-width: 900px) {
+    .page {
+        padding: 18px 16px 60px;
+    }
+    .header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+    .title {
+        font-size: 1.35rem;
+    }
+    .tabs {
+        /* Horizontal scroll instead of wrap so the underline-active style
+           still works and tab order stays predictable. */
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        scrollbar-width: thin;
+    }
+    .tabBtn {
+        flex-shrink: 0;
+        padding: 9px 12px;
+        font-size: 0.82rem;
+    }
+    .card {
+        padding: 16px 14px;
+    }
+    /* Form rows collapse from 200px / 1fr → single column */
+    .formRow {
+        grid-template-columns: 1fr;
+        gap: 6px;
+    }
+    .formRow label {
+        font-size: 0.78rem;
+    }
+    .inlineForm {
+        padding: 10px;
+    }
+    .inlineForm input,
+    .inlineForm select {
+        flex: 1 1 120px;
+        min-width: 0;
+    }
+    /* Tables: drop the uppercase headers' wide letter-spacing and let the
+       table scroll horizontally inside its card so no row gets clipped. */
+    .table {
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+    }
+    .table th,
+    .table td {
+        padding: 6px 8px;
+        font-size: 0.8rem;
+    }
+    .table th {
+        font-size: 0.7rem;
+        letter-spacing: 0.2px;
+    }
+    .wipInput {
+        width: 56px;
+    }
+    .helpGlossary {
+        grid-template-columns: 1fr;
+        padding: 10px 12px;
+        font-size: 0.78rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .page {
+        padding: 14px 12px 60px;
+    }
+    .title {
+        font-size: 1.2rem;
+    }
+    .subtitle {
+        font-size: 0.78rem;
+    }
+    .sectionTitle {
+        font-size: 0.85rem;
+    }
+    .sectionHead {
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+    .tabBtn {
+        padding: 8px 10px;
+        font-size: 0.78rem;
+    }
+    .flagGrid {
+        grid-template-columns: 1fr;
+    }
+    .formActions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .formActions .btn {
+        width: 100%;
+    }
+    .pending {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+    }
+}

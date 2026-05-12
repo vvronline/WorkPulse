@@ -65,6 +65,261 @@ const MIGRATIONS = [
             `);
         },
     },
+    {
+        // Tenant-customisable Agile configuration tables (Pass 1 of the
+        // story-points / work-item-types / workflow-states feature).
+        // initTenantSchema() also creates these for new tenants — this
+        // migration ensures every EXISTING tenant DB picks them up on the
+        // next deploy without needing manual intervention.
+        name: '2026_05_v1_agile_customisation_tables',
+        async up(query) {
+            await query(`
+                CREATE TABLE IF NOT EXISTS org_agile_settings (
+                    org_id                      INTEGER PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+                    estimation_type             TEXT NOT NULL DEFAULT 'fibonacci'
+                        CHECK(estimation_type IN ('fibonacci','linear','tshirt','hours','none','custom')),
+                    estimation_values           JSONB NOT NULL DEFAULT '[0.5,1,2,3,5,8,13,21,34]'::jsonb,
+                    estimation_unit_label       TEXT NOT NULL DEFAULT 'SP',
+                    priority_scheme             JSONB NOT NULL DEFAULT '[{"key":"low","label":"Low","color":"#10b981"},{"key":"medium","label":"Medium","color":"#f59e0b"},{"key":"high","label":"High","color":"#ef4444"}]'::jsonb,
+                    enable_story_points         BOOLEAN NOT NULL DEFAULT TRUE,
+                    enable_epics                BOOLEAN NOT NULL DEFAULT TRUE,
+                    enable_dependencies         BOOLEAN NOT NULL DEFAULT TRUE,
+                    enable_acceptance_criteria  BOOLEAN NOT NULL DEFAULT TRUE,
+                    enable_wip_limits           BOOLEAN NOT NULL DEFAULT FALSE,
+                    enable_blockers             BOOLEAN NOT NULL DEFAULT TRUE,
+                    enable_retrospectives       BOOLEAN NOT NULL DEFAULT TRUE,
+                    require_estimate_for_sprint BOOLEAN NOT NULL DEFAULT FALSE,
+                    default_dod                 TEXT,
+                    updated_at                  TIMESTAMPTZ DEFAULT NOW()
+                )
+            `);
+            await query(`
+                CREATE TABLE IF NOT EXISTS work_item_types (
+                    id          SERIAL PRIMARY KEY,
+                    org_id      INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                    key         TEXT NOT NULL,
+                    name        TEXT NOT NULL,
+                    icon        TEXT,
+                    color       TEXT NOT NULL DEFAULT '#6366f1',
+                    description TEXT,
+                    is_default  BOOLEAN NOT NULL DEFAULT FALSE,
+                    is_epic     BOOLEAN NOT NULL DEFAULT FALSE,
+                    is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+                    sort_order  INTEGER NOT NULL DEFAULT 0,
+                    created_at  TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE(org_id, key)
+                )
+            `);
+            await query(`CREATE INDEX IF NOT EXISTS idx_work_item_types_org ON work_item_types(org_id, is_active, sort_order)`);
+            await query(`
+                CREATE TABLE IF NOT EXISTS workflow_states (
+                    id            SERIAL PRIMARY KEY,
+                    org_id        INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                    key           TEXT NOT NULL,
+                    name          TEXT NOT NULL,
+                    category      TEXT NOT NULL CHECK(category IN ('open','in_progress','in_review','done')),
+                    color         TEXT NOT NULL DEFAULT '#6b7280',
+                    icon          TEXT,
+                    wip_limit     INTEGER,
+                    is_initial    BOOLEAN NOT NULL DEFAULT FALSE,
+                    is_terminal   BOOLEAN NOT NULL DEFAULT FALSE,
+                    is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+                    sort_order    INTEGER NOT NULL DEFAULT 0,
+                    created_at    TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE(org_id, key)
+                )
+            `);
+            await query(`CREATE INDEX IF NOT EXISTS idx_workflow_states_org ON workflow_states(org_id, is_active, sort_order)`);
+            await query(`
+                CREATE TABLE IF NOT EXISTS workflow_state_type_map (
+                    state_id INTEGER NOT NULL REFERENCES workflow_states(id) ON DELETE CASCADE,
+                    type_id  INTEGER NOT NULL REFERENCES work_item_types(id) ON DELETE CASCADE,
+                    PRIMARY KEY (state_id, type_id)
+                )
+            `);
+            await query(`
+                CREATE TABLE IF NOT EXISTS workflow_transitions (
+                    id            SERIAL PRIMARY KEY,
+                    org_id        INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                    from_state_id INTEGER NOT NULL REFERENCES workflow_states(id) ON DELETE CASCADE,
+                    to_state_id   INTEGER NOT NULL REFERENCES workflow_states(id) ON DELETE CASCADE,
+                    required_role TEXT,
+                    UNIQUE(from_state_id, to_state_id)
+                )
+            `);
+            await query(`CREATE INDEX IF NOT EXISTS idx_workflow_transitions_org ON workflow_transitions(org_id)`);
+            await query(`
+                CREATE TABLE IF NOT EXISTS team_agile_settings (
+                    team_id            INTEGER PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE,
+                    estimation_type    TEXT,
+                    estimation_values  JSONB,
+                    capacity_points    NUMERIC(7,1),
+                    updated_at         TIMESTAMPTZ DEFAULT NOW()
+                )
+            `);
+            await query(`
+                CREATE TABLE IF NOT EXISTS agile_editor_grants (
+                    id          SERIAL PRIMARY KEY,
+                    org_id      INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    granted_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    granted_at  TIMESTAMPTZ DEFAULT NOW(),
+                    revoked_at  TIMESTAMPTZ,
+                    UNIQUE(org_id, user_id)
+                )
+            `);
+            await query(`CREATE INDEX IF NOT EXISTS idx_agile_grants_active ON agile_editor_grants(org_id, user_id) WHERE revoked_at IS NULL`);
+            await query(`
+                CREATE TABLE IF NOT EXISTS agile_editor_requests (
+                    id            SERIAL PRIMARY KEY,
+                    org_id        INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    reason        TEXT,
+                    status        TEXT NOT NULL DEFAULT 'pending'
+                        CHECK(status IN ('pending','approved','rejected','cancelled')),
+                    reviewed_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    reviewed_at   TIMESTAMPTZ,
+                    reject_reason TEXT,
+                    created_at    TIMESTAMPTZ DEFAULT NOW()
+                )
+            `);
+            await query(`CREATE INDEX IF NOT EXISTS idx_agile_requests_status ON agile_editor_requests(org_id, status, created_at)`);
+            await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS story_points NUMERIC(6,2)`);
+            await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS work_item_type_id INTEGER REFERENCES work_item_types(id) ON DELETE SET NULL`);
+            await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS workflow_state_id INTEGER REFERENCES workflow_states(id) ON DELETE SET NULL`);
+            await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS parent_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL`);
+            await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS rank_value NUMERIC(20,10)`);
+            await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS acceptance_criteria JSONB`);
+            await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN NOT NULL DEFAULT FALSE`);
+            await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS blocked_reason TEXT`);
+            await query(`CREATE INDEX IF NOT EXISTS idx_tasks_workflow_state ON tasks(workflow_state_id) WHERE workflow_state_id IS NOT NULL`);
+            await query(`CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_task_id) WHERE parent_task_id IS NOT NULL`);
+            await query(`
+                CREATE TABLE IF NOT EXISTS task_dependencies (
+                    id            SERIAL PRIMARY KEY,
+                    task_id       INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                    depends_on_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                    type          TEXT NOT NULL DEFAULT 'blocks'
+                        CHECK(type IN ('blocks','relates','duplicates','clones')),
+                    created_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    created_at    TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE(task_id, depends_on_id, type)
+                )
+            `);
+            await query(`CREATE INDEX IF NOT EXISTS idx_task_deps_task ON task_dependencies(task_id)`);
+            await query(`CREATE INDEX IF NOT EXISTS idx_task_deps_depends_on ON task_dependencies(depends_on_id)`);
+            await query(`
+                CREATE TABLE IF NOT EXISTS sprint_retrospectives (
+                    id          SERIAL PRIMARY KEY,
+                    sprint_id   INTEGER NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
+                    category    TEXT NOT NULL CHECK(category IN ('went_well','went_wrong','action_item','kudos')),
+                    content     TEXT NOT NULL,
+                    author_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    votes       INTEGER NOT NULL DEFAULT 0,
+                    created_at  TIMESTAMPTZ DEFAULT NOW()
+                )
+            `);
+            await query(`CREATE INDEX IF NOT EXISTS idx_retro_sprint ON sprint_retrospectives(sprint_id, category)`);
+            await query(`
+                CREATE TABLE IF NOT EXISTS sprint_retro_votes (
+                    retro_id INTEGER NOT NULL REFERENCES sprint_retrospectives(id) ON DELETE CASCADE,
+                    user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    PRIMARY KEY (retro_id, user_id)
+                )
+            `);
+
+            // Drop the legacy hard-coded tasks.status CHECK so custom workflow
+            // state keys can flow through.
+            await query(`
+                DO $do$
+                DECLARE r record;
+                BEGIN
+                    FOR r IN
+                        SELECT con.conname
+                        FROM   pg_constraint con
+                        JOIN   pg_class       rel ON rel.oid = con.conrelid
+                        JOIN   pg_attribute   att ON att.attrelid = rel.oid
+                                                 AND att.attnum   = ANY(con.conkey)
+                        WHERE  rel.relname = 'tasks'
+                          AND  con.contype = 'c'
+                          AND  att.attname = 'status'
+                    LOOP
+                        EXECUTE 'ALTER TABLE tasks DROP CONSTRAINT ' || quote_ident(r.conname);
+                    END LOOP;
+                EXCEPTION WHEN others THEN NULL;
+                END $do$
+            `);
+        },
+    },
+    {
+        // Pass 2: sprint lifecycle, burndown snapshots, and the supporting
+        // columns on `sprints` (started_at / completed_at / velocity_points).
+        // These are additive; old sprints just have NULL until they complete.
+        name: '2026_05_v2_sprint_lifecycle',
+        async up(query) {
+            await query(`ALTER TABLE sprints ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ`);
+            await query(`ALTER TABLE sprints ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`);
+            await query(`ALTER TABLE sprints ADD COLUMN IF NOT EXISTS velocity_points NUMERIC(8,2)`);
+            await query(`
+                CREATE TABLE IF NOT EXISTS sprint_burndown_snapshots (
+                    id               SERIAL PRIMARY KEY,
+                    sprint_id        INTEGER NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
+                    snapshot_date    DATE NOT NULL,
+                    total_points     NUMERIC(10,2) NOT NULL DEFAULT 0,
+                    done_points      NUMERIC(10,2) NOT NULL DEFAULT 0,
+                    remaining_points NUMERIC(10,2) NOT NULL DEFAULT 0,
+                    blocked_points   NUMERIC(10,2) NOT NULL DEFAULT 0,
+                    open_tasks       INTEGER NOT NULL DEFAULT 0,
+                    created_at       TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE (sprint_id, snapshot_date)
+                )
+            `);
+            await query(`CREATE INDEX IF NOT EXISTS idx_burndown_sprint_date ON sprint_burndown_snapshots(sprint_id, snapshot_date)`);
+        },
+    },
+    {
+        // Phase 3: per-task cycle/lead-time markers + sprint retrospectives.
+        //
+        // - `cycle_started_at` is set the first time a task transitions out of
+        //   the initial workflow state (i.e. work actually begins).
+        // - `lead_started_at` is set on task creation to anchor lead time.
+        // - `sprint_retrospectives` is a one-row-per-sprint table holding the
+        //   classic three columns (Went Well / Improve / Action Items) plus a
+        //   numeric team-mood vote and an optional summary blurb. Action items
+        //   are JSONB so we don't need a separate child table.
+        name: '2026_05_v3_cycle_time_and_retros',
+        async up(query) {
+            await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS cycle_started_at TIMESTAMPTZ`);
+            await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS lead_started_at  TIMESTAMPTZ`);
+            // Backfill lead_started_at for existing rows so historical reports work.
+            await query(`UPDATE tasks SET lead_started_at = COALESCE(lead_started_at, created_at) WHERE lead_started_at IS NULL`);
+
+            // Pass 1 created a placeholder `sprint_retrospectives` table with
+            // a category/content/votes shape that no UI ever consumed. Phase 3
+            // replaces it with the conventional one-row-per-sprint template.
+            // The drop is safe: there are no production consumers and no data
+            // worth preserving (the table was empty in every tenant).
+            await query(`DROP TABLE IF EXISTS sprint_retro_votes`);
+            await query(`DROP TABLE IF EXISTS sprint_retrospectives`);
+
+            await query(`
+                CREATE TABLE sprint_retrospectives (
+                    id              SERIAL PRIMARY KEY,
+                    sprint_id       INTEGER NOT NULL UNIQUE REFERENCES sprints(id) ON DELETE CASCADE,
+                    went_well       TEXT,
+                    to_improve      TEXT,
+                    action_items    JSONB DEFAULT '[]'::jsonb,
+                    team_mood       SMALLINT CHECK (team_mood IS NULL OR team_mood BETWEEN 1 AND 5),
+                    summary         TEXT,
+                    created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    updated_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    created_at      TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at      TIMESTAMPTZ DEFAULT NOW()
+                )
+            `);
+            await query(`CREATE INDEX IF NOT EXISTS idx_retros_sprint ON sprint_retrospectives(sprint_id)`);
+        },
+    },
 ];
 
 /**
@@ -127,6 +382,18 @@ async function runTenantMigrations(query, opts = {}) {
                 err: err.message,
             }, 'Migration failed (non-fatal — will retry on next sweep)');
         }
+    }
+
+    // Always re-run the Agile defaults seeder. It's idempotent and only does
+    // work for orgs that haven't been seeded yet (or whose tasks still need
+    // backfilling). This makes the customisable Work Item Types / Workflow
+    // States feature available to every existing tenant on next deploy with
+    // zero manual intervention.
+    try {
+        const { seedAgileDefaults } = require('../db');
+        await seedAgileDefaults(query);
+    } catch (err) {
+        logger.error({ err: err.message, label }, 'Agile defaults seeding failed (non-fatal)');
     }
 
     return { applied, skipped, failed };

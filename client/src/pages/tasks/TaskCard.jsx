@@ -2,6 +2,7 @@ import React from 'react';
 import { HighlightedHtml, formatDueDate, isDueOverdue } from './utils.jsx';
 import { PRIORITIES } from './constants.js';
 import { User, CalendarDays, PenLine } from 'lucide-react';
+import { StoryPointBadge, WorkItemTypeBadge, BlockerBadge } from '../../components/agile/AgilePickers.jsx';
 import s from './TaskCard.module.css';
 
 function getPriority(p) {
@@ -32,12 +33,17 @@ export default function TaskCard({ task, sprintMode, onOpenDetail, onOpenComment
       }}
     >
       <div className={s['task-card-top']}>
-        <span
-          className={s['task-priority-badge']}
-          style={{ '--badge-bg': pri.color + '20', '--badge-color': pri.color }}
-        >
-          {pri.icon} {pri.label}
-        </span>
+        <div className={s['task-card-top-left']}>
+          <WorkItemTypeBadge value={task.work_item_type_id || task.work_item_type_key} />
+          <span
+            className={s['task-priority-badge']}
+            style={{ '--badge-bg': pri.color + '20', '--badge-color': pri.color }}
+          >
+            {pri.icon} {pri.label}
+          </span>
+          <StoryPointBadge value={task.story_points} />
+          <BlockerBadge task={task} />
+        </div>
         <div className={s['task-actions']}>
           <span
             className={s['comment-icon']}
