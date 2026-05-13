@@ -198,7 +198,7 @@ export default function Tasks() {
       if (comments.commentTaskId === taskToDelete.id) comments.closeComments();
       if (detail.detailTask?.id === taskToDelete.id) detail.closeTaskDetail();
       fetchTasks();
-      if (backlogOpen || activeTab === 'backlog') backlog.fetchBacklog();
+      if (activeTab === 'backlog') backlog.fetchBacklog();
     } catch {
       setError('Failed to delete item');
     }
@@ -335,9 +335,9 @@ export default function Tasks() {
             })()}
           </div>
 
-          {/* Burndown / Velocity charts moved off the day-to-day Sprint board.
-              They live in a dedicated Insights view (TODO) so the planning
-              surface stays focused on tickets + lifecycle. */}
+          {/* The Sprint Insights link previously rendered here was removed —
+              the toolbar's "Insights" button already opens the same view, so
+              the inline link was redundant noise on the Sprint board. */}
 
           {carriedCount > 0 && (
             <div className={s['carry-banner']}>

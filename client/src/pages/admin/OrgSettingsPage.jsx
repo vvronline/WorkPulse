@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings as SettingsIcon, Palette, Plug, ShieldCheck, UserCog } from 'lucide-react';
+import { Settings as SettingsIcon, Palette, Plug, ShieldCheck, UserCog, Mail } from 'lucide-react';
 import { getCurrentOrg } from '../../api';
 import OrgGeneralSettings from '../../components/organization/OrgSettings';
 import OrgRegistrationSettings from './OrgSettings';
 import OrgRoleLabels from './OrgRoleLabels';
+import BrandingSection from './BrandingSection';
+import EmailTemplatesSection from './EmailTemplatesSection';
 import s from './OrgSettingsPage.module.css';
 
 /**
@@ -24,6 +26,10 @@ export default function OrgSettingsPage({ userRole }) {
     const [org, setOrg] = useState(null);
     const [loading, setLoading] = useState(true);
     const isSuper = userRole === 'super_admin' || userRole === 'platform_admin';
+    // Branding + email templates: hr_admin, super_admin, and platform_admin
+    // can edit. Everyone else sees the section read-only (the BrandingContext
+    // still applies the values app-wide).
+    const canEditBranding = isSuper || userRole === 'hr_admin';
 
     const sectionRefs = useRef({});
     const [activeSection, setActiveSection] = useState('general');
@@ -38,10 +44,11 @@ export default function OrgSettingsPage({ userRole }) {
     useEffect(() => { fetchOrg(); }, [fetchOrg]);
 
     const sections = useMemo(() => ([
-        { id: 'general',      label: 'General',      icon: SettingsIcon },
+        { id: 'general', label: 'General', icon: SettingsIcon },
         ...(isSuper ? [{ id: 'registration', label: 'Registration', icon: ShieldCheck }] : []),
-        { id: 'roles',        label: 'Roles',        icon: UserCog },
-        { id: 'branding',     label: 'Branding',     icon: Palette },
+        { id: 'roles', label: 'Roles', icon: UserCog },
+        { id: 'branding', label: 'Branding', icon: Palette },
+        { id: 'email-templates', label: 'Email templates', icon: Mail },
         { id: 'integrations', label: 'Integrations', icon: Plug },
     ]), [isSuper]);
 
@@ -168,15 +175,35 @@ export default function OrgSettingsPage({ userRole }) {
                         <div>
                             <h2 className={s.sectionTitle}>Branding</h2>
                             <p className={s.sectionDesc}>
-                                Logo, color scheme, and email-template branding for your organization.
+                                Upload a logo and pick an accent color. The accent is applied across the app
+                                (buttons, links, badges) and the header bar of every outgoing email.
                             </p>
                         </div>
                     </header>
                     <div className={s.sectionBody}>
-                        <div className={s.placeholder}>
-                            Branding customization isn't available yet. It's on the roadmap and will let you
-                            upload a logo and choose an accent color that applies to the app and outgoing emails.
+                        <BrandingSection canEdit={canEditBranding} />
+                    </div>
+                </section>
+
+                <section
+                    id="email-templates"
+                    data-section-id="email-templates"
+                    ref={el => (sectionRefs.current['email-templates'] = el)}
+                    className={s.section}
+                >
+                    <header className={s.sectionHead}>
+                        <Mail size={18} className={s.sectionIcon} />
+                        <div>
+                            <h2 className={s.sectionTitle}>Email templates</h2>
+                            <p className={s.sectionDesc}>
+                                Customise the subject and body of every notification email
+                                (leaves, tasks, mentions, meetings, manual entries). Tweak the wording or
+                                disable individual templates without touching the code.
+                            </p>
                         </div>
+                    </header>
+                    <div className={s.sectionBody}>
+                        <EmailTemplatesSection canEdit={canEditBranding} />
                     </div>
                 </section>
 

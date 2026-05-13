@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../../AuthContext';
+import { useBranding } from '../../BrandingContext';
+import { serverURL } from '../../api';
 import NavLinks from './NavLinks';
 import ProfileMenu from './ProfileMenu';
 import MobileTabBar from './MobileTabBar';
@@ -14,7 +16,11 @@ const isMacElectron = isElectron && window.electronAPI?.platform === 'darwin';
 
 export default function Navbar() {
   const { isAuthenticated } = useAuth();
+  const { branding } = useBranding();
   const [searchOpen, setSearchOpen] = useState(false);
+  const logoSrc = branding?.logo_url
+    ? (branding.logo_url.startsWith('http') ? branding.logo_url : `${serverURL}${branding.logo_url}`)
+    : null;
 
   // Ctrl+K / Cmd+K opens global search from anywhere
   useEffect(() => {
@@ -34,7 +40,11 @@ export default function Navbar() {
     <>
       <nav className={`${s.navbar} ${isElectron ? s.electronNavbar : ''}`}>
         <NavLink to="/" className={s['navbar-logo']}>
-          <div className={s['logo-icon']}>💼</div>
+          {logoSrc ? (
+            <img src={logoSrc} alt="Logo" className={s['logo-img']} />
+          ) : (
+            <div className={s['logo-icon']}>💼</div>
+          )}
           <h1 className={s.title}>WorkPulse</h1>
         </NavLink>
         <div className={s['navbar-right']}>

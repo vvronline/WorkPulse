@@ -1,7 +1,9 @@
+const crypto = require('crypto');
 const express = require('express');
 const auth = require('../middleware/auth');
 const { logger } = require('../utils/logger');
 const { handleMention } = require('../utils/collaboration');
+const { masterQuery } = require('../db');
 
 const router = express.Router();
 const { requireTenant } = require('../middleware/tenant');
@@ -676,6 +678,104 @@ router.get('/direct-reports', async (req, res) => {
     } catch (e) {
         req.log.error({ err: e }, 'GET /notes/direct-reports error');
         res.status(500).json({ error: 'Failed to fetch reports' });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Public read-only share links (Chunk 5)
+//
+// A user can mint a share token for any of their own pages. The token is
+// stored in the MASTER DB (note_share_tokens) so the public viewer route
+// can resolve token → (tenant, user, page) without authentication.
+//
+// GET    /api/notes/share/:pageId  → { token, url } | { token: null }
+// POST   /api/notes/share/:pageId  → mint or reuse token; returns { token, url }
+// DELETE /api/notes/share/:pageId  → revoke
+// ─────────────────────────────────────────────────────────────────────────
+
+function publicShareUrlFor(req, token) {
+    // Best-effort absolute URL for copy-to-clipboard. Falls back to relative.
+    const proto = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
+    const host = req.headers.host;
+    if (host) return `${proto}://${host}/n/${token}`;
+    return `/n/${token}`;
+}
+
+router.get('/share/:pageId', async (req, res) => {
+    try {
+        const pageId = String(req.params.pageId || '');
+        if (!pageId) return res.status(400).json({ error: 'pageId required' });
+        const row = (await masterQuery(
+            `SELECT token, page_title, created_at FROM note_share_tokens
+              WHERE tenant_id = $1 AND user_id = $2 AND page_id = $3`,
+            [req.tenantId, req.userId, pageId]
+        )).rows[0];
+        if (!row) return res.json({ token: null });
+        res.json({ token: row.token, url: publicShareUrlFor(req, row.token), page_title: row.page_title, created_at: row.created_at });
+    } catch (err) {
+        req.log.error({ err }, 'GET /notes/share failed');
+        res.status(500).json({ error: 'Failed to fetch share token' });
+    }
+});
+
+router.post('/share/:pageId', async (req, res) => {
+    try {
+        const pageId = String(req.params.pageId || '');
+        if (!pageId) return res.status(400).json({ error: 'pageId required' });
+
+        // Confirm the page exists in the user's notebook (we read titles from
+        // the user's notebooks JSON, since the tenant DB is the source of
+        // truth for note content).
+        const notebook = await getNotebook(req.userId, req.db);
+        const page = notebook?.pages?.find(p => p.id === pageId);
+        if (!page) return res.status(404).json({ error: 'Page not found' });
+
+        // Reuse an existing token if there's one — share URLs are stable.
+        const existing = (await masterQuery(
+            `SELECT token FROM note_share_tokens
+              WHERE tenant_id = $1 AND user_id = $2 AND page_id = $3`,
+            [req.tenantId, req.userId, pageId]
+        )).rows[0];
+
+        let token = existing?.token;
+        if (!token) {
+            // Unguessable: 32 bytes → ~43 url-safe chars.
+            token = crypto.randomBytes(32).toString('base64url');
+            await masterQuery(
+                `INSERT INTO note_share_tokens
+                    (token, tenant_id, user_id, page_id, page_title, created_by)
+                 VALUES ($1, $2, $3, $4, $5, $6)`,
+                [token, req.tenantId, req.userId, pageId, page.title || 'Untitled', req.userId]
+            );
+        } else {
+            // Refresh the cached title so revisitors see the current name.
+            await masterQuery(
+                `UPDATE note_share_tokens SET page_title = $1
+                  WHERE tenant_id = $2 AND user_id = $3 AND page_id = $4`,
+                [page.title || 'Untitled', req.tenantId, req.userId, pageId]
+            );
+        }
+
+        res.json({ token, url: publicShareUrlFor(req, token) });
+    } catch (err) {
+        req.log.error({ err }, 'POST /notes/share failed');
+        res.status(500).json({ error: 'Failed to create share token' });
+    }
+});
+
+router.delete('/share/:pageId', async (req, res) => {
+    try {
+        const pageId = String(req.params.pageId || '');
+        if (!pageId) return res.status(400).json({ error: 'pageId required' });
+        await masterQuery(
+            `DELETE FROM note_share_tokens
+              WHERE tenant_id = $1 AND user_id = $2 AND page_id = $3`,
+            [req.tenantId, req.userId, pageId]
+        );
+        res.json({ ok: true });
+    } catch (err) {
+        req.log.error({ err }, 'DELETE /notes/share failed');
+        res.status(500).json({ error: 'Failed to revoke share token' });
     }
 });
 

@@ -320,6 +320,96 @@ const MIGRATIONS = [
             await query(`CREATE INDEX IF NOT EXISTS idx_retros_sprint ON sprint_retrospectives(sprint_id)`);
         },
     },
+    {
+        // Phase 4: defensive cleanup for the retrospective table.
+        //
+        // Some tenant DBs may still carry the legacy `category/content/votes`
+        // columns (e.g. v3 partially failed mid-deploy, or the tenant was
+        // bootstrapped against an older copy of `initTenantSchema()` that
+        // re-added the columns after v3 ran). This migration:
+        //   1. Drops the obsolete `sprint_retro_votes` table if it lingers.
+        //   2. Drops the legacy `category`, `content`, `votes`, `author_id`
+        //      columns from `sprint_retrospectives` if they still exist.
+        //   3. Drops the legacy `idx_retro_sprint` index that referenced
+        //      `(sprint_id, category)` — replaced by `idx_retros_sprint`.
+        //   4. Ensures the canonical UNIQUE(sprint_id) constraint exists so
+        //      the upsert in `routes/sprints.js` works even on tenants whose
+        //      table was created before the constraint was added.
+        // All steps are wrapped in IF EXISTS guards so the migration is a
+        // safe NO-OP on already-clean tenants.
+        name: '2026_05_v4_retro_cleanup',
+        async up(query) {
+            await query(`DROP TABLE IF EXISTS sprint_retro_votes`);
+            await query(`DROP INDEX IF EXISTS idx_retro_sprint`);
+            await query(`ALTER TABLE sprint_retrospectives DROP COLUMN IF EXISTS category`);
+            await query(`ALTER TABLE sprint_retrospectives DROP COLUMN IF EXISTS content`);
+            await query(`ALTER TABLE sprint_retrospectives DROP COLUMN IF EXISTS votes`);
+            await query(`ALTER TABLE sprint_retrospectives DROP COLUMN IF EXISTS author_id`);
+            // Ensure UNIQUE(sprint_id) — needed for the ON CONFLICT (sprint_id) upsert.
+            await query(`
+                DO $do$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint
+                         WHERE conrelid = 'sprint_retrospectives'::regclass
+                           AND contype  = 'u'
+                           AND conkey   = ARRAY[(
+                               SELECT attnum FROM pg_attribute
+                                WHERE attrelid = 'sprint_retrospectives'::regclass
+                                  AND attname  = 'sprint_id'
+                           )]::smallint[]
+                    ) THEN
+                        BEGIN
+                            ALTER TABLE sprint_retrospectives
+                                ADD CONSTRAINT sprint_retrospectives_sprint_id_key
+                                UNIQUE (sprint_id);
+                        EXCEPTION WHEN duplicate_object THEN NULL;
+                        END;
+                    END IF;
+                END $do$
+            `);
+            // Ensure the canonical index exists (idempotent).
+            await query(`CREATE INDEX IF NOT EXISTS idx_retros_sprint ON sprint_retrospectives(sprint_id)`);
+        },
+    },
+    {
+        // Phase 5: Org branding (logo + accent color) and per-template
+        // overrides for outgoing notification emails.
+        //
+        // - `org_branding` is a one-row-per-org table holding the logo URL
+        //   (relative to /uploads) and an accent color used as the primary
+        //   theme color across the app + email templates.
+        // - `org_email_templates` holds optional per-template overrides for
+        //   the subject and body HTML. The `template_key` is one of the
+        //   built-in keys defined in `server/utils/mailer.js` (leaveApproved,
+        //   leaveRejected, taskAssigned, mention, etc.). When no override
+        //   row exists the mailer falls back to the built-in template.
+        name: '2026_06_v1_branding_and_email_templates',
+        async up(query) {
+            await query(`
+                CREATE TABLE IF NOT EXISTS org_branding (
+                    org_id        INTEGER PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+                    logo_url      TEXT,
+                    accent_color  TEXT NOT NULL DEFAULT '#6366f1',
+                    updated_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    updated_at    TIMESTAMPTZ DEFAULT NOW()
+                )
+            `);
+            await query(`
+                CREATE TABLE IF NOT EXISTS org_email_templates (
+                    org_id        INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                    template_key  TEXT    NOT NULL,
+                    subject       TEXT    NOT NULL,
+                    body_html     TEXT    NOT NULL,
+                    enabled       BOOLEAN NOT NULL DEFAULT TRUE,
+                    updated_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    updated_at    TIMESTAMPTZ DEFAULT NOW(),
+                    PRIMARY KEY (org_id, template_key)
+                )
+            `);
+            await query(`CREATE INDEX IF NOT EXISTS idx_org_email_templates_org ON org_email_templates(org_id)`);
+        },
+    },
 ];
 
 /**

@@ -45,6 +45,8 @@ const searchRoutes = require('./routes/search');
 const meetingsRoutes = require('./routes/meetings');
 const tenantRoutes = require('./routes/tenants');
 const serviceDeskRoutes = require('./routes/serviceDesk');
+const brandingRoutes = require('./routes/branding');
+const publicRoutes = require('./routes/public');
 const { setupWebSocket } = require('./utils/ws');
 const { createCollaborationServer } = require('./utils/collaboration');
 const { initJobs, shutdownJobs } = require('./jobs');
@@ -65,6 +67,11 @@ app.use(helmet({
             // Allow embedding the official draw.io editor in an <iframe> so
             // the Notes feature can use it for diagram editing.
             "frame-src": ["'self'", "https://embed.diagrams.net", "https://www.diagrams.net"],
+            // Allow `blob:` images — needed for client-side previews that
+            // use `URL.createObjectURL()` (e.g. the org logo preview in
+            // Admin → Branding before saving). Helmet's default img-src is
+            // `'self' data:` and silently blocks blob URLs otherwise.
+            "img-src": ["'self'", "data:", "blob:"],
         }
     },
     crossOriginOpenerPolicy: false,
@@ -265,6 +272,11 @@ app.use('/api/export', apiLimiter, exportRoutes);
 app.use('/api/chat', apiLimiter, chatRoutes);
 app.use('/api/search', apiLimiter, searchRoutes);
 app.use('/api/service-desk', apiLimiter, serviceDeskRoutes);
+app.use('/api/branding', apiLimiter, brandingRoutes);
+// Public (unauthenticated) endpoints — share links, etc. Mounted with the
+// standard apiLimiter only (no auth, no tenant middleware). The route file
+// itself enforces token validity.
+app.use('/api/public', apiLimiter, publicRoutes);
 
 app.get('/api/health', async (req, res) => {
     try {

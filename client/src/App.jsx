@@ -20,6 +20,7 @@ import { UserStatusProvider } from './UserStatusContext';
 import { NotificationPrefsProvider } from './NotificationPrefsContext';
 import { AgileConfigProvider } from './AgileConfigContext';
 import { RoleLabelsProvider } from './RoleLabelsContext';
+import { BrandingProvider } from './BrandingContext';
 import MeetingPiP from './components/meeting/MeetingPiP';
 import GlobalIncomingCall from './components/notifications/GlobalIncomingCall';
 import GlobalMeetingNotification from './components/notifications/GlobalMeetingNotification';
@@ -34,6 +35,7 @@ import KeepAlive from './components/common/KeepAlive';
 const MeetingJoin = lazy(() => import('./pages/MeetingJoin'));
 const MeetingRoom = lazy(() => import('./pages/MeetingRoom'));
 const SprintInsights = lazy(() => import('./pages/SprintInsights'));
+const PublicNote = lazy(() => import('./pages/PublicNote'));
 
 function ProtectedRoute({ children, minRole }) {
   const { isAuthenticated, user } = useAuth();
@@ -112,6 +114,8 @@ function AppRoutes() {
             }
           />
           <Route path="/sprint-insights" element={<ProtectedRoute><SprintInsights /></ProtectedRoute>} />
+          {/* Public read-only note viewer (no auth, no navbar). */}
+          <Route path="/n/:token" element={<PublicNote />} />
           {/* Legacy redirects — old standalone pages now live under /attendance */}
           <Route path="/leaves" element={<Navigate to="/attendance#leaves" replace />} />
           <Route path="/manual-entry" element={<Navigate to="/attendance#manual-entry" replace />} />
@@ -225,6 +229,7 @@ export default function App() {
             <BrowserRouter>
               <AxiosInterceptor>
                 <NotificationPrefsProvider>
+                  <BrandingProvider>
                   <RoleLabelsProvider>
                   <AgileConfigProvider>
                   <ChatProvider>
@@ -241,6 +246,7 @@ export default function App() {
                   </ChatProvider>
                   </AgileConfigProvider>
                   </RoleLabelsProvider>
+                  </BrandingProvider>
                 </NotificationPrefsProvider>
               </AxiosInterceptor>
             </BrowserRouter>

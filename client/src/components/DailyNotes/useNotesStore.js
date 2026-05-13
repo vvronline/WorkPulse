@@ -904,9 +904,25 @@ export function useNotesStore(userId) {
     };
     const toggleActivityFeed = () => setActivityFeedOpen(o => !o);
 
-    /* ── Export the active page as a downloadable PDF ───── */
+    /* ── Export the active page as a downloadable PDF ─────
+       The persisted notebook state may be stale (debounced auto-save), so
+       always grab the LIVE HTML from the active Quill editor for the
+       currently-open page before exporting. Falls back to the persisted
+       page.content when no editor is mounted (e.g. exporting a non-active
+       page). */
     const handleExportPdf = (page) => {
-        savePageAsPdf(page || activePage);
+        const target = page || activePage;
+        if (!target) return;
+        let liveContent = target.content;
+        if (target.id === activePageId) {
+            const q = modalQuillRef?.current?.getEditor
+                ? modalQuillRef.current.getEditor()
+                : modalQuillRef?.current;
+            if (q && typeof q.root?.innerHTML === 'string') {
+                liveContent = q.root.innerHTML;
+            }
+        }
+        savePageAsPdf({ ...target, content: liveContent });
     };
 
     const handleRestoreSnapshot = (content, title) => {

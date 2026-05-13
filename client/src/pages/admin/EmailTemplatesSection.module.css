@@ -1,0 +1,206 @@
+.loading { color: var(--text-secondary); padding: 1rem 0; font-size: 0.88rem; }
+
+.layout {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 1.1rem;
+    align-items: flex-start;
+}
+
+/* ---------- Template list ---------- */
+.list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-secondary);
+    overflow: hidden;
+}
+
+.listItem {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.55rem 0.7rem;
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.82rem;
+    text-align: left;
+    cursor: pointer;
+}
+.list li:last-child .listItem { border-bottom: none; }
+
+.listItem:hover { background: color-mix(in srgb, var(--primary) 6%, transparent); }
+.listItemActive { background: color-mix(in srgb, var(--primary) 14%, transparent); color: var(--primary); font-weight: 600; }
+.listIcon { flex-shrink: 0; opacity: 0.7; }
+.listLabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--primary);
+    display: inline-block;
+}
+.disabled {
+    font-size: 0.66rem;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    background: var(--bg);
+    padding: 1px 5px;
+    border-radius: 4px;
+}
+.chevron { opacity: 0.5; flex-shrink: 0; }
+
+/* ---------- Editor ---------- */
+.editor { min-width: 0; }
+
+.editorInner {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+}
+
+.editorHead {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.85rem;
+    padding-bottom: 0.55rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.editorTitle { margin: 0; font-size: 1.05rem; font-weight: 700; color: var(--text); }
+.editorMeta { margin: 0.2rem 0 0; font-size: 0.78rem; color: var(--text-secondary); }
+.editorMeta code { font-family: ui-monospace, monospace; font-size: 0.75rem; }
+.metaCustom {
+    color: var(--primary);
+    font-weight: 600;
+}
+
+.editorHeadActions { flex-shrink: 0; }
+.toggleRow { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; font-size: 0.82rem; color: var(--text-secondary); }
+.toggleRow input { cursor: pointer; }
+
+.error {
+    background: color-mix(in srgb, #ef4444 12%, transparent);
+    border: 1px solid color-mix(in srgb, #ef4444 30%, transparent);
+    color: #ef4444;
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.83rem;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+/* ---------- Form ---------- */
+.fieldGroup { display: flex; flex-direction: column; gap: 6px; }
+.fieldLabelRow { display: flex; justify-content: space-between; align-items: center; }
+.fieldLabel { font-size: 0.82rem; font-weight: 600; color: var(--text); }
+
+.linkBtn {
+    background: none;
+    border: none;
+    color: var(--primary);
+    font-size: 0.78rem;
+    cursor: pointer;
+    padding: 0;
+    text-decoration: underline;
+}
+.linkBtn:disabled { color: var(--text-muted); text-decoration: none; cursor: not-allowed; }
+
+.input, .textarea {
+    width: 100%;
+    padding: 8px 11px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.86rem;
+    box-sizing: border-box;
+}
+.textarea {
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    resize: vertical;
+    min-height: 200px;
+}
+
+.tokenHint {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    line-height: 1.45;
+}
+.tokenHint code {
+    background: var(--bg-secondary);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 0.74rem;
+}
+
+.actions { display: flex; gap: 0.55rem; align-items: center; flex-wrap: wrap; }
+.dirtyHint {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* ---------- Preview pane ---------- */
+.previewWrap {
+    border-top: 1px solid var(--border);
+    padding-top: 0.85rem;
+    margin-top: 0.5rem;
+}
+.previewHeader {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.5rem;
+}
+.previewLoading { font-style: italic; text-transform: none; letter-spacing: 0; opacity: 0.7; }
+.previewSubject {
+    font-size: 0.82rem;
+    color: var(--text);
+    margin-bottom: 0.5rem;
+    padding: 0.35rem 0.6rem;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+}
+.previewBody {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    padding: 0;
+    overflow: auto;
+    max-height: 480px;
+}
+/* Server-rendered emails are styled with their own colors and don't inherit
+   from app theme. Make sure dark-theme app text doesn't bleed in. */
+.previewBody, .previewBody * {
+    color: #111 !important;
+}
+.previewNote {
+    font-size: 0.74rem;
+    color: var(--text-muted);
+    margin: 0.55rem 0 0;
+    line-height: 1.45;
+}
+
+@media (max-width: 800px) {
+    .layout { grid-template-columns: 1fr; }
+    .list {
+        max-height: 240px;
+        overflow-y: auto;
+    }
+}

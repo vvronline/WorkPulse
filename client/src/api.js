@@ -363,6 +363,14 @@ export const searchNoteMeetings = (q) => API.get('/notes/search-meetings', { par
 export const searchNoteEvents = (q) => API.get('/notes/search-events', { params: { q } });
 export const getDirectReports = () => API.get('/notes/direct-reports');
 
+// Public note share links (Chunk 5)
+export const getNoteShare = (pageId) => API.get(`/notes/share/${encodeURIComponent(pageId)}`);
+export const createNoteShare = (pageId) => API.post(`/notes/share/${encodeURIComponent(pageId)}`);
+export const revokeNoteShare = (pageId) => API.delete(`/notes/share/${encodeURIComponent(pageId)}`);
+// Public read-only note viewer — uses a separate axios instance with no
+// CSRF header / no credentials, so it works anonymously.
+export const getPublicNote = (token) => axios.get(`${baseURL}/public/notes/${encodeURIComponent(token)}`);
+
 // Calendar
 export const getCalendarEvents = (from, to) => API.get('/calendar', { params: { from, to } });
 export const createCalendarEvent = (data) => API.post('/calendar', data);
@@ -454,5 +462,24 @@ export const startMeetingHlsBroadcast = (code) => API.post(`/meetings/${code}/hl
 export const stopMeetingHlsBroadcast = (code, broadcastId) =>
     API.post(`/meetings/${code}/hls/stop`, { broadcastId });
 export const getMeetingHlsStatus = (code) => API.get(`/meetings/${code}/hls/status`);
+
+// ─── Branding & email templates (Chunk 3) ───────────────────────────────
+// `getBranding` is GET-only and is also called by the unauthenticated
+// AuthContext bootstrap on first load to apply the org accent + logo before
+// the user is even authenticated; the server only allows it for
+// authenticated org members so it returns 401 pre-login (which we handle).
+export const getBranding = () => API.get('/branding');
+export const updateBrandingAccent = (accent_color) => API.put('/branding', { accent_color });
+export const uploadBrandingLogo = (file) => {
+    const fd = new FormData();
+    fd.append('logo', file);
+    return API.post('/branding/logo', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+};
+export const deleteBrandingLogo = () => API.delete('/branding/logo');
+export const getEmailTemplates = () => API.get('/branding/email-templates');
+export const updateEmailTemplate = (key, data) => API.put(`/branding/email-templates/${encodeURIComponent(key)}`, data);
+export const revertEmailTemplate = (key) => API.delete(`/branding/email-templates/${encodeURIComponent(key)}`);
+export const previewEmailTemplate = (key, data) =>
+    API.post(`/branding/email-templates/${encodeURIComponent(key)}/preview`, data || {});
 
 export default API;

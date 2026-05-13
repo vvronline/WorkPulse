@@ -47,7 +47,10 @@ const SECTIONS = [
     // ?tab=labels URL still routes to the Agile Config page below.
 
     { key: 'audit',          label: 'Audit Logs',        icon: ScrollText,   group: 'Compliance' },
-    { key: 'org-settings',   label: 'Org Settings',      icon: SettingsIcon, group: 'Compliance', requires: 'orgId' },
+    // Org Settings owns branding/email templates/general org config — it's
+    // a configuration surface, not a compliance one. Promote it into its
+    // own "Settings" group so it's findable.
+    { key: 'org-settings',   label: 'Org Settings',      icon: SettingsIcon, group: 'Settings',   requires: 'orgId' },
 ];
 
 // Back-compat alias map (old ?tab= values → new section keys)
@@ -60,7 +63,7 @@ const TAB_ALIASES = {
     labels:        'agile',   // Task Labels merged into Agile Config (Labels tab)
 };
 
-const GROUP_ORDER = ['Overview', 'People', 'Structure', 'Operations', 'Compliance'];
+const GROUP_ORDER = ['Overview', 'People', 'Structure', 'Operations', 'Compliance', 'Settings'];
 
 function isAllowed(section, user) {
     if (!section.requires) return true;

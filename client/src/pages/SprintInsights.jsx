@@ -13,7 +13,7 @@
  * tenant + team boundaries.
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
     BarChart3, LineChart, Layers, ListChecks, RefreshCw, ArrowLeft, MessageSquare,
 } from 'lucide-react';
@@ -28,6 +28,7 @@ import s from './SprintInsights.module.css';
 
 export default function SprintInsights() {
     const { unitLabel } = useAgileConfig();
+    const [searchParams, setSearchParams] = useSearchParams();
     const [sprints, setSprints] = useState([]);
     const [selectedId, setSelectedId] = useState(null);
     const [stats, setStats] = useState(null);
@@ -38,10 +39,25 @@ export default function SprintInsights() {
 
     useEffect(() => {
         getAvailableSprints().then(r => {
-            setSprints(r.data || []);
-            const active = (r.data || []).find(s => s.status === 'active');
-            setSelectedId(active?.id || r.data?.[0]?.id || null);
+            const list = r.data || [];
+            setSprints(list);
+            // Honour deep-link ?sprint_id=… when present and valid; otherwise
+            // fall back to the active sprint or the first one in the list.
+            const requested = Number(searchParams.get('sprint_id'));
+            const requestedExists = requested && list.some(sp => sp.id === requested);
+            if (requestedExists) {
+                setSelectedId(requested);
+            } else {
+                const active = list.find(s => s.status === 'active');
+                setSelectedId(active?.id || list[0]?.id || null);
+            }
+            // Strip the query param after consuming so subsequent sprint-select
+            // changes feel like normal navigation (no stale URL state).
+            if (searchParams.get('sprint_id')) {
+                setSearchParams({}, { replace: true });
+            }
         });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const reload = () => {

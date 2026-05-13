@@ -243,6 +243,27 @@ async function initMasterDB() {
     `);
     await masterQuery(`CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)`);
 
+    // ---- Note Share Tokens (cross-tenant lookup for public read-only links) ----
+    //
+    // Notes live in the per-tenant DB (notebooks table). To serve a public
+    // share link without forcing the visitor through tenant resolution, we
+    // store an unguessable token in the MASTER DB that maps token →
+    // (tenant_id, user_id, page_id). The public route reads this row, then
+    // hits the tenant pool to fetch the actual page content.
+    await masterQuery(`
+        CREATE TABLE IF NOT EXISTS note_share_tokens (
+            token         TEXT PRIMARY KEY,
+            tenant_id     INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+            user_id       INTEGER NOT NULL,
+            page_id       TEXT    NOT NULL,
+            page_title    TEXT,
+            created_by    INTEGER NOT NULL,
+            created_at    TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE (tenant_id, user_id, page_id)
+        )
+    `);
+    await masterQuery(`CREATE INDEX IF NOT EXISTS idx_note_share_lookup ON note_share_tokens(tenant_id, user_id, page_id)`);
+
     // ---- Platform audit logs (master-level admin actions) ----
     await masterQuery(`
         CREATE TABLE IF NOT EXISTS platform_audit_logs (
@@ -1365,35 +1386,58 @@ async function initTenantSchema(q) {
     await q(`CREATE INDEX IF NOT EXISTS idx_task_deps_task ON task_dependencies(task_id)`);
     await q(`CREATE INDEX IF NOT EXISTS idx_task_deps_depends_on ON task_dependencies(depends_on_id)`);
 
-    // Sprint retrospectives
+    // Sprint retrospectives — one row per sprint with a Went Well / To Improve
+    // / Action Items / Mood / Summary template. The legacy "category/content/
+    // votes" placeholder shape (Pass 1) was never wired to a UI; the v3
+    // migration in migrationRunner.js drops + recreates it for older tenants.
+    // For brand-new tenants we create the canonical shape directly so we don't
+    // burn a drop/recreate cycle on first boot.
     await q(`
         CREATE TABLE IF NOT EXISTS sprint_retrospectives (
-            id          SERIAL PRIMARY KEY,
-            sprint_id   INTEGER NOT NULL REFERENCES sprints(id) ON DELETE CASCADE,
-            category    TEXT NOT NULL CHECK(category IN ('went_well','went_wrong','action_item','kudos')),
-            content     TEXT NOT NULL,
-            author_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
-            votes       INTEGER NOT NULL DEFAULT 0,
-            created_at  TIMESTAMPTZ DEFAULT NOW()
+            id              SERIAL PRIMARY KEY,
+            sprint_id       INTEGER NOT NULL UNIQUE REFERENCES sprints(id) ON DELETE CASCADE,
+            went_well       TEXT,
+            to_improve      TEXT,
+            action_items    JSONB DEFAULT '[]'::jsonb,
+            team_mood       SMALLINT CHECK (team_mood IS NULL OR team_mood BETWEEN 1 AND 5),
+            summary         TEXT,
+            created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            updated_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at      TIMESTAMPTZ DEFAULT NOW(),
+            updated_at      TIMESTAMPTZ DEFAULT NOW()
         )
     `);
-    // Backfill columns for tenants that already had an older sprint_retrospectives
-    // table (without category/content/votes) — CREATE TABLE IF NOT EXISTS skips
-    // these on existing tables, which would break the index below.
-    await q(`ALTER TABLE sprint_retrospectives ADD COLUMN IF NOT EXISTS category TEXT`);
-    await q(`ALTER TABLE sprint_retrospectives ADD COLUMN IF NOT EXISTS content TEXT`);
-    await q(`ALTER TABLE sprint_retrospectives ADD COLUMN IF NOT EXISTS author_id INTEGER REFERENCES users(id) ON DELETE SET NULL`);
-    await q(`ALTER TABLE sprint_retrospectives ADD COLUMN IF NOT EXISTS votes INTEGER NOT NULL DEFAULT 0`);
-    await q(`ALTER TABLE sprint_retrospectives ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
-    await q(`CREATE INDEX IF NOT EXISTS idx_retro_sprint ON sprint_retrospectives(sprint_id, category)`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_retros_sprint ON sprint_retrospectives(sprint_id)`);
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Org branding & per-template email overrides.
+    //   - org_branding holds logo URL + accent color (one row per org).
+    //   - org_email_templates lets admins override the subject + body of any
+    //     built-in mailer template (key matches mailer.js `templates` keys).
+    //     A missing override row falls back to the built-in template.
+    // ─────────────────────────────────────────────────────────────────────
     await q(`
-        CREATE TABLE IF NOT EXISTS sprint_retro_votes (
-            retro_id INTEGER NOT NULL REFERENCES sprint_retrospectives(id) ON DELETE CASCADE,
-            user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            PRIMARY KEY (retro_id, user_id)
+        CREATE TABLE IF NOT EXISTS org_branding (
+            org_id        INTEGER PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+            logo_url      TEXT,
+            accent_color  TEXT NOT NULL DEFAULT '#2383e2',
+            updated_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            updated_at    TIMESTAMPTZ DEFAULT NOW()
         )
     `);
+    await q(`
+        CREATE TABLE IF NOT EXISTS org_email_templates (
+            org_id        INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            template_key  TEXT    NOT NULL,
+            subject       TEXT    NOT NULL,
+            body_html     TEXT    NOT NULL,
+            enabled       BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            updated_at    TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (org_id, template_key)
+        )
+    `);
+    await q(`CREATE INDEX IF NOT EXISTS idx_org_email_templates_org ON org_email_templates(org_id)`);
 
     logger.info('Tenant schema initialised');
 }

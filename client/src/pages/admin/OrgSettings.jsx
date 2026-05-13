@@ -178,7 +178,8 @@ export default function OrgSettings() {
           No invite codes yet. Click "New Code" to generate one.
         </p>
       ) : (
-        <table className={s.table}>
+        <div style={{ width: '100%', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        <table className={s.table} style={{ minWidth: 720 }}>
           <thead>
             <tr>
               <th>Code</th>
@@ -235,6 +236,7 @@ export default function OrgSettings() {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );

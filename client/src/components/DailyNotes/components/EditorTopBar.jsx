@@ -22,7 +22,9 @@ import {
     Sparkles,
     Clock,
     Upload,
+    Link2,
 } from '../../../constants/icons';
+import ShareNoteModal from './ShareNoteModal';
 import s from './EditorTopBar.module.css';
 
 export default function EditorTopBar({ store, embedded, onClose }) {
@@ -52,6 +54,7 @@ export default function EditorTopBar({ store, embedded, onClose }) {
 
     const [overflowOpen, setOverflowOpen] = useState(false);
     const [tplOpen, setTplOpen] = useState(false);
+    const [shareOpen, setShareOpen] = useState(false);
     const overflowRef = useRef(null);
     const tplRef = useRef(null);
 
@@ -245,6 +248,19 @@ export default function EditorTopBar({ store, embedded, onClose }) {
                             <button
                                 className={s.menuItem}
                                 role="menuitem"
+                                onClick={() => { setOverflowOpen(false); setShareOpen(true); }}
+                                disabled={!activePage}
+                            >
+                                <span className={s.menuIcon}><Link2 size={15} /></span>
+                                <span className={s.menuText}>
+                                    <span className={s.menuTitle}>Share page…</span>
+                                    <span className={s.menuDesc}>Create a public read-only link</span>
+                                </span>
+                            </button>
+                            <div className={s.menuSep} />
+                            <button
+                                className={s.menuItem}
+                                role="menuitem"
                                 onClick={() => { setOverflowOpen(false); handleExportPdf?.(); }}
                                 disabled={!activePage}
                             >
@@ -319,6 +335,12 @@ export default function EditorTopBar({ store, embedded, onClose }) {
                     </button>
                 )}
             </div>
+
+            <ShareNoteModal
+                page={activePage}
+                isOpen={shareOpen}
+                onClose={() => setShareOpen(false)}
+            />
         </div>
     );
 }

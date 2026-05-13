@@ -71,6 +71,12 @@
     padding: 1.1rem 1.25rem 1.25rem;
     /* Anchor scrolling: leave room above when scrolled into view */
     scroll-margin-top: 1rem;
+    /* Critical: allow flex/grid children to shrink below their content
+       size so wide tables (e.g. Invite Codes) trigger their own
+       horizontal scrollbar instead of stretching the section past the
+       viewport on smaller (≤14") screens. */
+    min-width: 0;
+    overflow: hidden;
 }
 
 .sectionHead {
@@ -109,6 +115,7 @@
 
 .sectionBody {
     /* Sub-components carry their own padding/spacing */
+    min-width: 0;
 }
 
 .placeholder {
