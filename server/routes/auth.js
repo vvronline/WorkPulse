@@ -714,7 +714,14 @@ router.post('/logout', async (req, res) => {
             }
         }
     } catch { /* token may be expired/invalid — still clear cookie */ }
-    res.clearCookie('token', { httpOnly: true, sameSite: 'strict', path: '/' });
+    // Cookie attributes on clear MUST match those used when the cookie was
+    // set, otherwise browsers/Electron silently keep the cookie (the JWT
+    // would then survive across "logout" until expiry). cookieOptions()
+    // already encapsulates the per-environment / per-origin matrix
+    // (Electron uses sameSite=none+secure, production uses secure, dev uses
+    // sameSite=strict without secure). Reuse it here so set/clear stay in
+    // sync — only override maxAge to 0 to expire immediately.
+    res.clearCookie('token', cookieOptions(req, 0));
     res.json({ message: 'Logged out successfully' });
 });
 

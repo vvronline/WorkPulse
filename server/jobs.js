@@ -35,11 +35,19 @@ function initJobs({ autoClockOut, cleanupTokens }) {
         return;
     }
 
+    // BullMQ requires `maxRetriesPerRequest: null` on the ioredis connection
+    // it uses for blocking BRPOPLPUSH/XREAD commands; otherwise workers throw
+    // "Connection terminated" warnings. We do NOT reuse the shared cache
+    // client (which is configured with maxRetriesPerRequest: 1 for fast cache
+    // failover) — instead BullMQ will instantiate its own connection from the
+    // options below.
     const connection = {
         host: redisClient.options.host || 'localhost',
         port: redisClient.options.port || 6379,
         password: redisClient.options.password || undefined,
         db: redisClient.options.db || 0,
+        maxRetriesPerRequest: null,
+        enableReadyCheck: false,
     };
 
     // Auto clock-out: every 5 minutes

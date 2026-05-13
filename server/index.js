@@ -92,7 +92,11 @@ app.use(express.static(clientDist, {
     setHeaders(res, filePath) {
         if (filePath.endsWith('.html') || filePath.endsWith('sw.js')) {
             res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        } else if (filePath.match(/\.(js|css|woff2?|png|jpg|svg)$/)) {
+        } else if (/\.(?:js|mjs|css|map|woff2?|ttf|eot|otf|png|jpe?g|gif|svg|webp|ico|avif)$/i.test(filePath)) {
+            // Vite emits content-hashed filenames (foo.abc123.js) for all of
+            // these — long-cache them aggressively. The earlier regex missed
+            // .jpeg, .gif, .ico, .webp, .ttf, and source maps (.map) which
+            // meant those assets revalidated on every navigation.
             res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
         }
     },

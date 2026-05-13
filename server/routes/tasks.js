@@ -12,8 +12,19 @@ const router = express.Router();
 router.use(requireTenant);
 
 // Helper: record task history
+//
+// Either `client` (a transaction connection) or `db` (a tenant-bound DB
+// handle) must be supplied. The original implementation fell through to a
+// bare `query` identifier as a "last resort", but that symbol is not
+// imported anywhere in this module — so a missing context would throw a
+// confusing `ReferenceError: query is not defined` instead of a clear
+// validation error. Throw explicitly so the caller's missing argument is
+// obvious in the stack trace.
 async function logHistory(taskId, userId, action, field, oldValue, newValue, client, db) {
-    const q = client ? client.query.bind(client) : (db ? db.query : query);
+    let q;
+    if (client) q = client.query.bind(client);
+    else if (db && typeof db.query === 'function') q = db.query.bind(db);
+    else throw new Error('logHistory: either client or db must be provided');
     await q(
         'INSERT INTO task_history (task_id, user_id, action, field, old_value, new_value) VALUES ($1, $2, $3, $4, $5, $6)',
         [taskId, userId, action, field || null, oldValue != null ? String(oldValue) : null, newValue != null ? String(newValue) : null]

@@ -43,8 +43,13 @@ function getLocalDow(req) {
     return now.getUTCDay();
 }
 
-// SQLite modifier to convert UTC timestamps to client local time
-// e.g. for IST (offset=-330): returns '+330 minutes'
+// PostgreSQL INTERVAL literal (in minutes) used to shift UTC timestamps to
+// the client's local time. e.g. for IST (offset=-330) this returns
+// "+330 minutes" — added to a `timestamptz` column so that
+// `(ts + INTERVAL '+330 minutes')::date` reflects the user's local day.
+//
+// (Note: the original comment said "SQLite" — that was a leftover from
+// before the project migrated to PostgreSQL.)
 function getTzModifier(req) {
     const offsetMin = clampOffset(req.headers['x-timezone-offset']) ?? 0;
     const shift = -offsetMin;
