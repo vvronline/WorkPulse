@@ -196,6 +196,20 @@ export const reorderWorkflowStates = (order) => API.put('/agile/workflow-states/
 // server/middleware/agileEditor.js#ROLES_THAT_CAN_EDIT_AGILE.
 export const getAgilePermissions = () => API.get('/agile/permissions/me');
 
+// ─── Custom Fields (Chunk 6) ───────────────────────────────────────────
+// Tenant-customisable extra fields shown on every task. Definitions are
+// admin-managed; values live per-task and are coerced server-side based
+// on the field's declared type.
+export const getCustomFields = () => API.get('/custom-fields');
+export const getCustomFieldsAll = () => API.get('/custom-fields/all');
+export const createCustomField = (data) => API.post('/custom-fields', data);
+export const updateCustomField = (id, data) => API.put(`/custom-fields/${id}`, data);
+export const deleteCustomField = (id) => API.delete(`/custom-fields/${id}`);
+export const reorderCustomFields = (order) => API.put('/custom-fields/reorder', { order });
+export const getTaskCustomFieldValues = (taskId) => API.get(`/custom-fields/task/${taskId}`);
+export const updateTaskCustomFieldValues = (taskId, values) =>
+    API.put(`/custom-fields/task/${taskId}`, { values });
+
 // Service Desk
 export const getServiceDeskTickets = (params) => API.get('/service-desk/tickets', { params });
 export const getServiceDeskTicket = (id) => API.get(`/service-desk/tickets/${id}`);

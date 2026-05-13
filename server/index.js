@@ -46,6 +46,7 @@ const meetingsRoutes = require('./routes/meetings');
 const tenantRoutes = require('./routes/tenants');
 const serviceDeskRoutes = require('./routes/serviceDesk');
 const brandingRoutes = require('./routes/branding');
+const customFieldsRoutes = require('./routes/customFields');
 const publicRoutes = require('./routes/public');
 const { setupWebSocket } = require('./utils/ws');
 const { createCollaborationServer } = require('./utils/collaboration');
@@ -273,6 +274,7 @@ app.use('/api/chat', apiLimiter, chatRoutes);
 app.use('/api/search', apiLimiter, searchRoutes);
 app.use('/api/service-desk', apiLimiter, serviceDeskRoutes);
 app.use('/api/branding', apiLimiter, brandingRoutes);
+app.use('/api/custom-fields', apiLimiter, customFieldsRoutes);
 // Public (unauthenticated) endpoints — share links, etc. Mounted with the
 // standard apiLimiter only (no auth, no tenant middleware). The route file
 // itself enforces token validity.

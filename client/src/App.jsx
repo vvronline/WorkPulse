@@ -19,6 +19,7 @@ import { MeetingProvider } from './MeetingContext';
 import { UserStatusProvider } from './UserStatusContext';
 import { NotificationPrefsProvider } from './NotificationPrefsContext';
 import { AgileConfigProvider } from './AgileConfigContext';
+import { CustomFieldsProvider } from './CustomFieldsContext';
 import { RoleLabelsProvider } from './RoleLabelsContext';
 import { BrandingProvider } from './BrandingContext';
 import MeetingPiP from './components/meeting/MeetingPiP';
@@ -232,6 +233,7 @@ export default function App() {
                   <BrandingProvider>
                   <RoleLabelsProvider>
                   <AgileConfigProvider>
+                  <CustomFieldsProvider>
                   <ChatProvider>
                     <UserStatusProvider>
                     <CallProvider>
@@ -244,6 +246,7 @@ export default function App() {
                     </CallProvider>
                     </UserStatusProvider>
                   </ChatProvider>
+                  </CustomFieldsProvider>
                   </AgileConfigProvider>
                   </RoleLabelsProvider>
                   </BrandingProvider>

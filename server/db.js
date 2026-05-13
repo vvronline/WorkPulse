@@ -1439,6 +1439,53 @@ async function initTenantSchema(q) {
     `);
     await q(`CREATE INDEX IF NOT EXISTS idx_org_email_templates_org ON org_email_templates(org_id)`);
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Chunk 6 — Custom fields on tasks.
+    //
+    // custom_field_definitions: per-org catalog of field defs that admins
+    // can configure (text, number, date, select, multiselect, checkbox, url).
+    // task_custom_field_values: per-task value rows. We store the value as
+    // JSONB so the same row shape works for every field type without an
+    // extra column for each.
+    //
+    // Both tables are scoped by org_id so tenants stay isolated even though
+    // they share the same physical DB schema in legacy single-DB mode.
+    // ─────────────────────────────────────────────────────────────────────
+    await q(`
+        CREATE TABLE IF NOT EXISTS custom_field_definitions (
+            id              SERIAL PRIMARY KEY,
+            org_id          INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            key             TEXT    NOT NULL,
+            label           TEXT    NOT NULL,
+            field_type      TEXT    NOT NULL CHECK(field_type IN
+                                ('text','number','date','select','multiselect','checkbox','url')),
+            description     TEXT,
+            options         JSONB   NOT NULL DEFAULT '[]'::jsonb,
+            is_required     BOOLEAN NOT NULL DEFAULT FALSE,
+            show_on_card    BOOLEAN NOT NULL DEFAULT FALSE,
+            applies_to_types JSONB  NOT NULL DEFAULT '[]'::jsonb,
+            sort_order      INTEGER NOT NULL DEFAULT 0,
+            is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+            created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at      TIMESTAMPTZ DEFAULT NOW(),
+            updated_at      TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(org_id, key)
+        )
+    `);
+    await q(`CREATE INDEX IF NOT EXISTS idx_cfd_org ON custom_field_definitions(org_id, is_active, sort_order)`);
+
+    await q(`
+        CREATE TABLE IF NOT EXISTS task_custom_field_values (
+            task_id     INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            field_id    INTEGER NOT NULL REFERENCES custom_field_definitions(id) ON DELETE CASCADE,
+            value       JSONB,
+            updated_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            updated_at  TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (task_id, field_id)
+        )
+    `);
+    await q(`CREATE INDEX IF NOT EXISTS idx_tcfv_field ON task_custom_field_values(field_id)`);
+
     logger.info('Tenant schema initialised');
 }
 

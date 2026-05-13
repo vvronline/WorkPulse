@@ -13,8 +13,10 @@ import {
 } from '../../components/agile/AgilePickers.jsx';
 import AcceptanceCriteria from '../../components/agile/AcceptanceCriteria.jsx';
 import { BlockerControl, DependenciesPanel, ParentChildPanel } from '../../components/agile/AgileWorkflowPanels.jsx';
+import { CustomFieldsEditor, CustomFieldsSummary } from '../../components/customFields/CustomFieldRenderer.jsx';
 import { useAgileConfig } from '../../AgileConfigContext';
-import { getTaskDetail } from '../../api';
+import { useCustomFields } from '../../CustomFieldsContext';
+import { getTaskDetail, getTaskCustomFieldValues } from '../../api';
 import { X, Package, CalendarDays, Save, Pencil, MessageSquare, Clock, Trash2 } from 'lucide-react';
 import s from './TaskDetailModal.module.css';
 
@@ -46,6 +48,21 @@ export default function TaskDetailModal({
 }) {
   const { assignableUsers, orgLabels, availableSprints, currentUser, activeTab } = useTaskCtx();
   const { typeById } = useAgileConfig();
+  const { fields: customFields } = useCustomFields();
+  // Pull the task's custom-field values once when the modal opens so the
+  // read-only summary in view mode has data to render.
+  const [customValues, setCustomValues] = useState({});
+  useEffect(() => {
+    if (!detailTask?.id || customFields.length === 0) {
+      setCustomValues({});
+      return;
+    }
+    let cancelled = false;
+    getTaskCustomFieldValues(detailTask.id)
+      .then((r) => { if (!cancelled) setCustomValues(r.data?.values || {}); })
+      .catch(() => { if (!cancelled) setCustomValues({}); });
+    return () => { cancelled = true; };
+  }, [detailTask?.id, customFields.length]);
   // Used to swap the dependencies panel for the Epic↔children panel and vice-versa.
   const isEpic = !!(detailTask?.work_item_type_id && typeById[detailTask.work_item_type_id]?.is_epic);
 
@@ -299,6 +316,11 @@ export default function TaskDetailModal({
                 onChanged={() => fetchTasks && fetchTasks()}
               />
               {!isEpic && <DependenciesPanel task={detailTask} />}
+              <CustomFieldsEditor
+                taskId={detailTask.id}
+                workItemTypeId={detailTask.work_item_type_id}
+                onSaved={(v) => setCustomValues(v)}
+              />
             </div>
           ) : (
             /* ─── VIEW MODE ─── */
@@ -341,6 +363,10 @@ export default function TaskDetailModal({
                   </span>
                 </div>
               )}
+              {customFields.length > 0 && Object.keys(customValues).length > 0 && (
+                <CustomFieldsSummary values={customValues} />
+              )}
+
               {Array.isArray(detailTask.acceptance_criteria) && detailTask.acceptance_criteria.length > 0 && (
                 <div className={s['detail-readonly-section']}>
                   <div className={s['detail-readonly-title']}>

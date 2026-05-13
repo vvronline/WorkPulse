@@ -14,9 +14,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
     Plus, Trash2, Save, Settings as SettingsIcon, Layers, Workflow as WorkflowIcon,
-    Lock, ShieldCheck, Tag,
+    Lock, ShieldCheck, Tag, ListChecks,
 } from 'lucide-react';
 import TaskLabelsTab from './admin/TaskLabelsTab';
+import CustomFieldsTab from './CustomFieldsTab';
 import {
     getAgileSettings, updateAgileSettings,
     getWorkItemTypes, createWorkItemType, updateWorkItemType, deleteWorkItemType, reorderWorkItemTypes,
@@ -85,6 +86,7 @@ export default function AgileSettings() {
                 <button onClick={() => setTab('types')} className={`${s.tabBtn} ${tab === 'types' ? s.active : ''}`}><Layers size={14} /> Work Item Types</button>
                 <button onClick={() => setTab('workflow')} className={`${s.tabBtn} ${tab === 'workflow' ? s.active : ''}`}><WorkflowIcon size={14} /> Workflow</button>
                 <button onClick={() => setTab('labels')} className={`${s.tabBtn} ${tab === 'labels' ? s.active : ''}`}><Tag size={14} /> Labels</button>
+                <button onClick={() => setTab('custom-fields')} className={`${s.tabBtn} ${tab === 'custom-fields' ? s.active : ''}`}><ListChecks size={14} /> Custom Fields</button>
             </nav>
 
             {error && <div className={s.error}>{error}</div>}
@@ -101,6 +103,19 @@ export default function AgileSettings() {
                         A ticket can carry many labels, but only one Work Item Type.
                     </p>
                     <TaskLabelsTab />
+                </div>
+            )}
+            {tab === 'custom-fields' && (
+                <div className={s.card}>
+                    <h2 className={s.sectionTitle}>Custom Fields</h2>
+                    <p className={s.helpText}>
+                        Add tenant-specific fields shown on every task — text, number, date,
+                        dropdown, multi-select, checkbox, or URL. Each field can be required,
+                        scoped to specific work item types, and (optionally) shown directly on
+                        the task card. Field definitions are stored per organisation; values
+                        live per task.
+                    </p>
+                    <CustomFieldsTab canEdit={perms.canEdit} />
                 </div>
             )}
         </div>
