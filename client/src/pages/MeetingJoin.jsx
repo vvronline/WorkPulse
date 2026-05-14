@@ -1,8 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { MicOff, Mic, CameraOff, Camera, Check, ClipboardList, Volume2 } from 'lucide-react';
+import { MicOff, Mic, CameraOff, Camera, Check, ClipboardList, Volume2, Sparkles } from 'lucide-react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getMeeting } from '../api';
 import { useAuth } from '../AuthContext';
+import {
+    BackgroundProcessor, isBackgroundEffectsSupported, loadStoredEffect, storeEffect,
+} from '../utils/backgroundEffects';
+import BackgroundEffectsPicker from './meeting/BackgroundEffectsPicker';
 import './MeetingJoin.css';
 
 export default function MeetingJoin() {
@@ -24,6 +28,16 @@ export default function MeetingJoin() {
     const [networkStats, setNetworkStats] = useState(null);
     const [networkError, setNetworkError] = useState('');
     const [copied, setCopied] = useState(false);
+
+    // Background effects (blur / virtual background) — applied to the preview
+    // here in the lobby. The chosen effect is persisted so the meeting room
+    // picks it back up automatically once the user clicks Join.
+    const [bgEffect, setBgEffect] = useState(() => loadStoredEffect());
+    const [bgFxOpen, setBgFxOpen] = useState(false);
+    const fxSupported = isBackgroundEffectsSupported();
+    const processorRef = useRef(null);
+    const rawCameraTrackRef = useRef(null);
+    const previewStreamRef = useRef(null); // stream actually displayed in <video>
 
     const videoRef = useRef(null);
     const audioCtxRef = useRef(null);
@@ -95,6 +109,81 @@ export default function MeetingJoin() {
         };
         navigator.mediaDevices?.addEventListener('devicechange', handleChange);
         return () => navigator.mediaDevices?.removeEventListener('devicechange', handleChange);
+    }, []);
+
+    // Apply / re-apply the background effect to the preview stream whenever
+    // either the stream or the effect changes. We never touch the underlying
+    // `stream` (the audio track stays put) — we just swap which video track
+    // the <video> element renders.
+    useEffect(() => {
+        if (!stream) return;
+        const videoTracks = stream.getVideoTracks();
+        if (videoTracks.length === 0 || videoOff) {
+            // No video to process — show the raw stream so the placeholder
+            // logic in JSX can take over.
+            previewStreamRef.current = stream;
+            if (videoRef.current) videoRef.current.srcObject = stream;
+            return;
+        }
+
+        const rawTrack = rawCameraTrackRef.current && rawCameraTrackRef.current.readyState === 'live'
+            ? rawCameraTrackRef.current
+            : videoTracks[0];
+
+        // Effect = none → tear down processor and show the raw stream.
+        if (!bgEffect || bgEffect.type === 'none') {
+            if (processorRef.current) {
+                try { processorRef.current.stop(); } catch { /* ignore */ }
+                processorRef.current = null;
+            }
+            rawCameraTrackRef.current = null;
+            previewStreamRef.current = stream;
+            if (videoRef.current) videoRef.current.srcObject = stream;
+            return;
+        }
+
+        if (!fxSupported) return;
+
+        let cancelled = false;
+        (async () => {
+            try {
+                if (processorRef.current) {
+                    processorRef.current.setEffect(bgEffect);
+                    if (rawCameraTrackRef.current && rawCameraTrackRef.current !== rawTrack) {
+                        await processorRef.current.replaceInputTrack(rawTrack);
+                    } else if (!rawCameraTrackRef.current) {
+                        rawCameraTrackRef.current = rawTrack;
+                    }
+                    return;
+                }
+                const proc = new BackgroundProcessor({ inputTrack: rawTrack, effect: bgEffect });
+                const outStream = await proc.start();
+                if (cancelled) { proc.stop(); return; }
+                processorRef.current = proc;
+                rawCameraTrackRef.current = rawTrack;
+                // Composite: processed video + original audio for the level meter.
+                const audioTracks = stream.getAudioTracks();
+                const previewMs = new MediaStream([...outStream.getVideoTracks(), ...audioTracks]);
+                previewStreamRef.current = previewMs;
+                if (videoRef.current) videoRef.current.srcObject = previewMs;
+            } catch (err) {
+                console.warn('[meeting-lobby] background effect failed:', err?.message || err);
+            }
+        })();
+
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [stream, bgEffect, videoOff]);
+
+    // Tear down the processor on unmount (the raw track is owned by `stream`
+    // and gets stopped by the existing cleanup in the acquire-media effect).
+    useEffect(() => {
+        return () => {
+            if (processorRef.current) {
+                try { processorRef.current.stop(); } catch { /* ignore */ }
+                processorRef.current = null;
+            }
+        };
     }, []);
 
     // Audio level monitoring
@@ -187,7 +276,19 @@ export default function MeetingJoin() {
         } catch { /* ignore */ }
     };
 
+    const handleEffectChange = (eff) => {
+        setBgEffect(eff || { type: 'none' });
+        storeEffect(eff || { type: 'none' });
+    };
+
     const handleJoin = () => {
+        // Stop the processor before tearing down the camera so we don't leak
+        // the canvas pipeline. The room will spin up its own processor with
+        // the persisted effect.
+        if (processorRef.current) {
+            try { processorRef.current.stop(); } catch { /* ignore */ }
+            processorRef.current = null;
+        }
         if (stream) stream.getTracks().forEach(t => t.stop());
         navigate(`/meeting/${code}/room`, {
             state: { initialMuted: audioMuted, initialVideoOff: videoOff, meeting },
@@ -248,6 +349,28 @@ export default function MeetingJoin() {
                         >
                             {videoOff ? <CameraOff size={20} /> : <Camera size={20} />}
                         </button>
+                        {fxSupported && (
+                            <div className="mj-fx-wrap">
+                                <button
+                                    className={`mj-ctrl-btn ${bgEffect?.type && bgEffect.type !== 'none' ? 'mj-ctrl-active' : ''}`}
+                                    onClick={() => setBgFxOpen(v => !v)}
+                                    title="Background effects"
+                                    aria-haspopup="dialog"
+                                    aria-expanded={bgFxOpen}
+                                    disabled={videoOff}
+                                >
+                                    <Sparkles size={20} />
+                                </button>
+                                {bgFxOpen && !videoOff && (
+                                    <BackgroundEffectsPicker
+                                        value={bgEffect}
+                                        onChange={handleEffectChange}
+                                        onClose={() => setBgFxOpen(false)}
+                                        anchor="bottom"
+                                    />
+                                )}
+                            </div>
+                        )}
                     </div>
 
                     {/* Audio level bar */}

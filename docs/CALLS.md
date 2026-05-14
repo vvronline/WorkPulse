@@ -417,3 +417,46 @@ That's $0 extra at small scale and ~5 minutes of setup.
       the WorkPulse origins
 - [ ] Load-test with [Selkies](https://github.com/selkies-project/selkies-gstreamer)
       or your own headless-Chrome herd before launch
+---
+
+## Background Effects (Blur & Virtual Backgrounds)
+
+WorkPulse meetings support background blur and virtual (image) backgrounds
+entirely client-side — no server work is required.
+
+### How it works
+
+- `client/src/utils/backgroundEffects.js` lazily loads MediaPipe Selfie
+  Segmentation from `cdn.jsdelivr.net` (~3 MB, fetched on first use only).
+- The raw camera `MediaStreamTrack` is fed through a `<canvas>` compositor
+  that masks the person and draws the chosen background underneath.
+- The processed canvas track is swapped onto every `RTCRtpSender` via
+  `replaceTrack` — no SDP renegotiation required, so peers see the new
+  video instantly without reconnecting.
+
+### Where it appears
+
+| Surface | Component | Behaviour |
+|---|---|---|
+| Pre-call lobby | `MeetingJoin.jsx` | Shown next to mute/camera toggles. Effect is stored in `localStorage` and re-applied automatically once the user joins. |
+| In-call control bar | `MeetingBottomBar.jsx` |  Effects button toggles the same picker. Mobile users find it inside the More drawer. |
+
+### Available effects
+
+- **None** — raw camera track
+- **Blur** — adjustable strength (4–30 px)
+- **Built-in virtual backgrounds** — Aurora, Sunset, Forest, Graphite, Paper
+- **Custom upload** — any image up to 6 MB; stays on-device, never uploaded
+
+### Browser requirements & graceful degradation
+
+The picker hides itself entirely when `isBackgroundEffectsSupported()` is
+false (no WebGL, no `HTMLCanvasElement.captureStream`). If MediaPipe fails
+to load (offline, CSP block) the meeting silently falls back to the raw
+camera track. Users are never blocked from joining a call by an effect
+failure.
+
+### CSP
+
+The bundled Helmet CSP defaults already allow `cdn.jsdelivr.net` (script,
+WASM, model files) and `data:` (built-in SVG gradients + custom uploads).

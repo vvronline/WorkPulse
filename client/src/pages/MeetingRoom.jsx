@@ -47,6 +47,7 @@ export default function MeetingRoom() {
         connectionQualities, presenterId,
         toggleMute, toggleVideo, toggleScreenShare, raiseHand,
         sendChatMessage, endMeeting, leaveMeeting, muteParticipant, addParticipant,
+        bgEffect, setBackgroundEffect,
     } = useMeetingState({
         meetingId,
         ws: wsRef.current,
@@ -209,6 +210,8 @@ export default function MeetingRoom() {
                         isOrganizer={isOrganizer}
                         participantCount={totalCount}
                         activePanel={activePanel}
+                        bgEffect={bgEffect}
+                        onBgEffectChange={setBackgroundEffect}
                     />
                 </div>
 

@@ -1,10 +1,17 @@
 import React, { useState } from 'react';
-import { MicOff, Mic, CameraOff, Camera, MonitorUp, Hand, MessageSquare, Users, X } from 'lucide-react';
+import { MicOff, Mic, CameraOff, Camera, MonitorUp, Hand, MessageSquare, Users, X, Sparkles } from 'lucide-react';
 import './MeetingRoom.css';
+import BackgroundEffectsPicker from './BackgroundEffectsPicker';
 
 /**
  * Bottom control bar for the meeting room.
  * Responsive: shows "more" drawer on mobile for secondary controls.
+ *
+ * Background effects: when bgEffect/onBgEffectChange are provided, an
+ * "Effects" button toggles a picker popover anchored above the bar. The
+ * picker writes through to useMeetingState.setBackgroundEffect, which
+ * handles all the track-swap / processor lifecycle work. The bar itself
+ * stays presentational.
  */
 export default function MeetingBottomBar({
     muted, videoOff, screenSharing, raisedHand,
@@ -12,8 +19,11 @@ export default function MeetingBottomBar({
     onToggleChat, onToggleParticipants,
     onLeave, onEnd, isOrganizer,
     participantCount, activePanel,
+    bgEffect, onBgEffectChange,
 }) {
     const [moreOpen, setMoreOpen] = useState(false);
+    const [fxOpen, setFxOpen] = useState(false);
+    const fxActive = bgEffect && bgEffect.type && bgEffect.type !== 'none';
 
     return (
         <>
@@ -78,6 +88,29 @@ export default function MeetingBottomBar({
                         <span className="mb-label">People</span>
                     </button>
 
+                    {onBgEffectChange && (
+                        <div className="mb-fx-wrap mb-desktop-only">
+                            <button
+                                className={`mb-btn ${fxActive ? 'mb-btn-active' : ''}`}
+                                onClick={() => setFxOpen(v => !v)}
+                                title="Background effects"
+                                aria-haspopup="dialog"
+                                aria-expanded={fxOpen}
+                            >
+                                <Sparkles size={20} />
+                                <span className="mb-label">Effects</span>
+                            </button>
+                            {fxOpen && (
+                                <BackgroundEffectsPicker
+                                    value={bgEffect || { type: 'none' }}
+                                    onChange={(eff) => onBgEffectChange(eff)}
+                                    onClose={() => setFxOpen(false)}
+                                    anchor="bottom"
+                                />
+                            )}
+                        </div>
+                    )}
+
                     {/* Mobile "more" button */}
                     <button
                         className="mb-btn mb-mobile-only"
@@ -134,7 +167,29 @@ export default function MeetingBottomBar({
                             >
                                 <Users size={16} style={{marginRight:6,verticalAlign:'middle'}} />Participants
                             </button>
+                            {onBgEffectChange && (
+                                <button
+                                    className={`mb-drawer-btn ${fxActive ? 'mb-btn-active' : ''}`}
+                                    onClick={() => { setMoreOpen(false); setFxOpen(true); }}
+                                >
+                                    <Sparkles size={16} style={{marginRight:6,verticalAlign:'middle'}} />Effects
+                                </button>
+                            )}
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Mobile-friendly modal for the effects picker (when opened from drawer) */}
+            {fxOpen && onBgEffectChange && (
+                <div className="bg-fx-mobile-overlay mb-mobile-only" onClick={() => setFxOpen(false)}>
+                    <div onClick={(e) => e.stopPropagation()}>
+                        <BackgroundEffectsPicker
+                            value={bgEffect || { type: 'none' }}
+                            onChange={(eff) => onBgEffectChange(eff)}
+                            onClose={() => setFxOpen(false)}
+                            anchor="bottom"
+                        />
                     </div>
                 </div>
             )}

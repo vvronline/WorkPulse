@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useAuth } from '../../AuthContext';
 import { getIceConfig } from '../../api';
+import {
+    BackgroundProcessor, isBackgroundEffectsSupported, loadStoredEffect, storeEffect,
+} from '../../utils/backgroundEffects';
 
 // Default ICE servers used until the /chat/ice-config request resolves.
 // Includes the public Open Relay TURN service so meetings still work for peers
@@ -88,6 +91,12 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     const localStreamRef = useRef(null);
     const screenStreamRef = useRef(null);
     const pcsRef = useRef(new Map()); // userId -> RTCPeerConnection
+    // Background effects (blur / virtual background) — see utils/backgroundEffects.js
+    const processorRef = useRef(null);
+    const rawCameraTrackRef = useRef(null); // unprocessed camera track when an effect is active
+    const [bgEffect, setBgEffectState] = useState(() => loadStoredEffect());
+    const bgEffectRef = useRef(bgEffect);
+    bgEffectRef.current = bgEffect;
     const pendingSignals = useRef(new Map()); // userId -> []
     const qualityTimerRef = useRef(null);
     const wsRef = useRef(ws);
@@ -105,6 +114,76 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     videoOffRef.current = videoOff;
     const screenSharingRef = useRef(screenSharing);
     screenSharingRef.current = screenSharing;
+
+    // ── Background effects helpers ──────────────────────────────────────────
+    // Tear down the active processor and free the raw camera track. Safe to
+    // call when nothing is active.
+    const teardownProcessor = useCallback(() => {
+        if (processorRef.current) {
+            try { processorRef.current.stop(); } catch { /* ignore */ }
+            processorRef.current = null;
+        }
+        if (rawCameraTrackRef.current) {
+            try { rawCameraTrackRef.current.stop(); } catch { /* ignore */ }
+            rawCameraTrackRef.current = null;
+        }
+    }, []);
+
+    // Replace the active video track on every peer connection sender. Used by
+    // setBackgroundEffect, switchVideoDevice, and toggleVideo's re-enable path
+    // so we never have to renegotiate just because we swapped which track the
+    // sender carries.
+    const replaceVideoTrackOnPeers = useCallback(async (newTrack) => {
+        const tasks = [];
+        for (const [, pc] of pcsRef.current) {
+            const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+            if (sender) {
+                tasks.push(sender.replaceTrack(newTrack || null).catch(() => { }));
+            }
+        }
+        await Promise.all(tasks);
+    }, []);
+
+    // Run a raw camera track through the background processor and return the
+    // resulting MediaStreamTrack. Returns the raw track when the effect is
+    // 'none' or when MediaPipe fails to initialise.
+    const buildProcessedTrack = useCallback(async (rawTrack, effect) => {
+        if (!effect || effect.type === 'none') {
+            teardownProcessor();
+            rawCameraTrackRef.current = null;
+            return rawTrack;
+        }
+        if (!isBackgroundEffectsSupported()) {
+            return rawTrack;
+        }
+        // Reuse existing processor if it's already running.
+        if (processorRef.current) {
+            try {
+                processorRef.current.setEffect(effect);
+                if (rawCameraTrackRef.current && rawCameraTrackRef.current !== rawTrack) {
+                    await processorRef.current.replaceInputTrack(rawTrack);
+                    if (rawCameraTrackRef.current && rawCameraTrackRef.current !== rawTrack) {
+                        try { rawCameraTrackRef.current.stop(); } catch { /* ignore */ }
+                    }
+                    rawCameraTrackRef.current = rawTrack;
+                }
+                const out = processorRef.current._outStream;
+                const pt = out?.getVideoTracks?.()[0];
+                if (pt) return pt;
+            } catch { /* fall through to fresh init */ }
+        }
+        try {
+            const proc = new BackgroundProcessor({ inputTrack: rawTrack, effect });
+            const stream = await proc.start();
+            processorRef.current = proc;
+            rawCameraTrackRef.current = rawTrack;
+            return stream.getVideoTracks()[0];
+        } catch (err) {
+            console.warn('[meeting] background processor failed, falling back to raw track:', err?.message || err);
+            teardownProcessor();
+            return rawTrack;
+        }
+    }, [teardownProcessor]);
 
     // Helper: send WS message in { type, data } format
     const wsSend = useCallback((type, data) => {
@@ -831,16 +910,126 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         } catch (err) { console.error('switchVideoDevice:', err); }
     }, [videoOff]);
 
+    // ── Public: change background effect ─────────────────────────────────────
+    // Applies (or removes) a blur / virtual-background effect on the local
+    // camera. Updates senders via replaceTrack so no SDP renegotiation is
+    // needed. Safe to call regardless of whether the camera is currently on,
+    // sharing screen, or off — the effect will take hold the next time the
+    // camera produces frames.
+    const setBackgroundEffect = useCallback(async (effect) => {
+        const next = effect && ['none', 'blur', 'image'].includes(effect.type) ? effect : { type: 'none' };
+        setBgEffectState(next);
+        bgEffectRef.current = next;
+        storeEffect(next);
+
+        if (!localStreamRef.current) return;
+
+        // Don't touch peer senders while screen sharing (the sender holds the
+        // screen track). Just update the processor so the user sees the effect
+        // in the local preview path. When screen share ends, toggleScreenShare
+        // restores the camera track from localStreamRef which already carries
+        // the processed track.
+        const currentVideoTrack = localStreamRef.current.getVideoTracks()[0];
+        const isLiveCameraTrack = currentVideoTrack && currentVideoTrack.readyState === 'live'
+            && (!rawCameraTrackRef.current || currentVideoTrack !== rawCameraTrackRef.current);
+
+        if (next.type === 'none') {
+            // Restore the raw camera track on senders + local stream.
+            if (rawCameraTrackRef.current && rawCameraTrackRef.current.readyState === 'live') {
+                const raw = rawCameraTrackRef.current;
+                if (currentVideoTrack && currentVideoTrack !== raw) {
+                    try { currentVideoTrack.stop(); } catch { /* ignore */ }
+                    localStreamRef.current.removeTrack(currentVideoTrack);
+                }
+                if (!localStreamRef.current.getVideoTracks().includes(raw)) {
+                    localStreamRef.current.addTrack(raw);
+                }
+                rawCameraTrackRef.current = null;
+                if (processorRef.current) {
+                    try { processorRef.current.stop(); } catch { /* ignore */ }
+                    processorRef.current = null;
+                }
+                if (!screenSharingRef.current) await replaceVideoTrackOnPeers(raw);
+                setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+            } else {
+                // No raw track to restore — just stop the processor.
+                teardownProcessor();
+            }
+            return;
+        }
+
+        // Effect on. We need a raw camera track to feed the processor. If
+        // localStream's current video track *is* the raw camera (i.e. no
+        // effect was active before), use that. Otherwise we need to acquire a
+        // new camera track.
+        let raw;
+        if (isLiveCameraTrack) {
+            raw = currentVideoTrack;
+        } else if (rawCameraTrackRef.current && rawCameraTrackRef.current.readyState === 'live') {
+            raw = rawCameraTrackRef.current;
+        } else {
+            try {
+                const ms = await navigator.mediaDevices.getUserMedia({ video: true });
+                raw = ms.getVideoTracks()[0];
+            } catch (err) {
+                console.warn('[meeting] could not acquire camera for effect:', err);
+                return;
+            }
+        }
+
+        const processed = await buildProcessedTrack(raw, next);
+        if (processed === raw) {
+            // Effect failed to initialise — leave everything as-is.
+            return;
+        }
+
+        // Swap the processed track into the local stream + on peer senders.
+        const oldTrack = localStreamRef.current.getVideoTracks()[0];
+        if (oldTrack && oldTrack !== processed && oldTrack !== raw) {
+            try { oldTrack.stop(); } catch { /* ignore */ }
+            localStreamRef.current.removeTrack(oldTrack);
+        } else if (oldTrack === raw) {
+            // Detach the raw track from the local stream — the processor owns it now.
+            localStreamRef.current.removeTrack(raw);
+        }
+        if (!localStreamRef.current.getVideoTracks().includes(processed)) {
+            localStreamRef.current.addTrack(processed);
+        }
+        processed.enabled = !videoOffRef.current;
+        if (!screenSharingRef.current) await replaceVideoTrackOnPeers(processed);
+        setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+    }, [buildProcessedTrack, replaceVideoTrackOnPeers, teardownProcessor]);
+
+    // Re-apply the user's preferred effect once the local stream is ready
+    // (e.g. on first join). Runs once per session.
+    const initialEffectAppliedRef = useRef(false);
+    useEffect(() => {
+        if (initialEffectAppliedRef.current) return;
+        if (!localStream) return;
+        if (bgEffectRef.current?.type === 'none') { initialEffectAppliedRef.current = true; return; }
+        initialEffectAppliedRef.current = true;
+        setBackgroundEffect(bgEffectRef.current).catch(() => { });
+    }, [localStream, setBackgroundEffect]);
+
+    // Free the processor when leaving the meeting (or unmounting in non-PiP mode).
+    useEffect(() => {
+        return () => {
+            if (!keepAliveOnUnmount) teardownProcessor();
+        };
+    }, [keepAliveOnUnmount, teardownProcessor]);
+
     return {
         // State
         localStream, screenStream, muted, videoOff, screenSharing,
         participants, status, raisedHand, messages,
         activePanel, setActivePanel,
         connectionQualities, presenterId,
+        bgEffect,
         // Actions
         toggleMute, toggleVideo, toggleScreenShare, raiseHand,
         sendChatMessage, endMeeting, leaveMeeting, muteParticipant, addParticipant,
         switchAudioDevice, switchVideoDevice,
+        setBackgroundEffect,
         // WS message handler (MeetingRoom passes incoming WS msgs here)
         handleWsMessage,
     };

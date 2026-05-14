@@ -86,7 +86,23 @@
 }
 
 .mj-ctrl-btn:hover { background: rgba(255,255,255,0.15); }
+.mj-ctrl-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .mj-ctrl-off { background: rgba(239,68,68,0.8) !important; }
+.mj-ctrl-active {
+    background: rgba(14, 165, 233, 0.55) !important;
+    box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.3);
+}
+
+/* Background effects popover anchor inside the preview controls bar.
+ * The picker itself ships with .bg-fx-* styles from MeetingRoom.css —
+ * which we import via BackgroundEffectsPicker → bottom bar shared sheet.
+ * We make sure the panel renders ABOVE the controls bar (it sits at the
+ * bottom of the preview) and remains within the viewport on small screens.
+ */
+.mj-fx-wrap {
+    position: relative;
+    display: inline-flex;
+}
 
 /* Network stats badge */
 .mj-network-badge {

@@ -73,6 +73,14 @@ app.use(helmet({
             // Admin → Branding before saving). Helmet's default img-src is
             // `'self' data:` and silently blocks blob URLs otherwise.
             "img-src": ["'self'", "data:", "blob:"],
+            // Allow loading MediaPipe Selfie Segmentation script + WASM from
+            // jsdelivr at runtime (used for meeting background blur / virtual
+            // backgrounds). Loaded lazily only when the user enables an
+            // effect, so default users incur zero cost.
+            "script-src": ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
+            "script-src-elem": ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
+            "worker-src": ["'self'", "blob:"],
+            "connect-src": ["'self'", "https://cdn.jsdelivr.net", "ws:", "wss:"],
         }
     },
     crossOriginOpenerPolicy: false,
