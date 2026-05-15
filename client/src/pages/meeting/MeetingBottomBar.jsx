@@ -19,7 +19,7 @@ export default function MeetingBottomBar({
     onToggleChat, onToggleParticipants,
     onLeave, onEnd, isOrganizer,
     participantCount, activePanel,
-    bgEffect, onBgEffectChange,
+    bgEffect, onBgEffectChange, bgEffectError,
 }) {
     const [moreOpen, setMoreOpen] = useState(false);
     const [fxOpen, setFxOpen] = useState(false);
@@ -106,6 +106,7 @@ export default function MeetingBottomBar({
                                     onChange={(eff) => onBgEffectChange(eff)}
                                     onClose={() => setFxOpen(false)}
                                     anchor="bottom"
+                                    error={bgEffectError}
                                 />
                             )}
                         </div>
@@ -189,6 +190,7 @@ export default function MeetingBottomBar({
                             onChange={(eff) => onBgEffectChange(eff)}
                             onClose={() => setFxOpen(false)}
                             anchor="bottom"
+                            error={bgEffectError}
                         />
                     </div>
                 </div>

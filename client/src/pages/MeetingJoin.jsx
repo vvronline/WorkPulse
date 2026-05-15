@@ -34,6 +34,7 @@ export default function MeetingJoin() {
     // picks it back up automatically once the user clicks Join.
     const [bgEffect, setBgEffect] = useState(() => loadStoredEffect());
     const [bgFxOpen, setBgFxOpen] = useState(false);
+    const [bgFxError, setBgFxError] = useState(null);
     const fxSupported = isBackgroundEffectsSupported();
     const processorRef = useRef(null);
     const rawCameraTrackRef = useRef(null);
@@ -161,13 +162,24 @@ export default function MeetingJoin() {
                 if (cancelled) { proc.stop(); return; }
                 processorRef.current = proc;
                 rawCameraTrackRef.current = rawTrack;
+                setBgFxError(null);
                 // Composite: processed video + original audio for the level meter.
                 const audioTracks = stream.getAudioTracks();
                 const previewMs = new MediaStream([...outStream.getVideoTracks(), ...audioTracks]);
                 previewStreamRef.current = previewMs;
                 if (videoRef.current) videoRef.current.srcObject = previewMs;
             } catch (err) {
-                console.warn('[meeting-lobby] background effect failed:', err?.message || err);
+                const msg = err?.message || String(err);
+                console.warn('[meeting-lobby] background effect failed:', msg);
+                if (/wasm|CompileError|unsafe-eval|CSP|Content Security/i.test(msg)) {
+                    setBgFxError("Couldn't load background effects engine. Your browser blocked WebAssembly — make sure you're on HTTPS and the latest Chrome/Edge/Firefox.");
+                } else if (/load failed|network|fetch/i.test(msg)) {
+                    setBgFxError("Couldn't download the background effects model. Check your network and try again.");
+                } else {
+                    setBgFxError(`Background effect failed: ${msg}`);
+                }
+                // Fall back to raw stream so the user still sees themselves.
+                if (videoRef.current && stream) videoRef.current.srcObject = stream;
             }
         })();
 
@@ -367,6 +379,7 @@ export default function MeetingJoin() {
                                         onChange={handleEffectChange}
                                         onClose={() => setBgFxOpen(false)}
                                         anchor="bottom"
+                                        error={bgFxError}
                                     />
                                 )}
                             </div>

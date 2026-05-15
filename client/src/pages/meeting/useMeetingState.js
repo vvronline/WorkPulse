@@ -95,6 +95,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     const processorRef = useRef(null);
     const rawCameraTrackRef = useRef(null); // unprocessed camera track when an effect is active
     const [bgEffect, setBgEffectState] = useState(() => loadStoredEffect());
+    const [bgEffectError, setBgEffectError] = useState(null);
     const bgEffectRef = useRef(bgEffect);
     bgEffectRef.current = bgEffect;
     const pendingSignals = useRef(new Map()); // userId -> []
@@ -177,9 +178,20 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             const stream = await proc.start();
             processorRef.current = proc;
             rawCameraTrackRef.current = rawTrack;
+            setBgEffectError(null);
             return stream.getVideoTracks()[0];
         } catch (err) {
-            console.warn('[meeting] background processor failed, falling back to raw track:', err?.message || err);
+            const msg = err?.message || String(err);
+            console.warn('[meeting] background processor failed, falling back to raw track:', msg);
+            // Surface a friendly error to the picker UI. The detailed message
+            // is in the console for support diagnosis.
+            if (/wasm|CompileError|unsafe-eval|CSP|Content Security/i.test(msg)) {
+                setBgEffectError("Couldn't load background effects engine. Your browser blocked WebAssembly — make sure you're on HTTPS and the latest Chrome/Edge/Firefox.");
+            } else if (/load failed|network|fetch/i.test(msg)) {
+                setBgEffectError("Couldn't download the background effects model. Check your network and try again.");
+            } else {
+                setBgEffectError(`Background effect failed: ${msg}`);
+            }
             teardownProcessor();
             return rawTrack;
         }
@@ -1025,6 +1037,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         activePanel, setActivePanel,
         connectionQualities, presenterId,
         bgEffect,
+        bgEffectError,
         // Actions
         toggleMute, toggleVideo, toggleScreenShare, raiseHand,
         sendChatMessage, endMeeting, leaveMeeting, muteParticipant, addParticipant,

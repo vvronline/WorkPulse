@@ -29,6 +29,11 @@ export default function BackgroundEffectsPicker({
     onClose,
     anchor = 'bottom', // 'bottom' renders above the trigger; 'top' renders below
     title = 'Background Effects',
+    // Optional: error string surfaced from the host (the meeting hook /
+    // lobby) when the last effect application failed (e.g. CSP blocked
+    // the WASM module). When set, the picker shows a banner so the user
+    // understands why the preview doesn't reflect their selection.
+    error = null,
 }) {
     const [supported] = useState(() => isBackgroundEffectsSupported());
     const [blurStrength, setBlurStrength] = useState(
@@ -104,6 +109,11 @@ export default function BackgroundEffectsPicker({
                 </div>
             ) : (
                 <>
+                    {error && (
+                        <div className="bg-fx-warning" style={{ marginBottom: '0.6rem' }}>
+                            {error}
+                        </div>
+                    )}
                     <div className="bg-fx-row">
                         <button
                             type="button"

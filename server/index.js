@@ -77,9 +77,19 @@ app.use(helmet({
             // jsdelivr at runtime (used for meeting background blur / virtual
             // backgrounds). Loaded lazily only when the user enables an
             // effect, so default users incur zero cost.
-            "script-src": ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
+            //
+            // 'wasm-unsafe-eval' is REQUIRED — MediaPipe ships its inference
+            // engine as WebAssembly and the browser refuses to compile it
+            // without this directive (errors look like
+            // "CompileError: WebAssembly.instantiate(): Refused to compile
+            //  or instantiate WebAssembly module because 'unsafe-eval' is
+            //  not an allowed source of script in the following Content
+            //  Security Policy directive: \"script-src\"").
+            "script-src": ["'self'", "'unsafe-inline'", "'wasm-unsafe-eval'", "https://cdn.jsdelivr.net"],
             "script-src-elem": ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
             "worker-src": ["'self'", "blob:"],
+            // MediaPipe also fetches the .wasm binary + .tflite model files
+            // from jsdelivr at runtime — `connect-src` covers those XHR/fetches.
             "connect-src": ["'self'", "https://cdn.jsdelivr.net", "ws:", "wss:"],
         }
     },

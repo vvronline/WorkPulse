@@ -103,6 +103,8 @@ export class BackgroundProcessor {
         this._rafHandle = null;
         this._outStream = null;
         this._processing = false;
+        this._lastSent = 0;
+        this._framesProduced = 0;
     }
 
     /**
@@ -191,10 +193,33 @@ export class BackgroundProcessor {
             selfieMode: true,
         });
         this.segmenter.onResults((results) => this._onSegResults(results));
-        // Warm-up: run one inference so first real frame doesn't stutter.
-        try {
-            await this.segmenter.send({ image: this.video });
-        } catch { /* first frame may not be ready yet — ignore */ }
+        // Warm-up: run one inference so first real frame doesn't stutter AND
+        // so we surface CSP / WASM errors at start() time instead of silently
+        // pumping a black canvas. We retry a couple of times because the
+        // <video> may not have produced frames yet on first call.
+        let lastErr = null;
+        for (let attempt = 0; attempt < 5; attempt++) {
+            if (this.video.readyState >= 2 && this.video.videoWidth > 0) {
+                try {
+                    await this.segmenter.send({ image: this.video });
+                    return; // success
+                } catch (err) {
+                    lastErr = err;
+                    // CSP / WASM compile errors are fatal — bail immediately.
+                    const msg = String(err?.message || err);
+                    if (/wasm|CompileError|unsafe-eval|CSP|Content Security/i.test(msg)) {
+                        throw new Error(`MediaPipe WASM blocked: ${msg}. ` +
+                            `Add 'wasm-unsafe-eval' to your script-src CSP.`);
+                    }
+                }
+            }
+            await new Promise(r => setTimeout(r, 80));
+        }
+        if (lastErr) {
+            // Treat this as fatal so callers fall back to the raw track instead
+            // of leaving the user staring at a black preview.
+            throw lastErr;
+        }
     }
 
     _loadBackgroundIfNeeded() {
