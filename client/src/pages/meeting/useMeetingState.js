@@ -655,7 +655,23 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 break;
             }
             case 'meeting_message': {
-                setMessages(prev => [...prev, data.message]);
+                const incoming = data.message;
+                if (!incoming) break;
+                setMessages(prev => {
+                    // If this echoes our own optimistic message, replace it
+                    // instead of appending a duplicate.
+                    if (incoming.sender_id === user?.id) {
+                        const idx = prev.findIndex(m => m._optimistic
+                            && m.sender_id === incoming.sender_id
+                            && m.text === incoming.text);
+                        if (idx >= 0) {
+                            const next = prev.slice();
+                            next[idx] = incoming;
+                            return next;
+                        }
+                    }
+                    return [...prev, incoming];
+                });
                 break;
             }
             case 'meeting_invite': {
@@ -860,8 +876,21 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
 
     const sendChatMessage = useCallback((text) => {
         if (!text.trim()) return;
-        wsSend('meeting_chat', { meetingId, text: text.trim() });
-    }, [meetingId, wsSend]);
+        const trimmed = text.trim();
+        // Optimistic local insertion so the sender always sees their own
+        // message immediately — even if the server echo is delayed, dropped
+        // by rate limiting, or arrives during a brief listener-rebind window.
+        // The echo handler dedupes against the _optimistic flag.
+        const optimistic = {
+            sender_id: user?.id,
+            sender_name: user?.full_name || user?.username || 'You',
+            text: trimmed,
+            created_at: new Date().toISOString(),
+            _optimistic: true,
+        };
+        setMessages(prev => [...prev, optimistic]);
+        wsSend('meeting_chat', { meetingId, text: trimmed });
+    }, [meetingId, wsSend, user]);
 
     const endMeeting = useCallback(() => {
         wsSend('meeting_end', { meetingId });
@@ -942,8 +971,14 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         // restores the camera track from localStreamRef which already carries
         // the processed track.
         const currentVideoTrack = localStreamRef.current.getVideoTracks()[0];
-        const isLiveCameraTrack = currentVideoTrack && currentVideoTrack.readyState === 'live'
-            && (!rawCameraTrackRef.current || currentVideoTrack !== rawCameraTrackRef.current);
+        // currentVideoTrack is the *raw camera* only when no effect was
+        // active before. If `rawCameraTrackRef.current` is set, then
+        // currentVideoTrack is the processed canvas track and must NOT be
+        // fed back into the processor (which would create a feedback loop
+        // and short-circuit the change).
+        const isLiveCameraTrack = !!currentVideoTrack
+            && currentVideoTrack.readyState === 'live'
+            && !rawCameraTrackRef.current;
 
         if (next.type === 'none') {
             // Restore the raw camera track on senders + local stream.
