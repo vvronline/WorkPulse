@@ -3,12 +3,14 @@ import { MicOff, Mic, CameraOff, Camera, Check, ClipboardList, Volume2 } from 'l
 import { useParams, useNavigate } from 'react-router-dom';
 import { getMeeting } from '../api';
 import { useAuth } from '../AuthContext';
+import { useMeeting } from '../MeetingContext';
 import './MeetingJoin.css';
 
 export default function MeetingJoin() {
     const { code } = useParams();
     const navigate = useNavigate();
     const { user } = useAuth();
+    const { joinMeeting } = useMeeting();
 
     const [meeting, setMeeting] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -200,9 +202,14 @@ export default function MeetingJoin() {
 
     const handleJoin = () => {
         if (stream) stream.getTracks().forEach(t => t.stop());
-        navigate(`/meeting/${code}/room`, {
-            state: { initialMuted: audioMuted, initialVideoOff: videoOff, meeting },
+        joinMeeting({
+            meetingId: meeting.id,
+            code,
+            meeting,
+            initialMuted: audioMuted,
+            initialVideoOff: videoOff,
         });
+        navigate(`/meeting/${code}/room`);
     };
 
     const copyCode = () => {

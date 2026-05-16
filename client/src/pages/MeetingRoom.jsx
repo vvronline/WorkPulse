@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMeeting } from '../MeetingContext';
 import { useAuth } from '../AuthContext';
+import { getMeeting } from '../api';
 import { useMeetingState } from './meeting/useMeetingState';
 import ParticipantTile from './meeting/ParticipantTile';
 import PresenterView from './meeting/PresenterView';
@@ -17,8 +18,24 @@ export default function MeetingRoom() {
     const navigate = useNavigate();
     const { code } = useParams();
     const { user } = useAuth();
-    const { session, wsRef, localStreamRef, leaveMeeting: ctxLeave } = useMeeting();
+    const { session, wsRef, localStreamRef, leaveMeeting: ctxLeave, joinMeeting } = useMeeting();
     const ws = wsRef?.current;
+    const [autoJoinError, setAutoJoinError] = useState('');
+
+    // Auto-join: if navigated directly (e.g. desktop deep link) without a session, fetch meeting and join
+    useEffect(() => {
+        if (session || !code) return;
+        let cancelled = false;
+        getMeeting(code)
+            .then(r => {
+                if (cancelled) return;
+                joinMeeting({ meetingId: r.data.id, code, meeting: r.data, initialMuted: false, initialVideoOff: false });
+            })
+            .catch(() => {
+                if (!cancelled) setAutoJoinError('Meeting not found or you are not invited.');
+            });
+        return () => { cancelled = true; };
+    }, [session, code, joinMeeting]);
 
     const {
         localStream, screenStream, muted, videoOff, screenSharing,
@@ -99,7 +116,7 @@ export default function MeetingRoom() {
         return (
             <div className="mr-root">
                 <div className="mr-status-overlay">
-                    <span className="mr-status-text">No active meeting session</span>
+                    <span className="mr-status-text">{autoJoinError || 'Joining meeting…'}</span>
                 </div>
             </div>
         );
