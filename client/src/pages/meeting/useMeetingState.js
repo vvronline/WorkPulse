@@ -148,6 +148,16 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     // Run a raw camera track through the background processor and return the
     // resulting MediaStreamTrack. Returns the raw track when the effect is
     // 'none' or when MediaPipe fails to initialise.
+    //
+    // Behaviour:
+    //   • First call (no processor yet) → builds processor, returns processed track.
+    //   • Subsequent call with same rawTrack → reuses existing processor via
+    //     `setEffect()` and returns the SAME processed track (cheap, no WebGL
+    //     context churn, and — critically — fixes the "blur/background doesn't
+    //     change in an ongoing meeting" bug that the old "tear down + rebuild"
+    //     path caused by accidentally stopping the live raw camera track).
+    //   • Call with a different rawTrack → tears down old processor (without
+    //     stopping the new rawTrack) and builds a fresh one.
     const buildProcessedTrack = useCallback(async (rawTrack, effect) => {
         if (!effect || effect.type === 'none') {
             teardownProcessor();
@@ -157,21 +167,40 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         if (!isBackgroundEffectsSupported()) {
             return rawTrack;
         }
-        // Always tear down and rebuild the processor when the effect changes.
-        // Reusing the same processor + captureStream across effect changes is
-        // unreliable in Electron: the output track can silently stop producing
-        // frames that reflect the new effect. Rebuilding guarantees a fresh
-        // canvas → captureStream pipeline every time.
-        //
-        // IMPORTANT: We must NOT call `teardownProcessor()` here, because it
-        // also stops `rawCameraTrackRef.current` — and that's usually the very
-        // same track we're about to feed into the new processor (effect →
-        // effect transitions like blur → image reuse the existing raw camera
-        // track). Stopping it would leave the new processor with a dead
-        // <video> source, which is exactly the "background effect doesn't
-        // change mid-meeting" bug. Instead, stop only the previous processor
-        // and only stop the previous raw track if it's a different track than
-        // the one we're now using.
+
+        // ── Fast path: processor already exists for this raw track ──────────
+        // Just hot-swap the effect. This is the path taken when the user
+        // changes from blur → image, image → image, or moves the blur
+        // strength slider mid-meeting. No new WebGL context, no captureStream
+        // rebuild, no chance of the new processor getting fed a stopped track.
+        if (
+            processorRef.current
+            && rawCameraTrackRef.current === rawTrack
+            && rawTrack.readyState === 'live'
+        ) {
+            try {
+                processorRef.current.setEffect(effect);
+                setBgEffectError(null);
+                const existingOut = processorRef.current._outStream;
+                const existingTrack = existingOut?.getVideoTracks?.()[0];
+                if (existingTrack && existingTrack.readyState === 'live') {
+                    return existingTrack;
+                }
+                // captureStream track unexpectedly ended — fall through and
+                // rebuild from scratch.
+            } catch (err) {
+                console.warn('[meeting] setEffect on existing processor failed, rebuilding:', err);
+            }
+        }
+
+        // ── Slow path: build a fresh processor ──────────────────────────────
+        // IMPORTANT: Do NOT call `teardownProcessor()` here unconditionally:
+        // it also stops `rawCameraTrackRef.current`, and that's usually the
+        // very same track we're about to feed into the new processor. Stopping
+        // it would leave the new processor with a dead <video> source —
+        // exactly the "background effect doesn't change mid-meeting" bug.
+        // Stop the previous processor, and only stop the previous raw track
+        // if it's actually a different track than the one we're now using.
         if (processorRef.current) {
             try { processorRef.current.stop(); } catch { /* ignore */ }
             processorRef.current = null;
@@ -180,6 +209,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             try { rawCameraTrackRef.current.stop(); } catch { /* ignore */ }
         }
         rawCameraTrackRef.current = null;
+
         try {
             const proc = new BackgroundProcessor({ inputTrack: rawTrack, effect });
             const stream = await proc.start();
