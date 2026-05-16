@@ -23,22 +23,21 @@ export default function MeetingChat({ messages, onSend }) {
     };
 
     return (
-        <div className="mc-panel">
-            <div className="mc-header">Meeting Chat</div>
+        <>
             <div className="mc-messages">
                 {messages.length === 0 && (
                     <div className="mc-empty">No messages yet</div>
                 )}
                 {messages.map((m, i) => (
                     <div key={i} className="mc-msg">
-                        <span className="mc-sender">{m.sender_name || 'Participant'}</span>
-                        <span className="mc-text">{m.text}</span>
-                        <span className="mc-time">{new Date(m.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        <span className="mc-msg-sender">{m.sender_name || 'Participant'}</span>
+                        <span className="mc-msg-text">{m.text}</span>
+                        <span className="mc-msg-time">{new Date(m.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
                 ))}
                 <div ref={bottomRef} />
             </div>
-            <div className="mc-input-row">
+            <div className="mc-input-wrap">
                 <textarea
                     value={text}
                     onChange={e => setText(e.target.value)}
@@ -47,8 +46,8 @@ export default function MeetingChat({ messages, onSend }) {
                     rows={2}
                     className="mc-input"
                 />
-                <button className="mc-send-btn" onClick={send} disabled={!text.trim()}>➤</button>
+                <button className="mc-send" onClick={send} disabled={!text.trim()}>➤</button>
             </div>
-        </div>
+        </>
     );
 }

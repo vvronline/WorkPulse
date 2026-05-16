@@ -4,6 +4,7 @@ import { useMeeting } from '../MeetingContext';
 import { useAuth } from '../AuthContext';
 import { getMeeting } from '../api';
 import { useMeetingState } from './meeting/useMeetingState';
+import { useMeetingRecording } from './meeting/useMeetingRecording';
 import ParticipantTile from './meeting/ParticipantTile';
 import PresenterView from './meeting/PresenterView';
 import MeetingBottomBar from './meeting/MeetingBottomBar';
@@ -69,9 +70,19 @@ export default function MeetingRoom() {
     useEffect(() => {
         if (status === 'ended' || status === 'left') {
             ctxLeave();
-            navigate('/meetings');
+            navigate('/');
         }
     }, [status, ctxLeave, navigate]);
+
+    // Keyboard shortcuts (Alt+A = mute, Alt+V = video)
+    useEffect(() => {
+        const handler = (e) => {
+            if (e.altKey && e.key.toLowerCase() === 'a') { e.preventDefault(); toggleMute(); }
+            if (e.altKey && e.key.toLowerCase() === 'v') { e.preventDefault(); toggleVideo(); }
+        };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    }, [toggleMute, toggleVideo]);
 
     // Build tile list: local + remote participants
     const tiles = useMemo(() => {
@@ -105,6 +116,22 @@ export default function MeetingRoom() {
 
     const isHost = session?.meeting?.organizer_id === user?.id;
     const tileCount = tiles.length;
+
+    // Count raised hands (local + remote)
+    const raisedHandCount = useMemo(() => {
+        let count = raisedHand ? 1 : 0;
+        for (const [, p] of participants) { if (p.raisedHand) count++; }
+        return count;
+    }, [raisedHand, participants]);
+
+    // Meeting recording
+    const { recording, toggleRecording } = useMeetingRecording({
+        localStream,
+        screenStream,
+        participants,
+        presenterId,
+        localUserId: user?.id,
+    });
 
     const handleToggleChat = () => setActivePanel(p => p === 'chat' ? null : 'chat');
     const handleToggleParticipants = () => setActivePanel(p => p === 'participants' ? null : 'participants');
@@ -213,8 +240,12 @@ export default function MeetingRoom() {
                 videoOff={videoOff}
                 screenSharing={screenSharing}
                 raisedHand={raisedHand}
+                raisedHandCount={raisedHandCount}
                 activePanel={activePanel}
                 participantCount={tileCount}
+                meetingCode={session.code || code}
+                recording={recording}
+                onToggleRecording={toggleRecording}
                 onToggleMute={toggleMute}
                 onToggleVideo={toggleVideo}
                 onToggleScreenShare={toggleScreenShare}

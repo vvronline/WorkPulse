@@ -1,10 +1,10 @@
 import React, { useRef, useEffect, memo } from 'react';
+import { MicOff, Hand } from 'lucide-react';
 
 /**
  * VideoSDK-style participant tile.
  * Shows video when available, avatar initial when not.
- * Name overlay at bottom, mic/hand indicators.
- * No audio level visualization for performance.
+ * Name overlay at bottom, mic indicator. Raised hand at top-right.
  */
 const ParticipantTile = memo(function ParticipantTile({ participant, isLocal, quality, isMini }) {
     const videoRef = useRef(null);
@@ -40,18 +40,20 @@ const ParticipantTile = memo(function ParticipantTile({ participant, isLocal, qu
             {/* Hidden video for srcObject attachment when not shown */}
             {!showVideo && <video ref={videoRef} style={{ display: 'none' }} />}
 
+            {/* Raised hand badge — top right corner */}
+            {raisedHand && (
+                <span className="mr-tile-hand" title="Hand raised">
+                    <Hand size={16} />
+                </span>
+            )}
+
             {/* Name overlay */}
             <div className="mr-tile-overlay mr-tile-overlay--visible">
                 <span className="mr-tile-name">{displayName}</span>
                 <span className="mr-tile-icons">
                     {pMuted && (
                         <span className="mr-tile-icon mr-tile-icon--muted" title="Muted">
-                            🔇
-                        </span>
-                    )}
-                    {raisedHand && (
-                        <span className="mr-tile-icon mr-tile-icon--hand" title="Hand raised">
-                            ✋
+                            <MicOff size={12} />
                         </span>
                     )}
                 </span>
