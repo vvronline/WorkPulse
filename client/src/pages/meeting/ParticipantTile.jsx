@@ -1,100 +1,68 @@
-import React, { useRef, useEffect, useState } from 'react';
-import { Hand, MonitorUp, MicOff, Volume2 } from 'lucide-react';
-import './MeetingRoom.css';
+import React, { useRef, useEffect, memo } from 'react';
 
 /**
- * Single participant video tile in the meeting grid.
- * Now supports remote muted/videoOff state from track state sync.
+ * VideoSDK-style participant tile.
+ * Shows video when available, avatar initial when not.
+ * Name overlay at bottom, mic/hand indicators.
+ * No audio level visualization for performance.
  */
-export default function ParticipantTile({ participant, isLocal, localStream, screenStream, screenSharing, quality, userName, muted: localMuted, videoOff: localVideoOff }) {
+const ParticipantTile = memo(function ParticipantTile({ participant, isLocal, quality, isMini }) {
     const videoRef = useRef(null);
-    const [audioLevel, setAudioLevel] = useState(0);
-
-    const stream = isLocal
-        ? (screenSharing && screenStream ? screenStream : localStream)
-        : participant?.stream;
+    const { stream, name, muted: pMuted, videoOff: pVideoOff, raisedHand } = participant || {};
 
     useEffect(() => {
         if (!videoRef.current) return;
-        videoRef.current.srcObject = stream || null;
-        if (stream) videoRef.current.play().catch(() => {});
-    }, [stream]);
+        if (stream && !pVideoOff) {
+            videoRef.current.srcObject = stream;
+        } else {
+            videoRef.current.srcObject = null;
+        }
+    }, [stream, pVideoOff]);
 
-    // Audio level indicator (visual only)
-    useEffect(() => {
-        if (!stream) return;
-        const audioTracks = stream.getAudioTracks();
-        if (audioTracks.length === 0) return;
-        let ctx, analyser, source, animId;
-        try {
-            ctx = new AudioContext();
-            analyser = ctx.createAnalyser();
-            analyser.fftSize = 256;
-            source = ctx.createMediaStreamSource(stream);
-            source.connect(analyser);
-            const data = new Uint8Array(analyser.frequencyBinCount);
-            const tick = () => {
-                analyser.getByteFrequencyData(data);
-                const avg = data.reduce((a, b) => a + b, 0) / data.length;
-                setAudioLevel(Math.min(avg / 128, 1));
-                animId = requestAnimationFrame(tick);
-            };
-            tick();
-        } catch { /* ignore */ }
-        return () => {
-            cancelAnimationFrame(animId);
-            ctx?.close().catch(() => {});
-        };
-    }, [stream]);
-
-    const name = isLocal ? (userName || 'You') : (participant?.name || 'Participant');
-    const videoOff = isLocal
-        ? (localVideoOff !== undefined ? localVideoOff : !localStream?.getVideoTracks().some(t => t.enabled))
-        : (participant?.videoOff ?? !participant?.stream?.getVideoTracks().some(t => t.enabled));
-    const muted = isLocal
-        ? (localMuted !== undefined ? localMuted : !localStream?.getAudioTracks().some(t => t.enabled))
-        : (participant?.muted ?? false);
-    const raisedHand = isLocal ? participant?.raisedHand : participant?.raisedHand;
-    const isScreenSharing = !isLocal && participant?.screenSharing;
-
-    const qualityColor = { good: '#10b981', medium: '#f59e0b', poor: '#ef4444' };
-    const borderGlow = audioLevel > 0.15 && !muted ? `0 0 0 2px rgba(14, 165, 233, ${Math.min(audioLevel, 0.8)})` : 'none';
+    const showVideo = stream && !pVideoOff;
+    const initial = (name || '?').charAt(0).toUpperCase();
+    const displayName = isLocal ? `${name || 'You'} (You)` : (name || 'Participant');
 
     return (
-        <div className={`pt-tile ${isLocal ? 'pt-local' : ''}`} style={{ boxShadow: borderGlow }}>
-            {videoOff ? (
-                <div className="pt-avatar-wrap">
-                    <span className="pt-avatar">{name[0].toUpperCase()}</span>
-                </div>
-            ) : (
+        <div className={`mr-tile ${isLocal ? 'mr-tile--local' : ''}`}>
+            {showVideo ? (
                 <video
                     ref={videoRef}
                     autoPlay
                     playsInline
                     muted={isLocal}
-                    className={`pt-video ${isLocal && !screenSharing ? 'pt-mirror' : ''}`}
+                    style={isLocal ? { transform: 'scaleX(-1)' } : undefined}
                 />
+            ) : (
+                <div className="mr-tile-avatar">{initial}</div>
             )}
 
-            {raisedHand && (
-                <div className="pt-raised-hand" title="Hand raised">
-                    <Hand size={22} />
-                </div>
-            )}
+            {/* Hidden video for srcObject attachment when not shown */}
+            {!showVideo && <video ref={videoRef} style={{ display: 'none' }} />}
 
-            <div className="pt-overlay">
-                <div className="pt-name-row">
-                    {isScreenSharing && <span className="pt-screen-icon" title="Screen sharing"><MonitorUp size={14} /></span>}
-                    <span className="pt-name">{name}{isLocal ? ' (You)' : ''}</span>
-                    {muted && <span className="pt-muted-icon"><MicOff size={12} /></span>}
-                    {!muted && audioLevel > 0.1 && (
-                        <span className="pt-speaking-icon" title="Speaking"><Volume2 size={12} /></span>
+            {/* Name overlay */}
+            <div className="mr-tile-overlay mr-tile-overlay--visible">
+                <span className="mr-tile-name">{displayName}</span>
+                <span className="mr-tile-icons">
+                    {pMuted && (
+                        <span className="mr-tile-icon mr-tile-icon--muted" title="Muted">
+                            🔇
+                        </span>
                     )}
-                    {quality && (
-                        <span className="pt-quality-dot" style={{ background: qualityColor[quality] || '#0ea5e9' }} title={`Connection: ${quality}`} />
+                    {raisedHand && (
+                        <span className="mr-tile-icon mr-tile-icon--hand" title="Hand raised">
+                            ✋
+                        </span>
                     )}
-                </div>
+                </span>
             </div>
+
+            {/* Quality dot */}
+            {quality && !isMini && (
+                <span className={`mr-quality mr-quality--${quality}`} title={`Connection: ${quality}`} />
+            )}
         </div>
     );
-}
+});
+
+export default ParticipantTile;

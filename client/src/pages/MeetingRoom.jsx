@@ -1,8 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import { Phone, HandMetal, Check, ClipboardList, Users } from 'lucide-react';
-import { useParams, useLocation, useNavigate } from 'react-router-dom';
-import { useAuth } from '../AuthContext';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useMeeting } from '../MeetingContext';
+import { useAuth } from '../AuthContext';
 import { useMeetingState } from './meeting/useMeetingState';
 import ParticipantTile from './meeting/ParticipantTile';
 import PresenterView from './meeting/PresenterView';
@@ -11,132 +10,96 @@ import MeetingChat from './meeting/MeetingChat';
 import MeetingParticipants from './meeting/MeetingParticipants';
 import './meeting/MeetingRoom.css';
 
+/**
+ * Main meeting room page — VideoSDK-inspired full-viewport dark layout.
+ */
 export default function MeetingRoom() {
-    const { code } = useParams();
-    const { state: routeState } = useLocation();
     const navigate = useNavigate();
+    const { code } = useParams();
     const { user } = useAuth();
-    const { session, joinMeeting, leaveMeeting: ctxLeave, setLocalStream, localStreamRef, wsRef } = useMeeting();
-    const [copied, setCopied] = useState(false);
-    const [meetingTimer, setMeetingTimer] = useState(0);
-
-    const meeting = routeState?.meeting || session?.meeting;
-    const meetingId = meeting?.id;
-    const isOrganizer = meeting?.created_by === user?.id;
-    const isReturning = routeState?.returning || false;
-
-    // Register meeting session in global context on first mount (not on return)
-    useEffect(() => {
-        if (!meetingId) return;
-        // If already in a session for this meeting, skip
-        if (session?.meetingId === meetingId) return;
-        joinMeeting({
-            meetingId,
-            code,
-            meeting,
-            initialMuted: routeState?.initialMuted ?? false,
-            initialVideoOff: routeState?.initialVideoOff ?? false,
-        });
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [meetingId]);
+    const { session, wsRef, localStreamRef, leaveMeeting: ctxLeave } = useMeeting();
+    const ws = wsRef?.current;
 
     const {
         localStream, screenStream, muted, videoOff, screenSharing,
         participants, status, raisedHand, messages,
-        activePanel, setActivePanel,
-        connectionQualities, presenterId,
+        activePanel, setActivePanel, connectionQualities, presenterId,
         toggleMute, toggleVideo, toggleScreenShare, raiseHand,
         sendChatMessage, endMeeting, leaveMeeting, muteParticipant, addParticipant,
-        bgEffect, setBackgroundEffect, bgEffectError,
     } = useMeetingState({
-        meetingId,
-        ws: wsRef.current,
-        initialMuted: routeState?.initialMuted ?? false,
-        initialVideoOff: routeState?.initialVideoOff ?? false,
-        keepAliveOnUnmount: true,
-        existingStream: isReturning ? localStreamRef.current : null,
+        meetingId: session?.meetingId,
+        ws,
+        initialMuted: session?.initialMuted,
+        initialVideoOff: session?.initialVideoOff,
+        existingStream: localStreamRef?.current || null,
     });
 
-    // Store localStream in context so PiP can access it
+    // Timer
+    const [elapsed, setElapsed] = useState(0);
+    const timerRef = useRef(null);
     useEffect(() => {
-        if (localStream) setLocalStream(localStream);
-    }, [localStream, setLocalStream]);
+        timerRef.current = setInterval(() => setElapsed(e => e + 1), 1000);
+        return () => clearInterval(timerRef.current);
+    }, []);
+    const formatTime = (s) => {
+        const h = Math.floor(s / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        const sec = s % 60;
+        return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
+    };
 
-    // Meeting duration timer
+    // Navigate away on end/leave
     useEffect(() => {
-        if (status !== 'connected') return;
-        const interval = setInterval(() => setMeetingTimer(t => t + 1), 1000);
-        return () => clearInterval(interval);
-    }, [status]);
-
-    // On explicit leave or end, tear down the global session
-    useEffect(() => {
-        if (status === 'left' || status === 'ended') {
+        if (status === 'ended' || status === 'left') {
             ctxLeave();
+            navigate('/meetings');
         }
-    }, [status, ctxLeave]);
+    }, [status, ctxLeave, navigate]);
 
-    if (!meetingId) {
-        navigate(`/meeting/${code}`);
-        return null;
-    }
+    // Build tile list: local + remote participants
+    const tiles = useMemo(() => {
+        const list = [];
+        // Local tile
+        list.push({
+            key: 'local',
+            participant: {
+                userId: user?.id,
+                name: user?.full_name || user?.username || 'You',
+                stream: localStream,
+                muted,
+                videoOff,
+                raisedHand,
+            },
+            isLocal: true,
+        });
+        // Remote tiles
+        for (const [uid, p] of participants) {
+            list.push({ key: uid, participant: p, isLocal: false });
+        }
+        return list;
+    }, [user, localStream, muted, videoOff, raisedHand, participants]);
 
-    const allParticipants = [...participants.values()];
-    const totalCount = allParticipants.length + 1;
+    // Determine presenter
+    const presenterParticipant = presenterId === user?.id ? null : participants.get(presenterId);
+    const presenterStream = presenterId === user?.id ? screenStream : presenterParticipant?.stream;
+    const presenterName = presenterId === user?.id
+        ? (user?.full_name || 'You')
+        : (presenterParticipant?.name || 'Participant');
 
-    const presenterUser = presenterId
-        ? (presenterId === user?.id ? { name: 'You', stream: screenStream } : participants.get(presenterId))
-        : null;
+    const isHost = session?.meeting?.organizer_id === user?.id;
+    const tileCount = tiles.length;
 
-    const tilesInGrid = presenterId ? allParticipants.filter(p => p.userId !== presenterId) : allParticipants;
-    const gridCount = Math.min(presenterId ? tilesInGrid.length + 1 : totalCount, 9);
-    const gridDataCount = presenterId ? 'strip' : (gridCount <= 6 ? String(gridCount) : 'n');
+    const handleToggleChat = () => setActivePanel(p => p === 'chat' ? null : 'chat');
+    const handleToggleParticipants = () => setActivePanel(p => p === 'participants' ? null : 'participants');
 
     const handleLeave = () => { leaveMeeting(); };
     const handleEnd = () => { endMeeting(); };
 
-    const handleRejoin = () => {
-        navigate(`/meeting/${code}`, { state: { meeting } });
-    };
-
-    const copyMeetingId = () => {
-        navigator.clipboard.writeText(code).then(() => {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-        });
-    };
-
-    const formatTimer = (s) => {
-        const m = Math.floor(s / 60);
-        const sec = s % 60;
-        return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
-    };
-
-    // Waiting screen
-    if (status === 'joining' || status === 'connecting') {
+    if (!session) {
         return (
             <div className="mr-root">
-                <div className="mr-waiting">
-                    <div className="mr-waiting-spinner" />
-                    <h2>{status === 'joining' ? 'Joining meeting…' : 'Connecting to participants…'}</h2>
-                    <p>{meeting?.title || 'Meeting'}</p>
-                </div>
-            </div>
-        );
-    }
-
-    // Left / ended screen
-    if (status === 'left' || status === 'ended') {
-        return (
-            <div className="mr-root">
-                <div className="mr-leave-screen">
-                    <div className="mr-leave-icon">{status === 'ended' ? <Phone size={36} strokeWidth={1.5} /> : <HandMetal size={36} strokeWidth={1.5} />}</div>
-                    <h2>{status === 'ended' ? 'Meeting has ended' : 'You left the meeting'}</h2>
-                    {meetingTimer > 0 && <p className="mr-leave-duration">Duration: {formatTimer(meetingTimer)}</p>}
-                    <div className="mr-leave-actions">
-                        <button className="mr-rejoin-btn" onClick={handleRejoin}>Rejoin</button>
-                        <button className="mr-back-btn" onClick={() => navigate('/')}>Go to Dashboard</button>
-                    </div>
+                <div className="mr-status-overlay">
+                    <span className="mr-status-text">No active meeting session</span>
                 </div>
             </div>
         );
@@ -147,93 +110,111 @@ export default function MeetingRoom() {
             {/* Header */}
             <div className="mr-header">
                 <div className="mr-header-left">
-                    <span className="mr-header-title">{meeting?.title || 'Meeting'}</span>
-                    {meetingTimer > 0 && <span className="mr-header-timer">{formatTimer(meetingTimer)}</span>}
+                    <span className="mr-header-title">{session.meeting?.title || 'Meeting'}</span>
+                    <span
+                        className="mr-header-id"
+                        onClick={() => navigator.clipboard?.writeText(session.code || code)}
+                        title="Click to copy code"
+                    >
+                        {session.code || code}
+                    </span>
                 </div>
-                <div className="mr-header-info">
-                    <button className="mr-code-btn" onClick={copyMeetingId} title="Copy meeting code">
-                        <span className="mr-code">{code}</span>
-                        <span className="mr-copy-icon">{copied ? <Check size={14} /> : <ClipboardList size={14} />}</span>
-                    </button>
-                    <span><Users size={14} style={{marginRight:4,verticalAlign:'middle'}} />{totalCount}</span>
+                <div className="mr-header-right">
+                    <span className="mr-timer">{formatTime(elapsed)}</span>
                 </div>
             </div>
 
             {/* Body */}
             <div className="mr-body">
                 <div className="mr-main">
-                    {/* Presenter view when someone is screen-sharing */}
-                    {presenterId && presenterUser && (
-                        <PresenterView
-                            presenterStream={presenterUser.stream}
-                            presenterName={presenterUser.name || 'Participant'}
-                            isLocal={presenterId === user?.id}
-                            localStream={localStream}
-                        />
+                    {presenterId ? (
+                        /* Presenter layout */
+                        <div className="mr-presenter-layout">
+                            <div className="mr-presenter-main">
+                                <PresenterView
+                                    presenterStream={presenterStream}
+                                    presenterName={presenterName}
+                                />
+                            </div>
+                            <div className="mr-presenter-sidebar">
+                                {tiles.map(({ key, participant, isLocal }) => (
+                                    <ParticipantTile
+                                        key={key}
+                                        participant={participant}
+                                        isLocal={isLocal}
+                                        quality={connectionQualities.get(participant.userId)}
+                                        isMini
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    ) : (
+                        /* Grid layout */
+                        <div className="mr-grid" data-count={Math.min(tileCount, 6)}>
+                            {tiles.map(({ key, participant, isLocal }) => (
+                                <ParticipantTile
+                                    key={key}
+                                    participant={participant}
+                                    isLocal={isLocal}
+                                    quality={connectionQualities.get(participant.userId)}
+                                />
+                            ))}
+                        </div>
                     )}
-
-                    {/* Participant grid */}
-                    <div className={`mr-grid ${presenterId ? 'mr-grid-strip' : ''}`} data-count={gridDataCount}>
-                        <ParticipantTile
-                            isLocal
-                            participant={{ raisedHand }}
-                            localStream={localStream}
-                            screenStream={screenStream}
-                            screenSharing={screenSharing && !presenterId}
-                            userName={user?.full_name || user?.username}
-                            muted={muted}
-                            videoOff={videoOff}
-                        />
-                        {tilesInGrid.map(p => (
-                            <ParticipantTile
-                                key={p.userId}
-                                participant={p}
-                                quality={connectionQualities.get(p.userId)}
-                            />
-                        ))}
-                    </div>
-
-                    {/* Bottom bar */}
-                    <MeetingBottomBar
-                        muted={muted}
-                        videoOff={videoOff}
-                        screenSharing={screenSharing}
-                        raisedHand={raisedHand}
-                        onToggleMute={toggleMute}
-                        onToggleVideo={toggleVideo}
-                        onScreenShare={toggleScreenShare}
-                        onRaiseHand={raiseHand}
-                        onToggleChat={() => setActivePanel(p => p === 'chat' ? null : 'chat')}
-                        onToggleParticipants={() => setActivePanel(p => p === 'participants' ? null : 'participants')}
-                        onLeave={handleLeave}
-                        onEnd={handleEnd}
-                        isOrganizer={isOrganizer}
-                        participantCount={totalCount}
-                        activePanel={activePanel}
-                        bgEffect={bgEffect}
-                        onBgEffectChange={setBackgroundEffect}
-                        bgEffectError={bgEffectError}
-                    />
                 </div>
 
                 {/* Sidebar */}
                 {activePanel && (
-                    <div className="mr-side">
-                        {activePanel === 'chat' && (
-                            <MeetingChat messages={messages} onSend={sendChatMessage} />
-                        )}
-                        {activePanel === 'participants' && (
-                            <MeetingParticipants
-                                participants={participants}
-                                localUserId={user?.id}
-                                isOrganizer={isOrganizer}
-                                onMute={muteParticipant}
-                                onAdd={addParticipant}
-                            />
-                        )}
+                    <div className="mr-sidebar">
+                        <div className="mr-sidebar-header">
+                            <span className="mr-sidebar-title">
+                                {activePanel === 'chat' ? 'Chat' : 'Participants'}
+                            </span>
+                            <button className="mr-sidebar-close" onClick={() => setActivePanel(null)}>✕</button>
+                        </div>
+                        <div className="mr-sidebar-body">
+                            {activePanel === 'chat' && (
+                                <MeetingChat messages={messages} onSend={sendChatMessage} />
+                            )}
+                            {activePanel === 'participants' && (
+                                <MeetingParticipants
+                                    participants={participants}
+                                    localUserId={user?.id}
+                                    isOrganizer={isHost}
+                                    onMute={muteParticipant}
+                                    onAdd={addParticipant}
+                                />
+                            )}
+                        </div>
                     </div>
                 )}
             </div>
+
+            {/* Bottom bar */}
+            <MeetingBottomBar
+                muted={muted}
+                videoOff={videoOff}
+                screenSharing={screenSharing}
+                raisedHand={raisedHand}
+                activePanel={activePanel}
+                participantCount={tileCount}
+                onToggleMute={toggleMute}
+                onToggleVideo={toggleVideo}
+                onToggleScreenShare={toggleScreenShare}
+                onRaiseHand={raiseHand}
+                onToggleChat={handleToggleChat}
+                onToggleParticipants={handleToggleParticipants}
+                onLeaveMeeting={handleLeave}
+                onEndMeeting={handleEnd}
+                isHost={isHost}
+            />
+
+            {/* Joining overlay */}
+            {status === 'joining' && (
+                <div className="mr-status-overlay">
+                    <span className="mr-status-text">Joining meeting…</span>
+                </div>
+            )}
         </div>
     );
 }

@@ -1,45 +1,30 @@
 import React, { useRef, useEffect } from 'react';
-import { MonitorUp } from 'lucide-react';
-import './MeetingRoom.css';
 
 /**
- * Full-screen presenter view when someone is sharing their screen.
- * Shows the screen share as the main content with a small camera inset.
+ * PresenterView — shows the screen share in a large tile.
  */
-export default function PresenterView({ presenterStream, presenterName, isLocal, localStream }) {
-    const screenRef = useRef(null);
-    const camRef = useRef(null);
+export default function PresenterView({ presenterStream, presenterName }) {
+    const videoRef = useRef(null);
 
     useEffect(() => {
-        if (!screenRef.current) return;
-        screenRef.current.srcObject = presenterStream || null;
-        if (presenterStream) screenRef.current.play().catch(() => {});
+        if (videoRef.current && presenterStream) {
+            videoRef.current.srcObject = presenterStream;
+        }
     }, [presenterStream]);
 
-    useEffect(() => {
-        if (!camRef.current || !isLocal) return;
-        camRef.current.srcObject = localStream || null;
-        if (localStream) camRef.current.play().catch(() => {});
-    }, [localStream, isLocal]);
+    if (!presenterStream) return null;
 
     return (
-        <div className="pv-root">
-            <div className="pv-label">
-                <span className="pv-icon"><MonitorUp size={18} /></span>
-                <span>{presenterName || 'Participant'} is presenting</span>
+        <div className="mr-tile" style={{ aspectRatio: 'auto', width: '100%', height: '100%' }}>
+            <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: 'var(--mr-radius)' }}
+            />
+            <div className="mr-tile-overlay mr-tile-overlay--visible">
+                <span className="mr-tile-name">📺 {presenterName || 'Screen Share'}</span>
             </div>
-            <div className="pv-screen-wrap">
-                {presenterStream ? (
-                    <video ref={screenRef} autoPlay playsInline className="pv-screen" />
-                ) : (
-                    <div className="pv-placeholder">Waiting for screen share…</div>
-                )}
-            </div>
-            {isLocal && localStream && (
-                <div className="pv-cam-inset">
-                    <video ref={camRef} autoPlay playsInline muted className="pv-cam-video" />
-                </div>
-            )}
         </div>
     );
 }
