@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import useWebSocket from '../../hooks/useWebSocket';
 import s from './GlobalMeetingNotification.module.css';
 
 /**
  * Teams-like floating notification card that appears when a meeting starts.
  * Shows meeting title, organizer name, and join/dismiss buttons.
- * Listens for 'meeting_started' custom events dispatched by NotificationBell.
+ * Listens for 'meeting_started' WS events directly AND via custom DOM events
+ * dispatched by NotificationBell (redundancy for reliability).
  * Auto-dismisses after 60 seconds.
  */
 export default function GlobalMeetingNotification() {
@@ -13,7 +15,14 @@ export default function GlobalMeetingNotification() {
     const navigate = useNavigate();
     const autoDismissRef = useRef(null);
 
-    // Listen for meeting_started custom events from NotificationBell WS
+    // Direct WS listener — works regardless of whether Navbar/NotificationBell is mounted
+    useWebSocket(useCallback((msg) => {
+        if (msg.type === 'meeting_started' && msg.data) {
+            setNotification(msg.data);
+        }
+    }, []));
+
+    // Also listen for meeting_started custom events from NotificationBell (redundancy)
     useEffect(() => {
         const handler = (e) => {
             if (e.detail) {

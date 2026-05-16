@@ -170,7 +170,8 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 }
                 const out = processorRef.current._outStream;
                 const pt = out?.getVideoTracks?.()[0];
-                if (pt) return pt;
+                if (pt && pt.readyState === 'live') return pt;
+                // Output track ended — fall through to fresh init
             } catch { /* fall through to fresh init */ }
         }
         try {
@@ -371,6 +372,26 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         if (localStreamRef.current) {
             localStreamRef.current.getTracks().forEach(track => pc.addTrack(track, localStreamRef.current));
         }
+
+        // Apply encoding parameters to reduce lag (cap bitrate, prefer smooth framerate)
+        setTimeout(() => {
+            for (const sender of pc.getSenders()) {
+                if (!sender.track) continue;
+                try {
+                    const params = sender.getParameters();
+                    if (!params.encodings || params.encodings.length === 0) {
+                        params.encodings = [{}];
+                    }
+                    if (sender.track.kind === 'video') {
+                        params.encodings[0].maxBitrate = 1_200_000; // 1.2 Mbps
+                        params.degradationPreference = 'maintain-framerate';
+                    } else if (sender.track.kind === 'audio') {
+                        params.encodings[0].maxBitrate = 64_000; // 64 kbps
+                    }
+                    sender.setParameters(params).catch(() => { });
+                } catch { /* ignore unsupported browsers */ }
+            }
+        }, 0);
 
         // Handle remote tracks
         const remoteStream = new MediaStream();
@@ -634,9 +655,23 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 break;
             }
             case 'meeting_ended': {
-                setStatus('ended');
-                pcsRef.current.forEach(pc => pc.close());
+                // Stop all media tracks and close peer connections
+                teardownProcessor();
+                if (screenStreamRef.current) {
+                    screenStreamRef.current.getTracks().forEach(t => t.stop());
+                    screenStreamRef.current = null;
+                }
+                if (localStreamRef.current) {
+                    localStreamRef.current.getTracks().forEach(t => t.stop());
+                    localStreamRef.current = null;
+                }
+                pcsRef.current.forEach(pc => { try { pc.close(); } catch { } });
                 pcsRef.current.clear();
+                if (qualityTimerRef.current) {
+                    clearInterval(qualityTimerRef.current);
+                    qualityTimerRef.current = null;
+                }
+                setStatus('ended');
                 break;
             }
             case 'meeting_muted': {
@@ -907,15 +942,43 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         wsSend('meeting_chat', { meetingId, text: trimmed });
     }, [meetingId, wsSend, user]);
 
+    // Full media/peer cleanup — called by both endMeeting and leaveMeeting.
+    const cleanupMedia = useCallback(() => {
+        // Stop background processor + raw camera track
+        teardownProcessor();
+        // Stop screen share
+        if (screenStreamRef.current) {
+            screenStreamRef.current.getTracks().forEach(t => t.stop());
+            screenStreamRef.current = null;
+            setScreenStream(null);
+        }
+        // Stop all local media tracks (camera + microphone)
+        if (localStreamRef.current) {
+            localStreamRef.current.getTracks().forEach(t => t.stop());
+            localStreamRef.current = null;
+            setLocalStream(null);
+        }
+        // Close all peer connections
+        pcsRef.current.forEach(pc => { try { pc.close(); } catch { } });
+        pcsRef.current.clear();
+        // Stop quality monitoring
+        if (qualityTimerRef.current) {
+            clearInterval(qualityTimerRef.current);
+            qualityTimerRef.current = null;
+        }
+    }, [teardownProcessor]);
+
     const endMeeting = useCallback(() => {
         wsSend('meeting_end', { meetingId });
+        cleanupMedia();
         setStatus('ended');
-    }, [meetingId, wsSend]);
+    }, [meetingId, wsSend, cleanupMedia]);
 
     const leaveMeeting = useCallback(() => {
         wsSend('meeting_leave', { meetingId });
+        cleanupMedia();
         setStatus('left');
-    }, [meetingId, wsSend]);
+    }, [meetingId, wsSend, cleanupMedia]);
 
     const muteParticipant = useCallback((userId) => {
         wsSend('meeting_mute_participant', { meetingId, targetUserId: userId });

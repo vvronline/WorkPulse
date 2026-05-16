@@ -107,7 +107,9 @@ export class BackgroundProcessor {
         const settings = inputTrack.getSettings ? inputTrack.getSettings() : {};
         this.canvas.width = settings.width || 640;
         this.canvas.height = settings.height || 480;
-        this.ctx = this.canvas.getContext('2d', { desynchronized: true });
+        // NOTE: Do NOT use { desynchronized: true } — it prevents captureStream()
+        // from picking up canvas updates in Electron's Chromium.
+        this.ctx = this.canvas.getContext('2d');
         this.bgImage = null;
         this.lastBgSrc = null;
         this.segmenter = null;
