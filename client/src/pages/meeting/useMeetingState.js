@@ -474,7 +474,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                     for (const [peerId, pc] of pcsRef.current) {
                         const vs = pc.getSenders().find(s => s.track?.kind === 'video');
                         if (vs) {
-                            await vs.replaceTrack(vt).catch(() => {});
+                            await vs.replaceTrack(vt).catch(() => { });
                         } else {
                             pc.addTrack(vt, localStreamRef.current);
                             // Renegotiate so remote peer gets the new track
@@ -496,7 +496,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                             for (const [peerId, pc] of pcsRef.current) {
                                 const vs = pc.getSenders().find(s => s.track?.kind === 'video');
                                 if (vs) {
-                                    await vs.replaceTrack(nt).catch(() => {});
+                                    await vs.replaceTrack(nt).catch(() => { });
                                 } else {
                                     pc.addTrack(nt, localStreamRef.current);
                                     // Renegotiate so remote peer gets the new track
