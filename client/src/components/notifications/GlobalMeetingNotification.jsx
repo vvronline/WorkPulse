@@ -14,29 +14,41 @@ export default function GlobalMeetingNotification() {
     const [notification, setNotification] = useState(null);
     const navigate = useNavigate();
     const autoDismissRef = useRef(null);
+    const shownMeetingRef = useRef(null); // dedup: track which meetingId is currently shown
+
+    const showNotification = useCallback((data) => {
+        if (!data || !data.meetingId) return;
+        // Deduplicate: if already showing this meeting's card, skip
+        if (shownMeetingRef.current === data.meetingId) return;
+        shownMeetingRef.current = data.meetingId;
+        setNotification(data);
+    }, []);
 
     // Direct WS listener — works regardless of whether Navbar/NotificationBell is mounted
     useWebSocket(useCallback((msg) => {
         if (msg.type === 'meeting_started' && msg.data) {
-            setNotification(msg.data);
+            showNotification(msg.data);
         }
-    }, []));
+    }, [showNotification]));
 
-    // Also listen for meeting_started custom events from NotificationBell (redundancy)
+    // Also listen for meeting_started custom events from CallContext/NotificationBell
     useEffect(() => {
         const handler = (e) => {
             if (e.detail) {
-                setNotification(e.detail);
+                showNotification(e.detail);
             }
         };
         window.addEventListener('meeting_started', handler);
         return () => window.removeEventListener('meeting_started', handler);
-    }, []);
+    }, [showNotification]);
 
     // Auto-dismiss after 60 seconds
     useEffect(() => {
         if (!notification) return;
-        autoDismissRef.current = setTimeout(() => setNotification(null), 60000);
+        autoDismissRef.current = setTimeout(() => {
+            shownMeetingRef.current = null;
+            setNotification(null);
+        }, 60000);
         return () => clearTimeout(autoDismissRef.current);
     }, [notification]);
 
@@ -57,11 +69,13 @@ export default function GlobalMeetingNotification() {
 
     const handleJoin = () => {
         const code = notification.meetingCode;
+        shownMeetingRef.current = null;
         setNotification(null);
         navigate(`/meeting/${code}`);
     };
 
     const handleDismiss = () => {
+        shownMeetingRef.current = null;
         setNotification(null);
     };
 

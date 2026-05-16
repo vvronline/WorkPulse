@@ -130,7 +130,11 @@ export class BackgroundProcessor {
             await this._initVideo();
             await this._initSegmenter();
             this._loadBackgroundIfNeeded();
-            this._outStream = this.canvas.captureStream(this.fps);
+            // Use captureStream(0) for explicit frame control — we call
+            // requestFrame() after every draw in _onSegResults. This is more
+            // reliable in Electron than timer-based captureStream(fps) which
+            // can miss canvas updates when the element is offscreen.
+            this._outStream = this.canvas.captureStream(0);
             this.running = true;
             this._loop();
             // Listen for visibility changes so the render loop continues in
@@ -349,6 +353,17 @@ export class BackgroundProcessor {
             ctx.drawImage(results.image, 0, 0, width, height);
         }
         ctx.restore();
+
+        // Explicitly request a frame capture from the canvas stream. With
+        // captureStream(0), frames are only produced when requestFrame() is
+        // called. This guarantees every composited frame is delivered to
+        // WebRTC peers even when the canvas element is offscreen (Electron).
+        try {
+            const track = this._outStream?.getVideoTracks?.()?.[0];
+            if (track && track.readyState === 'live' && track.requestFrame) {
+                track.requestFrame();
+            }
+        } catch { /* ignore — non-critical */ }
     }
 }
 

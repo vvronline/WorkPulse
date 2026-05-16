@@ -30,6 +30,13 @@ export function CallProvider({ children }) {
   }, [globalIncomingCall, pendingAcceptedCall]);
 
   const onWsMessage = useCallback((msg) => {
+    // Relay meeting_started to GlobalMeetingNotification via DOM event.
+    // This provides a reliable delivery path since CallContext's WS is
+    // always connected when the user is authenticated.
+    if (msg.type === 'meeting_started' && msg.data) {
+      window.dispatchEvent(new CustomEvent('meeting_started', { detail: msg.data }));
+    }
+
     // Only handle call events when NOT on the chat page
     if (chatPageActiveRef.current) return;
     const d = msg.data;

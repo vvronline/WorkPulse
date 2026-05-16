@@ -991,7 +991,7 @@ function deliverLocal(tenantId, userId, type, data) {
     const ck = clientKey(tenantId, userId);
     const set = clients.get(ck);
     if (!set) {
-        if (type === 'call_signal' || type === 'call_accepted' || type === 'call_incoming' || type === 'meeting_signal' || type === 'meeting_participant_joined') {
+        if (type === 'call_signal' || type === 'call_accepted' || type === 'call_incoming' || type === 'meeting_signal' || type === 'meeting_participant_joined' || type === 'meeting_started') {
             logger.warn({ tenantId, userId, type, clientKey: ck, totalKeys: clients.size }, 'deliverLocal: no connections found for user');
         }
         return;
@@ -1001,7 +1001,7 @@ function deliverLocal(tenantId, userId, type, data) {
     for (const ws of set) {
         if (ws.readyState === 1) { ws.send(msg); delivered++; }
     }
-    if (delivered === 0 && (type === 'call_signal' || type === 'call_accepted' || type === 'call_incoming' || type === 'meeting_signal' || type === 'meeting_participant_joined')) {
+    if (delivered === 0 && (type === 'call_signal' || type === 'call_accepted' || type === 'call_incoming' || type === 'meeting_signal' || type === 'meeting_participant_joined' || type === 'meeting_started')) {
         logger.warn({ tenantId, userId, type, clientKey: ck, connections: set.size }, 'deliverLocal: user has connections but none are open');
     }
 }

@@ -157,23 +157,12 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         if (!isBackgroundEffectsSupported()) {
             return rawTrack;
         }
-        // Reuse existing processor if it's already running.
-        if (processorRef.current) {
-            try {
-                processorRef.current.setEffect(effect);
-                if (rawCameraTrackRef.current && rawCameraTrackRef.current !== rawTrack) {
-                    await processorRef.current.replaceInputTrack(rawTrack);
-                    if (rawCameraTrackRef.current && rawCameraTrackRef.current !== rawTrack) {
-                        try { rawCameraTrackRef.current.stop(); } catch { /* ignore */ }
-                    }
-                    rawCameraTrackRef.current = rawTrack;
-                }
-                const out = processorRef.current._outStream;
-                const pt = out?.getVideoTracks?.()[0];
-                if (pt && pt.readyState === 'live') return pt;
-                // Output track ended — fall through to fresh init
-            } catch { /* fall through to fresh init */ }
-        }
+        // Always tear down and rebuild the processor when the effect changes.
+        // Reusing the same processor + captureStream across effect changes is
+        // unreliable in Electron: the output track can silently stop producing
+        // frames that reflect the new effect. Rebuilding guarantees a fresh
+        // canvas → captureStream pipeline every time.
+        teardownProcessor();
         try {
             const proc = new BackgroundProcessor({ inputTrack: rawTrack, effect });
             const stream = await proc.start();
@@ -184,8 +173,6 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         } catch (err) {
             const msg = err?.message || String(err);
             console.warn('[meeting] background processor failed, falling back to raw track:', msg);
-            // Surface a friendly error to the picker UI. The detailed message
-            // is in the console for support diagnosis.
             if (/wasm|CompileError|unsafe-eval|CSP|Content Security/i.test(msg)) {
                 setBgEffectError("Couldn't load background effects engine. Your browser blocked WebAssembly — make sure you're on HTTPS and the latest Chrome/Edge/Firefox.");
             } else if (/load failed|network|fetch/i.test(msg)) {
