@@ -4,10 +4,12 @@
  *
  * Design choices:
  *
- * 1. We load MediaPipe Selfie Segmentation lazily from a CDN at runtime so we
- *    don't bloat the Vite bundle (the model + WASM is ~3 MB). The CDN host
- *    `cdn.jsdelivr.net` is already in the existing CSP defaults Helmet ships
- *    with, and it's the canonical host MediaPipe ships its WASM/model from.
+ * 1. We ship MediaPipe Selfie Segmentation as a static asset under
+ *    `client/public/mediapipe/selfie_segmentation/` (copied from
+ *    node_modules). Loading from a same-origin URL means no CSP exemption is
+ *    needed (works in Electron with the strict CSP), no CDN roundtrip, and
+ *    full offline support. The model + WASM is ~3 MB but only the loader
+ *    script (~45 KB) is fetched eagerly; WASM/model load on first use.
  *
  * 2. The processor is a class, not a hook, so it can live outside React's
  *    render lifecycle and survive the camera track being swapped (e.g. when
@@ -30,8 +32,16 @@
  *   { type: 'image', src: string }            // any URL the browser can load
  */
 
-const MP_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js';
-const MP_BASE_PATH = 'https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/';
+// MediaPipe is shipped locally under /mediapipe/selfie_segmentation/ (copied
+// from node_modules at build time — see client/public/mediapipe/). Loading
+// from a same-origin URL means:
+//   • no CSP exemption needed (works in Electron with the strict CSP);
+//   • no CDN/network roundtrip → instant blur on first toggle;
+//   • works fully offline once the desktop app is installed.
+// `import.meta.env.BASE_URL` honours Vite's `--base` so the path is correct
+// in both `workpulse://app/` (Electron) and any sub-path web deployment.
+const MP_BASE_PATH = `${import.meta.env.BASE_URL || '/'}mediapipe/selfie_segmentation/`;
+const MP_SCRIPT_URL = `${MP_BASE_PATH}selfie_segmentation.js`;
 
 let scriptPromise = null;
 function loadMediaPipeScript() {
@@ -48,7 +58,9 @@ function loadMediaPipeScript() {
         const s = document.createElement('script');
         s.src = MP_SCRIPT_URL;
         s.async = true;
-        s.crossOrigin = 'anonymous';
+        // Same-origin load — no `crossOrigin` attribute needed and adding
+        // it would actually break the load under workpulse:// (Electron),
+        // which doesn't emit CORS headers for our protocol handler.
         s.dataset.mpSelfie = '1';
         s.onload = () => resolve();
         s.onerror = () => {

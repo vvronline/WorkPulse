@@ -4,17 +4,21 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "predev": "node scripts/copy-mediapipe.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/copy-mediapipe.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "postinstall": "node scripts/copy-mediapipe.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "@hocuspocus/provider": "^4.0.0",
+    "@mediapipe/selfie_segmentation": "^0.1.1675465747",
     "axios": "^1.13.5",
     "chart.js": "^4.5.1",
     "dompurify": "^3.3.1",

@@ -197,17 +197,16 @@ app.whenReady().then(async () => {
                     "default-src 'self' workpulse://app; " +
                     // 'wasm-unsafe-eval' lets MediaPipe Selfie Segmentation
                     // compile its WebAssembly module (used by background
-                    // blur/virtual backgrounds). cdn.jsdelivr.net is the
-                    // canonical CDN MediaPipe ships its loader script from.
-                    "script-src 'self' workpulse://app 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; " +
+                    // blur/virtual backgrounds). MediaPipe is bundled as a
+                    // same-origin asset under /mediapipe/ so no CDN is
+                    // needed in script-src/connect-src.
+                    "script-src 'self' workpulse://app 'unsafe-inline' 'wasm-unsafe-eval'; " +
                     "style-src 'self' workpulse://app 'unsafe-inline'; " +
-                    // connect-src must include cdn.jsdelivr.net so the
-                    // MediaPipe loader can fetch the .wasm and .tflite
-                    // model files at runtime.
-                    `connect-src 'self' workpulse://app ${RAILWAY_URL} wss://${new URL(RAILWAY_URL).host} https://embed.diagrams.net https://cdn.jsdelivr.net; ` +
+                    `connect-src 'self' workpulse://app ${RAILWAY_URL} wss://${new URL(RAILWAY_URL).host} https://embed.diagrams.net; ` +
                     "img-src 'self' workpulse://app data: blob: https://embed.diagrams.net; " +
                     "media-src 'self' workpulse://app blob:; " +
                     "font-src 'self' workpulse://app; " +
+                    // MediaPipe spawns helper workers from blob: URLs.
                     "worker-src 'self' workpulse://app blob:; " +
                     "frame-src https://embed.diagrams.net; " +
                     "object-src 'none';"

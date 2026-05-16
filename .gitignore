@@ -6,6 +6,10 @@ node_modules/
 server-log.txt
 server-output.log
 client/dist/
+# Generated at build time by client/scripts/copy-mediapipe.mjs from
+# node_modules/@mediapipe/selfie_segmentation. Don't commit the ~12 MB
+# of WASM/model binaries — npm is the source of truth.
+client/public/mediapipe/
 server/uploads/
 server/data/
 data/
