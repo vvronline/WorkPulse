@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { useWorkState } from '../WorkStateContext';
 import { getTaskSummary, getCalendarEvents, getActiveAnnouncements } from '../api';
@@ -11,6 +12,7 @@ import PendingApprovalsCard from '../components/dashboard/PendingApprovalsCard';
 import SprintProgressCard from '../components/dashboard/SprintProgressCard';
 import WorkTimerCard from '../components/dashboard/WorkTimerCard';
 import { useEventReminder } from '../hooks/useEventReminder';
+import useWebSocket from '../hooks/useWebSocket';
 import { ROLE_LEVEL } from '../constants';
 import s from './Dashboard.module.css';
 
@@ -75,6 +77,34 @@ export default function Dashboard() {
     fetchData(controller.signal);
     return () => controller.abort();
   }, [fetchData]);
+
+  // Refetch events when a calendar_refresh WS event is received (new event
+  // created, updated, or deleted — including from another tab/device).
+  const refreshEvents = useCallback(() => {
+    const now = new Date();
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    const dayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString();
+    const tomorrowEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2).toISOString();
+    getCalendarEvents(dayStart, dayEnd).then(r => setTodayEvents(r.data || [])).catch(() => {});
+    getCalendarEvents(dayEnd, tomorrowEnd).then(r => setTomorrowEvents(r.data || [])).catch(() => {});
+  }, []);
+
+  useWebSocket(useCallback((msg) => {
+    if (msg.type === 'calendar_refresh' || msg.type === 'meeting_updated' || msg.type === 'meeting_cancelled') {
+      refreshEvents();
+    }
+  }, [refreshEvents]));
+
+  // Refetch events when Dashboard becomes visible again (KeepAlive hides it
+  // with display:none while on other pages — data can go stale).
+  const { pathname } = useLocation();
+  const prevPathRef = useRef(pathname);
+  useEffect(() => {
+    if (pathname === '/' && prevPathRef.current !== '/') {
+      refreshEvents();
+    }
+    prevPathRef.current = pathname;
+  }, [pathname, refreshEvents]);
 
   if (loading) return <DashboardSkeleton />;
 

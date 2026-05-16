@@ -422,6 +422,11 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             if (pc.connectionState === 'connected') {
                 setStatus('connected');
                 iceRestartCountsRef.current.delete(remoteUserId);
+                // Clear any pending disconnect timer
+                if (pc._disconnectTimer) {
+                    clearTimeout(pc._disconnectTimer);
+                    pc._disconnectTimer = null;
+                }
                 setParticipants(prev => {
                     const next = new Map(prev);
                     const p = next.get(remoteUserId);
@@ -445,12 +450,22 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                     setTimeout(() => createPeerConnection(remoteUserId, true), 500);
                 }
             } else if (pc.connectionState === 'disconnected') {
-                setParticipants(prev => {
-                    const next = new Map(prev);
-                    const p = next.get(remoteUserId);
-                    if (p) next.set(remoteUserId, { ...p, stream: null });
-                    return next;
-                });
+                // Don't null out the stream immediately — 'disconnected' is
+                // a transient state that often recovers on its own (network
+                // blip, mobile sleep, WiFi roam). Only clear after a timeout
+                // if the connection doesn't recover.
+                const disconnectTimer = setTimeout(() => {
+                    if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+                        setParticipants(prev => {
+                            const next = new Map(prev);
+                            const p = next.get(remoteUserId);
+                            if (p) next.set(remoteUserId, { ...p, stream: null });
+                            return next;
+                        });
+                    }
+                }, 5000);
+                // Store the timer so we can clear it if connection recovers
+                pc._disconnectTimer = disconnectTimer;
             }
         };
 

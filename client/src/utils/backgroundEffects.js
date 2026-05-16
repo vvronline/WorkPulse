@@ -131,6 +131,9 @@ export class BackgroundProcessor {
             this._outStream = this.canvas.captureStream(this.fps);
             this.running = true;
             this._loop();
+            // Listen for visibility changes so the render loop continues in
+            // Electron when the window is hidden/minimised.
+            document.addEventListener('visibilitychange', this._onVisibilityChange);
             return this._outStream;
         } catch (err) {
             this.onError(err);
@@ -142,6 +145,11 @@ export class BackgroundProcessor {
     setEffect(effect) {
         this.effect = effect || { type: 'none' };
         this._loadBackgroundIfNeeded();
+        // Ensure the render loop is still alive — in Electron, rAF can stop
+        // when the window loses visibility. Restart if needed.
+        if (this.running && !this._rafHandle) {
+            this._loop();
+        }
     }
 
     /**
@@ -164,6 +172,8 @@ export class BackgroundProcessor {
         this.running = false;
         if (this._rafHandle) cancelAnimationFrame(this._rafHandle);
         this._rafHandle = null;
+        this._stopFallbackLoop();
+        document.removeEventListener('visibilitychange', this._onVisibilityChange);
         if (this.segmenter) {
             try { this.segmenter.close(); } catch { /* ignore */ }
             this.segmenter = null;
@@ -202,7 +212,7 @@ export class BackgroundProcessor {
         });
         this.segmenter.setOptions({
             modelSelection: 1, // 1 = landscape, more accurate; 0 = general (faster)
-            selfieMode: true,
+            selfieMode: false,
         });
         this.segmenter.onResults((results) => this._onSegResults(results));
         // Warm-up: run one inference so first real frame doesn't stutter AND
@@ -243,7 +253,11 @@ export class BackgroundProcessor {
         if (this.effect.src === this.lastBgSrc && this.bgImage) return;
         this.lastBgSrc = this.effect.src;
         const img = new Image();
-        img.crossOrigin = 'anonymous';
+        // Only set crossOrigin for non-data URLs; data URLs in Electron's
+        // custom protocol can fail with crossOrigin='anonymous' set.
+        if (!this.effect.src.startsWith('data:')) {
+            img.crossOrigin = 'anonymous';
+        }
         img.onload = () => { this.bgImage = img; };
         img.onerror = () => { this.bgImage = null; };
         img.src = this.effect.src;
@@ -265,6 +279,40 @@ export class BackgroundProcessor {
             }
         }
         this._rafHandle = requestAnimationFrame(this._loop);
+    };
+
+    // Fallback loop using setInterval for when requestAnimationFrame is
+    // throttled (Electron background, minimised window, etc.)
+    _startFallbackLoop() {
+        if (this._fallbackInterval) return;
+        this._fallbackInterval = setInterval(() => {
+            if (!this.running) { this._stopFallbackLoop(); return; }
+            if (this.segmenter && this.video.readyState >= 2 && !this._processing) {
+                this._processing = true;
+                this.segmenter.send({ image: this.video })
+                    .catch(() => { })
+                    .finally(() => { this._processing = false; });
+            }
+        }, 1000 / this.fps);
+    }
+
+    _stopFallbackLoop() {
+        if (this._fallbackInterval) {
+            clearInterval(this._fallbackInterval);
+            this._fallbackInterval = null;
+        }
+    }
+
+    _onVisibilityChange = () => {
+        if (!this.running) return;
+        if (document.hidden) {
+            // Page hidden — rAF stops; use fallback interval
+            this._startFallbackLoop();
+        } else {
+            // Page visible — rAF resumes; stop fallback
+            this._stopFallbackLoop();
+            if (!this._rafHandle) this._loop();
+        }
     };
 
     _onSegResults(results) {

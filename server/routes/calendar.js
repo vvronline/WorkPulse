@@ -83,6 +83,9 @@ router.post('/', async (req, res) => {
             [req.userId, req.userOrgId || null, title.trim(), description || null, start_time, end_time, all_day || false, color || '#6366f1', task_id || null, meeting_id || null]
         );
 
+        // Notify the creating user so other open tabs / Dashboard refresh
+        sendToUser(req.tenantId, req.userId, 'calendar_refresh', { eventId: result.rows[0].id });
+
         // If linked to a meeting, create events for other participants
         if (meeting_id) {
             const otherParticipants = (await req.db.query(
@@ -101,6 +104,8 @@ router.post('/', async (req, res) => {
                          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
                         [p.user_id, req.userOrgId || null, title.trim(), description || null, start_time, end_time, all_day || false, color || '#6366f1', meeting_id]
                     );
+                    // Notify participant so their Dashboard / Calendar refreshes
+                    sendToUser(req.tenantId, p.user_id, 'calendar_refresh', { eventId: result.rows[0].id });
                 }
             }
         }
