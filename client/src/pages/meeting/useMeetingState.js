@@ -162,7 +162,24 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         // unreliable in Electron: the output track can silently stop producing
         // frames that reflect the new effect. Rebuilding guarantees a fresh
         // canvas → captureStream pipeline every time.
-        teardownProcessor();
+        //
+        // IMPORTANT: We must NOT call `teardownProcessor()` here, because it
+        // also stops `rawCameraTrackRef.current` — and that's usually the very
+        // same track we're about to feed into the new processor (effect →
+        // effect transitions like blur → image reuse the existing raw camera
+        // track). Stopping it would leave the new processor with a dead
+        // <video> source, which is exactly the "background effect doesn't
+        // change mid-meeting" bug. Instead, stop only the previous processor
+        // and only stop the previous raw track if it's a different track than
+        // the one we're now using.
+        if (processorRef.current) {
+            try { processorRef.current.stop(); } catch { /* ignore */ }
+            processorRef.current = null;
+        }
+        if (rawCameraTrackRef.current && rawCameraTrackRef.current !== rawTrack) {
+            try { rawCameraTrackRef.current.stop(); } catch { /* ignore */ }
+        }
+        rawCameraTrackRef.current = null;
         try {
             const proc = new BackgroundProcessor({ inputTrack: rawTrack, effect });
             const stream = await proc.start();
