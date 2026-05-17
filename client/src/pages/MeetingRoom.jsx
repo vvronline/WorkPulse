@@ -137,10 +137,17 @@ export default function MeetingRoom() {
         return list;
     }, [user, localStream, muted, videoOff, raisedHand, participants]);
 
-    // Determine presenter
-    const presenterParticipant = presenterId === user?.id ? null : participants.get(presenterId);
-    const presenterStream = presenterId === user?.id ? screenStream : presenterParticipant?.stream;
-    const presenterName = presenterId === user?.id
+    // Determine presenter. The presenter's *screen* goes in the main pane
+    // (PresenterView); their *camera* continues to appear in the right-side
+    // sidebar with everyone else's camera. This means we now use the new
+    // per-participant `screenStream` field (camera + screen are kept as
+    // separate MediaStream objects — see useMeetingState.js).
+    const isLocalPresenter = presenterId === user?.id;
+    const presenterParticipant = isLocalPresenter ? null : participants.get(presenterId);
+    const presenterStream = isLocalPresenter
+        ? screenStream
+        : (presenterParticipant?.screenStream || presenterParticipant?.stream);
+    const presenterName = isLocalPresenter
         ? (user?.full_name || 'You')
         : (presenterParticipant?.name || 'Participant');
 
@@ -250,12 +257,18 @@ export default function MeetingRoom() {
             <div className="mr-body">
                 <div className="mr-main">
                     {presenterId ? (
-                        /* Presenter layout */
+                        /* Presenter layout — screen share fills the main
+                           pane, every participant (including the presenter
+                           themselves, so the presenter can see their own
+                           self-view) shows their camera in the right
+                           sidebar. This matches the videosdk-rtc-react-sdk
+                           reference behaviour. */
                         <div className="mr-presenter-layout">
                             <div className="mr-presenter-main">
                                 <PresenterView
                                     presenterStream={presenterStream}
                                     presenterName={presenterName}
+                                    isLocal={isLocalPresenter}
                                 />
                             </div>
                             <div className="mr-presenter-sidebar">

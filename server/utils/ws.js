@@ -989,6 +989,22 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
             }
         }
 
+    } else if (msg.type === 'meeting_screen_track_id') {
+        // Sender is announcing which of the tracks they sent over their
+        // peer connection is the screen share. Client-side `useMeetingState`
+        // uses this to route the incoming track from the camera stream
+        // (shown in the participant tile) to a dedicated screen stream
+        // (shown in PresenterView). Server only relays — no DB checks
+        // needed since both peers were already verified at meeting_join.
+        const { meetingId, targetUserId, sharing, trackId } = msg.data || {};
+        if (!meetingId || !targetUserId) return;
+        sendToUser(tenantId, targetUserId, 'meeting_screen_track_id', {
+            meetingId,
+            fromUserId: senderId,
+            sharing: !!sharing,
+            trackId: trackId || null,
+        });
+
     } else if (msg.type === 'meeting_chat') {
         // In-meeting chat message relay (text or file)
         const { meetingId, text, file_url, file_name, file_size } = msg.data || {};

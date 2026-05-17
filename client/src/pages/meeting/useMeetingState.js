@@ -235,29 +235,68 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             }
         }, 0);
 
-        // Stable per-peer remote MediaStream. We keep the SAME stream object
+        // Stable per-peer remote streams. We keep the SAME stream objects
         // for the lifetime of the peer connection so the participant tile's
         // <video srcObject> never needs to be re-assigned when an additional
-        // track (e.g. video after audio) arrives. Re-assigning srcObject
-        // forces the browser to tear down the decoder, blank the element,
-        // and re-negotiate playback — which is what caused remote videos to
-        // "take a long time to appear" or "show small then resize" for late
-        // joiners.
-        const remoteStream = new MediaStream();
-        pc.ontrack = (e) => {
-            // Add the track (de-duped) and let the browser fire the usual
-            // loadedmetadata/canplay events on the existing video element.
-            const existing = remoteStream.getTracks().find(t => t.id === e.track.id);
-            if (!existing) remoteStream.addTrack(e.track);
+        // track arrives. Re-assigning srcObject forces the browser to tear
+        // down the decoder, blank the element, and re-negotiate playback.
+        //
+        // We maintain TWO separate streams per peer:
+        //   - camera + mic            → shown in the participant tile
+        //   - screen-share video      → shown in the PresenterView (main pane)
+        // Tracks coming in over the peer connection are routed to the camera
+        // stream by default, then *re-routed* to the screen stream when the
+        // sending peer announces (via `meeting_screen_track_id`) which track
+        // id is the screen share. We can't reliably classify "camera vs
+        // screen" from SDP alone, so the sender tells us explicitly.
+        const remoteStream = new MediaStream();          // camera + mic
+        const remoteScreenStream = new MediaStream();    // screen share only
+        pc._remoteStream = remoteStream;
+        pc._remoteScreenStream = remoteScreenStream;
+        pc._screenTrackIds = new Set();                  // ids announced as screen
 
-            // When a track ends (peer turned off camera), drop it so
-            // hasVideoTrack in the tile flips false and the avatar shows.
+        const reclassifyTracks = () => {
+            // Re-route any tracks that should be on the screen stream.
+            // Idempotent — safe to call after every ontrack / announcement.
+            for (const t of [...remoteStream.getTracks()]) {
+                if (pc._screenTrackIds.has(t.id)) {
+                    try { remoteStream.removeTrack(t); } catch { /* ignore */ }
+                    if (!remoteScreenStream.getTracks().some(x => x.id === t.id)) {
+                        remoteScreenStream.addTrack(t);
+                    }
+                }
+            }
+            for (const t of [...remoteScreenStream.getTracks()]) {
+                if (!pc._screenTrackIds.has(t.id)) {
+                    try { remoteScreenStream.removeTrack(t); } catch { /* ignore */ }
+                    if (!remoteStream.getTracks().some(x => x.id === t.id)) {
+                        remoteStream.addTrack(t);
+                    }
+                }
+            }
+        };
+        pc._reclassifyTracks = reclassifyTracks;
+
+        pc.ontrack = (e) => {
+            // Default: add to the camera stream. If the sender has already
+            // told us this track id is a screen share, reclassifyTracks()
+            // will immediately move it to the screen stream below.
+            if (!remoteStream.getTracks().some(t => t.id === e.track.id) &&
+                !remoteScreenStream.getTracks().some(t => t.id === e.track.id)) {
+                remoteStream.addTrack(e.track);
+            }
+            reclassifyTracks();
+
+            // When a track ends (peer turned off camera OR stopped sharing),
+            // drop it from whichever stream owns it.
             e.track.onended = () => {
                 try { remoteStream.removeTrack(e.track); } catch { /* ignore */ }
+                try { remoteScreenStream.removeTrack(e.track); } catch { /* ignore */ }
+                pc._screenTrackIds.delete(e.track.id);
                 setParticipants(prev => {
                     const next = new Map(prev);
                     const ex = next.get(remoteUserId);
-                    if (ex) next.set(remoteUserId, { ...ex, stream: remoteStream });
+                    if (ex) next.set(remoteUserId, { ...ex, stream: remoteStream, screenStream: remoteScreenStream });
                     return next;
                 });
             };
@@ -268,8 +307,8 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 const ex = next.get(remoteUserId) || { userId: remoteUserId };
                 next.set(remoteUserId, {
                     ...ex,
-                    // Reuse the SAME stream object — tile won't reload.
                     stream: remoteStream,
+                    screenStream: remoteScreenStream,
                     ...(hasVideo ? { videoOff: false } : {}),
                 });
                 return next;
@@ -526,6 +565,32 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 else if (s === false && presenterIdRef.current === userId) setPresenterId(null);
                 break;
             }
+            case 'meeting_screen_track_id': {
+                // The sending peer is telling us which of the tracks they
+                // sent us is the screen-share video. We add the id to the
+                // peer connection's screenTrackIds set and re-route the
+                // matching MediaStreamTrack from the camera stream to the
+                // screen stream. This lets the local camera continue to be
+                // shown in the participant tile while the screen share
+                // appears in the main PresenterView.
+                const { fromUserId, trackId, sharing } = data;
+                const pc = pcsRef.current.get(fromUserId);
+                if (!pc) break;
+                if (sharing && trackId) {
+                    pc._screenTrackIds.add(trackId);
+                } else if (!sharing) {
+                    // Stopped sharing — clear all classifications
+                    pc._screenTrackIds.clear();
+                }
+                pc._reclassifyTracks && pc._reclassifyTracks();
+                setParticipants(prev => {
+                    const n = new Map(prev);
+                    const ex = n.get(fromUserId);
+                    if (ex) n.set(fromUserId, { ...ex, stream: pc._remoteStream, screenStream: pc._remoteScreenStream });
+                    return n;
+                });
+                break;
+            }
             case 'meeting_message': {
                 const incoming = data.message;
                 if (!incoming) break;
@@ -711,29 +776,103 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: next, screenSharing: screenSharingRef.current });
     }, [meetingId, wsSend]);
 
+    // Track the screen-share senders we ADDED per peer (so we can remove
+    // them cleanly when sharing stops without disturbing the camera sender).
+    const screenSendersRef = useRef(new Map()); // peerId -> [RTCRtpSender]
+
     const toggleScreenShare = useCallback(async () => {
         if (screenSharing) {
-            if (screenStreamRef.current) { screenStreamRef.current.getTracks().forEach(t => t.stop()); screenStreamRef.current = null; }
-            setScreenSharing(false); setScreenStream(null);
+            // ── STOP sharing ──────────────────────────────────────────────
+            // Stop all local screen tracks first.
+            if (screenStreamRef.current) {
+                screenStreamRef.current.getTracks().forEach(t => t.stop());
+                screenStreamRef.current = null;
+            }
+            // Remove the dedicated screen-share senders we added — DO NOT
+            // touch the camera sender (this was the original bug: replacing
+            // the camera with the screen track removed the camera entirely,
+            // so when sharing stopped some participants' camera was gone).
+            for (const [peerId, senders] of screenSendersRef.current) {
+                const pc = pcsRef.current.get(peerId);
+                if (!pc) continue;
+                for (const sender of senders) {
+                    try { pc.removeTrack(sender); } catch { /* ignore */ }
+                }
+                // Renegotiate so the remote peer drops the m-line cleanly.
+                if (pc.signalingState === 'stable') {
+                    try {
+                        const offer = await pc.createOffer();
+                        await pc.setLocalDescription(offer);
+                        wsSend('meeting_signal', { meetingId, targetUserId: peerId, signal: { type: 'offer', sdp: pc.localDescription } });
+                    } catch { /* ignore */ }
+                }
+                // Tell the peer the screen share is over so they clear
+                // their screen-track classification.
+                wsSend('meeting_screen_track_id', { meetingId, targetUserId: peerId, sharing: false });
+            }
+            screenSendersRef.current.clear();
+
+            setScreenSharing(false);
+            setScreenStream(null);
             if (presenterIdRef.current === user?.id) setPresenterId(null);
             wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: videoOffRef.current, screenSharing: false });
-            for (const [, pc] of pcsRef.current) {
-                const vs = pc.getSenders().find(s => s.track?.kind === 'video');
-                if (vs) vs.replaceTrack(localStreamRef.current?.getVideoTracks()[0] || null).catch(() => { });
-            }
         } else {
+            // ── START sharing ─────────────────────────────────────────────
+            let ss;
             try {
-                const ss = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-                screenStreamRef.current = ss; setScreenStream(ss); setScreenSharing(true); setPresenterId(user?.id);
-                const st = ss.getVideoTracks()[0];
-                for (const [, pc] of pcsRef.current) {
-                    const vs = pc.getSenders().find(s => s.track?.kind === 'video');
-                    if (vs) vs.replaceTrack(st).catch(() => { });
-                    else pc.addTrack(st, ss);
+                ss = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+            } catch {
+                return; // user cancelled
+            }
+            screenStreamRef.current = ss;
+            setScreenStream(ss);
+            setScreenSharing(true);
+            setPresenterId(user?.id);
+
+            const screenVideoTrack = ss.getVideoTracks()[0];
+            const screenAudioTrack = ss.getAudioTracks()[0]; // optional
+
+            // Add the screen track(s) as NEW senders alongside the camera.
+            // This preserves remote viewers' ability to keep seeing the
+            // camera feed in the participant tile while ALSO receiving the
+            // screen-share track for the PresenterView pane.
+            for (const [peerId, pc] of pcsRef.current) {
+                const senders = [];
+                try {
+                    senders.push(pc.addTrack(screenVideoTrack, ss));
+                } catch { /* ignore */ }
+                if (screenAudioTrack) {
+                    try { senders.push(pc.addTrack(screenAudioTrack, ss)); } catch { /* ignore */ }
                 }
-                st.onended = () => toggleScreenShare();
-                wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: videoOffRef.current, screenSharing: true });
-            } catch { /* cancelled */ }
+                screenSendersRef.current.set(peerId, senders);
+
+                // Renegotiate so the new transceiver is created on the
+                // remote side and the receiving peer fires `ontrack`.
+                if (pc.signalingState === 'stable') {
+                    try {
+                        const offer = await pc.createOffer();
+                        await pc.setLocalDescription(offer);
+                        wsSend('meeting_signal', { meetingId, targetUserId: peerId, signal: { type: 'offer', sdp: pc.localDescription } });
+                    } catch { /* ignore */ }
+                }
+
+                // Tell the receiving peer which incoming track id is the
+                // screen share so they can route it to PresenterView
+                // instead of the participant tile.
+                wsSend('meeting_screen_track_id', {
+                    meetingId,
+                    targetUserId: peerId,
+                    sharing: true,
+                    trackId: screenVideoTrack.id,
+                });
+            }
+
+            // Auto-stop when the browser-level "Stop sharing" button is clicked
+            screenVideoTrack.onended = () => {
+                if (screenSharingRef.current) toggleScreenShare();
+            };
+
+            wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: videoOffRef.current, screenSharing: true });
         }
     }, [screenSharing, meetingId, wsSend, user?.id]);
 
