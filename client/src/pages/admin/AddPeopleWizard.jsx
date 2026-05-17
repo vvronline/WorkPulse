@@ -194,11 +194,12 @@ export default function AddPeopleWizard({ userRole, onCompleted }) {
                         ...singleForm,
                         role: defaults.role,
                     };
+                    if (!payload.password) delete payload.password;
                     if (defaults.org_id) payload.org_id = Number(defaults.org_id);
                     if (defaults.department_id) payload.department_id = Number(defaults.department_id);
                     if (defaults.team_id) payload.team_id = Number(defaults.team_id);
                     const r = await createAdminUser(payload);
-                    setResult({ kind: 'single', message: r.data.message });
+                    setResult({ kind: 'single', message: r.data.message, initial_password: r.data.initial_password });
                     onCompleted?.(r.data.message);
                     break;
                 }
@@ -395,12 +396,12 @@ export default function AddPeopleWizard({ userRole, onCompleted }) {
                             />
                         </div>
                         <div className={w.field}>
-                            <label>Initial password * (min 8 chars)</label>
+                            <label>Initial password (min 8 chars, auto-generated if empty)</label>
                             <input
                                 type="password"
                                 value={singleForm.password}
                                 onChange={e => setSingleForm({ ...singleForm, password: e.target.value })}
-                                placeholder="Will be required to change on first login"
+                                placeholder="Leave blank to auto-generate"
                             />
                         </div>
                     </div>
@@ -570,9 +571,25 @@ export default function AddPeopleWizard({ userRole, onCompleted }) {
                 <div className={w.successState}>
                     <Check size={32} color="var(--success)" />
                     <h3 className={w.h3}>{result.message}</h3>
-                    <p className={w.helpText}>
-                        The user must change their password on first login.
-                    </p>
+                    {result.initial_password && (
+                        <div className={w.credBox}>
+                            <p className={w.helpText}>
+                                <AlertTriangle size={13} color="var(--warning)" style={{ verticalAlign: 'middle' }} />{' '}
+                                Auto-generated password (shown once):
+                            </p>
+                            <div className={w.codeRow}>
+                                <code className={w.codeVal}>{result.initial_password}</code>
+                                <button className={`${s.btn} ${s.secondary}`} onClick={() => copy(result.initial_password, 'pw')}>
+                                    {copied === 'pw' ? <Check size={14} /> : <Copy size={14} />}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                    {!result.initial_password && (
+                        <p className={w.helpText}>
+                            The user must change their password on first login.
+                        </p>
+                    )}
                 </div>
             );
         }
@@ -668,7 +685,8 @@ export default function AddPeopleWizard({ userRole, onCompleted }) {
         if (step === 1) return !!method;
         if (step === 2) {
             if (method === 'single') {
-                return singleForm.full_name && singleForm.username && singleForm.email && singleForm.password.length >= 8;
+                return singleForm.full_name && singleForm.username && singleForm.email
+                    && (!singleForm.password || singleForm.password.length >= 8);
             }
             if (method === 'paste') return parsedRows.length > 0;
             if (method === 'file') return !!file;

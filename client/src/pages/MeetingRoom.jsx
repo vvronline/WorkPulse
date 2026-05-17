@@ -20,8 +20,7 @@ export default function MeetingRoom() {
     const navigate = useNavigate();
     const { code } = useParams();
     const { user } = useAuth();
-    const { session, wsRef, localStreamRef, leaveMeeting: ctxLeave, joinMeeting } = useMeeting();
-    const ws = wsRef?.current;
+    const { session, ws, localStreamRef, leaveMeeting: ctxLeave, joinMeeting } = useMeeting();
     const [autoJoinError, setAutoJoinError] = useState('');
     const [codeCopied, setCodeCopied] = useState(false);
 
@@ -306,6 +305,32 @@ export default function MeetingRoom() {
             {status === 'joining' && (
                 <div className="mr-status-overlay">
                     <span className="mr-status-text">Joining meeting…</span>
+                </div>
+            )}
+
+            {/* Failed overlay */}
+            {status === 'failed' && (
+                <div className="mr-status-overlay">
+                    <div style={{ textAlign: 'center' }}>
+                        <span className="mr-status-text">Unable to join meeting</span>
+                        <p style={{ color: 'var(--mr-text-muted)', fontSize: 13, marginTop: 8 }}>
+                            Connection failed. Please check your network and try again.
+                        </p>
+                        <div style={{ marginTop: 16, display: 'flex', gap: 12, justifyContent: 'center' }}>
+                            <button
+                                onClick={() => navigate('/')}
+                                style={{ padding: '8px 16px', borderRadius: 8, background: 'var(--mr-bg-tile)', color: 'var(--mr-text)', border: 'none', cursor: 'pointer', fontSize: 13 }}
+                            >
+                                Go back
+                            </button>
+                            <button
+                                onClick={() => window.location.reload()}
+                                style={{ padding: '8px 16px', borderRadius: 8, background: 'var(--mr-accent)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 13 }}
+                            >
+                                Retry
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
         </div>

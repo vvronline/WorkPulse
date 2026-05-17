@@ -18,6 +18,7 @@ export function MeetingProvider({ children }) {
     // session shape: { meetingId, code, meeting, initialMuted, initialVideoOff }
 
     const wsRef = useRef(null);
+    const [ws, setWs] = useState(null);
     const localStreamRef = useRef(null);
 
     const leaveMeetingRef = useRef(null);
@@ -51,6 +52,7 @@ export function MeetingProvider({ children }) {
         if (wsRef.current) {
             try { wsRef.current.close(); } catch { /* ignore */ }
             wsRef.current = null;
+            setWs(null);
         }
 
         // Create WebSocket for this meeting session
@@ -62,22 +64,48 @@ export function MeetingProvider({ children }) {
             const host = window.location.host;
             wsUrl = `${proto}://${host}/ws`;
         }
-        const ws = new WebSocket(wsUrl);
-        wsRef.current = ws;
 
-        ws.addEventListener('error', () => {
-            console.warn('Meeting WebSocket connection error');
-        });
+        let reconnectAttempts = 0;
+        const maxReconnects = 5;
 
-        // Listen for meeting_ended while in PiP / away from room
-        ws.addEventListener('message', (e) => {
-            try {
-                const msg = JSON.parse(e.data);
-                if (msg.type === 'meeting_ended') {
-                    if (leaveMeetingRef.current) leaveMeetingRef.current();
+        const createWs = () => {
+            const newWs = new WebSocket(wsUrl);
+            wsRef.current = newWs;
+            setWs(newWs);
+
+            newWs.addEventListener('open', () => {
+                reconnectAttempts = 0;
+            });
+
+            newWs.addEventListener('error', () => {
+                console.warn('Meeting WebSocket connection error');
+            });
+
+            newWs.addEventListener('close', (e) => {
+                if (e.code === 4001 || e.code === 4029) return;
+                if (reconnectAttempts < maxReconnects && wsRef.current === newWs) {
+                    reconnectAttempts++;
+                    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 10000);
+                    setTimeout(() => {
+                        if (wsRef.current === newWs || wsRef.current === null) {
+                            createWs();
+                        }
+                    }, delay);
                 }
-            } catch { /* ignore */ }
-        });
+            });
+
+            // Listen for meeting_ended while in PiP / away from room
+            newWs.addEventListener('message', (e) => {
+                try {
+                    const msg = JSON.parse(e.data);
+                    if (msg.type === 'meeting_ended') {
+                        if (leaveMeetingRef.current) leaveMeetingRef.current();
+                    }
+                } catch { /* ignore */ }
+            });
+        };
+
+        createWs();
 
         setSession({
             meetingId, code, meeting,
@@ -91,6 +119,7 @@ export function MeetingProvider({ children }) {
             wsRef.current.close();
             wsRef.current = null;
         }
+        setWs(null);
         if (localStreamRef.current) {
             localStreamRef.current.getTracks().forEach(t => t.stop());
             localStreamRef.current = null;
@@ -115,12 +144,13 @@ export function MeetingProvider({ children }) {
 
     const value = useMemo(() => ({
         session,
+        ws,
         joinMeeting,
         leaveMeeting,
         setLocalStream,
         localStreamRef,
         wsRef,
-    }), [session, joinMeeting, leaveMeeting, setLocalStream]);
+    }), [session, ws, joinMeeting, leaveMeeting, setLocalStream]);
 
     return (
         <MeetingCtx.Provider value={value}>

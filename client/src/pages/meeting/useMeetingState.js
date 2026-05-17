@@ -455,25 +455,42 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     useEffect(() => {
         if (!ws || !meetingId || !mediaReady) return;
         let retryTimer = null;
+        let retryTimer2 = null;
+        let failTimer = null;
+        let joined = false;
 
         const sendJoin = () => {
+            if (joined) return;
+            joined = true;
             wsSend('meeting_join', { meetingId });
             setTimeout(() => wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: videoOffRef.current, screenSharing: screenSharingRef.current }), 500);
         };
 
         const attemptJoin = () => {
             if (ws.readyState === WebSocket.OPEN) sendJoin();
-            else if (ws.readyState === WebSocket.CONNECTING) ws.addEventListener('open', sendJoin);
+            else if (ws.readyState === WebSocket.CONNECTING) ws.addEventListener('open', sendJoin, { once: true });
         };
 
         attemptJoin();
 
-        // Retry join if still in 'joining' state after 3s (handles race where response was missed)
+        // Retry join after 3s if first attempt didn't send (WS was still connecting)
         retryTimer = setTimeout(() => {
-            if (ws.readyState === WebSocket.OPEN) {
+            if (!joined && ws.readyState === WebSocket.OPEN) {
                 sendJoin();
             }
         }, 3000);
+
+        // Second retry at 6s — covers race where first join message was lost
+        retryTimer2 = setTimeout(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+                wsSend('meeting_join', { meetingId });
+            }
+        }, 6000);
+
+        // Fail after 15s if still in 'joining' state
+        failTimer = setTimeout(() => {
+            setStatus(prev => prev === 'joining' ? 'failed' : prev);
+        }, 15000);
 
         // Send leave on tab close/refresh so other participants are notified immediately
         const onBeforeUnload = () => {
@@ -485,6 +502,8 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
 
         return () => {
             clearTimeout(retryTimer);
+            clearTimeout(retryTimer2);
+            clearTimeout(failTimer);
             window.removeEventListener('beforeunload', onBeforeUnload);
             ws.removeEventListener('open', sendJoin);
             if (!keepAliveOnUnmount) { wsSend('meeting_leave', { meetingId }); pcsRef.current.forEach(pc => pc.close()); pcsRef.current.clear(); }
