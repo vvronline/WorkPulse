@@ -235,10 +235,15 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         const remoteStream = new MediaStream();
         pc.ontrack = (e) => {
             remoteStream.addTrack(e.track);
+            const hasVideo = remoteStream.getVideoTracks().some(t => t.readyState === 'live' && t.enabled);
             setParticipants(prev => {
                 const next = new Map(prev);
                 const ex = next.get(remoteUserId) || { userId: remoteUserId };
-                next.set(remoteUserId, { ...ex, stream: new MediaStream(remoteStream.getTracks()) });
+                next.set(remoteUserId, {
+                    ...ex,
+                    stream: new MediaStream(remoteStream.getTracks()),
+                    ...(hasVideo ? { videoOff: false } : {}),
+                });
                 return next;
             });
         };
@@ -269,6 +274,8 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 setStatus('connected');
                 iceRestartCountsRef.current.delete(remoteUserId);
                 if (pc._disconnectTimer) { clearTimeout(pc._disconnectTimer); pc._disconnectTimer = null; }
+                // Broadcast our track state so the peer knows our current mute/video status
+                wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: videoOffRef.current, screenSharing: screenSharingRef.current });
             } else if (pc.connectionState === 'failed') {
                 setParticipants(prev => {
                     const n = new Map(prev);
@@ -446,15 +453,13 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 const { userId, muted: m, videoOff: v, screenSharing: s } = data;
                 setParticipants(prev => {
                     const n = new Map(prev);
-                    const p = n.get(userId);
-                    if (p) {
-                        n.set(userId, {
-                            ...p,
-                            ...(m != null ? { muted: m } : {}),
-                            ...(v != null ? { videoOff: v } : {}),
-                            ...(s != null ? { screenSharing: s } : {}),
-                        });
-                    }
+                    const p = n.get(userId) || { userId, stream: null, name: 'Participant', raisedHand: false, role: 'participant' };
+                    n.set(userId, {
+                        ...p,
+                        ...(m != null ? { muted: m } : {}),
+                        ...(v != null ? { videoOff: v } : {}),
+                        ...(s != null ? { screenSharing: s } : {}),
+                    });
                     return n;
                 });
                 if (s) setPresenterId(userId);
@@ -493,7 +498,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     // because a ws prop change (reconnect) should NOT kick the user out of the meeting.
     // The unmount cleanup is handled in a separate effect below (keyed on meetingId only).
     useEffect(() => {
-        if (!ws || !meetingId || !mediaReady) return;
+        if (!ws || !meetingId) return;
         let retryTimer = null;
         let retryTimer2 = null;
         let joined = false;
@@ -511,7 +516,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             if (joined) return;
             joined = true;
             wsSend('meeting_join', { meetingId });
-            setTimeout(() => wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: videoOffRef.current, screenSharing: screenSharingRef.current }), 500);
+            setTimeout(() => wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: videoOffRef.current, screenSharing: screenSharingRef.current }), 300);
         };
 
         const onOpen = () => sendJoin();
@@ -539,7 +544,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             try { ws.removeEventListener('open', onOpen); } catch { /* ignore */ }
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [ws, meetingId, mediaReady]);
+    }, [ws, meetingId]);
 
     // Meeting-level cleanup — runs only when the meetingId truly changes or component unmounts.
     // Sends meeting_leave + tears down peer connections so the user is removed from the meeting.

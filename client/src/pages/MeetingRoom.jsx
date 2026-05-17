@@ -7,7 +7,6 @@ import { getMeeting } from '../api';
 import { useMeetingState } from './meeting/useMeetingState';
 import { useMeetingRecording } from './meeting/useMeetingRecording';
 import ParticipantTile from './meeting/ParticipantTile';
-import SelfViewPip from './meeting/SelfViewPip';
 import PresenterView from './meeting/PresenterView';
 import MeetingBottomBar from './meeting/MeetingBottomBar';
 import MeetingChat from './meeting/MeetingChat';
@@ -262,21 +261,6 @@ export default function MeetingRoom() {
                                     />
                                 ))}
                             </div>
-                        </div>
-                    ) : tileCount === 2 ? (
-                        /* 1:1 layout — remote full-screen, local as draggable pip */
-                        <div className="mr-one-on-one">
-                            {tiles.filter(t => !t.isLocal).map(({ key, participant }) => (
-                                <ParticipantTile
-                                    key={key}
-                                    participant={participant}
-                                    isLocal={false}
-                                    quality={connectionQualities.get(participant.userId)}
-                                />
-                            ))}
-                            <SelfViewPip
-                                participant={tiles.find(t => t.isLocal)?.participant}
-                            />
                         </div>
                     ) : (
                         /* Grid layout */

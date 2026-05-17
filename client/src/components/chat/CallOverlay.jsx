@@ -94,6 +94,10 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     const [swapped, setSwapped] = useState(false);
     const addPartTimerRef = useRef(null);
 
+    // Drag state for local video PiP
+    const localVideoDragState = useRef(null);
+    const [localVideoPos, setLocalVideoPos] = useState(null);
+
     // Refs
     const pcRef = useRef(null);
     const localStreamRef = useRef(null);
@@ -666,6 +670,46 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
 
     useEffect(() => { setSwapped(false); }, [status]);
 
+    // Drag handlers for local video PiP
+    const onLocalVideoDragStart = useCallback((e) => {
+        if (swapped) return;
+        e.preventDefault();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        const rect = e.currentTarget.getBoundingClientRect();
+        localVideoDragState.current = {
+            startX: clientX,
+            startY: clientY,
+            origLeft: rect.left,
+            origTop: rect.top,
+        };
+    }, [swapped]);
+
+    useEffect(() => {
+        const onMove = (e) => {
+            if (!localVideoDragState.current) return;
+            e.preventDefault();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            const dx = clientX - localVideoDragState.current.startX;
+            const dy = clientY - localVideoDragState.current.startY;
+            const newLeft = localVideoDragState.current.origLeft + dx;
+            const newTop = localVideoDragState.current.origTop + dy;
+            setLocalVideoPos({ left: Math.max(0, newLeft), top: Math.max(0, newTop) });
+        };
+        const onUp = () => { localVideoDragState.current = null; };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+        window.addEventListener('touchmove', onMove, { passive: false });
+        window.addEventListener('touchend', onUp);
+        return () => {
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+            window.removeEventListener('touchmove', onMove);
+            window.removeEventListener('touchend', onUp);
+        };
+    }, []);
+
     return (
         <div
             ref={overlayRef}
@@ -701,8 +745,11 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
                     <video
                         ref={localVideoRef}
                         className={`${s.localVideo} ${swapped ? s.swapped : ''}`}
+                        style={!swapped && localVideoPos ? { left: localVideoPos.left, top: localVideoPos.top, right: 'auto', bottom: 'auto' } : undefined}
                         autoPlay playsInline muted
-                        onClick={!swapped ? () => setSwapped(true) : undefined}
+                        onMouseDown={onLocalVideoDragStart}
+                        onTouchStart={onLocalVideoDragStart}
+                        onClick={!swapped && !localVideoDragState.current ? () => setSwapped(true) : undefined}
                     />
                 </>
             )}

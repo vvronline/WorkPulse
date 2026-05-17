@@ -103,14 +103,11 @@ export function MeetingProvider({ children }) {
             });
 
             // Listen for meeting_ended while in PiP / away from room
-            newWs.addEventListener('message', (e) => {
-                try {
-                    const msg = JSON.parse(e.data);
-                    if (msg.type === 'meeting_ended') {
-                        if (leaveMeetingRef.current) leaveMeetingRef.current();
-                    }
-                } catch { /* ignore */ }
-            });
+            // NOTE: The actual meeting_ended handling (cleanup + navigation) is done
+            // by useMeetingState inside MeetingRoom (which stays mounted via
+            // GlobalMeetingRoom). We do NOT call leaveMeeting() here because that
+            // would set session=null and unmount MeetingRoom before its navigate('/')
+            // effect fires, leaving participants on a blank screen.
         };
 
         createWs();
