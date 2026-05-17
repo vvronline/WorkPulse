@@ -20,7 +20,7 @@ export default function MeetingRoom() {
     const navigate = useNavigate();
     const { code } = useParams();
     const { user } = useAuth();
-    const { session, ws, localStreamRef, leaveMeeting: ctxLeave, joinMeeting } = useMeeting();
+    const { session, ws, localStreamRef, setLocalStream: ctxSetLocalStream, leaveMeeting: ctxLeave, joinMeeting } = useMeeting();
     const [autoJoinError, setAutoJoinError] = useState('');
     const [codeCopied, setCodeCopied] = useState(false);
 
@@ -58,8 +58,16 @@ export default function MeetingRoom() {
         ws,
         initialMuted: session?.initialMuted,
         initialVideoOff: session?.initialVideoOff,
+        keepAliveOnUnmount: true,
         existingStream: localStreamRef?.current || null,
     });
+
+    // Sync local stream into MeetingContext so the floating PiP widget
+    // (shown when the user navigates away from /meeting/:code/room) can
+    // display the live self-view and toggle mic/video.
+    useEffect(() => {
+        if (localStream && ctxSetLocalStream) ctxSetLocalStream(localStream);
+    }, [localStream, ctxSetLocalStream]);
 
     // Timer
     const [elapsed, setElapsed] = useState(0);
@@ -155,9 +163,9 @@ export default function MeetingRoom() {
         const newCount = messages.length;
         const diff = newCount - prevMsgCountRef.current;
         if (diff > 0 && activePanelRef.current !== 'chat') {
-            // Only count messages from others (skip optimistic local messages)
+            // Only count messages from others (skip own messages, including non-optimistic echoes)
             const newMessages = messages.slice(-diff);
-            const fromOthers = newMessages.filter(m => m.sender_id !== user?.id || !m._optimistic).length;
+            const fromOthers = newMessages.filter(m => m.sender_id !== user?.id).length;
             if (fromOthers > 0) {
                 setChatUnreadCount(c => c + fromOthers);
             }
@@ -235,7 +243,7 @@ export default function MeetingRoom() {
                         </div>
                     ) : (
                         /* Grid layout */
-                        <div className="mr-grid" data-count={Math.min(tileCount, 6)}>
+                        <div className="mr-grid" data-count={tileCount <= 6 ? tileCount : 'many'}>
                             {tiles.map(({ key, participant, isLocal }) => (
                                 <ParticipantTile
                                     key={key}

@@ -95,6 +95,10 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     useEffect(() => {
         if (existingStream) {
             localStreamRef.current = existingStream;
+            // Apply current mute/video flags to the reused stream so the
+            // returning UI matches whatever state the user toggled in PiP.
+            existingStream.getAudioTracks().forEach(t => { t.enabled = !initialMuted; });
+            existingStream.getVideoTracks().forEach(t => { t.enabled = !initialVideoOff; });
             setLocalStream(existingStream);
             setMediaReady(true);
             return;
@@ -339,12 +343,14 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         if (!data) return;
         switch (type) {
             case 'meeting_participant_joined': {
+                let hasPeersToConnect = false;
                 if (data.existingPeers && Array.isArray(data.existingPeers)) {
                     data.existingPeers.forEach(peer => {
                         if (!peer?.userId) return;
                         const pc = createPeerConnection(peer.userId, false);
                         if (pc) pcsRef.current.set(peer.userId, pc);
                         if (peer.userId !== user?.id) {
+                            hasPeersToConnect = true;
                             setParticipants(prev => {
                                 const next = new Map(prev);
                                 next.set(peer.userId, { userId: peer.userId, stream: null, muted: false, videoOff: false, raisedHand: false, role: 'participant', screenSharing: false, ...(next.get(peer.userId) || {}), name: peer.fullName || peer.username || 'Participant' });
@@ -352,7 +358,6 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                             });
                         }
                     });
-                    setStatus(data.existingPeers.length > 0 ? 'connecting' : 'connected');
                 }
                 if (data.userId !== user?.id) {
                     setParticipants(prev => {
@@ -366,7 +371,9 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                         wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: videoOffRef.current, screenSharing: screenSharingRef.current });
                     }
                 }
-                setStatus('connected');
+                // Show "connecting" while peer connections are being established;
+                // pc.onconnectionstatechange will flip status to "connected" when ready.
+                setStatus(prev => hasPeersToConnect ? (prev === 'connected' ? prev : 'connecting') : 'connected');
                 break;
             }
             case 'meeting_signal': {

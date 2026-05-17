@@ -367,7 +367,7 @@ router.put('/:id', async (req, res) => {
         )).rows;
 
         for (const p of participants) {
-            sendToUser(p.user_id, 'meeting_updated', { meetingId, title: updatedMeeting.title });
+            sendToUser(req.tenantId, p.user_id, 'meeting_updated', { meetingId, title: updatedMeeting.title });
             notifyByEmail('meetingUpdated', p, { title: updatedMeeting.title, meeting_code: updatedMeeting.meeting_code }, organizer?.full_name || 'Someone');
         }
 
@@ -409,7 +409,7 @@ router.delete('/:id', async (req, res) => {
             [meetingId, req.userId]
         )).rows;
         for (const p of participants) {
-            sendToUser(p.user_id, 'meeting_cancelled', { meetingId, title: meeting.title });
+            sendToUser(req.tenantId, p.user_id, 'meeting_cancelled', { meetingId, title: meeting.title });
             notifyByEmail('meetingCancelled', p, { title: meeting.title, meeting_code: meeting.meeting_code }, organizer?.full_name || 'Someone');
         }
 
