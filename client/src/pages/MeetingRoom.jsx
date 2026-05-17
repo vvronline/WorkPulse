@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Copy, Check } from 'lucide-react';
+import { Copy, Check, Minimize2 } from 'lucide-react';
 import { useMeeting } from '../MeetingContext';
 import { useAuth } from '../AuthContext';
 import { getMeeting } from '../api';
@@ -31,6 +31,12 @@ export default function MeetingRoom() {
         setCodeCopied(true);
         setTimeout(() => setCodeCopied(false), 2000);
     }, [session?.code, code]);
+
+    // Minimize meeting — navigate away from the room route while keeping the
+    // meeting session alive. The MeetingPiP floating widget then appears.
+    const handleMinimize = useCallback(() => {
+        navigate('/');
+    }, [navigate]);
 
     // Auto-join: if navigated directly (e.g. desktop deep link) without a session, fetch meeting and join
     useEffect(() => {
@@ -214,6 +220,14 @@ export default function MeetingRoom() {
                 </div>
                 <div className="mr-header-right">
                     <span className="mr-timer">{formatTime(elapsed)}</span>
+                    <button
+                        className="mr-header-btn"
+                        onClick={handleMinimize}
+                        title="Minimize meeting"
+                        aria-label="Minimize meeting"
+                    >
+                        <Minimize2 size={16} />
+                    </button>
                 </div>
             </div>
 

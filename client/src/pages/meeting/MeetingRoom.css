@@ -76,6 +76,28 @@
   color: var(--mr-text-muted);
 }
 
+.mr-header-btn {
+  background: var(--mr-bg-tile);
+  border: none;
+  color: var(--mr-text);
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.mr-header-btn:hover {
+  background: #4b5563;
+}
+
+.mr-header-btn:active {
+  transform: scale(0.95);
+}
+
 /* Body — main content area */
 .mr-body {
   flex: 1;
@@ -160,7 +182,23 @@
 }
 
 .mr-tile--speaking {
-  box-shadow: 0 0 0 2px var(--mr-success);
+  box-shadow:
+    0 0 0 3px var(--mr-success),
+    0 0 16px 2px rgba(16, 185, 129, 0.55);
+  animation: speakingPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes speakingPulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 3px var(--mr-success),
+      0 0 14px 1px rgba(16, 185, 129, 0.45);
+  }
+  50% {
+    box-shadow:
+      0 0 0 3px var(--mr-success),
+      0 0 22px 4px rgba(16, 185, 129, 0.75);
+  }
 }
 
 .mr-tile--local {
