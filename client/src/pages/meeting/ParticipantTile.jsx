@@ -1,6 +1,22 @@
 import React, { useRef, useEffect, useState, memo } from 'react';
 import { MicOff, Hand } from 'lucide-react';
 
+// A single shared AudioContext for all participant tiles. Browsers cap the
+// number of concurrent contexts, and creating one per tile (especially with
+// many remote participants) can interfere with WebRTC audio/video pipelines.
+let sharedAudioCtx = null;
+function getSharedAudioCtx() {
+    if (sharedAudioCtx) return sharedAudioCtx;
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return null;
+    try {
+        sharedAudioCtx = new AudioCtx();
+    } catch {
+        sharedAudioCtx = null;
+    }
+    return sharedAudioCtx;
+}
+
 /**
  * VideoSDK-style participant tile.
  * Shows video when available, avatar initial when not.
@@ -21,8 +37,11 @@ const ParticipantTile = memo(function ParticipantTile({ participant, isLocal, qu
         }
     }, [stream, pVideoOff]);
 
-    // Speaking detection via Web Audio analyser on the participant's audio track.
-    // Skipped when muted (no point measuring) and torn down on stream change/unmount.
+    // Speaking detection — uses a shared AudioContext + per-tile analyser on an
+    // audio-only MediaStream containing just this participant's audio track.
+    // Important: we build a *new* MediaStream wrapping only the audio track so
+    // the analyser graph cannot interfere with the original stream's video
+    // playback inside <video>. Skipped when muted or no audio track.
     useEffect(() => {
         if (!stream || pMuted) {
             setSpeaking(false);
@@ -34,10 +53,9 @@ const ParticipantTile = memo(function ParticipantTile({ participant, isLocal, qu
             return;
         }
 
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        if (!AudioCtx) return;
+        const ctx = getSharedAudioCtx();
+        if (!ctx) return;
 
-        let ctx;
         let source;
         let analyser;
         let rafId;
@@ -47,9 +65,15 @@ const ParticipantTile = memo(function ParticipantTile({ participant, isLocal, qu
         let aboveSince = 0;
         let belowSince = 0;
 
+        // Build an audio-only clone of the stream for the analyser. This
+        // isolates the analyser graph from the original MediaStream that the
+        // <video> element is rendering, and avoids browser quirks where
+        // attaching a MediaStreamSource to a stream that also drives a media
+        // element can disrupt playback.
+        let audioOnlyStream;
         try {
-            ctx = new AudioCtx();
-            source = ctx.createMediaStreamSource(stream);
+            audioOnlyStream = new MediaStream([audioTracks[0]]);
+            source = ctx.createMediaStreamSource(audioOnlyStream);
             analyser = ctx.createAnalyser();
             analyser.fftSize = 256;
             analyser.smoothingTimeConstant = 0.6;
@@ -58,18 +82,21 @@ const ParticipantTile = memo(function ParticipantTile({ participant, isLocal, qu
             return;
         }
 
-        const SPEAKING_THRESHOLD = 18;   // 0–255 average; tune as needed
-        const ENTER_MS = 120;            // must be above threshold this long to turn on
-        const EXIT_MS = 400;             // must be below threshold this long to turn off
+        // Resume context lazily (some browsers start it suspended)
+        if (ctx.state === 'suspended') {
+            ctx.resume().catch(() => { /* ignore */ });
+        }
+
+        const SPEAKING_THRESHOLD = 18;
+        const ENTER_MS = 120;
+        const EXIT_MS = 400;
 
         const tick = () => {
             if (cancelled) return;
             analyser.getByteFrequencyData(data);
-            // Average low-mid band (voice range)
             let sum = 0;
-            const len = data.length;
-            for (let i = 0; i < len; i++) sum += data[i];
-            const avg = sum / len;
+            for (let i = 0; i < data.length; i++) sum += data[i];
+            const avg = sum / data.length;
             const now = performance.now();
 
             if (avg > SPEAKING_THRESHOLD) {
@@ -96,7 +123,7 @@ const ParticipantTile = memo(function ParticipantTile({ participant, isLocal, qu
             if (rafId) cancelAnimationFrame(rafId);
             try { source && source.disconnect(); } catch { /* ignore */ }
             try { analyser && analyser.disconnect(); } catch { /* ignore */ }
-            try { ctx && ctx.close(); } catch { /* ignore */ }
+            // Do NOT close the shared context — other tiles still use it.
             setSpeaking(false);
         };
     }, [stream, pMuted]);

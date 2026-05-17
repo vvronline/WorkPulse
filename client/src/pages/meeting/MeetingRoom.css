@@ -1049,30 +1049,57 @@
 }
 
 /* Desktop (≥769px): float header & bottom bar over the video grid so
-   each participant tile can use the full viewport height. */
+   each participant tile can use the full viewport height. The header and
+   bottom bar render as two solid floating pills rather than full-width
+   bars — this avoids any compositing/transparency issues on top of the
+   remote video tiles and keeps every control crisply aligned. */
 @media (min-width: 769px) {
   .mr-root {
     /* Body fills full viewport; header & bar overlay on top */
     display: block;
   }
 
+  /* The .mr-header itself becomes a transparent container that simply
+     positions its two solid pills (left = meeting title/code,
+     right = timer + minimize) at the top corners. */
   .mr-header {
     position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
+    top: 12px;
+    left: 12px;
+    right: 12px;
     z-index: 20;
-    background: linear-gradient(to bottom, rgba(17, 24, 39, 0.85), rgba(17, 24, 39, 0.0));
+    background: transparent;
     border-bottom: none;
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
-    pointer-events: none; /* let clicks pass through gradient area */
-    transition: opacity 0.2s;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    padding: 0;
+    min-height: 0;
+    pointer-events: none; /* container is non-interactive; pills below opt-in */
   }
 
-  /* Re-enable pointer events on the actual interactive children */
-  .mr-header > * {
+  /* Both header pills: solid dark background, rounded, shadowed. */
+  .mr-header-left,
+  .mr-header-right {
     pointer-events: auto;
+    background: rgba(17, 24, 39, 0.92);
+    border: 1px solid var(--mr-border);
+    border-radius: 10px;
+    padding: 6px 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+    height: 36px;
+    box-sizing: border-box;
+  }
+
+  .mr-header-btn {
+    /* Slightly larger and clearly visible against the solid pill */
+    width: 26px;
+    height: 26px;
+    background: transparent;
+    color: var(--mr-text);
+  }
+
+  .mr-header-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
   }
 
   .mr-body {
@@ -1082,40 +1109,60 @@
   }
 
   .mr-main {
-    /* Reserve a little top/bottom padding so tiles don't sit under the
-       floating header/controls when they fade in. */
-    padding: 8px 8px 8px 8px;
+    /* Reserve top/bottom padding so video tiles don't sit underneath
+       the floating header / bottom-bar pills. */
+    padding: 60px 12px 84px 12px;
   }
 
+  /* Bottom bar — single solid floating pill, centered. */
   .mb-bar {
     position: absolute;
-    bottom: 12px;
+    bottom: 16px;
     left: 50%;
     transform: translateX(-50%);
     z-index: 20;
     height: 56px;
     border-top: none;
+    border: 1px solid var(--mr-border);
     border-radius: 14px;
-    background: rgba(17, 24, 39, 0.75);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-    /* Auto-size around its contents instead of full width */
+    background: rgba(17, 24, 39, 0.95);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
     width: auto;
     max-width: calc(100% - 24px);
     padding: 0 14px;
-    gap: 10px;
+    gap: 12px;
+    /* Flex layout: [recording badge?] [center controls] [leave/end] */
+    justify-content: center;
   }
 
-  /* The bottom bar uses absolutely-positioned left/right sections; when
-     the bar shrinks to fit its center controls they would overlap. Bring
-     them back into normal flow on desktop so the floating pill stays
-     compact and well-aligned. */
+  /* Bring the previously absolutely-positioned left/right sections back
+     into normal flow so the pill auto-sizes around all three groups
+     (recording badge, controls, leave buttons) and everything aligns on
+     one baseline. */
   .mb-left,
   .mb-right {
     position: static;
     left: auto;
     right: auto;
+  }
+
+  /* Subtle visual divider between center controls and leave/end buttons */
+  .mb-right {
+    padding-left: 12px;
+    margin-left: 4px;
+    border-left: 1px solid var(--mr-border);
+  }
+
+  /* If the recording badge is hidden, .mb-left would otherwise reserve
+     empty space — collapse it when empty so the pill stays balanced. */
+  .mb-left:empty {
+    display: none;
+  }
+
+  /* Hide individual button labels in the floating pill to keep it compact
+     (titles are still available via tooltip on hover). */
+  .mb-btn-label {
+    display: none;
   }
 
   /* Sidebar should sit above the floating bar/header visually */
