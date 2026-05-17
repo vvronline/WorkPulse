@@ -266,6 +266,16 @@
   background: #000;
 }
 
+/* Mirror the local self-view ONLY. Mirroring your own camera feels natural
+   (it matches how you'd see yourself in an actual mirror) and is the
+   standard convention used by Zoom, Google Meet, Teams, and the
+   pre-call MeetingJoin preview in this app. Remote participants' videos
+   are intentionally NOT mirrored — you should see other people the way
+   they actually look (e.g. text on a t-shirt should read normally). */
+.mr-tile--local .mr-tile-video {
+  transform: scaleX(-1);
+}
+
 .mr-tile-video--hidden {
   visibility: hidden;
 }
