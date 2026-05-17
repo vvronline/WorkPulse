@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Hand, MicOff } from 'lucide-react';
+import { Hand, MicOff, Mic } from 'lucide-react';
 import { searchChatUsers } from '../../api';
 import './MeetingRoom.css';
 
@@ -7,7 +7,7 @@ import './MeetingRoom.css';
  * Participants panel (sidebar) — lists active participants,
  * allows organizer to mute/remove, and add new participants.
  */
-export default function MeetingParticipants({ participants, localUserId, isOrganizer, onMute, onAdd }) {
+export default function MeetingParticipants({ participants, localUserId, isOrganizer, onMute, onMuteAll, onAdd }) {
     const [showAdd, setShowAdd] = useState(false);
     const [query, setQuery] = useState('');
     const [results, setResults] = useState([]);
@@ -35,9 +35,16 @@ export default function MeetingParticipants({ participants, localUserId, isOrgan
         <div className="mp-panel">
             <div className="mp-header">
                 <span>Participants ({participantList.length})</span>
-                {isOrganizer && (
-                    <button className="mp-add-btn" onClick={() => setShowAdd(v => !v)}>＋ Add</button>
-                )}
+                <div className="mp-header-actions">
+                    {isOrganizer && onMuteAll && (
+                        <button className="mp-mute-all-btn" onClick={onMuteAll} title="Mute all participants">
+                            <MicOff size={14} /> Mute All
+                        </button>
+                    )}
+                    {isOrganizer && (
+                        <button className="mp-add-btn" onClick={() => setShowAdd(v => !v)}>＋ Add</button>
+                    )}
+                </div>
             </div>
 
             {showAdd && (
@@ -78,8 +85,8 @@ export default function MeetingParticipants({ participants, localUserId, isOrgan
                         {p.raisedHand && <span className="mp-hand" title="Hand raised"><Hand size={16} color="#facc15" /></span>}
                         {p.muted && <span className="mp-muted"><MicOff size={13} /></span>}
                         {isOrganizer && p.userId !== localUserId && (
-                            <button className="mp-mute-btn" onClick={() => onMute(p.userId)} title="Mute participant">
-                                <MicOff size={13} />
+                            <button className="mp-mute-btn" onClick={() => onMute(p.userId)} title={p.muted ? 'Unmute participant' : 'Mute participant'}>
+                                {p.muted ? <Mic size={13} /> : <MicOff size={13} />}
                             </button>
                         )}
                     </div>

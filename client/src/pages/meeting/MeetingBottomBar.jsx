@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
     Mic, MicOff, Video, VideoOff, MonitorUp, Hand, MessageSquare,
-    Users, PhoneOff, Copy, Check, Circle, MoreVertical,
-    MicOffIcon, SmilePlus, Pin
+    Users, PhoneOff, Circle, MoreVertical,
+    MicOffIcon, SmilePlus
 } from 'lucide-react';
 
 const REACTIONS = ['👍', '👏', '😂', '🎉', '❤️', '🔥'];
@@ -13,13 +13,12 @@ const REACTIONS = ['👍', '👏', '😂', '🎉', '❤️', '🔥'];
 export default function MeetingBottomBar({
     muted, videoOff, screenSharing, raisedHand, raisedHandCount,
     activePanel, participantCount, meetingCode,
-    recording, onToggleRecording,
+    recording, onToggleRecording, chatUnreadCount,
     onToggleMute, onToggleVideo, onToggleScreenShare,
     onRaiseHand, onToggleChat, onToggleParticipants,
     onLeaveMeeting, onEndMeeting, onMuteAll, onReaction,
     isHost,
 }) {
-    const [copied, setCopied] = useState(false);
     const [showMore, setShowMore] = useState(false);
     const [showReactions, setShowReactions] = useState(false);
     const moreRef = useRef(null);
@@ -35,23 +34,10 @@ export default function MeetingBottomBar({
         return () => document.removeEventListener('mousedown', handler);
     }, []);
 
-    const handleCopy = () => {
-        if (!meetingCode) return;
-        navigator.clipboard?.writeText(meetingCode);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-    };
-
     return (
         <div className="mb-bar">
-            {/* Left: meeting ID + recording indicator */}
+            {/* Left: recording indicator */}
             <div className="mb-left">
-                {meetingCode && (
-                    <button className="mb-info-btn" onClick={handleCopy} title="Copy meeting code">
-                        <span className="mb-code">{meetingCode}</span>
-                        {copied ? <Check size={14} /> : <Copy size={14} />}
-                    </button>
-                )}
                 {recording && (
                     <span className="mb-recording-badge" title="Recording in progress">
                         <Circle size={10} fill="#ef4444" stroke="none" className="mb-rec-dot" />
@@ -154,6 +140,7 @@ export default function MeetingBottomBar({
                         title="Chat"
                     >
                         <MessageSquare size={20} />
+                        {chatUnreadCount > 0 && activePanel !== 'chat' && <span className="mb-badge">{chatUnreadCount}</span>}
                     </button>
                     <span className="mb-btn-label">Chat</span>
                 </div>

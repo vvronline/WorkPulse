@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { Copy, Check } from 'lucide-react';
 import { useMeeting } from '../MeetingContext';
 import { useAuth } from '../AuthContext';
 import { getMeeting } from '../api';
@@ -22,6 +23,15 @@ export default function MeetingRoom() {
     const { session, wsRef, localStreamRef, leaveMeeting: ctxLeave, joinMeeting } = useMeeting();
     const ws = wsRef?.current;
     const [autoJoinError, setAutoJoinError] = useState('');
+    const [codeCopied, setCodeCopied] = useState(false);
+
+    const copyMeetingCode = useCallback(() => {
+        const c = session?.code || code;
+        if (!c) return;
+        navigator.clipboard?.writeText(c);
+        setCodeCopied(true);
+        setTimeout(() => setCodeCopied(false), 2000);
+    }, [session?.code, code]);
 
     // Auto-join: if navigated directly (e.g. desktop deep link) without a session, fetch meeting and join
     useEffect(() => {
@@ -43,7 +53,7 @@ export default function MeetingRoom() {
         participants, status, raisedHand, messages,
         activePanel, setActivePanel, connectionQualities, presenterId,
         toggleMute, toggleVideo, toggleScreenShare, raiseHand,
-        sendChatMessage, endMeeting, leaveMeeting, muteParticipant, addParticipant,
+        sendChatMessage, sendChatFile, endMeeting, leaveMeeting, muteParticipant, addParticipant,
     } = useMeetingState({
         meetingId: session?.meetingId,
         ws,
@@ -136,6 +146,28 @@ export default function MeetingRoom() {
     const handleToggleChat = () => setActivePanel(p => p === 'chat' ? null : 'chat');
     const handleToggleParticipants = () => setActivePanel(p => p === 'participants' ? null : 'participants');
 
+    // Track unread chat messages when panel is not open
+    const [chatUnreadCount, setChatUnreadCount] = useState(0);
+    const prevMsgCountRef = useRef(messages.length);
+    useEffect(() => {
+        if (messages.length > prevMsgCountRef.current) {
+            if (activePanel !== 'chat') {
+                setChatUnreadCount(c => c + (messages.length - prevMsgCountRef.current));
+            }
+        }
+        prevMsgCountRef.current = messages.length;
+    }, [messages.length, activePanel]);
+    useEffect(() => {
+        if (activePanel === 'chat') setChatUnreadCount(0);
+    }, [activePanel]);
+
+    // Mute all participants (host only)
+    const muteAllParticipants = useCallback(() => {
+        for (const [uid] of participants) {
+            if (uid !== user?.id) muteParticipant(uid);
+        }
+    }, [participants, user?.id, muteParticipant]);
+
     const handleLeave = () => { leaveMeeting(); };
     const handleEnd = () => { endMeeting(); };
 
@@ -157,10 +189,11 @@ export default function MeetingRoom() {
                     <span className="mr-header-title">{session.meeting?.title || 'Meeting'}</span>
                     <span
                         className="mr-header-id"
-                        onClick={() => navigator.clipboard?.writeText(session.code || code)}
+                        onClick={copyMeetingCode}
                         title="Click to copy code"
                     >
                         {session.code || code}
+                        {codeCopied ? <Check size={12} style={{ marginLeft: 4 }} /> : <Copy size={12} style={{ marginLeft: 4 }} />}
                     </span>
                 </div>
                 <div className="mr-header-right">
@@ -218,7 +251,7 @@ export default function MeetingRoom() {
                         </div>
                         <div className="mr-sidebar-body">
                             {activePanel === 'chat' && (
-                                <MeetingChat messages={messages} onSend={sendChatMessage} />
+                                <MeetingChat messages={messages} onSend={sendChatMessage} onSendFile={sendChatFile} />
                             )}
                             {activePanel === 'participants' && (
                                 <MeetingParticipants
@@ -226,6 +259,7 @@ export default function MeetingRoom() {
                                     localUserId={user?.id}
                                     isOrganizer={isHost}
                                     onMute={muteParticipant}
+                                    onMuteAll={muteAllParticipants}
                                     onAdd={addParticipant}
                                 />
                             )}
@@ -246,6 +280,7 @@ export default function MeetingRoom() {
                 meetingCode={session.code || code}
                 recording={recording}
                 onToggleRecording={toggleRecording}
+                chatUnreadCount={chatUnreadCount}
                 onToggleMute={toggleMute}
                 onToggleVideo={toggleVideo}
                 onToggleScreenShare={toggleScreenShare}
@@ -254,6 +289,7 @@ export default function MeetingRoom() {
                 onToggleParticipants={handleToggleParticipants}
                 onLeaveMeeting={handleLeave}
                 onEndMeeting={handleEnd}
+                onMuteAll={muteAllParticipants}
                 isHost={isHost}
             />
 

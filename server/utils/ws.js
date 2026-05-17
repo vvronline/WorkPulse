@@ -906,9 +906,10 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
         }
 
     } else if (msg.type === 'meeting_chat') {
-        // In-meeting chat message relay
-        const { meetingId, text } = msg.data || {};
-        if (!meetingId || !text || typeof text !== 'string' || !text.trim() || text.length > 5000) return;
+        // In-meeting chat message relay (text or file)
+        const { meetingId, text, file_url, file_name, file_size } = msg.data || {};
+        if (!meetingId) return;
+        if (!file_url && (!text || typeof text !== 'string' || !text.trim() || text.length > 5000)) return;
 
         // Verify sender is an active participant
         const senderOk = (await db.query(
@@ -926,9 +927,14 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
         const message = {
             sender_id: senderId,
             sender_name: sender?.full_name || 'Participant',
-            text: text.trim(),
-            created_at: new Date().toISOString()
+            text: text ? text.trim() : null,
+            created_at: new Date().toISOString(),
         };
+        if (file_url) {
+            message.file_url = file_url;
+            message.file_name = file_name || 'File';
+            message.file_size = file_size || null;
+        }
 
         for (const p of participants) {
             sendToUser(tenantId, p.user_id, 'meeting_message', { meetingId, message });

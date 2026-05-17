@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useAuth } from '../../AuthContext';
-import { getIceConfig } from '../../api';
+import { getIceConfig, uploadChatFile } from '../../api';
 
 const DEFAULT_ICE_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -567,6 +567,31 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         wsSend('meeting_chat', { meetingId, text: trimmed });
     }, [meetingId, wsSend, user]);
 
+    const sendChatFile = useCallback(async (file) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            // Optimistic local message
+            setMessages(prev => [...prev, {
+                sender_id: user?.id,
+                sender_name: user?.full_name || user?.username || 'You',
+                file_name: file.name,
+                file_size: file.size,
+                file_url: URL.createObjectURL(file),
+                created_at: new Date().toISOString(),
+                _optimistic: true,
+            }]);
+            // Upload and broadcast via WS
+            const convId = sessionStorage.getItem('meeting_conv_id');
+            if (convId) {
+                const res = await uploadChatFile(convId, formData);
+                wsSend('meeting_chat', { meetingId, file_url: res.data.fileUrl, file_name: res.data.fileName, file_size: res.data.fileSize });
+            } else {
+                wsSend('meeting_chat', { meetingId, text: `📎 ${file.name}`, file_name: file.name, file_size: file.size });
+            }
+        } catch { /* silent */ }
+    }, [meetingId, wsSend, user]);
+
     const cleanupMedia = useCallback(() => {
         if (screenStreamRef.current) { screenStreamRef.current.getTracks().forEach(t => t.stop()); screenStreamRef.current = null; setScreenStream(null); }
         if (localStreamRef.current) { localStreamRef.current.getTracks().forEach(t => t.stop()); localStreamRef.current = null; setLocalStream(null); }
@@ -612,7 +637,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         participants, status, raisedHand, messages,
         activePanel, setActivePanel, connectionQualities, presenterId,
         toggleMute, toggleVideo, toggleScreenShare, raiseHand,
-        sendChatMessage, endMeeting, leaveMeeting, muteParticipant, addParticipant,
+        sendChatMessage, sendChatFile, endMeeting, leaveMeeting, muteParticipant, addParticipant,
         switchAudioDevice, switchVideoDevice, handleWsMessage,
     };
 }
