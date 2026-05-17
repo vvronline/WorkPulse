@@ -18,8 +18,8 @@ export default function GlobalMeetingNotification() {
 
     const showNotification = useCallback((data) => {
         if (!data || !data.meetingId) return;
-        // Deduplicate: if already showing this meeting's card, skip
-        if (shownMeetingRef.current === data.meetingId) return;
+        // Deduplicate: if already showing this meeting's card, skip (unless it's a restart)
+        if (shownMeetingRef.current === data.meetingId && !data.restarted) return;
         shownMeetingRef.current = data.meetingId;
         setNotification(data);
     }, []);
@@ -57,8 +57,10 @@ export default function GlobalMeetingNotification() {
         if (!notification) return;
         if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && !document.hasFocus()) {
             try {
-                const n = new Notification('Meeting Started', {
-                    body: `${notification.organizerName} started "${notification.title}"`,
+                const label = notification.restarted ? 'Meeting Restarted' : 'Meeting Started';
+                const verb = notification.restarted ? 'restarted' : 'started';
+                const n = new Notification(label, {
+                    body: `${notification.organizerName} ${verb} "${notification.title}"`,
                     tag: 'workpulse-meeting-started',
                     icon: '/icon-192.svg',
                 });
@@ -85,7 +87,7 @@ export default function GlobalMeetingNotification() {
         <div className={s.card}>
             <div className={s.topBar}>
                 <span className={s.pulseRing} />
-                <span className={s.topLabel}>Meeting Started</span>
+                <span className={s.topLabel}>{notification.restarted ? 'Meeting Restarted' : 'Meeting Started'}</span>
                 <button className={s.dismissBtn} onClick={handleDismiss} title="Dismiss">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                         <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -94,7 +96,7 @@ export default function GlobalMeetingNotification() {
             </div>
             <div className={s.meetInfo}>
                 <h3 className={s.meetTitle}>{notification.title || 'Meeting'}</h3>
-                <p className={s.meetHost}>{notification.organizerName} started this meeting</p>
+                <p className={s.meetHost}>{notification.organizerName} {notification.restarted ? 'restarted' : 'started'} this meeting</p>
             </div>
             <div className={s.actions}>
                 <button className={s.joinBtn} onClick={handleJoin}>Join now</button>

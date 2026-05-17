@@ -441,22 +441,39 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     }, [user, createPeerConnection, handleSignal, meetingId, wsSend]);
 
     // Register WS message handler
+    const handleWsMessageRef = useRef(handleWsMessage);
+    handleWsMessageRef.current = handleWsMessage;
+
     useEffect(() => {
         if (!ws) return;
-        const onMessage = (e) => { try { handleWsMessage(JSON.parse(e.data)); } catch { /* ignore */ } };
+        const onMessage = (e) => { try { handleWsMessageRef.current(JSON.parse(e.data)); } catch { /* ignore */ } };
         ws.addEventListener('message', onMessage);
         return () => ws.removeEventListener('message', onMessage);
-    }, [ws, handleWsMessage]);
+    }, [ws]);
 
     // Send WS join
     useEffect(() => {
         if (!ws || !meetingId || !mediaReady) return;
+        let retryTimer = null;
+
         const sendJoin = () => {
             wsSend('meeting_join', { meetingId });
             setTimeout(() => wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: videoOffRef.current, screenSharing: screenSharingRef.current }), 500);
         };
-        if (ws.readyState === WebSocket.OPEN) sendJoin();
-        else if (ws.readyState === WebSocket.CONNECTING) ws.addEventListener('open', sendJoin);
+
+        const attemptJoin = () => {
+            if (ws.readyState === WebSocket.OPEN) sendJoin();
+            else if (ws.readyState === WebSocket.CONNECTING) ws.addEventListener('open', sendJoin);
+        };
+
+        attemptJoin();
+
+        // Retry join if still in 'joining' state after 3s (handles race where response was missed)
+        retryTimer = setTimeout(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+                sendJoin();
+            }
+        }, 3000);
 
         // Send leave on tab close/refresh so other participants are notified immediately
         const onBeforeUnload = () => {
@@ -467,6 +484,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         window.addEventListener('beforeunload', onBeforeUnload);
 
         return () => {
+            clearTimeout(retryTimer);
             window.removeEventListener('beforeunload', onBeforeUnload);
             ws.removeEventListener('open', sendJoin);
             if (!keepAliveOnUnmount) { wsSend('meeting_leave', { meetingId }); pcsRef.current.forEach(pc => pc.close()); pcsRef.current.clear(); }

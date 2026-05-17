@@ -657,24 +657,46 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
         // Tag this WS connection so we can clean up on disconnect
         ws._activeMeetingId = meetingId;
 
-        // Mark meeting as active on first join
-        if (meeting.status === 'scheduled') {
-            await db.query(`UPDATE meetings SET status = 'active', started_at = NOW() WHERE id = $1`, [meetingId]);
+        // Determine if we should notify other participants
+        const isRestart = meeting.status === 'ended';
+        const isFirstStart = meeting.status === 'scheduled';
+        // For active meetings, notify if no one else is currently in the meeting
+        let isFirstJoinActive = false;
+        if (meeting.status === 'active' && !isFirstStart) {
+            const currentlyJoined = (await db.query(
+                `SELECT COUNT(*) as cnt FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined' AND user_id != $2`,
+                [meetingId, senderId]
+            )).rows[0];
+            isFirstJoinActive = parseInt(currentlyJoined.cnt) === 0;
+        }
 
-            // Notify all invited participants that the meeting has started (Teams-like join card)
+        // Mark meeting as active on first join
+        if (isFirstStart) {
+            await db.query(`UPDATE meetings SET status = 'active', started_at = NOW() WHERE id = $1`, [meetingId]);
+        }
+
+        if (isFirstStart || isRestart || isFirstJoinActive) {
+            // Notify all invited participants that the meeting has started/restarted
             const allInvited = (await db.query(
                 `SELECT mp.user_id FROM meeting_participants mp
                  WHERE mp.meeting_id = $1 AND mp.user_id != $2`,
                 [meetingId, senderId]
             )).rows;
-            const organizer = (await db.query('SELECT full_name, avatar FROM users WHERE id = $1', [meeting.created_by])).rows[0];
-            const orgName = organizer?.full_name || 'Someone';
+            const starter = (await db.query('SELECT full_name, avatar FROM users WHERE id = $1', [senderId])).rows[0];
+            const starterName = starter?.full_name || 'Someone';
+            const notifType = isRestart ? 'meeting_restarted' : 'meeting_started';
+            const notifTitle = isRestart
+                ? `Meeting Restarted: ${meeting.title || 'Untitled'}`
+                : `Meeting Started: ${meeting.title || 'Untitled'}`;
+            const notifBody = isRestart
+                ? `${starterName} restarted the meeting`
+                : `${starterName} started the meeting`;
+
             for (const p of allInvited) {
-                // Persist notification in DB so it shows in the bell (even if user is offline)
                 try {
                     await db.query(
-                        `INSERT INTO notifications (user_id, type, title, body) VALUES ($1, 'meeting_started', $2, $3)`,
-                        [p.user_id, `Meeting Started: ${meeting.title || 'Untitled'}`, `${orgName} started the meeting`]
+                        `INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)`,
+                        [p.user_id, notifType, notifTitle, notifBody]
                     );
                 } catch { /* ignore duplicate or constraint errors */ }
 
@@ -682,14 +704,14 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
                     meetingId,
                     meetingCode: meeting.meeting_code,
                     title: meeting.title,
-                    organizerName: orgName,
-                    organizerAvatar: organizer?.avatar,
+                    organizerName: starterName,
+                    organizerAvatar: starter?.avatar,
                     startedBy: senderId,
+                    restarted: isRestart,
                 });
-                // Also send a generic notification event so the bell refreshes
                 sendToUser(tenantId, p.user_id, 'notification', {
-                    title: `Meeting Started: ${meeting.title || 'Untitled'}`,
-                    body: `${orgName} started the meeting`,
+                    title: notifTitle,
+                    body: notifBody,
                 });
             }
         }
