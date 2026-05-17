@@ -29,6 +29,9 @@
     background: #111118;
     cursor: pointer;
     overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .pip-video {
@@ -48,8 +51,7 @@
     font-size: 1.6rem;
     font-weight: 700;
     color: #fff;
-    background: linear-gradient(135deg, #0ea5e9 0%, #0ea5e9 100%);
-    margin: auto;
+    background: linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%);
 }
 
 .pip-overlay {

@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState } from 'react';
 import { MicOff, Mic, CameraOff, Camera, PhoneOff } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useMeeting } from '../../MeetingContext';
+import { useAuth } from '../../AuthContext';
 import './MeetingPiP.css';
 
 /**
@@ -11,6 +12,7 @@ import './MeetingPiP.css';
  */
 export default function MeetingPiP() {
     const { session, leaveMeeting, localStreamRef, wsRef, joinedAt } = useMeeting();
+    const { user } = useAuth();
     const location = useLocation();
     const navigate = useNavigate();
     const videoRef = useRef(null);
@@ -20,6 +22,9 @@ export default function MeetingPiP() {
     const [muted, setMuted] = useState(false);
     const [videoOff, setVideoOff] = useState(false);
     const [timer, setTimer] = useState(() => joinedAt ? Math.floor((Date.now() - joinedAt) / 1000) : 0);
+
+    const userName = user?.full_name || user?.username || 'You';
+    const userInitial = userName.charAt(0).toUpperCase();
 
     // Don't show if no active session or we're on the meeting room page
     const isInMeetingRoom = /^\/meeting\/[^/]+\/room/.test(location.pathname);
@@ -111,8 +116,38 @@ export default function MeetingPiP() {
         const stream = localStreamRef.current;
         if (!stream) return;
         const next = !videoOff;
-        stream.getVideoTracks().forEach(t => { t.enabled = !next; });
-        setVideoOff(next);
+        if (next) {
+            // Turning video OFF
+            stream.getVideoTracks().forEach(t => { t.enabled = false; });
+            setVideoOff(true);
+        } else {
+            // Turning video ON — re-enable existing tracks or acquire new one
+            const liveTracks = stream.getVideoTracks().filter(t => t.readyState === 'live');
+            if (liveTracks.length > 0) {
+                liveTracks.forEach(t => { t.enabled = true; });
+                // Re-attach stream to video element in case srcObject was cleared
+                if (videoRef.current) {
+                    videoRef.current.srcObject = stream;
+                    videoRef.current.play().catch(() => {});
+                }
+                setVideoOff(false);
+            } else {
+                // All video tracks ended — acquire a new one
+                navigator.mediaDevices.getUserMedia({ video: true }).then(ns => {
+                    const nt = ns.getVideoTracks()[0];
+                    if (nt) {
+                        // Remove dead tracks, add fresh one
+                        stream.getVideoTracks().forEach(t => stream.removeTrack(t));
+                        stream.addTrack(nt);
+                        if (videoRef.current) {
+                            videoRef.current.srcObject = stream;
+                            videoRef.current.play().catch(() => {});
+                        }
+                        setVideoOff(false);
+                    }
+                }).catch(() => {});
+            }
+        }
         const ws = wsRef.current;
         if (ws && ws.readyState === 1) {
             ws.send(JSON.stringify({
@@ -163,13 +198,18 @@ export default function MeetingPiP() {
         >
             {/* Video preview */}
             <div className="pip-video-wrap" onClick={handleReturn}>
-                {videoOff ? (
+                {videoOff && (
                     <div className="pip-avatar">
-                        {(session.meeting?.title || 'M')[0].toUpperCase()}
+                        {userInitial}
                     </div>
-                ) : (
-                    <video ref={videoRef} className="pip-video" muted playsInline />
                 )}
+                <video
+                    ref={videoRef}
+                    className="pip-video"
+                    style={videoOff ? { display: 'none' } : undefined}
+                    muted
+                    playsInline
+                />
                 <div className="pip-overlay">
                     <span className="pip-title">{session.meeting?.title || 'Meeting'}</span>
                     <span className="pip-timer">{formatTimer(timer)}</span>

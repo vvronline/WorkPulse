@@ -214,18 +214,21 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             localStreamRef.current.getTracks().forEach(track => pc.addTrack(track, localStreamRef.current));
         }
 
-        // Bitrate caps for smooth video
+        // Bitrate caps — adaptive based on number of peer connections.
+        // Full mesh means N-1 upload streams; lower per-peer bitrate as peers grow.
         setTimeout(() => {
+            const peerCount = pcsRef.current.size;
+            const videoBitrate = peerCount <= 2 ? 1_200_000 : peerCount <= 4 ? 600_000 : 400_000;
             for (const sender of pc.getSenders()) {
                 if (!sender.track) continue;
                 try {
                     const params = sender.getParameters();
                     if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
                     if (sender.track.kind === 'video') {
-                        params.encodings[0].maxBitrate = 1_200_000;
-                        params.degradationPreference = 'maintain-framerate';
+                        params.encodings[0].maxBitrate = videoBitrate;
+                        params.degradationPreference = 'balanced';
                     } else {
-                        params.encodings[0].maxBitrate = 64_000;
+                        params.encodings[0].maxBitrate = 48_000;
                     }
                     sender.setParameters(params).catch(() => { });
                 } catch { /* ignore */ }
@@ -411,6 +414,23 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 // Show "connecting" while peer connections are being established;
                 // pc.onconnectionstatechange will flip status to "connected" when ready.
                 setStatus(prev => hasPeersToConnect ? (prev === 'connected' ? prev : 'connecting') : 'connected');
+
+                // Re-adjust bitrate for all existing peers based on new peer count
+                const peerCount = pcsRef.current.size;
+                if (peerCount > 1) {
+                    const videoBitrate = peerCount <= 2 ? 1_200_000 : peerCount <= 4 ? 600_000 : 400_000;
+                    for (const [, existingPc] of pcsRef.current) {
+                        for (const sender of existingPc.getSenders()) {
+                            if (!sender.track || sender.track.kind !== 'video') continue;
+                            try {
+                                const params = sender.getParameters();
+                                if (!params.encodings || params.encodings.length === 0) continue;
+                                params.encodings[0].maxBitrate = videoBitrate;
+                                sender.setParameters(params).catch(() => {});
+                            } catch { /* ignore */ }
+                        }
+                    }
+                }
                 break;
             }
             case 'meeting_signal': {
