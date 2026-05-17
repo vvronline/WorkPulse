@@ -20,7 +20,7 @@ export default function MeetingRoom() {
     const navigate = useNavigate();
     const { code } = useParams();
     const { user } = useAuth();
-    const { session, ws, localStreamRef, setLocalStream: ctxSetLocalStream, leaveMeeting: ctxLeave, joinMeeting } = useMeeting();
+    const { session, ws, localStreamRef, setLocalStream: ctxSetLocalStream, leaveMeeting: ctxLeave, joinMeeting, joinedAt } = useMeeting();
     const [autoJoinError, setAutoJoinError] = useState('');
     const [codeCopied, setCodeCopied] = useState(false);
 
@@ -80,13 +80,15 @@ export default function MeetingRoom() {
         if (localStream && ctxSetLocalStream) ctxSetLocalStream(localStream);
     }, [localStream, ctxSetLocalStream]);
 
-    // Timer
-    const [elapsed, setElapsed] = useState(0);
+    // Timer — compute elapsed from the shared joinedAt timestamp
+    const [elapsed, setElapsed] = useState(() => joinedAt ? Math.floor((Date.now() - joinedAt) / 1000) : 0);
     const timerRef = useRef(null);
     useEffect(() => {
-        timerRef.current = setInterval(() => setElapsed(e => e + 1), 1000);
+        if (!joinedAt) return;
+        setElapsed(Math.floor((Date.now() - joinedAt) / 1000));
+        timerRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - joinedAt) / 1000)), 1000);
         return () => clearInterval(timerRef.current);
-    }, []);
+    }, [joinedAt]);
     const formatTime = (s) => {
         const h = Math.floor(s / 3600);
         const m = Math.floor((s % 3600) / 60);

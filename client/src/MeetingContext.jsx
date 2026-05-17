@@ -17,6 +17,9 @@ export function MeetingProvider({ children }) {
     const [session, setSession] = useState(null);
     // session shape: { meetingId, code, meeting, initialMuted, initialVideoOff }
 
+    // Timestamp when the user joined the meeting — used for elapsed timer
+    const [joinedAt, setJoinedAt] = useState(null);
+
     // When true, the meeting room UI is hidden (display:none) and the PiP
     // floating widget takes over. The MeetingRoom component STAYS MOUNTED
     // so peer connections, participants Map, etc. survive minimize/maximize.
@@ -112,6 +115,7 @@ export function MeetingProvider({ children }) {
 
         createWs();
 
+        setJoinedAt(Date.now());
         setSession({
             meetingId, code, meeting,
             initialMuted: initialMuted ?? false,
@@ -130,6 +134,7 @@ export function MeetingProvider({ children }) {
             localStreamRef.current = null;
         }
         setSession(null);
+        setJoinedAt(null);
         setMinimized(false);
     }, []);
 
@@ -153,12 +158,13 @@ export function MeetingProvider({ children }) {
         ws,
         minimized,
         setMinimized,
+        joinedAt,
         joinMeeting,
         leaveMeeting,
         setLocalStream,
         localStreamRef,
         wsRef,
-    }), [session, ws, minimized, joinMeeting, leaveMeeting, setLocalStream]);
+    }), [session, ws, minimized, joinedAt, joinMeeting, leaveMeeting, setLocalStream]);
 
     return (
         <MeetingCtx.Provider value={value}>

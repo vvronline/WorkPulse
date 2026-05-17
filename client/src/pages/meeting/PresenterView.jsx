@@ -20,6 +20,7 @@ export default function PresenterView({ presenterStream, presenterName }) {
                 ref={videoRef}
                 autoPlay
                 playsInline
+                muted
                 style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: 'var(--mr-radius)' }}
             />
             <div className="mr-tile-overlay mr-tile-overlay--visible">

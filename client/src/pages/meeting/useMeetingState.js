@@ -95,10 +95,12 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     useEffect(() => {
         if (existingStream) {
             localStreamRef.current = existingStream;
-            // Apply current mute/video flags to the reused stream so the
-            // returning UI matches whatever state the user toggled in PiP.
-            existingStream.getAudioTracks().forEach(t => { t.enabled = !initialMuted; });
-            existingStream.getVideoTracks().forEach(t => { t.enabled = !initialVideoOff; });
+            // Sync mute/video state from the actual track state — the PiP
+            // widget may have toggled tracks while we were display:none.
+            const audioEnabled = existingStream.getAudioTracks().some(t => t.enabled);
+            const videoEnabled = existingStream.getVideoTracks().some(t => t.enabled);
+            setMuted(!audioEnabled);
+            setVideoOff(!videoEnabled);
             setLocalStream(existingStream);
             setMediaReady(true);
             return;
@@ -268,7 +270,15 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 iceRestartCountsRef.current.delete(remoteUserId);
                 if (pc._disconnectTimer) { clearTimeout(pc._disconnectTimer); pc._disconnectTimer = null; }
             } else if (pc.connectionState === 'failed') {
-                setParticipants(prev => { const n = new Map(prev); const p = n.get(remoteUserId); if (p) n.set(remoteUserId, { ...p, stream: null }); return n; });
+                setParticipants(prev => {
+                    const n = new Map(prev);
+                    const p = n.get(remoteUserId);
+                    if (p) {
+                        if (p.stream) p.stream.getTracks().forEach(t => t.stop());
+                        n.set(remoteUserId, { ...p, stream: null });
+                    }
+                    return n;
+                });
                 if (!relayOnlyPeersRef.current.has(remoteUserId)) {
                     relayOnlyPeersRef.current.add(remoteUserId);
                     try { pc.close(); } catch { }
@@ -278,7 +288,15 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             } else if (pc.connectionState === 'disconnected') {
                 pc._disconnectTimer = setTimeout(() => {
                     if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-                        setParticipants(prev => { const n = new Map(prev); const p = n.get(remoteUserId); if (p) n.set(remoteUserId, { ...p, stream: null }); return n; });
+                        setParticipants(prev => {
+                            const n = new Map(prev);
+                            const p = n.get(remoteUserId);
+                            if (p) {
+                                if (p.stream) p.stream.getTracks().forEach(t => t.stop());
+                                n.set(remoteUserId, { ...p, stream: null });
+                            }
+                            return n;
+                        });
                     }
                 }, 5000);
             }
@@ -535,7 +553,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     }, [meetingId, wsSend]);
 
     const toggleVideo = useCallback(async () => {
-        const next = !videoOff;
+        const next = !videoOffRef.current;
         if (next) {
             if (localStreamRef.current) localStreamRef.current.getVideoTracks().forEach(t => { t.enabled = false; });
         } else {
@@ -605,12 +623,13 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         }
         setVideoOff(next);
         wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: next, screenSharing: screenSharingRef.current });
-    }, [meetingId, videoOff, wsSend]);
+    }, [meetingId, wsSend]);
 
     const toggleScreenShare = useCallback(async () => {
         if (screenSharing) {
             if (screenStreamRef.current) { screenStreamRef.current.getTracks().forEach(t => t.stop()); screenStreamRef.current = null; }
-            setScreenSharing(false); setScreenStream(null); setPresenterId(null);
+            setScreenSharing(false); setScreenStream(null);
+            if (presenterIdRef.current === user?.id) setPresenterId(null);
             wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: videoOffRef.current, screenSharing: false });
             for (const [, pc] of pcsRef.current) {
                 const vs = pc.getSenders().find(s => s.track?.kind === 'video');
@@ -644,6 +663,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     const sendChatFile = useCallback(async (file) => {
         const formData = new FormData();
         formData.append('file', file);
+        const previewUrl = URL.createObjectURL(file);
         try {
             // Optimistic local message
             setMessages(prev => [...prev, {
@@ -651,7 +671,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 sender_name: user?.full_name || user?.username || 'You',
                 file_name: file.name,
                 file_size: file.size,
-                file_url: URL.createObjectURL(file),
+                file_url: previewUrl,
                 created_at: new Date().toISOString(),
                 _optimistic: true,
             }]);
@@ -664,6 +684,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 wsSend('meeting_chat', { meetingId, text: `📎 ${file.name}`, file_name: file.name, file_size: file.size });
             }
         } catch { /* silent */ }
+        setTimeout(() => URL.revokeObjectURL(previewUrl), 60_000);
     }, [meetingId, wsSend, user]);
 
     const cleanupMedia = useCallback(() => {

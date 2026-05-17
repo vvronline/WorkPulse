@@ -10,7 +10,7 @@ import './MeetingPiP.css';
  * Draggable.
  */
 export default function MeetingPiP() {
-    const { session, leaveMeeting, localStreamRef, wsRef } = useMeeting();
+    const { session, leaveMeeting, localStreamRef, wsRef, joinedAt } = useMeeting();
     const location = useLocation();
     const navigate = useNavigate();
     const videoRef = useRef(null);
@@ -19,7 +19,7 @@ export default function MeetingPiP() {
     const [pos, setPos] = useState({ right: 24, bottom: 24 });
     const [muted, setMuted] = useState(false);
     const [videoOff, setVideoOff] = useState(false);
-    const [timer, setTimer] = useState(0);
+    const [timer, setTimer] = useState(() => joinedAt ? Math.floor((Date.now() - joinedAt) / 1000) : 0);
 
     // Don't show if no active session or we're on the meeting room page
     const isInMeetingRoom = /^\/meeting\/[^/]+\/room/.test(location.pathname);
@@ -40,12 +40,13 @@ export default function MeetingPiP() {
         }
     }, [visible, localStreamRef]);
 
-    // Meeting timer
+    // Meeting timer — derived from shared joinedAt timestamp
     useEffect(() => {
-        if (!visible) { setTimer(0); return; }
-        const id = setInterval(() => setTimer(t => t + 1), 1000);
+        if (!visible || !joinedAt) { setTimer(0); return; }
+        setTimer(Math.floor((Date.now() - joinedAt) / 1000));
+        const id = setInterval(() => setTimer(Math.floor((Date.now() - joinedAt) / 1000)), 1000);
         return () => clearInterval(id);
-    }, [visible]);
+    }, [visible, joinedAt]);
 
     // Dragging
     useEffect(() => {

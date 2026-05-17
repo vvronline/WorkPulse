@@ -977,9 +977,15 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
             [meetingId]
         )).rows;
 
+        // Only include explicitly-sent fields to avoid coercing undefined to false
+        const trackState = { meetingId, userId: senderId };
+        if (muted !== undefined) trackState.muted = !!muted;
+        if (videoOff !== undefined) trackState.videoOff = !!videoOff;
+        if (screenSharing !== undefined) trackState.screenSharing = !!screenSharing;
+
         for (const p of participants) {
             if (p.user_id !== senderId) {
-                sendToUser(tenantId, p.user_id, 'meeting_track_state', { meetingId, userId: senderId, muted: !!muted, videoOff: !!videoOff, screenSharing: !!screenSharing });
+                sendToUser(tenantId, p.user_id, 'meeting_track_state', trackState);
             }
         }
 
