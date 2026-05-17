@@ -85,7 +85,7 @@ export default function MeetingParticipants({ participants, localUserId, isOrgan
                         {p.raisedHand && <span className="mp-hand" title="Hand raised"><Hand size={16} color="#facc15" /></span>}
                         {p.muted && <span className="mp-muted"><MicOff size={13} /></span>}
                         {isOrganizer && p.userId !== localUserId && (
-                            <button className="mp-mute-btn" onClick={() => onMute(p.userId)} title={p.muted ? 'Unmute participant' : 'Mute participant'}>
+                            <button className="mp-mute-btn" onClick={() => onMute(p.userId, !p.muted)} title={p.muted ? 'Unmute participant' : 'Mute participant'}>
                                 {p.muted ? <Mic size={13} /> : <MicOff size={13} />}
                             </button>
                         )}

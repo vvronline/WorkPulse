@@ -394,8 +394,10 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 break;
             }
             case 'meeting_muted': {
-                setMuted(true);
-                if (localStreamRef.current) localStreamRef.current.getAudioTracks().forEach(t => { t.enabled = false; });
+                const shouldMute = data.muted !== false;
+                setMuted(shouldMute);
+                if (localStreamRef.current) localStreamRef.current.getAudioTracks().forEach(t => { t.enabled = !shouldMute; });
+                wsSend('meeting_track_state', { meetingId, muted: shouldMute, videoOff: videoOffRef.current, screenSharing: screenSharingRef.current });
                 break;
             }
             case 'meeting_hand_raised': {
@@ -405,9 +407,21 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             }
             case 'meeting_track_state': {
                 const { userId, muted: m, videoOff: v, screenSharing: s } = data;
-                setParticipants(prev => { const n = new Map(prev); const p = n.get(userId); if (p) n.set(userId, { ...p, muted: m, videoOff: v, screenSharing: s }); return n; });
+                setParticipants(prev => {
+                    const n = new Map(prev);
+                    const p = n.get(userId);
+                    if (p) {
+                        n.set(userId, {
+                            ...p,
+                            ...(m != null ? { muted: m } : {}),
+                            ...(v != null ? { videoOff: v } : {}),
+                            ...(s != null ? { screenSharing: s } : {}),
+                        });
+                    }
+                    return n;
+                });
                 if (s) setPresenterId(userId);
-                else if (presenterIdRef.current === userId) setPresenterId(null);
+                else if (s === false && presenterIdRef.current === userId) setPresenterId(null);
                 break;
             }
             case 'meeting_message': {
@@ -601,7 +615,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
 
     const endMeeting = useCallback(() => { wsSend('meeting_end', { meetingId }); cleanupMedia(); setStatus('ended'); }, [meetingId, wsSend, cleanupMedia]);
     const leaveMeeting = useCallback(() => { wsSend('meeting_leave', { meetingId }); cleanupMedia(); setStatus('left'); }, [meetingId, wsSend, cleanupMedia]);
-    const muteParticipant = useCallback((targetUserId) => { wsSend('meeting_mute_participant', { meetingId, targetUserId }); }, [meetingId, wsSend]);
+    const muteParticipant = useCallback((targetUserId, muted = true) => { wsSend('meeting_mute_participant', { meetingId, targetUserId, muted }); }, [meetingId, wsSend]);
     const addParticipant = useCallback((targetUserId) => { wsSend('meeting_add_participant', { meetingId, targetUserId }); }, [meetingId, wsSend]);
 
     const switchAudioDevice = useCallback(async (deviceId) => {

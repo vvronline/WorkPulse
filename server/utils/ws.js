@@ -852,14 +852,26 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
         });
 
     } else if (msg.type === 'meeting_mute_participant') {
-        // Organizer mutes a participant
+        // Organizer mutes/unmutes a participant
         const { meetingId, targetUserId, muted } = msg.data || {};
         if (!meetingId || !targetUserId) return;
 
         const meeting = (await db.query('SELECT * FROM meetings WHERE id = $1 AND created_by = $2', [meetingId, senderId])).rows[0];
         if (!meeting) return;
 
-        sendToUser(tenantId, targetUserId, 'meeting_muted', { meetingId, muted: !!muted, byUserId: senderId });
+        // Notify the target to mute/unmute themselves
+        sendToUser(tenantId, targetUserId, 'meeting_muted', { meetingId, muted: muted !== false, byUserId: senderId });
+
+        // Broadcast updated mute state to all participants so UI reflects change
+        const participants = (await db.query(
+            `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined'`,
+            [meetingId]
+        )).rows;
+        for (const p of participants) {
+            if (p.user_id !== targetUserId) {
+                sendToUser(tenantId, p.user_id, 'meeting_track_state', { meetingId, userId: targetUserId, muted: muted !== false, videoOff: null, screenSharing: null });
+            }
+        }
 
     } else if (msg.type === 'meeting_raise_hand') {
         const { meetingId, raised } = msg.data || {};

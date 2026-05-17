@@ -146,17 +146,26 @@ export default function MeetingRoom() {
     const handleToggleChat = () => setActivePanel(p => p === 'chat' ? null : 'chat');
     const handleToggleParticipants = () => setActivePanel(p => p === 'participants' ? null : 'participants');
 
-    // Track unread chat messages when panel is not open
+    // Track unread chat messages when chat panel is not open
     const [chatUnreadCount, setChatUnreadCount] = useState(0);
     const prevMsgCountRef = useRef(messages.length);
+    const activePanelRef = useRef(activePanel);
+    activePanelRef.current = activePanel;
+
     useEffect(() => {
-        if (messages.length > prevMsgCountRef.current) {
-            if (activePanel !== 'chat') {
-                setChatUnreadCount(c => c + (messages.length - prevMsgCountRef.current));
+        const newCount = messages.length;
+        const diff = newCount - prevMsgCountRef.current;
+        if (diff > 0 && activePanelRef.current !== 'chat') {
+            // Only count messages from others (skip optimistic local messages)
+            const newMessages = messages.slice(-diff);
+            const fromOthers = newMessages.filter(m => m.sender_id !== user?.id || !m._optimistic).length;
+            if (fromOthers > 0) {
+                setChatUnreadCount(c => c + fromOthers);
             }
         }
-        prevMsgCountRef.current = messages.length;
-    }, [messages.length, activePanel]);
+        prevMsgCountRef.current = newCount;
+    }, [messages, user?.id]);
+
     useEffect(() => {
         if (activePanel === 'chat') setChatUnreadCount(0);
     }, [activePanel]);

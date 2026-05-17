@@ -42,7 +42,7 @@ export default function MeetingChat({ messages, onSend, onSendFile }) {
     };
 
     return (
-        <>
+        <div className="mc-panel">
             <div className="mc-messages">
                 {messages.length === 0 && (
                     <div className="mc-empty">No messages yet</div>
@@ -86,6 +86,6 @@ export default function MeetingChat({ messages, onSend, onSendFile }) {
                     <Send size={16} />
                 </button>
             </div>
-        </>
+        </div>
     );
 }
