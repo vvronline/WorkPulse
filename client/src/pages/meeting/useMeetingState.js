@@ -457,7 +457,17 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         };
         if (ws.readyState === WebSocket.OPEN) sendJoin();
         else if (ws.readyState === WebSocket.CONNECTING) ws.addEventListener('open', sendJoin);
+
+        // Send leave on tab close/refresh so other participants are notified immediately
+        const onBeforeUnload = () => {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'meeting_leave', data: { meetingId } }));
+            }
+        };
+        window.addEventListener('beforeunload', onBeforeUnload);
+
         return () => {
+            window.removeEventListener('beforeunload', onBeforeUnload);
             ws.removeEventListener('open', sendJoin);
             if (!keepAliveOnUnmount) { wsSend('meeting_leave', { meetingId }); pcsRef.current.forEach(pc => pc.close()); pcsRef.current.clear(); }
         };

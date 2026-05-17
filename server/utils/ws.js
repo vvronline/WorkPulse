@@ -183,6 +183,42 @@ function setupWebSocket(server) {
                     broadcastPresence(db, tenantId, userId, 'offline');
                 }
             }
+
+            // Clean up meeting if user was in one and didn't explicitly leave
+            if (ws._activeMeetingId) {
+                const mid = ws._activeMeetingId;
+                ws._activeMeetingId = null;
+                (async () => {
+                    try {
+                        const isJoined = (await db.query(
+                            `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
+                            [mid, userId]
+                        )).rows[0];
+                        if (!isJoined) return;
+
+                        await db.query(
+                            `UPDATE meeting_participants SET status = 'left', left_at = NOW() WHERE meeting_id = $1 AND user_id = $2`,
+                            [mid, userId]
+                        );
+
+                        const activeParticipants = (await db.query(
+                            `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined'`,
+                            [mid]
+                        )).rows;
+
+                        for (const p of activeParticipants) {
+                            sendToUser(tenantId, p.user_id, 'meeting_participant_left', { meetingId: mid, userId });
+                        }
+
+                        if (activeParticipants.length === 0) {
+                            await db.query(`UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1 AND status != 'ended'`, [mid]);
+                        }
+                    } catch (err) {
+                        logger.warn({ err: err.message, userId, meetingId: mid }, 'Meeting cleanup on disconnect failed');
+                    }
+                })();
+            }
+
             logger.debug({ userId, tenantId }, 'WS client disconnected');
         });
 
@@ -618,6 +654,9 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
             [meetingId, senderId]
         );
 
+        // Tag this WS connection so we can clean up on disconnect
+        ws._activeMeetingId = meetingId;
+
         // Mark meeting as active on first join
         if (meeting.status === 'scheduled') {
             await db.query(`UPDATE meetings SET status = 'active', started_at = NOW() WHERE id = $1`, [meetingId]);
@@ -708,6 +747,9 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
         const { meetingId } = msg.data || {};
         if (!meetingId) return;
 
+        // Clear the tag so disconnect handler doesn't double-leave
+        ws._activeMeetingId = null;
+
         // Verify sender is actually a joined participant
         const isJoined = (await db.query(
             `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
@@ -737,6 +779,8 @@ async function handleChatMessage(db, senderId, tenantId, msg) {
     } else if (msg.type === 'meeting_end') {
         const { meetingId } = msg.data || {};
         if (!meetingId) return;
+
+        ws._activeMeetingId = null;
 
         const meeting = (await db.query(
             'SELECT * FROM meetings WHERE id = $1 AND created_by = $2',
