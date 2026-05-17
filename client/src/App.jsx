@@ -23,6 +23,7 @@ import { CustomFieldsProvider } from './CustomFieldsContext';
 import { RoleLabelsProvider } from './RoleLabelsContext';
 import { BrandingProvider } from './BrandingContext';
 import MeetingPiP from './components/meeting/MeetingPiP';
+import GlobalMeetingRoom from './components/meeting/GlobalMeetingRoom';
 import GlobalIncomingCall from './components/notifications/GlobalIncomingCall';
 import GlobalMeetingNotification from './components/notifications/GlobalMeetingNotification';
 import PageSkeleton from './components/common/PageSkeleton';
@@ -34,7 +35,6 @@ import KeepAlive from './components/common/KeepAlive';
 
 // Lazy-load pages that are NOT part of keep-alive (meetings use dynamic params)
 const MeetingJoin = lazy(() => import('./pages/MeetingJoin'));
-const MeetingRoom = lazy(() => import('./pages/MeetingRoom'));
 const SprintInsights = lazy(() => import('./pages/SprintInsights'));
 const PublicNote = lazy(() => import('./pages/PublicNote'));
 
@@ -100,7 +100,10 @@ function AppRoutes() {
           <Route path="/forgot-password" element={<PublicRoute><ForgotPassword /></PublicRoute>} />
           <Route path="/reset-password/:token" element={<PublicRoute><ResetPassword /></PublicRoute>} />
           <Route path="/meeting/:code" element={<ProtectedRoute><MeetingJoin /></ProtectedRoute>} />
-          <Route path="/meeting/:code/room" element={<ProtectedRoute><MeetingRoom /></ProtectedRoute>} />
+          {/* /meeting/:code/room is handled by the globally-mounted <GlobalMeetingRoom />
+              (rendered below at the app root). The Routes entry only needs to gate auth
+              and provide an empty element so the matched URL doesn't fall through to "*". */}
+          <Route path="/meeting/:code/room" element={<ProtectedRoute><div /></ProtectedRoute>} />
           {/* Agile config is now ONLY editable from inside the admin panel
               (Admin → Structure → Agile Config). The standalone /agile-settings
               route redirects any non-admin to the tasks page; admins get
@@ -239,6 +242,10 @@ export default function App() {
                     <CallProvider>
                       <MeetingProvider>
                         <AppRoutes />
+                        {/* Keeps a single MeetingRoom instance alive across
+                            navigations so minimize/maximize preserves peer
+                            connections and rendered <video> elements. */}
+                        <GlobalMeetingRoom />
                         <MeetingPiP />
                         <GlobalIncomingCall />
                         <GlobalMeetingNotification />

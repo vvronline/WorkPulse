@@ -17,6 +17,11 @@ export function MeetingProvider({ children }) {
     const [session, setSession] = useState(null);
     // session shape: { meetingId, code, meeting, initialMuted, initialVideoOff }
 
+    // When true, the meeting room UI is hidden (display:none) and the PiP
+    // floating widget takes over. The MeetingRoom component STAYS MOUNTED
+    // so peer connections, participants Map, etc. survive minimize/maximize.
+    const [minimized, setMinimized] = useState(false);
+
     const wsRef = useRef(null);
     const [ws, setWs] = useState(null);
     const localStreamRef = useRef(null);
@@ -125,6 +130,7 @@ export function MeetingProvider({ children }) {
             localStreamRef.current = null;
         }
         setSession(null);
+        setMinimized(false);
     }, []);
 
     leaveMeetingRef.current = leaveMeeting;
@@ -145,12 +151,14 @@ export function MeetingProvider({ children }) {
     const value = useMemo(() => ({
         session,
         ws,
+        minimized,
+        setMinimized,
         joinMeeting,
         leaveMeeting,
         setLocalStream,
         localStreamRef,
         wsRef,
-    }), [session, ws, joinMeeting, leaveMeeting, setLocalStream]);
+    }), [session, ws, minimized, joinMeeting, leaveMeeting, setLocalStream]);
 
     return (
         <MeetingCtx.Provider value={value}>

@@ -1170,4 +1170,39 @@
     position: relative;
     z-index: 25;
   }
+
+  /* Better tile proportions for multi-participant grids on desktop.
+     Without this, 3+ tiles end up very wide and short because each grid
+     cell stretches to 1fr regardless of aspect. Setting a 16:9 aspect
+     ratio on tiles + center-aligning them in their cells keeps cells
+     looking like real "video tiles" instead of letterbox strips. The
+     `min-height: 0` + `max-height: 100%` lets the browser shrink them so
+     they always fit the row height. */
+  .mr-grid[data-count="3"] .mr-tile,
+  .mr-grid[data-count="4"] .mr-tile,
+  .mr-grid[data-count="5"] .mr-tile,
+  .mr-grid[data-count="6"] .mr-tile,
+  .mr-grid[data-count="many"] .mr-tile {
+    aspect-ratio: 16 / 9;
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: 100%;
+  }
+
+  /* Center the (now smaller-than-cell) tiles within their grid cells so
+     the layout stays balanced when tiles are narrower than the cell. */
+  .mr-grid[data-count="3"],
+  .mr-grid[data-count="4"],
+  .mr-grid[data-count="5"],
+  .mr-grid[data-count="6"],
+  .mr-grid[data-count="many"] {
+    justify-items: center;
+    align-items: center;
+  }
+
+  /* Single participant: keep using full available area (no aspect-ratio
+     cap) so the self-view is as large as possible. */
+  /* Two participants: also keep full-width per cell so each half-screen
+     shows a nice large tile without empty bars. */
 }

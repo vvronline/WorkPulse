@@ -32,8 +32,13 @@ export default function MeetingRoom() {
         setTimeout(() => setCodeCopied(false), 2000);
     }, [session?.code, code]);
 
-    // Minimize meeting — navigate away from the room route while keeping the
-    // meeting session alive. The MeetingPiP floating widget then appears.
+    // Minimize meeting — navigate to "/" so the navbar reappears and the user
+    // can keep working. The MeetingRoom component is mounted GLOBALLY in
+    // App.jsx (via <GlobalMeetingRoom />) so this navigation does NOT unmount
+    // it; peer connections, participant Map, video elements, audio analysers
+    // and the WebSocket all survive. While the URL is not the room route the
+    // global mount hides itself (display:none) and the <MeetingPiP /> widget
+    // takes over the UI.
     const handleMinimize = useCallback(() => {
         navigate('/');
     }, [navigate]);
