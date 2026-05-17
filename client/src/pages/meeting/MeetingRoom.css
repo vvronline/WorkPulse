@@ -148,19 +148,19 @@
   overflow: hidden;
 }
 
-/* 3 participants — 2 columns × 2 rows, with the 3rd tile spanning both
-   columns on the second row. This matches the videosdk-rtc-react-sdk
-   reference UI (and Zoom/Meet) where 3 people get two equal tiles on top
-   and one large tile underneath, rather than three cramped narrow tiles.
-   Result is much more usable cell sizes on a typical landscape desktop. */
+/* 3 participants — 4-column × 2-row grid with each tile spanning 2 columns.
+   This gives THREE equal-sized tiles: two on the top row (cols 1–2 and 3–4)
+   and the third centered on the second row (cols 2–3). It matches the
+   videosdk-rtc-react-sdk reference UI exactly — every tile is the same
+   width AND the same height, with no awkward full-width row. */
 .mr-grid[data-count="3"] {
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   grid-template-rows: repeat(2, 1fr);
   overflow: hidden;
 }
-.mr-grid[data-count="3"] > :nth-child(3) {
-  grid-column: 1 / -1;
-}
+.mr-grid[data-count="3"] > :nth-child(1) { grid-column: 1 / span 2; grid-row: 1; }
+.mr-grid[data-count="3"] > :nth-child(2) { grid-column: 3 / span 2; grid-row: 1; }
+.mr-grid[data-count="3"] > :nth-child(3) { grid-column: 2 / span 2; grid-row: 2; }
 
 .mr-grid[data-count="4"] {
   grid-template-columns: repeat(2, 1fr);
