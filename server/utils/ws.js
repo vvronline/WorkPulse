@@ -165,7 +165,7 @@ function setupWebSocket(server) {
 
             try {
                 const msg = JSON.parse(raw);
-                handleChatMessage(db, userId, tenantId, msg).catch(err => {
+                handleChatMessage(db, userId, tenantId, msg, ws).catch(err => {
                     logger.error({ err: err?.message, stack: err?.stack, userId, tenantId, type: msg?.type }, 'WS message handler error');
                 });
             } catch { /* ignore non-JSON */ }
@@ -253,7 +253,7 @@ function setupWebSocket(server) {
 }
 
 /** Handle incoming WS messages for chat */
-async function handleChatMessage(db, senderId, tenantId, msg) {
+async function handleChatMessage(db, senderId, tenantId, msg, ws) {
     if (msg.type === 'chat_message') {
         const { conversationId, content, replyToId, formatType, mentions } = msg.data || {};
         if (!conversationId || !content || typeof content !== 'string' || content.trim().length === 0 || content.length > 5000) return;
