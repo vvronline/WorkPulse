@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, memo } from 'react';
-import { MicOff, Hand } from 'lucide-react';
+import { MicOff, Hand, Loader2, WifiOff } from 'lucide-react';
 
 // A single shared AudioContext for all participant tiles. Browsers cap the
 // number of concurrent contexts, and creating one per tile (especially with
@@ -25,15 +25,51 @@ function getSharedAudioCtx() {
  */
 const ParticipantTile = memo(function ParticipantTile({ participant, isLocal, quality, isMini }) {
     const videoRef = useRef(null);
-    const { stream, name, muted: pMuted, videoOff: pVideoOff, raisedHand } = participant || {};
+    const { stream, name, muted: pMuted, videoOff: pVideoOff, raisedHand, connectionState } = participant || {};
     const [speaking, setSpeaking] = useState(false);
+    const [videoReady, setVideoReady] = useState(false);
 
+    // Attach the MediaStream and aggressively try to start playback. Remote
+    // <video> elements aren't `muted`, so some browsers (Safari, locked-down
+    // Chrome contexts) silently block autoplay until we call play() ourselves
+    // after the user-gesture that joined the meeting. Re-trying on
+    // loadedmetadata / canplay covers the case where the video track arrives
+    // a moment after audio (mesh re-negotiation) so the element initially has
+    // no frame to paint.
     useEffect(() => {
-        if (!videoRef.current) return;
+        const video = videoRef.current;
+        if (!video) return;
+
         if (stream && !pVideoOff) {
-            videoRef.current.srcObject = stream;
+            if (video.srcObject !== stream) {
+                video.srcObject = stream;
+            }
+            setVideoReady(false);
+
+            const tryPlay = () => {
+                const p = video.play();
+                if (p && typeof p.catch === 'function') {
+                    p.catch(() => { /* autoplay blocked — retry on next event */ });
+                }
+            };
+            const markReady = () => {
+                setVideoReady(true);
+                tryPlay();
+            };
+
+            tryPlay();
+            video.addEventListener('loadedmetadata', markReady);
+            video.addEventListener('canplay', markReady);
+            video.addEventListener('playing', markReady);
+
+            return () => {
+                video.removeEventListener('loadedmetadata', markReady);
+                video.removeEventListener('canplay', markReady);
+                video.removeEventListener('playing', markReady);
+            };
         } else {
-            videoRef.current.srcObject = null;
+            if (video.srcObject) video.srcObject = null;
+            setVideoReady(false);
         }
     }, [stream, pVideoOff]);
 
@@ -128,25 +164,57 @@ const ParticipantTile = memo(function ParticipantTile({ participant, isLocal, qu
         };
     }, [stream, pMuted]);
 
-    const showVideo = stream && !pVideoOff;
+    const hasVideoTrack = !!stream && !pVideoOff && stream.getVideoTracks?.().some(t => t.readyState === 'live');
+    const showVideo = hasVideoTrack;
     const initial = (name || '?').charAt(0).toUpperCase();
     const displayName = isLocal ? `${name || 'You'} (You)` : (name || 'Participant');
 
+    // Determine the connection status label to show in the placeholder.
+    // Local tile is always considered connected. Remote tiles use the
+    // RTCPeerConnection state piped through from useMeetingState. We
+    // intentionally collapse "new"/"connecting"/no-state into "Connecting…"
+    // so users get clear feedback during the (sometimes multi-second) ICE
+    // handshake instead of staring at a blank tile and assuming something
+    // is broken.
+    const isConnecting = !isLocal && (!connectionState || connectionState === 'new' || connectionState === 'connecting');
+    const isReconnecting = !isLocal && (connectionState === 'disconnected' || connectionState === 'failed');
+    const statusLabel = isConnecting ? 'Connecting…' : isReconnecting ? 'Reconnecting…' : null;
+
     return (
         <div className={`mr-tile ${isLocal ? 'mr-tile--local' : ''} ${speaking ? 'mr-tile--speaking' : ''}`}>
-            {showVideo ? (
-                <video
-                    ref={videoRef}
-                    autoPlay
-                    playsInline
-                    muted={isLocal}
-                />
-            ) : (
-                <div className="mr-tile-avatar">{initial}</div>
-            )}
+            {/* Always-mounted video element. Keeping it in the tree (rather
+                than conditionally rendering) means srcObject sticks around
+                and the browser keeps the decoder warm — drastically reducing
+                the "blank / takes-time-to-show" delay when a peer joins or
+                toggles their camera. We just hide it via CSS when there is
+                no live video track. */}
+            <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted={isLocal}
+                className={`mr-tile-video ${showVideo && videoReady ? 'mr-tile-video--visible' : 'mr-tile-video--hidden'}`}
+            />
 
-            {/* Hidden video for srcObject attachment when not shown */}
-            {!showVideo && <video ref={videoRef} style={{ display: 'none' }} />}
+            {/* Avatar placeholder — shown when there's no live video OR while
+                the video element is still buffering its first frame. Sized
+                proportionally to the tile so it doesn't look "tiny" in a
+                large grid cell. We also surface the WebRTC connection state
+                here (Connecting… / Reconnecting…) so the user always knows
+                what's going on instead of seeing a silent black box. */}
+            {(!showVideo || !videoReady) && (
+                <div className="mr-tile-placeholder">
+                    <div className="mr-tile-avatar">{initial}</div>
+                    {statusLabel && (
+                        <div className={`mr-tile-status ${isReconnecting ? 'mr-tile-status--warn' : ''}`}>
+                            {isReconnecting
+                                ? <WifiOff size={14} />
+                                : <Loader2 size={14} className="mr-tile-status-spin" />}
+                            <span>{statusLabel}</span>
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* Raised hand badge — top right corner */}
             {raisedHand && (

@@ -235,16 +235,41 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             }
         }, 0);
 
+        // Stable per-peer remote MediaStream. We keep the SAME stream object
+        // for the lifetime of the peer connection so the participant tile's
+        // <video srcObject> never needs to be re-assigned when an additional
+        // track (e.g. video after audio) arrives. Re-assigning srcObject
+        // forces the browser to tear down the decoder, blank the element,
+        // and re-negotiate playback — which is what caused remote videos to
+        // "take a long time to appear" or "show small then resize" for late
+        // joiners.
         const remoteStream = new MediaStream();
         pc.ontrack = (e) => {
-            remoteStream.addTrack(e.track);
-            const hasVideo = remoteStream.getVideoTracks().some(t => t.readyState === 'live' && t.enabled);
+            // Add the track (de-duped) and let the browser fire the usual
+            // loadedmetadata/canplay events on the existing video element.
+            const existing = remoteStream.getTracks().find(t => t.id === e.track.id);
+            if (!existing) remoteStream.addTrack(e.track);
+
+            // When a track ends (peer turned off camera), drop it so
+            // hasVideoTrack in the tile flips false and the avatar shows.
+            e.track.onended = () => {
+                try { remoteStream.removeTrack(e.track); } catch { /* ignore */ }
+                setParticipants(prev => {
+                    const next = new Map(prev);
+                    const ex = next.get(remoteUserId);
+                    if (ex) next.set(remoteUserId, { ...ex, stream: remoteStream });
+                    return next;
+                });
+            };
+
+            const hasVideo = remoteStream.getVideoTracks().some(t => t.readyState === 'live');
             setParticipants(prev => {
                 const next = new Map(prev);
                 const ex = next.get(remoteUserId) || { userId: remoteUserId };
                 next.set(remoteUserId, {
                     ...ex,
-                    stream: new MediaStream(remoteStream.getTracks()),
+                    // Reuse the SAME stream object — tile won't reload.
+                    stream: remoteStream,
                     ...(hasVideo ? { videoOff: false } : {}),
                 });
                 return next;
@@ -273,6 +298,21 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         };
 
         pc.onconnectionstatechange = () => {
+            // Mirror the peer-connection state onto the corresponding
+            // participant entry so the tile can show clear feedback
+            // ("Connecting…" spinner, "Reconnecting…", etc.) instead of a
+            // blank black square while we wait for the first video frame.
+            const state = pc.connectionState;
+            setParticipants(prev => {
+                const next = new Map(prev);
+                const ex = next.get(remoteUserId);
+                if (ex && ex.connectionState !== state) {
+                    next.set(remoteUserId, { ...ex, connectionState: state });
+                    return next;
+                }
+                return prev;
+            });
+
             if (pc.connectionState === 'connected') {
                 setStatus('connected');
                 iceRestartCountsRef.current.delete(remoteUserId);
@@ -426,7 +466,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                                 const params = sender.getParameters();
                                 if (!params.encodings || params.encodings.length === 0) continue;
                                 params.encodings[0].maxBitrate = videoBitrate;
-                                sender.setParameters(params).catch(() => {});
+                                sender.setParameters(params).catch(() => { });
                             } catch { /* ignore */ }
                         }
                     }

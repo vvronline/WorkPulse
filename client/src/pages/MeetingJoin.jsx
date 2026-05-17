@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { MicOff, Mic, CameraOff, Camera, Check, ClipboardList, Volume2 } from 'lucide-react';
+import { MicOff, Mic, CameraOff, Camera, Check, ClipboardList, Volume2, Play } from 'lucide-react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getMeeting } from '../api';
 import { useAuth } from '../AuthContext';
@@ -26,6 +26,7 @@ export default function MeetingJoin() {
     const [networkStats, setNetworkStats] = useState(null);
     const [networkError, setNetworkError] = useState('');
     const [copied, setCopied] = useState(false);
+    const [testingSpeaker, setTestingSpeaker] = useState(false);
 
 
 
@@ -33,6 +34,49 @@ export default function MeetingJoin() {
     const audioCtxRef = useRef(null);
     const analyserRef = useRef(null);
     const animRef = useRef(null);
+    const testAudioRef = useRef(null);
+
+    // Speaker test — plays a short tone through the currently selected
+    // audio output device so users can verify their speakers/headphones
+    // before joining. Uses HTMLAudioElement.setSinkId() to route the
+    // playback to the chosen device (where supported by the browser).
+    // VideoSDK exposes the same behaviour in their DropDownSpeaker component.
+    const testSpeaker = useCallback(async () => {
+        if (testingSpeaker) return;
+        try {
+            // Generate a 0.6s ping using Web Audio so we don't ship an mp3.
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            if (!Ctx) return;
+            const ctx = new Ctx();
+            const dest = ctx.createMediaStreamDestination();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.frequency.value = 660;
+            gain.gain.setValueAtTime(0, ctx.currentTime);
+            gain.gain.linearRampToValueAtTime(0.18, ctx.currentTime + 0.05);
+            gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.55);
+            osc.connect(gain).connect(dest);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.6);
+
+            const audio = new Audio();
+            audio.srcObject = dest.stream;
+            testAudioRef.current = audio;
+            // Route to selected speaker if the browser supports it
+            if (selectedSpeaker && typeof audio.setSinkId === 'function') {
+                try { await audio.setSinkId(selectedSpeaker); } catch { /* fallback to default */ }
+            }
+            setTestingSpeaker(true);
+            await audio.play().catch(() => { /* autoplay blocked */ });
+            setTimeout(() => {
+                setTestingSpeaker(false);
+                try { audio.pause(); } catch { /* ignore */ }
+                try { ctx.close(); } catch { /* ignore */ }
+            }, 700);
+        } catch {
+            setTestingSpeaker(false);
+        }
+    }, [selectedSpeaker, testingSpeaker]);
 
     useEffect(() => {
         getMeeting(code)
@@ -309,7 +353,19 @@ export default function MeetingJoin() {
                         )}
                         {devices.speaker.length > 0 && (
                             <div className="mj-device-select">
-                                <label><Volume2 size={13} style={{marginRight:5,verticalAlign:'middle'}} />Speaker</label>
+                                <label>
+                                    <Volume2 size={13} style={{marginRight:5,verticalAlign:'middle'}} />Speaker
+                                    <button
+                                        type="button"
+                                        className="mj-speaker-test"
+                                        onClick={testSpeaker}
+                                        disabled={testingSpeaker}
+                                        title="Play test sound"
+                                    >
+                                        <Play size={11} />
+                                        {testingSpeaker ? 'Playing…' : 'Test'}
+                                    </button>
+                                </label>
                                 <select value={selectedSpeaker} onChange={e => setSelectedSpeaker(e.target.value)}>
                                     {devices.speaker.map(d => <option key={d.deviceId} value={d.deviceId}>{d.label || 'Speaker'}</option>)}
                                 </select>

@@ -204,7 +204,15 @@ export default function MeetingRoom() {
         return (
             <div className="mr-root">
                 <div className="mr-status-overlay">
-                    <span className="mr-status-text">{autoJoinError || 'Joining meeting…'}</span>
+                    <div className="mr-status-card">
+                        {!autoJoinError && <div className="mr-status-spinner" />}
+                        <span className="mr-status-text">{autoJoinError || 'Joining meeting…'}</span>
+                        {!autoJoinError && (
+                            <span className="mr-status-sub">
+                                Setting up your camera and microphone.
+                            </span>
+                        )}
+                    </div>
                 </div>
             </div>
         );
@@ -263,8 +271,10 @@ export default function MeetingRoom() {
                             </div>
                         </div>
                     ) : (
-                        /* Grid layout */
-                        <div className="mr-grid" data-count={tileCount <= 6 ? tileCount : 'many'}>
+                        /* Grid layout — pass exact count up to 9 so the CSS
+                           can pick a matching square-ish grid; 10+ falls back
+                           to "many" (4-column scrolling layout). */
+                        <div className="mr-grid" data-count={tileCount <= 9 ? tileCount : 'many'}>
                             {tiles.map(({ key, participant, isLocal }) => (
                                 <ParticipantTile
                                     key={key}
@@ -330,22 +340,29 @@ export default function MeetingRoom() {
                 isHost={isHost}
             />
 
-            {/* Joining overlay */}
+            {/* Joining overlay — animated spinner card so the user sees
+                progress while WebRTC is still establishing peer connections. */}
             {status === 'joining' && (
                 <div className="mr-status-overlay">
-                    <span className="mr-status-text">Joining meeting…</span>
+                    <div className="mr-status-card">
+                        <div className="mr-status-spinner" />
+                        <span className="mr-status-text">Joining meeting…</span>
+                        <span className="mr-status-sub">
+                            Connecting you to other participants.
+                        </span>
+                    </div>
                 </div>
             )}
 
             {/* Failed overlay */}
             {status === 'failed' && (
                 <div className="mr-status-overlay">
-                    <div style={{ textAlign: 'center' }}>
+                    <div className="mr-status-card">
                         <span className="mr-status-text">Unable to join meeting</span>
-                        <p style={{ color: 'var(--mr-text-muted)', fontSize: 13, marginTop: 8 }}>
+                        <span className="mr-status-sub">
                             Connection failed. Please check your network and try again.
-                        </p>
-                        <div style={{ marginTop: 16, display: 'flex', gap: 12, justifyContent: 'center' }}>
+                        </span>
+                        <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
                             <button
                                 onClick={() => navigate('/')}
                                 style={{ padding: '8px 16px', borderRadius: 8, background: 'var(--mr-bg-tile)', color: 'var(--mr-text)', border: 'none', cursor: 'pointer', fontSize: 13 }}
