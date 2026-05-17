@@ -124,7 +124,7 @@ export default function MeetingRoom() {
         ? (user?.full_name || 'You')
         : (presenterParticipant?.name || 'Participant');
 
-    const isHost = session?.meeting?.organizer_id === user?.id;
+    const isHost = session?.meeting?.organizer_id === user?.id || session?.meeting?.created_by === user?.id;
     const tileCount = tiles.length;
 
     // Count raised hands (local + remote)

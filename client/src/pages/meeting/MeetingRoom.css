@@ -82,6 +82,7 @@
   display: flex;
   overflow: hidden;
   position: relative;
+  min-height: 0;
 }
 
 .mr-main {
@@ -566,7 +567,7 @@
   flex-shrink: 0;
   overflow: hidden;
   animation: slideIn 0.2s ease-out;
-  height: 100%;
+  min-height: 0;
 }
 
 @keyframes slideIn {
@@ -616,7 +617,7 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  height: 100%;
+  overflow: hidden;
 }
 
 .mc-messages {
@@ -665,9 +666,9 @@
   gap: 8px;
   align-items: flex-end;
   padding: 12px;
-  margin-top: auto;
   border-top: 1px solid var(--mr-border);
   flex-shrink: 0;
+  background: var(--mr-bg);
 }
 
 .mc-input {
