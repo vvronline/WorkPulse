@@ -451,12 +451,14 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         return () => ws.removeEventListener('message', onMessage);
     }, [ws]);
 
-    // Send WS join
+    // Send WS join — re-runs whenever the underlying WS changes (e.g. reconnect)
+    // IMPORTANT: this effect intentionally does NOT send meeting_leave on cleanup,
+    // because a ws prop change (reconnect) should NOT kick the user out of the meeting.
+    // The unmount cleanup is handled in a separate effect below (keyed on meetingId only).
     useEffect(() => {
         if (!ws || !meetingId || !mediaReady) return;
         let retryTimer = null;
         let retryTimer2 = null;
-        let failTimer = null;
         let joined = false;
 
         const sendJoin = () => {
@@ -466,12 +468,10 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             setTimeout(() => wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: videoOffRef.current, screenSharing: screenSharingRef.current }), 500);
         };
 
-        const attemptJoin = () => {
-            if (ws.readyState === WebSocket.OPEN) sendJoin();
-            else if (ws.readyState === WebSocket.CONNECTING) ws.addEventListener('open', sendJoin, { once: true });
-        };
+        const onOpen = () => sendJoin();
 
-        attemptJoin();
+        if (ws.readyState === WebSocket.OPEN) sendJoin();
+        else if (ws.readyState === WebSocket.CONNECTING) ws.addEventListener('open', onOpen, { once: true });
 
         // Retry join after 3s if first attempt didn't send (WS was still connecting)
         retryTimer = setTimeout(() => {
@@ -487,29 +487,35 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             }
         }, 6000);
 
-        // Fail after 15s if still in 'joining' state
-        failTimer = setTimeout(() => {
-            setStatus(prev => prev === 'joining' ? 'failed' : prev);
-        }, 15000);
-
-        // Send leave on tab close/refresh so other participants are notified immediately
-        const onBeforeUnload = () => {
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'meeting_leave', data: { meetingId } }));
-            }
-        };
-        window.addEventListener('beforeunload', onBeforeUnload);
-
         return () => {
             clearTimeout(retryTimer);
             clearTimeout(retryTimer2);
-            clearTimeout(failTimer);
-            window.removeEventListener('beforeunload', onBeforeUnload);
-            ws.removeEventListener('open', sendJoin);
-            if (!keepAliveOnUnmount) { wsSend('meeting_leave', { meetingId }); pcsRef.current.forEach(pc => pc.close()); pcsRef.current.clear(); }
+            try { ws.removeEventListener('open', onOpen); } catch { /* ignore */ }
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [ws, meetingId, mediaReady]);
+
+    // Meeting-level cleanup — runs only when the meetingId truly changes or component unmounts.
+    // Sends meeting_leave + tears down peer connections so the user is removed from the meeting.
+    useEffect(() => {
+        if (!meetingId) return;
+        const onBeforeUnload = () => {
+            const w = wsRef.current;
+            if (w && w.readyState === WebSocket.OPEN) {
+                try { w.send(JSON.stringify({ type: 'meeting_leave', data: { meetingId } })); } catch { /* ignore */ }
+            }
+        };
+        window.addEventListener('beforeunload', onBeforeUnload);
+        return () => {
+            window.removeEventListener('beforeunload', onBeforeUnload);
+            if (!keepAliveOnUnmount) {
+                wsSend('meeting_leave', { meetingId });
+                pcsRef.current.forEach(pc => { try { pc.close(); } catch { /* ignore */ } });
+                pcsRef.current.clear();
+            }
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [meetingId]);
 
     // Actions
     const toggleMute = useCallback(() => {
