@@ -140,7 +140,6 @@ const ParticipantTile = memo(function ParticipantTile({ participant, isLocal, qu
                     autoPlay
                     playsInline
                     muted={isLocal}
-                    style={isLocal ? { transform: 'scaleX(-1)' } : undefined}
                 />
             ) : (
                 <div className="mr-tile-avatar">{initial}</div>

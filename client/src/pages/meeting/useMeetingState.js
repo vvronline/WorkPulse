@@ -365,6 +365,12 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 if (data.existingPeers && Array.isArray(data.existingPeers)) {
                     data.existingPeers.forEach(peer => {
                         if (!peer?.userId) return;
+                        // Close stale peer connection before creating a new one
+                        const oldPc = pcsRef.current.get(peer.userId);
+                        if (oldPc) {
+                            try { oldPc.close(); } catch { }
+                            pcsRef.current.delete(peer.userId);
+                        }
                         const pc = createPeerConnection(peer.userId, false);
                         if (pc) pcsRef.current.set(peer.userId, pc);
                         if (peer.userId !== user?.id) {
@@ -384,6 +390,12 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                         return next;
                     });
                     if (!data.existingPeers) {
+                        // Close stale peer connection before creating a new one
+                        const oldPc = pcsRef.current.get(data.userId);
+                        if (oldPc) {
+                            try { oldPc.close(); } catch { }
+                            pcsRef.current.delete(data.userId);
+                        }
                         const pc = createPeerConnection(data.userId, true);
                         if (pc) pcsRef.current.set(data.userId, pc);
                         wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: videoOffRef.current, screenSharing: screenSharingRef.current });
@@ -485,6 +497,15 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         let retryTimer = null;
         let retryTimer2 = null;
         let joined = false;
+
+        // On reconnect, close stale peer connections so fresh ones are established
+        // when the server sends meeting_participant_joined with existingPeers.
+        if (pcsRef.current.size > 0) {
+            pcsRef.current.forEach(pc => { try { pc.close(); } catch { } });
+            pcsRef.current.clear();
+            iceRestartCountsRef.current.clear();
+            relayOnlyPeersRef.current.clear();
+        }
 
         const sendJoin = () => {
             if (joined) return;
