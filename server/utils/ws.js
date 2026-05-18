@@ -403,14 +403,25 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
 
         const caller = (await db.query('SELECT full_name, avatar FROM users WHERE id = $1', [senderId])).rows[0];
 
-        // Notify all other participants about incoming call
-        const participants = (await db.query(
-            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2',
-            [conversationId, senderId]
-        )).rows;
-
         // Get conversation info for the notification
         const conv = (await db.query('SELECT name, is_group FROM conversations WHERE id = $1', [conversationId])).rows[0];
+
+        // Notify all other participants about incoming call.
+        //
+        // For NON-group (1:1) conversations we ring at most ONE other user —
+        // the earliest-added counterpart. This protects against legacy 1:1
+        // chats that were silently corrupted by the old "add participant"
+        // bug, which permanently injected a 3rd member into the
+        // conversation_participants table. Without this guard, every 1:1
+        // call would auto-ring that ghost 3rd participant.
+        const participantsQuery = conv?.is_group
+            ? `SELECT user_id FROM conversation_participants
+               WHERE conversation_id = $1 AND user_id != $2`
+            : `SELECT user_id FROM conversation_participants
+               WHERE conversation_id = $1 AND user_id != $2
+               ORDER BY user_id ASC
+               LIMIT 1`;
+        const participants = (await db.query(participantsQuery, [conversationId, senderId])).rows;
 
         logger.info({ senderId, callId: callLog.id, conversationId, callType, participantCount: participants.length, tenantId }, 'call_initiate: notifying participants');
 
@@ -1053,7 +1064,21 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
         broadcastStatus(db, tenantId, senderId, status, safeText);
 
     } else if (msg.type === 'call_add_participant') {
-        // Add a participant to an ongoing 1:1 call (upgrade to group)
+        // Add a participant to an ongoing call.
+        //
+        // IMPORTANT: This is ONLY allowed when the underlying conversation is
+        // already a group conversation. The previous behaviour permanently
+        // inserted the target into `conversation_participants` for any chat —
+        // including 1:1 DMs — which had two awful side-effects:
+        //
+        //   1. The 1:1 WebRTC peer connection has no mesh/SFU plumbing, so
+        //      the 3rd person could never actually hear/see anyone.
+        //   2. The conversation was now a 3-person group forever, so the
+        //      next call from that DM would auto-ring the 3rd person too.
+        //
+        // For n-way calls users should start a Meeting (which has proper
+        // group support). We hard-reject the request here so old / mobile
+        // clients that still expose the button cannot corrupt the chat.
         const { callId, conversationId, targetUserId } = msg.data || {};
         if (!callId || !conversationId || !targetUserId) return;
 
@@ -1067,7 +1092,17 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
         )).rows[0];
         if (!senderOk) return;
 
-        // Add target to conversation
+        // Refuse to upgrade a 1:1 conversation into a group via this path.
+        const conv = (await db.query(
+            'SELECT is_group FROM conversations WHERE id = $1',
+            [conversationId]
+        )).rows[0];
+        if (!conv || !conv.is_group) {
+            logger.warn({ senderId, callId, conversationId, targetUserId }, 'call_add_participant: rejected — conversation is not a group');
+            return;
+        }
+
+        // Add target to conversation (no-op if they were already a member)
         await db.query(
             `INSERT INTO conversation_participants (conversation_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
             [conversationId, targetUserId]

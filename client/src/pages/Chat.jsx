@@ -67,6 +67,35 @@ export default function Chat() {
         return () => window.removeEventListener('beforeunload', handler);
     }, [callState]);
 
+    // When a call becomes active, automatically open the call's conversation
+    // so the in-call chat panel has the live message history & WS updates.
+    // Without this the receiver (and the caller, if they navigated away) sees
+    // an empty chat panel even when the peer is typing into it.
+    useEffect(() => {
+        if (!callState?.conversationId) return;
+        if (activeConv?.id === callState.conversationId) return;
+        // Find conversation metadata from the loaded list. If we don't have
+        // it yet (e.g. a brand-new conversation created remotely), fall back
+        // to a minimal stub — openConversation will still load the messages.
+        const conv = conversations.find(c => c.id === callState.conversationId);
+        const meta = conv ? {
+            other_user_id: conv.other_user_id,
+            other_username: conv.other_username,
+            other_full_name: conv.other_full_name,
+            other_avatar: conv.other_avatar,
+            is_group: conv.is_group,
+            is_self_chat: conv.is_self_chat,
+            group_name: conv.group_name,
+            name: conv.name,
+            member_count: conv.member_count,
+        } : {
+            other_full_name: callState.remoteName,
+            other_avatar: callState.remoteAvatar,
+            is_group: !!callState.isGroup,
+        };
+        openConversation(callState.conversationId, meta);
+    }, [callState?.conversationId, activeConv?.id, conversations]); // eslint-disable-line react-hooks/exhaustive-deps
+
     // Hide navbar & bottom tab bar on mobile when a chat conversation is active
     useEffect(() => {
         const isMobileChat = isChatPage && mobileView === 'chat' && activeConv;
@@ -266,6 +295,11 @@ export default function Chat() {
                     chatMessages={callState.conversationId === activeConv?.id ? messages : []}
                     onSendChat={(text) => {
                         if (!text || !callState.conversationId) return;
+                        // Send directly via the chat WS — the server echoes
+                        // the message back through `chat_message`, which the
+                        // useChatState handler picks up and appends to the
+                        // active conversation's `messages` array. This is the
+                        // same path the regular chat input bar uses.
                         wsSend('chat_message', {
                             conversationId: callState.conversationId,
                             content: text,

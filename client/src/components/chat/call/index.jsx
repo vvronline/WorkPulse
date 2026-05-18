@@ -20,7 +20,15 @@ export default function CallOverlay({
     callState, user, wsSend, onEnd,
     chatMessages = [], onSendChat,
 }) {
-    const { callId, conversationId, callType, isIncoming, remoteName, remoteAvatar } = callState;
+    const { callId, conversationId, callType, isIncoming, remoteName, remoteAvatar, isGroup } = callState;
+
+    // "Add participant" only works in group-call conversations. A 1:1 call is
+    // a single WebRTC peer connection with no mesh/SFU support, so a 3rd
+    // person can never actually join. Worse, the server's previous behaviour
+    // permanently added the 3rd user to `conversation_participants`, turning
+    // the chat into a 3-person group and auto-ringing them on the next call.
+    // For n-way calls users should start a Meeting instead.
+    const canAddParticipant = !!isGroup;
 
     const isReconnect = !!callState.isReconnect;
     const [status, setStatus] = useState(isReconnect ? 'reconnecting' : (isIncoming ? 'incoming' : 'ringing'));
@@ -404,7 +412,7 @@ export default function CallOverlay({
                             </button>
                         )}
 
-                        {isConnected && (
+                        {isConnected && canAddParticipant && (
                             <button
                                 className={`${s.controlBtn} ${showAddParticipant ? s.active : ''}`}
                                 onClick={() => setShowAddParticipant(v => !v)}

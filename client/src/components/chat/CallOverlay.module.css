@@ -663,6 +663,13 @@
     animation: chatPanelSlideIn 0.22s ease;
 }
 
+/* Frameless Electron window: the OS-style min/max/close buttons live at
+   top:0 right:0 inside the page (windowControls). Push the chat panel
+   down so its own close (×) button does NOT sit beneath them. */
+.chatPanelElectron {
+    top: 32px;
+}
+
 @keyframes chatPanelSlideIn {
     from { transform: translateX(100%); opacity: 0; }
     to   { transform: translateX(0);    opacity: 1; }

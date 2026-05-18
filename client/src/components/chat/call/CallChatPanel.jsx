@@ -2,6 +2,13 @@ import { useState, useRef, useEffect } from 'react';
 import { SendIcon } from './CallIcons';
 import s from '../CallOverlay.module.css';
 
+// Frameless Electron windows on Windows/Linux render their own caption
+// buttons (min / max / close) inside the page at top:0, right:0. Without
+// this offset the chat panel's own close (×) button sits directly below
+// the OS close button and the two overlap visually.
+const isElectron = !!window.electronAPI?.isElectron;
+const isWinLikeElectron = isElectron && window.electronAPI?.platform !== 'darwin';
+
 /**
  * In-call personal chat panel. Slides in from the right side of the
  * CallOverlay so participants can exchange text messages without leaving
@@ -55,7 +62,11 @@ export default function CallChatPanel({
     const visible = messages.filter(m => !m.deleted_at);
 
     return (
-        <div className={s.chatPanel} role="dialog" aria-label="In-call chat">
+        <div
+            className={`${s.chatPanel} ${isWinLikeElectron ? s.chatPanelElectron : ''}`}
+            role="dialog"
+            aria-label="In-call chat"
+        >
             <div className={s.chatPanelHeader}>
                 <span>Chat</span>
                 <button
