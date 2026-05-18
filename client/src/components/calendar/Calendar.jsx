@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Video } from 'lucide-react';
 import { getCalendarEvents, createCalendarEvent, updateCalendarEvent, deleteCalendarEvent, createMeeting, cancelMeeting } from '../../api';
 import { useAuth } from '../../AuthContext';
+import { useBranding } from '../../BrandingContext';
 import useWebSocket from '../../hooks/useWebSocket';
 import EventFormModal from './EventFormModal';
 import s from './Calendar.module.css';
@@ -58,6 +59,8 @@ const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'Ju
 export default function Calendar({ tasks = [] }) {
     const navigate = useNavigate();
     const { user } = useAuth();
+    const { branding } = useBranding();
+    const accentColor = branding.accent_color || '#2383e2';
     const [events, setEvents] = useState([]);
     const [view, setView] = useState('week');
     const [baseDate, setBaseDate] = useState(() => new Date());
@@ -68,7 +71,7 @@ export default function Calendar({ tasks = [] }) {
         start_time: '',
         end_time: '',
         all_day: false,
-        color: '#0ea5e9',
+        color: '',
         task_id: '',
         schedule_mode: 'single',
         weekdays: [],
@@ -81,9 +84,11 @@ export default function Calendar({ tasks = [] }) {
     const weekDays = getWeekDays(baseDate);
     const monthDays = getMonthDays(baseDate);
     const rangeStart = view === 'day' ? new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate())
-        : view === 'week' ? weekDays[0] : monthDays[0];
+        : view === 'week' ? new Date(weekDays[0].getFullYear(), weekDays[0].getMonth(), weekDays[0].getDate())
+        : monthDays[0];
     const rangeEnd = view === 'day' ? new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + 1)
-        : view === 'week' ? new Date(weekDays[6].getTime() + 86400000) : new Date(monthDays[41].getTime() + 86400000);
+        : view === 'week' ? new Date(weekDays[6].getFullYear(), weekDays[6].getMonth(), weekDays[6].getDate() + 1)
+        : new Date(monthDays[41].getTime() + 86400000);
 
     const fetchEvents = useCallback(() => {
         getCalendarEvents(rangeStart.toISOString(), rangeEnd.toISOString())
@@ -146,7 +151,7 @@ export default function Calendar({ tasks = [] }) {
             start_time: toLocalISO(start),
             end_time: toLocalISO(end),
             all_day: false,
-            color: '#0ea5e9',
+            color: accentColor,
             task_id: '',
             schedule_mode: 'single',
             weekdays: [toMonDayIndex(start)],
@@ -156,7 +161,7 @@ export default function Calendar({ tasks = [] }) {
 
     const openEdit = (evt) => {
         setForm({
-            title: evt.title, description: evt.description || '', color: evt.color || '#0ea5e9', task_id: evt.task_id || '',
+            title: evt.title, description: evt.description || '', color: evt.color || accentColor, task_id: evt.task_id || '',
             start_time: toLocalISO(new Date(evt.start_time)), end_time: toLocalISO(new Date(evt.end_time)), all_day: evt.all_day,
             schedule_mode: 'single', weekdays: [],
         });
@@ -345,9 +350,10 @@ export default function Calendar({ tasks = [] }) {
                                     const gap = 2;
                                     const colW = total === 1 ? undefined : `calc((100% - ${gap * (total + 1)}px) / ${total})`;
                                     const colL = total === 1 ? '2px' : `calc(${col} * ((100% - ${gap * (total + 1)}px) / ${total}) + ${gap * (col + 1)}px)`;
+                                    const evColor = ev.meeting_code ? accentColor : (ev.color || accentColor);
                                     const evStyle = total === 1
-                                        ? { top: `${top}px`, height: `${height}px`, left: '2px', right: '2px', '--ev-color': ev.color || '#0ea5e9' }
-                                        : { top: `${top}px`, height: `${height}px`, left: colL, width: colW, '--ev-color': ev.color || '#0ea5e9' };
+                                        ? { top: `${top}px`, height: `${height}px`, left: '2px', right: '2px', '--ev-color': evColor }
+                                        : { top: `${top}px`, height: `${height}px`, left: colL, width: colW, '--ev-color': evColor };
                                     return (
                                         <div key={ev.id} className={s.event}
                                             style={evStyle}
@@ -380,7 +386,7 @@ export default function Calendar({ tasks = [] }) {
                             return (
                                 <div key={di} className={s.allDayCell}>
                                     {allDayEvts.map(ev => (
-                                        <div key={ev.id} className={s.allDayEvent} style={{ '--ev-color': ev.color || '#0ea5e9' }}
+                                        <div key={ev.id} className={s.allDayEvent} style={{ '--ev-color': ev.meeting_code ? accentColor : (ev.color || accentColor) }}
                                             onClick={() => openEdit(ev)}>
                                             {ev.title}
                                         </div>
@@ -406,7 +412,7 @@ export default function Calendar({ tasks = [] }) {
                         onClick={() => { setBaseDate(new Date(day)); setView('day'); }}>
                         <span className={s.monthDate}>{day.getDate()}</span>
                         {dayEvts.slice(0, 3).map(ev => (
-                            <div key={ev.id} className={s.monthEvent} style={{ '--ev-color': ev.color || '#0ea5e9' }}
+                            <div key={ev.id} className={s.monthEvent} style={{ '--ev-color': ev.meeting_code ? accentColor : (ev.color || accentColor) }}
                                 onClick={(e) => { e.stopPropagation(); openEdit(ev); }}>
                                 {ev.meeting_code && <span className={s.eventMeetingBadge}><Video size={9} /></span>}
                                 {ev.title}

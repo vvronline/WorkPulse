@@ -1,6 +1,7 @@
 import React, { memo, useMemo, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CalendarDays, Video } from 'lucide-react';
+import { useBranding } from '../../BrandingContext';
 import s from './TodayEventsCard.module.css';
 
 function formatEventTime(isoString) {
@@ -79,12 +80,12 @@ function MeetingItem({ ev, onJoinMeeting, tick }) {
   );
 }
 
-function EventItem({ ev }) {
+function EventItem({ ev, accentColor }) {
   const past = isNowOrPast(ev.end_time);
 
   return (
     <div className={`${s.item} ${past ? s.past : ''}`}>
-      <div className={s.colorDot} style={{ background: ev.color || '#0ea5e9' }} />
+      <div className={s.colorDot} style={{ background: ev.meeting_code ? accentColor : (ev.color || accentColor) }} />
       <div className={s.body}>
         <span className={s.name}>{ev.title}</span>
         <span className={s.time}>
@@ -97,6 +98,8 @@ function EventItem({ ev }) {
 
 const TodayEventsCard = memo(function TodayEventsCard({ events, tomorrowEvents }) {
   const navigate = useNavigate();
+  const { branding } = useBranding();
+  const accentColor = branding.accent_color || '#2383e2';
 
   // Tick every 30s so join-button visibility updates in real time
   const [tick, setTick] = useState(0);
@@ -159,7 +162,7 @@ const TodayEventsCard = memo(function TodayEventsCard({ events, tomorrowEvents }
           {upcomingMeetings.length > 0 && <h4 className={s['section-label']}>Other Events</h4>}
           <div className={s.list}>
             {otherEvents.map(ev => (
-              <EventItem key={ev.id} ev={ev} />
+              <EventItem key={ev.id} ev={ev} accentColor={accentColor} />
             ))}
           </div>
         </>
@@ -176,7 +179,7 @@ const TodayEventsCard = memo(function TodayEventsCard({ events, tomorrowEvents }
           <div className={s.list}>
             {tomorrowSorted.slice(0, 3).map((ev) => (
               <div key={ev.id} className={`${s.item} ${s.tomorrow}`}>
-                <div className={s.colorDot} style={{ background: ev.color || '#0ea5e9' }} />
+                <div className={s.colorDot} style={{ background: ev.meeting_code ? accentColor : (ev.color || accentColor) }} />
                 <div className={s.body}>
                   <span className={s.name}>{ev.title}</span>
                   <span className={s.time}>
