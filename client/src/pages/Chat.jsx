@@ -263,6 +263,14 @@ export default function Chat() {
                     user={user}
                     wsSend={wsSend}
                     onEnd={handleEndCall}
+                    chatMessages={callState.conversationId === activeConv?.id ? messages : []}
+                    onSendChat={(text) => {
+                        if (!text || !callState.conversationId) return;
+                        wsSend('chat_message', {
+                            conversationId: callState.conversationId,
+                            content: text,
+                        });
+                    }}
                 />
             )}
         </div>

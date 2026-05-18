@@ -4,26 +4,33 @@ import useWebRTC from './useWebRTC';
 import useCallControls from './useCallControls';
 import { QualityBadge, DeviceSelector } from './CallWidgets';
 import { AddParticipantPopup } from './AddParticipantPopup';
+import CallChatPanel from './CallChatPanel';
 import { useNotificationPrefs } from '../../../NotificationPrefsContext';
 import {
     MicIcon, MicOffIcon, CamIcon, CamOffIcon, PhoneIcon,
     ScreenShareIcon, ScreenShareOffIcon, FullscreenIcon, ExitFullscreenIcon,
-    HoldIcon, ResumeIcon, PipIcon, AddParticipantIcon
+    HoldIcon, ResumeIcon, PipIcon, AddParticipantIcon, ChatIcon
 } from './CallIcons';
 import s from '../CallOverlay.module.css';
 
 const isElectron = !!window.electronAPI?.isElectron;
 const isWinElectron = isElectron && window.electronAPI?.platform !== 'darwin';
 
-export default function CallOverlay({ callState, user, wsSend, onEnd }) {
+export default function CallOverlay({
+    callState, user, wsSend, onEnd,
+    chatMessages = [], onSendChat,
+}) {
     const { callId, conversationId, callType, isIncoming, remoteName, remoteAvatar } = callState;
 
     const isReconnect = !!callState.isReconnect;
     const [status, setStatus] = useState(isReconnect ? 'reconnecting' : (isIncoming ? 'incoming' : 'ringing'));
     const [duration, setDuration] = useState(0);
     const [showAddParticipant, setShowAddParticipant] = useState(false);
+    const [showChat, setShowChat] = useState(false);
+    const [chatUnread, setChatUnread] = useState(0);
     const [swapped, setSwapped] = useState(false);
     const canScreenShare = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
+    const lastSeenMsgCountRef = useRef(chatMessages.length);
 
     const { playRingtone, playOutgoing } = useNotificationPrefs();
 
@@ -125,6 +132,46 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
 
     const isConnected = status === 'connected';
     const isVideoCall = callType === 'video';
+
+    // ─── Track unread chat messages while the panel is closed ───
+    useEffect(() => {
+        if (showChat) {
+            // Mark all current messages as seen when the panel is open
+            lastSeenMsgCountRef.current = chatMessages.length;
+            setChatUnread(0);
+            return;
+        }
+        const delta = chatMessages.length - lastSeenMsgCountRef.current;
+        if (delta <= 0) {
+            // Either no new messages, or messages were removed/replaced.
+            lastSeenMsgCountRef.current = chatMessages.length;
+            return;
+        }
+        // Count only NEW messages from other users (skip our own echoes)
+        const newMsgs = chatMessages.slice(-delta);
+        const fromOthers = newMsgs.filter(m => m.sender_id !== user?.id).length;
+        if (fromOthers > 0) {
+            setChatUnread(c => c + fromOthers);
+        }
+        lastSeenMsgCountRef.current = chatMessages.length;
+    }, [chatMessages, showChat, user?.id]);
+
+    const handleToggleChat = useCallback(() => {
+        setShowChat(prev => {
+            const next = !prev;
+            if (next) {
+                lastSeenMsgCountRef.current = chatMessages.length;
+                setChatUnread(0);
+            }
+            return next;
+        });
+    }, [chatMessages.length]);
+
+    const handleSendChatMessage = useCallback((text) => {
+        if (onSendChat) {
+            onSendChat(text);
+        }
+    }, [onSendChat]);
 
     // ─── Tell the peer whenever our camera turns on/off ───
     // Browsers' RTCRtpReceiver.track.onmute is unreliable (Chrome lags 5–10s,
@@ -246,6 +293,16 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
                 />
             )}
 
+            {/* ─── In-call personal chat panel ─── */}
+            {showChat && onSendChat && (
+                <CallChatPanel
+                    messages={chatMessages}
+                    currentUserId={user?.id}
+                    onSend={handleSendChatMessage}
+                    onClose={() => setShowChat(false)}
+                />
+            )}
+
             <div className={s.controls}>
                 {status === 'incoming' ? (
                     <>
@@ -327,6 +384,23 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
                         {isVideoCall && isConnected && document.pictureInPictureEnabled && (
                             <button className={s.controlBtn} onClick={controls.togglePiP} title="Picture-in-Picture">
                                 <PipIcon />
+                            </button>
+                        )}
+
+                        {/* Personal chat — toggle the slide-out chat panel */}
+                        {isConnected && onSendChat && (
+                            <button
+                                className={`${s.controlBtn} ${showChat ? s.active : ''} ${s.chatBtn}`}
+                                onClick={handleToggleChat}
+                                title="Chat"
+                                aria-label="Toggle chat"
+                            >
+                                <ChatIcon />
+                                {chatUnread > 0 && !showChat && (
+                                    <span className={s.chatUnreadBadge}>
+                                        {chatUnread > 99 ? '99+' : chatUnread}
+                                    </span>
+                                )}
                             </button>
                         )}
 
