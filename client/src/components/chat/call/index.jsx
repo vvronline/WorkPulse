@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { ChatAvatar } from '../';
 import useWebRTC from './useWebRTC';
 import useCallControls from './useCallControls';
@@ -16,9 +17,23 @@ import s from '../CallOverlay.module.css';
 const isElectron = !!window.electronAPI?.isElectron;
 const isWinElectron = isElectron && window.electronAPI?.platform !== 'darwin';
 
+// Minimize / Maximize icons (kept inline so we don't add new icon deps)
+const MinimizeIcon = () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+        <path d="M5 14h6v6M19 10h-6V4M14 10l7-7M10 14l-7 7"
+            stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+);
+const MaximizeIcon = () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+        <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"
+            stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+);
+
 export default function CallOverlay({
     callState, user, wsSend, onEnd,
-    chatMessages = [], onSendChat,
+    chatMessages = [], onSendChat, onSendChatFile,
 }) {
     const { callId, conversationId, callType, isIncoming, remoteName, remoteAvatar, isGroup } = callState;
 
@@ -37,6 +52,12 @@ export default function CallOverlay({
     const [showChat, setShowChat] = useState(false);
     const [chatUnread, setChatUnread] = useState(0);
     const [swapped, setSwapped] = useState(false);
+    // Minimized = small floating PiP-like widget so the user can keep working
+    // (notes / chat / dashboard / tasks / calendar / attendance / settings).
+    // The overlay JSX stays in the DOM (so the WebRTC peer connection, video
+    // elements, mic capture, etc. all keep running) — we just shrink it via
+    // a CSS class and hide most chrome.
+    const [minimized, setMinimized] = useState(false);
     const canScreenShare = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
     const lastSeenMsgCountRef = useRef(chatMessages.length);
 
@@ -181,6 +202,12 @@ export default function CallOverlay({
         }
     }, [onSendChat]);
 
+    const handleSendChatFile = useCallback((file) => {
+        if (onSendChatFile) {
+            onSendChatFile(file);
+        }
+    }, [onSendChatFile]);
+
     // ─── Tell the peer whenever our camera turns on/off ───
     // Browsers' RTCRtpReceiver.track.onmute is unreliable (Chrome lags 5–10s,
     // Firefox sometimes never fires), so we send an explicit `video-state`
@@ -194,13 +221,37 @@ export default function CallOverlay({
         webrtc.sendLocalVideoState?.(peerSeesNoCamera);
     }, [status, isVideoCall, controls.videoOff, controls.screenSharing]);
 
-    return (
+    // Auto-restore when an incoming call arrives so the user can answer it
+    useEffect(() => {
+        if (status === 'incoming' && minimized) setMinimized(false);
+    }, [status, minimized]);
+
+    const handleMinimize = useCallback((e) => {
+        e?.stopPropagation?.();
+        setMinimized(true);
+        // Close any open popovers so they don't sit on top of the mini widget
+        setShowAddParticipant(false);
+        setShowChat(false);
+        controls.setShowAudioDevices?.(false);
+        controls.setShowVideoDevices?.(false);
+    }, [controls]);
+
+    const handleRestore = useCallback((e) => {
+        e?.stopPropagation?.();
+        setMinimized(false);
+    }, []);
+
+    const overlayContent = (
         <div
             ref={overlayRef}
-            className={`${s.overlay} ${(isVideoCall || controls.screenSharing || webrtc.remoteHasVideo) && isConnected ? s.videoMode : ''} ${controls.onHold ? s.holdMode : ''}`}
+            className={`${s.overlay} ${(isVideoCall || controls.screenSharing || webrtc.remoteHasVideo) && isConnected ? s.videoMode : ''} ${controls.onHold ? s.holdMode : ''} ${minimized ? s.minimized : ''}`}
+            onClick={minimized ? handleRestore : undefined}
+            role={minimized ? 'button' : undefined}
+            aria-label={minimized ? 'Restore call window' : undefined}
+            tabIndex={minimized ? 0 : undefined}
         >
             {/* Window controls for frameless Electron window */}
-            {isWinElectron && (
+            {isWinElectron && !minimized && (
                 <div className={s.windowControls}>
                     <button className={s.winBtn} onClick={() => window.electronAPI.minimize()} title="Minimize">
                         <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="5.5" width="10" height="1" fill="currentColor"/></svg>
@@ -238,7 +289,32 @@ export default function CallOverlay({
                             <ChatAvatar name={user?.fullName || 'You'} avatar={user?.avatar} size="md" />
                         </div>
                     )}
+                    {/* Mute indicator on the local self-view tile so YOU can
+                        see at a glance that you are on mute (matches the way
+                        Teams/Zoom/Meet flag mute state on the self-tile). */}
+                    {controls.muted && (
+                        <div
+                            className={`${s.localVideoMuteBadge} ${controls.videoOff && !controls.screenSharing ? s.localVideoMuteBadgeAvatar : ''}`}
+                            title="You are muted"
+                            aria-label="You are muted"
+                        >
+                            <MicOffIcon />
+                        </div>
+                    )}
                 </>
+            )}
+
+            {/* For audio-only calls (no local video tile) still flag mute
+                state by overlaying a small badge on the caller-info card. */}
+            {!isVideoCall && !controls.screenSharing && !webrtc.remoteHasVideo && controls.muted && isConnected && (
+                <div
+                    className={s.localVideoMuteBadge}
+                    style={{ position: 'absolute', top: 16, left: 16, bottom: 'auto', right: 'auto' }}
+                    title="You are muted"
+                    aria-label="You are muted"
+                >
+                    <MicOffIcon />
+                </div>
             )}
 
             {isConnected && (
@@ -307,6 +383,7 @@ export default function CallOverlay({
                     messages={chatMessages}
                     currentUserId={user?.id}
                     onSend={handleSendChatMessage}
+                    onSendFile={onSendChatFile ? handleSendChatFile : undefined}
                     onClose={() => setShowChat(false)}
                 />
             )}
@@ -389,6 +466,21 @@ export default function CallOverlay({
                             </button>
                         )}
 
+                        {/* Minimize — shrinks the call into a floating widget
+                            so the user can navigate to Notes / Chat / Dashboard
+                            / Tasks / Calendar / Attendance / Settings while the
+                            call keeps running. */}
+                        {isConnected && (
+                            <button
+                                className={s.controlBtn}
+                                onClick={handleMinimize}
+                                title="Minimize call"
+                                aria-label="Minimize call"
+                            >
+                                <MinimizeIcon />
+                            </button>
+                        )}
+
                         {isVideoCall && isConnected && document.pictureInPictureEnabled && (
                             <button className={s.controlBtn} onClick={controls.togglePiP} title="Picture-in-Picture">
                                 <PipIcon />
@@ -428,6 +520,66 @@ export default function CallOverlay({
                     </>
                 )}
             </div>
+
+            {/* Mini-mode bottom strip (name + mute/end/restore). Only visible
+                when the overlay has the .minimized class — see CSS. Clicks on
+                buttons stop propagation so they don't trigger the overlay's
+                "click to restore" handler. */}
+            {minimized && (
+                <div className={s.miniBar} onClick={(e) => e.stopPropagation()}>
+                    <div className={s.miniBarInfo}>
+                        <span className={s.miniBarName}>{remoteName || 'Call'}</span>
+                        <span className={s.miniBarMeta}>
+                            {isConnected ? formatDuration(duration) : (
+                                status === 'incoming' ? 'Incoming…' :
+                                status === 'ringing'  ? 'Ringing…' :
+                                status === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'
+                            )}
+                            {controls.muted && (
+                                <span className={s.miniBarMuteIcon} title="Muted">
+                                    <MicOffIcon />
+                                </span>
+                            )}
+                        </span>
+                    </div>
+                    <div className={s.miniBarActions}>
+                        <button
+                            type="button"
+                            className={s.miniBarBtn}
+                            onClick={(e) => { e.stopPropagation(); controls.toggleMute(); }}
+                            title={controls.muted ? 'Unmute' : 'Mute'}
+                            aria-label={controls.muted ? 'Unmute' : 'Mute'}
+                        >
+                            {controls.muted ? <MicOffIcon /> : <MicIcon />}
+                        </button>
+                        <button
+                            type="button"
+                            className={s.miniBarBtn}
+                            onClick={handleRestore}
+                            title="Restore call window"
+                            aria-label="Restore call window"
+                        >
+                            <MaximizeIcon />
+                        </button>
+                        <button
+                            type="button"
+                            className={`${s.miniBarBtn} ${s.miniBarEnd}`}
+                            onClick={(e) => { e.stopPropagation(); webrtc.handleEnd(); }}
+                            title="End call"
+                            aria-label="End call"
+                        >
+                            <PhoneIcon rotate />
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
+
+    // Render via a portal attached to <body> so that even when the host page
+    // (Chat) is hidden by the KeepAlive wrapper (display:none), the call
+    // overlay stays visible across navigations. Without this the call window
+    // would disappear the moment the user navigated to Notes / Dashboard /
+    // Tasks etc., even though the underlying peer connection stayed alive.
+    return createPortal(overlayContent, document.body);
 }

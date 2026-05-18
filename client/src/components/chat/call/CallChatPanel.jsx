@@ -2,6 +2,21 @@ import { useState, useRef, useEffect } from 'react';
 import { SendIcon } from './CallIcons';
 import s from '../CallOverlay.module.css';
 
+// Inline paperclip icon (avoids pulling another icon set)
+const AttachIcon = () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"
+            stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+);
+
+function formatFileSize(bytes) {
+    if (!bytes && bytes !== 0) return '';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1048576).toFixed(1)} MB`;
+}
+
 // Frameless Electron windows on Windows/Linux render their own caption
 // buttons (min / max / close) inside the page at top:0, right:0. Without
 // this offset the chat panel's own close (×) button sits directly below
@@ -20,11 +35,13 @@ export default function CallChatPanel({
     messages = [],
     currentUserId,
     onSend,
+    onSendFile,
     onClose,
 }) {
     const [text, setText] = useState('');
     const bottomRef = useRef(null);
     const inputRef = useRef(null);
+    const fileInputRef = useRef(null);
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -47,6 +64,17 @@ export default function CallChatPanel({
             e.preventDefault();
             send();
         }
+    };
+
+    const handleFileSelect = (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file) return;
+        if (file.size > 25 * 1024 * 1024) {
+            alert('File must be under 25MB');
+            return;
+        }
+        if (onSendFile) onSendFile(file);
     };
 
     const formatTime = (ts) => {
@@ -104,7 +132,17 @@ export default function CallChatPanel({
                                             rel="noopener noreferrer"
                                             className={s.chatPanelMsgFile}
                                         >
-                                            📎 {m.file_name || 'File'}
+                                            <span className={s.chatPanelMsgFileIcon}>📎</span>
+                                            <span className={s.chatPanelMsgFileMeta}>
+                                                <span className={s.chatPanelMsgFileName}>
+                                                    {m.file_name || 'File'}
+                                                </span>
+                                                {m.file_size ? (
+                                                    <span className={s.chatPanelMsgFileSize}>
+                                                        {formatFileSize(m.file_size)}
+                                                    </span>
+                                                ) : null}
+                                            </span>
                                         </a>
                                     ) : (
                                         <span className={s.chatPanelMsgText}>{m.content}</span>
@@ -121,6 +159,25 @@ export default function CallChatPanel({
             </div>
 
             <div className={s.chatPanelInputWrap}>
+                {onSendFile && (
+                    <>
+                        <button
+                            type="button"
+                            className={s.chatPanelAttachBtn}
+                            onClick={() => fileInputRef.current?.click()}
+                            title="Attach file"
+                            aria-label="Attach file"
+                        >
+                            <AttachIcon />
+                        </button>
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            style={{ display: 'none' }}
+                            onChange={handleFileSelect}
+                        />
+                    </>
+                )}
                 <textarea
                     ref={inputRef}
                     className={s.chatPanelInput}

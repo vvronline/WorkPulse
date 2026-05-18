@@ -219,6 +219,56 @@
     visibility: hidden;
 }
 
+/* ── Mute badge overlay on local self-view (shown when muted) ── */
+.localVideoMuteBadge {
+    position: absolute;
+    bottom: 110px;          /* sit just above the local video bottom edge */
+    right: 24px;
+    z-index: 12;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: rgba(239, 68, 68, 0.92);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    pointer-events: none;
+    animation: badgePulse 2.4s ease-in-out infinite;
+}
+
+.localVideoMuteBadge svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* When camera is off (we render the avatar tile instead) anchor the badge
+   on the avatar tile in the same corner. */
+.localVideoMuteBadgeAvatar {
+    bottom: 110px;
+}
+
+@media (max-width: 1024px) {
+    .localVideoMuteBadge {
+        bottom: 90px;
+        right: 16px;
+        width: 24px;
+        height: 24px;
+    }
+    .localVideoMuteBadge svg {
+        width: 14px;
+        height: 14px;
+    }
+}
+
+@media (max-width: 600px) {
+    .localVideoMuteBadge {
+        bottom: 80px;
+        right: 12px;
+    }
+}
+
 /* ── Local video avatar (shown when camera is off) ── */
 .localVideoAvatar {
     position: absolute;
@@ -783,10 +833,57 @@
     color: inherit;
     text-decoration: none;
     font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .chatPanelMsgFile:hover {
     text-decoration: underline;
+}
+
+.chatPanelMsgFileIcon {
+    font-size: 16px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.chatPanelMsgFileMeta {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.chatPanelMsgFileName {
+    font-weight: 600;
+    word-break: break-word;
+}
+
+.chatPanelMsgFileSize {
+    font-size: 11px;
+    opacity: 0.8;
+    margin-top: 2px;
+}
+
+/* Attach (paperclip) button in the chat input row */
+.chatPanelAttachBtn {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    color: #9ca3af;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s, color 0.15s;
+}
+
+.chatPanelAttachBtn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #f9fafb;
 }
 
 .chatPanelMsgTime {
@@ -893,5 +990,171 @@
         bottom: 56px;
         border-left: none;
         border-top: 1px solid #374151;
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Minimized call PiP — small floating window so the user can keep
+   using the rest of the app (notes / chat / dashboard / tasks /
+   calendar / attendance / settings) while the call continues. Click
+   anywhere on the widget to restore the full-screen call.
+   ───────────────────────────────────────────────────────────────── */
+.overlay.minimized {
+    inset: auto;
+    top: auto;
+    left: auto;
+    right: 20px;
+    bottom: 20px;
+    width: 280px;
+    height: 200px;
+    min-height: 0;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+    border: 1px solid #1f2937;
+    cursor: pointer;
+    z-index: 9998;
+    align-items: stretch;
+    justify-content: flex-end;
+}
+
+/* Hide everything that doesn't belong in the mini view */
+.overlay.minimized .controls,
+.overlay.minimized .topBar,
+.overlay.minimized .videoOverlayInfo,
+.overlay.minimized .windowControls,
+.overlay.minimized .localVideo,
+.overlay.minimized .localVideoAvatar,
+.overlay.minimized .localVideoMuteBadge,
+.overlay.minimized .chatPanel,
+.overlay.minimized .addPartPopup,
+.overlay.minimized .deviceSelector {
+    display: none !important;
+}
+
+/* The remote video fills the mini frame */
+.overlay.minimized .remoteVideo {
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 14px;
+}
+
+/* Call info card shrinks neatly inside the mini frame */
+.overlay.minimized .callInfo {
+    position: relative;
+    z-index: 5;
+    gap: 6px;
+    padding: 8px;
+}
+
+.overlay.minimized .avatarContainer {
+    width: 56px;
+    height: 56px;
+}
+
+.overlay.minimized .callerName {
+    font-size: 0.95rem;
+}
+
+.overlay.minimized .callStatus {
+    font-size: 0.75rem;
+}
+
+/* Mini control strip — only shown when overlay is minimized */
+.miniBar {
+    display: none;
+}
+
+.overlay.minimized .miniBar {
+    display: flex;
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 12;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 6px 10px;
+    background: linear-gradient(180deg, rgba(17,24,39,0) 0%, rgba(17,24,39,0.85) 60%, rgba(17,24,39,0.95) 100%);
+}
+
+.miniBarInfo {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+    color: #f9fafb;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+}
+
+.miniBarName {
+    font-size: 12px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.miniBarMeta {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    opacity: 0.9;
+}
+
+.miniBarMuteIcon {
+    color: #fca5a5;
+    display: inline-flex;
+    align-items: center;
+}
+
+.miniBarActions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.miniBarBtn {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(55, 65, 81, 0.85);
+    color: #f9fafb;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, transform 0.1s;
+}
+
+.miniBarBtn:hover {
+    background: rgba(75, 85, 99, 0.95);
+    transform: scale(1.07);
+}
+
+.miniBarBtn.miniBarEnd {
+    background: #ef4444;
+}
+
+.miniBarBtn.miniBarEnd:hover {
+    background: #dc2626;
+}
+
+.miniBarBtn svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* Mobile minimized — slightly smaller */
+@media (max-width: 600px) {
+    .overlay.minimized {
+        width: 220px;
+        height: 160px;
+        right: 12px;
+        bottom: 12px;
     }
 }

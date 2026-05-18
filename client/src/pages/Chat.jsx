@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import ConfirmDialog from '../components/common/ConfirmDialog';
+import { uploadChatFile } from '../api';
 import {
     MessageSearch, ForwardModal, GroupModal,
     StarredMessages, PollCreator, CallOverlay
@@ -304,6 +305,17 @@ export default function Chat() {
                             conversationId: callState.conversationId,
                             content: text,
                         });
+                    }}
+                    onSendChatFile={(file) => {
+                        // Reuse the same multipart upload endpoint the regular
+                        // chat input uses. The server broadcasts a chat_message
+                        // event so the file appears in both the in-call chat
+                        // panel and the conversation history without extra
+                        // wiring.
+                        if (!file || !callState.conversationId) return;
+                        const formData = new FormData();
+                        formData.append('file', file);
+                        uploadChatFile(callState.conversationId, formData).catch(() => { /* ignore */ });
                     }}
                 />
             )}
