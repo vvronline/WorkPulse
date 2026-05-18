@@ -56,9 +56,24 @@ router.post('/', async (req, res) => {
             if (toLocalDate(startDate) < toLocalDate(now)) {
                 return res.status(400).json({ error: 'Cannot create events in the past' });
             }
-        } else if (startDate < now) {
-            return res.status(400).json({ error: 'Cannot create events in the past' });
+        } else if (!meeting_id) {
+            // For standalone events: reject past start times, but allow a small
+            // grace period to absorb client/server clock skew + HTTP round-trip
+            // latency. Without the grace period, scheduling an event for "now"
+            // or 1-2 minutes in the future occasionally 400's because the
+            // server's `now` is a few hundred ms ahead of the client's by the
+            // time the request arrives.
+            const GRACE_MS = 60_000;
+            if (startDate.getTime() < now.getTime() - GRACE_MS) {
+                return res.status(400).json({ error: 'Cannot create events in the past' });
+            }
         }
+        // For meeting-linked events (`meeting_id` set) we deliberately do NOT
+        // reject past start times. The meeting row was already created in a
+        // previous request (POST /api/meetings); if we 400 here the meeting
+        // becomes orphaned — it exists on the server but is invisible on
+        // every participant's calendar. Honour the user's intent and create
+        // the calendar event so the meeting stays joinable from the calendar.
 
         // Rate limit: max 1000 events per user
         const countRes = await req.db.query('SELECT COUNT(*) AS c FROM calendar_events WHERE user_id = $1', [req.userId]);

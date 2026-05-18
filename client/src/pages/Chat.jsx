@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import ConfirmDialog from '../components/common/ConfirmDialog';
 import { uploadChatFile } from '../api';
@@ -68,17 +68,33 @@ export default function Chat() {
         return () => window.removeEventListener('beforeunload', handler);
     }, [callState]);
 
-    // When a call becomes active, automatically open the call's conversation
-    // so the in-call chat panel has the live message history & WS updates.
-    // Without this the receiver (and the caller, if they navigated away) sees
-    // an empty chat panel even when the peer is typing into it.
+    // When a call BECOMES active, auto-open its conversation ONCE so the
+    // in-call chat panel has the live message history & WS updates. After
+    // that the user must be free to browse other chats during the call —
+    // including `activeConv?.id` in the deps below would re-fire this
+    // effect every time the user clicks another conversation, instantly
+    // forcing them back to the call's chat (making the sidebar look
+    // "broken" / "mixing up" selections).
+    //
+    // We track the last conversationId we auto-opened in a ref so the
+    // effect only acts when a *new* call starts, not when the user
+    // intentionally navigates away during the same call.
+    const lastAutoOpenedCallConvRef = useRef(null);
     useEffect(() => {
-        if (!callState?.conversationId) return;
-        if (activeConv?.id === callState.conversationId) return;
+        const callConvId = callState?.conversationId;
+        if (!callConvId) {
+            lastAutoOpenedCallConvRef.current = null;
+            return;
+        }
+        if (lastAutoOpenedCallConvRef.current === callConvId) return;
+        lastAutoOpenedCallConvRef.current = callConvId;
+
+        if (activeConv?.id === callConvId) return; // already on it
+
         // Find conversation metadata from the loaded list. If we don't have
         // it yet (e.g. a brand-new conversation created remotely), fall back
         // to a minimal stub — openConversation will still load the messages.
-        const conv = conversations.find(c => c.id === callState.conversationId);
+        const conv = conversations.find(c => c.id === callConvId);
         const meta = conv ? {
             other_user_id: conv.other_user_id,
             other_username: conv.other_username,
@@ -94,8 +110,8 @@ export default function Chat() {
             other_avatar: callState.remoteAvatar,
             is_group: !!callState.isGroup,
         };
-        openConversation(callState.conversationId, meta);
-    }, [callState?.conversationId, activeConv?.id, conversations]); // eslint-disable-line react-hooks/exhaustive-deps
+        openConversation(callConvId, meta);
+    }, [callState?.conversationId, conversations]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Hide navbar & bottom tab bar on mobile when a chat conversation is active
     useEffect(() => {
