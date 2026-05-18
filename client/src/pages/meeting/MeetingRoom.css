@@ -1193,11 +1193,24 @@
     grid-template-columns: 1fr;
     grid-template-rows: repeat(2, 1fr);
   }
-  /* 3–4 participants — 2 columns */
+  /* 3–4 participants — 2 columns. We explicitly RESET the desktop
+     `nth-child` overrides for [data-count="3"] (which use a 4-column grid
+     with each tile spanning 2 cols) so mobile gets a simple 2×2 grid
+     with the 3rd tile spanning both columns of the bottom row — far more
+     usable on a narrow portrait screen than four narrow columns. */
   .mr-grid[data-count="3"],
   .mr-grid[data-count="4"] {
     grid-template-columns: repeat(2, 1fr);
     grid-template-rows: repeat(2, 1fr);
+  }
+  .mr-grid[data-count="3"] > :nth-child(1),
+  .mr-grid[data-count="3"] > :nth-child(2) {
+    grid-column: auto;
+    grid-row: auto;
+  }
+  .mr-grid[data-count="3"] > :nth-child(3) {
+    grid-column: 1 / -1;
+    grid-row: auto;
   }
   /* 5–6 participants — 2 cols × 3 rows */
   .mr-grid[data-count="5"],

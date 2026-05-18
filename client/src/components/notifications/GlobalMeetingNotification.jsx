@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import useWebSocket from '../../hooks/useWebSocket';
+import { useMeeting } from '../../MeetingContext';
 import s from './GlobalMeetingNotification.module.css';
 
 /**
@@ -15,14 +16,34 @@ export default function GlobalMeetingNotification() {
     const navigate = useNavigate();
     const autoDismissRef = useRef(null);
     const shownMeetingRef = useRef(null); // dedup: track which meetingId is currently shown
+    const { session } = useMeeting() || {};
+    const activeMeetingIdRef = useRef(null);
+    activeMeetingIdRef.current = session?.meetingId ?? null;
 
     const showNotification = useCallback((data) => {
         if (!data || !data.meetingId) return;
+        // Suppress the "Meeting Started/Restarted" card entirely when the
+        // current user is ALREADY in this meeting (e.g. they just joined
+        // and the server is broadcasting the start event to all invitees,
+        // or another participant joined later and the server is re-emitting
+        // the started event). Without this guard the card kept popping
+        // back up on top of the in-meeting UI even after joining.
+        if (activeMeetingIdRef.current === data.meetingId) return;
         // Deduplicate: if already showing this meeting's card, skip (unless it's a restart)
         if (shownMeetingRef.current === data.meetingId && !data.restarted) return;
         shownMeetingRef.current = data.meetingId;
         setNotification(data);
     }, []);
+
+    // If the user joins the meeting that's currently shown in the card,
+    // immediately dismiss the card so we don't have a stale invite floating
+    // over the meeting room.
+    useEffect(() => {
+        if (session?.meetingId && notification?.meetingId === session.meetingId) {
+            shownMeetingRef.current = null;
+            setNotification(null);
+        }
+    }, [session?.meetingId, notification?.meetingId]);
 
     // Direct WS listener — works regardless of whether Navbar/NotificationBell is mounted
     useWebSocket(useCallback((msg) => {

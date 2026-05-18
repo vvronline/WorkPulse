@@ -649,19 +649,23 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         if (ws.readyState === WebSocket.OPEN) sendJoin();
         else if (ws.readyState === WebSocket.CONNECTING) ws.addEventListener('open', onOpen, { once: true });
 
-        // Retry join after 3s if first attempt didn't send (WS was still connecting)
+        // Retry join after 1s if first attempt didn't send (WS was still
+        // connecting at this point). Earlier code waited 3s here which made
+        // the "Joining…" overlay feel like a hang on slow networks.
         retryTimer = setTimeout(() => {
             if (!joined && ws.readyState === WebSocket.OPEN) {
                 sendJoin();
             }
-        }, 3000);
+        }, 1000);
 
-        // Second retry at 6s — covers race where first join message was lost
+        // Second retry at 2.5s — covers the rare race where the first
+        // meeting_join WS frame was lost during connection setup. The
+        // server is idempotent (`ON CONFLICT DO UPDATE`) so this is safe.
         retryTimer2 = setTimeout(() => {
             if (ws.readyState === WebSocket.OPEN) {
                 wsSend('meeting_join', { meetingId });
             }
-        }, 6000);
+        }, 2500);
 
         return () => {
             clearTimeout(retryTimer);
