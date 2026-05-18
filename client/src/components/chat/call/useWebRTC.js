@@ -547,16 +547,51 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                     pendingIceCandidatesRef.current.push(signal.candidate);
                 }
             } else if (signal.type === 'video-state') {
-                // Peer told us they toggled their camera. Browsers' track.onmute
-                // is unreliable (Chrome lags 5–10s, Firefox often never fires),
-                // so we use this explicit signal to flip the avatar overlay
-                // immediately on both sides.
-                setRemoteVideoOff(!!signal.videoOff);
+                // Peer told us they toggled their outgoing video. Browsers'
+                // track.onmute / track.onended are unreliable (Chrome lags
+                // 5–10 s, Firefox often never fires, and removeTrack on a
+                // sender does NOT reliably end the receiver's track at all),
+                // so this explicit signal is the source of truth.
+                const videoOff = !!signal.videoOff;
+                setRemoteVideoOff(videoOff);
+                // In an AUDIO call the only video that ever exists is the
+                // peer's screen share. When they stop sharing we must also
+                // clear the remoteHasVideo flag (which controls whether the
+                // <video> tile renders at all) AND null-out the srcObject so
+                // the browser doesn't keep painting the last frozen frame.
+                // For video calls we leave remoteHasVideo alone — the camera
+                // transceiver should stay alive and may come back on at any
+                // moment, and we keep showing an avatar overlay instead.
+                if (callType !== 'video') {
+                    if (videoOff) {
+                        setRemoteHasVideo(false);
+                        if (remoteVideoRef.current) {
+                            try { remoteVideoRef.current.srcObject = null; } catch { /* ignore */ }
+                        }
+                        // The remote stream may also still hold a stopped
+                        // video track from the peer's removeTrack — drop it
+                        // so a subsequent share starts from a clean slate.
+                        if (remoteStreamRef.current) {
+                            remoteStreamRef.current.getVideoTracks().forEach(t => {
+                                try { remoteStreamRef.current.removeTrack(t); } catch { /* ignore */ }
+                            });
+                        }
+                    } else if (remoteStreamRef.current?.getVideoTracks().length) {
+                        // Peer is sharing again and we already have a video
+                        // track on the remote stream (e.g. the renegotiation
+                        // re-used the transceiver) — restore the tile.
+                        setRemoteHasVideo(true);
+                        if (remoteVideoRef.current && !remoteVideoRef.current.srcObject) {
+                            remoteVideoRef.current.srcObject = remoteStreamRef.current;
+                            remoteVideoRef.current.play().catch(() => { });
+                        }
+                    }
+                }
             }
         } catch (err) {
             console.error('[call-webrtc] Signal handling error:', err);
         }
-    }, [conversationId, wsSend, flushPendingIceCandidates, addIceCandidateSafe]);
+    }, [conversationId, wsSend, flushPendingIceCandidates, addIceCandidateSafe, callType]);
 
     const handleSignal = useCallback((signal, fromUserId) => {
         // Detect a "fresh session" offer that requires us to tear down our

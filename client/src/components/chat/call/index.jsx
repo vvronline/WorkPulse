@@ -220,17 +220,30 @@ export default function CallOverlay({
         }
     }, [onSendChatFile]);
 
-    // ─── Tell the peer whenever our camera turns on/off ───
+    // ─── Tell the peer whenever our outgoing video state changes ───
     // Browsers' RTCRtpReceiver.track.onmute is unreliable (Chrome lags 5–10s,
     // Firefox sometimes never fires), so we send an explicit `video-state`
-    // signal. While screen-sharing the outgoing video track is the screen,
-    // not the cam, so the peer should NOT see our avatar in that case — only
-    // when controls.videoOff is true and we are not screen-sharing.
+    // signal. The signal tells the peer whether they should treat our
+    // outgoing video as "off" (show avatar / hide the remote video tile).
+    //
+    //   • Video call: we send videoOff=true when the user has turned the
+    //     camera off AND is not screen-sharing (screen replaces cam in the
+    //     outgoing video sender, so the peer should still see something).
+    //   • Audio call: there is no camera; the only way the peer ever sees
+    //     a video track is when we screen-share. So videoOff=true whenever
+    //     we are NOT screen-sharing. This is essential for the receiver to
+    //     hide the (now-frozen) video element when we stop sharing — the
+    //     RTCPeerConnection's track.onended event is unreliable across
+    //     browsers when a sender simply removes a track.
     useEffect(() => {
         if (status !== 'connected') return;
-        if (!isVideoCall) return;
-        const peerSeesNoCamera = controls.videoOff && !controls.screenSharing;
-        webrtc.sendLocalVideoState?.(peerSeesNoCamera);
+        let peerSeesNoVideo;
+        if (isVideoCall) {
+            peerSeesNoVideo = controls.videoOff && !controls.screenSharing;
+        } else {
+            peerSeesNoVideo = !controls.screenSharing;
+        }
+        webrtc.sendLocalVideoState?.(peerSeesNoVideo);
     }, [status, isVideoCall, controls.videoOff, controls.screenSharing]);
 
     // ─── Picture-in-Picture helpers ───────────────────────────────────
@@ -430,14 +443,35 @@ export default function CallOverlay({
 
         // Try floating layers in priority order. The in-app .minimized
         // overlay is always shown as the WorkPulse-internal fallback.
+        //
+        // For VIDEO calls (or when the peer is screen-sharing) we prefer the
+        // browser's NATIVE <video> picture-in-picture because it actually
+        // streams the live remote video into the floating window. The
+        // Electron secondary BrowserWindow can only render the avatar +
+        // metadata (MediaStream objects cannot be transferred between
+        // BrowserWindows), so falling back to it for a video call would
+        // give the user a black/avatar-only floatie — confusing.
+        //
+        // For AUDIO calls (no remote video) we prefer the Electron floatie
+        // because it survives Alt-Tabbing to other apps and stays on top
+        // even over fullscreen windows on macOS.
+        const hasRemoteVideoStream = isVideoCall || webrtc.remoteHasVideo;
+        if (hasRemoteVideoStream) {
+            const ok = await openNativeVideoPip();
+            if (ok) return;
+            // Native PiP unavailable (Safari iOS, some embedded webviews) —
+            // fall through to Electron floatie / Document PiP / in-app mini.
+        }
         if (openElectronPip()) return;
         if (isVideoCall) {
+            // Last-resort native PiP attempt if we skipped it above.
             const ok = await openNativeVideoPip();
             if (ok) return;
         }
         // Audio call (or video PiP unavailable) on the web → try Document PiP.
         await openDocumentPip();
-    }, [controls, isVideoCall, openElectronPip, openNativeVideoPip, openDocumentPip]);
+    }, [controls, isVideoCall, webrtc.remoteHasVideo,
+        openElectronPip, openNativeVideoPip, openDocumentPip]);
 
     const handleRestore = useCallback((e) => {
         e?.stopPropagation?.();
@@ -537,7 +571,32 @@ export default function CallOverlay({
                 </div>
             )}
 
-            {(!isVideoCall || !isConnected || controls.onHold || status === 'reconnecting' || (isVideoCall && isConnected && webrtc.remoteVideoOff)) && (
+            {/* Caller-info card (big avatar + name + duration). We hide it
+                whenever there's actual video being shown so it doesn't sit on
+                top of the remote camera feed or a screen share. Specifically:
+                  • Pre-connect (incoming / ringing / connecting / reconnecting
+                    / on-hold) → always show
+                  • Audio call WITHOUT any screen share (neither side) → show
+                  • Audio call WITH the peer screen-sharing → hide
+                  • Audio call WITH us screen-sharing → hide
+                  • Video call where the peer's camera is off (and nobody is
+                    screen-sharing) → show avatar as a centred overlay */}
+            {(() => {
+                const preConnect = !isConnected || controls.onHold || status === 'reconnecting';
+                const anyVideoShowing = controls.screenSharing || webrtc.remoteHasVideo;
+                let showCallInfo;
+                if (preConnect) {
+                    showCallInfo = true;
+                } else if (isVideoCall) {
+                    // Video call: avatar overlay only when peer cam is off AND
+                    // nobody is sharing the screen.
+                    showCallInfo = webrtc.remoteVideoOff && !controls.screenSharing;
+                } else {
+                    // Audio call: avatar card only when no video is on screen.
+                    showCallInfo = !anyVideoShowing;
+                }
+                if (!showCallInfo) return null;
+                return (
                 <div className={s.callInfo}>
                     <div className={`${s.avatarContainer} ${status === 'incoming' || status === 'ringing' ? s.pulsing : ''}`}>
                         <ChatAvatar name={remoteName || 'User'} avatar={remoteAvatar} size="xl" />
@@ -552,7 +611,8 @@ export default function CallOverlay({
                         {isConnected && controls.onHold && `On Hold · ${formatDuration(duration)}`}
                     </p>
                 </div>
-            )}
+                );
+            })()}
 
             {isVideoCall && isConnected && !controls.onHold && (
                 <div className={s.videoOverlayInfo}>
