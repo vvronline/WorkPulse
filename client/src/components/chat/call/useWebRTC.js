@@ -56,6 +56,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     const [remoteVideoOff, setRemoteVideoOff] = useState(false);
     const [remoteHasVideo, setRemoteHasVideo] = useState(false);
     const [remoteMuted, setRemoteMuted] = useState(false);
+    const [remoteScreenSharing, setRemoteScreenSharing] = useState(false);
 
     // Track whether the *local* user has their camera explicitly off, so the
     // peer can be told and render an avatar instead of a frozen black frame.
@@ -591,6 +592,8 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 }
             } else if (signal.type === 'audio-state') {
                 setRemoteMuted(!!signal.muted);
+            } else if (signal.type === 'screen-share-state') {
+                setRemoteScreenSharing(!!signal.sharing);
             }
         } catch (err) {
             console.error('[call-webrtc] Signal handling error:', err);
@@ -853,13 +856,26 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         }
     }, [conversationId, wsSend, isIncoming, callerId, acceptedBy, reconnectTo]);
 
+    const sendLocalScreenShareState = useCallback((isSharing) => {
+        const target = isIncoming ? callerId : (acceptedBy || reconnectTo);
+        if (!target) return;
+        try {
+            wsSend('call_signal', {
+                conversationId, targetUserId: target,
+                signal: { type: 'screen-share-state', sharing: !!isSharing }
+            });
+        } catch (err) {
+            console.warn('[call-webrtc] sendLocalScreenShareState failed:', err?.message || err);
+        }
+    }, [conversationId, wsSend, isIncoming, callerId, acceptedBy, reconnectTo]);
+
     return {
         pcRef, localStreamRef, screenStreamRef, remoteStreamRef,
         localVideoRef, remoteVideoRef, remoteAudioRef,
         screenSenderRef, connectionTimeoutRef, ringtoneRef,
         handleAccept, handleReject, handleEnd,
         stopRingtone, startMedia, createPeerConnection,
-        isMobile, remoteVideoOff, remoteHasVideo, remoteMuted,
-        sendLocalVideoState, sendLocalMuteState
+        isMobile, remoteVideoOff, remoteHasVideo, remoteMuted, remoteScreenSharing,
+        sendLocalVideoState, sendLocalMuteState, sendLocalScreenShareState
     };
 }

@@ -106,6 +106,7 @@ export default function Chat() {
             name: conv.name,
             member_count: conv.member_count,
         } : {
+            other_user_id: callState.callerId,
             other_full_name: callState.remoteName,
             other_avatar: callState.remoteAvatar,
             is_group: !!callState.isGroup,

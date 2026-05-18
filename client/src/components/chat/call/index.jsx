@@ -11,8 +11,7 @@ import {
     MicIcon, MicOffIcon, CamIcon, CamOffIcon, PhoneIcon,
     ScreenShareIcon, ScreenShareOffIcon,
     HoldIcon, ResumeIcon, PipIcon, AddParticipantIcon, ChatIcon,
-    FullscreenIcon, ExitFullscreenIcon, RecordIcon,
-    NoiseSuppressionIcon, EmojiIcon
+    RecordIcon, NoiseSuppressionIcon, EmojiIcon
 } from './CallIcons';
 import s from '../CallOverlay.module.css';
 
@@ -219,6 +218,12 @@ export default function CallOverlay({
         webrtc.sendLocalMuteState?.(controls.muted);
     }, [status, controls.muted]);
 
+    // Send local screen share state to remote peer
+    useEffect(() => {
+        if (status !== 'connected') return;
+        webrtc.sendLocalScreenShareState?.(controls.screenSharing);
+    }, [status, controls.screenSharing]);
+
     // ═══════════════════════════════════════════════════════════════
     //  FEATURE: Auto-hide controls (video mode, 4s idle)
     // ═══════════════════════════════════════════════════════════════
@@ -255,13 +260,11 @@ export default function CallOverlay({
             else if (key === 's' && isConnected && canScreenShare) { controls.toggleScreenShare(); resetControlsTimer(); }
             else if (key === 'h' && isConnected) { controls.toggleHold(); resetControlsTimer(); }
             else if (key === 'e' || (e.ctrlKey && e.shiftKey && key === 'h')) { webrtc.handleEnd(); }
-            else if (key === 'f' && isConnected) { controls.toggleFullscreen(); resetControlsTimer(); }
             else if (key === '?' || (e.shiftKey && key === '/')) { setShowShortcutsHelp(v => !v); }
             else if (key === 'escape') {
                 if (showShortcutsHelp) setShowShortcutsHelp(false);
                 else if (showStats) setShowStats(false);
                 else if (showReactionPicker) setShowReactionPicker(false);
-                else if (controls.isFullscreen) controls.toggleFullscreen();
             }
             else if (key === ' ' && !e.repeat) {
                 e.preventDefault();
@@ -680,7 +683,7 @@ export default function CallOverlay({
             {webrtc.remoteHasVideo && (
                 <video
                     ref={webrtc.remoteVideoRef}
-                    className={`${s.remoteVideo} ${swapped ? s.swapped : ''}`}
+                    className={`${s.remoteVideo} ${swapped ? s.swapped : ''} ${!webrtc.remoteScreenSharing ? s.mirrored : ''}`}
                     autoPlay playsInline
                     onClick={swapped ? () => setSwapped(false) : undefined}
                 />
@@ -737,12 +740,9 @@ export default function CallOverlay({
                 </div>
             )}
 
-            {/* ─── Top bar ─── */}
+            {/* ─── Top bar (status badges) ─── */}
             {isConnected && (
                 <div className={`${s.topBar} ${!controlsVisible ? s.topBarHidden : ''}`}>
-                    <button className={s.qualityBadgeBtn} onClick={() => setShowStats(v => !v)} title="Connection stats">
-                        <QualityBadge quality={controls.connectionQuality} />
-                    </button>
                     {controls.screenSharing && <span className={s.sharingBadge}>Screen Sharing</span>}
                     {controls.onHold && <span className={s.holdBadge}>On Hold</span>}
                     {controls.recording && <span className={s.recordingBadge}>REC</span>}
@@ -813,13 +813,23 @@ export default function CallOverlay({
                         {isConnected && !controls.onHold && formatDuration(duration)}
                         {isConnected && controls.onHold && `On Hold \u00B7 ${formatDuration(duration)}`}
                     </p>
+                    {isConnected && (
+                        <button className={s.qualityBadgeBtn} onClick={() => setShowStats(v => !v)} title="Connection stats">
+                            <QualityBadge quality={controls.connectionQuality} />
+                        </button>
+                    )}
                 </div>
                 );
             })()}
 
             {isVideoCall && isConnected && !controls.onHold && (
                 <div className={`${s.videoOverlayInfo} ${!controlsVisible ? s.videoOverlayInfoHidden : ''}`}>
-                    <span className={s.videoCallerName}>{remoteName}</span>
+                    <div className={s.videoOverlayTop}>
+                        <span className={s.videoCallerName}>{remoteName}</span>
+                        <button className={s.qualityBadgeBtn} onClick={() => setShowStats(v => !v)} title="Connection stats">
+                            <QualityBadge quality={controls.connectionQuality} />
+                        </button>
+                    </div>
                     <span className={s.videoDuration}>{formatDuration(duration)}</span>
                 </div>
             )}
@@ -887,10 +897,9 @@ export default function CallOverlay({
                             <div className={s.shortcutRow}><kbd>V</kbd><span>Toggle video</span></div>
                             <div className={s.shortcutRow}><kbd>S</kbd><span>Toggle screen share</span></div>
                             <div className={s.shortcutRow}><kbd>H</kbd><span>Toggle hold</span></div>
-                            <div className={s.shortcutRow}><kbd>F</kbd><span>Toggle fullscreen</span></div>
                             <div className={s.shortcutRow}><kbd>E</kbd><span>End call</span></div>
                             <div className={s.shortcutRow}><kbd>Space</kbd><span>Push-to-talk (hold)</span></div>
-                            <div className={s.shortcutRow}><kbd>Esc</kbd><span>Close panel / exit fullscreen</span></div>
+                            <div className={s.shortcutRow}><kbd>Esc</kbd><span>Close panel</span></div>
                             <div className={s.shortcutRow}><kbd>?</kbd><span>Toggle this help</span></div>
                         </div>
                     </div>
@@ -956,17 +965,6 @@ export default function CallOverlay({
                                 title={controls.onHold ? 'Resume (H)' : 'Hold (H)'}
                             >
                                 {controls.onHold ? <ResumeIcon /> : <HoldIcon />}
-                            </button>
-                        )}
-
-                        {/* Fullscreen */}
-                        {isConnected && (
-                            <button
-                                className={`${s.controlBtn} ${controls.isFullscreen ? s.active : ''}`}
-                                onClick={controls.toggleFullscreen}
-                                title={controls.isFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'}
-                            >
-                                {controls.isFullscreen ? <ExitFullscreenIcon /> : <FullscreenIcon />}
                             </button>
                         )}
 

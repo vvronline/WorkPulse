@@ -11,6 +11,7 @@ const STATUS_LABEL = {
     dnd: 'Do Not Disturb',
     away: 'Away',
     offline: 'Offline',
+    online: 'Online',
     in_call: 'In a Call',
     in_meeting: 'In a Meeting',
 };
@@ -52,9 +53,9 @@ export default function ChatHeader({ activeConv, onlineUsers, userStatusMap = {}
                 <div className={s.chatHeaderMeta}>
                     {activeConv.is_group
                         ? `${activeConv.member_count || ''} members`
-                        : otherStatus && otherStatus !== 'available'
+                        : otherStatus && otherStatus !== 'available' && otherStatus !== 'online'
                             ? STATUS_LABEL[otherStatus] || otherStatus
-                            : isUserOnline(activeConv, onlineUsers) ? 'Online' : `@${activeConv.other_username}`}
+                            : isUserOnline(activeConv, onlineUsers) ? 'Online' : activeConv.other_username ? `@${activeConv.other_username}` : ''}
                 </div>
             </div>
             <div className={s.headerActions}>

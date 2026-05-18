@@ -578,7 +578,7 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
         if (!conversationId || !targetUserId || !signal) return;
 
         // Validate signal type against whitelist
-        const VALID_SIGNAL_TYPES = ['offer', 'answer', 'ice-candidate', 'video-state', 'audio-state'];
+        const VALID_SIGNAL_TYPES = ['offer', 'answer', 'ice-candidate', 'video-state', 'audio-state', 'screen-share-state'];
         if (!signal.type || !VALID_SIGNAL_TYPES.includes(signal.type)) {
             logger.warn({ senderId, signalType: signal?.type }, 'call_signal: rejected unknown signal type');
             return;

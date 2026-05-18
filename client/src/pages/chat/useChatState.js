@@ -216,13 +216,14 @@ export default function useChatState() {
                     d.status === 'online' ? next.add(d.userId) : next.delete(d.userId);
                     return next;
                 });
-                if (d.userStatus) {
-                    setUserStatusMap(prev => ({ ...prev, [d.userId]: d.userStatus }));
-                }
+                const effectiveStatus = d.status === 'online'
+                    ? (d.userStatus || 'available')
+                    : (d.userStatus || 'offline');
+                setUserStatusMap(prev => ({ ...prev, [d.userId]: effectiveStatus }));
                 break;
             }
             case 'status_change': {
-                setUserStatusMap(prev => ({ ...prev, [d.userId]: d.userStatus }));
+                setUserStatusMap(prev => ({ ...prev, [d.userId]: d.userStatus || 'available' }));
                 break;
             }
             case 'chat_group_created':
