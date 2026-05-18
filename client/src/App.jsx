@@ -37,6 +37,14 @@ import KeepAlive from './components/common/KeepAlive';
 const MeetingJoin = lazy(() => import('./pages/MeetingJoin'));
 const SprintInsights = lazy(() => import('./pages/SprintInsights'));
 const PublicNote = lazy(() => import('./pages/PublicNote'));
+const CallPipPage = lazy(() => import('./pages/CallPipPage'));
+
+// The Electron always-on-top mini call window loads /pip-call. That window
+// is independent of auth/providers/navbar — it just renders the avatar +
+// controls and IPC-talks to the main window. Detect early so we can short-
+// circuit the rest of the provider tree.
+const IS_PIP_WINDOW = typeof window !== 'undefined'
+    && window.location.pathname === '/pip-call';
 
 function ProtectedRoute({ children, minRole }) {
   const { isAuthenticated, user } = useAuth();
@@ -134,7 +142,7 @@ function AppRoutes() {
   );
 }
 
-export default function App() {
+function MainApp() {
   useEffect(() => {
     // Create a single fixed tooltip div attached to body — escapes all overflow/stacking contexts
     const tip = document.createElement('div');
@@ -265,4 +273,21 @@ export default function App() {
       </ThemeProvider>
     </AuthProvider>
   );
+}
+
+export default function App() {
+  // ─── Electron always-on-top mini call window ────────────────────────
+  // The Electron main process opens a secondary BrowserWindow that loads
+  // workpulse://app/pip-call. That window must be standalone — no auth
+  // provider, no navbar, no axios interceptor, no global call/meeting
+  // overlays. It just renders the tiny avatar + controls and IPC-talks
+  // back to the main window via window.electronAPI.callPip.
+  if (IS_PIP_WINDOW) {
+    return (
+      <Suspense fallback={null}>
+        <CallPipPage />
+      </Suspense>
+    );
+  }
+  return <MainApp />;
 }

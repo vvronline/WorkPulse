@@ -49,4 +49,42 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Incoming call: flash taskbar and show/focus window
     flashFrame: (flash) => ipcRenderer.send('flash-frame', flash),
     showAndFocus: () => ipcRenderer.send('show-and-focus'),
+
+    // ─── Always-on-top mini call window ("floatie") ─────────────────────
+    // Used by the 1:1 call overlay to pop a small always-on-top window
+    // that sits over other apps (Teams-style). The pip window itself
+    // renders /pip-call which calls callPip.ready() once mounted, then
+    // listens for state updates via onCallPipState and sends actions via
+    // sendCallPipAction.
+    callPip: {
+        // ── Main window → main process ──
+        open: (state) => ipcRenderer.send('call:pip-open', state),
+        close: () => ipcRenderer.send('call:pip-close'),
+        updateState: (partial) => ipcRenderer.send('call:pip-update-state', partial),
+        // Subscribe to "user closed the floatie" — caller should restore
+        // the in-app overlay. Returns an unsubscribe function.
+        onWindowClosed: (cb) => {
+            const handler = () => cb();
+            ipcRenderer.on('call:pip-window-closed', handler);
+            return () => ipcRenderer.removeListener('call:pip-window-closed', handler);
+        },
+        // Subscribe to actions the user took inside the pip window
+        // (mute / unmute / restore / end). Returns an unsubscribe function.
+        onAction: (cb) => {
+            const handler = (_e, payload) => cb(payload || {});
+            ipcRenderer.on('call:pip-action', handler);
+            return () => ipcRenderer.removeListener('call:pip-action', handler);
+        },
+
+        // ── Pip window → main process ──
+        ready: () => ipcRenderer.send('call:pip-ready'),
+        sendAction: (action) => ipcRenderer.send('call:pip-action', { action }),
+        // Subscribe to state pushes from the main window (avatar, name,
+        // duration tick, muted flag, …). Returns an unsubscribe function.
+        onState: (cb) => {
+            const handler = (_e, state) => cb(state || {});
+            ipcRenderer.on('call:pip-state', handler);
+            return () => ipcRenderer.removeListener('call:pip-state', handler);
+        },
+    },
 });

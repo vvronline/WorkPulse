@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { setupTray } = require('./tray');
 const { setupUpdater } = require('./updater');
+const { setupCallPipWindow } = require('./callPipWindow');
 
 // Set app identity for Windows notifications and taskbar
 app.setAppUserModelId('com.workpulse.desktop');
@@ -398,6 +399,10 @@ app.whenReady().then(async () => {
 
     // Auto-updater
     setupUpdater(mainWindow);
+
+    // Always-on-top mini call window (Teams-style "floatie") — opens via
+    // IPC from the renderer when the user clicks the in-call PiP button.
+    setupCallPipWindow(mainWindow);
 });
 
 // macOS: re-create window when dock icon is clicked

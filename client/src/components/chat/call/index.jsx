@@ -9,21 +9,21 @@ import CallChatPanel from './CallChatPanel';
 import { useNotificationPrefs } from '../../../NotificationPrefsContext';
 import {
     MicIcon, MicOffIcon, CamIcon, CamOffIcon, PhoneIcon,
-    ScreenShareIcon, ScreenShareOffIcon, FullscreenIcon, ExitFullscreenIcon,
+    ScreenShareIcon, ScreenShareOffIcon,
     HoldIcon, ResumeIcon, PipIcon, AddParticipantIcon, ChatIcon
 } from './CallIcons';
 import s from '../CallOverlay.module.css';
 
 const isElectron = !!window.electronAPI?.isElectron;
 const isWinElectron = isElectron && window.electronAPI?.platform !== 'darwin';
+const hasElectronCallPip = !!window.electronAPI?.callPip;
+// Document Picture-in-Picture API (Chromium 116+) — lets us render arbitrary
+// HTML in an OS-level always-on-top window. Used for audio calls in the web
+// build where the standard <video> PiP can't help.
+const hasDocumentPip = typeof window !== 'undefined'
+    && typeof window.documentPictureInPicture?.requestWindow === 'function';
 
-// Minimize / Maximize icons (kept inline so we don't add new icon deps)
-const MinimizeIcon = () => (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-        <path d="M5 14h6v6M19 10h-6V4M14 10l7-7M10 14l-7 7"
-            stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-);
+// Restore (maximize-out-of-pip) icon — used only by the in-app mini bar.
 const MaximizeIcon = () => (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
         <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"
@@ -57,7 +57,19 @@ export default function CallOverlay({
     // The overlay JSX stays in the DOM (so the WebRTC peer connection, video
     // elements, mic capture, etc. all keep running) — we just shrink it via
     // a CSS class and hide most chrome.
+    //
+    // On top of the in-app mini we ALSO try to open one of (in priority order):
+    //   1. An Electron always-on-top BrowserWindow (desktop build → Teams-style
+    //      floating window that survives switching to other apps).
+    //   2. The browser's native <video>.requestPictureInPicture() for video
+    //      calls in the web build.
+    //   3. The Document Picture-in-Picture API for audio calls in Chromium 116+.
+    // The user only sees one button labelled "Picture-in-picture"; we pick
+    // whichever option is available at click time.
     const [minimized, setMinimized] = useState(false);
+    const [nativePipActive, setNativePipActive] = useState(false);
+    const [electronPipActive, setElectronPipActive] = useState(false);
+    const docPipWindowRef = useRef(null);
     const canScreenShare = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
     const lastSeenMsgCountRef = useRef(chatMessages.length);
 
@@ -221,34 +233,234 @@ export default function CallOverlay({
         webrtc.sendLocalVideoState?.(peerSeesNoCamera);
     }, [status, isVideoCall, controls.videoOff, controls.screenSharing]);
 
-    // Auto-restore when an incoming call arrives so the user can answer it
-    useEffect(() => {
-        if (status === 'incoming' && minimized) setMinimized(false);
-    }, [status, minimized]);
+    // ─── Picture-in-Picture helpers ───────────────────────────────────
+    const closeAllFloatingLayers = useCallback(() => {
+        // Native <video> PiP
+        try {
+            if (document.pictureInPictureElement) {
+                document.exitPictureInPicture().catch(() => { /* ignore */ });
+            }
+        } catch { /* ignore */ }
+        // Document PiP
+        try { docPipWindowRef.current?.close?.(); } catch { /* ignore */ }
+        docPipWindowRef.current = null;
+        // Electron mini window
+        if (hasElectronCallPip) {
+            try { window.electronAPI.callPip.close(); } catch { /* ignore */ }
+        }
+        setNativePipActive(false);
+        setElectronPipActive(false);
+    }, []);
 
-    const handleMinimize = useCallback((e) => {
+    // Auto-restore when an incoming call arrives so the user can answer it.
+    // Also close any floating layer so the accept/decline buttons are
+    // immediately reachable in the full overlay.
+    useEffect(() => {
+        if (status === 'incoming') {
+            if (minimized) setMinimized(false);
+            closeAllFloatingLayers();
+        }
+    }, [status, minimized, closeAllFloatingLayers]);
+
+    // Listen for native PiP exit (user clicked the browser's ✕ on the
+    // floating video) → restore the full overlay automatically.
+    useEffect(() => {
+        const v = webrtc.remoteVideoRef.current;
+        if (!v) return;
+        const onEnter = () => setNativePipActive(true);
+        const onLeave = () => {
+            setNativePipActive(false);
+            setMinimized(false);
+        };
+        v.addEventListener('enterpictureinpicture', onEnter);
+        v.addEventListener('leavepictureinpicture', onLeave);
+        return () => {
+            v.removeEventListener('enterpictureinpicture', onEnter);
+            v.removeEventListener('leavepictureinpicture', onLeave);
+        };
+    }, [webrtc.remoteVideoRef]);
+
+    // Electron mini-window IPC: user closed the floatie → restore overlay.
+    // Listen for actions (mute/unmute/restore/end) coming from the floatie.
+    useEffect(() => {
+        if (!hasElectronCallPip) return;
+        const offClosed = window.electronAPI.callPip.onWindowClosed(() => {
+            setElectronPipActive(false);
+            setMinimized(false);
+        });
+        const offAction = window.electronAPI.callPip.onAction(({ action }) => {
+            if (action === 'mute' || action === 'unmute') {
+                controls.toggleMute();
+            } else if (action === 'restore') {
+                setElectronPipActive(false);
+                setMinimized(false);
+                try { window.electronAPI.callPip.close(); } catch { /* ignore */ }
+            } else if (action === 'end') {
+                try { window.electronAPI.callPip.close(); } catch { /* ignore */ }
+                webrtc.handleEnd();
+            }
+        });
+        return () => {
+            try { offClosed?.(); } catch { /* ignore */ }
+            try { offAction?.(); } catch { /* ignore */ }
+        };
+    }, [controls, webrtc]);
+
+    // Push live state into the Electron floatie whenever something the user
+    // can see there changes (status, duration, mute, callType, name).
+    useEffect(() => {
+        if (!hasElectronCallPip || !electronPipActive) return;
+        try {
+            window.electronAPI.callPip.updateState({
+                remoteName: remoteName || 'Call',
+                remoteAvatar: remoteAvatar || null,
+                status: controls.onHold ? 'on-hold' : status,
+                durationSec: duration,
+                muted: controls.muted,
+                videoOff: controls.videoOff,
+                callType,
+            });
+        } catch { /* ignore */ }
+    }, [electronPipActive, status, duration, controls.muted, controls.videoOff,
+        controls.onHold, remoteName, remoteAvatar, callType]);
+
+    // Close any floating layer + mini state when the call ends/unmounts
+    useEffect(() => () => { closeAllFloatingLayers(); }, [closeAllFloatingLayers]);
+
+    const openElectronPip = useCallback(() => {
+        if (!hasElectronCallPip) return false;
+        try {
+            window.electronAPI.callPip.open({
+                remoteName: remoteName || 'Call',
+                remoteAvatar: remoteAvatar || null,
+                status: controls.onHold ? 'on-hold' : status,
+                durationSec: duration,
+                muted: controls.muted,
+                videoOff: controls.videoOff,
+                callType,
+            });
+            setElectronPipActive(true);
+            return true;
+        } catch {
+            return false;
+        }
+    }, [remoteName, remoteAvatar, status, duration,
+        controls.muted, controls.videoOff, controls.onHold, callType]);
+
+    const openNativeVideoPip = useCallback(async () => {
+        const v = webrtc.remoteVideoRef.current;
+        if (!v || !document.pictureInPictureEnabled) return false;
+        try {
+            await v.requestPictureInPicture();
+            return true;
+        } catch {
+            return false;
+        }
+    }, [webrtc.remoteVideoRef]);
+
+    const openDocumentPip = useCallback(async () => {
+        if (!hasDocumentPip) return false;
+        try {
+            const pipWin = await window.documentPictureInPicture.requestWindow({
+                width: 320, height: 220,
+            });
+            docPipWindowRef.current = pipWin;
+            pipWin.document.title = 'WorkPulse Call';
+            pipWin.document.body.style.margin = '0';
+            pipWin.document.body.style.background = '#111827';
+            pipWin.document.body.style.color = '#f9fafb';
+            pipWin.document.body.style.fontFamily =
+                '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            pipWin.document.body.innerHTML = `
+                <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:8px;padding:12px;box-sizing:border-box;">
+                    <div id="wp-pip-avatar" style="width:64px;height:64px;border-radius:50%;background:#374151;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:600;overflow:hidden;"></div>
+                    <div id="wp-pip-name" style="font-size:15px;font-weight:600;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;"></div>
+                    <div id="wp-pip-status" style="font-size:12px;opacity:0.75;"></div>
+                </div>
+            `;
+            const setAvatar = () => {
+                const el = pipWin.document.getElementById('wp-pip-avatar');
+                if (!el) return;
+                if (remoteAvatar) {
+                    const url = remoteAvatar.startsWith('http')
+                        ? remoteAvatar
+                        : `${window.location.origin}${remoteAvatar.startsWith('/') ? '' : '/'}${remoteAvatar}`;
+                    el.innerHTML = `<img src="${url}" alt="" style="width:100%;height:100%;object-fit:cover;" />`;
+                } else {
+                    el.textContent = (remoteName || '?').charAt(0).toUpperCase();
+                }
+            };
+            setAvatar();
+            const nameEl = pipWin.document.getElementById('wp-pip-name');
+            if (nameEl) nameEl.textContent = remoteName || 'Call';
+            pipWin.addEventListener('pagehide', () => {
+                docPipWindowRef.current = null;
+                setMinimized(false);
+            });
+            return true;
+        } catch {
+            return false;
+        }
+    }, [remoteName, remoteAvatar]);
+
+    // Keep the Document PiP window's status/duration text fresh.
+    useEffect(() => {
+        const pipWin = docPipWindowRef.current;
+        if (!pipWin) return;
+        try {
+            const el = pipWin.document.getElementById('wp-pip-status');
+            if (!el) return;
+            if (status === 'incoming') el.textContent = 'Incoming call…';
+            else if (status === 'ringing') el.textContent = 'Ringing…';
+            else if (status === 'connecting') el.textContent = 'Connecting…';
+            else if (status === 'reconnecting') el.textContent = 'Reconnecting…';
+            else if (controls.onHold) el.textContent = 'On Hold';
+            else el.textContent = formatDuration(duration);
+        } catch { /* ignore */ }
+    }, [status, duration, controls.onHold]);
+
+    const handleMinimize = useCallback(async (e) => {
         e?.stopPropagation?.();
-        setMinimized(true);
         // Close any open popovers so they don't sit on top of the mini widget
         setShowAddParticipant(false);
         setShowChat(false);
         controls.setShowAudioDevices?.(false);
         controls.setShowVideoDevices?.(false);
-    }, [controls]);
+        setMinimized(true);
+
+        // Try floating layers in priority order. The in-app .minimized
+        // overlay is always shown as the WorkPulse-internal fallback.
+        if (openElectronPip()) return;
+        if (isVideoCall) {
+            const ok = await openNativeVideoPip();
+            if (ok) return;
+        }
+        // Audio call (or video PiP unavailable) on the web → try Document PiP.
+        await openDocumentPip();
+    }, [controls, isVideoCall, openElectronPip, openNativeVideoPip, openDocumentPip]);
 
     const handleRestore = useCallback((e) => {
         e?.stopPropagation?.();
         setMinimized(false);
-    }, []);
+        closeAllFloatingLayers();
+    }, [closeAllFloatingLayers]);
+
+    // When an external floating layer (Electron window, native PiP, or
+    // Document PiP) is showing the call, we hide the in-app mini overlay
+    // entirely so the user only sees the OS-level floating widget — no
+    // duplicate UI inside the WorkPulse window.
+    const externalFloaterActive = electronPipActive || nativePipActive || !!docPipWindowRef.current;
+    const hiddenForExternal = minimized && externalFloaterActive;
 
     const overlayContent = (
         <div
             ref={overlayRef}
             className={`${s.overlay} ${(isVideoCall || controls.screenSharing || webrtc.remoteHasVideo) && isConnected ? s.videoMode : ''} ${controls.onHold ? s.holdMode : ''} ${minimized ? s.minimized : ''}`}
-            onClick={minimized ? handleRestore : undefined}
-            role={minimized ? 'button' : undefined}
-            aria-label={minimized ? 'Restore call window' : undefined}
-            tabIndex={minimized ? 0 : undefined}
+            onClick={minimized && !hiddenForExternal ? handleRestore : undefined}
+            role={minimized && !hiddenForExternal ? 'button' : undefined}
+            aria-label={minimized && !hiddenForExternal ? 'Restore call window' : undefined}
+            tabIndex={minimized && !hiddenForExternal ? 0 : undefined}
+            style={hiddenForExternal ? { display: 'none' } : undefined}
         >
             {/* Window controls for frameless Electron window */}
             {isWinElectron && !minimized && (
@@ -456,33 +668,21 @@ export default function CallOverlay({
                             </button>
                         )}
 
-                        {isConnected && (
-                            <button
-                                className={s.controlBtn}
-                                onClick={controls.toggleFullscreen}
-                                title={controls.isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-                            >
-                                {controls.isFullscreen ? <ExitFullscreenIcon /> : <FullscreenIcon />}
-                            </button>
-                        )}
-
-                        {/* Minimize — shrinks the call into a floating widget
-                            so the user can navigate to Notes / Chat / Dashboard
-                            / Tasks / Calendar / Attendance / Settings while the
-                            call keeps running. */}
+                        {/* Picture-in-Picture / Minimize — single combined
+                            button. Picks the best available floating layer:
+                            Electron always-on-top window (desktop), browser's
+                            native video PiP (web video call), Document PiP
+                            (web audio call on Chrome/Edge 116+), or falls back
+                            to the in-app floating widget. Lets the user keep
+                            working inside WorkPulse — and outside — while the
+                            call stays alive. */}
                         {isConnected && (
                             <button
                                 className={s.controlBtn}
                                 onClick={handleMinimize}
-                                title="Minimize call"
-                                aria-label="Minimize call"
+                                title="Picture-in-picture"
+                                aria-label="Picture-in-picture"
                             >
-                                <MinimizeIcon />
-                            </button>
-                        )}
-
-                        {isVideoCall && isConnected && document.pictureInPictureEnabled && (
-                            <button className={s.controlBtn} onClick={controls.togglePiP} title="Picture-in-Picture">
                                 <PipIcon />
                             </button>
                         )}
