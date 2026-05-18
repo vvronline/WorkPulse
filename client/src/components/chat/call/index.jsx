@@ -12,7 +12,7 @@ import {
     ScreenShareIcon, ScreenShareOffIcon,
     HoldIcon, ResumeIcon, PipIcon, AddParticipantIcon, ChatIcon,
     FullscreenIcon, ExitFullscreenIcon, RecordIcon,
-    NoiseSuppressionIcon, EmojiIcon, KeyboardIcon
+    NoiseSuppressionIcon, EmojiIcon
 } from './CallIcons';
 import s from '../CallOverlay.module.css';
 
@@ -212,6 +212,12 @@ export default function CallOverlay({
         }
         webrtc.sendLocalVideoState?.(peerSeesNoVideo);
     }, [status, isVideoCall, controls.videoOff, controls.screenSharing]);
+
+    // Send local mute state to remote peer
+    useEffect(() => {
+        if (status !== 'connected') return;
+        webrtc.sendLocalMuteState?.(controls.muted);
+    }, [status, controls.muted]);
 
     // ═══════════════════════════════════════════════════════════════
     //  FEATURE: Auto-hide controls (video mode, 4s idle)
@@ -680,6 +686,13 @@ export default function CallOverlay({
                 />
             )}
 
+            {/* Remote mute indicator */}
+            {isConnected && webrtc.remoteMuted && (
+                <div className={s.remoteMuteBadge}>
+                    <MicOffIcon />
+                </div>
+            )}
+
             {/* ─── Local self-view tile (draggable corner snap) ─── */}
             {isVideoCall && (
                 <video
@@ -897,22 +910,13 @@ export default function CallOverlay({
                     </>
                 ) : (
                     <>
-                        <div className={s.controlGroup}>
-                            <button
-                                className={`${s.controlBtn} ${controls.muted ? s.active : ''}`}
-                                onClick={controls.toggleMute}
-                                title={controls.muted ? 'Unmute (M)' : 'Mute (M)'}
-                            >
-                                {controls.muted ? <MicOffIcon /> : <MicIcon />}
-                            </button>
-                            {isConnected && controls.audioDevices.length > 1 && (
-                                <button
-                                    className={s.deviceToggle}
-                                    onClick={() => { controls.setShowAudioDevices(!controls.showAudioDevices); controls.setShowVideoDevices(false); }}
-                                    title="Switch microphone"
-                                >\u25B4</button>
-                            )}
-                        </div>
+                        <button
+                            className={`${s.controlBtn} ${controls.muted ? s.active : ''}`}
+                            onClick={controls.toggleMute}
+                            title={controls.muted ? 'Unmute (M)' : 'Mute (M)'}
+                        >
+                            {controls.muted ? <MicOffIcon /> : <MicIcon />}
+                        </button>
 
                         {/* Noise suppression toggle */}
                         {isConnected && (
@@ -926,22 +930,13 @@ export default function CallOverlay({
                         )}
 
                         {isVideoCall && (
-                            <div className={s.controlGroup}>
-                                <button
-                                    className={`${s.controlBtn} ${controls.videoOff ? s.active : ''}`}
-                                    onClick={controls.toggleVideo}
-                                    title={controls.videoOff ? 'Turn on camera (V)' : 'Turn off camera (V)'}
-                                >
-                                    {controls.videoOff ? <CamOffIcon /> : <CamIcon />}
-                                </button>
-                                {isConnected && controls.videoDevices.length > 1 && (
-                                    <button
-                                        className={s.deviceToggle}
-                                        onClick={() => { controls.setShowVideoDevices(!controls.showVideoDevices); controls.setShowAudioDevices(false); }}
-                                        title="Switch camera"
-                                    >\u25B4</button>
-                                )}
-                            </div>
+                            <button
+                                className={`${s.controlBtn} ${controls.videoOff ? s.active : ''}`}
+                                onClick={controls.toggleVideo}
+                                title={controls.videoOff ? 'Turn on camera (V)' : 'Turn off camera (V)'}
+                            >
+                                {controls.videoOff ? <CamOffIcon /> : <CamIcon />}
+                            </button>
                         )}
 
                         {isConnected && canScreenShare && (
@@ -1038,15 +1033,6 @@ export default function CallOverlay({
                                 <AddParticipantIcon />
                             </button>
                         )}
-
-                        {/* Keyboard shortcuts help */}
-                        <button
-                            className={`${s.controlBtn} ${s.smallBtn}`}
-                            onClick={() => setShowShortcutsHelp(v => !v)}
-                            title="Keyboard shortcuts (?)"
-                        >
-                            <KeyboardIcon />
-                        </button>
 
                         <button className={`${s.controlBtn} ${s.endBtn}`} onClick={webrtc.handleEnd} title="End call (E)">
                             <PhoneIcon rotate />

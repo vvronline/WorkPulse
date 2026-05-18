@@ -121,6 +121,7 @@ export default function useCallState(wsSendRef) {
     const handleCallWsEvent = (type, data) => {
         switch (type) {
             case 'call_incoming': {
+                if (!isChatPage) break;
                 if (!callActiveRef.current) {
                     setCallState({
                         callId: data.callId,

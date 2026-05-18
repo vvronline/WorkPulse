@@ -55,6 +55,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
     const [remoteVideoOff, setRemoteVideoOff] = useState(false);
     const [remoteHasVideo, setRemoteHasVideo] = useState(false);
+    const [remoteMuted, setRemoteMuted] = useState(false);
 
     // Track whether the *local* user has their camera explicitly off, so the
     // peer can be told and render an avatar instead of a frozen black frame.
@@ -588,6 +589,8 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                         }
                     }
                 }
+            } else if (signal.type === 'audio-state') {
+                setRemoteMuted(!!signal.muted);
             }
         } catch (err) {
             console.error('[call-webrtc] Signal handling error:', err);
@@ -689,7 +692,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 localVideoRef.current.srcObject = localStream;
             }
         }
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [localStream]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ─── Reconnect: acquire media and wait for peer to re-offer ───
     useEffect(() => {
@@ -837,13 +840,26 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         }
     }, [conversationId, wsSend, isIncoming, callerId, acceptedBy, reconnectTo]);
 
+    const sendLocalMuteState = useCallback((isMuted) => {
+        const target = isIncoming ? callerId : (acceptedBy || reconnectTo);
+        if (!target) return;
+        try {
+            wsSend('call_signal', {
+                conversationId, targetUserId: target,
+                signal: { type: 'audio-state', muted: !!isMuted }
+            });
+        } catch (err) {
+            console.warn('[call-webrtc] sendLocalMuteState failed:', err?.message || err);
+        }
+    }, [conversationId, wsSend, isIncoming, callerId, acceptedBy, reconnectTo]);
+
     return {
         pcRef, localStreamRef, screenStreamRef, remoteStreamRef,
         localVideoRef, remoteVideoRef, remoteAudioRef,
         screenSenderRef, connectionTimeoutRef, ringtoneRef,
         handleAccept, handleReject, handleEnd,
         stopRingtone, startMedia, createPeerConnection,
-        isMobile, remoteVideoOff, remoteHasVideo,
-        sendLocalVideoState
+        isMobile, remoteVideoOff, remoteHasVideo, remoteMuted,
+        sendLocalVideoState, sendLocalMuteState
     };
 }

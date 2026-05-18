@@ -126,6 +126,7 @@
     object-fit: cover;
     z-index: 1;
     background: #000;
+    transform: scaleX(-1);
 }
 
 /* ── Local video (PiP) ── */
@@ -143,6 +144,7 @@
     cursor: grab;
     transition: box-shadow 0.2s, border-color 0.2s;
     touch-action: none;
+    transform: scaleX(-1);
 }
 
 .localVideo:hover {
@@ -269,6 +271,29 @@
     }
 }
 
+/* ── Remote mute badge (shown on remote video when peer is muted) ── */
+.remoteMuteBadge {
+    position: absolute;
+    bottom: 96px;
+    left: 16px;
+    z-index: 12;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: rgba(239, 68, 68, 0.85);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    pointer-events: none;
+}
+
+.remoteMuteBadge svg {
+    width: 18px;
+    height: 18px;
+}
+
 /* ── Local video avatar (shown when camera is off) ── */
 .localVideoAvatar {
     position: absolute;
@@ -374,52 +399,21 @@
 /* ── Controls bar ── */
 .controls {
     position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
     display: flex;
     gap: 12px;
     align-items: center;
     justify-content: center;
     flex-wrap: nowrap;
     z-index: 10;
-    padding: 10px 16px;
-    min-height: 64px;
-    background: #111827;
-    border-top: 1px solid #374151;
-}
-
-/* ── Control group (button + device arrow) ── */
-.controlGroup {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    position: relative;
-    justify-content: center;
-}
-
-.deviceToggle {
-    position: absolute;
-    bottom: -12px;
-    width: 24px;
-    height: 14px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(255,255,255,0.12);
-    border: none;
-    border-radius: 8px;
-    color: #fff;
-    font-size: 10px;
-    cursor: pointer;
-    opacity: 0.7;
-    transition: all 0.15s;
-    line-height: 1;
-}
-
-.deviceToggle:hover {
-    opacity: 1;
-    background: rgba(255,255,255,0.2);
+    padding: 12px 24px;
+    border-radius: 32px;
+    background: rgba(17, 24, 39, 0.6);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(55, 65, 81, 0.4);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
 }
 
 /* ── Control button ── */
@@ -1172,7 +1166,7 @@
 .controlsHidden {
     opacity: 0;
     pointer-events: none;
-    transform: translateY(100%);
+    transform: translateX(-50%) scale(0.95);
 }
 
 .topBarHidden {

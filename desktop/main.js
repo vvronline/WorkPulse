@@ -114,6 +114,22 @@ app.whenReady().then(async () => {
         }
     }
 
+    // Grant media permissions for camera/microphone/screen capture
+    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+        const allowed = ['media', 'display-capture', 'mediaKeySystem'];
+        callback(allowed.includes(permission));
+    });
+    session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+        const allowed = ['media', 'display-capture', 'mediaKeySystem'];
+        return allowed.includes(permission);
+    });
+
+    // macOS: request camera/mic access at OS level
+    if (process.platform === 'darwin') {
+        systemPreferences.askForMediaAccess('camera').catch(() => {});
+        systemPreferences.askForMediaAccess('microphone').catch(() => {});
+    }
+
     // ─── Screen sharing: show picker so user can choose which screen/window ───
     let pendingSourceSelection = null;
 
