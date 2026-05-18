@@ -305,7 +305,7 @@ export default function CallOverlay({
             v.removeEventListener('enterpictureinpicture', onEnter);
             v.removeEventListener('leavepictureinpicture', onLeave);
         };
-    }, [webrtc.remoteVideoRef, focusMainAppWindow]);
+    }, [webrtc.remoteVideoRef, webrtc.remoteHasVideo, focusMainAppWindow]);
 
     // Electron mini-window IPC: user closed the floatie → restore overlay
     // AND bring WorkPulse to the foreground (it may be minimised to tray).
@@ -426,12 +426,13 @@ export default function CallOverlay({
             pipWin.addEventListener('pagehide', () => {
                 docPipWindowRef.current = null;
                 setMinimized(false);
+                focusMainAppWindow();
             });
             return true;
         } catch {
             return false;
         }
-    }, [remoteName, remoteAvatar]);
+    }, [remoteName, remoteAvatar, focusMainAppWindow]);
 
     // Keep the Document PiP window's status/duration text fresh.
     useEffect(() => {
@@ -546,6 +547,51 @@ export default function CallOverlay({
     // duplicate UI inside the WorkPulse window.
     const externalFloaterActive = electronPipActive || nativePipActive || !!docPipWindowRef.current;
     const hiddenForExternal = minimized && externalFloaterActive;
+
+    // ─── Re-sync video after PiP/minimize restore ────────────────────
+    // Browsers pause or stop decoding <video> elements that were
+    // display:none (hiddenForExternal) or in a tiny container (minimized).
+    // When restoring to full visibility, force-restart the video rendering
+    // pipeline to avoid frozen/black frames.
+    const wasMinimizedRef = useRef(false);
+    useEffect(() => {
+        if (minimized) {
+            wasMinimizedRef.current = true;
+            return;
+        }
+        if (!wasMinimizedRef.current) return;
+        wasMinimizedRef.current = false;
+
+        const timer = setTimeout(() => {
+            if (status !== 'connected') return;
+            // Remote video — null→reassign forces decoder pipeline restart
+            const rv = webrtc.remoteVideoRef.current;
+            const rs = webrtc.remoteStreamRef.current;
+            if (rv && rs) {
+                rv.srcObject = null;
+                rv.srcObject = rs;
+                rv.play().catch(() => {});
+            }
+            // Local video (video calls only)
+            if (isVideoCall) {
+                const lv = webrtc.localVideoRef.current;
+                const ls = webrtc.localStreamRef.current;
+                if (lv && ls) {
+                    lv.srcObject = null;
+                    lv.srcObject = ls;
+                    lv.play().catch(() => {});
+                }
+            }
+            // Remote audio — safety net
+            const ra = webrtc.remoteAudioRef.current;
+            if (ra && rs && ra.paused) {
+                ra.srcObject = rs;
+                ra.play().catch(() => {});
+            }
+        }, 100);
+
+        return () => clearTimeout(timer);
+    }, [minimized, electronPipActive, nativePipActive]);
 
     const overlayContent = (
         <div

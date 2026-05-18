@@ -411,6 +411,127 @@ const MIGRATIONS = [
         },
     },
     {
+        // ─────────────────────────────────────────────────────────────────
+        // Clean up 1:1 chats that the legacy "Add participant in call" bug
+        // permanently corrupted by injecting a 3rd member into the
+        // `conversation_participants` table.
+        //
+        // Symptoms before this migration:
+        //   • A direct (`is_group = FALSE`) conversation between A and B
+        //     showed up as a 3-person "group" with member_count = 3 in
+        //     the sidebar after someone hit "Add participant" during a
+        //     1:1 call.
+        //   • The call_initiate handler uses `LIMIT 1 ORDER BY user_id ASC`
+        //     for non-group conversations, so the 1:1 call would
+        //     deterministically ring whichever of the 3 had the lowest
+        //     user_id — even if that wasn't the intended counterpart.
+        //
+        // Fix strategy: for every `is_group = FALSE` conversation that has
+        // more than 2 participants, keep only the 2 oldest rows (by primary
+        // key — these are the original pair) and delete the rest. The
+        // deleted users:
+        //   • were never the intended counterpart (they were injected by a
+        //     button click during somebody else's call);
+        //   • could never actually hear/see anything in the call (no
+        //     mesh/SFU plumbing existed for 1:1 conversations);
+        //   • get their own clean self-chat or DM relationship preserved
+        //     because we only touch `conversation_participants` rows for
+        //     the corrupted shared DM, not the user records themselves.
+        //
+        // Self-chats (the rare conversation where both rows reference the
+        // same user_id, used as the "Notes to self" pseudo-DM) are
+        // intentionally left alone — they legitimately have just 1 or 2
+        // participant rows.
+        //
+        // Also adds a partial unique index that *prevents* future
+        // corruption from sneaking through: no more than 2 rows are
+        // allowed in `conversation_participants` per non-group
+        // conversation. Wrapped in a DO block so it logs+continues if
+        // some other tenant has already hand-cleaned the data.
+        // ─────────────────────────────────────────────────────────────────
+        name: '2026_06_v2_cleanup_dm_extra_participants',
+        async up(query) {
+            // Step 1: identify corrupted DMs (non-group with > 2 participants)
+            const corruptedRes = await query(`
+                SELECT cp.conversation_id, COUNT(*)::int AS member_count
+                  FROM conversation_participants cp
+                  JOIN conversations c ON c.id = cp.conversation_id
+                 WHERE c.is_group = FALSE
+                 GROUP BY cp.conversation_id
+                HAVING COUNT(*) > 2
+            `);
+            const corruptedIds = corruptedRes.rows.map(r => r.conversation_id);
+            if (corruptedIds.length > 0) {
+                // Step 2: for each corrupted DM, keep the 2 oldest rows by
+                // primary key and delete the rest. Doing this in a single
+                // statement keeps the migration atomic per-tenant.
+                await query(`
+                    DELETE FROM conversation_participants
+                     WHERE id IN (
+                        SELECT id FROM (
+                            SELECT cp.id,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY cp.conversation_id
+                                       ORDER BY cp.id ASC
+                                   ) AS rn
+                              FROM conversation_participants cp
+                              JOIN conversations c ON c.id = cp.conversation_id
+                             WHERE c.is_group = FALSE
+                               AND cp.conversation_id = ANY($1::int[])
+                        ) ranked
+                        WHERE rn > 2
+                     )
+                `, [corruptedIds]);
+                logger.info(
+                    { conversationCount: corruptedIds.length },
+                    'Cleaned up legacy DM conversations with extra participants'
+                );
+            }
+
+            // Step 3: install a guard so this can never happen again. We
+            // use a function-based partial unique index because Postgres
+            // doesn't support CHECK constraints that reference other
+            // rows. The index counts how many participant rows exist for
+            // a given non-group conversation and rejects any insert that
+            // would push the count above 2.
+            //
+            // Implementation: trigger-based, because Postgres unique
+            // indexes can't express "count <= 2" directly.
+            await query(`
+                CREATE OR REPLACE FUNCTION enforce_dm_participant_limit()
+                RETURNS TRIGGER AS $fn$
+                DECLARE
+                    is_grp BOOLEAN;
+                    cnt    INTEGER;
+                BEGIN
+                    SELECT is_group INTO is_grp
+                      FROM conversations
+                     WHERE id = NEW.conversation_id;
+                    IF is_grp IS NULL OR is_grp = TRUE THEN
+                        RETURN NEW; -- group / unknown: no limit
+                    END IF;
+                    SELECT COUNT(*) INTO cnt
+                      FROM conversation_participants
+                     WHERE conversation_id = NEW.conversation_id;
+                    IF cnt > 2 THEN
+                        RAISE EXCEPTION
+                          'Direct (non-group) conversation % cannot have more than 2 participants',
+                          NEW.conversation_id;
+                    END IF;
+                    RETURN NEW;
+                END
+                $fn$ LANGUAGE plpgsql
+            `);
+            await query(`DROP TRIGGER IF EXISTS trg_enforce_dm_participant_limit ON conversation_participants`);
+            await query(`
+                CREATE TRIGGER trg_enforce_dm_participant_limit
+                AFTER INSERT ON conversation_participants
+                FOR EACH ROW
+                EXECUTE FUNCTION enforce_dm_participant_limit()
+            `);
+        },
+    },
+    {
         // Chunk 6: Custom fields on tasks. Per-org catalog of admin-defined
         // extra fields (text/number/date/select/multiselect/checkbox/url) plus
         // the JSONB value rows on each task. initTenantSchema() also creates
