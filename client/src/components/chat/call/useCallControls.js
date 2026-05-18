@@ -61,12 +61,13 @@ export default function useCallControls({ localStreamRef, pcRef, screenStreamRef
         return () => document.removeEventListener('fullscreenchange', handler);
     }, []);
 
-    // Sync screen share stream to video element when it mounts (audio call case)
-    useEffect(() => {
-        if (screenSharing && screenStreamRef.current && localVideoRef.current && !localVideoRef.current.srcObject) {
-            localVideoRef.current.srcObject = screenStreamRef.current;
-        }
-    }, [screenSharing]);
+    // NOTE: we intentionally do NOT mirror the local screen-share stream into
+    // localVideoRef. The local-video element is the small self-view PIP tile;
+    // showing the user a tiny copy of their own screen there is confusing and
+    // (in an audio call) replaces the user's avatar/name with a
+    // hard-to-recognise thumbnail of their desktop. The screen still reaches
+    // the peer through the RTCPeerConnection sender; the sharer doesn't need
+    // a local preview because they already see their actual desktop.
 
     const toggleMute = () => {
         if (localStreamRef.current) {
@@ -116,9 +117,14 @@ export default function useCallControls({ localStreamRef, pcRef, screenStreamRef
                     screenSenderRef.current = sender;
                 }
 
-                if (localVideoRef.current) {
-                    localVideoRef.current.srcObject = screenStream;
-                }
+                // Intentionally NOT mirroring the screen into localVideoRef:
+                // the sharer already sees their own desktop directly, and
+                // putting a tiny copy in the PIP tile (or covering the audio-
+                // call avatar with a screen thumbnail) just looks like a bug.
+                // For VIDEO calls the localVideoRef stays bound to the camera
+                // self-view so the user keeps their familiar self-tile while
+                // sharing — sender.replaceTrack only affects what the peer
+                // receives, not the local <video> element's srcObject.
 
                 screenTrack.onended = () => { toggleScreenShare(); };
                 setScreenSharing(true);

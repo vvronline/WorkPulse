@@ -513,46 +513,67 @@ export default function CallOverlay({
 
             <audio ref={webrtc.remoteAudioRef} autoPlay />
 
-            {(isVideoCall || controls.screenSharing || webrtc.remoteHasVideo) && (
-                <>
-                    <video
-                        ref={webrtc.remoteVideoRef}
-                        className={`${s.remoteVideo} ${swapped ? s.swapped : ''}`}
-                        autoPlay playsInline
-                        onClick={swapped ? () => setSwapped(false) : undefined}
-                    />
-                    <video
-                        ref={webrtc.localVideoRef}
-                        className={`${s.localVideo} ${controls.videoOff && !controls.screenSharing ? s.localVideoHidden : ''} ${swapped ? s.swapped : ''}`}
-                        autoPlay playsInline muted
-                        onClick={!swapped ? () => setSwapped(true) : undefined}
-                    />
-                    {controls.videoOff && !controls.screenSharing && (
-                        <div
-                            className={s.localVideoAvatar}
-                            onClick={() => setSwapped(prev => !prev)}
-                        >
-                            <ChatAvatar name={user?.fullName || 'You'} avatar={user?.avatar} size="md" />
-                        </div>
-                    )}
-                    {/* Mute indicator on the local self-view tile so YOU can
-                        see at a glance that you are on mute (matches the way
-                        Teams/Zoom/Meet flag mute state on the self-tile). */}
-                    {controls.muted && (
-                        <div
-                            className={`${s.localVideoMuteBadge} ${controls.videoOff && !controls.screenSharing ? s.localVideoMuteBadgeAvatar : ''}`}
-                            title="You are muted"
-                            aria-label="You are muted"
-                        >
-                            <MicOffIcon />
-                        </div>
-                    )}
-                </>
+            {/* ─── Remote video tile (fullscreen) ─── */}
+            {/* Mounted only when the peer is actually sending video (their
+                camera in a video call, or their screen share in either call
+                type). Keeping it conditional means an audio call with no
+                share has no <video> element at all — so the callInfo card
+                below sits on the bare overlay background instead of on top
+                of a black <video>. */}
+            {webrtc.remoteHasVideo && (
+                <video
+                    ref={webrtc.remoteVideoRef}
+                    className={`${s.remoteVideo} ${swapped ? s.swapped : ''}`}
+                    autoPlay playsInline
+                    onClick={swapped ? () => setSwapped(false) : undefined}
+                />
             )}
 
-            {/* For audio-only calls (no local video tile) still flag mute
-                state by overlaying a small badge on the caller-info card. */}
-            {!isVideoCall && !controls.screenSharing && !webrtc.remoteHasVideo && controls.muted && isConnected && (
+            {/* ─── Local self-view tile (small PIP corner) ─── */}
+            {/* Only rendered for VIDEO calls — the user has a camera and
+                expects to see themselves. We always mount the <video> tag
+                (even when the camera is off) and just hide it via the
+                `.localVideoHidden` class, so toggling the camera back on
+                doesn't have to re-acquire the MediaStream or re-bind it. */}
+            {isVideoCall && (
+                <video
+                    ref={webrtc.localVideoRef}
+                    className={`${s.localVideo} ${controls.videoOff ? s.localVideoHidden : ''} ${swapped ? s.swapped : ''}`}
+                    autoPlay playsInline muted
+                    onClick={!swapped ? () => setSwapped(true) : undefined}
+                />
+            )}
+
+            {/* Local self-tile AVATAR fallback. Two situations:
+                1. Video call, user has turned off the camera → replace the
+                   (now hidden) <video> with their avatar tile.
+                2. Audio call, the peer is sending us video (their screen
+                   share) → we have no camera, but we still want SOMETHING
+                   in the PIP corner so the user can see their own identity
+                   instead of an empty rectangle. */}
+            {((isVideoCall && controls.videoOff) || (!isVideoCall && webrtc.remoteHasVideo)) && (
+                <div
+                    className={s.localVideoAvatar}
+                    onClick={isVideoCall ? () => setSwapped(prev => !prev) : undefined}
+                >
+                    <ChatAvatar name={user?.fullName || 'You'} avatar={user?.avatar} size="md" />
+                </div>
+            )}
+
+            {/* Mute badge — anchored on whichever local tile exists. */}
+            {controls.muted && isConnected && (isVideoCall || webrtc.remoteHasVideo) && (
+                <div
+                    className={`${s.localVideoMuteBadge} ${(isVideoCall && controls.videoOff) || !isVideoCall ? s.localVideoMuteBadgeAvatar : ''}`}
+                    title="You are muted"
+                    aria-label="You are muted"
+                >
+                    <MicOffIcon />
+                </div>
+            )}
+
+            {/* Mute badge for audio calls where NO video tile is on screen
+                (no screen share anywhere) — anchor on the caller-info card. */}
+            {!isVideoCall && !webrtc.remoteHasVideo && controls.muted && isConnected && (
                 <div
                     className={s.localVideoMuteBadge}
                     style={{ position: 'absolute', top: 16, left: 16, bottom: 'auto', right: 'auto' }}
@@ -572,18 +593,23 @@ export default function CallOverlay({
             )}
 
             {/* Caller-info card (big avatar + name + duration). We hide it
-                whenever there's actual video being shown so it doesn't sit on
-                top of the remote camera feed or a screen share. Specifically:
+                whenever an actual remote video stream is filling the main
+                view so it doesn't sit on top of the remote camera feed or
+                an incoming screen share. Specifically:
                   • Pre-connect (incoming / ringing / connecting / reconnecting
                     / on-hold) → always show
-                  • Audio call WITHOUT any screen share (neither side) → show
-                  • Audio call WITH the peer screen-sharing → hide
-                  • Audio call WITH us screen-sharing → hide
+                  • Audio call where the PEER is screen-sharing (we are the
+                    receiver) → hide so the screen share is unobstructed
+                  • Audio call where WE are screen-sharing → SHOW. We don't
+                    mirror our own screen anywhere on our overlay (the user
+                    is already looking at the real desktop they're sharing),
+                    so without the callInfo card the main view would be
+                    blank. The card keeps the remote name + duration visible.
+                  • Audio call with no screen share anywhere → show
                   • Video call where the peer's camera is off (and nobody is
                     screen-sharing) → show avatar as a centred overlay */}
             {(() => {
                 const preConnect = !isConnected || controls.onHold || status === 'reconnecting';
-                const anyVideoShowing = controls.screenSharing || webrtc.remoteHasVideo;
                 let showCallInfo;
                 if (preConnect) {
                     showCallInfo = true;
@@ -592,8 +618,10 @@ export default function CallOverlay({
                     // nobody is sharing the screen.
                     showCallInfo = webrtc.remoteVideoOff && !controls.screenSharing;
                 } else {
-                    // Audio call: avatar card only when no video is on screen.
-                    showCallInfo = !anyVideoShowing;
+                    // Audio call: hide only when the peer is sending us video
+                    // (their screen share). Our own screen share doesn't
+                    // render anywhere locally, so still show the card.
+                    showCallInfo = !webrtc.remoteHasVideo;
                 }
                 if (!showCallInfo) return null;
                 return (
