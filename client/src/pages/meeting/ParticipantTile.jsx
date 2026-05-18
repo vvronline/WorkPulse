@@ -25,7 +25,14 @@ function getSharedAudioCtx() {
  */
 const ParticipantTile = memo(function ParticipantTile({ participant, isLocal, quality, isMini }) {
     const videoRef = useRef(null);
-    const { stream, name, muted: pMuted, videoOff: pVideoOff, raisedHand, connectionState } = participant || {};
+    const { stream, name, muted: pMuted, videoOff: pVideoOff, raisedHand, connectionState, avatar } = participant || {};
+    const [avatarFailed, setAvatarFailed] = useState(false);
+
+    // Resolve avatar to a full URL when the backend returns a relative path
+    // (e.g. "/uploads/avatars/xyz.png"). Same logic as ProfileMenu.
+    const avatarUrl = avatar
+        ? (avatar.startsWith('http') ? avatar : `${window.location.origin}${avatar.startsWith('/') ? '' : '/'}${avatar}`)
+        : null;
     const [speaking, setSpeaking] = useState(false);
     const [videoReady, setVideoReady] = useState(false);
 
@@ -199,12 +206,23 @@ const ParticipantTile = memo(function ParticipantTile({ participant, isLocal, qu
             {/* Avatar placeholder — shown when there's no live video OR while
                 the video element is still buffering its first frame. Sized
                 proportionally to the tile so it doesn't look "tiny" in a
-                large grid cell. We also surface the WebRTC connection state
-                here (Connecting… / Reconnecting…) so the user always knows
-                what's going on instead of seeing a silent black box. */}
+                large grid cell. Shows the user's profile picture if they have
+                one, otherwise falls back to the first-letter initial. We also
+                surface the WebRTC connection state here (Connecting… /
+                Reconnecting…) so the user always knows what's going on
+                instead of seeing a silent black box. */}
             {(!showVideo || !videoReady) && (
                 <div className="mr-tile-placeholder">
-                    <div className="mr-tile-avatar">{initial}</div>
+                    <div className="mr-tile-avatar">
+                        {avatarUrl && !avatarFailed ? (
+                            <img
+                                src={avatarUrl}
+                                alt={name || 'Participant'}
+                                className="mr-tile-avatar-img"
+                                onError={() => setAvatarFailed(true)}
+                            />
+                        ) : initial}
+                    </div>
                     {statusLabel && (
                         <div className={`mr-tile-status ${isReconnecting ? 'mr-tile-status--warn' : ''}`}>
                             {isReconnecting

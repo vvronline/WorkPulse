@@ -466,7 +466,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                             hasPeersToConnect = true;
                             setParticipants(prev => {
                                 const next = new Map(prev);
-                                next.set(peer.userId, { userId: peer.userId, stream: null, muted: false, videoOff: false, raisedHand: false, role: 'participant', screenSharing: false, ...(next.get(peer.userId) || {}), name: peer.fullName || peer.username || 'Participant' });
+                                next.set(peer.userId, { userId: peer.userId, stream: null, muted: false, videoOff: false, raisedHand: false, role: 'participant', screenSharing: false, ...(next.get(peer.userId) || {}), name: peer.fullName || peer.username || 'Participant', avatar: peer.avatar || null });
                                 return next;
                             });
                         }
@@ -475,7 +475,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 if (data.userId !== user?.id) {
                     setParticipants(prev => {
                         const next = new Map(prev);
-                        next.set(data.userId, { userId: data.userId, stream: null, muted: false, videoOff: false, raisedHand: false, role: data.role || 'participant', screenSharing: false, ...(next.get(data.userId) || {}), name: data.fullName || data.username || 'Participant' });
+                        next.set(data.userId, { userId: data.userId, stream: null, muted: false, videoOff: false, raisedHand: false, role: data.role || 'participant', screenSharing: false, ...(next.get(data.userId) || {}), name: data.fullName || data.username || 'Participant', avatar: data.avatar || null });
                         return next;
                     });
                     if (!data.existingPeers) {

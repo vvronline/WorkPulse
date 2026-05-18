@@ -371,6 +371,18 @@
   font-weight: 600;
   color: #fff;
   text-transform: uppercase;
+  overflow: hidden;
+}
+
+/* Profile picture inside the avatar circle. Falls back gracefully to the
+   first-letter initial if the image fails to load (handled by an onError
+   handler in ParticipantTile.jsx). */
+.mr-tile-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  display: block;
 }
 
 .mr-tile-overlay {
@@ -385,6 +397,11 @@
   background: linear-gradient(transparent, rgba(0,0,0,0.6));
   opacity: 0;
   transition: opacity 0.2s;
+  /* Sit ABOVE the avatar placeholder (which has z-index: 1) so the
+     participant's name and mic icon are visible even when the camera is
+     off and the placeholder is filling the tile. Without this the name
+     was hidden behind the placeholder div whenever video was off. */
+  z-index: 2;
 }
 
 .mr-tile:hover .mr-tile-overlay,

@@ -123,6 +123,7 @@ export default function MeetingRoom() {
             participant: {
                 userId: user?.id,
                 name: user?.full_name || user?.username || 'You',
+                avatar: user?.avatar || null,
                 stream: localStream,
                 muted,
                 videoOff,
