@@ -21,7 +21,6 @@ vi.mock('../UserStatusContext', () => ({
         setManualStatus: vi.fn(),
         setAutoStatus: vi.fn(),
         clearAutoStatus: vi.fn(),
-        otherStatuses: {},
     }),
 }));
 

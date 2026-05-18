@@ -13,7 +13,6 @@ const StatusCtx = createContext({
   setManualStatus: () => {},
   setAutoStatus: () => {},
   clearAutoStatus: () => {},
-  otherStatuses: {},
 });
 
 /** Compute the effective auto status from a Set of active auto statuses */
@@ -24,7 +23,7 @@ function resolveAutoStatus(set) {
 }
 
 export function UserStatusProvider({ children }) {
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated } = useAuth();
 
   // Manual status set by the user (available/busy/dnd/offline/away)
   const [manualStatus, setManualStatusState] = useState(null);
@@ -34,9 +33,6 @@ export function UserStatusProvider({ children }) {
   // The ref is the source of truth for synchronous reads; state triggers re-renders.
   const autoSetRef = useRef(new Set());
   const [autoStatus, setAutoStatusDerived] = useState(null);
-
-  // Other users' statuses: { [userId]: 'available' | 'busy' | ... }
-  const [otherStatuses, setOtherStatuses] = useState({});
 
   // Idle tracking
   const idleTimerRef = useRef(null);
@@ -49,25 +45,7 @@ export function UserStatusProvider({ children }) {
   const myStatus = autoStatus || manualStatus || 'available';
   const myStatusText = manualStatusText;
 
-  // WS handler for receiving other users' status changes
-  const onWsMessage = useCallback((msg) => {
-    if (msg.type === 'status_change') {
-      const { userId, userStatus } = msg.data;
-      // Ignore own status echoes
-      if (userId === user?.id) return;
-      setOtherStatuses(prev => ({ ...prev, [userId]: userStatus }));
-    } else if (msg.type === 'presence_change') {
-      const { userId, status, userStatus } = msg.data;
-      if (userId === user?.id) return;
-      if (status === 'offline') {
-        setOtherStatuses(prev => ({ ...prev, [userId]: 'offline' }));
-      } else if (userStatus) {
-        setOtherStatuses(prev => ({ ...prev, [userId]: userStatus }));
-      }
-    }
-  }, [user?.id]);
-
-  const { sendMessage: wsSend } = useWebSocket(isAuthenticated ? onWsMessage : null);
+  const { sendMessage: wsSend } = useWebSocket(null);
 
   // Send status change via WS (persists to DB on server)
   const broadcastStatus = useCallback((status, statusText) => {
@@ -112,7 +90,7 @@ export function UserStatusProvider({ children }) {
   useEffect(() => {
     if (!isAuthenticated) return;
     getUserStatus().then(({ data }) => {
-      if (data.status && data.status !== 'available' && data.status !== 'in_call' && data.status !== 'in_meeting' && data.status !== 'away') {
+      if (data.status && data.status !== 'available' && data.status !== 'in_call' && data.status !== 'in_meeting') {
         setManualStatusState(data.status);
         setManualStatusText(data.statusText || null);
       }
@@ -180,8 +158,7 @@ export function UserStatusProvider({ children }) {
     setManualStatus,
     setAutoStatus,
     clearAutoStatus,
-    otherStatuses,
-  }), [myStatus, myStatusText, manualStatus, setManualStatus, setAutoStatus, clearAutoStatus, otherStatuses]);
+  }), [myStatus, myStatusText, manualStatus, setManualStatus, setAutoStatus, clearAutoStatus]);
 
   return (
     <StatusCtx.Provider value={value}>
