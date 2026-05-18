@@ -371,6 +371,26 @@ app.whenReady().then(async () => {
     mainWindow.on('maximize', () => mainWindow.webContents.send('maximize-change', true));
     mainWindow.on('unmaximize', () => mainWindow.webContents.send('maximize-change', false));
 
+    // ─── Notify renderer when the main window is hidden / shown ───
+    // Used by the in-call overlay to auto-open the always-on-top mini PiP
+    // when the user minimises or sends the app to the tray during a call,
+    // and to drop back to the full overlay when the user reopens the app.
+    const notifyHidden = (reason) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            try { mainWindow.webContents.send('window-hidden', { reason }); } catch { /* ignore */ }
+        }
+    };
+    const notifyShown = (reason) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            try { mainWindow.webContents.send('window-shown', { reason }); } catch { /* ignore */ }
+        }
+    };
+    mainWindow.on('minimize', () => notifyHidden('minimize'));
+    mainWindow.on('hide', () => notifyHidden('hide'));
+    mainWindow.on('restore', () => notifyShown('restore'));
+    mainWindow.on('show', () => notifyShown('show'));
+    mainWindow.on('focus', () => notifyShown('focus'));
+
     // Minimize to tray on close instead of quitting
     mainWindow.on('close', (e) => {
         if (!app.isQuitting) {

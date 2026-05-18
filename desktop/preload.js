@@ -50,6 +50,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     flashFrame: (flash) => ipcRenderer.send('flash-frame', flash),
     showAndFocus: () => ipcRenderer.send('show-and-focus'),
 
+    // ─── Main window hide/show lifecycle (renderer subscribers) ────────
+    // Fired whenever the main BrowserWindow is minimized / hidden to the
+    // tray / restored / shown / focused. The in-call overlay uses these
+    // to automatically open the always-on-top mini PiP when the user
+    // leaves the app during a call, and to drop back to the full overlay
+    // when the user reopens the app.
+    onWindowHidden: (cb) => {
+        const handler = (_e, payload) => cb(payload || {});
+        ipcRenderer.on('window-hidden', handler);
+        return () => ipcRenderer.removeListener('window-hidden', handler);
+    },
+    onWindowShown: (cb) => {
+        const handler = (_e, payload) => cb(payload || {});
+        ipcRenderer.on('window-shown', handler);
+        return () => ipcRenderer.removeListener('window-shown', handler);
+    },
+
     // ─── Always-on-top mini call window ("floatie") ─────────────────────
     // Used by the 1:1 call overlay to pop a small always-on-top window
     // that sits over other apps (Teams-style). The pip window itself

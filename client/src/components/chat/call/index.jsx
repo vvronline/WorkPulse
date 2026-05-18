@@ -247,6 +247,15 @@ export default function CallOverlay({
     }, [status, isVideoCall, controls.videoOff, controls.screenSharing]);
 
     // ─── Picture-in-Picture helpers ───────────────────────────────────
+    // Bring the WorkPulse main window back to the foreground. The
+    // Electron build minimises-to-tray on close, so when the user leaves a
+    // PiP (e.g. clicks the browser PiP "back to tab" button) the main
+    // window may still be hidden. Without this call the user has to
+    // re-open WorkPulse manually from the tray to see the call again.
+    const focusMainAppWindow = useCallback(() => {
+        try { window.electronAPI?.showAndFocus?.(); } catch { /* ignore */ }
+    }, []);
+
     const closeAllFloatingLayers = useCallback(() => {
         // Native <video> PiP
         try {
@@ -275,8 +284,12 @@ export default function CallOverlay({
         }
     }, [status, minimized, closeAllFloatingLayers]);
 
-    // Listen for native PiP exit (user clicked the browser's ✕ on the
-    // floating video) → restore the full overlay automatically.
+    // Listen for native PiP exit (user clicked the browser's "back to tab"
+    // or ✕ on the floating video). Restore the full overlay AND bring the
+    // WorkPulse main window back to the foreground — in the Electron build
+    // the main window may have been minimised / sent to the tray while the
+    // user was using the OS PiP, so without an explicit showAndFocus the
+    // user would be stuck with nothing visible after exiting PiP.
     useEffect(() => {
         const v = webrtc.remoteVideoRef.current;
         if (!v) return;
@@ -284,6 +297,7 @@ export default function CallOverlay({
         const onLeave = () => {
             setNativePipActive(false);
             setMinimized(false);
+            focusMainAppWindow();
         };
         v.addEventListener('enterpictureinpicture', onEnter);
         v.addEventListener('leavepictureinpicture', onLeave);
@@ -291,15 +305,17 @@ export default function CallOverlay({
             v.removeEventListener('enterpictureinpicture', onEnter);
             v.removeEventListener('leavepictureinpicture', onLeave);
         };
-    }, [webrtc.remoteVideoRef]);
+    }, [webrtc.remoteVideoRef, focusMainAppWindow]);
 
-    // Electron mini-window IPC: user closed the floatie → restore overlay.
+    // Electron mini-window IPC: user closed the floatie → restore overlay
+    // AND bring WorkPulse to the foreground (it may be minimised to tray).
     // Listen for actions (mute/unmute/restore/end) coming from the floatie.
     useEffect(() => {
         if (!hasElectronCallPip) return;
         const offClosed = window.electronAPI.callPip.onWindowClosed(() => {
             setElectronPipActive(false);
             setMinimized(false);
+            focusMainAppWindow();
         });
         const offAction = window.electronAPI.callPip.onAction(({ action }) => {
             if (action === 'mute' || action === 'unmute') {
@@ -308,6 +324,7 @@ export default function CallOverlay({
                 setElectronPipActive(false);
                 setMinimized(false);
                 try { window.electronAPI.callPip.close(); } catch { /* ignore */ }
+                focusMainAppWindow();
             } else if (action === 'end') {
                 try { window.electronAPI.callPip.close(); } catch { /* ignore */ }
                 webrtc.handleEnd();
@@ -317,7 +334,7 @@ export default function CallOverlay({
             try { offClosed?.(); } catch { /* ignore */ }
             try { offAction?.(); } catch { /* ignore */ }
         };
-    }, [controls, webrtc]);
+    }, [controls, webrtc, focusMainAppWindow]);
 
     // Push live state into the Electron floatie whenever something the user
     // can see there changes (status, duration, mute, callType, name).
@@ -478,6 +495,50 @@ export default function CallOverlay({
         setMinimized(false);
         closeAllFloatingLayers();
     }, [closeAllFloatingLayers]);
+
+    // ─── Auto-open PiP when the user minimises / hides WorkPulse ─────
+    // Keeps the call visible as an always-on-top floatie even if the user
+    // never clicks the in-call PiP button. Without this, minimising the
+    // main window during a call would leave the user with no visible call
+    // UI, and reopening the app from the taskbar/tray would feel like the
+    // call "broke" (the chat tab might have moved elsewhere, etc.).
+    //
+    // We use refs to capture the latest handlers / status so the IPC
+    // subscription itself only needs to mount once for the lifetime of
+    // the call.
+    const handleMinimizeRef = useRef(handleMinimize);
+    const statusRef = useRef(status);
+    const minimizedRef = useRef(minimized);
+    const closeAllFloatingLayersRef = useRef(closeAllFloatingLayers);
+    useEffect(() => { handleMinimizeRef.current = handleMinimize; }, [handleMinimize]);
+    useEffect(() => { statusRef.current = status; }, [status]);
+    useEffect(() => { minimizedRef.current = minimized; }, [minimized]);
+    useEffect(() => { closeAllFloatingLayersRef.current = closeAllFloatingLayers; }, [closeAllFloatingLayers]);
+
+    useEffect(() => {
+        if (!isElectron) return;
+        const offHidden = window.electronAPI?.onWindowHidden?.(() => {
+            // Only auto-pop the floatie while the call is actively running.
+            // For incoming calls, the user needs the full overlay to
+            // accept/decline; for an already-minimised overlay, do nothing.
+            const s = statusRef.current;
+            if (s === 'incoming' || s === 'ended') return;
+            if (minimizedRef.current) return;
+            try { handleMinimizeRef.current?.(); } catch { /* ignore */ }
+        });
+        const offShown = window.electronAPI?.onWindowShown?.(() => {
+            // User brought WorkPulse back to the foreground — drop out of
+            // the floatie and show the full overlay again. Closing the
+            // floating layers also dismisses the in-app mini bar.
+            if (!minimizedRef.current) return;
+            setMinimized(false);
+            try { closeAllFloatingLayersRef.current?.(); } catch { /* ignore */ }
+        });
+        return () => {
+            try { offHidden?.(); } catch { /* ignore */ }
+            try { offShown?.(); } catch { /* ignore */ }
+        };
+    }, []);
 
     // When an external floating layer (Electron window, native PiP, or
     // Document PiP) is showing the call, we hide the in-app mini overlay
