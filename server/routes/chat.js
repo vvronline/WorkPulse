@@ -296,12 +296,20 @@ router.post('/conversations', auth, async (req, res) => {
                 JOIN conversations c ON c.id = cp1.conversation_id
                 WHERE cp1.user_id = $1 AND cp2.user_id = $2
                   AND c.is_group = FALSE
-                  AND (SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = cp1.conversation_id) = 2
+                  AND (SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = cp1.conversation_id) >= 2
                 LIMIT 1
                 FOR UPDATE
             `, [req.userId, otherUserId])).rows[0];
 
-            if (existing) return { id: existing.conversation_id, existed: true };
+            if (existing) {
+                // Heal corrupted 1:1 chats: remove extra participants
+                await client.query(
+                    `DELETE FROM conversation_participants
+                     WHERE conversation_id = $1 AND user_id NOT IN ($2, $3)`,
+                    [existing.conversation_id, req.userId, otherUserId]
+                );
+                return { id: existing.conversation_id, existed: true };
+            }
 
             const c = (await client.query(
                 'INSERT INTO conversations (org_id) VALUES ($1) RETURNING id',
@@ -1062,6 +1070,13 @@ router.post('/messages/:id/forward', auth, async (req, res) => {
 
             await req.db.query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [convIdNum]);
 
+            await req.db.query(
+                `INSERT INTO message_reads (conversation_id, user_id, last_read_at)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = $3`,
+                [convIdNum, req.userId, result.created_at]
+            );
+
             const participants = (await req.db.query(
                 'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
                 [convIdNum]
@@ -1085,6 +1100,9 @@ router.post('/messages/:id/forward', auth, async (req, res) => {
 
             for (const p of participants) {
                 sendToUser(req.tenantId, p.user_id, 'chat_message', outMsg);
+                if (p.user_id !== req.userId) {
+                    redis.incrUnread(req.tenantId, p.user_id, convIdNum);
+                }
             }
         }
 
@@ -1272,7 +1290,8 @@ router.post('/polls/:id/vote', auth, async (req, res) => {
         )).rows;
         for (const p of participants) {
             sendToUser(req.tenantId, p.user_id, 'chat_poll_vote', {
-                pollId, conversationId: poll.conversation_id, votes: voteMap
+                pollId, conversationId: poll.conversation_id, votes: voteMap,
+                voterId: req.userId, optionIdx, isRemoval: !!existing
             });
         }
 

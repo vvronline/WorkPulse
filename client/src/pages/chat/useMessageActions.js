@@ -34,13 +34,14 @@ export default function useMessageActions(state) {
         const mentions = mentionInputRef.current?.getMentionedIds?.() || [];
         mentionInputRef.current?.resetMentionedIds?.();
 
+        const clientMsgId = `pending_${++pendingCounter.current}`;
         setMessages(prev => [...prev, {
-            id: `pending_${++pendingCounter.current}`, sender_id: user.id, sender_name: user.full_name,
+            id: clientMsgId, sender_id: user.id, sender_name: user.full_name,
             content, created_at: new Date().toISOString(), reply_to_id: replyTo?.id || null,
             reactions: []
         }]);
         wsSend('chat_message', {
-            conversationId: activeConv.id, content,
+            conversationId: activeConv.id, content, clientMsgId,
             ...(replyTo ? { replyToId: replyTo.id } : {}),
             ...(mentions.length > 0 ? { mentions } : {})
         });

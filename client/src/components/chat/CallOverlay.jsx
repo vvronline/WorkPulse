@@ -461,22 +461,19 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     }, [onEnd, stopRingtone]);
 
     const cleanup = () => {
-        if (screenStreamRef.current) {
-            screenStreamRef.current.getTracks().forEach(t => t.stop());
-            screenStreamRef.current = null;
-        }
-        if (localStreamRef.current) {
-            localStreamRef.current.getTracks().forEach(t => t.stop());
-            localStreamRef.current = null;
-        }
-        if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
-        if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
+        try { screenStreamRef.current?.getTracks().forEach(t => { try { t.stop(); } catch {} }); } catch {}
+        screenStreamRef.current = null;
+        try { localStreamRef.current?.getTracks().forEach(t => { try { t.stop(); } catch {} }); } catch {}
+        localStreamRef.current = null;
+        try { if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null; } catch {}
+        try { if (pcRef.current) pcRef.current.close(); } catch {}
+        pcRef.current = null;
         pendingSignalsRef.current = [];
         clearInterval(timerRef.current);
         clearInterval(statsIntervalRef.current);
         clearTimeout(addPartTimerRef.current);
         clearTimeout(connectionTimeoutRef.current);
-        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        try { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); } catch {}
     };
 
     useEffect(() => cleanup, []);

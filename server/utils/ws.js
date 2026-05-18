@@ -255,8 +255,14 @@ function setupWebSocket(server) {
 /** Handle incoming WS messages for chat */
 async function handleChatMessage(db, senderId, tenantId, msg, ws) {
     if (msg.type === 'chat_message') {
-        const { conversationId, content, replyToId, formatType, mentions } = msg.data || {};
+        const { conversationId, content, replyToId, formatType, mentions, clientMsgId } = msg.data || {};
         if (!conversationId || !content || typeof content !== 'string' || content.trim().length === 0 || content.length > 5000) return;
+
+        // Defense-in-depth: reject messages with obvious script injection patterns
+        if (/<script[\s>]|javascript:|on\w+\s*=/i.test(content)) {
+            logger.warn({ senderId, conversationId }, 'chat_message: rejected content with script-like pattern');
+            return;
+        }
 
         // Verify sender is a participant
         const participant = (await db.query(
@@ -320,7 +326,8 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
             replyToId: replyId,
             replyContent,
             replySenderName,
-            createdAt: result.created_at
+            createdAt: result.created_at,
+            clientMsgId: clientMsgId || null
         };
 
         for (const p of participants) {
@@ -569,6 +576,28 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
         // WebRTC signaling relay: offer, answer, ICE candidates
         const { conversationId, targetUserId, signal } = msg.data || {};
         if (!conversationId || !targetUserId || !signal) return;
+
+        // Validate signal type against whitelist
+        const VALID_SIGNAL_TYPES = ['offer', 'answer', 'ice-candidate', 'video-state'];
+        if (!signal.type || !VALID_SIGNAL_TYPES.includes(signal.type)) {
+            logger.warn({ senderId, signalType: signal?.type }, 'call_signal: rejected unknown signal type');
+            return;
+        }
+
+        // Validate signal payload per type
+        if (signal.type === 'offer' || signal.type === 'answer') {
+            if (typeof signal.sdp !== 'string' || signal.sdp.length === 0 || signal.sdp.length > 100000) {
+                logger.warn({ senderId, signalType: signal.type, sdpLen: signal.sdp?.length }, 'call_signal: invalid SDP');
+                return;
+            }
+        } else if (signal.type === 'ice-candidate') {
+            if (signal.candidate != null && (typeof signal.candidate !== 'object' || typeof signal.candidate.candidate !== 'string')) {
+                logger.warn({ senderId }, 'call_signal: invalid ICE candidate structure');
+                return;
+            }
+        } else if (signal.type === 'video-state') {
+            if (typeof signal.videoOff !== 'boolean') return;
+        }
 
         // For offer/answer: verify both sender and target are in the conversation.
         // For ICE candidates: skip DB checks to avoid pool exhaustion during rapid trickle.

@@ -156,6 +156,7 @@ function setupCallPipWindow(mainWindow) {
         pipWindow.on('closed', () => {
             const wasSilent = pipWindow?.__silentClose;
             pipWindow = null;
+            lastState = null;
             // Only notify the main window if the USER closed it (so the
             // overlay restores itself). End-of-call / restore-in-progress
             // closes set __silentClose to avoid the bounce.

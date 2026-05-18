@@ -103,7 +103,9 @@ export default function useChatState() {
                         // Deduplicate: don't add if a real message with this ID already exists
                         if (prev.some(m => m.id === d.id)) return prev;
                         if (d.senderId === user?.id) {
-                            const idx = prev.findIndex(p => String(p.id).startsWith('pending_') && p.content === d.content);
+                            const idx = d.clientMsgId
+                                ? prev.findIndex(p => p.id === d.clientMsgId)
+                                : prev.findIndex(p => String(p.id).startsWith('pending_') && p.content === d.content);
                             if (idx >= 0) {
                                 const updated = [...prev];
                                 updated[idx] = msgFields;

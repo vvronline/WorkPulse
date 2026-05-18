@@ -799,7 +799,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
             if (!remoteVideoRef.current.srcObject) {
                 remoteVideoRef.current.srcObject = remoteStreamRef.current;
             }
-            remoteVideoRef.current.play().catch(() => {});
+            remoteVideoRef.current.play().catch(() => { });
         }
     }, [remoteHasVideo]);
 
