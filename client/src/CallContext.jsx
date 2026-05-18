@@ -22,12 +22,13 @@ export function CallProvider({ children }) {
 
   const setChatPageActive = useCallback((active) => {
     chatPageActiveRef.current = active;
-    // If chat page becomes active and there's a global incoming call that hasn't been accepted,
-    // clear it — the chat page's own WS will handle it
-    if (active && globalIncomingCall && !pendingAcceptedCall) {
-      setGlobalIncomingCall(null);
-    }
-  }, [globalIncomingCall, pendingAcceptedCall]);
+    // NOTE: previously we cleared `globalIncomingCall` whenever the user
+    // landed on /chat because Chat.jsx had its own incoming-call UI. That
+    // behaviour caused the bug where the floating PiP disappeared the moment
+    // the chat page mounted, and Chat.jsx then re-rendered a *second*
+    // incoming screen. We now keep the PiP visible everywhere (including
+    // /chat) and Chat.jsx no longer shows an incoming overlay of its own.
+  }, []);
 
   const onWsMessage = useCallback((msg) => {
     // Relay meeting_started to GlobalMeetingNotification via DOM event.
@@ -37,8 +38,11 @@ export function CallProvider({ children }) {
       window.dispatchEvent(new CustomEvent('meeting_started', { detail: msg.data }));
     }
 
-    // Only handle call events when NOT on the chat page
-    if (chatPageActiveRef.current) return;
+    // Always handle incoming-call events through the global PiP — even when
+    // the user is already on /chat. This avoids the previous situation where
+    // both the floating PiP AND the full-screen CallOverlay's "incoming"
+    // screen appeared at once, and where accepting in the PiP then dropped
+    // the user into another "incoming" screen requiring a second tap.
     const d = msg.data;
     switch (msg.type) {
       case 'call_incoming': {

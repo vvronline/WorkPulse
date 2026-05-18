@@ -121,42 +121,14 @@ export default function useCallState(wsSendRef) {
     const handleCallWsEvent = (type, data) => {
         switch (type) {
             case 'call_incoming': {
-                if (!isChatPage) break;
-                if (!callActiveRef.current) {
-                    setCallState({
-                        callId: data.callId,
-                        conversationId: data.conversationId,
-                        callType: data.callType,
-                        isIncoming: true,
-                        callerId: data.callerId,
-                        remoteName: data.callerName,
-                        remoteAvatar: data.callerAvatar,
-                        isGroup: data.isGroup,
-                        accepted: false,
-                        acceptedBy: null,
-                        onSignal: callSignalRef,
-                        onEndExternal: callEndRef
-                    });
-                    // Desktop: flash taskbar + bring to front
-                    if (window.electronAPI?.isElectron) {
-                        window.electronAPI.flashFrame(true);
-                        window.electronAPI.showAndFocus();
-                    }
-                    // Web: browser notification when not focused
-                    if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && !document.hasFocus()) {
-                        try {
-                            const callLabel = data.callType === 'video' ? 'Video Call' : 'Voice Call';
-                            const displayName = data.callerName || 'Unknown';
-                            const n = new Notification(`Incoming ${callLabel}`, {
-                                body: `${displayName} is calling...`,
-                                tag: 'workpulse-incoming-call',
-                                icon: '/icon-192.svg',
-                                requireInteraction: true,
-                            });
-                            n.onclick = () => { window.focus(); n.close(); };
-                        } catch { /* ignore */ }
-                    }
-                }
+                // Intentionally ignored here. The global PiP notification
+                // (GlobalIncomingCall) — driven by CallContext — is now the
+                // single source of truth for incoming-call UI on every page,
+                // including /chat. When the user clicks "Accept" in the PiP
+                // we receive the call via `pendingAcceptedCall` (see effect
+                // above) and create the local callState with `preAccepted`,
+                // which lets CallOverlay skip its second "incoming" screen
+                // and go straight to "connecting".
                 break;
             }
             case 'call_started': {

@@ -40,7 +40,19 @@ export default function CallOverlay({
     const canAddParticipant = !!isGroup;
 
     const isReconnect = !!callState.isReconnect;
-    const [status, setStatus] = useState(isReconnect ? 'reconnecting' : (isIncoming ? 'incoming' : 'ringing'));
+    // `preAccepted` means the user already clicked "Accept" in the global PiP
+    // incoming-call notification (GlobalIncomingCall). When that happens we
+    // navigate to the chat page and mount this overlay — but we MUST NOT show
+    // another "incoming" screen with accept/reject buttons, otherwise the user
+    // has to click accept twice. Start directly in `connecting`; useWebRTC's
+    // auto-accept effect handles the actual WebRTC handshake in the background.
+    const isPreAccepted = !!callState.preAccepted;
+    const [status, setStatus] = useState(
+        isReconnect ? 'reconnecting'
+            : isPreAccepted ? 'connecting'
+                : isIncoming ? 'incoming'
+                    : 'ringing'
+    );
     const [duration, setDuration] = useState(0);
     const [showAddParticipant, setShowAddParticipant] = useState(false);
     const [showChat, setShowChat] = useState(false);

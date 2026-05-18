@@ -578,12 +578,34 @@
     }
 
     .controls {
-        gap: 8px;
-        padding: 8px 12px;
+        gap: 6px;
+        padding: 8px 10px;
         min-height: 56px;
+        /* Keep everything in a single row, but allow horizontal scrolling if
+           the user's device is extremely narrow (e.g. small phones in
+           landscape) so buttons never overlap. */
+        flex-wrap: nowrap;
+        max-width: calc(100vw - 16px);
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none; /* Firefox */
+        -ms-overflow-style: none; /* IE/Edge */
+    }
+
+    .controls::-webkit-scrollbar {
+        display: none;
     }
 
     .controlBtn {
+        width: 36px;
+        height: 36px;
+        flex: 0 0 auto;
+    }
+
+    /* On mobile we drop the smaller variant so every button in the bottom
+       controls bar is the same size — otherwise the noise-suppression
+       (smallBtn) button visually collides with its larger neighbours. */
+    .controlBtn.smallBtn {
         width: 36px;
         height: 36px;
     }
@@ -593,6 +615,7 @@
     .controlBtn.acceptBtn {
         width: 40px;
         height: 40px;
+        flex: 0 0 auto;
     }
 
     .callerName {
