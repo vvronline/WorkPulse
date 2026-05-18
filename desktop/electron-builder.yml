@@ -11,6 +11,7 @@ files:
   - preload.js
   - tray.js
   - updater.js
+  - callPipWindow.js
   - icons/**/*
   - package.json
 
