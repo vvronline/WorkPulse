@@ -37,7 +37,7 @@ export default function Chat() {
         showSharedFiles, setShowSharedFiles, showStarred, setShowStarred,
         showPollCreator, setShowPollCreator, convMembers,
         deleteConfirm, setDeleteConfirm, convMenu, setConvMenu,
-        callState, wsSend,
+        callState, wsSend, callReactionRef,
         loadingMsgs, loadingConvs, hasMore,
         messagesEndRef, messagesContainerRef, fileInputRef, mentionInputRef,
         searchInputRef,
@@ -309,6 +309,7 @@ export default function Chat() {
                     user={user}
                     wsSend={wsSend}
                     onEnd={handleEndCall}
+                    callReactionRef={callReactionRef}
                     chatMessages={callState.conversationId === activeConv?.id ? messages : []}
                     onSendChat={(text) => {
                         if (!text || !callState.conversationId) return;

@@ -1158,3 +1158,348 @@
         bottom: 12px;
     }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   NEW FEATURES: Auto-hide, Stats, Shortcuts, Reactions, Recording,
+   Noise Suppression, Reconnect Toast, Draggable Video
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ─── Auto-hide controls ─── */
+.controls {
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.controlsHidden {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(100%);
+}
+
+.topBarHidden {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+.videoOverlayInfoHidden {
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+/* ─── Quality badge clickable wrapper ─── */
+.qualityBadgeBtn {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    border-radius: 20px;
+    transition: transform 0.15s;
+}
+
+.qualityBadgeBtn:hover {
+    transform: scale(1.05);
+}
+
+/* ─── Smaller control button variant ─── */
+.smallBtn {
+    width: 34px;
+    height: 34px;
+}
+
+/* ─── Recording active state ─── */
+.recordActive {
+    background: #ef4444 !important;
+    color: #fff !important;
+    animation: badgePulse 1.5s ease-in-out infinite;
+}
+
+/* ─── Recording badge in top bar ─── */
+.recordingBadge {
+    background: rgba(239, 68, 68, 0.9);
+    border: 1px solid rgba(239, 68, 68, 0.6);
+    padding: 3px 8px;
+    border-radius: 20px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    animation: badgePulse 1.5s ease-in-out infinite;
+    color: #fff;
+}
+
+/* ─── Noise suppression badge in top bar ─── */
+.nsBadge {
+    background: rgba(16, 185, 129, 0.2);
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    padding: 3px 8px;
+    border-radius: 20px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #10b981;
+}
+
+/* ─── Detailed stats panel ─── */
+.statsPanel {
+    position: absolute;
+    top: 48px;
+    right: 16px;
+    z-index: 30;
+    min-width: 220px;
+    background: rgba(17, 24, 39, 0.95);
+    backdrop-filter: blur(12px);
+    border: 1px solid #374151;
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    animation: slideUp 0.2s ease;
+    overflow: hidden;
+}
+
+.statsPanelHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    color: #9ca3af;
+    border-bottom: 1px solid #374151;
+}
+
+.statsPanelClose {
+    background: none;
+    border: none;
+    color: #9ca3af;
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+}
+
+.statsPanelClose:hover {
+    color: #f9fafb;
+}
+
+.statsPanelBody {
+    padding: 8px 14px;
+}
+
+.statRow {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    font-size: 12px;
+    color: #d1d5db;
+}
+
+.statRow span:first-child {
+    color: #9ca3af;
+}
+
+.statRow span:last-child {
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ─── Network reconnect toast ─── */
+.reconnectToast {
+    position: absolute;
+    top: 56px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 35;
+    padding: 8px 18px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 500;
+    background: rgba(239, 68, 68, 0.9);
+    color: #fff;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    animation: toastSlideDown 0.3s ease;
+    white-space: nowrap;
+}
+
+.reconnectToastSuccess {
+    background: rgba(16, 185, 129, 0.9);
+}
+
+@keyframes toastSlideDown {
+    from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* ─── Emoji reaction picker ─── */
+.reactionPicker {
+    position: absolute;
+    bottom: 72px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 30;
+    display: flex;
+    gap: 4px;
+    padding: 8px 12px;
+    background: rgba(31, 41, 55, 0.95);
+    backdrop-filter: blur(12px);
+    border: 1px solid #374151;
+    border-radius: 24px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    animation: slideUp 0.2s ease;
+}
+
+.reactionPickerBtn {
+    width: 40px;
+    height: 40px;
+    border: none;
+    background: transparent;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.15s, background 0.15s;
+}
+
+.reactionPickerBtn:hover {
+    transform: scale(1.3);
+    background: rgba(255, 255, 255, 0.1);
+}
+
+/* ─── Floating emoji reactions ─── */
+.reactionsContainer {
+    position: absolute;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 25;
+    pointer-events: none;
+    display: flex;
+    gap: 8px;
+}
+
+.floatingEmoji {
+    font-size: 32px;
+    animation: floatUp 2.5s ease forwards;
+    opacity: 0;
+}
+
+@keyframes floatUp {
+    0% { opacity: 1; transform: translateY(0) scale(1); }
+    70% { opacity: 1; transform: translateY(-80px) scale(1.2); }
+    100% { opacity: 0; transform: translateY(-120px) scale(0.8); }
+}
+
+/* ─── Keyboard shortcuts help modal ─── */
+.shortcutsOverlay {
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    animation: fadeIn 0.2s ease;
+}
+
+.shortcutsModal {
+    background: #1f2937;
+    border: 1px solid #374151;
+    border-radius: 16px;
+    width: 320px;
+    max-width: 90vw;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+}
+
+.shortcutsHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #f9fafb;
+    border-bottom: 1px solid #374151;
+}
+
+.shortcutsClose {
+    background: none;
+    border: none;
+    color: #9ca3af;
+    font-size: 1.4rem;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+}
+
+.shortcutsClose:hover {
+    color: #f9fafb;
+}
+
+.shortcutsList {
+    padding: 12px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.shortcutRow {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+    color: #d1d5db;
+}
+
+.shortcutRow kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 24px;
+    padding: 0 6px;
+    background: #374151;
+    border: 1px solid #4b5563;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: inherit;
+    color: #f9fafb;
+}
+
+/* ─── Draggable local video corner positions ─── */
+.localVideo_bottom_right,
+.localVideoAvatar_bottom_right {
+    bottom: 100px;
+    right: 16px;
+    left: auto;
+    top: auto;
+}
+
+.localVideo_bottom_left,
+.localVideoAvatar_bottom_left {
+    bottom: 100px;
+    left: 16px;
+    right: auto;
+    top: auto;
+}
+
+.localVideo_top_right,
+.localVideoAvatar_top_right {
+    top: 56px;
+    right: 16px;
+    bottom: auto;
+    left: auto;
+}
+
+.localVideo_top_left,
+.localVideoAvatar_top_left {
+    top: 56px;
+    left: 16px;
+    bottom: auto;
+    right: auto;
+}

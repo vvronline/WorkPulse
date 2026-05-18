@@ -14,6 +14,7 @@ export default function useCallState(wsSendRef) {
     const [callState, setCallState] = useState(null);
     const callSignalRef = useRef(null);
     const callEndRef = useRef(null);
+    const callReactionRef = useRef(null);
     const callActiveRef = useRef(false);
     const pendingCallSignalsRef = useRef([]);
 
@@ -71,6 +72,7 @@ export default function useCallState(wsSendRef) {
                     isGroup: call.isGroup,
                     accepted: false,
                     acceptedBy: null,
+                    preAccepted: true,
                     onSignal: callSignalRef,
                     onEndExternal: callEndRef
                 });
@@ -192,13 +194,19 @@ export default function useCallState(wsSendRef) {
                 setCallState(prev => prev ? { ...prev, reconnectTo: data.userId } : prev);
                 break;
             }
+            case 'call_reaction': {
+                if (callReactionRef.current) {
+                    callReactionRef.current(data.emoji, data.fromUserId);
+                }
+                break;
+            }
             default: break;
         }
     };
 
     return {
         callState, setCallState,
-        callSignalRef, callEndRef, callActiveRef,
+        callSignalRef, callEndRef, callReactionRef, callActiveRef,
         handleCallWsEvent,
     };
 }

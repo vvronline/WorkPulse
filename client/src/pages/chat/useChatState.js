@@ -21,7 +21,7 @@ export default function useChatState() {
     // Call state (extracted hook)
     const {
         callState, setCallState,
-        callSignalRef, callEndRef, callActiveRef,
+        callSignalRef, callEndRef, callReactionRef, callActiveRef,
         handleCallWsEvent,
     } = useCallState(wsSendRef);
 
@@ -263,7 +263,8 @@ export default function useChatState() {
             case 'call_rejected':
             case 'call_ended':
             case 'call_signal':
-            case 'call_reconnect': {
+            case 'call_reconnect':
+            case 'call_reaction': {
                 handleCallWsEvent(msg.type, d);
                 break;
             }
@@ -470,7 +471,7 @@ export default function useChatState() {
         convMenu, setConvMenu,
         // Call state
         callState, setCallState,
-        callSignalRef, callEndRef,
+        callSignalRef, callEndRef, callReactionRef,
         // Refs
         messagesEndRef, messagesContainerRef,
         fileInputRef, mentionInputRef,

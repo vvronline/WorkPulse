@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 export default function useCallControls({ localStreamRef, pcRef, screenStreamRef, screenSenderRef, localVideoRef, remoteVideoRef, overlayRef }) {
     const [muted, setMuted] = useState(false);
@@ -16,25 +16,74 @@ export default function useCallControls({ localStreamRef, pcRef, screenStreamRef
     const [showAudioDevices, setShowAudioDevices] = useState(false);
     const [showVideoDevices, setShowVideoDevices] = useState(false);
 
-    // ─── Connection quality monitor ───
+    // ─── Detailed stats ───
+    const [detailedStats, setDetailedStats] = useState(null);
+    const prevBytesRef = useRef({ sent: 0, received: 0, timestamp: 0 });
+
+    // ─── Connection quality monitor (enhanced with detailed stats) ───
     const startQualityMonitor = useCallback((pc) => {
         const interval = setInterval(async () => {
             try {
                 const stats = await pc.getStats();
                 let rtt = null, packetsLost = 0, packetsReceived = 0;
+                let bytesSent = 0, bytesReceived = 0;
+                let frameRate = null, frameWidth = null, frameHeight = null;
+                let audioCodec = null, videoCodec = null;
+                let localCandidateType = null;
+                const codecIds = {};
+
                 stats.forEach(report => {
                     if (report.type === 'candidate-pair' && report.state === 'succeeded') {
                         rtt = report.currentRoundTripTime;
+                        if (report.localCandidateId) {
+                            const local = stats.get(report.localCandidateId);
+                            if (local) localCandidateType = local.candidateType;
+                        }
                     }
                     if (report.type === 'inbound-rtp' && report.kind === 'audio') {
                         packetsLost = report.packetsLost || 0;
                         packetsReceived = report.packetsReceived || 0;
+                        bytesReceived += report.bytesReceived || 0;
+                        if (report.codecId) codecIds[report.codecId] = 'audio';
+                    }
+                    if (report.type === 'inbound-rtp' && report.kind === 'video') {
+                        frameRate = report.framesPerSecond || null;
+                        frameWidth = report.frameWidth || null;
+                        frameHeight = report.frameHeight || null;
+                        bytesReceived += report.bytesReceived || 0;
+                        if (report.codecId) codecIds[report.codecId] = 'video';
+                    }
+                    if (report.type === 'outbound-rtp') {
+                        bytesSent += report.bytesSent || 0;
                     }
                 });
+
+                stats.forEach(report => {
+                    if (report.type === 'codec') {
+                        if (codecIds[report.id] === 'audio') audioCodec = report.mimeType;
+                        else if (codecIds[report.id] === 'video') videoCodec = report.mimeType;
+                    }
+                });
+
                 const lossRate = packetsReceived > 0 ? packetsLost / (packetsLost + packetsReceived) : 0;
                 if (rtt !== null && rtt < 0.15 && lossRate < 0.02) setConnectionQuality('good');
                 else if (rtt !== null && rtt < 0.4 && lossRate < 0.05) setConnectionQuality('fair');
                 else if (rtt !== null) setConnectionQuality('poor');
+
+                const now = Date.now();
+                const elapsed = (now - prevBytesRef.current.timestamp) / 1000;
+                const bitrateOut = elapsed > 0 ? Math.round(((bytesSent - prevBytesRef.current.sent) * 8) / elapsed / 1000) : 0;
+                const bitrateIn = elapsed > 0 ? Math.round(((bytesReceived - prevBytesRef.current.received) * 8) / elapsed / 1000) : 0;
+                prevBytesRef.current = { sent: bytesSent, received: bytesReceived, timestamp: now };
+
+                setDetailedStats({
+                    rtt: rtt !== null ? Math.round(rtt * 1000) : null,
+                    packetLoss: Math.round(lossRate * 100 * 10) / 10,
+                    bitrateIn: Math.max(0, bitrateIn),
+                    bitrateOut: Math.max(0, bitrateOut),
+                    frameRate, frameWidth, frameHeight,
+                    audioCodec, videoCodec, localCandidateType
+                });
             } catch { /* stats unavailable */ }
         }, 3000);
         return interval;
@@ -60,14 +109,6 @@ export default function useCallControls({ localStreamRef, pcRef, screenStreamRef
         document.addEventListener('fullscreenchange', handler);
         return () => document.removeEventListener('fullscreenchange', handler);
     }, []);
-
-    // NOTE: we intentionally do NOT mirror the local screen-share stream into
-    // localVideoRef. The local-video element is the small self-view PIP tile;
-    // showing the user a tiny copy of their own screen there is confusing and
-    // (in an audio call) replaces the user's avatar/name with a
-    // hard-to-recognise thumbnail of their desktop. The screen still reaches
-    // the peer through the RTCPeerConnection sender; the sharer doesn't need
-    // a local preview because they already see their actual desktop.
 
     const toggleMute = () => {
         if (localStreamRef.current) {
@@ -116,15 +157,6 @@ export default function useCallControls({ localStreamRef, pcRef, screenStreamRef
                     const sender = pcRef.current.addTrack(screenTrack, screenStream);
                     screenSenderRef.current = sender;
                 }
-
-                // Intentionally NOT mirroring the screen into localVideoRef:
-                // the sharer already sees their own desktop directly, and
-                // putting a tiny copy in the PIP tile (or covering the audio-
-                // call avatar with a screen thumbnail) just looks like a bug.
-                // For VIDEO calls the localVideoRef stays bound to the camera
-                // self-view so the user keeps their familiar self-tile while
-                // sharing — sender.replaceTrack only affects what the peer
-                // receives, not the local <video> element's srcObject.
 
                 screenTrack.onended = () => { toggleScreenShare(); };
                 setScreenSharing(true);
@@ -193,12 +225,114 @@ export default function useCallControls({ localStreamRef, pcRef, screenStreamRef
         } catch (err) { console.error('Switch camera failed:', err); }
     };
 
+    // ─── Call recording ───
+    const [recording, setRecording] = useState(false);
+    const recorderRef = useRef(null);
+    const chunksRef = useRef([]);
+
+    const startRecording = useCallback((remoteStream) => {
+        if (recording || !remoteStream) return;
+        try {
+            const ctx = new AudioContext();
+            const dest = ctx.createMediaStreamDestination();
+            if (localStreamRef.current) {
+                const localSrc = ctx.createMediaStreamSource(new MediaStream(localStreamRef.current.getAudioTracks()));
+                localSrc.connect(dest);
+            }
+            const remoteSrc = ctx.createMediaStreamSource(new MediaStream(remoteStream.getAudioTracks()));
+            remoteSrc.connect(dest);
+
+            const tracks = [...dest.stream.getTracks()];
+            const videoTracks = remoteStream.getVideoTracks();
+            if (videoTracks.length) tracks.push(...videoTracks);
+
+            const combinedStream = new MediaStream(tracks);
+            const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+                ? 'video/webm;codecs=vp9,opus'
+                : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
+                    ? 'video/webm;codecs=vp8,opus'
+                    : 'audio/webm;codecs=opus';
+
+            const recorder = new MediaRecorder(combinedStream, { mimeType });
+            chunksRef.current = [];
+            recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+            recorder.onstop = () => {
+                const blob = new Blob(chunksRef.current, { type: mimeType });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `call-recording-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.webm`;
+                a.click();
+                URL.revokeObjectURL(url);
+                ctx.close().catch(() => {});
+            };
+            recorder.start(1000);
+            recorderRef.current = recorder;
+            setRecording(true);
+        } catch (err) {
+            console.error('[call] recording start failed:', err);
+        }
+    }, [recording, localStreamRef]);
+
+    const stopRecording = useCallback(() => {
+        if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+            recorderRef.current.stop();
+            recorderRef.current = null;
+        }
+        setRecording(false);
+    }, []);
+
+    // ─── Noise suppression ───
+    const [noiseSuppression, setNoiseSuppression] = useState(false);
+    const noiseCtxRef = useRef(null);
+    const originalTrackRef = useRef(null);
+
+    const toggleNoiseSuppression = useCallback(async () => {
+        if (!localStreamRef.current || !pcRef.current) return;
+        const sender = pcRef.current.getSenders().find(s => s.track?.kind === 'audio');
+        if (!sender) return;
+
+        if (!noiseSuppression) {
+            try {
+                const audioTrack = localStreamRef.current.getAudioTracks()[0];
+                if (!audioTrack) return;
+                originalTrackRef.current = audioTrack;
+                const ctx = new AudioContext();
+                noiseCtxRef.current = ctx;
+                const source = ctx.createMediaStreamSource(new MediaStream([audioTrack]));
+                const filter = ctx.createBiquadFilter();
+                filter.type = 'highpass';
+                filter.frequency.value = 85;
+                filter.Q.value = 0.7;
+                const dest = ctx.createMediaStreamDestination();
+                source.connect(filter);
+                filter.connect(dest);
+                const filteredTrack = dest.stream.getAudioTracks()[0];
+                await sender.replaceTrack(filteredTrack);
+                setNoiseSuppression(true);
+            } catch (err) {
+                console.error('[call] noise suppression failed:', err);
+            }
+        } else {
+            if (originalTrackRef.current) {
+                await sender.replaceTrack(originalTrackRef.current);
+            }
+            if (noiseCtxRef.current) {
+                noiseCtxRef.current.close().catch(() => {});
+                noiseCtxRef.current = null;
+            }
+            setNoiseSuppression(false);
+        }
+    }, [noiseSuppression, localStreamRef, pcRef]);
+
     return {
-        muted, videoOff, screenSharing, onHold, isFullscreen, connectionQuality,
+        muted, videoOff, screenSharing, onHold, isFullscreen, connectionQuality, detailedStats,
         audioDevices, videoDevices, activeAudioDevice, activeVideoDevice,
         showAudioDevices, setShowAudioDevices, showVideoDevices, setShowVideoDevices,
         toggleMute, toggleVideo, toggleScreenShare, toggleHold, toggleFullscreen, togglePiP,
         switchAudioDevice, switchVideoDevice,
-        startQualityMonitor
+        startQualityMonitor,
+        recording, startRecording, stopRecording,
+        noiseSuppression, toggleNoiseSuppression
     };
 }

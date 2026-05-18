@@ -658,6 +658,21 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
             });
         }
 
+    } else if (msg.type === 'call_reaction') {
+        const { conversationId, targetUserId, emoji } = msg.data || {};
+        if (!conversationId || !targetUserId || !emoji) return;
+        const allowedEmojis = ['\u{1F44D}', '\u{1F44F}', '\u{2764}\u{FE0F}', '\u{1F602}', '\u{1F389}', '\u{1F914}'];
+        if (!allowedEmojis.includes(emoji)) return;
+        const participant = (await db.query(
+            'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
+            [conversationId, senderId]
+        )).rows[0];
+        if (!participant) return;
+        sendToUser(tenantId, targetUserId, 'call_reaction', {
+            conversationId,
+            fromUserId: senderId,
+            emoji
+        });
         // ═══════════════════════════════════════════════════════
         //  MEETING HANDLERS
         // ═══════════════════════════════════════════════════════

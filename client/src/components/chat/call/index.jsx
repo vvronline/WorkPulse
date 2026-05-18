@@ -10,20 +10,20 @@ import { useNotificationPrefs } from '../../../NotificationPrefsContext';
 import {
     MicIcon, MicOffIcon, CamIcon, CamOffIcon, PhoneIcon,
     ScreenShareIcon, ScreenShareOffIcon,
-    HoldIcon, ResumeIcon, PipIcon, AddParticipantIcon, ChatIcon
+    HoldIcon, ResumeIcon, PipIcon, AddParticipantIcon, ChatIcon,
+    FullscreenIcon, ExitFullscreenIcon, RecordIcon,
+    NoiseSuppressionIcon, EmojiIcon, KeyboardIcon
 } from './CallIcons';
 import s from '../CallOverlay.module.css';
 
 const isElectron = !!window.electronAPI?.isElectron;
 const isWinElectron = isElectron && window.electronAPI?.platform !== 'darwin';
 const hasElectronCallPip = !!window.electronAPI?.callPip;
-// Document Picture-in-Picture API (Chromium 116+) — lets us render arbitrary
-// HTML in an OS-level always-on-top window. Used for audio calls in the web
-// build where the standard <video> PiP can't help.
 const hasDocumentPip = typeof window !== 'undefined'
     && typeof window.documentPictureInPicture?.requestWindow === 'function';
 
-// Restore (maximize-out-of-pip) icon — used only by the in-app mini bar.
+const REACTION_EMOJIS = ['\u{1F44D}', '\u{1F44F}', '\u{2764}\u{FE0F}', '\u{1F602}', '\u{1F389}', '\u{1F914}'];
+
 const MaximizeIcon = () => (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
         <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"
@@ -34,15 +34,10 @@ const MaximizeIcon = () => (
 export default function CallOverlay({
     callState, user, wsSend, onEnd,
     chatMessages = [], onSendChat, onSendChatFile,
+    callReactionRef,
 }) {
     const { callId, conversationId, callType, isIncoming, remoteName, remoteAvatar, isGroup } = callState;
 
-    // "Add participant" only works in group-call conversations. A 1:1 call is
-    // a single WebRTC peer connection with no mesh/SFU support, so a 3rd
-    // person can never actually join. Worse, the server's previous behaviour
-    // permanently added the 3rd user to `conversation_participants`, turning
-    // the chat into a 3-person group and auto-ringing them on the next call.
-    // For n-way calls users should start a Meeting instead.
     const canAddParticipant = !!isGroup;
 
     const isReconnect = !!callState.isReconnect;
@@ -52,26 +47,26 @@ export default function CallOverlay({
     const [showChat, setShowChat] = useState(false);
     const [chatUnread, setChatUnread] = useState(0);
     const [swapped, setSwapped] = useState(false);
-    // Minimized = small floating PiP-like widget so the user can keep working
-    // (notes / chat / dashboard / tasks / calendar / attendance / settings).
-    // The overlay JSX stays in the DOM (so the WebRTC peer connection, video
-    // elements, mic capture, etc. all keep running) — we just shrink it via
-    // a CSS class and hide most chrome.
-    //
-    // On top of the in-app mini we ALSO try to open one of (in priority order):
-    //   1. An Electron always-on-top BrowserWindow (desktop build → Teams-style
-    //      floating window that survives switching to other apps).
-    //   2. The browser's native <video>.requestPictureInPicture() for video
-    //      calls in the web build.
-    //   3. The Document Picture-in-Picture API for audio calls in Chromium 116+.
-    // The user only sees one button labelled "Picture-in-picture"; we pick
-    // whichever option is available at click time.
     const [minimized, setMinimized] = useState(false);
     const [nativePipActive, setNativePipActive] = useState(false);
     const [electronPipActive, setElectronPipActive] = useState(false);
     const docPipWindowRef = useRef(null);
     const canScreenShare = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
     const lastSeenMsgCountRef = useRef(chatMessages.length);
+
+    // ─── New feature states ───
+    const [controlsVisible, setControlsVisible] = useState(true);
+    const [showStats, setShowStats] = useState(false);
+    const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+    const [showReactionPicker, setShowReactionPicker] = useState(false);
+    const [reactions, setReactions] = useState([]);
+    const [reconnectToast, setReconnectToast] = useState(null);
+    const [localVideoCorner, setLocalVideoCorner] = useState(() => {
+        try { return sessionStorage.getItem('wp_call_video_corner') || 'bottom-right'; } catch { return 'bottom-right'; }
+    });
+    const mouseTimerRef = useRef(null);
+    const prevStatusRef = useRef(status);
+    const dragRef = useRef(null);
 
     const { playRingtone, playOutgoing } = useNotificationPrefs();
 
@@ -134,10 +129,6 @@ export default function CallOverlay({
     }, [status]);
 
     // ─── Ringtone / outgoing tone ───
-    // Uses the user-selected preset / volume / mute toggle from
-    // NotificationPrefsContext (Profile menu → Notification Sounds).
-    //   • status === 'incoming' → incoming-call ringtone
-    //   • status === 'ringing'  → outgoing dial ring-back tone
     useEffect(() => {
         let stop = null;
         if (status === 'incoming') {
@@ -151,8 +142,6 @@ export default function CallOverlay({
                 try { stopRingtoneRef.current(); } catch { /* ignore */ }
                 stopRingtoneRef.current = null;
             }
-            // Also clear any legacy ringtone left on the webrtc ref so older
-            // code paths that still call stopRingtone() are a no-op.
             try { webrtc.stopRingtone(); } catch { /* ignore */ }
         };
     }, [status, playRingtone, playOutgoing]);
@@ -166,7 +155,6 @@ export default function CallOverlay({
         return `${m}:${String(sec).padStart(2, '0')}`;
     };
 
-    // Reset swap when call reconnects
     useEffect(() => {
         setSwapped(false);
     }, [status]);
@@ -177,18 +165,15 @@ export default function CallOverlay({
     // ─── Track unread chat messages while the panel is closed ───
     useEffect(() => {
         if (showChat) {
-            // Mark all current messages as seen when the panel is open
             lastSeenMsgCountRef.current = chatMessages.length;
             setChatUnread(0);
             return;
         }
         const delta = chatMessages.length - lastSeenMsgCountRef.current;
         if (delta <= 0) {
-            // Either no new messages, or messages were removed/replaced.
             lastSeenMsgCountRef.current = chatMessages.length;
             return;
         }
-        // Count only NEW messages from other users (skip our own echoes)
         const newMsgs = chatMessages.slice(-delta);
         const fromOthers = newMsgs.filter(m => m.sender_id !== user?.id).length;
         if (fromOthers > 0) {
@@ -209,32 +194,14 @@ export default function CallOverlay({
     }, [chatMessages.length]);
 
     const handleSendChatMessage = useCallback((text) => {
-        if (onSendChat) {
-            onSendChat(text);
-        }
+        if (onSendChat) onSendChat(text);
     }, [onSendChat]);
 
     const handleSendChatFile = useCallback((file) => {
-        if (onSendChatFile) {
-            onSendChatFile(file);
-        }
+        if (onSendChatFile) onSendChatFile(file);
     }, [onSendChatFile]);
 
     // ─── Tell the peer whenever our outgoing video state changes ───
-    // Browsers' RTCRtpReceiver.track.onmute is unreliable (Chrome lags 5–10s,
-    // Firefox sometimes never fires), so we send an explicit `video-state`
-    // signal. The signal tells the peer whether they should treat our
-    // outgoing video as "off" (show avatar / hide the remote video tile).
-    //
-    //   • Video call: we send videoOff=true when the user has turned the
-    //     camera off AND is not screen-sharing (screen replaces cam in the
-    //     outgoing video sender, so the peer should still see something).
-    //   • Audio call: there is no camera; the only way the peer ever sees
-    //     a video track is when we screen-share. So videoOff=true whenever
-    //     we are NOT screen-sharing. This is essential for the receiver to
-    //     hide the (now-frozen) video element when we stop sharing — the
-    //     RTCPeerConnection's track.onended event is unreliable across
-    //     browsers when a sender simply removes a track.
     useEffect(() => {
         if (status !== 'connected') return;
         let peerSeesNoVideo;
@@ -246,27 +213,162 @@ export default function CallOverlay({
         webrtc.sendLocalVideoState?.(peerSeesNoVideo);
     }, [status, isVideoCall, controls.videoOff, controls.screenSharing]);
 
-    // ─── Picture-in-Picture helpers ───────────────────────────────────
-    // Bring the WorkPulse main window back to the foreground. The
-    // Electron build minimises-to-tray on close, so when the user leaves a
-    // PiP (e.g. clicks the browser PiP "back to tab" button) the main
-    // window may still be hidden. Without this call the user has to
-    // re-open WorkPulse manually from the tray to see the call again.
+    // ═══════════════════════════════════════════════════════════════
+    //  FEATURE: Auto-hide controls (video mode, 4s idle)
+    // ═══════════════════════════════════════════════════════════════
+    const resetControlsTimer = useCallback(() => {
+        setControlsVisible(true);
+        clearTimeout(mouseTimerRef.current);
+        if (isConnected && (isVideoCall || controls.screenSharing || webrtc.remoteHasVideo)) {
+            mouseTimerRef.current = setTimeout(() => setControlsVisible(false), 4000);
+        }
+    }, [isConnected, isVideoCall, controls.screenSharing, webrtc.remoteHasVideo]);
+
+    useEffect(() => {
+        if (!isConnected || (!isVideoCall && !controls.screenSharing && !webrtc.remoteHasVideo)) {
+            setControlsVisible(true);
+            clearTimeout(mouseTimerRef.current);
+            return;
+        }
+        mouseTimerRef.current = setTimeout(() => setControlsVisible(false), 4000);
+        return () => clearTimeout(mouseTimerRef.current);
+    }, [isConnected, isVideoCall, controls.screenSharing, webrtc.remoteHasVideo]);
+
+    // ═══════════════════════════════════════════════════════════════
+    //  FEATURE: Keyboard shortcuts
+    // ═══════════════════════════════════════════════════════════════
+    useEffect(() => {
+        if (minimized) return;
+        const handleKeyDown = (e) => {
+            const tag = e.target.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
+
+            const key = e.key.toLowerCase();
+            if (key === 'm') { controls.toggleMute(); resetControlsTimer(); }
+            else if (key === 'v' && isVideoCall) { controls.toggleVideo(); resetControlsTimer(); }
+            else if (key === 's' && isConnected && canScreenShare) { controls.toggleScreenShare(); resetControlsTimer(); }
+            else if (key === 'h' && isConnected) { controls.toggleHold(); resetControlsTimer(); }
+            else if (key === 'e' || (e.ctrlKey && e.shiftKey && key === 'h')) { webrtc.handleEnd(); }
+            else if (key === 'f' && isConnected) { controls.toggleFullscreen(); resetControlsTimer(); }
+            else if (key === '?' || (e.shiftKey && key === '/')) { setShowShortcutsHelp(v => !v); }
+            else if (key === 'escape') {
+                if (showShortcutsHelp) setShowShortcutsHelp(false);
+                else if (showStats) setShowStats(false);
+                else if (showReactionPicker) setShowReactionPicker(false);
+                else if (controls.isFullscreen) controls.toggleFullscreen();
+            }
+            else if (key === ' ' && !e.repeat) {
+                e.preventDefault();
+                if (controls.muted) controls.toggleMute();
+            }
+        };
+        const handleKeyUp = (e) => {
+            const tag = e.target.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
+            if (e.key === ' ') {
+                e.preventDefault();
+                if (!controls.muted) controls.toggleMute();
+            }
+        };
+        document.addEventListener('keydown', handleKeyDown);
+        document.addEventListener('keyup', handleKeyUp);
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown);
+            document.removeEventListener('keyup', handleKeyUp);
+        };
+    }, [minimized, isVideoCall, isConnected, canScreenShare, controls, webrtc, resetControlsTimer, showShortcutsHelp, showStats, showReactionPicker]);
+
+    // ═══════════════════════════════════════════════════════════════
+    //  FEATURE: Network reconnect toast
+    // ═══════════════════════════════════════════════════════════════
+    useEffect(() => {
+        if (status === 'reconnecting' && prevStatusRef.current === 'connected') {
+            setReconnectToast('disconnected');
+        } else if (status === 'connected' && prevStatusRef.current === 'reconnecting') {
+            setReconnectToast('reconnected');
+            const t = setTimeout(() => setReconnectToast(null), 3000);
+            return () => clearTimeout(t);
+        }
+        prevStatusRef.current = status;
+    }, [status]);
+
+    // ═══════════════════════════════════════════════════════════════
+    //  FEATURE: Emoji reactions
+    // ═══════════════════════════════════════════════════════════════
+    const sendReaction = useCallback((emoji) => {
+        if (!wsSend || !conversationId) return;
+        const targetUserId = callState.isIncoming ? callState.callerId : (callState.acceptedBy || callState.callerId);
+        wsSend('call_reaction', { conversationId, targetUserId, emoji });
+        const id = Date.now() + Math.random();
+        setReactions(prev => [...prev, { id, emoji, fromSelf: true }]);
+        setTimeout(() => setReactions(prev => prev.filter(r => r.id !== id)), 2500);
+        setShowReactionPicker(false);
+    }, [wsSend, conversationId, callState, user?.id]);
+
+    useEffect(() => {
+        if (!callReactionRef) return;
+        const handler = (emoji) => {
+            const id = Date.now() + Math.random();
+            setReactions(prev => [...prev, { id, emoji, fromSelf: false }]);
+            setTimeout(() => setReactions(prev => prev.filter(r => r.id !== id)), 2500);
+        };
+        callReactionRef.current = handler;
+        return () => { if (callReactionRef) callReactionRef.current = null; };
+    }, [callReactionRef]);
+
+    // ═══════════════════════════════════════════════════════════════
+    //  FEATURE: Draggable local video (4 corner snap)
+    // ═══════════════════════════════════════════════════════════════
+    const handleLocalVideoDragStart = useCallback((e) => {
+        e.preventDefault();
+        const startX = e.clientX || e.touches?.[0]?.clientX || 0;
+        const startY = e.clientY || e.touches?.[0]?.clientY || 0;
+        dragRef.current = { startX, startY, moved: false };
+
+        const onMove = (ev) => {
+            if (!dragRef.current) return;
+            const cx = ev.clientX || ev.touches?.[0]?.clientX || 0;
+            const cy = ev.clientY || ev.touches?.[0]?.clientY || 0;
+            if (Math.abs(cx - dragRef.current.startX) > 10 || Math.abs(cy - dragRef.current.startY) > 10) {
+                dragRef.current.moved = true;
+            }
+        };
+        const onEnd = (ev) => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onEnd);
+            document.removeEventListener('touchmove', onMove);
+            document.removeEventListener('touchend', onEnd);
+            if (!dragRef.current?.moved) { dragRef.current = null; return; }
+            const cx = ev.clientX || ev.changedTouches?.[0]?.clientX || 0;
+            const cy = ev.clientY || ev.changedTouches?.[0]?.clientY || 0;
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            const isRight = cx > w / 2;
+            const isBottom = cy > h / 2;
+            const corner = `${isBottom ? 'bottom' : 'top'}-${isRight ? 'right' : 'left'}`;
+            setLocalVideoCorner(corner);
+            try { sessionStorage.setItem('wp_call_video_corner', corner); } catch { /* ignore */ }
+            dragRef.current = null;
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onEnd);
+        document.addEventListener('touchmove', onMove);
+        document.addEventListener('touchend', onEnd);
+    }, []);
+
+    // ─── Picture-in-Picture helpers ───
     const focusMainAppWindow = useCallback(() => {
         try { window.electronAPI?.showAndFocus?.(); } catch { /* ignore */ }
     }, []);
 
     const closeAllFloatingLayers = useCallback(() => {
-        // Native <video> PiP
         try {
             if (document.pictureInPictureElement) {
                 document.exitPictureInPicture().catch(() => { /* ignore */ });
             }
         } catch { /* ignore */ }
-        // Document PiP
         try { docPipWindowRef.current?.close?.(); } catch { /* ignore */ }
         docPipWindowRef.current = null;
-        // Electron mini window
         if (hasElectronCallPip) {
             try { window.electronAPI.callPip.close(); } catch { /* ignore */ }
         }
@@ -274,9 +376,6 @@ export default function CallOverlay({
         setElectronPipActive(false);
     }, []);
 
-    // Auto-restore when an incoming call arrives so the user can answer it.
-    // Also close any floating layer so the accept/decline buttons are
-    // immediately reachable in the full overlay.
     useEffect(() => {
         if (status === 'incoming') {
             if (minimized) setMinimized(false);
@@ -284,12 +383,6 @@ export default function CallOverlay({
         }
     }, [status, minimized, closeAllFloatingLayers]);
 
-    // Listen for native PiP exit (user clicked the browser's "back to tab"
-    // or ✕ on the floating video). Restore the full overlay AND bring the
-    // WorkPulse main window back to the foreground — in the Electron build
-    // the main window may have been minimised / sent to the tray while the
-    // user was using the OS PiP, so without an explicit showAndFocus the
-    // user would be stuck with nothing visible after exiting PiP.
     useEffect(() => {
         const v = webrtc.remoteVideoRef.current;
         if (!v) return;
@@ -307,9 +400,6 @@ export default function CallOverlay({
         };
     }, [webrtc.remoteVideoRef, webrtc.remoteHasVideo, focusMainAppWindow]);
 
-    // Electron mini-window IPC: user closed the floatie → restore overlay
-    // AND bring WorkPulse to the foreground (it may be minimised to tray).
-    // Listen for actions (mute/unmute/restore/end) coming from the floatie.
     useEffect(() => {
         if (!hasElectronCallPip) return;
         const offClosed = window.electronAPI.callPip.onWindowClosed(() => {
@@ -336,8 +426,6 @@ export default function CallOverlay({
         };
     }, [controls, webrtc, focusMainAppWindow]);
 
-    // Push live state into the Electron floatie whenever something the user
-    // can see there changes (status, duration, mute, callType, name).
     useEffect(() => {
         if (!hasElectronCallPip || !electronPipActive) return;
         try {
@@ -354,7 +442,6 @@ export default function CallOverlay({
     }, [electronPipActive, status, duration, controls.muted, controls.videoOff,
         controls.onHold, remoteName, remoteAvatar, callType]);
 
-    // Close any floating layer + mini state when the call ends/unmounts
     useEffect(() => () => { closeAllFloatingLayers(); }, [closeAllFloatingLayers]);
 
     const openElectronPip = useCallback(() => {
@@ -434,17 +521,16 @@ export default function CallOverlay({
         }
     }, [remoteName, remoteAvatar, focusMainAppWindow]);
 
-    // Keep the Document PiP window's status/duration text fresh.
     useEffect(() => {
         const pipWin = docPipWindowRef.current;
         if (!pipWin) return;
         try {
             const el = pipWin.document.getElementById('wp-pip-status');
             if (!el) return;
-            if (status === 'incoming') el.textContent = 'Incoming call…';
-            else if (status === 'ringing') el.textContent = 'Ringing…';
-            else if (status === 'connecting') el.textContent = 'Connecting…';
-            else if (status === 'reconnecting') el.textContent = 'Reconnecting…';
+            if (status === 'incoming') el.textContent = 'Incoming call\u2026';
+            else if (status === 'ringing') el.textContent = 'Ringing\u2026';
+            else if (status === 'connecting') el.textContent = 'Connecting\u2026';
+            else if (status === 'reconnecting') el.textContent = 'Reconnecting\u2026';
             else if (controls.onHold) el.textContent = 'On Hold';
             else el.textContent = formatDuration(duration);
         } catch { /* ignore */ }
@@ -452,41 +538,22 @@ export default function CallOverlay({
 
     const handleMinimize = useCallback(async (e) => {
         e?.stopPropagation?.();
-        // Close any open popovers so they don't sit on top of the mini widget
         setShowAddParticipant(false);
         setShowChat(false);
         controls.setShowAudioDevices?.(false);
         controls.setShowVideoDevices?.(false);
         setMinimized(true);
 
-        // Try floating layers in priority order. The in-app .minimized
-        // overlay is always shown as the WorkPulse-internal fallback.
-        //
-        // For VIDEO calls (or when the peer is screen-sharing) we prefer the
-        // browser's NATIVE <video> picture-in-picture because it actually
-        // streams the live remote video into the floating window. The
-        // Electron secondary BrowserWindow can only render the avatar +
-        // metadata (MediaStream objects cannot be transferred between
-        // BrowserWindows), so falling back to it for a video call would
-        // give the user a black/avatar-only floatie — confusing.
-        //
-        // For AUDIO calls (no remote video) we prefer the Electron floatie
-        // because it survives Alt-Tabbing to other apps and stays on top
-        // even over fullscreen windows on macOS.
         const hasRemoteVideoStream = isVideoCall || webrtc.remoteHasVideo;
         if (hasRemoteVideoStream) {
             const ok = await openNativeVideoPip();
             if (ok) return;
-            // Native PiP unavailable (Safari iOS, some embedded webviews) —
-            // fall through to Electron floatie / Document PiP / in-app mini.
         }
         if (openElectronPip()) return;
         if (isVideoCall) {
-            // Last-resort native PiP attempt if we skipped it above.
             const ok = await openNativeVideoPip();
             if (ok) return;
         }
-        // Audio call (or video PiP unavailable) on the web → try Document PiP.
         await openDocumentPip();
     }, [controls, isVideoCall, webrtc.remoteHasVideo,
         openElectronPip, openNativeVideoPip, openDocumentPip]);
@@ -498,15 +565,6 @@ export default function CallOverlay({
     }, [closeAllFloatingLayers]);
 
     // ─── Auto-open PiP when the user minimises / hides WorkPulse ─────
-    // Keeps the call visible as an always-on-top floatie even if the user
-    // never clicks the in-call PiP button. Without this, minimising the
-    // main window during a call would leave the user with no visible call
-    // UI, and reopening the app from the taskbar/tray would feel like the
-    // call "broke" (the chat tab might have moved elsewhere, etc.).
-    //
-    // We use refs to capture the latest handlers / status so the IPC
-    // subscription itself only needs to mount once for the lifetime of
-    // the call.
     const handleMinimizeRef = useRef(handleMinimize);
     const statusRef = useRef(status);
     const minimizedRef = useRef(minimized);
@@ -519,18 +577,12 @@ export default function CallOverlay({
     useEffect(() => {
         if (!isElectron) return;
         const offHidden = window.electronAPI?.onWindowHidden?.(() => {
-            // Only auto-pop the floatie while the call is actively running.
-            // For incoming calls, the user needs the full overlay to
-            // accept/decline; for an already-minimised overlay, do nothing.
             const s = statusRef.current;
             if (s === 'incoming' || s === 'ended') return;
             if (minimizedRef.current) return;
             try { handleMinimizeRef.current?.(); } catch { /* ignore */ }
         });
         const offShown = window.electronAPI?.onWindowShown?.(() => {
-            // User brought WorkPulse back to the foreground — drop out of
-            // the floatie and show the full overlay again. Closing the
-            // floating layers also dismisses the in-app mini bar.
             if (!minimizedRef.current) return;
             setMinimized(false);
             try { closeAllFloatingLayersRef.current?.(); } catch { /* ignore */ }
@@ -541,18 +593,10 @@ export default function CallOverlay({
         };
     }, []);
 
-    // When an external floating layer (Electron window, native PiP, or
-    // Document PiP) is showing the call, we hide the in-app mini overlay
-    // entirely so the user only sees the OS-level floating widget — no
-    // duplicate UI inside the WorkPulse window.
     const externalFloaterActive = electronPipActive || nativePipActive || !!docPipWindowRef.current;
     const hiddenForExternal = minimized && externalFloaterActive;
 
     // ─── Re-sync video after PiP/minimize restore ────────────────────
-    // Browsers pause or stop decoding <video> elements that were
-    // display:none (hiddenForExternal) or in a tiny container (minimized).
-    // When restoring to full visibility, force-restart the video rendering
-    // pipeline to avoid frozen/black frames.
     const wasMinimizedRef = useRef(false);
     useEffect(() => {
         if (minimized) {
@@ -564,7 +608,6 @@ export default function CallOverlay({
 
         const timer = setTimeout(() => {
             if (status !== 'connected') return;
-            // Remote video — null→reassign forces decoder pipeline restart
             const rv = webrtc.remoteVideoRef.current;
             const rs = webrtc.remoteStreamRef.current;
             if (rv && rs) {
@@ -572,7 +615,6 @@ export default function CallOverlay({
                 rv.srcObject = rs;
                 rv.play().catch(() => {});
             }
-            // Local video (video calls only)
             if (isVideoCall) {
                 const lv = webrtc.localVideoRef.current;
                 const ls = webrtc.localStreamRef.current;
@@ -582,7 +624,6 @@ export default function CallOverlay({
                     lv.play().catch(() => {});
                 }
             }
-            // Remote audio — safety net
             const ra = webrtc.remoteAudioRef.current;
             if (ra && rs && ra.paused) {
                 ra.srcObject = rs;
@@ -593,11 +634,20 @@ export default function CallOverlay({
         return () => clearTimeout(timer);
     }, [minimized, electronPipActive, nativePipActive]);
 
+    // ─── Auto-stop recording on call end ───
+    useEffect(() => {
+        if (status === 'ended' || !isConnected) {
+            if (controls.recording) controls.stopRecording();
+        }
+    }, [status, isConnected]);
+
     const overlayContent = (
         <div
             ref={overlayRef}
             className={`${s.overlay} ${(isVideoCall || controls.screenSharing || webrtc.remoteHasVideo) && isConnected ? s.videoMode : ''} ${controls.onHold ? s.holdMode : ''} ${minimized ? s.minimized : ''}`}
             onClick={minimized && !hiddenForExternal ? handleRestore : undefined}
+            onMouseMove={!minimized ? resetControlsTimer : undefined}
+            onTouchStart={!minimized ? resetControlsTimer : undefined}
             role={minimized && !hiddenForExternal ? 'button' : undefined}
             aria-label={minimized && !hiddenForExternal ? 'Restore call window' : undefined}
             tabIndex={minimized && !hiddenForExternal ? 0 : undefined}
@@ -621,12 +671,6 @@ export default function CallOverlay({
             <audio ref={webrtc.remoteAudioRef} autoPlay />
 
             {/* ─── Remote video tile (fullscreen) ─── */}
-            {/* Mounted only when the peer is actually sending video (their
-                camera in a video call, or their screen share in either call
-                type). Keeping it conditional means an audio call with no
-                share has no <video> element at all — so the callInfo card
-                below sits on the bare overlay background instead of on top
-                of a black <video>. */}
             {webrtc.remoteHasVideo && (
                 <video
                     ref={webrtc.remoteVideoRef}
@@ -636,38 +680,29 @@ export default function CallOverlay({
                 />
             )}
 
-            {/* ─── Local self-view tile (small PIP corner) ─── */}
-            {/* Only rendered for VIDEO calls — the user has a camera and
-                expects to see themselves. We always mount the <video> tag
-                (even when the camera is off) and just hide it via the
-                `.localVideoHidden` class, so toggling the camera back on
-                doesn't have to re-acquire the MediaStream or re-bind it. */}
+            {/* ─── Local self-view tile (draggable corner snap) ─── */}
             {isVideoCall && (
                 <video
                     ref={webrtc.localVideoRef}
-                    className={`${s.localVideo} ${controls.videoOff ? s.localVideoHidden : ''} ${swapped ? s.swapped : ''}`}
+                    className={`${s.localVideo} ${controls.videoOff ? s.localVideoHidden : ''} ${swapped ? s.swapped : ''} ${!swapped ? s[`localVideo_${localVideoCorner.replace('-', '_')}`] || '' : ''}`}
                     autoPlay playsInline muted
-                    onClick={!swapped ? () => setSwapped(true) : undefined}
+                    onMouseDown={!swapped ? handleLocalVideoDragStart : undefined}
+                    onTouchStart={!swapped ? handleLocalVideoDragStart : undefined}
+                    onClick={!swapped && !dragRef.current?.moved ? () => setSwapped(true) : undefined}
                 />
             )}
 
-            {/* Local self-tile AVATAR fallback. Two situations:
-                1. Video call, user has turned off the camera → replace the
-                   (now hidden) <video> with their avatar tile.
-                2. Audio call, the peer is sending us video (their screen
-                   share) → we have no camera, but we still want SOMETHING
-                   in the PIP corner so the user can see their own identity
-                   instead of an empty rectangle. */}
+            {/* Local self-tile AVATAR fallback */}
             {((isVideoCall && controls.videoOff) || (!isVideoCall && webrtc.remoteHasVideo)) && (
                 <div
-                    className={s.localVideoAvatar}
+                    className={`${s.localVideoAvatar} ${!swapped ? s[`localVideoAvatar_${localVideoCorner.replace('-', '_')}`] || '' : ''}`}
                     onClick={isVideoCall ? () => setSwapped(prev => !prev) : undefined}
                 >
                     <ChatAvatar name={user?.fullName || 'You'} avatar={user?.avatar} size="md" />
                 </div>
             )}
 
-            {/* Mute badge — anchored on whichever local tile exists. */}
+            {/* Mute badge */}
             {controls.muted && isConnected && (isVideoCall || webrtc.remoteHasVideo) && (
                 <div
                     className={`${s.localVideoMuteBadge} ${(isVideoCall && controls.videoOff) || !isVideoCall ? s.localVideoMuteBadgeAvatar : ''}`}
@@ -678,8 +713,6 @@ export default function CallOverlay({
                 </div>
             )}
 
-            {/* Mute badge for audio calls where NO video tile is on screen
-                (no screen share anywhere) — anchor on the caller-info card. */}
             {!isVideoCall && !webrtc.remoteHasVideo && controls.muted && isConnected && (
                 <div
                     className={s.localVideoMuteBadge}
@@ -691,43 +724,65 @@ export default function CallOverlay({
                 </div>
             )}
 
+            {/* ─── Top bar ─── */}
             {isConnected && (
-                <div className={s.topBar}>
-                    <QualityBadge quality={controls.connectionQuality} />
+                <div className={`${s.topBar} ${!controlsVisible ? s.topBarHidden : ''}`}>
+                    <button className={s.qualityBadgeBtn} onClick={() => setShowStats(v => !v)} title="Connection stats">
+                        <QualityBadge quality={controls.connectionQuality} />
+                    </button>
                     {controls.screenSharing && <span className={s.sharingBadge}>Screen Sharing</span>}
                     {controls.onHold && <span className={s.holdBadge}>On Hold</span>}
+                    {controls.recording && <span className={s.recordingBadge}>REC</span>}
+                    {controls.noiseSuppression && <span className={s.nsBadge}>NS</span>}
                 </div>
             )}
 
-            {/* Caller-info card (big avatar + name + duration). We hide it
-                whenever an actual remote video stream is filling the main
-                view so it doesn't sit on top of the remote camera feed or
-                an incoming screen share. Specifically:
-                  • Pre-connect (incoming / ringing / connecting / reconnecting
-                    / on-hold) → always show
-                  • Audio call where the PEER is screen-sharing (we are the
-                    receiver) → hide so the screen share is unobstructed
-                  • Audio call where WE are screen-sharing → SHOW. We don't
-                    mirror our own screen anywhere on our overlay (the user
-                    is already looking at the real desktop they're sharing),
-                    so without the callInfo card the main view would be
-                    blank. The card keeps the remote name + duration visible.
-                  • Audio call with no screen share anywhere → show
-                  • Video call where the peer's camera is off (and nobody is
-                    screen-sharing) → show avatar as a centred overlay */}
+            {/* ─── Detailed stats panel ─── */}
+            {showStats && controls.detailedStats && (
+                <div className={s.statsPanel}>
+                    <div className={s.statsPanelHeader}>
+                        <span>Connection Stats</span>
+                        <button className={s.statsPanelClose} onClick={() => setShowStats(false)}>&times;</button>
+                    </div>
+                    <div className={s.statsPanelBody}>
+                        {controls.detailedStats.rtt != null && <div className={s.statRow}><span>Latency</span><span>{controls.detailedStats.rtt} ms</span></div>}
+                        <div className={s.statRow}><span>Packet Loss</span><span>{controls.detailedStats.packetLoss}%</span></div>
+                        <div className={s.statRow}><span>Bitrate In</span><span>{controls.detailedStats.bitrateIn} kbps</span></div>
+                        <div className={s.statRow}><span>Bitrate Out</span><span>{controls.detailedStats.bitrateOut} kbps</span></div>
+                        {controls.detailedStats.frameRate && <div className={s.statRow}><span>Frame Rate</span><span>{controls.detailedStats.frameRate} fps</span></div>}
+                        {controls.detailedStats.frameWidth && <div className={s.statRow}><span>Resolution</span><span>{controls.detailedStats.frameWidth}x{controls.detailedStats.frameHeight}</span></div>}
+                        {controls.detailedStats.audioCodec && <div className={s.statRow}><span>Audio Codec</span><span>{controls.detailedStats.audioCodec.replace('audio/', '')}</span></div>}
+                        {controls.detailedStats.videoCodec && <div className={s.statRow}><span>Video Codec</span><span>{controls.detailedStats.videoCodec.replace('video/', '')}</span></div>}
+                        {controls.detailedStats.localCandidateType && <div className={s.statRow}><span>Transport</span><span>{controls.detailedStats.localCandidateType}</span></div>}
+                    </div>
+                </div>
+            )}
+
+            {/* ─── Network reconnect toast ─── */}
+            {reconnectToast && (
+                <div className={`${s.reconnectToast} ${reconnectToast === 'reconnected' ? s.reconnectToastSuccess : ''}`}>
+                    {reconnectToast === 'disconnected' ? 'Connection lost. Reconnecting...' : 'Reconnected'}
+                </div>
+            )}
+
+            {/* ─── Floating emoji reactions ─── */}
+            {reactions.length > 0 && (
+                <div className={s.reactionsContainer}>
+                    {reactions.map(r => (
+                        <span key={r.id} className={s.floatingEmoji}>{r.emoji}</span>
+                    ))}
+                </div>
+            )}
+
+            {/* Caller-info card */}
             {(() => {
                 const preConnect = !isConnected || controls.onHold || status === 'reconnecting';
                 let showCallInfo;
                 if (preConnect) {
                     showCallInfo = true;
                 } else if (isVideoCall) {
-                    // Video call: avatar overlay only when peer cam is off AND
-                    // nobody is sharing the screen.
                     showCallInfo = webrtc.remoteVideoOff && !controls.screenSharing;
                 } else {
-                    // Audio call: hide only when the peer is sending us video
-                    // (their screen share). Our own screen share doesn't
-                    // render anywhere locally, so still show the card.
                     showCallInfo = !webrtc.remoteHasVideo;
                 }
                 if (!showCallInfo) return null;
@@ -743,14 +798,14 @@ export default function CallOverlay({
                         {status === 'connecting' && 'Connecting...'}
                         {status === 'reconnecting' && 'Reconnecting...'}
                         {isConnected && !controls.onHold && formatDuration(duration)}
-                        {isConnected && controls.onHold && `On Hold · ${formatDuration(duration)}`}
+                        {isConnected && controls.onHold && `On Hold \u00B7 ${formatDuration(duration)}`}
                     </p>
                 </div>
                 );
             })()}
 
             {isVideoCall && isConnected && !controls.onHold && (
-                <div className={s.videoOverlayInfo}>
+                <div className={`${s.videoOverlayInfo} ${!controlsVisible ? s.videoOverlayInfoHidden : ''}`}>
                     <span className={s.videoCallerName}>{remoteName}</span>
                     <span className={s.videoDuration}>{formatDuration(duration)}</span>
                 </div>
@@ -795,7 +850,42 @@ export default function CallOverlay({
                 />
             )}
 
-            <div className={s.controls}>
+            {/* ─── Reaction emoji picker ─── */}
+            {showReactionPicker && (
+                <div className={s.reactionPicker}>
+                    {REACTION_EMOJIS.map(emoji => (
+                        <button key={emoji} className={s.reactionPickerBtn} onClick={() => sendReaction(emoji)}>
+                            {emoji}
+                        </button>
+                    ))}
+                </div>
+            )}
+
+            {/* ─── Keyboard shortcuts help modal ─── */}
+            {showShortcutsHelp && (
+                <div className={s.shortcutsOverlay} onClick={() => setShowShortcutsHelp(false)}>
+                    <div className={s.shortcutsModal} onClick={e => e.stopPropagation()}>
+                        <div className={s.shortcutsHeader}>
+                            <span>Keyboard Shortcuts</span>
+                            <button className={s.shortcutsClose} onClick={() => setShowShortcutsHelp(false)}>&times;</button>
+                        </div>
+                        <div className={s.shortcutsList}>
+                            <div className={s.shortcutRow}><kbd>M</kbd><span>Toggle mute</span></div>
+                            <div className={s.shortcutRow}><kbd>V</kbd><span>Toggle video</span></div>
+                            <div className={s.shortcutRow}><kbd>S</kbd><span>Toggle screen share</span></div>
+                            <div className={s.shortcutRow}><kbd>H</kbd><span>Toggle hold</span></div>
+                            <div className={s.shortcutRow}><kbd>F</kbd><span>Toggle fullscreen</span></div>
+                            <div className={s.shortcutRow}><kbd>E</kbd><span>End call</span></div>
+                            <div className={s.shortcutRow}><kbd>Space</kbd><span>Push-to-talk (hold)</span></div>
+                            <div className={s.shortcutRow}><kbd>Esc</kbd><span>Close panel / exit fullscreen</span></div>
+                            <div className={s.shortcutRow}><kbd>?</kbd><span>Toggle this help</span></div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ─── Controls bar ─── */}
+            <div className={`${s.controls} ${!controlsVisible && isConnected ? s.controlsHidden : ''}`}>
                 {status === 'incoming' ? (
                     <>
                         <button className={`${s.controlBtn} ${s.rejectBtn}`} onClick={webrtc.handleReject} title="Decline">
@@ -811,7 +901,7 @@ export default function CallOverlay({
                             <button
                                 className={`${s.controlBtn} ${controls.muted ? s.active : ''}`}
                                 onClick={controls.toggleMute}
-                                title={controls.muted ? 'Unmute' : 'Mute'}
+                                title={controls.muted ? 'Unmute (M)' : 'Mute (M)'}
                             >
                                 {controls.muted ? <MicOffIcon /> : <MicIcon />}
                             </button>
@@ -820,16 +910,27 @@ export default function CallOverlay({
                                     className={s.deviceToggle}
                                     onClick={() => { controls.setShowAudioDevices(!controls.showAudioDevices); controls.setShowVideoDevices(false); }}
                                     title="Switch microphone"
-                                >▴</button>
+                                >\u25B4</button>
                             )}
                         </div>
+
+                        {/* Noise suppression toggle */}
+                        {isConnected && (
+                            <button
+                                className={`${s.controlBtn} ${s.smallBtn} ${controls.noiseSuppression ? s.active : ''}`}
+                                onClick={controls.toggleNoiseSuppression}
+                                title={controls.noiseSuppression ? 'Disable noise suppression' : 'Enable noise suppression'}
+                            >
+                                <NoiseSuppressionIcon />
+                            </button>
+                        )}
 
                         {isVideoCall && (
                             <div className={s.controlGroup}>
                                 <button
                                     className={`${s.controlBtn} ${controls.videoOff ? s.active : ''}`}
                                     onClick={controls.toggleVideo}
-                                    title={controls.videoOff ? 'Turn on camera' : 'Turn off camera'}
+                                    title={controls.videoOff ? 'Turn on camera (V)' : 'Turn off camera (V)'}
                                 >
                                     {controls.videoOff ? <CamOffIcon /> : <CamIcon />}
                                 </button>
@@ -838,7 +939,7 @@ export default function CallOverlay({
                                         className={s.deviceToggle}
                                         onClick={() => { controls.setShowVideoDevices(!controls.showVideoDevices); controls.setShowAudioDevices(false); }}
                                         title="Switch camera"
-                                    >▴</button>
+                                    >\u25B4</button>
                                 )}
                             </div>
                         )}
@@ -847,7 +948,7 @@ export default function CallOverlay({
                             <button
                                 className={`${s.controlBtn} ${controls.screenSharing ? s.active : ''}`}
                                 onClick={controls.toggleScreenShare}
-                                title={controls.screenSharing ? 'Stop sharing' : 'Share screen'}
+                                title={controls.screenSharing ? 'Stop sharing (S)' : 'Share screen (S)'}
                             >
                                 {controls.screenSharing ? <ScreenShareOffIcon /> : <ScreenShareIcon />}
                             </button>
@@ -857,20 +958,24 @@ export default function CallOverlay({
                             <button
                                 className={`${s.controlBtn} ${controls.onHold ? s.holdActive : ''}`}
                                 onClick={controls.toggleHold}
-                                title={controls.onHold ? 'Resume' : 'Hold'}
+                                title={controls.onHold ? 'Resume (H)' : 'Hold (H)'}
                             >
                                 {controls.onHold ? <ResumeIcon /> : <HoldIcon />}
                             </button>
                         )}
 
-                        {/* Picture-in-Picture / Minimize — single combined
-                            button. Picks the best available floating layer:
-                            Electron always-on-top window (desktop), browser's
-                            native video PiP (web video call), Document PiP
-                            (web audio call on Chrome/Edge 116+), or falls back
-                            to the in-app floating widget. Lets the user keep
-                            working inside WorkPulse — and outside — while the
-                            call stays alive. */}
+                        {/* Fullscreen */}
+                        {isConnected && (
+                            <button
+                                className={`${s.controlBtn} ${controls.isFullscreen ? s.active : ''}`}
+                                onClick={controls.toggleFullscreen}
+                                title={controls.isFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'}
+                            >
+                                {controls.isFullscreen ? <ExitFullscreenIcon /> : <FullscreenIcon />}
+                            </button>
+                        )}
+
+                        {/* PiP / Minimize */}
                         {isConnected && (
                             <button
                                 className={s.controlBtn}
@@ -882,7 +987,32 @@ export default function CallOverlay({
                             </button>
                         )}
 
-                        {/* Personal chat — toggle the slide-out chat panel */}
+                        {/* Call recording */}
+                        {isConnected && (
+                            <button
+                                className={`${s.controlBtn} ${controls.recording ? s.recordActive : ''}`}
+                                onClick={() => {
+                                    if (controls.recording) controls.stopRecording();
+                                    else controls.startRecording(webrtc.remoteStreamRef.current);
+                                }}
+                                title={controls.recording ? 'Stop recording' : 'Record call'}
+                            >
+                                <RecordIcon />
+                            </button>
+                        )}
+
+                        {/* Emoji reactions */}
+                        {isConnected && (
+                            <button
+                                className={`${s.controlBtn} ${showReactionPicker ? s.active : ''}`}
+                                onClick={() => setShowReactionPicker(v => !v)}
+                                title="Send reaction"
+                            >
+                                <EmojiIcon />
+                            </button>
+                        )}
+
+                        {/* Personal chat */}
                         {isConnected && onSendChat && (
                             <button
                                 className={`${s.controlBtn} ${showChat ? s.active : ''} ${s.chatBtn}`}
@@ -909,26 +1039,32 @@ export default function CallOverlay({
                             </button>
                         )}
 
-                        <button className={`${s.controlBtn} ${s.endBtn}`} onClick={webrtc.handleEnd} title="End call">
+                        {/* Keyboard shortcuts help */}
+                        <button
+                            className={`${s.controlBtn} ${s.smallBtn}`}
+                            onClick={() => setShowShortcutsHelp(v => !v)}
+                            title="Keyboard shortcuts (?)"
+                        >
+                            <KeyboardIcon />
+                        </button>
+
+                        <button className={`${s.controlBtn} ${s.endBtn}`} onClick={webrtc.handleEnd} title="End call (E)">
                             <PhoneIcon rotate />
                         </button>
                     </>
                 )}
             </div>
 
-            {/* Mini-mode bottom strip (name + mute/end/restore). Only visible
-                when the overlay has the .minimized class — see CSS. Clicks on
-                buttons stop propagation so they don't trigger the overlay's
-                "click to restore" handler. */}
+            {/* Mini-mode bottom strip */}
             {minimized && (
                 <div className={s.miniBar} onClick={(e) => e.stopPropagation()}>
                     <div className={s.miniBarInfo}>
                         <span className={s.miniBarName}>{remoteName || 'Call'}</span>
                         <span className={s.miniBarMeta}>
                             {isConnected ? formatDuration(duration) : (
-                                status === 'incoming' ? 'Incoming…' :
-                                status === 'ringing'  ? 'Ringing…' :
-                                status === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'
+                                status === 'incoming' ? 'Incoming\u2026' :
+                                status === 'ringing'  ? 'Ringing\u2026' :
+                                status === 'reconnecting' ? 'Reconnecting\u2026' : 'Connecting\u2026'
                             )}
                             {controls.muted && (
                                 <span className={s.miniBarMuteIcon} title="Muted">
@@ -971,10 +1107,5 @@ export default function CallOverlay({
         </div>
     );
 
-    // Render via a portal attached to <body> so that even when the host page
-    // (Chat) is hidden by the KeepAlive wrapper (display:none), the call
-    // overlay stays visible across navigations. Without this the call window
-    // would disappear the moment the user navigated to Notes / Dashboard /
-    // Tasks etc., even though the underlying peer connection stayed alive.
     return createPortal(overlayContent, document.body);
 }

@@ -48,7 +48,8 @@ function buildMediaConstraintProfiles(isVideoCall) {
 export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatusChange }) {
     const {
         callId, conversationId, isIncoming, callerId, acceptedBy,
-        accepted, onSignal, onEndExternal, localStream, isReconnect, reconnectTo
+        accepted, onSignal, onEndExternal, localStream, isReconnect, reconnectTo,
+        preAccepted
     } = callState;
 
     const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -660,6 +661,15 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         flushPendingSignals();
         wsSend('call_accept', { callId, conversationId });
     }, [callId, conversationId, wsSend, startMedia, createPeerConnection, callerId, stopRingtone, flushPendingSignals, onStatusChange, handleEnd]);
+
+    // ─── Auto-accept when call was accepted from global PiP notification ───
+    const preAcceptedRef = useRef(preAccepted);
+    useEffect(() => {
+        if (preAcceptedRef.current && isIncoming && !pcRef.current) {
+            preAcceptedRef.current = false;
+            handleAccept();
+        }
+    }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
     // ─── Register signal handler ───
     useEffect(() => {
