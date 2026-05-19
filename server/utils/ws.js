@@ -146,7 +146,26 @@ function setupWebSocket(server) {
         // Presence: mark online
         if (wasOffline) {
             redis.setPresence(tenantId, userId, redis.TTL.PRESENCE);
-            db.query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId]).catch(err => { logger.warn({ err: err.message, userId }, 'Failed to update last_seen_at on connect'); });
+            // Reset user_status from 'offline' to 'available' on (re)connect.
+            // The 'offline' value is persisted by /logout and /clock-out but
+            // becomes stale the moment the user reconnects — without this
+            // reset, the subsequent broadcastPresence would tell every other
+            // user that this user is online (green dot) but with status
+            // "Offline", and the user's own UserStatusContext.getUserStatus
+            // would load 'offline' as their manual status. The user would
+            // appear offline to themselves and to chat until they manually
+            // pick another status.
+            try {
+                await db.query(
+                    `UPDATE users SET user_status = 'available', user_status_text = NULL, last_seen_at = NOW() WHERE id = $1 AND user_status = 'offline'`,
+                    [userId]
+                );
+                await redis.setUserStatus(tenantId, userId, 'available');
+            } catch (err) {
+                logger.warn({ err: err.message, userId }, 'Failed to reset user_status on connect');
+                // Still bump last_seen_at even if the status reset failed
+                db.query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId]).catch(() => { });
+            }
             broadcastPresence(db, tenantId, userId, 'online');
         }
 

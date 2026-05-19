@@ -77,9 +77,15 @@ export function AuthProvider({ children }) {
     return () => clearInterval(id);
   }, [user]);
 
-  const saveAuth = useCallback((user) => {
-    try { localStorage.setItem('user', JSON.stringify(sanitizeForCache(user))); } catch { /* quota exceeded or private mode */ }
-    setUser(user);
+  const saveAuth = useCallback((userData) => {
+    try { localStorage.setItem('user', JSON.stringify(sanitizeForCache(userData))); } catch { /* quota exceeded or private mode */ }
+    setUser(userData);
+    getProfile().then(res => {
+      if (res.data) {
+        setUser(res.data);
+        try { localStorage.setItem('user', JSON.stringify(sanitizeForCache(res.data))); } catch { /* ignore */ }
+      }
+    }).catch(() => {});
   }, []);
 
   const updateUser = useCallback((partial) => {

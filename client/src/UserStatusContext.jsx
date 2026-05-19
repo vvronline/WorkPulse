@@ -86,12 +86,26 @@ export function UserStatusProvider({ children }) {
     }
   }, [broadcastStatus]);
 
-  // Fetch initial status on mount
+  // Fetch initial status on mount.
+  //
+  // We deliberately ignore the server values 'available', 'in_call',
+  // 'in_meeting' AND 'offline' here:
+  //   • 'available' is the implicit default, so there's no need to
+  //     stamp it as a manual choice (which would prevent idle-away).
+  //   • 'in_call' / 'in_meeting' are auto statuses driven by the
+  //     active call/meeting on this device, not a manual selection.
+  //   • 'offline' is persisted on logout / clock-out — but the very
+  //     fact that we're loading the app means the user is back online,
+  //     so we should NOT pin them as "Appear Offline". Without this
+  //     guard the navbar profile would show "Offline" with a grey dot
+  //     until the user manually changes status, while chat (driven by
+  //     a fresh WS presence_change) correctly shows them as available.
   useEffect(() => {
     if (!isAuthenticated) return;
     getUserStatus().then(({ data }) => {
-      if (data.status && data.status !== 'available' && data.status !== 'in_call' && data.status !== 'in_meeting') {
-        setManualStatusState(data.status);
+      const persisted = data.status;
+      if (persisted && persisted !== 'available' && persisted !== 'in_call' && persisted !== 'in_meeting' && persisted !== 'offline') {
+        setManualStatusState(persisted);
         setManualStatusText(data.statusText || null);
       }
     }).catch(() => {});

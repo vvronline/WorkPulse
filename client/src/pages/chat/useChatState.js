@@ -216,10 +216,23 @@ export default function useChatState() {
                     d.status === 'online' ? next.add(d.userId) : next.delete(d.userId);
                     return next;
                 });
-                const effectiveStatus = d.status === 'online'
-                    ? (d.userStatus || 'available')
-                    : (d.userStatus || 'offline');
-                setUserStatusMap(prev => ({ ...prev, [d.userId]: effectiveStatus }));
+                // When a user goes offline (WS disconnect), their richer
+                // user_status (available/busy/away/...) is irrelevant — we
+                // must override it to 'offline' so the chat dot/badge
+                // matches the navbar profile (which also flips to offline
+                // on logout/disconnect). If we kept the stale value, the
+                // user would show as offline in presence but still display
+                // a green "Available" dot in chat.
+                // When online, prefer the broadcast userStatus but fall
+                // back to the existing map value (or 'available') rather
+                // than clobbering a fresher status_change with a stale
+                // presence_change.
+                setUserStatusMap(prev => {
+                    if (d.status === 'online') {
+                        return { ...prev, [d.userId]: d.userStatus || prev[d.userId] || 'available' };
+                    }
+                    return { ...prev, [d.userId]: 'offline' };
+                });
                 break;
             }
             case 'status_change': {
@@ -362,11 +375,18 @@ export default function useChatState() {
                         const uid = Number(k);
                         if (typeof v === 'object' && v !== null) {
                             // New format: { presence, userStatus }
-                            if (v.presence === 'online') onlineSet.add(uid);
-                            statusMap[uid] = v.userStatus || 'available';
+                            const isOnline = v.presence === 'online';
+                            if (isOnline) onlineSet.add(uid);
+                            // If the user's WS is disconnected we must show
+                            // them as 'offline' in chat — even if user_status
+                            // in DB is still 'available' from a stale
+                            // session. Otherwise the chat dot stays green
+                            // while the navbar/profile shows offline.
+                            statusMap[uid] = isOnline ? (v.userStatus || 'available') : 'offline';
                         } else {
                             // Legacy format: 'online' | 'offline'
                             if (v === 'online') onlineSet.add(uid);
+                            statusMap[uid] = v === 'online' ? 'available' : 'offline';
                         }
                     }
                     setOnlineUsers(onlineSet);
