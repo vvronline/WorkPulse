@@ -15,7 +15,10 @@ const router = express.Router();
 
 const { cookieOptions } = require('../utils/cookie');
 
-const MAX_SESSIONS = 2;
+// Strictly one active session per user. When a user logs in on a new device,
+// all of their other active sessions are evicted so they are forced to log out
+// on the previous device.
+const MAX_SESSIONS = 1;
 
 /**
  * Resolve a tenant's DB handle from its id.

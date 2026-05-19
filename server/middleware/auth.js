@@ -43,7 +43,7 @@ async function authMiddleware(req, res, next) {
                 return res.status(401).json({ error: 'Session expired. Please sign in again.' });
             }
 
-            // Validate session is still active (max-2-device enforcement)
+            // Validate session is still active (single-device enforcement)
             if (decoded.sid) {
                 let sessions = await redis.getUserSessions(tenantId, decoded.id);
                 if (sessions === null) {
