@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { getBranding, serverURL } from './api';
+import { getBranding, getPublicBranding, serverURL } from './api';
 import { useAuth } from './AuthContext';
 
 /**
@@ -29,6 +29,7 @@ export function BrandingProvider({ children }) {
     const { isAuthenticated, user } = useAuth();
     const [branding, setBranding] = useState({ logo_url: null, accent_color: DEFAULT_ACCENT });
     const fetchedForUser = useRef(null);
+    const publicFetched = useRef(false);
 
     const refresh = useCallback(() => {
         getBranding()
@@ -43,14 +44,30 @@ export function BrandingProvider({ children }) {
 
     useEffect(() => {
         if (!isAuthenticated || !user?.id) {
-            // Reset to default branding when logged out so the next user's
-            // branding doesn't bleed across sessions.
-            setBranding({ logo_url: null, accent_color: DEFAULT_ACCENT });
+            // Logged-out state: instead of falling straight to defaults, ask
+            // the server for the resolved tenant's branding so the
+            // login / register / forgot-password pages match the org theme.
+            // The /public/branding endpoint returns nulls on the master
+            // domain or when the tenant hasn't configured branding, in
+            // which case we keep the built-in default accent.
             fetchedForUser.current = null;
+            if (publicFetched.current) return;
+            publicFetched.current = true;
+            getPublicBranding()
+                .then(({ data }) => {
+                    setBranding({
+                        logo_url: data?.logo_url || null,
+                        accent_color: data?.accent_color || DEFAULT_ACCENT,
+                    });
+                })
+                .catch(() => {
+                    setBranding({ logo_url: null, accent_color: DEFAULT_ACCENT });
+                });
             return;
         }
         if (fetchedForUser.current === user.id) return;
         fetchedForUser.current = user.id;
+        publicFetched.current = false; // re-fetch public branding on next logout
         refresh();
     }, [isAuthenticated, user?.id, refresh]);
 

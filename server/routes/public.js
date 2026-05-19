@@ -16,6 +16,48 @@ const { logger } = require('../utils/logger');
 
 const router = express.Router();
 
+/**
+ * GET /api/public/branding
+ *
+ * Returns the resolved tenant's logo + accent color so the login / register /
+ * forgot-password pages can match the org's theme BEFORE the user authenticates.
+ *
+ * Unlike GET /api/branding (which requires auth + a specific user's org_id),
+ * this endpoint relies on tenant resolution via the Host header (custom
+ * domain → tenant DB) that has already happened in middleware. It returns
+ * branding for the first org found in the tenant DB; multi-org tenants will
+ * naturally have one org per tenant DB so this is unambiguous.
+ *
+ * Returns defaults ({ logo_url: null, accent_color: null }) when:
+ *   - request hits the master / default railway domain (no tenant context)
+ *   - the tenant DB has no org_branding row yet
+ *   - any error occurs (branding is best-effort, never blocks login)
+ */
+router.get('/branding', async (req, res) => {
+    // Master / default-domain context — no tenant branding to serve.
+    if (!req.tenant || !req.db || req.isMasterRoute) {
+        return res.json({ logo_url: null, accent_color: null });
+    }
+    try {
+        const row = (await req.db.query(
+            `SELECT b.logo_url, b.accent_color
+               FROM org_branding b
+               JOIN organizations o ON o.id = b.org_id
+              ORDER BY o.id ASC
+              LIMIT 1`
+        )).rows[0];
+        res.json({
+            logo_url: row?.logo_url || null,
+            accent_color: row?.accent_color || null,
+        });
+    } catch (err) {
+        // org_branding table may not exist on very old tenant DBs — fall back
+        // silently so login pages still render.
+        req.log?.warn?.({ err: err.message }, 'Public branding lookup failed');
+        res.json({ logo_url: null, accent_color: null });
+    }
+});
+
 router.get('/notes/:token', async (req, res) => {
     try {
         const token = String(req.params.token || '');

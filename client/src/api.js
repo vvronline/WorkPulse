@@ -483,6 +483,10 @@ export const getMeetingHlsStatus = (code) => API.get(`/meetings/${code}/hls/stat
 // the user is even authenticated; the server only allows it for
 // authenticated org members so it returns 401 pre-login (which we handle).
 export const getBranding = () => API.get('/branding');
+// Public branding (no auth) — used to theme the login / register pages with
+// the org's accent color before the user signs in. Returns nulls on the
+// master / default domain so callers can safely fall back to defaults.
+export const getPublicBranding = () => API.get('/public/branding');
 export const updateBrandingAccent = (accent_color) => API.put('/branding', { accent_color });
 export const uploadBrandingLogo = (file) => {
     const fd = new FormData();
