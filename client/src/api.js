@@ -461,6 +461,10 @@ export const getBankVerifications = () => API.get('/compensation/bank-verificati
 export const approveBankDetails = (userId) => API.post(`/compensation/bank-details/${userId}/approve`);
 export const rejectBankDetails = (userId) => API.post(`/compensation/bank-details/${userId}/reject`);
 
+// CTC Config
+export const getCtcConfig = () => API.get('/compensation/ctc-config');
+export const saveCtcConfig = (data) => API.put('/compensation/ctc-config', data);
+
 // Bulk User Import
 export const importUsers = (payload, isFile = false) => {
     if (isFile) {

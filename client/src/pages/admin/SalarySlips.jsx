@@ -5,6 +5,7 @@ import {
     bulkPublishSlips, downloadSalarySlipPdf, disburseSalaries,
     getDisbursements, retryDisbursement,
 } from '../../api';
+import ConfirmDialog from '../../components/common/ConfirmDialog';
 import s from './AdminPages.module.css';
 
 const STATUS_COLORS = {
@@ -28,6 +29,7 @@ export default function SalarySlips() {
     const [disbursing, setDisbursing] = useState(false);
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
+    const [showDisburseConfirm, setShowDisburseConfirm] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -104,7 +106,7 @@ export default function SalarySlips() {
     };
 
     const handleDisburse = async () => {
-        if (!window.confirm('Initiate bank transfer for all published slips in this period?')) return;
+        setShowDisburseConfirm(false);
         setDisbursing(true);
         setError('');
         try {
@@ -166,7 +168,7 @@ export default function SalarySlips() {
                             </button>
                         )}
                         {publishedCount > 0 && (
-                            <button onClick={handleDisburse} disabled={disbursing} className={s.btnPrimary}>
+                            <button onClick={() => setShowDisburseConfirm(true)} disabled={disbursing} className={s.btnPrimary}>
                                 <Send size={14} /> {disbursing ? 'Disbursing...' : `Disburse All (${publishedCount})`}
                             </button>
                         )}
@@ -240,6 +242,17 @@ export default function SalarySlips() {
                     </table>
                 </div>
             )}
+
+            <ConfirmDialog
+                isOpen={showDisburseConfirm}
+                title="Confirm Disbursement"
+                message="Initiate bank transfer for all published slips in this period?"
+                confirmText="Disburse"
+                cancelText="Cancel"
+                onConfirm={handleDisburse}
+                onCancel={() => setShowDisburseConfirm(false)}
+                isDanger={false}
+            />
         </div>
     );
 }

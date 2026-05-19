@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Edit2, Save, X, Users, LayoutTemplate, Building2, CheckCircle, XCircle } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Users, LayoutTemplate, Building2, CheckCircle, XCircle, Settings } from 'lucide-react';
 import {
     getCompensationTemplates, createCompensationTemplate, updateCompensationTemplate,
     deleteCompensationTemplate, getEmployeeCompensations, assignCompensation, getOrgMembers,
     getBankVerifications, approveBankDetails, rejectBankDetails,
+    getCtcConfig, saveCtcConfig,
 } from '../../api';
 import s from './AdminPages.module.css';
 
@@ -17,6 +18,32 @@ const DEFAULT_COMPONENTS = [
     { key: '_ded_tds', label: 'Income Tax (TDS)', type: 'deduction', calc_type: 'fixed', taxable: false },
 ];
 
+const CTC_DEFAULTS = { basic_pct: 40, hra_pct: 50, conveyance_pct: 5, pf_pct: 12, pf_max: 1800, pt_fixed: 200 };
+
+function calcFromCtc(ctcAnnual, config, currentComponents) {
+    const cfg = config || CTC_DEFAULTS;
+    const monthly = Math.round(ctcAnnual / 12);
+    const basic = Math.round(monthly * cfg.basic_pct / 100);
+    const hra = Math.round(basic * cfg.hra_pct / 100);
+    const conveyance = Math.round(monthly * cfg.conveyance_pct / 100);
+    const specialAllowance = Math.max(0, monthly - basic - hra - conveyance);
+    const pf = Math.min(Number(cfg.pf_max), Math.round(basic * cfg.pf_pct / 100));
+    const ctcMap = {
+        basic,
+        hra,
+        conveyance,
+        special_allowance: specialAllowance,
+        _ded_pf: pf,
+        _ded_professional_tax: Number(cfg.pt_fixed),
+        _ded_tds: 0,
+    };
+    const updated = { ...currentComponents };
+    Object.keys(updated).forEach(key => {
+        if (ctcMap[key] !== undefined) updated[key] = ctcMap[key];
+    });
+    return { base_salary: monthly, components: updated };
+}
+
 export default function CompensationSetup() {
     const [tab, setTab] = useState('templates');
     const [templates, setTemplates] = useState([]);
@@ -26,13 +53,19 @@ export default function CompensationSetup() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
 
+    // CTC config state
+    const [ctcConfig, setCtcConfig] = useState(CTC_DEFAULTS);
+    const [ctcForm, setCtcForm] = useState(CTC_DEFAULTS);
+    const [ctcSaving, setCtcSaving] = useState(false);
+    const [ctcSaved, setCtcSaved] = useState(false);
+
     // Template form
     const [editingTemplate, setEditingTemplate] = useState(null);
     const [templateForm, setTemplateForm] = useState({ name: '', description: '', components: DEFAULT_COMPONENTS, is_default: false });
 
     // Employee compensation form
     const [assignModal, setAssignModal] = useState(null);
-    const [assignForm, setAssignForm] = useState({ effective_from: '', base_salary: '', components: {} });
+    const [assignForm, setAssignForm] = useState({ effective_from: '', ctc_annual: '', base_salary: '', components: {} });
     const [selectedUserId, setSelectedUserId] = useState('');
 
     const loadTemplates = useCallback(async () => {
@@ -63,10 +96,18 @@ export default function CompensationSetup() {
         } catch { /* non-critical */ }
     }, []);
 
+    const loadCtcConfig = useCallback(async () => {
+        try {
+            const res = await getCtcConfig();
+            setCtcConfig(res.data);
+            setCtcForm(res.data);
+        } catch { /* use defaults */ }
+    }, []);
+
     useEffect(() => {
         setLoading(true);
-        Promise.all([loadTemplates(), loadEmployees(), loadMembers(), loadBankVerifications()]).finally(() => setLoading(false));
-    }, [loadTemplates, loadEmployees, loadMembers, loadBankVerifications]);
+        Promise.all([loadTemplates(), loadEmployees(), loadMembers(), loadBankVerifications(), loadCtcConfig()]).finally(() => setLoading(false));
+    }, [loadTemplates, loadEmployees, loadMembers, loadBankVerifications, loadCtcConfig]);
 
     const handleSaveTemplate = async (e) => {
         e.preventDefault();
@@ -101,12 +142,40 @@ export default function CompensationSetup() {
         try {
             const userId = assignModal.user_id || assignModal.id || selectedUserId;
             if (!userId) { setError('Please select an employee'); return; }
-            await assignCompensation(userId, assignForm);
+            await assignCompensation(userId, { ...assignForm, ctc_annual: assignForm.ctc_annual || 0 });
             setAssignModal(null);
             setSelectedUserId('');
             loadEmployees();
         } catch (err) {
             setError(err.response?.data?.error || 'Failed to assign compensation');
+        }
+    };
+
+    const handleCtcChange = (ctcVal) => {
+        const ctc = parseFloat(ctcVal) || 0;
+        setAssignForm(f => {
+            if (ctc > 0) {
+                const { base_salary, components } = calcFromCtc(ctc, ctcConfig, f.components);
+                return { ...f, ctc_annual: ctcVal, base_salary, components };
+            }
+            return { ...f, ctc_annual: ctcVal };
+        });
+    };
+
+    const handleSaveCtcConfig = async (e) => {
+        e.preventDefault();
+        setCtcSaving(true);
+        setError('');
+        try {
+            const res = await saveCtcConfig(ctcForm);
+            setCtcConfig(res.data);
+            setCtcForm(res.data);
+            setCtcSaved(true);
+            setTimeout(() => setCtcSaved(false), 2000);
+        } catch (err) {
+            setError(err.response?.data?.error || 'Failed to save CTC config');
+        } finally {
+            setCtcSaving(false);
         }
     };
 
@@ -143,6 +212,9 @@ export default function CompensationSetup() {
                 </button>
                 <button className={`${s.tabBtn} ${tab === 'employees' ? s.active : ''}`} onClick={() => setTab('employees')}>
                     <Users size={14} /> Employees
+                </button>
+                <button className={`${s.tabBtn} ${tab === 'ctc' ? s.active : ''}`} onClick={() => setTab('ctc')}>
+                    <Settings size={14} /> CTC Settings
                 </button>
                 <button className={`${s.tabBtn} ${tab === 'bank' ? s.active : ''}`} onClick={() => setTab('bank')}>
                     <Building2 size={14} /> Bank Verifications
@@ -277,7 +349,7 @@ export default function CompensationSetup() {
                         <button className={s.btnPrimary} onClick={() => {
                             setAssignModal({ _isNew: true });
                             setSelectedUserId('');
-                            setAssignForm({ effective_from: new Date().toISOString().slice(0, 10), base_salary: '', components: {} });
+                            setAssignForm({ effective_from: new Date().toISOString().slice(0, 10), ctc_annual: '', base_salary: '', components: {} });
                         }}>
                             <Plus size={14} /> Assign Compensation
                         </button>
@@ -288,7 +360,8 @@ export default function CompensationSetup() {
                                 <tr>
                                     <th>Employee</th>
                                     <th>Department</th>
-                                    <th>Base Salary</th>
+                                    <th>Annual CTC</th>
+                                    <th>Base Salary (Monthly)</th>
                                     <th>Effective From</th>
                                     <th>Actions</th>
                                 </tr>
@@ -298,6 +371,7 @@ export default function CompensationSetup() {
                                     <tr key={emp.id}>
                                         <td><strong>{emp.full_name}</strong><br /><small>{emp.email}</small></td>
                                         <td>{emp.department_name || '-'}</td>
+                                        <td>{emp.ctc_annual > 0 ? `₹${Number(emp.ctc_annual).toLocaleString('en-IN')}` : '-'}</td>
                                         <td>₹{Number(emp.base_salary).toLocaleString('en-IN')}</td>
                                         <td>{emp.effective_from}</td>
                                         <td>
@@ -305,6 +379,7 @@ export default function CompensationSetup() {
                                                 setAssignModal(emp);
                                                 setAssignForm({
                                                     effective_from: new Date().toISOString().slice(0, 10),
+                                                    ctc_annual: emp.ctc_annual > 0 ? emp.ctc_annual : '',
                                                     base_salary: emp.base_salary,
                                                     components: emp.components || {},
                                                     template_id: emp.template_id,
@@ -315,11 +390,96 @@ export default function CompensationSetup() {
                                         </td>
                                     </tr>
                                 ))}
-                                {employees.length === 0 && <tr><td colSpan={5}>No compensation records. Assign salary to employees.</td></tr>}
+                                {employees.length === 0 && <tr><td colSpan={6}>No compensation records. Assign salary to employees.</td></tr>}
                             </tbody>
                         </table>
                     </div>
                 </div>
+            )}
+
+            {tab === 'ctc' && (
+                <form onSubmit={handleSaveCtcConfig} className={s.formCard}>
+                    <h3>CTC Breakdown Settings</h3>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginBottom: '1.5rem' }}>
+                        These percentages are used to auto-calculate monthly component amounts when an Annual CTC is entered during compensation assignment.
+                    </p>
+
+                    <div className={s.formRow}>
+                        <div className={s.formGroup}>
+                            <label>Basic Salary — % of Monthly CTC</label>
+                            <input
+                                type="number" min="0" max="100" step="0.5"
+                                value={ctcForm.basic_pct}
+                                onChange={e => setCtcForm(f => ({ ...f, basic_pct: e.target.value }))}
+                                className={s.input}
+                                required
+                            />
+                        </div>
+                        <div className={s.formGroup}>
+                            <label>HRA — % of Basic Salary</label>
+                            <input
+                                type="number" min="0" max="100" step="0.5"
+                                value={ctcForm.hra_pct}
+                                onChange={e => setCtcForm(f => ({ ...f, hra_pct: e.target.value }))}
+                                className={s.input}
+                                required
+                            />
+                        </div>
+                        <div className={s.formGroup}>
+                            <label>Conveyance — % of Monthly CTC</label>
+                            <input
+                                type="number" min="0" max="100" step="0.5"
+                                value={ctcForm.conveyance_pct}
+                                onChange={e => setCtcForm(f => ({ ...f, conveyance_pct: e.target.value }))}
+                                className={s.input}
+                                required
+                            />
+                        </div>
+                    </div>
+
+                    <div className={s.formRow}>
+                        <div className={s.formGroup}>
+                            <label>PF — % of Basic Salary</label>
+                            <input
+                                type="number" min="0" max="100" step="0.5"
+                                value={ctcForm.pf_pct}
+                                onChange={e => setCtcForm(f => ({ ...f, pf_pct: e.target.value }))}
+                                className={s.input}
+                                required
+                            />
+                        </div>
+                        <div className={s.formGroup}>
+                            <label>PF Maximum Cap (₹/month)</label>
+                            <input
+                                type="number" min="0"
+                                value={ctcForm.pf_max}
+                                onChange={e => setCtcForm(f => ({ ...f, pf_max: e.target.value }))}
+                                className={s.input}
+                                required
+                            />
+                        </div>
+                        <div className={s.formGroup}>
+                            <label>Professional Tax — Fixed (₹/month)</label>
+                            <input
+                                type="number" min="0"
+                                value={ctcForm.pt_fixed}
+                                onChange={e => setCtcForm(f => ({ ...f, pt_fixed: e.target.value }))}
+                                className={s.input}
+                                required
+                            />
+                        </div>
+                    </div>
+
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '1rem' }}>
+                        Special Allowance is automatically the remaining balance after Basic, HRA, and Conveyance. TDS defaults to ₹0 and can be set manually per employee.
+                    </p>
+
+                    <div className={s.formActions}>
+                        <button type="submit" className={s.btnPrimary} disabled={ctcSaving}>
+                            <Save size={14} /> {ctcSaved ? 'Saved!' : ctcSaving ? 'Saving...' : 'Save Settings'}
+                        </button>
+                    </div>
+                </form>
             )}
 
             {tab === 'bank' && (
@@ -426,6 +586,19 @@ export default function CompensationSetup() {
                                     </select>
                                 </div>
                             )}
+
+                            <div className={s.formRow}>
+                                <label>Annual CTC (₹)</label>
+                                <input
+                                    type="number"
+                                    value={assignForm.ctc_annual}
+                                    onChange={e => handleCtcChange(e.target.value)}
+                                    min="0"
+                                    className={s.input}
+                                    placeholder="e.g. 600000 — auto-fills fields below"
+                                />
+                            </div>
+
                             <div className={s.formRow}>
                                 <label>Effective From</label>
                                 <input
@@ -437,7 +610,7 @@ export default function CompensationSetup() {
                                 />
                             </div>
                             <div className={s.formRow}>
-                                <label>Base Salary (Monthly)</label>
+                                <label>Base Salary (Monthly ₹)</label>
                                 <input
                                     type="number"
                                     value={assignForm.base_salary}
@@ -459,7 +632,14 @@ export default function CompensationSetup() {
                                             if (tmpl) {
                                                 const comps = {};
                                                 tmpl.components.forEach(c => { comps[c.key] = 0; });
-                                                setAssignForm(f => ({ ...f, components: comps }));
+                                                setAssignForm(f => {
+                                                    const updated = { ...f, components: comps, template_id: tid || null };
+                                                    if (f.ctc_annual > 0) {
+                                                        const { base_salary, components } = calcFromCtc(parseFloat(f.ctc_annual), ctcConfig, comps);
+                                                        return { ...updated, base_salary, components };
+                                                    }
+                                                    return updated;
+                                                });
                                             }
                                         }
                                     }}
@@ -470,28 +650,32 @@ export default function CompensationSetup() {
                                 </select>
                             </div>
 
-                            <h4>Component Amounts</h4>
-                            <div className={s.componentList}>
-                                {Object.entries(assignForm.components).map(([key, val]) => (
-                                    <div key={key} className={s.componentRow}>
-                                        <span className={s.compLabel}>{key.replace(/_ded_/, '').replace(/_/g, ' ')}</span>
-                                        <input
-                                            type="number"
-                                            value={val}
-                                            onChange={e => setAssignForm(f => ({
-                                                ...f,
-                                                components: { ...f.components, [key]: e.target.value === '' ? '' : parseFloat(e.target.value) },
-                                            }))}
-                                            onBlur={e => setAssignForm(f => ({
-                                                ...f,
-                                                components: { ...f.components, [key]: parseFloat(e.target.value) || 0 },
-                                            }))}
-                                            min="0"
-                                            className={s.inputSm}
-                                        />
+                            {Object.keys(assignForm.components).length > 0 && (
+                                <>
+                                    <h4>Component Amounts (Monthly ₹)</h4>
+                                    <div className={s.componentList}>
+                                        {Object.entries(assignForm.components).map(([key, val]) => (
+                                            <div key={key} className={s.componentRow}>
+                                                <span className={s.compLabel}>{key.replace(/_ded_/, '').replace(/_/g, ' ')}</span>
+                                                <input
+                                                    type="number"
+                                                    value={val}
+                                                    onChange={e => setAssignForm(f => ({
+                                                        ...f,
+                                                        components: { ...f.components, [key]: e.target.value === '' ? '' : parseFloat(e.target.value) },
+                                                    }))}
+                                                    onBlur={e => setAssignForm(f => ({
+                                                        ...f,
+                                                        components: { ...f.components, [key]: parseFloat(e.target.value) || 0 },
+                                                    }))}
+                                                    min="0"
+                                                    className={s.inputSm}
+                                                />
+                                            </div>
+                                        ))}
                                     </div>
-                                ))}
-                            </div>
+                                </>
+                            )}
 
                             <div className={s.formActions}>
                                 <button type="submit" className={s.btnPrimary}><Save size={14} /> Save</button>

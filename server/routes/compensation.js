@@ -158,7 +158,7 @@ router.get('/employees/:userId', requireRole('hr_admin'), requireSameOrg, async 
 
 router.post('/employees/:userId', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
     try {
-        const { template_id, effective_from, base_salary, components, currency, payment_frequency, bank_account, notes } = req.body;
+        const { template_id, effective_from, base_salary, ctc_annual, components, currency, payment_frequency, bank_account, notes } = req.body;
         if (!effective_from || !base_salary) {
             return res.status(400).json({ error: 'effective_from and base_salary are required' });
         }
@@ -177,13 +177,13 @@ router.post('/employees/:userId', requireRole('hr_admin'), requireSameOrg, async
 
         const result = await req.db.query(
             `INSERT INTO employee_compensation
-             (user_id, org_id, template_id, effective_from, base_salary, components, currency, payment_frequency, bank_account, notes, created_by)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-            [req.params.userId, req.userOrgId, template_id || null, effective_from, base_salary,
+             (user_id, org_id, template_id, effective_from, ctc_annual, base_salary, components, currency, payment_frequency, bank_account, notes, created_by)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+            [req.params.userId, req.userOrgId, template_id || null, effective_from, ctc_annual || 0, base_salary,
              JSON.stringify(components || {}), currency || 'INR', payment_frequency || 'monthly',
              bank_account || null, notes || null, req.userId]
         );
-        logAction(req, 'create', 'employee_compensation', result.rows[0].id, { user_id: req.params.userId, base_salary });
+        logAction(req, 'create', 'employee_compensation', result.rows[0].id, { user_id: req.params.userId, base_salary, ctc_annual });
         res.status(201).json(result.rows[0]);
     } catch (err) {
         if (err.code === '23505') return res.status(409).json({ error: 'Compensation for this effective date already exists' });
@@ -194,7 +194,7 @@ router.post('/employees/:userId', requireRole('hr_admin'), requireSameOrg, async
 
 router.put('/employees/:userId/:id', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
     try {
-        const { base_salary, components, currency, payment_frequency, bank_account, notes } = req.body;
+        const { base_salary, ctc_annual, components, currency, payment_frequency, bank_account, notes } = req.body;
         const existing = (await req.db.query(
             `SELECT * FROM employee_compensation WHERE id = $1 AND user_id = $2 AND org_id = $3`,
             [req.params.id, req.params.userId, req.userOrgId]
@@ -203,11 +203,12 @@ router.put('/employees/:userId/:id', requireRole('hr_admin'), requireSameOrg, as
 
         const result = await req.db.query(
             `UPDATE employee_compensation
-             SET base_salary = COALESCE($1, base_salary), components = COALESCE($2, components),
-                 currency = COALESCE($3, currency), payment_frequency = COALESCE($4, payment_frequency),
-                 bank_account = COALESCE($5, bank_account), notes = COALESCE($6, notes), updated_at = NOW()
-             WHERE id = $7 RETURNING *`,
-            [base_salary, components ? JSON.stringify(components) : null, currency, payment_frequency, bank_account, notes, req.params.id]
+             SET base_salary = COALESCE($1, base_salary), ctc_annual = COALESCE($2, ctc_annual),
+                 components = COALESCE($3, components),
+                 currency = COALESCE($4, currency), payment_frequency = COALESCE($5, payment_frequency),
+                 bank_account = COALESCE($6, bank_account), notes = COALESCE($7, notes), updated_at = NOW()
+             WHERE id = $8 RETURNING *`,
+            [base_salary, ctc_annual ?? null, components ? JSON.stringify(components) : null, currency, payment_frequency, bank_account, notes, req.params.id]
         );
         res.json(result.rows[0]);
     } catch (err) {
@@ -768,6 +769,46 @@ router.post('/payment-config/test', requireRole('hr_admin'), requireSameOrg, asy
         res.json({ success: true, balance: result.balance });
     } catch (err) {
         res.status(400).json({ success: false, error: err.message });
+    }
+});
+
+// ==================== CTC CONFIG ====================
+
+const CTC_DEFAULTS = { basic_pct: 40, hra_pct: 50, conveyance_pct: 5, pf_pct: 12, pf_max: 1800, pt_fixed: 200 };
+
+router.get('/ctc-config', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
+    try {
+        const row = (await req.db.query(
+            `SELECT * FROM org_ctc_config WHERE org_id = $1`,
+            [req.userOrgId]
+        )).rows[0];
+        res.json(row || { org_id: req.userOrgId, ...CTC_DEFAULTS });
+    } catch (err) {
+        logger.error({ err }, 'GET ctc-config error');
+        res.status(500).json({ error: 'Failed to fetch CTC config' });
+    }
+});
+
+router.put('/ctc-config', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
+    try {
+        const { basic_pct, hra_pct, conveyance_pct, pf_pct, pf_max, pt_fixed } = req.body;
+        const result = await req.db.query(
+            `INSERT INTO org_ctc_config (org_id, basic_pct, hra_pct, conveyance_pct, pf_pct, pf_max, pt_fixed, updated_by, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+             ON CONFLICT (org_id) DO UPDATE SET
+                 basic_pct = EXCLUDED.basic_pct, hra_pct = EXCLUDED.hra_pct,
+                 conveyance_pct = EXCLUDED.conveyance_pct, pf_pct = EXCLUDED.pf_pct,
+                 pf_max = EXCLUDED.pf_max, pt_fixed = EXCLUDED.pt_fixed,
+                 updated_by = EXCLUDED.updated_by, updated_at = NOW()
+             RETURNING *`,
+            [req.userOrgId, basic_pct ?? CTC_DEFAULTS.basic_pct, hra_pct ?? CTC_DEFAULTS.hra_pct,
+             conveyance_pct ?? CTC_DEFAULTS.conveyance_pct, pf_pct ?? CTC_DEFAULTS.pf_pct,
+             pf_max ?? CTC_DEFAULTS.pf_max, pt_fixed ?? CTC_DEFAULTS.pt_fixed, req.userId]
+        );
+        res.json(result.rows[0]);
+    } catch (err) {
+        logger.error({ err }, 'PUT ctc-config error');
+        res.status(500).json({ error: 'Failed to save CTC config' });
     }
 });
 

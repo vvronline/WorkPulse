@@ -1093,6 +1093,7 @@ async function initTenantSchema(q) {
             template_id         INTEGER REFERENCES compensation_templates(id) ON DELETE SET NULL,
             effective_from      TEXT NOT NULL,
             effective_to        TEXT,
+            ctc_annual          NUMERIC(12,2) NOT NULL DEFAULT 0,
             base_salary         NUMERIC(12,2) NOT NULL DEFAULT 0,
             components          JSONB NOT NULL DEFAULT '{}',
             currency            TEXT NOT NULL DEFAULT 'INR',
@@ -1202,6 +1203,21 @@ async function initTenantSchema(q) {
         )
     `);
     await q(`CREATE INDEX IF NOT EXISTS idx_employee_bank_details_org ON employee_bank_details(org_id)`);
+
+    // ---- CTC breakdown config (org-level percentages for auto-calculation) ----
+    await q(`
+        CREATE TABLE IF NOT EXISTS org_ctc_config (
+            org_id          INTEGER PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+            basic_pct       NUMERIC(5,2) NOT NULL DEFAULT 40,
+            hra_pct         NUMERIC(5,2) NOT NULL DEFAULT 50,
+            conveyance_pct  NUMERIC(5,2) NOT NULL DEFAULT 5,
+            pf_pct          NUMERIC(5,2) NOT NULL DEFAULT 12,
+            pf_max          NUMERIC(10,2) NOT NULL DEFAULT 1800,
+            pt_fixed        NUMERIC(10,2) NOT NULL DEFAULT 200,
+            updated_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            updated_at      TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
 
     // ---- Announcements ----
     await q(`
