@@ -705,8 +705,18 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
             const newSprint = newSprintId ? (await req.db.query('SELECT name FROM sprints WHERE id = $1', [newSprintId])).rows[0] : null;
             await logHistory(id, req.userId, 'updated', 'sprint', oldSprint?.name || 'none', newSprint?.name || 'none', null, req.db);
         }
-        if (String(newStoryPoints ?? '') !== String(task.story_points ?? '')) {
-            await logHistory(id, req.userId, 'updated', 'story_points', task.story_points, newStoryPoints, null, req.db);
+        // Normalize for comparison: DB returns NUMERIC as a string like '8.00',
+        // while newStoryPoints is a JS number (e.g. 8). A naive string compare
+        // would mark every edit as a change. Compare numerically and treat
+        // null/undefined as equal.
+        const oldSpNum = task.story_points == null ? null : Number(task.story_points);
+        const newSpNum = newStoryPoints == null ? null : Number(newStoryPoints);
+        const spChanged = (oldSpNum === null) !== (newSpNum === null)
+            || (oldSpNum !== null && newSpNum !== null && oldSpNum !== newSpNum);
+        if (spChanged) {
+            // Log normalised numeric values so the history reads "8 → 9" rather
+            // than "8.00 → 9" (Postgres NUMERIC vs JS number formatting).
+            await logHistory(id, req.userId, 'updated', 'story_points', oldSpNum, newSpNum, null, req.db);
         }
         if (String(newWitId ?? '') !== String(task.work_item_type_id ?? '')) {
             const oldWit = task.work_item_type_id ? (await req.db.query('SELECT name FROM work_item_types WHERE id = $1', [task.work_item_type_id])).rows[0] : null;
