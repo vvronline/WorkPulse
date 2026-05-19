@@ -456,6 +456,10 @@ export const getEmployeeBankDetails = (userId) => API.get(`/compensation/bank-de
 export const saveEmployeeBankDetails = (userId, data) => API.post(`/compensation/bank-details/${userId}`, data);
 export const verifyBankDetails = (userId) => API.post(`/compensation/bank-details/${userId}/verify`);
 export const getMyBankDetails = () => API.get('/compensation/my-bank-details');
+export const saveMyBankDetails = (data) => API.post('/compensation/my-bank-details', data);
+export const getBankVerifications = () => API.get('/compensation/bank-verifications');
+export const approveBankDetails = (userId) => API.post(`/compensation/bank-details/${userId}/approve`);
+export const rejectBankDetails = (userId) => API.post(`/compensation/bank-details/${userId}/reject`);
 
 // Bulk User Import
 export const importUsers = (payload, isFile = false) => {

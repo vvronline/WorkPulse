@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Edit2, Save, X, Users, LayoutTemplate } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Users, LayoutTemplate, Building2, CheckCircle, XCircle } from 'lucide-react';
 import {
     getCompensationTemplates, createCompensationTemplate, updateCompensationTemplate,
     deleteCompensationTemplate, getEmployeeCompensations, assignCompensation, getOrgMembers,
+    getBankVerifications, approveBankDetails, rejectBankDetails,
 } from '../../api';
 import s from './AdminPages.module.css';
 
@@ -21,6 +22,7 @@ export default function CompensationSetup() {
     const [templates, setTemplates] = useState([]);
     const [employees, setEmployees] = useState([]);
     const [allMembers, setAllMembers] = useState([]);
+    const [bankVerifications, setBankVerifications] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
 
@@ -54,10 +56,17 @@ export default function CompensationSetup() {
         } catch { /* non-critical */ }
     }, []);
 
+    const loadBankVerifications = useCallback(async () => {
+        try {
+            const res = await getBankVerifications();
+            setBankVerifications(res.data || []);
+        } catch { /* non-critical */ }
+    }, []);
+
     useEffect(() => {
         setLoading(true);
-        Promise.all([loadTemplates(), loadEmployees(), loadMembers()]).finally(() => setLoading(false));
-    }, [loadTemplates, loadEmployees, loadMembers]);
+        Promise.all([loadTemplates(), loadEmployees(), loadMembers(), loadBankVerifications()]).finally(() => setLoading(false));
+    }, [loadTemplates, loadEmployees, loadMembers, loadBankVerifications]);
 
     const handleSaveTemplate = async (e) => {
         e.preventDefault();
@@ -134,6 +143,14 @@ export default function CompensationSetup() {
                 </button>
                 <button className={`${s.tabBtn} ${tab === 'employees' ? s.active : ''}`} onClick={() => setTab('employees')}>
                     <Users size={14} /> Employees
+                </button>
+                <button className={`${s.tabBtn} ${tab === 'bank' ? s.active : ''}`} onClick={() => setTab('bank')}>
+                    <Building2 size={14} /> Bank Verifications
+                    {bankVerifications.filter(b => !b.is_verified).length > 0 && (
+                        <span style={{ marginLeft: 6, background: 'var(--warning)', color: '#fff', borderRadius: 10, padding: '1px 7px', fontSize: 11, fontWeight: 600 }}>
+                            {bankVerifications.filter(b => !b.is_verified).length}
+                        </span>
+                    )}
                 </button>
             </div>
 
@@ -305,6 +322,86 @@ export default function CompensationSetup() {
                 </div>
             )}
 
+            {tab === 'bank' && (
+                <div>
+                    <div className={s.tableWrap}>
+                        <table className={s.table}>
+                            <thead>
+                                <tr>
+                                    <th>Employee</th>
+                                    <th>Department</th>
+                                    <th>Account Holder</th>
+                                    <th>Account Number</th>
+                                    <th>IFSC</th>
+                                    <th>Bank</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {bankVerifications.map(b => (
+                                    <tr key={b.id}>
+                                        <td><strong>{b.full_name}</strong><br /><small>{b.email}</small></td>
+                                        <td>{b.department_name || '-'}</td>
+                                        <td>{b.account_holder_name}</td>
+                                        <td>{b.account_number}</td>
+                                        <td>{b.ifsc_code}</td>
+                                        <td>{b.bank_name || '-'}</td>
+                                        <td>
+                                            {b.is_verified ? (
+                                                <span style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                    <CheckCircle size={14} /> Verified
+                                                </span>
+                                            ) : (
+                                                <span style={{ color: 'var(--warning)', fontWeight: 500 }}>Pending</span>
+                                            )}
+                                        </td>
+                                        <td>
+                                            {!b.is_verified ? (
+                                                <div style={{ display: 'flex', gap: 6 }}>
+                                                    <button
+                                                        className={s.iconBtn}
+                                                        title="Approve"
+                                                        style={{ color: 'var(--success)' }}
+                                                        onClick={async () => {
+                                                            try {
+                                                                await approveBankDetails(b.user_id);
+                                                                loadBankVerifications();
+                                                            } catch { alert('Failed to approve'); }
+                                                        }}
+                                                    >
+                                                        <CheckCircle size={16} />
+                                                    </button>
+                                                    <button
+                                                        className={s.iconBtn}
+                                                        title="Reject"
+                                                        style={{ color: 'var(--danger)' }}
+                                                        onClick={async () => {
+                                                            if (!window.confirm('Reject this bank detail?')) return;
+                                                            try {
+                                                                await rejectBankDetails(b.user_id);
+                                                                loadBankVerifications();
+                                                            } catch { alert('Failed to reject'); }
+                                                        }}
+                                                    >
+                                                        <XCircle size={16} />
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <small style={{ color: 'var(--text-muted)' }}>
+                                                    {b.verified_at ? `Verified ${new Date(b.verified_at).toLocaleDateString()}` : '—'}
+                                                </small>
+                                            )}
+                                        </td>
+                                    </tr>
+                                ))}
+                                {bankVerifications.length === 0 && <tr><td colSpan={8}>No bank details submitted yet.</td></tr>}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+
             {/* Assign compensation modal */}
             {assignModal && (
                 <div className={s.modalOverlay} onClick={() => setAssignModal(null)}>
@@ -322,7 +419,7 @@ export default function CompensationSetup() {
                                     >
                                         <option value="">Select an employee</option>
                                         {allMembers
-                                            .filter(m => !employees.some(emp => (emp.user_id || emp.id) === m.id))
+                                            .filter(m => m.is_active !== false && !employees.some(emp => (emp.user_id || emp.id) === m.id))
                                             .map(m => (
                                                 <option key={m.id} value={m.id}>{m.full_name || m.name} ({m.email})</option>
                                             ))}
@@ -382,6 +479,10 @@ export default function CompensationSetup() {
                                             type="number"
                                             value={val}
                                             onChange={e => setAssignForm(f => ({
+                                                ...f,
+                                                components: { ...f.components, [key]: e.target.value === '' ? '' : parseFloat(e.target.value) },
+                                            }))}
+                                            onBlur={e => setAssignForm(f => ({
                                                 ...f,
                                                 components: { ...f.components, [key]: parseFloat(e.target.value) || 0 },
                                             }))}

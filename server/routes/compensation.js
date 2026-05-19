@@ -899,6 +899,57 @@ router.post('/bank-details/:userId/verify', requireRole('hr_admin'), requireSame
     }
 });
 
+router.get('/bank-verifications', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
+    try {
+        const rows = (await req.db.query(
+            `SELECT ebd.*, u.full_name, u.email, u.department_id, d.name as department_name
+             FROM employee_bank_details ebd
+             JOIN users u ON u.id = ebd.user_id
+             LEFT JOIN departments d ON d.id = u.department_id
+             WHERE ebd.org_id = $1
+             ORDER BY ebd.is_verified ASC, ebd.updated_at DESC`,
+            [req.userOrgId]
+        )).rows;
+        res.json(rows.map(r => ({
+            ...r,
+            account_number: maskAccountNumber(decrypt(r.account_number)),
+        })));
+    } catch (err) {
+        logger.error({ err }, 'GET bank-verifications error');
+        res.status(500).json({ error: 'Failed to fetch bank verifications' });
+    }
+});
+
+router.post('/bank-details/:userId/approve', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
+    try {
+        const result = await req.db.query(
+            `UPDATE employee_bank_details SET is_verified = TRUE, verified_at = NOW()
+             WHERE user_id = $1 AND org_id = $2 RETURNING id`,
+            [req.params.userId, req.userOrgId]
+        );
+        if (result.rowCount === 0) return res.status(404).json({ error: 'Bank details not found' });
+        res.json({ message: 'Bank details approved' });
+    } catch (err) {
+        logger.error({ err }, 'POST bank-details approve error');
+        res.status(500).json({ error: 'Failed to approve bank details' });
+    }
+});
+
+router.post('/bank-details/:userId/reject', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
+    try {
+        const result = await req.db.query(
+            `UPDATE employee_bank_details SET is_verified = FALSE, verified_at = NULL
+             WHERE user_id = $1 AND org_id = $2 RETURNING id`,
+            [req.params.userId, req.userOrgId]
+        );
+        if (result.rowCount === 0) return res.status(404).json({ error: 'Bank details not found' });
+        res.json({ message: 'Bank details rejected' });
+    } catch (err) {
+        logger.error({ err }, 'POST bank-details reject error');
+        res.status(500).json({ error: 'Failed to reject bank details' });
+    }
+});
+
 router.get('/my-bank-details', async (req, res) => {
     try {
         const row = (await req.db.query(
@@ -913,6 +964,33 @@ router.get('/my-bank-details', async (req, res) => {
     } catch (err) {
         logger.error({ err }, 'GET my-bank-details error');
         res.status(500).json({ error: 'Failed to fetch bank details' });
+    }
+});
+
+router.post('/my-bank-details', async (req, res) => {
+    try {
+        const { account_holder_name, account_number, ifsc_code, bank_name, account_type } = req.body;
+        if (!account_holder_name || !account_number || !ifsc_code) {
+            return res.status(400).json({ error: 'account_holder_name, account_number, and ifsc_code are required' });
+        }
+        const encrypted = encrypt(account_number);
+        await req.db.query(
+            `INSERT INTO employee_bank_details (user_id, org_id, account_holder_name, account_number, ifsc_code, bank_name, account_type)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT (user_id, org_id) DO UPDATE SET
+               account_holder_name = EXCLUDED.account_holder_name,
+               account_number = EXCLUDED.account_number,
+               ifsc_code = EXCLUDED.ifsc_code,
+               bank_name = EXCLUDED.bank_name,
+               account_type = EXCLUDED.account_type,
+               is_verified = false,
+               updated_at = NOW()`,
+            [req.userId, req.userOrgId, account_holder_name, encrypted, ifsc_code, bank_name || null, account_type || 'savings']
+        );
+        res.json({ message: 'Bank details saved successfully' });
+    } catch (err) {
+        logger.error({ err }, 'POST my-bank-details error');
+        res.status(500).json({ error: 'Failed to save bank details' });
     }
 });
 

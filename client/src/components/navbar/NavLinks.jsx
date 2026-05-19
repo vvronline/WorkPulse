@@ -23,7 +23,7 @@ export default function NavLinks() {
     const isHR = userLevel >= 4;
 
     const moreItems = [];
-    if (user?.org_id && user?.role !== 'platform_admin') moreItems.push({ to: '/organization', label: 'Organization', icon: Building2 });
+    if (user?.org_id) moreItems.push({ to: '/organization', label: 'Organization', icon: Building2 });
     if (isTeamLead) moreItems.push({ to: '/manager', label: 'My Team', icon: Users });
     if (isHR) moreItems.push({ to: '/admin', label: 'Admin', icon: Settings });
     if (user?.role === 'platform_admin') moreItems.push({ to: '/tenants', label: 'Tenants', icon: Server });

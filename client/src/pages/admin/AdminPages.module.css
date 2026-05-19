@@ -579,7 +579,7 @@
 }
 
 .modal {
-    background: var(--surface);
+    background: var(--bg, #1e1e1e);
     border-radius: 12px;
     padding: 24px;
     max-width: 520px;
