@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Plus, Trash2, Edit2, Save, X, Users, LayoutTemplate } from 'lucide-react';
 import {
     getCompensationTemplates, createCompensationTemplate, updateCompensationTemplate,
-    deleteCompensationTemplate, getEmployeeCompensations, assignCompensation,
+    deleteCompensationTemplate, getEmployeeCompensations, assignCompensation, getOrgMembers,
 } from '../../api';
 import s from './AdminPages.module.css';
 
@@ -20,6 +20,7 @@ export default function CompensationSetup() {
     const [tab, setTab] = useState('templates');
     const [templates, setTemplates] = useState([]);
     const [employees, setEmployees] = useState([]);
+    const [allMembers, setAllMembers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
 
@@ -30,6 +31,7 @@ export default function CompensationSetup() {
     // Employee compensation form
     const [assignModal, setAssignModal] = useState(null);
     const [assignForm, setAssignForm] = useState({ effective_from: '', base_salary: '', components: {} });
+    const [selectedUserId, setSelectedUserId] = useState('');
 
     const loadTemplates = useCallback(async () => {
         try {
@@ -45,10 +47,17 @@ export default function CompensationSetup() {
         } catch { setError('Failed to load employee compensations'); }
     }, []);
 
+    const loadMembers = useCallback(async () => {
+        try {
+            const res = await getOrgMembers({ perPage: 500 });
+            setAllMembers(res.data.data || []);
+        } catch { /* non-critical */ }
+    }, []);
+
     useEffect(() => {
         setLoading(true);
-        Promise.all([loadTemplates(), loadEmployees()]).finally(() => setLoading(false));
-    }, [loadTemplates, loadEmployees]);
+        Promise.all([loadTemplates(), loadEmployees(), loadMembers()]).finally(() => setLoading(false));
+    }, [loadTemplates, loadEmployees, loadMembers]);
 
     const handleSaveTemplate = async (e) => {
         e.preventDefault();
@@ -81,8 +90,11 @@ export default function CompensationSetup() {
         e.preventDefault();
         setError('');
         try {
-            await assignCompensation(assignModal.id || assignModal.user_id, assignForm);
+            const userId = assignModal.user_id || assignModal.id || selectedUserId;
+            if (!userId) { setError('Please select an employee'); return; }
+            await assignCompensation(userId, assignForm);
             setAssignModal(null);
+            setSelectedUserId('');
             loadEmployees();
         } catch (err) {
             setError(err.response?.data?.error || 'Failed to assign compensation');
@@ -244,6 +256,15 @@ export default function CompensationSetup() {
 
             {tab === 'employees' && (
                 <div>
+                    <div className={s.formActions} style={{ marginBottom: '1rem' }}>
+                        <button className={s.btnPrimary} onClick={() => {
+                            setAssignModal({ _isNew: true });
+                            setSelectedUserId('');
+                            setAssignForm({ effective_from: new Date().toISOString().slice(0, 10), base_salary: '', components: {} });
+                        }}>
+                            <Plus size={14} /> Assign Compensation
+                        </button>
+                    </div>
                     <div className={s.tableWrap}>
                         <table className={s.table}>
                             <thead>
@@ -288,8 +309,26 @@ export default function CompensationSetup() {
             {assignModal && (
                 <div className={s.modalOverlay} onClick={() => setAssignModal(null)}>
                     <div className={s.modal} onClick={e => e.stopPropagation()}>
-                        <h3>Assign Compensation — {assignModal.full_name || 'Employee'}</h3>
+                        <h3>{assignModal._isNew ? 'Assign Compensation' : `Edit Compensation — ${assignModal.full_name || 'Employee'}`}</h3>
                         <form onSubmit={handleAssign}>
+                            {assignModal._isNew && (
+                                <div className={s.formRow}>
+                                    <label>Employee</label>
+                                    <select
+                                        value={selectedUserId}
+                                        onChange={e => setSelectedUserId(e.target.value)}
+                                        required
+                                        className={s.input}
+                                    >
+                                        <option value="">Select an employee</option>
+                                        {allMembers
+                                            .filter(m => !employees.some(emp => (emp.user_id || emp.id) === m.id))
+                                            .map(m => (
+                                                <option key={m.id} value={m.id}>{m.full_name || m.name} ({m.email})</option>
+                                            ))}
+                                    </select>
+                                </div>
+                            )}
                             <div className={s.formRow}>
                                 <label>Effective From</label>
                                 <input
