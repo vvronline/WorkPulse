@@ -34,10 +34,10 @@ const router = express.Router();
  *   - any error occurs (branding is best-effort, never blocks login)
  */
 router.get('/branding', async (req, res) => {
-    const EMPTY = { logo_url: null, accent_color: null };
-    const BRANDING_SQL = `SELECT b.logo_url, b.accent_color
-               FROM org_branding b
-               JOIN organizations o ON o.id = b.org_id
+    const EMPTY = { logo_url: null, accent_color: null, org_name: null };
+    const BRANDING_SQL = `SELECT b.logo_url, b.accent_color, o.name AS org_name
+               FROM organizations o
+               LEFT JOIN org_branding b ON b.org_id = o.id
               ORDER BY o.id ASC
               LIMIT 1`;
 
@@ -48,6 +48,7 @@ router.get('/branding', async (req, res) => {
             return res.json({
                 logo_url: row?.logo_url || null,
                 accent_color: row?.accent_color || null,
+                org_name: row?.org_name || null,
             });
         } catch (err) {
             req.log?.warn?.({ err: err.message }, 'Public branding lookup failed');
@@ -71,11 +72,60 @@ router.get('/branding', async (req, res) => {
         res.json({
             logo_url: row?.logo_url || null,
             accent_color: row?.accent_color || null,
+            org_name: row?.org_name || null,
         });
     } catch (err) {
         req.log?.warn?.({ err: err.message, slug }, 'Public branding slug lookup failed');
         res.json(EMPTY);
     }
+});
+
+router.get('/branding/logo', async (req, res) => {
+    const fs = require('fs');
+    const path = require('path');
+    const UPLOADS_ROOT = path.resolve(__dirname, '..', 'uploads');
+
+    const LOGO_SQL = `SELECT b.logo_url
+               FROM org_branding b
+               JOIN organizations o ON o.id = b.org_id
+              WHERE b.logo_url IS NOT NULL
+              ORDER BY o.id ASC
+              LIMIT 1`;
+
+    let logoUrl = null;
+
+    if (req.tenant && req.db && !req.isMasterRoute) {
+        try {
+            const row = (await req.db.query(LOGO_SQL)).rows[0];
+            logoUrl = row?.logo_url || null;
+        } catch { /* fall through */ }
+    } else {
+        const slug = (req.query.slug || '').trim().toLowerCase();
+        if (slug) {
+            try {
+                const tenantRow = (await masterQuery(
+                    `SELECT id, db_name, db_host FROM tenants WHERE slug = $1 AND status = 'active'`,
+                    [slug]
+                )).rows[0];
+                if (tenantRow) {
+                    const tenantDb = await getTenantPool(tenantRow.db_name, tenantRow.db_host);
+                    const row = (await tenantDb.query(LOGO_SQL)).rows[0];
+                    logoUrl = row?.logo_url || null;
+                }
+            } catch { /* fall through */ }
+        }
+    }
+
+    if (!logoUrl) return res.status(404).json({ error: 'No logo' });
+
+    const stripped = logoUrl.replace(/^\/+/, '').replace(/^uploads\//, '');
+    const abs = path.resolve(UPLOADS_ROOT, stripped);
+    if (!abs.startsWith(fs.realpathSync(UPLOADS_ROOT))) {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+    if (!fs.existsSync(abs)) return res.status(404).json({ error: 'Not found' });
+
+    res.sendFile(abs);
 });
 
 router.get('/notes/:token', async (req, res) => {

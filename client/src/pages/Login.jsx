@@ -16,8 +16,9 @@ export default function Login() {
   const [error, setError] = useAutoDismiss('');
   const [loading, setLoading] = useState(false);
 
+  const slug = new URLSearchParams(window.location.search).get('org') || '';
   const logoSrc = branding?.logo_url
-    ? (branding.logo_url.startsWith('http') ? branding.logo_url : `${serverURL}${branding.logo_url}`)
+    ? `${serverURL}/api/public/branding/logo${slug ? `?slug=${slug}` : ''}`
     : null;
 
   const handleSubmit = async (e) => {
@@ -43,7 +44,7 @@ export default function Login() {
           : <div className={s['auth-icon']}><ShieldCheck size={28} strokeWidth={1.5} /></div>
         }
         <h2>Welcome Back</h2>
-        <p>Sign in to WorkPulse</p>
+        <p>Sign in to {branding?.org_name || 'WorkPulse'}</p>
         {location.state?.message && <div className="success-msg">{location.state.message}</div>}
         {error && <div className="error-msg">{error}</div>}
         <form onSubmit={handleSubmit}>

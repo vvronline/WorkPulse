@@ -20,14 +20,14 @@ import { useAuth } from './AuthContext';
 // working unchanged.
 const DEFAULT_ACCENT = '#2383e2';
 const BrandingContext = createContext({
-    branding: { logo_url: null, accent_color: DEFAULT_ACCENT },
+    branding: { logo_url: null, accent_color: DEFAULT_ACCENT, org_name: null },
     refresh: () => { },
     setBranding: () => { },
 });
 
 export function BrandingProvider({ children }) {
     const { isAuthenticated, user } = useAuth();
-    const [branding, setBranding] = useState({ logo_url: null, accent_color: DEFAULT_ACCENT });
+    const [branding, setBranding] = useState({ logo_url: null, accent_color: DEFAULT_ACCENT, org_name: null });
     const fetchedForUser = useRef(null);
     const publicFetched = useRef(false);
 
@@ -37,6 +37,7 @@ export function BrandingProvider({ children }) {
                 setBranding({
                     logo_url: data?.logo_url || null,
                     accent_color: data?.accent_color || DEFAULT_ACCENT,
+                    org_name: data?.org_name || null,
                 });
             })
             .catch(() => { /* fall back to defaults silently */ });
@@ -59,10 +60,11 @@ export function BrandingProvider({ children }) {
                     setBranding({
                         logo_url: data?.logo_url || null,
                         accent_color: data?.accent_color || DEFAULT_ACCENT,
+                        org_name: data?.org_name || null,
                     });
                 })
                 .catch(() => {
-                    setBranding({ logo_url: null, accent_color: DEFAULT_ACCENT });
+                    setBranding({ logo_url: null, accent_color: DEFAULT_ACCENT, org_name: null });
                 });
             return;
         }
