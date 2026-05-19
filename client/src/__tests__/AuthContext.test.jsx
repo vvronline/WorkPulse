@@ -79,6 +79,7 @@ describe('AuthContext', () => {
 
     test('saveAuth stores user and sets authenticated', async () => {
         const user = userEvent.setup();
+        mockGetProfile.mockResolvedValue({ data: { id: 1, username: 'saved', role: 'employee' } });
         render(
             <AuthProvider>
                 <TestConsumer />
@@ -98,6 +99,7 @@ describe('AuthContext', () => {
 
     test('logout clears user state', async () => {
         const user = userEvent.setup();
+        mockGetProfile.mockResolvedValue({ data: { id: 1, username: 'saved', role: 'employee' } });
         mockLogoutUser.mockResolvedValue({});
         render(
             <AuthProvider>
