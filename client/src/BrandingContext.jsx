@@ -53,7 +53,8 @@ export function BrandingProvider({ children }) {
             fetchedForUser.current = null;
             if (publicFetched.current) return;
             publicFetched.current = true;
-            getPublicBranding()
+            const slug = new URLSearchParams(window.location.search).get('org') || '';
+            getPublicBranding(slug)
                 .then(({ data }) => {
                     setBranding({
                         logo_url: data?.logo_url || null,
@@ -108,16 +109,12 @@ export function BrandingProvider({ children }) {
     // tab among many. Falls back to the original /favicon.ico when the
     // org has no custom logo.
     useEffect(() => {
-        const ORIGINAL = '/favicon.ico';
-        const logoUrl = branding.logo_url
-            ? (branding.logo_url.startsWith('http')
-                ? branding.logo_url
-                : `${serverURL}${branding.logo_url}`)
-            : ORIGINAL;
+        if (!branding.logo_url) return;
 
-        // Find/create a single canonical link[rel="icon"] element. Removes
-        // duplicates so we don't end up with multiple favicons fighting
-        // for priority across reloads.
+        const logoUrl = branding.logo_url.startsWith('http')
+            ? branding.logo_url
+            : `${serverURL}${branding.logo_url}`;
+
         const head = document.head;
         const existing = Array.from(head.querySelectorAll('link[rel~="icon"]'));
         existing.slice(1).forEach(el => el.remove());
@@ -127,10 +124,7 @@ export function BrandingProvider({ children }) {
             link.rel = 'icon';
             head.appendChild(link);
         }
-        // Cache-bust on URL change so the browser refreshes the icon.
-        link.href = logoUrl + (logoUrl === ORIGINAL ? '' : `?v=${Date.now()}`);
-        // PNG/SVG/JPEG are all supported by modern browsers as favicons —
-        // we omit `type` so the browser sniffs from the response headers.
+        link.href = `${logoUrl}?v=${Date.now()}`;
         link.removeAttribute('type');
     }, [branding.logo_url]);
 

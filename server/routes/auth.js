@@ -15,10 +15,13 @@ const router = express.Router();
 
 const { cookieOptions } = require('../utils/cookie');
 
-// Strictly one active session per user. When a user logs in on a new device,
-// all of their other active sessions are evicted so they are forced to log out
-// on the previous device.
-const MAX_SESSIONS = 1;
+// Allow up to two concurrent active sessions per user (e.g. desktop app +
+// browser, or laptop + phone). When a user signs in on a third device, the
+// oldest active session is evicted so the device count never exceeds the cap.
+// Note: a stolen/forgotten session on one device is therefore NOT auto-kicked
+// by a fresh login on another device — users must explicitly log out or reset
+// their password (which clears all sessions and bumps token_version) to revoke.
+const MAX_SESSIONS = 2;
 
 /**
  * Resolve a tenant's DB handle from its id.

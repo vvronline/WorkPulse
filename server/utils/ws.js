@@ -509,6 +509,18 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
             userAvatar: accepter?.avatar
         });
 
+        // Multi-session support: the accepter may have other active sessions
+        // (e.g. desktop + browser) where the incoming-call PiP is still
+        // ringing. Tell every one of the accepter's sessions that the call
+        // has been handled so non-accepting devices dismiss their PiP.
+        // The accepting session itself has already cleared its PiP locally
+        // and ignores this event (see CallContext handler).
+        sendToUser(tenantId, senderId, 'call_handled_elsewhere', {
+            callId,
+            conversationId,
+            action: 'accepted',
+        });
+
     } else if (msg.type === 'call_reject') {
         // Callee rejects → update call log, notify caller
         const { callId, conversationId } = msg.data || {};
@@ -548,6 +560,15 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
                 userName: rejecter?.full_name
             });
         }
+
+        // Multi-session support: dismiss the ringing PiP on the rejecter's
+        // other devices (e.g. desktop + browser). The session that pressed
+        // "reject" has already cleared its PiP locally.
+        sendToUser(tenantId, senderId, 'call_handled_elsewhere', {
+            callId,
+            conversationId,
+            action: 'rejected',
+        });
 
     } else if (msg.type === 'call_end') {
         // Either party ends the call → update log, notify others

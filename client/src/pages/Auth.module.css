@@ -60,6 +60,14 @@
   box-shadow: 0 0 30px var(--primary-glow);
 }
 
+.auth-logo {
+  height: 56px;
+  max-width: 180px;
+  object-fit: contain;
+  margin-bottom: 1.5rem;
+  border-radius: 8px;
+}
+
 .auth-card h2 {
   font-size: 1.75rem;
   font-weight: 700;

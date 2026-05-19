@@ -65,6 +65,31 @@ export function CallProvider({ children }) {
         setGlobalIncomingCall(null);
         break;
       }
+      case 'call_handled_elsewhere': {
+        // Server tells *every* session belonging to the current user that an
+        // incoming call has been accepted or rejected on one of their
+        // devices. Dismiss the floating PiP here so the other devices stop
+        // ringing. The session that actually accepted/rejected has already
+        // cleared its own PiP locally before sending; receiving this echo
+        // is harmless (setGlobalIncomingCall(null) is idempotent) and
+        // ensures multi-device users don't see duplicate ring UIs.
+        setGlobalIncomingCall(prev => {
+          if (!prev) return prev;
+          // Only dismiss if it matches the same callId — defensive against
+          // races where a new incoming call arrives just after this echo.
+          if (d?.callId && prev.callId !== d.callId) return prev;
+          return null;
+        });
+        // Drop any pending-accepted call too, in case the user tapped
+        // "accept" on device A while device B was mid-navigation: device B
+        // must NOT then try to join the call.
+        setPendingAcceptedCall(prev => {
+          if (!prev) return prev;
+          if (d?.callId && prev.callId !== d.callId) return prev;
+          return null;
+        });
+        break;
+      }
       default: break;
     }
   }, []);

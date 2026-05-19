@@ -34,27 +34,47 @@ const router = express.Router();
  *   - any error occurs (branding is best-effort, never blocks login)
  */
 router.get('/branding', async (req, res) => {
-    // Master / default-domain context — no tenant branding to serve.
-    if (!req.tenant || !req.db || req.isMasterRoute) {
-        return res.json({ logo_url: null, accent_color: null });
-    }
-    try {
-        const row = (await req.db.query(
-            `SELECT b.logo_url, b.accent_color
+    const EMPTY = { logo_url: null, accent_color: null };
+    const BRANDING_SQL = `SELECT b.logo_url, b.accent_color
                FROM org_branding b
                JOIN organizations o ON o.id = b.org_id
               ORDER BY o.id ASC
-              LIMIT 1`
+              LIMIT 1`;
+
+    // 1. Tenant already resolved from custom domain — use it directly.
+    if (req.tenant && req.db && !req.isMasterRoute) {
+        try {
+            const row = (await req.db.query(BRANDING_SQL)).rows[0];
+            return res.json({
+                logo_url: row?.logo_url || null,
+                accent_color: row?.accent_color || null,
+            });
+        } catch (err) {
+            req.log?.warn?.({ err: err.message }, 'Public branding lookup failed');
+            return res.json(EMPTY);
+        }
+    }
+
+    // 2. Default domain — try slug query param for org-specific branding.
+    const slug = (req.query.slug || '').trim().toLowerCase();
+    if (!slug) return res.json(EMPTY);
+
+    try {
+        const tenantRow = (await masterQuery(
+            `SELECT id, db_name, db_host FROM tenants WHERE slug = $1 AND status = 'active'`,
+            [slug]
         )).rows[0];
+        if (!tenantRow) return res.json(EMPTY);
+
+        const tenantDb = await getTenantPool(tenantRow.db_name, tenantRow.db_host);
+        const row = (await tenantDb.query(BRANDING_SQL)).rows[0];
         res.json({
             logo_url: row?.logo_url || null,
             accent_color: row?.accent_color || null,
         });
     } catch (err) {
-        // org_branding table may not exist on very old tenant DBs — fall back
-        // silently so login pages still render.
-        req.log?.warn?.({ err: err.message }, 'Public branding lookup failed');
-        res.json({ logo_url: null, accent_color: null });
+        req.log?.warn?.({ err: err.message, slug }, 'Public branding slug lookup failed');
+        res.json(EMPTY);
     }
 });
 

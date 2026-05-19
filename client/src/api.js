@@ -486,7 +486,8 @@ export const getBranding = () => API.get('/branding');
 // Public branding (no auth) — used to theme the login / register pages with
 // the org's accent color before the user signs in. Returns nulls on the
 // master / default domain so callers can safely fall back to defaults.
-export const getPublicBranding = () => API.get('/public/branding');
+export const getPublicBranding = (slug) =>
+    API.get('/public/branding', slug ? { params: { slug } } : undefined);
 export const updateBrandingAccent = (accent_color) => API.put('/branding', { accent_color });
 export const uploadBrandingLogo = (file) => {
     const fd = new FormData();

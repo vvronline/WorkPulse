@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
-import { login as loginApi } from '../api';
+import { useBranding } from '../BrandingContext';
+import { login as loginApi, serverURL } from '../api';
 import { ShieldCheck, ArrowRight } from 'lucide-react';
 import PasswordInput from '../components/common/PasswordInput';
 import { useAutoDismiss } from '../hooks/useAutoDismiss';
@@ -9,10 +10,15 @@ import s from './Auth.module.css';
 
 export default function Login() {
   const { saveAuth } = useAuth();
+  const { branding } = useBranding();
   const location = useLocation();
   const [form, setForm] = useState({ username: '', password: '' });
   const [error, setError] = useAutoDismiss('');
   const [loading, setLoading] = useState(false);
+
+  const logoSrc = branding?.logo_url
+    ? (branding.logo_url.startsWith('http') ? branding.logo_url : `${serverURL}${branding.logo_url}`)
+    : null;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -32,7 +38,10 @@ export default function Login() {
     <div className={s['auth-container']}>
       <div className={s['auth-card']}>
 
-        <div className={s['auth-icon']}><ShieldCheck size={28} strokeWidth={1.5} /></div>
+        {logoSrc
+          ? <img src={logoSrc} alt="Organization" className={s['auth-logo']} />
+          : <div className={s['auth-icon']}><ShieldCheck size={28} strokeWidth={1.5} /></div>
+        }
         <h2>Welcome Back</h2>
         <p>Sign in to WorkPulse</p>
         {location.state?.message && <div className="success-msg">{location.state.message}</div>}
