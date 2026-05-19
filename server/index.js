@@ -48,6 +48,8 @@ const serviceDeskRoutes = require('./routes/serviceDesk');
 const brandingRoutes = require('./routes/branding');
 const customFieldsRoutes = require('./routes/customFields');
 const publicRoutes = require('./routes/public');
+const compensationRoutes = require('./routes/compensation');
+const webhookRoutes = require('./routes/webhooks');
 const { setupWebSocket } = require('./utils/ws');
 const { createCollaborationServer } = require('./utils/collaboration');
 const { initJobs, shutdownJobs } = require('./jobs');
@@ -239,6 +241,9 @@ app.use('/uploads', authMiddleware, async (req, res, next) => {
     next();
 }, express.static(path.join(__dirname, 'uploads')));
 
+// Webhooks must be mounted BEFORE CSRF middleware (external services can't send X-Requested-With)
+app.use('/api/webhooks', webhookRoutes);
+
 app.use('/api', (req, res, next) => {
     if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
     const xrw = req.headers['x-requested-with'];
@@ -293,6 +298,7 @@ app.use('/api/search', apiLimiter, searchRoutes);
 app.use('/api/service-desk', apiLimiter, serviceDeskRoutes);
 app.use('/api/branding', apiLimiter, brandingRoutes);
 app.use('/api/custom-fields', apiLimiter, customFieldsRoutes);
+app.use('/api/compensation', apiLimiter, compensationRoutes);
 // Public (unauthenticated) endpoints — share links, etc. Mounted with the
 // standard apiLimiter only (no auth, no tenant middleware). The route file
 // itself enforces token validity.

@@ -363,3 +363,255 @@
     font-size: 13px;
     color: var(--text-muted, #64748b);
 }
+
+/* ── Compensation / Salary Slips pages ── */
+.pageTitle {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0 0 16px;
+}
+
+.tabBar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+}
+
+.tabBtn {
+    padding: 7px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.15s;
+}
+
+.tabBtn:hover { background: var(--surface-hover); color: var(--text-primary); }
+.tabBtn.active { background: var(--accent, #0ea5e9); color: #fff; border-color: var(--accent, #0ea5e9); }
+
+.formCard {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin-bottom: 16px;
+}
+
+.formRow {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.formActions {
+    display: flex;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.btnPrimary {
+    padding: 8px 16px;
+    background: var(--accent, #0ea5e9);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: opacity 0.15s;
+}
+
+.btnPrimary:disabled { opacity: 0.55; cursor: not-allowed; }
+.btnPrimary:not(:disabled):hover { opacity: 0.9; }
+
+.btnSecondary {
+    padding: 8px 14px;
+    background: var(--surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.15s;
+}
+
+.btnSecondary:not(:disabled):hover { background: var(--surface-hover); }
+.btnSecondary:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.iconBtn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    color: var(--text-secondary);
+    transition: all 0.15s;
+}
+
+.iconBtn:hover { color: var(--accent, #0ea5e9); background: var(--surface-hover); }
+
+.linkBtn {
+    background: none;
+    border: none;
+    color: var(--accent, #0ea5e9);
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 0;
+    margin-top: 4px;
+}
+
+.linkBtn:hover { text-decoration: underline; }
+
+.tableWrap {
+    overflow-x: auto;
+    margin-top: 12px;
+}
+
+.error {
+    background: rgba(248, 113, 113, 0.1);
+    color: var(--error-color, #f87171);
+    padding: 8px 14px;
+    border-radius: 8px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.success {
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+    padding: 8px 14px;
+    border-radius: 8px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.loading {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.componentList {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 8px 0;
+}
+
+.componentRow {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.compLabel {
+    font-size: 13px;
+    font-weight: 500;
+    min-width: 140px;
+    text-transform: capitalize;
+    color: var(--text-primary);
+}
+
+.inputSm {
+    padding: 6px 10px;
+    background: var(--input-bg, var(--surface));
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--text-primary);
+    width: 140px;
+}
+
+.inputSm:focus { outline: none; border-color: var(--accent, #0ea5e9); }
+
+.selectSm {
+    padding: 6px 10px;
+    background: var(--input-bg, var(--surface));
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+.checkLabel {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.modalOverlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal {
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 24px;
+    max-width: 520px;
+    width: 90%;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.modal h3 {
+    margin: 0 0 16px;
+    font-size: 16px;
+    color: var(--text-primary);
+}
+
+.infoBox {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+.infoBox p {
+    margin: 4px 0;
+}
+
+.helpText {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin: 0 0 14px;
+    line-height: 1.5;
+}

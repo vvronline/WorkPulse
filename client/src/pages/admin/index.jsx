@@ -3,6 +3,7 @@ import {
     Home, Users, UserPlus, Building, UsersRound, GitBranch, ScrollText,
     RefreshCw, DollarSign, Tag, Settings as SettingsIcon,
     Menu, X, ChevronDown, ExternalLink, Workflow as WorkflowIcon,
+    Wallet, Receipt, CreditCard,
 } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
 import { useSearchParams, useNavigate } from 'react-router-dom';
@@ -13,6 +14,9 @@ import MyOrganization from './MyOrganization';
 import AuditLogs from './AuditLogs';
 import RoleRequests from './RoleRequests';
 import PayPeriods from './PayPeriods';
+import CompensationSetup from './CompensationSetup';
+import SalarySlips from './SalarySlips';
+import PaymentSettings from './PaymentSettings';
 import TaskLabelsTab from './TaskLabelsTab';
 import AdminHome from './AdminHome';
 import OrgSettingsPage from './OrgSettingsPage';
@@ -43,6 +47,9 @@ const SECTIONS = [
     { key: 'agile',          label: 'Agile Config',      icon: WorkflowIcon, group: 'Structure', requires: 'orgId' },
 
     { key: 'payroll',        label: 'Payroll Periods',   icon: DollarSign,   group: 'Operations' },
+    { key: 'compensation',   label: 'Compensation',      icon: Wallet,       group: 'Operations', requires: 'orgId' },
+    { key: 'salary-slips',   label: 'Salary Slips',      icon: Receipt,      group: 'Operations', requires: 'orgId' },
+    { key: 'payment-config', label: 'Payment Settings',  icon: CreditCard,   group: 'Operations', requires: 'orgId' },
     // Task Labels moved into Agile Config → Labels tab; the legacy
     // ?tab=labels URL still routes to the Agile Config page below.
 
@@ -187,6 +194,12 @@ export default function AdminPanel() {
                 return <RoleRequests userRole={user.role} />;
             case 'payroll':
                 return <PayPeriods />;
+            case 'compensation':
+                return <CompensationSetup />;
+            case 'salary-slips':
+                return <SalarySlips />;
+            case 'payment-config':
+                return <PaymentSettings />;
             case 'audit':
                 return <AuditLogs />;
             case 'departments':

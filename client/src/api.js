@@ -415,6 +415,48 @@ export const getPayPeriods = () => API.get('/admin/pay-periods');
 export const createPayPeriod = (data) => API.post('/admin/pay-periods', data);
 export const deletePayPeriod = (id) => API.delete(`/admin/pay-periods/${id}`);
 
+// Compensation Templates
+export const getCompensationTemplates = () => API.get('/compensation/templates');
+export const createCompensationTemplate = (data) => API.post('/compensation/templates', data);
+export const updateCompensationTemplate = (id, data) => API.put(`/compensation/templates/${id}`, data);
+export const deleteCompensationTemplate = (id) => API.delete(`/compensation/templates/${id}`);
+
+// Employee Compensation
+export const getEmployeeCompensations = () => API.get('/compensation/employees');
+export const getEmployeeCompensation = (userId) => API.get(`/compensation/employees/${userId}`);
+export const assignCompensation = (userId, data) => API.post(`/compensation/employees/${userId}`, data);
+export const updateCompensation = (userId, id, data) => API.put(`/compensation/employees/${userId}/${id}`, data);
+
+// Salary Slips (HR Admin)
+export const runPayroll = (data) => API.post('/compensation/payroll-run', data);
+export const getSalarySlips = (params) => API.get('/compensation/salary-slips', { params });
+export const getSalarySlip = (id) => API.get(`/compensation/salary-slips/${id}`);
+export const publishSalarySlip = (id) => API.put(`/compensation/salary-slips/${id}/publish`);
+export const bulkPublishSlips = (data) => API.post('/compensation/salary-slips/bulk-publish', data);
+export const downloadSalarySlipPdf = (id) => API.get(`/compensation/salary-slips/${id}/pdf`, { responseType: 'blob' });
+
+// Salary Slips (Employee Self-Service)
+export const getMySalarySlips = () => API.get('/compensation/my-slips');
+export const downloadMySalarySlipPdf = (id) => API.get(`/compensation/my-slips/${id}/pdf`, { responseType: 'blob' });
+
+// Disbursement
+export const disburseSalaries = (data) => API.post('/compensation/disburse', data);
+export const disburseSingle = (slipId) => API.post(`/compensation/disburse/${slipId}`);
+export const getDisbursements = (params) => API.get('/compensation/disbursements', { params });
+export const retryDisbursement = (id) => API.post(`/compensation/disburse/retry/${id}`);
+
+// Payment Config
+export const getPaymentConfig = () => API.get('/compensation/payment-config');
+export const savePaymentConfig = (data) => API.put('/compensation/payment-config', data);
+export const testPaymentConfig = () => API.post('/compensation/payment-config/test');
+
+// Employee Bank Details
+export const getOrgBankDetails = () => API.get('/compensation/bank-details');
+export const getEmployeeBankDetails = (userId) => API.get(`/compensation/bank-details/${userId}`);
+export const saveEmployeeBankDetails = (userId, data) => API.post(`/compensation/bank-details/${userId}`, data);
+export const verifyBankDetails = (userId) => API.post(`/compensation/bank-details/${userId}/verify`);
+export const getMyBankDetails = () => API.get('/compensation/my-bank-details');
+
 // Bulk User Import
 export const importUsers = (payload, isFile = false) => {
     if (isFile) {

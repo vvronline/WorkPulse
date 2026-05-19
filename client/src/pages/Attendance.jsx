@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useState, useMemo, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { CalendarDays, Palmtree, FileEdit, BarChart3 } from 'lucide-react';
+import { CalendarDays, Palmtree, FileEdit, BarChart3, CreditCard } from 'lucide-react';
 import AttendanceCalendar from './attendance/AttendanceCalendar';
 import PageSkeleton from '../components/common/PageSkeleton';
 import s from './Attendance.module.css';
@@ -9,12 +9,14 @@ import s from './Attendance.module.css';
 const Leaves = lazy(() => import('./Leaves'));
 const ManualEntry = lazy(() => import('./ManualEntry'));
 const Analytics = lazy(() => import('./analytics'));
+const MySalarySlips = lazy(() => import('./attendance/MySalarySlips'));
 
 const TABS = [
     { id: 'overview', label: 'Overview', icon: CalendarDays, hash: '' },
     { id: 'leaves', label: 'Leaves', icon: Palmtree, hash: '#leaves' },
     { id: 'manual', label: 'Manual Entry', icon: FileEdit, hash: '#manual-entry' },
     { id: 'analytics', label: 'Analytics', icon: BarChart3, hash: '#analytics' },
+    { id: 'salary-slips', label: 'Salary Slips', icon: CreditCard, hash: '#salary-slips' },
 ];
 
 export default function Attendance() {
@@ -104,6 +106,13 @@ export default function Attendance() {
                     <div style={{ display: active === 'analytics' ? 'block' : 'none' }}>
                         <Suspense fallback={<PageSkeleton />}>
                             <Analytics />
+                        </Suspense>
+                    </div>
+                )}
+                {mounted.has('salary-slips') && (
+                    <div style={{ display: active === 'salary-slips' ? 'block' : 'none' }}>
+                        <Suspense fallback={<PageSkeleton />}>
+                            <MySalarySlips />
                         </Suspense>
                     </div>
                 )}

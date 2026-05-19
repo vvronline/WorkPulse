@@ -1067,6 +1067,142 @@ async function initTenantSchema(q) {
         CREATE INDEX IF NOT EXISTS idx_pay_periods_org ON pay_periods(org_id, start_date)
     `);
 
+    // ---- Compensation templates (org-level salary structures) ----
+    await q(`
+        CREATE TABLE IF NOT EXISTS compensation_templates (
+            id              SERIAL PRIMARY KEY,
+            org_id          INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            name            TEXT NOT NULL,
+            description     TEXT,
+            components      JSONB NOT NULL DEFAULT '[]',
+            is_default      BOOLEAN NOT NULL DEFAULT FALSE,
+            created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at      TIMESTAMPTZ DEFAULT NOW(),
+            updated_at      TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(org_id, name)
+        )
+    `);
+    await q(`CREATE INDEX IF NOT EXISTS idx_compensation_templates_org ON compensation_templates(org_id)`);
+
+    // ---- Employee compensation (per-employee salary assignment) ----
+    await q(`
+        CREATE TABLE IF NOT EXISTS employee_compensation (
+            id                  SERIAL PRIMARY KEY,
+            user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            org_id              INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            template_id         INTEGER REFERENCES compensation_templates(id) ON DELETE SET NULL,
+            effective_from      TEXT NOT NULL,
+            effective_to        TEXT,
+            base_salary         NUMERIC(12,2) NOT NULL DEFAULT 0,
+            components          JSONB NOT NULL DEFAULT '{}',
+            currency            TEXT NOT NULL DEFAULT 'INR',
+            payment_frequency   TEXT NOT NULL DEFAULT 'monthly' CHECK(payment_frequency IN ('monthly','biweekly','weekly')),
+            bank_account        TEXT,
+            notes               TEXT,
+            created_by          INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at          TIMESTAMPTZ DEFAULT NOW(),
+            updated_at          TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(user_id, effective_from)
+        )
+    `);
+    await q(`CREATE INDEX IF NOT EXISTS idx_employee_compensation_user ON employee_compensation(user_id, effective_from DESC)`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_employee_compensation_org ON employee_compensation(org_id)`);
+
+    // ---- Salary slips (generated payslip records) ----
+    await q(`
+        CREATE TABLE IF NOT EXISTS salary_slips (
+            id                  SERIAL PRIMARY KEY,
+            org_id              INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            pay_period_id       INTEGER NOT NULL REFERENCES pay_periods(id) ON DELETE CASCADE,
+            compensation_id     INTEGER REFERENCES employee_compensation(id) ON DELETE SET NULL,
+            slip_month          TEXT NOT NULL,
+            earnings            JSONB NOT NULL DEFAULT '{}',
+            deductions          JSONB NOT NULL DEFAULT '{}',
+            gross_earnings      NUMERIC(12,2) NOT NULL DEFAULT 0,
+            total_deductions    NUMERIC(12,2) NOT NULL DEFAULT 0,
+            net_pay             NUMERIC(12,2) NOT NULL DEFAULT 0,
+            days_worked         NUMERIC(5,2) DEFAULT 0,
+            days_absent         NUMERIC(5,2) DEFAULT 0,
+            leave_days          NUMERIC(5,2) DEFAULT 0,
+            overtime_hours      NUMERIC(6,2) DEFAULT 0,
+            status              TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','generated','published','revised')),
+            generated_by        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            published_at        TIMESTAMPTZ,
+            created_at          TIMESTAMPTZ DEFAULT NOW(),
+            updated_at          TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(org_id, user_id, pay_period_id)
+        )
+    `);
+    await q(`CREATE INDEX IF NOT EXISTS idx_salary_slips_user ON salary_slips(user_id, slip_month DESC)`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_salary_slips_period ON salary_slips(pay_period_id)`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_salary_slips_org_month ON salary_slips(org_id, slip_month)`);
+
+    // ---- Payroll disbursements (bank transfer tracking) ----
+    await q(`
+        CREATE TABLE IF NOT EXISTS payroll_disbursements (
+            id                          SERIAL PRIMARY KEY,
+            org_id                      INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            salary_slip_id              INTEGER NOT NULL REFERENCES salary_slips(id) ON DELETE CASCADE,
+            user_id                     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            amount                      NUMERIC(12,2) NOT NULL,
+            currency                    TEXT NOT NULL DEFAULT 'INR',
+            razorpay_payout_id          TEXT,
+            razorpay_fund_account_id    TEXT,
+            transfer_mode               TEXT NOT NULL DEFAULT 'NEFT',
+            status                      TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','processing','processed','reversed','failed')),
+            failure_reason              TEXT,
+            utr                         TEXT,
+            initiated_by                INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            initiated_at                TIMESTAMPTZ,
+            processed_at                TIMESTAMPTZ,
+            created_at                  TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(salary_slip_id)
+        )
+    `);
+    await q(`CREATE INDEX IF NOT EXISTS idx_payroll_disbursements_org ON payroll_disbursements(org_id, status)`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_payroll_disbursements_user ON payroll_disbursements(user_id)`);
+
+    // ---- Organization payment config (Razorpay credentials) ----
+    await q(`
+        CREATE TABLE IF NOT EXISTS org_payment_config (
+            id                      SERIAL PRIMARY KEY,
+            org_id                  INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            provider                TEXT NOT NULL DEFAULT 'razorpay',
+            api_key_id              TEXT,
+            api_key_secret          TEXT,
+            account_number          TEXT,
+            webhook_secret          TEXT,
+            default_transfer_mode   TEXT NOT NULL DEFAULT 'NEFT',
+            is_active               BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at              TIMESTAMPTZ DEFAULT NOW(),
+            updated_at              TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(org_id)
+        )
+    `);
+
+    // ---- Employee bank details (for payouts) ----
+    await q(`
+        CREATE TABLE IF NOT EXISTS employee_bank_details (
+            id                          SERIAL PRIMARY KEY,
+            user_id                     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            org_id                      INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+            account_holder_name         TEXT NOT NULL,
+            account_number              TEXT NOT NULL,
+            ifsc_code                   TEXT NOT NULL,
+            bank_name                   TEXT,
+            account_type                TEXT NOT NULL DEFAULT 'savings',
+            razorpay_contact_id         TEXT,
+            razorpay_fund_account_id    TEXT,
+            is_verified                 BOOLEAN NOT NULL DEFAULT FALSE,
+            verified_at                 TIMESTAMPTZ,
+            created_at                  TIMESTAMPTZ DEFAULT NOW(),
+            updated_at                  TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(user_id, org_id)
+        )
+    `);
+    await q(`CREATE INDEX IF NOT EXISTS idx_employee_bank_details_org ON employee_bank_details(org_id)`);
+
     // ---- Announcements ----
     await q(`
         CREATE TABLE IF NOT EXISTS announcements (
