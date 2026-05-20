@@ -253,11 +253,15 @@ router.post('/payroll-run', requireRole('hr_admin'), requireSameOrg, async (req,
         let generated = 0;
         const slipMonth = period.start_date.slice(0, 7);
 
+        logger.info({ start_date: period.start_date, end_date: period.end_date, slipMonth }, 'Payroll run date range');
+
         for (const emp of employees) {
             const attendance = await calculateAttendance(
                 req.db, emp.user_id, req.userOrgId,
                 period.start_date, period.end_date, emp.timezone_offset || 0
             );
+
+            logger.info({ user_id: emp.user_id, attendance, period_start: period.start_date, period_end: period.end_date }, 'Attendance calculation result');
 
             const components = emp.components || {};
             const baseSalary = parseFloat(emp.base_salary) || 0;
@@ -281,11 +285,6 @@ router.post('/payroll-run', requireRole('hr_admin'), requireSameOrg, async (req,
                 earnings[key] = Math.round(earnings[key] * attendanceRatio);
             }
 
-            // Overtime pay
-            if (attendance.overtimeHours > 0) {
-                const hourlyRate = baseSalary / (attendance.workHoursPerDay * workDaysPerMonth);
-                earnings.overtime_pay = Math.round(attendance.overtimeHours * hourlyRate * 1.5);
-            }
 
             // Calculate deductions from components with negative or deduction-tagged keys
             const deductions = {};
