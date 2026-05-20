@@ -2,7 +2,7 @@ const { computeFloorMs, computeBreakMs } = require('./timeCalc');
 
 async function calculateAttendance(db, userId, orgId, startDate, endDate, timezoneOffset = 0) {
     const orgRow = (await db.query(
-        `SELECT work_days, work_hours_per_day FROM organizations WHERE id = $1`,
+        `SELECT work_days, work_hours_per_day, min_hours_present FROM organizations WHERE id = $1`,
         [orgId]
     )).rows[0] || {};
     const workDaySet = new Set(
@@ -10,6 +10,9 @@ async function calculateAttendance(db, userId, orgId, startDate, endDate, timezo
             .split(',').map(n => parseInt(n.trim(), 10)).filter(n => !isNaN(n))
     );
     const workHpd = orgRow.work_hours_per_day || 8;
+    const minHoursPresent = (orgRow.min_hours_present != null && Number(orgRow.min_hours_present) >= 0)
+        ? Number(orgRow.min_hours_present)
+        : workHpd / 2;
 
     const holidaySet = new Set(
         (await db.query(
@@ -56,6 +59,7 @@ async function calculateAttendance(db, userId, orgId, startDate, endDate, timezo
     let scheduledDays = 0, daysWorked = 0;
     let totalLeaveDays = 0, leaveEquivForAbsent = 0;
     let totalHours = 0, regularHours = 0, overtimeHours = 0;
+    const minPresentMs = minHoursPresent * 3_600_000;
 
     for (const date of allDays) {
         const dow = new Date(date + 'T00:00:00Z').getUTCDay();
@@ -64,6 +68,8 @@ async function calculateAttendance(db, userId, orgId, startDate, endDate, timezo
         const leave = leaveMap[date];
         const dayEntries = byDate[date] || [];
         const hasWork = dayEntries.length > 0;
+        const floorMs = hasWork ? computeFloorMs(dayEntries) : 0;
+        const meetsMinHours = floorMs >= minPresentMs;
 
         if (!isWorkDay) {
             if (!hasWork) continue;
@@ -71,7 +77,7 @@ async function calculateAttendance(db, userId, orgId, startDate, endDate, timezo
             if (!hasWork) continue;
         } else {
             scheduledDays++;
-            if (hasWork) daysWorked++;
+            if (meetsMinHours) daysWorked++;
 
             if (leave) {
                 const durFrac = leave.duration === 'quarter' ? 0.25
@@ -79,14 +85,13 @@ async function calculateAttendance(db, userId, orgId, startDate, endDate, timezo
                 totalLeaveDays += durFrac;
                 if (leave.duration === 'full') {
                     leaveEquivForAbsent += 1;
-                } else if (!hasWork) {
+                } else if (!meetsMinHours) {
                     leaveEquivForAbsent += durFrac;
                 }
             }
         }
 
         if (hasWork) {
-            const floorMs = computeFloorMs(dayEntries);
             const dayTotal = floorMs / 3_600_000;
             if (!isWorkDay || isHoliday) {
                 overtimeHours += dayTotal;

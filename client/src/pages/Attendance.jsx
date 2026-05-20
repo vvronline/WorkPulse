@@ -8,7 +8,7 @@ import s from './Attendance.module.css';
 /* Lazy-load child tabs so they only load when first opened */
 const Leaves = lazy(() => import('./Leaves'));
 const ManualEntry = lazy(() => import('./ManualEntry'));
-const Analytics = lazy(() => import('./analytics'));
+const Analytics = lazy(() => import('./analytics/index'));
 
 const TABS = [
     { id: 'overview', label: 'Overview', icon: CalendarDays, hash: '' },

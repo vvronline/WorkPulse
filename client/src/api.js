@@ -75,7 +75,7 @@ export const breakStart = () => API.post('/tracker/break-start');
 export const breakEnd = () => API.post('/tracker/break-end');
 export const clockOut = () => API.post('/tracker/clock-out');
 export const getHistory = (from, to) => API.get('/tracker/history', { params: { from, to } });
-export const getAnalytics = (days) => API.get('/tracker/analytics', { params: { days } });
+export const getAnalytics = (days, from, to) => API.get('/tracker/analytics', { params: { days, from, to } });
 
 // Manual Entry
 export const addManualEntry = (data) => API.post('/tracker/manual-entry', data);

@@ -360,11 +360,21 @@ router.get('/history', auth, async (req, res) => {
 // Analytics (weekly chart)
 router.get('/analytics', auth, async (req, res) => {
     try {
-        const { days } = req.query;
-        const numDays = Math.min(Math.max(parseInt(days) || 7, 1), 365);
+        const { days, from, to } = req.query;
         const offsetMin = getOffsetMin(req);
-        const fromDate = new Date(Date.now() - offsetMin * 60000 - numDays * 86400000).toISOString().slice(0, 10);
-        const toDate = getLocalToday(req);
+        let fromDate, toDate, numDays;
+
+        if (from && to) {
+            fromDate = from;
+            toDate = to;
+            numDays = Math.round((new Date(to + 'T00:00:00Z') - new Date(from + 'T00:00:00Z')) / 86400000) + 1;
+            numDays = Math.min(Math.max(numDays, 1), 365);
+        } else {
+            numDays = Math.min(Math.max(parseInt(days) || 7, 1), 365);
+            fromDate = new Date(Date.now() - offsetMin * 60000 - numDays * 86400000).toISOString().slice(0, 10);
+            toDate = getLocalToday(req);
+        }
+
         const tzMod = getTzModifier(req);
 
         const result = await req.db.query(
@@ -385,8 +395,9 @@ router.get('/analytics', auth, async (req, res) => {
 
         const today = getLocalToday(req);
         const analytics = [];
+        const startMs = new Date(fromDate + 'T00:00:00Z').getTime();
         for (let i = 0; i < numDays; i++) {
-            const d = new Date(Date.now() - offsetMin * 60000 - (numDays - 1 - i) * 86400000);
+            const d = new Date(startMs + i * 86400000);
             const dateStr = d.toISOString().slice(0, 10);
             const summary = computeDaySummary(grouped[dateStr] || [], dateStr === today);
             analytics.push({ date: dateStr, ...summary });

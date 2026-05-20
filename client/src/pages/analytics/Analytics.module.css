@@ -123,6 +123,27 @@
   box-shadow: 0 0 16px var(--primary-glow);
 }
 
+.custom-range {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.custom-range input[type="date"] {
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-family: inherit;
+}
+
+.custom-range span {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
 /* ============= CHARTS GRID ============= */
 .analytics-charts-row {
   display: grid;

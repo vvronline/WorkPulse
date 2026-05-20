@@ -23,20 +23,28 @@ ChartJS.register(
 
 export default function Analytics() {
     const [days, setDays] = useState(7);
+    const [customFrom, setCustomFrom] = useState('');
+    const [customTo, setCustomTo] = useState('');
     const [data, setData] = useState([]);
     const [history, setHistory] = useState([]);
     const [widgets, setWidgets] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useAutoDismiss('');
 
+    const isCustom = days === 'custom';
+    const fromDate = isCustom ? customFrom : getLocalDate(days);
+    const toDate = isCustom ? customTo : getLocalToday();
+
     useEffect(() => {
+        if (isCustom && (!customFrom || !customTo)) return;
         let cancelled = false;
         const fetchData = async () => {
             setLoading(true);
             try {
+                const params = isCustom ? undefined : days;
                 const [analyticsRes, historyRes, widgetsRes] = await Promise.allSettled([
-                    getAnalytics(days),
-                    getHistory(getLocalDate(days), getLocalToday()),
+                    getAnalytics(params, isCustom ? fromDate : undefined, isCustom ? toDate : undefined),
+                    getHistory(fromDate, toDate),
                     getWidgets()
                 ]);
                 if (cancelled) return;
@@ -55,7 +63,7 @@ export default function Analytics() {
         };
         fetchData();
         return () => { cancelled = true; };
-    }, [days]);
+    }, [days, customFrom, customTo]);
 
     const labels = useMemo(() => data.map(d => {
         const date = new Date(d.date + 'T00:00:00');
@@ -81,10 +89,22 @@ export default function Analytics() {
                             Last {d} days
                         </button>
                     ))}
+                    <button className={isCustom ? s.active : ''} onClick={() => setDays('custom')}>
+                        Custom
+                    </button>
                 </div>
+                {isCustom && (
+                    <div className={s['custom-range']}>
+                        <input type="date" value={customFrom} max={customTo || getLocalToday()}
+                            onChange={e => setCustomFrom(e.target.value)} />
+                        <span>to</span>
+                        <input type="date" value={customTo} min={customFrom} max={getLocalToday()}
+                            onChange={e => setCustomTo(e.target.value)} />
+                    </div>
+                )}
                 <ExportButton
                     fetchFn={exportMyAnalytics}
-                    params={{ from: getLocalDate(days), to: getLocalToday() }}
+                    params={{ from: fromDate, to: toDate }}
                     label="Export Analytics"
                 />
             </div>
