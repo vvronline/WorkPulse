@@ -711,6 +711,29 @@ const MIGRATIONS = [
         },
     },
     {
+        // ADR-0001 step 1 (PR1): v2 status service schema.
+        //
+        // Adds the `manual_status` / `presence_preference` / `status_message` /
+        // `status_message_expires_at` / `last_activity_at` columns on `users`,
+        // creates `user_presence_sessions` (per-device live presence) and
+        // `user_status_events` (audit log), plus the CHECK constraints and
+        // indexes.
+        //
+        // SAFETY:
+        //   • Implementation lives in services/status/migration.js so the
+        //     status service stays self-contained. We delegate to it here so
+        //     existing tenants pick it up via the versioned runner, not just
+        //     on a fresh-tenant initTenantSchema() call.
+        //   • Idempotent — every statement is IF NOT EXISTS / guarded.
+        //   • Must run BEFORE 2026_06_v5_drop_legacy_user_status_columns so
+        //     the new columns exist before the old ones go away.
+        name: '2026_06_v4_status_service_v2_schema',
+        async up(query) {
+            const { runStatusMigration } = require('../services/status/migration');
+            await runStatusMigration(query);
+        },
+    },
+    {
         name: '2026_06_v4_ctc_support',
         async up(query) {
             await query(`
@@ -730,6 +753,51 @@ const MIGRATIONS = [
                     updated_at      TIMESTAMPTZ DEFAULT NOW()
                 )
             `);
+        },
+    },
+    {
+        // ADR-0001 step 8: drop the legacy `users.user_status` and
+        // `users.user_status_text` columns + their CHECK constraint.
+        //
+        // Safety:
+        //   • PR7 removed every reader/writer of these columns from the
+        //     application code. They have been stale since the deploy that
+        //     shipped PR7, and the resolver+broadcaster path is the only
+        //     source of presence/status state in production.
+        //   • The status backfill in services/status/migration.js was
+        //     gated on "IF EXISTS users.user_status" so it becomes a NO-OP
+        //     once the columns are dropped — this migration is safe to
+        //     run before, after, or interleaved with that bootstrap.
+        //   • DROP CONSTRAINT IF EXISTS / DROP COLUMN IF EXISTS keep the
+        //     migration idempotent across reruns and across tenants that
+        //     never had the columns (fresh databases).
+        name: '2026_06_v5_drop_legacy_user_status_columns',
+        async up(query) {
+            // The CHECK constraint name follows Postgres' default naming
+            // convention `<table>_<col>_check`. We also defensively look
+            // for any other CHECK on `user_status` in case an earlier
+            // tenant copy used a non-default name.
+            await query(`
+                DO $do$
+                DECLARE r record;
+                BEGIN
+                    FOR r IN
+                        SELECT con.conname
+                        FROM   pg_constraint con
+                        JOIN   pg_class       rel ON rel.oid = con.conrelid
+                        JOIN   pg_attribute   att ON att.attrelid = rel.oid
+                                                 AND att.attnum   = ANY(con.conkey)
+                        WHERE  rel.relname = 'users'
+                          AND  con.contype = 'c'
+                          AND  att.attname = 'user_status'
+                    LOOP
+                        EXECUTE 'ALTER TABLE users DROP CONSTRAINT ' || quote_ident(r.conname);
+                    END LOOP;
+                EXCEPTION WHEN others THEN NULL;
+                END $do$
+            `);
+            await query(`ALTER TABLE users DROP COLUMN IF EXISTS user_status`);
+            await query(`ALTER TABLE users DROP COLUMN IF EXISTS user_status_text`);
         },
     },
 ];

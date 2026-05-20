@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useAuth } from '../AuthContext';
 import { QUOTE_ROTATION_INTERVAL, STATUS_POLL_INTERVAL } from '../constants';
 import { useWorkState } from '../WorkStateContext';
-import { useUserStatus } from '../UserStatusContext';
+// NOTE (status v2): tracker no longer writes status — see useFloatingTimer.js
 import {
     getStatus, clockIn, breakStart, breakEnd, clockOut,
     getWidgets, getWeeklyChart, getTaskSummary, getCalendarEvents,
@@ -51,7 +51,6 @@ function requestNotificationPermission() {
 export function useDashboardData() {
     const { user } = useAuth();
     const { setWorkState, setWorkMode: setContextWorkMode } = useWorkState();
-    const { setManualStatus } = useUserStatus();
 
     const [status, setStatus] = useState(null);
     const [widgets, setWidgets] = useState(null);
@@ -199,17 +198,14 @@ export function useDashboardData() {
     const handleClockIn = useCallback(() => handleAction(() => clockIn(workMode), 'clockIn'), [handleAction, workMode]);
     const handleBreakStart = useCallback(async () => {
         await handleAction(breakStart, 'breakStart');
-        setManualStatus('away');
-    }, [handleAction, setManualStatus]);
+    }, [handleAction]);
     const handleBreakEnd = useCallback(async () => {
         await handleAction(breakEnd, 'breakEnd');
-        setManualStatus('available');
-    }, [handleAction, setManualStatus]);
+    }, [handleAction]);
     const handleConfirmClockOut = useCallback(async () => {
         setShowClockOutConfirm(false);
         await handleAction(clockOut, 'clockOut');
-        setManualStatus('offline');
-    }, [handleAction, setManualStatus]);
+    }, [handleAction]);
 
     return {
         user, status, state, loading, actionLoading, error,

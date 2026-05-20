@@ -1,7 +1,16 @@
 /**
  * WebSocket server for real-time notifications and chat.
  * Attaches to the HTTP server and authenticates via the JWT cookie.
+ *
+ * STATUS / PRESENCE NOTE (status service v2):
+ *   • Every WS connection registers a session with `statusService.openSession`
+ *     and closes it on disconnect / pong-timeout via `statusService.closeSession`.
+ *   • That is the canonical source of presence + per-device activity. The
+ *     legacy `presence_change` / `status_change` events were removed in PR7;
+ *     clients now subscribe to the unified `user_status` event broadcast by
+ *     services/status/broadcaster.js.
  */
+const { randomUUID } = require('crypto');
 const { WebSocketServer } = require('ws');
 const jwt = require('jsonwebtoken');
 const cookie = require('cookie');
@@ -9,6 +18,7 @@ const { masterQuery } = require('../db');
 const { getTenantPool, getTenantById } = require('./tenantManager');
 const { logger } = require('./logger');
 const redis = require('../redis');
+const statusService = require('../services/status');
 
 /** Map<clientKey, Set<WebSocket>> — local instance connections, keyed by tenantId:userId */
 const clients = new Map();
@@ -141,32 +151,35 @@ function setupWebSocket(server) {
             return;
         }
         userConns.add(ws);
-        logger.debug({ userId, tenantId }, 'WS client connected');
 
-        // Presence: mark online
+        // Status service v2: register this connection as its own session so
+        // per-device activity (in_call / in_meeting) and "Appear Offline" can
+        // be tracked correctly. The session_key is a UUID generated per WS
+        // connection and stashed on `ws` so the disconnect handler can close
+        // exactly this row (instead of guessing which one to kill).
+        ws._statusSessionKey = randomUUID();
+        const deviceLabel = req.headers['user-agent']
+            ? String(req.headers['user-agent']).slice(0, 80)
+            : null;
+        // openSession also re-resolves effective state, writes an audit row,
+        // updates the cache, and broadcasts the unified `user_status` event.
+        statusService.openSession(
+            { db, tenantId },
+            { userId, sessionKey: ws._statusSessionKey, deviceLabel }
+        ).catch(err => {
+            logger.warn({ err: err.message, userId }, 'statusService.openSession failed');
+        });
+
+        logger.debug({ userId, tenantId, sessionKey: ws._statusSessionKey }, 'WS client connected');
+
+        // Bump users.last_seen_at on first WS connect so legacy chat /
+        // presence callers ('/api/chat/presence') still see the user as
+        // online. The status service writes its own per-session
+        // last_seen_at — this is only for the legacy chat-presence read.
         if (wasOffline) {
             redis.setPresence(tenantId, userId, redis.TTL.PRESENCE);
-            // Reset user_status from 'offline' to 'available' on (re)connect.
-            // The 'offline' value is persisted by /logout and /clock-out but
-            // becomes stale the moment the user reconnects — without this
-            // reset, the subsequent broadcastPresence would tell every other
-            // user that this user is online (green dot) but with status
-            // "Offline", and the user's own UserStatusContext.getUserStatus
-            // would load 'offline' as their manual status. The user would
-            // appear offline to themselves and to chat until they manually
-            // pick another status.
-            try {
-                await db.query(
-                    `UPDATE users SET user_status = 'available', user_status_text = NULL, last_seen_at = NOW() WHERE id = $1 AND user_status = 'offline'`,
-                    [userId]
-                );
-                await redis.setUserStatus(tenantId, userId, 'available');
-            } catch (err) {
-                logger.warn({ err: err.message, userId }, 'Failed to reset user_status on connect');
-                // Still bump last_seen_at even if the status reset failed
-                db.query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId]).catch(() => { });
-            }
-            broadcastPresence(db, tenantId, userId, 'online');
+            db.query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId])
+                .catch(err => logger.warn({ err: err.message, userId }, 'last_seen_at bump failed'));
         }
 
         ws.on('message', (raw) => {
@@ -196,11 +209,21 @@ function setupWebSocket(server) {
                 set.delete(ws);
                 if (set.size === 0) {
                     clients.delete(ck);
-                    // Presence: mark offline
+                    // Drop Redis presence + bump last_seen_at for legacy
+                    // /api/chat/presence readers. Status service emits the
+                    // canonical `user_status` event from closeSession() below.
                     redis.removePresence(tenantId, userId);
                     db.query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId]).catch(err => { logger.warn({ err: err.message, userId }, 'Failed to update last_seen_at on disconnect'); });
-                    broadcastPresence(db, tenantId, userId, 'offline');
                 }
+            }
+
+            // Status service v2: close exactly this connection's session.
+            // If it was the user's last open session, the service will
+            // resolve them as offline and broadcast `user_status` accordingly.
+            if (ws._statusSessionKey) {
+                statusService.closeSession({ db, tenantId }, ws._statusSessionKey)
+                    .catch(err => logger.warn({ err: err.message, userId }, 'statusService.closeSession failed'));
+                ws._statusSessionKey = null;
             }
 
             // Clean up meeting if user was in one and didn't explicitly leave
@@ -231,6 +254,14 @@ function setupWebSocket(server) {
 
                         if (activeParticipants.length === 0) {
                             await db.query(`UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1 AND status != 'ended'`, [mid]);
+                            // Status service v2: meeting truly ended (no one
+                            // left), clear in_meeting for every dangling
+                            // session referencing it. closeSession() above
+                            // already wiped this user's session, but a peer
+                            // who dropped to "leaving" without sending
+                            // meeting_leave could still be marked.
+                            statusService.clearActivityForRef({ db, tenantId }, 'in_meeting', mid)
+                                .catch(err => logger.warn({ err: err.message, meetingId: mid }, 'clearActivityForRef(in_meeting) on disconnect failed'));
                         }
                     } catch (err) {
                         logger.warn({ err: err.message, userId, meetingId: mid }, 'Meeting cleanup on disconnect failed');
@@ -254,6 +285,12 @@ function setupWebSocket(server) {
             ws.isAlive = true;
             // Refresh Redis presence TTL on every pong so users don't appear offline
             redis.setPresence(ws.tenantId, ws.userId, redis.TTL.PRESENCE);
+            // Status service v2: keep this session's last_seen_at fresh so
+            // the resolver doesn't classify it as stale (> SESSION_STALE_MS).
+            if (ws._statusSessionKey) {
+                statusService.touchSession({ db, tenantId: ws.tenantId }, ws._statusSessionKey)
+                    .catch(() => { /* best-effort */ });
+            }
         });
     });
 
@@ -471,6 +508,17 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
             callType
         });
 
+        // Status service v2: mark THIS device of the caller as in_call.
+        // (The callee is marked on call_accept.) Per-session means the
+        // caller's other tabs/devices stay on whatever status they had.
+        if (ws._statusSessionKey) {
+            statusService.setSessionActivity(
+                { db, tenantId },
+                ws._statusSessionKey, 'in_call', callLog.id
+            ).catch(err => logger.warn({ err: err.message, callId: callLog.id }, 'setSessionActivity(in_call) failed'));
+            ws._callActivityRefId = callLog.id;
+        }
+
     } else if (msg.type === 'call_accept') {
         // Callee accepts → update call log, notify caller with acceptance
         const { callId, conversationId } = msg.data || {};
@@ -527,6 +575,15 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
             action: 'accepted',
         });
 
+        // Status service v2: mark the accepting device (only) as in_call.
+        if (ws._statusSessionKey) {
+            statusService.setSessionActivity(
+                { db, tenantId },
+                ws._statusSessionKey, 'in_call', callId
+            ).catch(err => logger.warn({ err: err.message, callId }, 'setSessionActivity(in_call) failed'));
+            ws._callActivityRefId = callId;
+        }
+
     } else if (msg.type === 'call_cancel') {
         // Caller cancels (media acquisition failed after call_initiate was sent)
         const { conversationId } = msg.data || {};
@@ -551,6 +608,13 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
                 conversationId,
             });
         }
+
+        // Status service v2: caller cancelled (media acquisition failed);
+        // their device was briefly marked in_call by call_initiate.
+        // Sweep every session referencing this call.
+        statusService.clearActivityForRef({ db, tenantId }, 'in_call', callLog.id)
+            .catch(err => logger.warn({ err: err.message, callId: callLog.id }, 'clearActivityForRef(in_call) on cancel failed'));
+        ws._callActivityRefId = null;
 
     } else if (msg.type === 'call_reject') {
         // Callee rejects → update call log, notify caller
@@ -601,6 +665,12 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
             action: 'rejected',
         });
 
+        // Status service v2: if the callee had been auto-flagged in_call by a
+        // racy accept (or the caller's device was still marked from initiate),
+        // clear it for every session referencing this call.
+        statusService.clearActivityForRef({ db, tenantId }, 'in_call', callId)
+            .catch(err => logger.warn({ err: err.message, callId }, 'clearActivityForRef(in_call) on reject failed'));
+
     } else if (msg.type === 'call_end') {
         // Either party ends the call → update log, notify others
         const { callId, conversationId } = msg.data || {};
@@ -642,6 +712,12 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
                 sendToUser(tenantId, p.user_id, 'call_ended', { callId, conversationId, endedBy: senderId, duration });
             }
         }
+
+        // Status service v2: clear in_call for every session referencing
+        // this call (caller + all callees, across all their devices).
+        statusService.clearActivityForRef({ db, tenantId }, 'in_call', callId)
+            .catch(err => logger.warn({ err: err.message, callId }, 'clearActivityForRef(in_call) on end failed'));
+        if (ws._callActivityRefId === callId) ws._callActivityRefId = null;
 
     } else if (msg.type === 'call_signal') {
         // WebRTC signaling relay: offer, answer, ICE candidates
@@ -894,6 +970,16 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
             }
         }
 
+        // Status service v2: mark THIS device of the joiner as in_meeting.
+        // Per-session: their other tabs/devices retain their existing status.
+        if (ws._statusSessionKey) {
+            statusService.setSessionActivity(
+                { db, tenantId },
+                ws._statusSessionKey, 'in_meeting', meetingId
+            ).catch(err => logger.warn({ err: err.message, meetingId }, 'setSessionActivity(in_meeting) failed'));
+            ws._meetingActivityRefId = meetingId;
+        }
+
     } else if (msg.type === 'meeting_leave') {
         const { meetingId } = msg.data || {};
         if (!meetingId) return;
@@ -925,6 +1011,18 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
         // If no active participants, mark meeting ended (use WHERE to prevent double-update race)
         if (activeParticipants.length === 0) {
             await db.query(`UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1 AND status != 'ended'`, [meetingId]);
+        }
+
+        // Status service v2: clear in_meeting on THIS device only. Other
+        // devices of the same user (e.g. they joined the meeting from
+        // desktop while ALSO having a browser tab open with no meeting)
+        // keep their state intact.
+        if (ws._statusSessionKey) {
+            statusService.clearSessionActivity(
+                { db, tenantId },
+                ws._statusSessionKey, 'in_meeting'
+            ).catch(err => logger.warn({ err: err.message, meetingId }, 'clearSessionActivity(in_meeting) on leave failed'));
+            if (ws._meetingActivityRefId === meetingId) ws._meetingActivityRefId = null;
         }
 
     } else if (msg.type === 'meeting_end') {
@@ -982,6 +1080,12 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
                 });
             }
         }
+
+        // Status service v2: end of meeting → clear in_meeting for EVERY
+        // session referencing this meetingId (every participant, every device).
+        statusService.clearActivityForRef({ db, tenantId }, 'in_meeting', meetingId)
+            .catch(err => logger.warn({ err: err.message, meetingId }, 'clearActivityForRef(in_meeting) on end failed'));
+        if (ws._meetingActivityRefId === meetingId) ws._meetingActivityRefId = null;
 
     } else if (msg.type === 'meeting_signal') {
         // WebRTC mesh signaling between meeting participants
@@ -1169,18 +1273,6 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
             sendToUser(tenantId, p.user_id, 'meeting_message', { meetingId, message });
         }
 
-    } else if (msg.type === 'status_change') {
-        // User manually sets their status or auto-status from client
-        const { status, statusText } = msg.data || {};
-        const validStatuses = ['available', 'busy', 'dnd', 'away', 'offline', 'in_call', 'in_meeting'];
-        if (!status || !validStatuses.includes(status)) return;
-        const safeText = typeof statusText === 'string' ? statusText.trim().slice(0, 100) : null;
-        // Persist to DB + Redis
-        await db.query('UPDATE users SET user_status = $1, user_status_text = $2 WHERE id = $3', [status, safeText, senderId]);
-        redis.setUserStatus(tenantId, senderId, status);
-        // Broadcast to org members
-        broadcastStatus(db, tenantId, senderId, status, safeText);
-
     } else if (msg.type === 'call_add_participant') {
         // Add a participant to an ongoing call.
         //
@@ -1290,45 +1382,6 @@ function broadcast(tenantId, type, data) {
             if (ws.readyState === 1) ws.send(msg);
         }
     }
-}
-
-/**
- * Broadcast presence change to org members who are online.
- */
-async function broadcastPresence(db, tenantId, userId, status) {
-    try {
-        const user = (await db.query('SELECT org_id, full_name, user_status FROM users WHERE id = $1', [userId])).rows[0];
-        if (!user?.org_id) return;
-
-        // Only notify online org users
-        const orgUsers = (await db.query(
-            'SELECT id FROM users WHERE org_id = $1 AND id != $2 AND is_active = TRUE',
-            [user.org_id, userId]
-        )).rows;
-
-        for (const u of orgUsers) {
-            sendToUser(tenantId, u.id, 'presence_change', { userId, status, fullName: user.full_name, userStatus: user.user_status });
-        }
-    } catch { /* ignore */ }
-}
-
-/**
- * Broadcast user status change (available/busy/dnd/away/in_call/in_meeting/offline) to org members.
- */
-async function broadcastStatus(db, tenantId, userId, userStatus, statusText) {
-    try {
-        const user = (await db.query('SELECT org_id, full_name FROM users WHERE id = $1', [userId])).rows[0];
-        if (!user?.org_id) return;
-
-        const orgUsers = (await db.query(
-            'SELECT id FROM users WHERE org_id = $1 AND id != $2 AND is_active = TRUE',
-            [user.org_id, userId]
-        )).rows;
-
-        for (const u of orgUsers) {
-            sendToUser(tenantId, u.id, 'status_change', { userId, userStatus, statusText, fullName: user.full_name });
-        }
-    } catch { /* ignore */ }
 }
 
 /**

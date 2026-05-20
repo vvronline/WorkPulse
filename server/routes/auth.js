@@ -713,10 +713,24 @@ router.post('/logout', async (req, res) => {
                 await req.db.query('DELETE FROM user_sessions WHERE id = $1 AND user_id = $2', [decoded.sid, decoded.id]);
                 await redis.invalidateUserSessions(decoded.tenant_id || null, decoded.id);
             }
-            // Set user status to offline
+            // Status service v2: close all open presence sessions for this
+            // user (logout means every device is gone). The service handles
+            // the legacy `users.user_status = 'offline'` dual-write and
+            // broadcasts a `user_status` event with effective='offline'.
+            //
+            // CRITICAL: we no longer pin the user's manual status to
+            // 'offline' here — the old code did, which broke "Appear
+            // Offline" semantics on the very next reconnect. The status
+            // service correctly treats logout as a session-closure only;
+            // the user's `manual_status` / `presence_preference` rows
+            // are preserved verbatim.
             if (decoded.id) {
-                await req.db.query('UPDATE users SET user_status = $1, user_status_text = NULL WHERE id = $2', ['offline', decoded.id]);
-                await redis.setUserStatus(decoded.tenant_id || null, decoded.id, 'offline');
+                const statusService = require('../services/status');
+                await statusService.closeAllSessions(
+                    { db: req.db, tenantId: decoded.tenant_id || null },
+                    decoded.id,
+                    { source: 'logout' }
+                ).catch(err => logger.warn({ err: err.message, userId: decoded.id }, 'logout: statusService.closeAllSessions failed'));
             }
         }
     } catch { /* token may be expired/invalid — still clear cookie */ }

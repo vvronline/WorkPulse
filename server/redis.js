@@ -147,34 +147,12 @@ async function getOnlineUsers(tenantId, userIds) {
 }
 
 // -- User status helpers --
-
-async function setUserStatus(tenantId, userId, status) {
-    if (!isReady) return;
-    try {
-        await client.set(tk(tenantId, 'user_status', userId), status, 'EX', TTL.USER_CONTEXT);
-    } catch { /* ignore */ }
-}
-
-async function getUserStatus(tenantId, userId) {
-    if (!isReady) return null;
-    try {
-        return await client.get(tk(tenantId, 'user_status', userId));
-    } catch { return null; }
-}
-
-async function getUserStatuses(tenantId, userIds) {
-    if (!isReady || !userIds.length) return null;
-    try {
-        const pipeline = client.pipeline();
-        for (const id of userIds) pipeline.get(tk(tenantId, 'user_status', id));
-        const results = await pipeline.exec();
-        const map = {};
-        for (let i = 0; i < userIds.length; i++) {
-            map[userIds[i]] = results[i][1] || 'available';
-        }
-        return map;
-    } catch { return null; }
-}
+//
+// PR8 / ADR-0001 step 8: the per-user `user_status` Redis cache was a v1
+// fallback for the legacy `users.user_status` column. The v2 status service
+// owns its own cache in services/status/cache.js (keyed on tenantId+userId,
+// containing the full resolved payload). The old helpers (setUserStatus /
+// getUserStatus / getUserStatuses) were deleted; no callers remain.
 
 // -- Unread counter helpers --
 
@@ -382,10 +360,6 @@ module.exports = {
     removePresence,
     isOnline,
     getOnlineUsers,
-    // User status
-    setUserStatus,
-    getUserStatus,
-    getUserStatuses,
     // Unread counters
     incrUnread,
     resetUnread,

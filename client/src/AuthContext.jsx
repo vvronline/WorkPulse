@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
-import { getProfile, logoutUser, refreshToken, updateUserStatus } from './api';
+import { getProfile, logoutUser, refreshToken } from './api';
 import { REFRESH_TOKEN_INTERVAL } from './constants';
 
 const AuthContext = createContext(null);
@@ -97,9 +97,9 @@ export function AuthProvider({ children }) {
   }, []);
 
   const logout = useCallback(async () => {
-    try {
-      await updateUserStatus('offline');
-    } catch { /* ignore — server logout will also set offline */ }
+    // PR7: dropped client-side `updateUserStatus('offline')`. The server's
+    // /auth/logout handler calls statusService.closeAllSessions which
+    // resolves the user to offline and broadcasts `user_status` for us.
     try {
       await logoutUser();
     } catch (e) { /* ignore network error on logout */ }

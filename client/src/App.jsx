@@ -16,7 +16,7 @@ import { ToastProvider } from './components/common/Toast';
 import { ChatProvider } from './ChatContext';
 import { CallProvider } from './CallContext';
 import { MeetingProvider } from './MeetingContext';
-import { UserStatusProvider } from './UserStatusContext';
+import { StatusProvider } from './status/StatusContext';
 import { NotificationPrefsProvider } from './NotificationPrefsContext';
 import { AgileConfigProvider } from './AgileConfigContext';
 import { CustomFieldsProvider } from './CustomFieldsContext';
@@ -246,7 +246,7 @@ function MainApp() {
                   <AgileConfigProvider>
                   <CustomFieldsProvider>
                   <ChatProvider>
-                    <UserStatusProvider>
+                    <StatusProvider>
                     <CallProvider>
                       <MeetingProvider>
                         <AppRoutes />
@@ -259,7 +259,7 @@ function MainApp() {
                         <GlobalMeetingNotification />
                       </MeetingProvider>
                     </CallProvider>
-                    </UserStatusProvider>
+                    </StatusProvider>
                   </ChatProvider>
                   </CustomFieldsProvider>
                   </AgileConfigProvider>

@@ -140,15 +140,30 @@ describe('GET /api/chat/presence', () => {
     });
 
     test('returns presence statuses for users in same org', async () => {
+        // PR7: /api/chat/presence is now a thin alias over StatusService.
+        // The test feeds the repository fixtures the service needs:
+        //   1) getUserOrg (route)
+        //   2) org-membership filter (route)
+        //   3) repo.getUserPrefsBulk
+        //   4) repo.getOpenSessionsBulk
         setupAuth();
         mockQuery.mockResolvedValueOnce({ rows: [{ org_id: 1 }], rowCount: 1 }); // getUserOrg
-        const recentDate = new Date(Date.now() - 60 * 1000).toISOString(); // 1 min ago = online
+        mockQuery.mockResolvedValueOnce({
+            rows: [{ id: 2 }, { id: 3 }], rowCount: 2
+        }); // org members filter
         mockQuery.mockResolvedValueOnce({
             rows: [
-                { id: 2, last_seen_at: recentDate },
-                { id: 3, last_seen_at: null },
+                { id: 2, manual_status: null, presence_preference: 'auto', status_message: null, status_message_expires_at: null, last_activity_at: new Date() },
+                { id: 3, manual_status: null, presence_preference: 'auto', status_message: null, status_message_expires_at: null, last_activity_at: new Date() },
             ], rowCount: 2
-        });
+        }); // getUserPrefsBulk
+        const recent = new Date(Date.now() - 60 * 1000); // 1 min ago = online
+        mockQuery.mockResolvedValueOnce({
+            rows: [
+                // Only user 2 has an open session → online
+                { user_id: 2, session_key: 's2', device_label: null, connected_at: recent, last_seen_at: recent, disconnected_at: null, activity: null, activity_ref_id: null },
+            ], rowCount: 1
+        }); // getOpenSessionsBulk
 
         const res = await request(app)
             .get('/api/chat/presence?userIds=2,3')
@@ -157,6 +172,7 @@ describe('GET /api/chat/presence', () => {
         expect(res.status).toBe(200);
         expect(res.body[2].presence).toBe('online');
         expect(res.body[3].presence).toBe('offline');
+        expect(res.body[3].userStatus).toBe('offline');
     });
 });
 

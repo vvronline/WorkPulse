@@ -1,9 +1,15 @@
 import s from './ChatAvatar.module.css';
 
+// Keep this map in sync with server/services/status/constants.js
+// (EFFECTIVE_STATUSES) and client/src/status/constants.js (STATUS_META).
+// Both `brb` (manual "I'll be right back") and `away` (server-derived from
+// idle) share the same amber styling — the user thinks of them as the same
+// state, the resolver just distinguishes the source.
 const STATUS_CONFIG = {
     available:  { cls: 'available', label: 'Available' },
     busy:       { cls: 'busy', label: 'Busy' },
     dnd:        { cls: 'dnd', label: 'Do Not Disturb' },
+    brb:        { cls: 'away', label: 'Away' },
     away:       { cls: 'away', label: 'Away' },
     offline:    { cls: 'offline', label: 'Offline' },
     in_call:    { cls: 'inCall', label: 'In a Call' },

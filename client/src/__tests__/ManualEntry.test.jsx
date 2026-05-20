@@ -13,16 +13,8 @@ vi.mock('../ThemeContext', () => ({
     useTheme: () => ({ theme: 'light' }),
 }));
 
-vi.mock('../UserStatusContext', () => ({
-    useUserStatus: () => ({
-        myStatus: 'available',
-        myStatusText: null,
-        manualStatus: null,
-        setManualStatus: vi.fn(),
-        setAutoStatus: vi.fn(),
-        clearAutoStatus: vi.fn(),
-    }),
-}));
+// NOTE (status v2): ManualEntry no longer imports UserStatusContext —
+// tracker events don't write status. No mock needed.
 
 const mockAddManualEntry = vi.fn();
 const mockGetEntries = vi.fn();

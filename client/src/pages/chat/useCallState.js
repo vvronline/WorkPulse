@@ -2,14 +2,14 @@ import { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useGlobalCall } from '../../CallContext';
 import { getActiveCall } from '../../api';
-import { useUserStatus } from '../../UserStatusContext';
+// NOTE (status v2): client no longer broadcasts auto-status for calls.
+// The server sets/clears per-session `in_call` activity on
+// `call_initiate` / `call_accept` / `call_end` (see server/utils/ws.js).
 
 export default function useCallState(wsSendRef) {
     const { setChatPageActive, pendingAcceptedCall, consumePendingCall } = useGlobalCall();
-    const { setAutoStatus, clearAutoStatus } = useUserStatus();
     const { pathname } = useLocation();
     const isChatPage = pathname === '/chat';
-    const statusSetRef = useRef(false);
 
     const [callState, setCallState] = useState(null);
     const callSignalRef = useRef(null);
@@ -24,11 +24,6 @@ export default function useCallState(wsSendRef) {
     useEffect(() => {
         callActiveRef.current = !!callState;
         if (callState && callState.callId) {
-            // Set auto-status to "in_call" when call is accepted or outgoing (only once)
-            if ((callState.accepted || !callState.isIncoming) && !statusSetRef.current) {
-                statusSetRef.current = true;
-                setAutoStatus('in_call');
-            }
             try {
                 sessionStorage.setItem('wp_active_call', JSON.stringify({
                     callId: callState.callId,
@@ -42,10 +37,6 @@ export default function useCallState(wsSendRef) {
                 }));
             } catch { /* ignore */ }
         } else if (!callState) {
-            if (statusSetRef.current) {
-                statusSetRef.current = false;
-                clearAutoStatus('in_call');
-            }
             pendingCallSignalsRef.current = [];
             try { sessionStorage.removeItem('wp_active_call'); } catch { /* ignore */ }
         }

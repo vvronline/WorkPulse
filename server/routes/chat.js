@@ -136,7 +136,14 @@ router.get('/search', auth, async (req, res) => {
 
 /**
  * GET /api/chat/presence?userIds=1,2,3
- * Returns both online/offline presence AND user status for each user.
+ *
+ * Returns presence + resolved effective status for each user, sourced from
+ * StatusService (org-isolated). Kept as a thin v1 alias so the chat
+ * conversation-list query has a single bulk endpoint; the underlying data
+ * is identical to GET /api/me/status (same resolver output).
+ *
+ * Response shape (preserved for backwards compatibility):
+ *   { [userId]: { presence: 'online'|'offline', userStatus: '<effective>' } }
  */
 router.get('/presence', auth, async (req, res) => {
     try {
@@ -145,45 +152,29 @@ router.get('/presence', auth, async (req, res) => {
         const ids = userIds.split(',').map(Number).filter(n => n > 0);
         if (ids.length === 0) return res.json({});
 
-        // Only return presence for users within the same organization
+        // Org isolation — never leak presence across orgs.
         const orgId = await getUserOrg(req.userId, req.db);
         if (!orgId) return res.json({});
-
-        // Try Redis presence first — but filter by org membership
-        const redisPresence = await redis.getOnlineUsers(req.tenantId, ids);
-        const redisStatuses = await redis.getUserStatuses(req.tenantId, ids);
-
-        if (redisPresence) {
-            // Filter to only users in the same org (prevent cross-org presence leak)
-            const orgMembers = (await req.db.query(
-                'SELECT id FROM users WHERE id = ANY($1) AND org_id = $2',
-                [ids, orgId]
-            )).rows.map(r => r.id);
-            const orgMemberSet = new Set(orgMembers);
-
-            const result = {};
-            for (const id of ids) {
-                if (!orgMemberSet.has(id)) continue;
-                result[id] = {
-                    presence: redisPresence[id] || 'offline',
-                    userStatus: redisStatuses?.[id] || 'available'
-                };
-            }
-            return res.json(result);
-        }
-
-        // Fallback to DB
-        const rows = (await req.db.query(
-            'SELECT id, last_seen_at, user_status FROM users WHERE id = ANY($1) AND org_id = $2',
+        const orgMembers = (await req.db.query(
+            'SELECT id FROM users WHERE id = ANY($1) AND org_id = $2',
             [ids, orgId]
-        )).rows;
+        )).rows.map(r => r.id);
+        const orgMemberSet = new Set(orgMembers);
+        const allowedIds = ids.filter(id => orgMemberSet.has(id));
+        if (allowedIds.length === 0) return res.json({});
+
+        const statusService = require('../services/status');
+        const payloads = await statusService.getEffectiveBulk(
+            { db: req.db, tenantId: req.tenantId || null },
+            allowedIds
+        );
 
         const result = {};
-        const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
-        for (const r of rows) {
-            result[r.id] = {
-                presence: r.last_seen_at && new Date(r.last_seen_at) > fiveMinAgo ? 'online' : 'offline',
-                userStatus: r.user_status || 'available'
+        for (const id of allowedIds) {
+            const p = payloads[id];
+            result[id] = {
+                presence: p?.presence || 'offline',
+                userStatus: p?.effective || 'offline',
             };
         }
         res.json(result);
@@ -193,39 +184,8 @@ router.get('/presence', auth, async (req, res) => {
     }
 });
 
-/**
- * GET /api/chat/status  — get current user's status
- */
-router.get('/status', auth, async (req, res) => {
-    try {
-        const row = (await req.db.query('SELECT user_status, user_status_text FROM users WHERE id = $1', [req.userId])).rows[0];
-        if (!row) return res.status(404).json({ error: 'User not found' });
-        res.json({ status: row.user_status, statusText: row.user_status_text });
-    } catch (err) {
-        req.log.error({ err }, 'Get status error');
-        res.status(500).json({ error: 'Failed to get status' });
-    }
-});
-
-/**
- * PUT /api/chat/status  — set current user's status manually
- */
-router.put('/status', auth, async (req, res) => {
-    try {
-        const { status, statusText } = req.body;
-        const validStatuses = ['available', 'busy', 'dnd', 'away', 'offline'];
-        if (!status || !validStatuses.includes(status)) {
-            return res.status(400).json({ error: 'Invalid status' });
-        }
-        const safeText = typeof statusText === 'string' ? statusText.trim().slice(0, 100) : null;
-        await req.db.query('UPDATE users SET user_status = $1, user_status_text = $2 WHERE id = $3', [status, safeText, req.userId]);
-        await redis.setUserStatus(req.tenantId, req.userId, status);
-        res.json({ status, statusText: safeText });
-    } catch (err) {
-        req.log.error({ err }, 'Update status error');
-        res.status(500).json({ error: 'Failed to update status' });
-    }
-});
+// PR7: removed legacy `GET /api/chat/status` and `PUT /api/chat/status`.
+// The v2 client uses `/api/me/status*` (see server/routes/status.js).
 
 /**
  * POST /api/chat/conversations  { userId }

@@ -1237,9 +1237,19 @@ async function initTenantSchema(q) {
     `);
     await q(`ALTER TABLE announcements ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`);
 
-    // Migration: add user_status and user_status_text to users
-    await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS user_status TEXT NOT NULL DEFAULT 'available' CHECK(user_status IN ('available','busy','dnd','away','offline','in_call','in_meeting'))`);
-    await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS user_status_text TEXT`);
+    // ─── Status state ──────────────────────────────────────────────────────
+    // PR8 / ADR-0001 step 8: the legacy `users.user_status` and
+    // `users.user_status_text` columns are no longer created on fresh DBs.
+    // The status service migration (services/status/migration.js) is the
+    // single source of truth for v2 status state. Existing tenant DBs still
+    // have the legacy columns; they're dropped by the
+    // `2026_06_v5_drop_legacy_user_status_columns` migration in
+    // server/utils/migrationRunner.js.
+
+    // ─── Status service v2 schema (preferences + sessions + audit) ──────────
+    // Owned by services/status. Single entry point keeps the new tables /
+    // constraints discoverable in one place.
+    await require('./services/status/migration').runStatusMigration(q);
 
     // Per-user notification & sound preferences (ringtones, message tones,
     // mute toggle, volumes). Stored as JSONB so we can evolve the schema

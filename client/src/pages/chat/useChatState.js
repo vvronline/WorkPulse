@@ -210,33 +210,26 @@ export default function useChatState() {
                 }
                 break;
             }
-            case 'presence_change': {
+            case 'user_status': {
+                // PR7: legacy `presence_change` and `status_change` events
+                // were retired in favour of the unified `user_status` event
+                // broadcast by services/status/broadcaster.js. We keep a
+                // local copy in `onlineUsers` / `userStatusMap` so the chat
+                // sidebar dots don't have to re-render through the global
+                // StatusContext. The two values are kept in sync by
+                // construction — both consume the same event.
+                if (!d?.userId) break;
+                const isOnline = d.presence === 'online';
                 setOnlineUsers(prev => {
+                    if (isOnline === prev.has(d.userId)) return prev;
                     const next = new Set(prev);
-                    d.status === 'online' ? next.add(d.userId) : next.delete(d.userId);
+                    isOnline ? next.add(d.userId) : next.delete(d.userId);
                     return next;
                 });
-                // When a user goes offline (WS disconnect), their richer
-                // user_status (available/busy/away/...) is irrelevant — we
-                // must override it to 'offline' so the chat dot/badge
-                // matches the navbar profile (which also flips to offline
-                // on logout/disconnect). If we kept the stale value, the
-                // user would show as offline in presence but still display
-                // a green "Available" dot in chat.
-                // When online, prefer the broadcast userStatus but fall
-                // back to the existing map value (or 'available') rather
-                // than clobbering a fresher status_change with a stale
-                // presence_change.
-                setUserStatusMap(prev => {
-                    if (d.status === 'online') {
-                        return { ...prev, [d.userId]: d.userStatus || prev[d.userId] || 'available' };
-                    }
-                    return { ...prev, [d.userId]: 'offline' };
-                });
-                break;
-            }
-            case 'status_change': {
-                setUserStatusMap(prev => ({ ...prev, [d.userId]: d.userStatus || 'available' }));
+                setUserStatusMap(prev => ({
+                    ...prev,
+                    [d.userId]: d.effective || (isOnline ? 'available' : 'offline'),
+                }));
                 break;
             }
             case 'chat_group_created':

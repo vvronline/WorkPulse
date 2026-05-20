@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { useAuth } from '../../AuthContext';
 import { useTheme } from '../../ThemeContext';
 import { useWorkState } from '../../WorkStateContext';
-import { useUserStatus } from '../../UserStatusContext';
+import { useStatus } from '../../status/useStatus';
 import { clockOut as apiClockOut, uploadAvatar, removeAvatar, baseURL } from '../../api';
 import { Camera, Building2, House, Bell } from 'lucide-react';
 import EditProfileModal from '../profile/EditProfileModal';
@@ -16,7 +16,7 @@ export default function ProfileMenu() {
     const { user, logout, updateUser } = useAuth();
     const { theme, toggleTheme } = useTheme();
     const { workState, workMode } = useWorkState();
-    const { myStatus } = useUserStatus();
+    const { effective: myStatus } = useStatus();
 
     const [profileOpen, setProfileOpen] = useState(false);
     const [uploading, setUploading] = useState(false);
@@ -38,10 +38,15 @@ export default function ProfileMenu() {
         ? user.full_name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
         : '?';
 
+    // `brb` (user-picked "Away") and `away` (server-derived from idle) are
+    // visually identical — both use the amber away styling. The on-the-wire
+    // enum keeps them distinct so the audit log can tell us whether the
+    // user said so or whether the resolver inferred it.
     const STATUS_DOT_MAP = {
         available: s['dot-online'],
         busy: s['dot-busy'],
         dnd: s['dot-dnd'],
+        brb: s['dot-away'],
         away: s['dot-away'],
         offline: s['dot-offline'],
         in_call: s['dot-in-call'],
@@ -53,6 +58,7 @@ export default function ProfileMenu() {
         available: { label: workState === 'on_floor' ? (workMode === 'remote' ? 'Working Remotely' : 'Working') : 'Available', glyph: 'check' },
         busy: { label: 'Busy', glyph: 'dot' },
         dnd: { label: 'Do Not Disturb', glyph: 'minus' },
+        brb: { label: 'Away', glyph: 'clock' },
         away: { label: 'Away', glyph: 'clock' },
         offline: { label: 'Offline', glyph: 'ring' },
         in_call: { label: 'In a Call', glyph: 'dot' },

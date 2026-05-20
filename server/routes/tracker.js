@@ -308,9 +308,14 @@ router.post('/clock-out', auth, async (req, res) => {
         });
 
         if (txResult.error) return res.status(400).json({ error: txResult.error });
-        // Set user status to offline on clock-out
-        await req.db.query('UPDATE users SET user_status = $1, user_status_text = NULL WHERE id = $2', ['offline', req.userId]);
-        await redis.setUserStatus(req.tenantId, req.userId, 'offline');
+
+        // NOTE (status service v2): clock-out is a TIME-TRACKING event, not a
+        // presence event. The old code wrote `user_status = 'offline'` here,
+        // which broke the user's chat presence even though their WS was still
+        // open (they were "offline in chat but actively using the app"). The
+        // status service derives presence from open WS sessions, so we simply
+        // don't touch presence here at all. If the user wants to appear
+        // offline they can use the "Appear Offline" toggle in StatusPicker.
         logAction(req, 'clock_out', 'time_entry', null, {});
         res.json({ message: 'Logged out. See you tomorrow!' });
     } catch (err) {

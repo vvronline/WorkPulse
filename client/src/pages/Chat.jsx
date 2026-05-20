@@ -12,7 +12,7 @@ import ChatMessages from './chat/ChatMessages';
 import ChatInputBar from './chat/ChatInputBar';
 import useChatState from './chat/useChatState';
 import useChatActions from './chat/useChatActions';
-import { useUserStatus } from '../UserStatusContext';
+import { useStatus } from '../status/useStatus';
 import { getConvName } from './chat/chatUtils';
 import s from './Chat.module.css';
 import msgStyles from './chat/ChatMessages.module.css';
@@ -20,7 +20,7 @@ import msgStyles from './chat/ChatMessages.module.css';
 export default function Chat() {
     const state = useChatState();
     const actions = useChatActions(state);
-    const { myStatus } = useUserStatus();
+    const { effective: myStatus } = useStatus();
     const { pathname } = useLocation();
     const isChatPage = pathname === '/chat';
 

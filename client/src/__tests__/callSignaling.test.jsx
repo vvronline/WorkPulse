@@ -5,8 +5,6 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 const mockGetActiveCall = vi.fn();
 const mockSetChatPageActive = vi.fn();
 const mockConsumePendingCall = vi.fn();
-const mockSetAutoStatus = vi.fn();
-const mockClearAutoStatus = vi.fn();
 
 const mockGetIceConfig = vi.fn().mockResolvedValue({ data: { iceServers: [] } });
 
@@ -23,12 +21,8 @@ vi.mock('../CallContext', () => ({
     }),
 }));
 
-vi.mock('../UserStatusContext', () => ({
-    useUserStatus: () => ({
-        setAutoStatus: mockSetAutoStatus,
-        clearAutoStatus: mockClearAutoStatus,
-    }),
-}));
+// NOTE (status v2): useCallState no longer imports UserStatusContext.
+// Server handles per-session in_call activity automatically.
 
 import useCallState from '../pages/chat/useCallState';
 import useWebRTC from '../components/chat/call/useWebRTC';
@@ -45,8 +39,6 @@ describe('call signaling races', () => {
         mockGetActiveCall.mockResolvedValue({ data: null });
         mockSetChatPageActive.mockReset();
         mockConsumePendingCall.mockReset();
-        mockSetAutoStatus.mockReset();
-        mockClearAutoStatus.mockReset();
     });
 
     afterEach(() => {

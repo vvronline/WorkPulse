@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../AuthContext';
 import { useWorkState } from '../WorkStateContext';
-import { useUserStatus } from '../UserStatusContext';
+// NOTE (status v2): the tracker flow no longer writes status. Clock-in/break/
+// clock-out are time-tracking events, NOT presence events. Presence is
+// derived server-side from open WS sessions; idle/away is derived from
+// last_activity_at. See server/services/status/README.md.
 import { getStatus, clockIn, breakStart, breakEnd, clockOut } from '../api';
 import { useLiveTimer } from './useLiveTimer';
 import { useAutoDismiss } from './useAutoDismiss';
@@ -17,7 +20,6 @@ const TARGET_MINUTES = 9 * 60;
 export function useFloatingTimer() {
     const { isAuthenticated, user } = useAuth();
     const { setWorkState, setWorkMode: setContextWorkMode } = useWorkState();
-    const { setManualStatus } = useUserStatus();
 
     const [status, setStatus] = useState(null);
     const [workMode, setWorkMode] = useState('office');
@@ -103,21 +105,17 @@ export function useFloatingTimer() {
 
     const handleClockIn = useCallback(async () => {
         await handleAction(() => clockIn(workMode), 'clockIn');
-        setManualStatus('available');
-    }, [handleAction, workMode, setManualStatus]);
+    }, [handleAction, workMode]);
     const handleBreakStart = useCallback(async () => {
         await handleAction(breakStart, 'breakStart');
-        setManualStatus('away');
-    }, [handleAction, setManualStatus]);
+    }, [handleAction]);
     const handleBreakEnd = useCallback(async () => {
         await handleAction(breakEnd, 'breakEnd');
-        setManualStatus('available');
-    }, [handleAction, setManualStatus]);
+    }, [handleAction]);
     const handleConfirmClockOut = useCallback(async () => {
         setShowClockOutConfirm(false);
         await handleAction(clockOut, 'clockOut');
-        setManualStatus('offline');
-    }, [handleAction, setManualStatus]);
+    }, [handleAction]);
 
     const radius = 38;
     const circumference = 2 * Math.PI * radius;
