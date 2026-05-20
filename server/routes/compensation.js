@@ -23,7 +23,7 @@ function logAction(req, action, entity, entityId, details = {}) {
         `INSERT INTO audit_logs(user_id, org_id, action, entity_type, entity_id, details)
          VALUES($1,$2,$3,$4,$5,$6)`,
         [req.userId, req.userOrgId, action, entity, entityId, JSON.stringify(details)]
-    ).catch(() => {});
+    ).catch(() => { });
 }
 
 // ==================== COMPENSATION TEMPLATES ====================
@@ -180,8 +180,8 @@ router.post('/employees/:userId', requireRole('hr_admin'), requireSameOrg, async
              (user_id, org_id, template_id, effective_from, ctc_annual, base_salary, components, currency, payment_frequency, bank_account, notes, created_by)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
             [req.params.userId, req.userOrgId, template_id || null, effective_from, ctc_annual || 0, base_salary,
-             JSON.stringify(components || {}), currency || 'INR', payment_frequency || 'monthly',
-             bank_account || null, notes || null, req.userId]
+            JSON.stringify(components || {}), currency || 'INR', payment_frequency || 'monthly',
+            bank_account || null, notes || null, req.userId]
         );
         logAction(req, 'create', 'employee_compensation', result.rows[0].id, { user_id: req.params.userId, base_salary, ctc_annual });
         res.status(201).json(result.rows[0]);
@@ -303,19 +303,19 @@ router.post('/payroll-run', requireRole('hr_admin'), requireSameOrg, async (req,
                 `INSERT INTO salary_slips
                  (org_id, user_id, pay_period_id, compensation_id, slip_month, earnings, deductions,
                   gross_earnings, total_deductions, net_pay, days_worked, days_absent, leave_days,
-                  status, generated_by)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'draft',$14)
+                  overtime_hours, status, generated_by)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'draft',$15)
                  ON CONFLICT (org_id, user_id, pay_period_id) DO UPDATE SET
                   earnings = EXCLUDED.earnings, deductions = EXCLUDED.deductions,
                   gross_earnings = EXCLUDED.gross_earnings, total_deductions = EXCLUDED.total_deductions,
                   net_pay = EXCLUDED.net_pay, days_worked = EXCLUDED.days_worked,
                   days_absent = EXCLUDED.days_absent, leave_days = EXCLUDED.leave_days,
-                  updated_at = NOW()`,
+                  overtime_hours = EXCLUDED.overtime_hours, updated_at = NOW()`,
                 [req.userOrgId, emp.user_id, pay_period_id, emp.id, slipMonth,
-                 JSON.stringify(earnings), JSON.stringify(deductions),
-                 grossEarnings, totalDeductions, netPay,
-                 attendance.daysWorked, attendance.daysAbsent, attendance.leaveDays,
-                 req.userId]
+                JSON.stringify(earnings), JSON.stringify(deductions),
+                    grossEarnings, totalDeductions, netPay,
+                attendance.daysWorked, attendance.daysAbsent, attendance.leaveDays,
+                attendance.overtimeHours, req.userId]
             );
             generated++;
         }
@@ -583,7 +583,7 @@ router.post('/disburse', requireRole('hr_admin'), requireSameOrg, async (req, re
                       razorpay_fund_account_id, transfer_mode, status, initiated_by, initiated_at)
                      VALUES ($1,$2,$3,$4,'INR',$5,$6,'NEFT','processing',$7,NOW())`,
                     [req.userOrgId, slip.id, slip.user_id, slip.net_pay,
-                     payout.id, slip.razorpay_fund_account_id, req.userId]
+                    payout.id, slip.razorpay_fund_account_id, req.userId]
                 );
                 disbursed++;
             } catch (err) {
@@ -595,7 +595,7 @@ router.post('/disburse', requireRole('hr_admin'), requireSameOrg, async (req, re
                      VALUES ($1,$2,$3,$4,'INR',$5,'NEFT','failed',$6,$7,NOW())
                      ON CONFLICT (salary_slip_id) DO UPDATE SET status = 'failed', failure_reason = EXCLUDED.failure_reason`,
                     [req.userOrgId, slip.id, slip.user_id, slip.net_pay,
-                     slip.razorpay_fund_account_id, err.message, req.userId]
+                    slip.razorpay_fund_account_id, err.message, req.userId]
                 );
                 failed++;
             }
@@ -647,7 +647,7 @@ router.post('/disburse/:slipId', requireRole('hr_admin'), requireSameOrg, async 
               razorpay_payout_id = EXCLUDED.razorpay_payout_id, status = 'processing',
               failure_reason = NULL, initiated_at = NOW()`,
             [req.userOrgId, slip.id, slip.user_id, slip.net_pay,
-             payout.id, slip.razorpay_fund_account_id, req.userId]
+            payout.id, slip.razorpay_fund_account_id, req.userId]
         );
         res.json({ message: 'Disbursement initiated', payout_id: payout.id });
     } catch (err) {
@@ -801,8 +801,8 @@ router.put('/ctc-config', requireRole('hr_admin'), requireSameOrg, async (req, r
                  updated_by = EXCLUDED.updated_by, updated_at = NOW()
              RETURNING *`,
             [req.userOrgId, basic_pct ?? CTC_DEFAULTS.basic_pct, hra_pct ?? CTC_DEFAULTS.hra_pct,
-             conveyance_pct ?? CTC_DEFAULTS.conveyance_pct, pf_pct ?? CTC_DEFAULTS.pf_pct,
-             pf_max ?? CTC_DEFAULTS.pf_max, pt_fixed ?? CTC_DEFAULTS.pt_fixed, req.userId]
+            conveyance_pct ?? CTC_DEFAULTS.conveyance_pct, pf_pct ?? CTC_DEFAULTS.pf_pct,
+            pf_max ?? CTC_DEFAULTS.pf_max, pt_fixed ?? CTC_DEFAULTS.pt_fixed, req.userId]
         );
         res.json(result.rows[0]);
     } catch (err) {
@@ -902,8 +902,8 @@ router.post('/bank-details/:userId', requireRole('hr_admin'), requireSameOrg, as
               updated_at = NOW()
              RETURNING *`,
             [req.params.userId, req.userOrgId, account_holder_name, encAccountNumber,
-             ifsc_code, bank_name || null, account_type || 'savings',
-             razorpayContactId, razorpayFundAccountId]
+                ifsc_code, bank_name || null, account_type || 'savings',
+                razorpayContactId, razorpayFundAccountId]
         );
         const saved = result.rows[0];
         logAction(req, 'update', 'employee_bank_details', saved.id, { user_id: req.params.userId });
