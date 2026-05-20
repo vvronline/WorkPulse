@@ -420,20 +420,20 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
             return;
         }
 
-        // Create call log entry
-        const callLog = (await db.query(
-            `INSERT INTO call_logs (conversation_id, caller_id, call_type, status)
-             VALUES ($1, $2, $3, 'ringing') RETURNING id, created_at`,
-            [conversationId, senderId, callType]
-        )).rows[0];
+        const [callLogResult, callerResult, convResult] = await Promise.all([
+            db.query(
+                `INSERT INTO call_logs (conversation_id, caller_id, call_type, status)
+                 VALUES ($1, $2, $3, 'ringing') RETURNING id, created_at`,
+                [conversationId, senderId, callType]
+            ),
+            db.query('SELECT full_name, avatar FROM users WHERE id = $1', [senderId]),
+            db.query('SELECT name, is_group FROM conversations WHERE id = $1', [conversationId]),
+        ]);
 
-        const caller = (await db.query('SELECT full_name, avatar FROM users WHERE id = $1', [senderId])).rows[0];
+        const callLog = callLogResult.rows[0];
+        const caller = callerResult.rows[0];
+        const conv = convResult.rows[0];
 
-        // Get conversation info for the notification
-        const conv = (await db.query('SELECT name, is_group FROM conversations WHERE id = $1', [conversationId])).rows[0];
-
-        // Notify all other participants about incoming call.
-        //
         // For NON-group (1:1) conversations we ring at most ONE other user —
         // the earliest-added counterpart. This protects against legacy 1:1
         // chats that were silently corrupted by the old "add participant"
@@ -476,27 +476,33 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
         const { callId, conversationId } = msg.data || {};
         if (!callId || !conversationId) return;
 
-        const callLog = (await db.query(
-            `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2 AND status = 'ringing'`,
-            [callId, conversationId]
-        )).rows[0];
+        const [callLogResult, participantResult] = await Promise.all([
+            db.query(
+                `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2 AND status = 'ringing'`,
+                [callId, conversationId]
+            ),
+            db.query(
+                'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
+                [conversationId, senderId]
+            ),
+        ]);
+
+        const callLog = callLogResult.rows[0];
         if (!callLog) {
             logger.warn({ senderId, callId, conversationId }, 'call_accept: no ringing call found');
             return;
         }
-
-        const participant = (await db.query(
-            'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
-            [conversationId, senderId]
-        )).rows[0];
-        if (!participant) {
+        if (!participantResult.rows[0]) {
             logger.warn({ senderId, callId, conversationId }, 'call_accept: sender not a participant');
             return;
         }
 
-        await db.query(`UPDATE call_logs SET status = 'answered', started_at = NOW() WHERE id = $1`, [callId]);
+        const [, accepterResult] = await Promise.all([
+            db.query(`UPDATE call_logs SET status = 'answered', started_at = NOW() WHERE id = $1`, [callId]),
+            db.query('SELECT full_name, avatar FROM users WHERE id = $1', [senderId]),
+        ]);
 
-        const accepter = (await db.query('SELECT full_name, avatar FROM users WHERE id = $1', [senderId])).rows[0];
+        const accepter = accepterResult.rows[0];
 
         logger.info({ senderId, callerId: callLog.caller_id, callId, conversationId, tenantId }, 'call_accept: notifying caller');
 
@@ -520,6 +526,31 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
             conversationId,
             action: 'accepted',
         });
+
+    } else if (msg.type === 'call_cancel') {
+        // Caller cancels (media acquisition failed after call_initiate was sent)
+        const { conversationId } = msg.data || {};
+        if (!conversationId) return;
+
+        const callLog = (await db.query(
+            `SELECT id FROM call_logs WHERE conversation_id = $1 AND caller_id = $2 AND status = 'ringing' ORDER BY created_at DESC LIMIT 1`,
+            [conversationId, senderId]
+        )).rows[0];
+        if (!callLog) return;
+
+        await db.query(`UPDATE call_logs SET status = 'missed', ended_at = NOW() WHERE id = $1`, [callLog.id]);
+
+        const participants = (await db.query(
+            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2',
+            [conversationId, senderId]
+        )).rows;
+
+        for (const p of participants) {
+            sendToUser(tenantId, p.user_id, 'call_ended', {
+                callId: callLog.id,
+                conversationId,
+            });
+        }
 
     } else if (msg.type === 'call_reject') {
         // Callee rejects → update call log, notify caller
@@ -811,15 +842,18 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
             }
         }
 
-        const joiner = (await db.query('SELECT full_name, avatar, username FROM users WHERE id = $1', [senderId])).rows[0];
+        const [joinerResult, allParticipantsResult] = await Promise.all([
+            db.query('SELECT full_name, avatar, username FROM users WHERE id = $1', [senderId]),
+            db.query(
+                `SELECT mp.user_id, u.full_name, u.avatar, u.username
+                 FROM meeting_participants mp JOIN users u ON u.id = mp.user_id
+                 WHERE mp.meeting_id = $1 AND mp.status = $2`,
+                [meetingId, 'joined']
+            ),
+        ]);
 
-        // Get all current participants with user info (for sending to the new joiner)
-        const allParticipants = (await db.query(
-            `SELECT mp.user_id, u.full_name, u.avatar, u.username
-             FROM meeting_participants mp JOIN users u ON u.id = mp.user_id
-             WHERE mp.meeting_id = $1 AND mp.status = $2`,
-            [meetingId, 'joined']
-        )).rows;
+        const joiner = joinerResult.rows[0];
+        const allParticipants = allParticipantsResult.rows;
 
         // Build existingPeers with full user info so the joiner can display names
         const existingPeers = allParticipants

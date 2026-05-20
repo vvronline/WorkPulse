@@ -19,7 +19,7 @@ const FALLBACK_ICE_SERVERS = [
  * order until getUserMedia succeeds. This is essential on mobile networks /
  * older devices where ideal constraints (1280x720@30fps) often fail.
  */
-function buildMediaConstraintProfiles(isVideoCall) {
+function buildMediaConstraintProfiles(isVideoCall, isMobile) {
     const audio = {
         echoCancellation: true,
         noiseSuppression: true,
@@ -31,16 +31,18 @@ function buildMediaConstraintProfiles(isVideoCall) {
             { audio: true, video: false }, // last-resort: bare audio
         ];
     }
+    if (isMobile) {
+        return [
+            { audio, video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 }, facingMode: 'user' } },
+            { audio, video: true },
+            { audio, video: false },
+        ];
+    }
     return [
-        // 1. HD ideal — works on desktops with good cameras
         { audio, video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 }, facingMode: 'user' } },
-        // 2. SD — typical mobile / weaker cameras
         { audio, video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 }, facingMode: 'user' } },
-        // 3. Low — congested networks, older webcams
         { audio, video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 15, max: 24 }, facingMode: 'user' } },
-        // 4. Bare video flag — let the browser pick anything that works
         { audio, video: true },
-        // 5. Audio-only fallback — better than dropping the call entirely
         { audio, video: false },
     ];
 }
@@ -82,6 +84,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     const relayOnlyRef = useRef(false); // set true after a UDP-relay failure to force TURN/TCP/TLS only
     const networkOnlineRef = useRef(navigator.onLine);
     const initialIceConfigLoadedRef = useRef(false);
+    const deferredOfferRef = useRef(null);
 
     // Fetch ICE config (STUN + optional TURN). Re-fetch when credentials are
     // about to expire (coturn ephemeral REST API issues short-lived creds).
@@ -128,7 +131,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
             alert('Your browser does not support audio/video calls. Please use Chrome, Edge, Firefox or Safari over HTTPS.');
             return null;
         }
-        const profiles = buildMediaConstraintProfiles(callType === 'video');
+        const profiles = buildMediaConstraintProfiles(callType === 'video', isMobile);
         let lastError = null;
 
         for (let i = 0; i < profiles.length; i++) {
@@ -343,14 +346,11 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 remoteAudioRef.current.play().catch(err => console.warn('[call-webrtc] remote audio autoplay blocked:', err?.message || err));
             }
 
-            // Attach to video sink. We re-assign srcObject on EVERY ontrack
-            // even if it's the same stream object — some browsers (Safari,
-            // older Chromium) only render the new track after a fresh
-            // assignment, otherwise the <video> stays black.
             if (remoteVideoRef.current) {
-                remoteVideoRef.current.srcObject = null; // force a teardown
-                remoteVideoRef.current.srcObject = remoteStream;
-                if (isMobile) remoteVideoRef.current.muted = true; // mobile autoplay needs muted
+                if (remoteVideoRef.current.srcObject !== remoteStream) {
+                    remoteVideoRef.current.srcObject = remoteStream;
+                }
+                if (isMobile) remoteVideoRef.current.muted = true;
                 remoteVideoRef.current.play().catch(err => console.warn('[call-webrtc] remote video autoplay blocked:', err?.message || err));
             }
 
@@ -371,11 +371,10 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 e.track.onunmute = () => {
                     console.log('[call-webrtc] remote video track unmuted');
                     setRemoteVideoOff(false);
-                    // Re-attach srcObject — some browsers need this to actually
-                    // start rendering frames after the first unmute.
                     if (remoteVideoRef.current && remoteStreamRef.current) {
-                        remoteVideoRef.current.srcObject = null;
-                        remoteVideoRef.current.srcObject = remoteStreamRef.current;
+                        if (remoteVideoRef.current.srcObject !== remoteStreamRef.current) {
+                            remoteVideoRef.current.srcObject = remoteStreamRef.current;
+                        }
                         remoteVideoRef.current.play().catch(() => { });
                     }
                 };
@@ -658,14 +657,11 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     const handleAccept = useCallback(async () => {
         onStatusChange('connecting');
         stopRingtone();
+        wsSend('call_accept', { callId, conversationId });
         const stream = await startMedia();
         if (!stream) { handleEnd(); return; }
-        // Answerer side: create PC WITHOUT adding tracks yet. Tracks are
-        // attached to the offer's transceivers later in handleSignalInternal,
-        // which avoids the m-line mismatch that prevents ICE from completing.
         createPeerConnection(stream, callerId, false);
         flushPendingSignals();
-        wsSend('call_accept', { callId, conversationId });
     }, [callId, conversationId, wsSend, startMedia, createPeerConnection, callerId, stopRingtone, flushPendingSignals, onStatusChange, handleEnd]);
 
     // ─── Auto-accept when call was accepted from global PiP notification ───
@@ -693,6 +689,21 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
             localStreamRef.current = localStream;
             if (localVideoRef.current && callType === 'video') {
                 localVideoRef.current.srcObject = localStream;
+            }
+            if (deferredOfferRef.current) {
+                const targetUserId = deferredOfferRef.current;
+                deferredOfferRef.current = null;
+                (async () => {
+                    const pc = createPeerConnection(localStream, targetUserId);
+                    flushPendingSignals();
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+                    console.log('[call-webrtc] deferred offer sent to:', targetUserId);
+                    wsSend('call_signal', {
+                        conversationId, targetUserId,
+                        signal: { type: 'offer', sdp: offer.sdp }
+                    });
+                })();
             }
         }
     }, [localStream]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -733,7 +744,11 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 onStatusChange('connecting');
                 stopRingtone();
                 const stream = localStreamRef.current;
-                if (!stream) { console.warn('[call-webrtc] no local stream, ending call'); handleEnd(); return; }
+                if (!stream) {
+                    console.log('[call-webrtc] stream not ready yet, deferring offer creation');
+                    deferredOfferRef.current = acceptedBy;
+                    return;
+                }
                 const pc = createPeerConnection(stream, acceptedBy);
                 flushPendingSignals();
                 const offer = await pc.createOffer();

@@ -12,6 +12,14 @@ const DEFAULT_ICE_SERVERS = [
 function buildMeetingMediaProfiles(wantVideo) {
     const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
     if (!wantVideo) return [{ audio, video: false }];
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    if (isMobile) {
+        return [
+            { audio, video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 } } },
+            { audio, video: true },
+            { audio, video: false },
+        ];
+    }
     return [
         { audio, video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } } },
         { audio, video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 } } },

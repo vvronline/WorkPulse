@@ -5,27 +5,8 @@ export default function useCallActions(state) {
         setCallState, callSignalRef, callEndRef,
     } = state;
 
-    const initiateCall = async (callType) => {
+    const initiateCall = (callType) => {
         if (!activeConv) return;
-
-        let stream = null;
-        try {
-            stream = await navigator.mediaDevices.getUserMedia({
-                audio: true,
-                video: callType === 'video' ? { width: 1280, height: 720, facingMode: 'user' } : false
-            });
-        } catch (err) {
-            console.error('Failed to get media:', err);
-            const device = callType === 'video' ? 'camera/microphone' : 'microphone';
-            if (err?.name === 'NotAllowedError') {
-                alert(`${device} access is blocked.\n\n1. Click the lock/tune icon in the address bar → allow ${device}\n2. If the setting is locked, your organization may be blocking it — contact your IT admin to whitelist this site`);
-            } else if (err?.name === 'NotFoundError') {
-                alert(`No ${device} found. Please connect a ${device} and try again.`);
-            } else {
-                alert(`Could not access ${device}. Please check your device settings and try again.`);
-            }
-            return;
-        }
 
         const remoteName = activeConv.is_group
             ? (activeConv.group_name || activeConv.name)
@@ -45,12 +26,36 @@ export default function useCallActions(state) {
             acceptedBy: null,
             onSignal: callSignalRef,
             onEndExternal: callEndRef,
-            localStream: stream
+            localStream: null
         });
 
         wsSend('call_initiate', {
             conversationId: activeConv.id,
             callType
+        });
+
+        const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        const videoConstraints = isMobile
+            ? { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 }, facingMode: 'user' }
+            : { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' };
+
+        navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+            video: callType === 'video' ? videoConstraints : false
+        }).then(stream => {
+            setCallState(prev => prev ? { ...prev, localStream: stream } : prev);
+        }).catch(err => {
+            console.error('Failed to get media:', err);
+            const device = callType === 'video' ? 'camera/microphone' : 'microphone';
+            if (err?.name === 'NotAllowedError') {
+                alert(`${device} access is blocked.\n\n1. Click the lock/tune icon in the address bar → allow ${device}\n2. If the setting is locked, your organization may be blocking it — contact your IT admin to whitelist this site`);
+            } else if (err?.name === 'NotFoundError') {
+                alert(`No ${device} found. Please connect a ${device} and try again.`);
+            } else {
+                alert(`Could not access ${device}. Please check your device settings and try again.`);
+            }
+            wsSend('call_cancel', { conversationId: activeConv.id });
+            setCallState(null);
         });
     };
 
