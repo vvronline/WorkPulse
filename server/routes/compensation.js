@@ -303,19 +303,19 @@ router.post('/payroll-run', requireRole('hr_admin'), requireSameOrg, async (req,
                 `INSERT INTO salary_slips
                  (org_id, user_id, pay_period_id, compensation_id, slip_month, earnings, deductions,
                   gross_earnings, total_deductions, net_pay, days_worked, days_absent, leave_days,
-                  overtime_hours, status, generated_by)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'draft',$15)
+                  status, generated_by)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'draft',$14)
                  ON CONFLICT (org_id, user_id, pay_period_id) DO UPDATE SET
                   earnings = EXCLUDED.earnings, deductions = EXCLUDED.deductions,
                   gross_earnings = EXCLUDED.gross_earnings, total_deductions = EXCLUDED.total_deductions,
                   net_pay = EXCLUDED.net_pay, days_worked = EXCLUDED.days_worked,
                   days_absent = EXCLUDED.days_absent, leave_days = EXCLUDED.leave_days,
-                  overtime_hours = EXCLUDED.overtime_hours, updated_at = NOW()`,
+                  updated_at = NOW()`,
                 [req.userOrgId, emp.user_id, pay_period_id, emp.id, slipMonth,
                  JSON.stringify(earnings), JSON.stringify(deductions),
                  grossEarnings, totalDeductions, netPay,
                  attendance.daysWorked, attendance.daysAbsent, attendance.leaveDays,
-                 attendance.overtimeHours, req.userId]
+                 req.userId]
             );
             generated++;
         }

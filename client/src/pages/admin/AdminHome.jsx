@@ -102,15 +102,14 @@ export default function AdminHome({ user, onNavigate }) {
         });
     }
     if (stats && stats.pendingApprovals > 0 && pendingApprovals === 0) {
-        // Fallback if /manager/approvals isn't accessible (HR-only role)
         attention.push({
             key: 'pending-stats',
             icon: <AlertTriangle size={18} />,
             iconClass: 'warning',
             value: stats.pendingApprovals,
             label: 'pending approvals across the organization',
-            action: null,
-            target: null,
+            action: 'View approvals',
+            target: '__manager__',
         });
     }
     if (!setupComplete && setup.loaded && user?.org_id) {

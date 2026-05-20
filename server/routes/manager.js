@@ -325,9 +325,19 @@ router.get('/approvals', async (req, res) => {
         const { status, type } = req.query;
         const filterStatus = status || 'pending';
 
-        const conditions = ['(ar.approver_id = $1 OR (ar.approver_id IS NULL AND ar.requester_id IN (SELECT id FROM users WHERE manager_id = $1)))'];
-        const params = [req.userId];
-        let pi = 2;
+        const isHrOrAbove = req.roleLevel >= ROLE_LEVEL.hr_admin;
+        const conditions = [];
+        const params = [];
+        let pi = 1;
+
+        if (isHrOrAbove && req.userOrgId) {
+            conditions.push(`ar.requester_id IN (SELECT id FROM users WHERE org_id = $${pi++})`);
+            params.push(req.userOrgId);
+        } else {
+            conditions.push(`(ar.approver_id = $${pi} OR (ar.approver_id IS NULL AND ar.requester_id IN (SELECT id FROM users WHERE manager_id = $${pi})))`);
+            params.push(req.userId);
+            pi++;
+        }
 
         if (filterStatus !== 'all') { conditions.push(`ar.status = $${pi++}`); params.push(filterStatus); }
         if (type) { conditions.push(`ar.type = $${pi++}`); params.push(type); }

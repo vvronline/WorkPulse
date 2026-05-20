@@ -75,7 +75,6 @@ function sendSalarySlipPDF(res, { slip, employee, organization, branding, ytdDat
         `Days Worked: ${slip.days_worked || 0}`,
         `Leave Days: ${slip.leave_days || 0}`,
         `Absent Days: ${slip.days_absent || 0}`,
-        `Overtime Hrs: ${slip.overtime_hours || 0}`,
     ];
     doc.font('Helvetica').fontSize(8.5).fillColor('#000000')
         .text(attItems.join('    |    '), ML + 10, attY + 18, { width: usableWidth - 20 });

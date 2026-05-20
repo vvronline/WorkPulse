@@ -4,6 +4,7 @@ import {
     getPayPeriods, createPayPeriod, deletePayPeriod,
     exportPayrollHours,
 } from '../../api';
+import ConfirmDialog from '../../components/common/ConfirmDialog';
 import s from './AdminPages.module.css';
 
 const today = new Date().toISOString().slice(0, 10);
@@ -30,6 +31,9 @@ export default function PayPeriods() {
     });
     const [submitting, setSubmitting] = useState(false);
     const [formError, setFormError] = useState('');
+
+    // Unlock confirmation
+    const [unlockTarget, setUnlockTarget] = useState(null);
 
     // Payroll export state
     const [exportFrom, setExportFrom] = useState(getMonthRange().start);
@@ -70,8 +74,8 @@ export default function PayPeriods() {
         }
     };
 
-    const handleDelete = async (id, label) => {
-        if (!window.confirm(`Delete pay period "${label}"? This will unlock time entries in that range.`)) return;
+    const handleDelete = async (id) => {
+        setUnlockTarget(null);
         try {
             await deletePayPeriod(id);
             setPeriods(ps => ps.filter(p => p.id !== id));
@@ -214,7 +218,7 @@ export default function PayPeriods() {
                                     <td>
                                         <button
                                             className={s.dangerBtn}
-                                            onClick={() => handleDelete(p.id, p.label)}
+                                            onClick={() => setUnlockTarget(p)}
                                             title="Unlock this period"
                                         >
                                             <Unlock size={14} style={{marginRight:4,verticalAlign:'middle'}} />Unlock
@@ -226,6 +230,17 @@ export default function PayPeriods() {
                     </table>
                 )}
             </div>
+
+            <ConfirmDialog
+                isOpen={!!unlockTarget}
+                title="Unlock Pay Period"
+                message={unlockTarget ? `Unlock "${unlockTarget.label}"? This will allow employees to modify time entries in that range.` : ''}
+                confirmText="Unlock"
+                cancelText="Cancel"
+                onConfirm={() => handleDelete(unlockTarget.id)}
+                onCancel={() => setUnlockTarget(null)}
+                isDanger
+            />
         </div>
     );
 }
