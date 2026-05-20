@@ -558,7 +558,35 @@ router.post('/disburse', requireRole('hr_admin'), requireSameOrg, async (req, re
         )).rows;
 
         if (slips.length === 0) {
-            return res.status(400).json({ error: 'No eligible slips for disbursement (all already disbursed or missing bank details)' });
+            const totalPublished = (await req.db.query(
+                `SELECT COUNT(*) FROM salary_slips WHERE org_id = $1 AND pay_period_id = $2 AND status = 'published'`,
+                [req.userOrgId, pay_period_id]
+            )).rows[0].count;
+            const alreadyDisbursed = (await req.db.query(
+                `SELECT COUNT(*) FROM salary_slips ss
+                 JOIN payroll_disbursements pd ON pd.salary_slip_id = ss.id
+                 WHERE ss.org_id = $1 AND ss.pay_period_id = $2`,
+                [req.userOrgId, pay_period_id]
+            )).rows[0].count;
+            const missingBank = (await req.db.query(
+                `SELECT COUNT(*) FROM salary_slips ss
+                 LEFT JOIN employee_bank_details ebd ON ebd.user_id = ss.user_id AND ebd.org_id = ss.org_id
+                 WHERE ss.org_id = $1 AND ss.pay_period_id = $2 AND ss.status = 'published'
+                   AND (ebd.razorpay_fund_account_id IS NULL OR ebd.id IS NULL)`,
+                [req.userOrgId, pay_period_id]
+            )).rows[0].count;
+
+            let reason = 'No eligible slips for disbursement.';
+            if (parseInt(alreadyDisbursed) > 0 && parseInt(missingBank) > 0) {
+                reason = `All slips already disbursed (${alreadyDisbursed}) or missing bank details (${missingBank}).`;
+            } else if (parseInt(alreadyDisbursed) > 0) {
+                reason = `All ${alreadyDisbursed} slip(s) have already been disbursed.`;
+            } else if (parseInt(missingBank) > 0) {
+                reason = `${missingBank} slip(s) missing bank details. No slips are ready for disbursement.`;
+            } else if (parseInt(totalPublished) === 0) {
+                reason = 'No published slips found. Publish draft slips before disbursing.';
+            }
+            return res.status(400).json({ error: reason });
         }
 
         const payoutService = await getPayoutService(req.db, req.userOrgId);

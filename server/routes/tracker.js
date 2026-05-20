@@ -517,11 +517,9 @@ router.post('/manual-entry', auth, loadUserContext, async (req, res) => {
             }
         }
 
-        let approvalStatus = 'approved';
-        let needsApproval = false;
-        const hasManager = req.userManagerId != null;
-        const isOrgSubordinate = req.userOrgId && (ROLE_LEVEL[req.userRole] || 1) < ROLE_LEVEL.hr_admin;
-        if (hasManager || isOrgSubordinate) { approvalStatus = 'pending'; needsApproval = true; }
+        const isSuperAdmin = req.userRole === 'super_admin';
+        let approvalStatus = isSuperAdmin ? 'approved' : 'pending';
+        let needsApproval = !isSuperAdmin;
 
         const clockInTs = toUTC(date, clock_in);
         const clockOutTs = clock_out ? toUTC(date, clock_out) : null;
@@ -648,11 +646,9 @@ router.put('/manual-entry/:date', auth, loadUserContext, async (req, res) => {
             }
         }
 
-        let approvalStatus = 'approved';
-        let needsApproval = false;
-        const hasManager = req.userManagerId != null;
-        const isOrgSubordinate = req.userOrgId && (ROLE_LEVEL[req.userRole] || 1) < ROLE_LEVEL.hr_admin;
-        if (hasManager || isOrgSubordinate) { approvalStatus = 'pending'; needsApproval = true; }
+        const isSuperAdmin = req.userRole === 'super_admin';
+        let approvalStatus = isSuperAdmin ? 'approved' : 'pending';
+        let needsApproval = !isSuperAdmin;
 
         const tzMod = getTzModifier(req);
         const clockInTs = toUTC(date, clock_in);

@@ -30,6 +30,7 @@ export default function SalarySlips() {
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
     const [showDisburseConfirm, setShowDisburseConfirm] = useState(false);
+    const [showPublishConfirm, setShowPublishConfirm] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -79,7 +80,7 @@ export default function SalarySlips() {
     };
 
     const handleBulkPublish = async () => {
-        if (!window.confirm('Publish all draft slips for this period?')) return;
+        setShowPublishConfirm(false);
         setPublishing(true);
         try {
             const res = await bulkPublishSlips({ pay_period_id: parseInt(selectedPeriod) });
@@ -163,7 +164,7 @@ export default function SalarySlips() {
                 {selectedPeriod && slips.length > 0 && (
                     <div className={s.formRow} style={{ marginTop: 12 }}>
                         {draftCount > 0 && (
-                            <button onClick={handleBulkPublish} disabled={publishing} className={s.btnSecondary}>
+                            <button onClick={() => setShowPublishConfirm(true)} disabled={publishing} className={s.btnSecondary}>
                                 <CheckCircle size={14} /> Publish All Drafts ({draftCount})
                             </button>
                         )}
@@ -242,6 +243,17 @@ export default function SalarySlips() {
                     </table>
                 </div>
             )}
+
+            <ConfirmDialog
+                isOpen={showPublishConfirm}
+                title="Confirm Publish"
+                message="Publish all draft slips for this period?"
+                confirmText="Publish"
+                cancelText="Cancel"
+                onConfirm={handleBulkPublish}
+                onCancel={() => setShowPublishConfirm(false)}
+                isDanger={false}
+            />
 
             <ConfirmDialog
                 isOpen={showDisburseConfirm}
