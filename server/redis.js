@@ -139,7 +139,12 @@ async function getOnlineUsers(tenantId, userIds) {
         const results = await pipeline.exec();
         const map = {};
         for (let i = 0; i < userIds.length; i++) {
-            const [err, val] = results[i];
+            // Pipeline can return undefined / null entries when the
+            // connection drops mid-flight. Destructuring those crashes
+            // — fall back to 'offline'.
+            const entry = results?.[i];
+            if (!entry) { map[userIds[i]] = 'offline'; continue; }
+            const [err, val] = entry;
             map[userIds[i]] = !err && val === 1 ? 'online' : 'offline';
         }
         return map;
@@ -178,7 +183,10 @@ async function getUnreadCounts(tenantId, userId, conversationIds) {
         const results = await pipeline.exec();
         const map = {};
         for (let i = 0; i < conversationIds.length; i++) {
-            map[conversationIds[i]] = parseInt(results[i][1], 10) || 0;
+            // Defensive: see comment in getOnlineUsers — pipeline entries
+            // may be missing if the connection is torn down mid-flight.
+            const entry = results?.[i];
+            map[conversationIds[i]] = entry && !entry[0] ? (parseInt(entry[1], 10) || 0) : 0;
         }
         return map;
     } catch { return null; }

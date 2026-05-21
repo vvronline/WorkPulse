@@ -213,15 +213,26 @@ async function clearActivityForRef(ctx, activity, refId) {
     assertCtx(ctx);
     const source = activity === 'in_meeting' ? 'meeting' : 'call';
     const userIds = await repo.clearActivityByRef(ctx.db, activity, refId);
-    const results = [];
-    for (const userId of userIds) {
+    if (userIds.length === 0) return [];
+
+    // Fan out in parallel — every applyChange runs against the same db
+    // pool but each affects a different user's rows, so there's no
+    // contention. Promise.all keeps latency O(slowest user) instead of
+    // O(sum of all users) which matters for large meetings.
+    const settled = await Promise.allSettled(userIds.map(async (userId) => {
         const previous = await peekEffective(ctx, userId);
-        const payload = await applyChange(ctx, {
+        return applyChange(ctx, {
             userId, source,
             previousEffective: previous?.effective,
             metadata: { activity, refId },
         });
-        if (payload) results.push(payload);
+    }));
+    const results = [];
+    for (const r of settled) {
+        if (r.status === 'fulfilled' && r.value) results.push(r.value);
+        else if (r.status === 'rejected') {
+            ctx.logger?.warn?.({ err: r.reason?.message, activity, refId }, 'clearActivityForRef: per-user applyChange failed');
+        }
     }
     return results;
 }

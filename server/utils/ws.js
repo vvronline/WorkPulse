@@ -220,10 +220,14 @@ function setupWebSocket(server) {
             // Status service v2: close exactly this connection's session.
             // If it was the user's last open session, the service will
             // resolve them as offline and broadcast `user_status` accordingly.
+            // closeSession also clears any per-session activity (in_call /
+            // in_meeting) as part of the UPDATE — see repository.closeSession.
             if (ws._statusSessionKey) {
                 statusService.closeSession({ db, tenantId }, ws._statusSessionKey)
                     .catch(err => logger.warn({ err: err.message, userId }, 'statusService.closeSession failed'));
                 ws._statusSessionKey = null;
+                ws._callActivityRefId = null;
+                ws._meetingActivityRefId = null;
             }
 
             // Clean up meeting if user was in one and didn't explicitly leave

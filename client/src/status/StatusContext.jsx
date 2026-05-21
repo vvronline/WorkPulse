@@ -32,6 +32,21 @@ import {
 } from './api';
 import { ACTIVITY_PING_THROTTLE_MS } from './constants';
 
+/**
+ * Shallow-compare the status fields that matter for the UI. We intentionally
+ * skip `source` (debug-only) and any non-listed extras the server may add in
+ * future — those won't trigger a re-render until they're added here.
+ */
+const STATUS_KEYS = ['effective', 'presence', 'manualStatus', 'presencePreference', 'statusMessage', 'statusMessageExpiresAt'];
+function samePayload(a, b) {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    for (const k of STATUS_KEYS) {
+        if (a[k] !== b[k]) return false;
+    }
+    return true;
+}
+
 // Default "we haven't heard from the server yet" payload.
 const INITIAL_ME = {
     userId: null,
@@ -71,13 +86,19 @@ export function StatusProvider({ children }) {
         if (msg.type !== 'user_status' || !msg.data?.userId) return;
 
         const payload = msg.data;
-        // Update self if it's our event.
+        // Update self if it's our event. Skip the setState if nothing
+        // changed (e.g. duplicate broadcast after a reconnect) to avoid
+        // re-rendering every consumer.
         if (myUserId && payload.userId === myUserId) {
-            setMe(prev => ({ ...prev, ...payload }));
+            setMe(prev => (samePayload(prev, payload) ? prev : { ...prev, ...payload }));
         }
         // Always merge into peers map so any component can look up
-        // any user without a roundtrip.
-        setPeers(prev => ({ ...prev, [payload.userId]: payload }));
+        // any user without a roundtrip. Same deduplication applies.
+        setPeers(prev => {
+            const existing = prev[payload.userId];
+            if (existing && samePayload(existing, payload)) return prev;
+            return { ...prev, [payload.userId]: payload };
+        });
     }, [myUserId]);
 
     const { sendMessage: _wsSend } = useWebSocket(onWsMessage);

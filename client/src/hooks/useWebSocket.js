@@ -1,5 +1,8 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 
+/** Bound the outbound queue so a long offline stretch can't grow unboundedly. */
+const MAX_QUEUED_MESSAGES = 100;
+
 /**
  * Hook that maintains a WebSocket connection for real-time updates.
  * Reconnects automatically on disconnect. Auth is via HttpOnly cookie.
@@ -73,8 +76,13 @@ export default function useWebSocket(onMessage) {
         if (wsRef.current && wsRef.current.readyState === 1) {
             wsRef.current.send(msg);
         } else {
-            console.warn('[ws] queuing message (WS not open):', type);
-            // Queue the message to send on reconnect
+            // Queue the message to send on reconnect, but cap the queue so
+            // a long disconnect (e.g. laptop closed for hours) doesn't grow
+            // memory unboundedly. Drop oldest first — newer messages are
+            // almost always more relevant (e.g. typing indicators, ping).
+            if (queueRef.current.length >= MAX_QUEUED_MESSAGES) {
+                queueRef.current.shift();
+            }
             queueRef.current.push(msg);
         }
     }, []);

@@ -84,8 +84,12 @@ async function getOpenSessionsBulk(db, userIds) {
     const map = new Map();
     for (const id of userIds) map.set(id, []);
     for (const r of rows) {
-        if (!map.has(r.user_id)) map.set(r.user_id, []);
-        map.get(r.user_id).push(mapSessionRow(r));
+        // r.user_id is always in `map` because we seeded it above from the
+        // same id list, but guard defensively for cases where the caller
+        // passes ids as strings.
+        let arr = map.get(r.user_id);
+        if (!arr) { arr = []; map.set(r.user_id, arr); }
+        arr.push(mapSessionRow(r));
     }
     return map;
 }
@@ -177,7 +181,10 @@ async function closeAllSessionsForUser(db, userId) {
 
 async function setSessionActivity(db, sessionKey, activity, refId = null) {
     if (!sessionKey) throw new TypeError('setSessionActivity: sessionKey is required');
-    if (!isActivity(activity) || activity === null) {
+    // `isActivity(null)` is true (null is a valid "no activity" sentinel
+    // for the clear path), but setSessionActivity requires a concrete
+    // activity — reject null explicitly.
+    if (activity === null || !isActivity(activity)) {
         throw new TypeError(`setSessionActivity: invalid activity "${activity}"`);
     }
     const row = (await db.query(
@@ -218,7 +225,7 @@ async function clearSessionActivity(db, sessionKey, only = null) {
  */
 async function clearActivityByRef(db, activity, refId) {
     if (!activity || refId == null) return [];
-    if (!isActivity(activity) || activity === null) {
+    if (!isActivity(activity)) {
         throw new TypeError(`clearActivityByRef: invalid activity "${activity}"`);
     }
     const rows = (await db.query(

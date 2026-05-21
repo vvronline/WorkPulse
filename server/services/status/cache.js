@@ -20,10 +20,13 @@ const { CACHE_TTL_SEC } = require('./constants');
 const KEY_NS = 'status:effective';
 const TTL = CACHE_TTL_SEC;
 
+/**
+ * Tenant-prefixed key. Format mirrors `redis.tk` so a flat KEYS scan in
+ * ops tooling can group every per-tenant key under `t:<id>:...`.
+ */
 function key(tenantId, userId) {
-    // redis.tk handles the per-tenant prefix.
-    return redis.KEYS
-        ? `t:${tenantId || 0}:${KEY_NS}:${userId}`
+    return tenantId
+        ? `t:${tenantId}:${KEY_NS}:${userId}`
         : `${KEY_NS}:${userId}`;
 }
 

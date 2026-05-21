@@ -46,12 +46,18 @@ async function broadcastUserStatus({ db, tenantId, userId, payload }) {
         ws.sendToUser(tenantId, userId, 'user_status', payload);
 
         // Then to org peers. Org membership is the privacy boundary.
-        const user = (await db.query('SELECT org_id FROM users WHERE id = $1', [userId])).rows[0];
-        if (!user?.org_id) return;
+        // Single SQL round-trip: derive org_id from the actor row and fan
+        // out to every active peer in one query (the previous version did
+        // two sequential queries — one for org_id, one for peers).
         const peers = (await db.query(
-            `SELECT id FROM users
-              WHERE org_id = $1 AND id <> $2 AND is_active = TRUE`,
-            [user.org_id, userId]
+            `SELECT p.id
+               FROM users a
+               JOIN users p ON p.org_id = a.org_id
+              WHERE a.id = $1
+                AND p.id <> $1
+                AND p.is_active = TRUE
+                AND a.org_id IS NOT NULL`,
+            [userId]
         )).rows;
         for (const p of peers) {
             ws.sendToUser(tenantId, p.id, 'user_status', payload);

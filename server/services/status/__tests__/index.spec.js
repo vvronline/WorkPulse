@@ -223,6 +223,17 @@ function makeDb({ users }) {
                     .map(u => ({ id: u.id })),
             };
         }
+        // ── broadcaster (one-shot): peers in same org as actor ────────────
+        if (/^SELECT p\.id\s+FROM users a\s+JOIN users p ON p\.org_id = a\.org_id\s+WHERE a\.id = \$1/i.test(s)) {
+            const actorId = params[0];
+            const actor = state.users.get(actorId);
+            if (!actor || !actor.org_id) return { rows: [] };
+            return {
+                rows: [...state.users.values()]
+                    .filter(u => u.org_id === actor.org_id && u.id !== actorId && u.is_active)
+                    .map(u => ({ id: u.id })),
+            };
+        }
 
         throw new Error(`unhandled SQL in test fake: ${s.slice(0, 120)}`);
     }
