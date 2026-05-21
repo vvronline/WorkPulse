@@ -98,5 +98,14 @@ export default function useWebSocket(onMessage) {
         };
     }, [connect]);
 
+    // Reconnect when a message handler is provided after a 4001 auth rejection.
+    // This handles the desktop app case where the WS connects before login
+    // (gets 4001, stops retrying), then the user logs in and auth becomes available.
+    useEffect(() => {
+        if (onMessage && (!wsRef.current || wsRef.current.readyState > 1)) {
+            connect();
+        }
+    }, [onMessage, connect]);
+
     return { connected, sendMessage };
 }

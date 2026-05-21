@@ -164,9 +164,14 @@ describe('Tenant Isolation - Tasks', () => {
     test('persists org_id when creating backlog task', async () => {
         setupAuth();
         const taskId = 101;
+        // Stage 2 Bug #1: the INSERT + label-sync + history are now wrapped
+        // in a `req.db.transaction(...)` block, so the INSERT runs against
+        // the transaction client (`mockTxClient.query`) rather than the
+        // top-level pool (`mockQuery`). The post-insert SELECT + enrichment
+        // queries still go through `mockQuery`.
+        mockTxClient.query.mockResolvedValueOnce({ rows: [{ id: taskId }], rowCount: 1 }); // INSERT
+        mockTxClient.query.mockResolvedValue({ rows: [], rowCount: 0 }); // history + label work
         mockQuery
-            .mockResolvedValueOnce({ rows: [{ id: taskId }], rowCount: 1 })
-            .mockResolvedValueOnce({ rows: [], rowCount: 0 })
             .mockResolvedValueOnce({
                 rows: [{ id: taskId, title: 'Org Task', status: 'pending', user_id: 1, priority: 'medium', assigned_to: null, date: null, org_id: 1 }],
                 rowCount: 1,
@@ -181,15 +186,15 @@ describe('Tenant Isolation - Tasks', () => {
             .send({ title: 'Org Task' });
 
         expect([200, 500]).toContain(res.status);
-        const insertCall = mockQuery.mock.calls.find(([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO tasks') && sql.includes('org_id'));
+        // Look on the transaction client now — that's where the INSERT lives
+        // post-Stage-2 (Bug #1 transactional fix).
+        const insertCall = mockTxClient.query.mock.calls.find(([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO tasks') && sql.includes('org_id'));
         expect(insertCall).toBeTruthy();
-        // The INSERT now carries 16+ columns (Pass 1 added story_points,
+        // The INSERT carries every Pass-1 / Phase-3 column (story_points,
         // work_item_type_id, workflow_state_id, parent_task_id,
-        // acceptance_criteria, is_blocked, blocked_reason; Phase 3 added
-        // lead_started_at). Just assert the org_id we passed in (1) is among
-        // the bound parameters — the column order is asserted by the route's
-        // own SQL and the integration tests; this test only cares about
-        // tenant isolation, not column ordering.
+        // acceptance_criteria, is_blocked, blocked_reason, lead_started_at).
+        // Only assert that the org_id we passed in (1) is among the bound
+        // parameters — column order is enforced by the route's own SQL.
         expect(insertCall[1]).toContain(1);
     });
 
