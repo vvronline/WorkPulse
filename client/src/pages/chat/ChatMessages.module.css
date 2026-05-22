@@ -10,7 +10,7 @@
 .messagesContainer {
     flex: 1;
     overflow-y: auto;
-    padding: 8px 0 12px;
+    padding: 16px 0 16px;
     display: flex;
     flex-direction: column;
     gap: 0;
@@ -36,24 +36,23 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 12px 16px 6px;
+    padding: 16px 16px 8px;
 }
 .dateDivider::before,
 .dateDivider::after {
     content: '';
     flex: 1;
     height: 1px;
-    background: var(--glass-border);
+    background: var(--separator);
 }
 .dateDivider span {
     color: var(--text-muted);
-    font-size: 0.68rem;
+    font-size: 0.72rem;
     font-weight: 500;
     white-space: nowrap;
-    background: var(--bg);
-    padding: 0 8px;
-    border-radius: 10px;
-    border: 1px solid var(--glass-border);
+    background: var(--bg-secondary);
+    padding: 4px 12px;
+    border-radius: var(--radius-full);
 }
 
 .hint {
@@ -84,9 +83,9 @@
     position: relative;
 }
 .theirs .bubble {
-    background: var(--glass);
+    background: var(--chat-bubble-theirs);
     color: var(--text);
-    border-bottom-left-radius: 4px;
+    border-bottom-left-radius: 16px;
 }
 
 /* ─── Typing indicator ─── */
@@ -156,24 +155,24 @@
 /* ─── Tablet ─── */
 @media (max-width: 1024px) {
     .messagesContainer {
-        padding: 6px 0 10px;
+        padding: 12px 0 12px;
     }
     .dateDivider {
-        padding: 10px 12px 4px;
+        padding: 12px 12px 6px;
     }
 }
 
 /* ─── Mobile ─── */
 @media (max-width: 768px) {
     .messagesContainer {
-        padding: 4px 0 8px;
+        padding: 8px 0 8px;
     }
     .dateDivider {
-        padding: 8px 8px 4px;
+        padding: 10px 8px 6px;
         gap: 8px;
     }
     .dateDivider span {
-        font-size: 0.65rem;
+        font-size: 0.68rem;
     }
     .typingRow {
         padding: 2px 8px;
@@ -217,12 +216,6 @@
     background: var(--glass-border, rgba(255,255,255,0.08));
     animation: msgShimmer 1.4s ease-in-out infinite;
     min-width: 60px;
-}
-.skeletonMine .skeletonBubble {
-    border-bottom-right-radius: 4px;
-}
-.skeletonBubbleRow:not(.skeletonMine) .skeletonBubble {
-    border-bottom-left-radius: 4px;
 }
 @keyframes msgShimmer {
     0%, 100% { opacity: 0.3; }

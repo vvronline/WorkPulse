@@ -2,7 +2,7 @@
 .row {
     display: flex;
     align-items: flex-start;
-    padding: 2px 16px 2px 16px;
+    padding: 3px 16px 3px 16px;
     margin-top: 0;
     position: relative;
 }
@@ -11,7 +11,7 @@
 }
 /* First message of a new sender block — add breathing room */
 .row.groupStart {
-    margin-top: 12px;
+    margin-top: 16px;
 }
 /* Mine on right, theirs on left */
 .mine { flex-direction: row-reverse; }
@@ -42,46 +42,47 @@
 
 /* ─── Sender name ─── */
 .senderName {
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     font-weight: 600;
     color: var(--primary);
-    margin-bottom: 2px;
+    margin-bottom: 3px;
     padding: 0;
     line-height: 1.2;
+    opacity: 0.85;
 }
 .mineName {
     color: var(--primary);
 }
 
-/* ─── Bubble – WhatsApp style ─── */
+/* ─── Bubble ─── */
 .bubble {
     position: relative;
-    padding: 7px 10px 5px;
-    border-radius: 18px;
+    padding: 10px 14px 8px;
+    border-radius: 16px;
     word-break: break-word;
-    line-height: 1.5;
-    font-size: 0.875rem;
+    line-height: 1.55;
+    font-size: 0.9375rem;
     width: fit-content;
     max-width: 70%;
     background: transparent;
     color: var(--text);
 }
-/* Mine – solid primary, white text, tail on bottom-right */
+/* Mine – subtle primary tint */
 .myBubble {
-    background: var(--primary, #0ea5e9);
-    color: #fff;
-    border-radius: 18px 18px 4px 18px;
-}
-/* Theirs – elevated surface with border, tail on bottom-left */
-.theirBubble {
-    background: var(--bg-secondary);
-    border: 1px solid var(--glass-border);
+    background: var(--chat-bubble-mine);
     color: var(--text);
-    border-radius: 18px 18px 18px 4px;
+    border-radius: 16px;
+    border: 1px solid var(--chat-bubble-mine-border);
 }
-/* Grouped continuation – no tail, flat on connecting corner */
-.mine.grouped .myBubble   { border-radius: 18px 4px 4px 18px; }
-.theirs.grouped .theirBubble { border-radius: 4px 18px 18px 4px; }
+/* Theirs – elevated surface, no border */
+.theirBubble {
+    background: var(--chat-bubble-theirs);
+    color: var(--text);
+    border-radius: 16px;
+}
+/* Grouped continuation – consistent radius */
+.mine.grouped .myBubble   { border-radius: 16px; }
+.theirs.grouped .theirBubble { border-radius: 16px; }
 
 .pinned { border-left: 2px solid #f59e0b; padding-left: 8px; }
 .pendingBubble { opacity: 0.6; }
@@ -143,7 +144,7 @@
     justify-content: flex-start;
 }
 .time {
-    font-size: 0.62rem;
+    font-size: 0.68rem;
     color: var(--text-muted);
     opacity: 0.8;
 }
@@ -153,7 +154,7 @@
     font-style: italic;
 }
 
-/* ─── Hover toolbar – Teams style: appears top-right of the row ─── */
+/* ─── Hover toolbar ─── */
 .hoverActions {
     position: absolute;
     top: -18px;
@@ -163,10 +164,9 @@
     align-items: center;
     gap: 0;
     padding: 2px 3px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--glass-border);
-    border-radius: 6px;
-    box-shadow: 0 2px 12px rgba(0,0,0,.18);
+    background: var(--bg-elevated);
+    border-radius: 8px;
+    box-shadow: 0 2px 12px rgba(0,0,0,.15), 0 0 0 1px var(--separator);
     z-index: 10;
     animation: toolbarFade 0.12s ease-out;
 }
@@ -407,19 +407,19 @@
     .bubbleWrap { max-width: 92%; }
     .row { padding: 2px 6px; }
     .bubble {
-        font-size: 0.84rem;
-        padding: 5px 8px;
+        font-size: 0.9rem;
+        padding: 8px 12px 6px;
     }
 }
 
-/* ─── myBubble inner element overrides (white on colored bg) ─── */
-.myBubble .link { color: rgba(255,255,255,0.9); text-decoration: underline; }
-.myBubble .mention { color: rgba(255,255,255,0.95); font-weight: 700; }
-.myBubble .inlineCode { background: rgba(0,0,0,0.2); border-color: rgba(255,255,255,0.15); color: #fff; }
-.myBubble .time { color: rgba(255,255,255,0.65); }
-.myBubble .edited { color: rgba(255,255,255,0.55); }
-.myBubble .forwarded { color: rgba(255,255,255,0.7); }
-.myBubble .pinnedBadge { color: #fde68a; }
+/* ─── myBubble inner element overrides ─── */
+.myBubble .link { color: var(--primary-light); text-decoration: none; }
+.myBubble .mention { color: var(--primary-light); font-weight: 600; }
+.myBubble .inlineCode { background: var(--surface-hover); border-color: var(--glass-border); color: var(--text); }
+.myBubble .time { color: var(--text-muted); opacity: 0.8; }
+.myBubble .edited { color: var(--text-muted); }
+.myBubble .forwarded { color: var(--text-muted); }
+.myBubble .pinnedBadge { color: #f59e0b; }
 
 /* ─── Delivery receipts ─── */
 .deliverySent, .deliveryPartial, .deliveryRead, .deliveryPending {
@@ -427,10 +427,10 @@
     margin-left: 2px;
     letter-spacing: -1px;
 }
-.deliveryPending { color: rgba(255,255,255,0.4); animation: pendingPulse 1.5s ease-in-out infinite; }
-.deliverySent { color: rgba(255,255,255,0.55); }
-.deliveryPartial { color: rgba(255,255,255,0.8); }
-.deliveryRead { color: #93c5fd; }
+.deliveryPending { color: var(--text-muted); opacity: 0.6; animation: pendingPulse 1.5s ease-in-out infinite; }
+.deliverySent { color: var(--text-muted); }
+.deliveryPartial { color: var(--text-secondary); }
+.deliveryRead { color: var(--primary); }
 
 @keyframes pendingPulse {
     0%, 100% { opacity: 0.4; }

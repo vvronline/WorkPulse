@@ -42,6 +42,10 @@
   --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.5);
   --modal-bg: rgba(25, 25, 25, 0.96);
   --modal-border: rgba(255, 255, 255, 0.07);
+  --chat-bubble-mine: rgba(35, 131, 226, 0.08);
+  --chat-bubble-theirs: rgba(255, 255, 255, 0.04);
+  --chat-bubble-mine-border: rgba(35, 131, 226, 0.12);
+  --separator: rgba(255, 255, 255, 0.04);
   --radius: 8px;
   --radius-sm: 6px;
   --radius-full: 9999px;
@@ -82,6 +86,10 @@
   --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.1);
   --modal-bg: rgba(255, 255, 255, 0.97);
   --modal-border: rgba(55, 53, 47, 0.09);
+  --chat-bubble-mine: rgba(35, 131, 226, 0.07);
+  --chat-bubble-theirs: rgba(55, 53, 47, 0.03);
+  --chat-bubble-mine-border: rgba(35, 131, 226, 0.1);
+  --separator: rgba(55, 53, 47, 0.04);
   color-scheme: light;
 }
 
