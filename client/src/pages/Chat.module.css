@@ -66,12 +66,9 @@
 /* ─── Mobile (≤768px) ─── */
 @media (max-width: 768px) {
     .chatPage {
-        height: calc(100vh - 60px);
-        height: calc(100dvh - 60px);
-        transition: height 0.3s cubic-bezier(.4,0,.2,1);
+        height: calc(100dvh - 60px - 90px);
     }
     :global(body[data-chat-active]) .chatPage {
-        height: 100vh;
         height: 100dvh;
     }
     .chatArea {
