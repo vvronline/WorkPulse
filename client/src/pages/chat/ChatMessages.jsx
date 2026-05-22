@@ -97,6 +97,7 @@ export default function ChatMessages({
                                 onForward={onForward}
                                 onReact={onReact}
                                 onStar={onStar}
+                                onJumpTo={onJumpTo}
                                 participantCount={convMembers.length || 2}
                                 readReceipts={readReceipts}
                             />

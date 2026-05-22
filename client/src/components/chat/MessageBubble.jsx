@@ -15,7 +15,7 @@ import EmojiGifPicker from './EmojiGifPicker';
 
 export default function MessageBubble({
     msg, isMine, userId, showAvatar, showName,
-    onReply, onEdit, onDelete, onPin, onForward, onReact, onStar,
+    onReply, onEdit, onDelete, onPin, onForward, onReact, onStar, onJumpTo,
     participantCount, readReceipts
 }) {
     const [showReactions, setShowReactions] = useState(false);
@@ -185,6 +185,7 @@ export default function MessageBubble({
                         <ReplyPreview
                             senderName={msg.reply_sender_name || 'User'}
                             content={msg.reply_content}
+                            onClick={() => onJumpTo && onJumpTo(msg.reply_to_id)}
                         />
                     )}
 

@@ -7,6 +7,13 @@
     border-radius: var(--radius-sm);
     max-width: 100%;
 }
+.clickable {
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+.clickable:hover {
+    background: var(--surface-hover);
+}
 .accent {
     width: 3px;
     border-radius: 2px;

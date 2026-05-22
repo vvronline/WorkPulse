@@ -1,11 +1,48 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { File, X, Search, Image, FileText, Film, Music } from 'lucide-react';
 import s from './SharedFilesPanel.module.css';
 import { getSharedFiles } from '../../api';
 import FilePreview from './FilePreview';
 
+const FILE_FILTERS = [
+    { key: 'all', label: 'All' },
+    { key: 'image', label: 'Images', icon: Image },
+    { key: 'document', label: 'Docs', icon: FileText },
+    { key: 'video', label: 'Video', icon: Film },
+    { key: 'audio', label: 'Audio', icon: Music },
+];
+
+function getFileCategory(type) {
+    if (!type) return 'other';
+    if (type.startsWith('image/')) return 'image';
+    if (type.startsWith('video/')) return 'video';
+    if (type.startsWith('audio/')) return 'audio';
+    if (type.includes('pdf') || type.includes('document') || type.includes('sheet') || type.includes('text')) return 'document';
+    return 'other';
+}
+
+function groupByDate(files) {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const weekAgo = new Date(today.getTime() - 7 * 86400000);
+    const monthAgo = new Date(today.getTime() - 30 * 86400000);
+
+    const groups = { today: [], thisWeek: [], thisMonth: [], older: [] };
+    for (const f of files) {
+        const d = new Date(f.created_at);
+        if (d >= today) groups.today.push(f);
+        else if (d >= weekAgo) groups.thisWeek.push(f);
+        else if (d >= monthAgo) groups.thisMonth.push(f);
+        else groups.older.push(f);
+    }
+    return groups;
+}
+
 export default function SharedFilesPanel({ convId, onClose }) {
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [filter, setFilter] = useState('all');
+    const [query, setQuery] = useState('');
 
     useEffect(() => {
         if (!convId) return;
@@ -16,16 +53,26 @@ export default function SharedFilesPanel({ convId, onClose }) {
             .finally(() => setLoading(false));
     }, [convId]);
 
-    return (
-        <div className={s.panel}>
-            <div className={s.header}>
-                <h4>Shared Files</h4>
-                <button className={s.close} onClick={onClose}>✕</button>
-            </div>
-            <div className={s.list}>
-                {loading && <div className={s.hint}>Loading...</div>}
-                {!loading && files.length === 0 && <div className={s.hint}>No files shared yet</div>}
-                {files.map(f => (
+    const filtered = useMemo(() => {
+        let result = files;
+        if (filter !== 'all') {
+            result = result.filter(f => getFileCategory(f.file_type) === filter);
+        }
+        if (query.trim()) {
+            const q = query.toLowerCase();
+            result = result.filter(f => (f.file_name || '').toLowerCase().includes(q));
+        }
+        return result;
+    }, [files, filter, query]);
+
+    const groups = useMemo(() => groupByDate(filtered), [filtered]);
+
+    const renderGroup = (label, items) => {
+        if (items.length === 0) return null;
+        return (
+            <div key={label}>
+                <div className={s.groupLabel}>{label}</div>
+                {items.map(f => (
                     <div key={f.id} className={s.fileItem}>
                         <FilePreview
                             fileUrl={f.file_url}
@@ -41,6 +88,56 @@ export default function SharedFilesPanel({ convId, onClose }) {
                         </div>
                     </div>
                 ))}
+            </div>
+        );
+    };
+
+    return (
+        <div className={s.panel}>
+            <div className={s.header}>
+                <span className={s.title}><File size={15} /> Shared Files</span>
+                <button className={s.closeBtn} onClick={onClose}><X size={16} /></button>
+            </div>
+
+            <div className={s.searchWrap}>
+                <Search size={14} className={s.searchIcon} />
+                <input
+                    className={s.searchInput}
+                    placeholder="Search files..."
+                    value={query}
+                    onChange={e => setQuery(e.target.value)}
+                />
+            </div>
+
+            <div className={s.filters}>
+                {FILE_FILTERS.map(f => (
+                    <button
+                        key={f.key}
+                        className={`${s.filterBtn} ${filter === f.key ? s.filterActive : ''}`}
+                        onClick={() => setFilter(f.key)}
+                    >
+                        {f.icon && <f.icon size={12} />}
+                        {f.label}
+                    </button>
+                ))}
+            </div>
+
+            <div className={s.list}>
+                {loading && <div className={s.empty}>Loading...</div>}
+                {!loading && files.length === 0 && (
+                    <div className={s.emptyState}>
+                        <div className={s.emptyIcon}><File size={32} strokeWidth={1.2} /></div>
+                        <p className={s.emptyTitle}>No shared files</p>
+                        <p className={s.emptyDesc}>Files shared in this conversation will appear here</p>
+                    </div>
+                )}
+                {!loading && files.length > 0 && filtered.length === 0 && (
+                    <div className={s.empty}>No files match your filter</div>
+                )}
+                {renderGroup('Today', groups.today)}
+                {renderGroup('This Week', groups.thisWeek)}
+                {renderGroup('This Month', groups.thisMonth)}
+                {renderGroup('Older', groups.older)}
             </div>
         </div>
     );

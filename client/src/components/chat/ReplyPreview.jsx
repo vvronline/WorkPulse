@@ -1,8 +1,8 @@
 import s from './ReplyPreview.module.css';
 
-export default function ReplyPreview({ senderName, content, onClear }) {
+export default function ReplyPreview({ senderName, content, onClear, onClick }) {
     return (
-        <div className={s.bar}>
+        <div className={`${s.bar} ${onClick ? s.clickable : ''}`} onClick={onClick}>
             <div className={s.accent} />
             <div className={s.body}>
                 <span className={s.name}>{senderName}</span>
