@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { getBacklog, addBacklogTask, scheduleTask, unscheduleTask, assignTaskToSprint, updateTask, getLocalToday } from '../../../api';
 
 export function useBacklog({ activeTab, backlogOpen, date, backlogFilters, selectedSprintId, showConfirm, closeConfirm, fetchTasks, setError }) {
@@ -15,6 +15,7 @@ export function useBacklog({ activeTab, backlogOpen, date, backlogFilters, selec
   const [backlogSprintId, setBacklogSprintId] = useState('');
   const [backlogStoryPoints, setBacklogStoryPoints] = useState(null);
   const [backlogWorkItemType, setBacklogWorkItemType] = useState('');
+  const [backlogProjectId, setBacklogProjectId] = useState('');
   const [scheduleTaskId, setScheduleTaskId] = useState(null);
   const [scheduleDate, setScheduleDate] = useState(() => getLocalToday());
   const [backlogSummary, setBacklogSummary] = useState({ total: 0, byStatus: {}, byPriority: {} });
@@ -22,19 +23,43 @@ export function useBacklog({ activeTab, backlogOpen, date, backlogFilters, selec
   const [importConfigTask, setImportConfigTask] = useState(null);
   const [importAssignedTo, setImportAssignedTo] = useState('');
   const [importDueDate, setImportDueDate] = useState('');
+  // Pagination state. Server caps page size and returns
+  // { tasks, summary, pagination: { limit, offset, total, hasMore } } so we
+  // can drive page controls without a second round-trip for the total.
+  const [backlogLimit, setBacklogLimit] = useState(25);
+  const [backlogOffset, setBacklogOffset] = useState(0);
+  const [backlogTotal, setBacklogTotal] = useState(0);
+
+  // Resetting offset on filter/page-size change avoids landing on an empty
+  // page when the filtered result set shrinks below the current offset.
+  useEffect(() => { setBacklogOffset(0); }, [backlogFilters, backlogLimit]);
 
   const fetchBacklog = useCallback(async () => {
     setBacklogLoading(true);
     try {
-      const res = await getBacklog(backlogFilters);
+      const res = await getBacklog({
+        ...(backlogFilters || {}),
+        limit: backlogLimit,
+        offset: backlogOffset,
+      });
       setBacklogTasks(res.data.tasks);
       if (res.data.summary) setBacklogSummary(res.data.summary);
+      // `pagination.total` is the authoritative count for the current
+      // filter set; fall back to summary.total / list length for older
+      // server builds that don't return pagination.
+      if (res.data.pagination?.total != null) {
+        setBacklogTotal(res.data.pagination.total);
+      } else if (res.data.summary?.total != null) {
+        setBacklogTotal(res.data.summary.total);
+      } else {
+        setBacklogTotal(res.data.tasks?.length || 0);
+      }
     } catch {
       setError('Failed to load backlog');
     } finally {
       setBacklogLoading(false);
     }
-  }, [backlogFilters]);
+  }, [backlogFilters, backlogLimit, backlogOffset]);
 
   const sortedBacklogTasks = useMemo(() => {
     const sorted = [...backlogTasks];
@@ -72,10 +97,12 @@ export function useBacklog({ activeTab, backlogOpen, date, backlogFilters, selec
         sprint_id: backlogSprintId || null,
         story_points: backlogStoryPoints,
         work_item_type_id: backlogWorkItemType || null,
+        project_id: backlogProjectId || null,
       });
       setBacklogTitle(''); setBacklogDesc(''); setBacklogPriority('medium');
       setBacklogAssignedTo(''); setBacklogDueDate(''); setBacklogLabels([]);
       setBacklogSprintId(''); setBacklogStoryPoints(null); setBacklogWorkItemType('');
+      setBacklogProjectId('');
       setBacklogFormOpen(false);
       fetchBacklog();
       if (backlogSprintId && activeTab === 'sprint') fetchTasks();
@@ -147,6 +174,10 @@ export function useBacklog({ activeTab, backlogOpen, date, backlogFilters, selec
     backlogSprintId, setBacklogSprintId,
     backlogStoryPoints, setBacklogStoryPoints,
     backlogWorkItemType, setBacklogWorkItemType,
+    backlogProjectId, setBacklogProjectId,
+    backlogLimit, setBacklogLimit,
+    backlogOffset, setBacklogOffset,
+    backlogTotal,
     scheduleTaskId, setScheduleTaskId,
     scheduleDate, setScheduleDate,
     backlogSummary,

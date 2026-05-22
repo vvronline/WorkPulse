@@ -38,6 +38,9 @@ const MeetingJoin = lazy(() => import('./pages/MeetingJoin'));
 const SprintInsights = lazy(() => import('./pages/SprintInsights'));
 const PublicNote = lazy(() => import('./pages/PublicNote'));
 const CallPipPage = lazy(() => import('./pages/CallPipPage'));
+// Stage 3 — Projects + GitHub integrations admin pages.
+const Projects = lazy(() => import('./pages/Projects'));
+const Integrations = lazy(() => import('./pages/Integrations'));
 
 // The Electron always-on-top mini call window loads /pip-call. That window
 // is independent of auth/providers/navbar — it just renders the avatar +
@@ -126,6 +129,13 @@ function AppRoutes() {
             }
           />
           <Route path="/sprint-insights" element={<ProtectedRoute><SprintInsights /></ProtectedRoute>} />
+          {/* Stage 3 — Projects + Integrations live inside the Admin panel
+              (Admin → Structure → Projects, Admin → Settings → Integrations).
+              Keep these legacy URLs working by redirecting into the
+              corresponding admin tab so any bookmarks / external links from
+              the previous deploy don't 404. */}
+          <Route path="/projects" element={<ProtectedRoute minRole="hr_admin"><Navigate to="/admin?tab=projects" replace /></ProtectedRoute>} />
+          <Route path="/integrations" element={<ProtectedRoute minRole="hr_admin"><Navigate to="/admin?tab=integrations" replace /></ProtectedRoute>} />
           {/* Public read-only note viewer (no auth, no navbar). */}
           <Route path="/n/:token" element={<PublicNote />} />
           {/* Legacy redirects — old standalone pages now live under /attendance */}

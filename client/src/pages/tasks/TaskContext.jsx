@@ -13,12 +13,13 @@ export function TaskProvider({
     assignableUsers,
     orgLabels,
     availableSprints,
+    availableProjects,
     currentUser,
     activeTab,
 }) {
     const value = useMemo(
-        () => ({ assignableUsers, orgLabels, availableSprints, currentUser, activeTab }),
-        [assignableUsers, orgLabels, availableSprints, currentUser, activeTab],
+        () => ({ assignableUsers, orgLabels, availableSprints, availableProjects, currentUser, activeTab }),
+        [assignableUsers, orgLabels, availableSprints, availableProjects, currentUser, activeTab],
     );
     return <TaskContext.Provider value={value}>{children}</TaskContext.Provider>;
 }

@@ -36,10 +36,16 @@
     padding: 7px 10px;
     border: 1px solid var(--border, #d1d5db);
     border-radius: 6px;
-    background: var(--bg, #fff);
+    background: var(--input-bg, var(--bg, #fff));
     color: var(--text, #111827);
     font-size: 0.86rem;
     min-width: 200px;
+    color-scheme: inherit;
+}
+.sprintSelect option,
+.sprintSelect optgroup {
+    background: var(--bg-secondary, var(--bg, #fff));
+    color: var(--text, #111827);
 }
 
 .empty, .loading {

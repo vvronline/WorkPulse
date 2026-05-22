@@ -80,6 +80,10 @@ export function useTaskDetail({ activeTab, showConfirm, closeConfirm, setTasks, 
             label_ids: editData.labels,
             story_points: editData.storyPoints,
             work_item_type_id: editData.workItemType || null,
+            // project_id is only honoured by the server when the task has
+            // no project yet — once assigned, the issue key is immutable.
+            // Send it unconditionally and let the server enforce that rule.
+            project_id: editData.projectId || null,
           });
           setDetailEditing(false);
           const res = await getTaskDetail(detailTask.id);
@@ -103,6 +107,7 @@ export function useTaskDetail({ activeTab, showConfirm, closeConfirm, setTasks, 
       setDetailComments(prev => [...prev, res.data]);
       setTasks(prev => prev.map(t => t.id === detailTask.id ? { ...t, comment_count: (t.comment_count || 0) + 1 } : t));
       setBacklogTasks(prev => prev.map(t => t.id === detailTask.id ? { ...t, comment_count: (t.comment_count || 0) + 1 } : t));
+      refreshDetailHistory(detailTask.id);
     } catch { setError('Failed to add comment'); }
   }, [detailTask, setTasks, setBacklogTasks, setError]);
 
@@ -111,6 +116,7 @@ export function useTaskDetail({ activeTab, showConfirm, closeConfirm, setTasks, 
     try {
       const res = await updateTaskComment(detailTask.id, commentId, content);
       setDetailComments(prev => prev.map(c => c.id === commentId ? res.data : c));
+      refreshDetailHistory(detailTask.id);
     } catch { setError('Failed to update comment'); }
   }, [detailTask, setError]);
 
@@ -129,6 +135,7 @@ export function useTaskDetail({ activeTab, showConfirm, closeConfirm, setTasks, 
           setBacklogTasks(prev => prev.map(t =>
             t.id === detailTask.id ? { ...t, comment_count: Math.max(0, (t.comment_count || 1) - 1) } : t
           ));
+          refreshDetailHistory(detailTask.id);
         } catch { setError('Failed to delete comment'); }
       },
       { confirmText: 'Delete', isDanger: true }

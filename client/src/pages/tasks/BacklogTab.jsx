@@ -1,8 +1,9 @@
 import React from 'react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
-import { Plus, X, User, CalendarDays, MessageSquare, Package } from 'lucide-react';
+import { Plus, X, User, CalendarDays, MessageSquare, Package, Folder } from 'lucide-react';
 import SprintSelector from '../../components/common/SprintSelector';
+import Pagination from '../../components/common/Pagination';
 import LabelSelector from './LabelSelector.jsx';
 import { PRIORITIES, COLUMNS } from './constants.js';
 import { formatDueDate, formatRelativeTime, isDueOverdue, stripHtml, getAvatarUrl } from './utils.jsx';
@@ -47,6 +48,13 @@ export default function BacklogTab({
   setBacklogStoryPoints,
   backlogWorkItemType,
   setBacklogWorkItemType,
+  backlogProjectId,
+  setBacklogProjectId,
+  backlogLimit,
+  setBacklogLimit,
+  backlogOffset,
+  setBacklogOffset,
+  backlogTotal,
   scheduleTaskId,
   setScheduleTaskId,
   scheduleDate,
@@ -61,7 +69,7 @@ export default function BacklogTab({
   onHandleSummaryPriority,
   onToggleLabel,
 }) {
-  const { assignableUsers, orgLabels, availableSprints } = useTaskCtx();
+  const { assignableUsers, orgLabels, availableSprints, availableProjects } = useTaskCtx();
   return (
     <>
       {error && <div className="error-msg error-msg-mb">{error}</div>}
@@ -205,6 +213,25 @@ export default function BacklogTab({
                 <label>Type</label>
                 <WorkItemTypePicker value={backlogWorkItemType} onChange={setBacklogWorkItemType} />
               </div>
+              {availableProjects && availableProjects.length > 0 && (
+                <div className={s['form-extra-group']}>
+                  <label>
+                    <Folder size={13} style={{marginRight:4,verticalAlign:'middle'}} />Project
+                  </label>
+                  <select
+                    value={backlogProjectId || ''}
+                    onChange={(e) => setBacklogProjectId(e.target.value)}
+                    title="Assign to a project to get a stable issue key (e.g. WEB-123)"
+                  >
+                    <option value="">— No project —</option>
+                    {availableProjects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.key} · {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
             <div className={s['form-extras']} style={{ marginTop: 4 }}>
               <StoryPointPicker value={backlogStoryPoints} onChange={setBacklogStoryPoints} />
@@ -247,6 +274,19 @@ export default function BacklogTab({
               </span>
             </div>
           )}
+          {/* Top pagination bar — also visible above the list so users with
+              many tickets don't have to scroll to switch pages. */}
+          {backlogTasks.length > 0 && (
+            <Pagination
+              total={backlogTotal || backlogTasks.length}
+              limit={backlogLimit}
+              offset={backlogOffset}
+              onPageChange={setBacklogOffset}
+              onLimitChange={setBacklogLimit}
+              pageSizeOptions={[10, 25, 50, 100]}
+              itemLabel="ticket"
+            />
+          )}
           {sortedBacklogTasks.map((task) => {
             const pri = getPriority(task.priority);
             const dueFmt = formatDueDate(task.due_date);
@@ -269,7 +309,9 @@ export default function BacklogTab({
                 />
                 <div className={s['backlog-card-body']}>
                   <div className={s['backlog-card-header']}>
-                    <span className={s['backlog-ticket-id']}>#{task.id}</span>
+                    <span className={s['backlog-ticket-id']}>
+                      {task.issue_key || `#${task.id}`}
+                    </span>
                     <span
                       className={s['backlog-status-badge']}
                       style={{

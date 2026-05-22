@@ -151,11 +151,28 @@ router.post('/backlog', auth, loadUserContext, async (req, res) => {
     try {
         const { title, description, priority, assigned_to, due_date, label_ids, sprint_id,
             story_points, work_item_type_id, workflow_state_id, parent_task_id,
-            acceptance_criteria, is_blocked, blocked_reason } = req.body;
+            acceptance_criteria, is_blocked, blocked_reason, project_id } = req.body;
 
         if (!title || !title.trim()) return res.status(400).json({ error: 'Task title is required' });
         if (title.trim().length > 200) return res.status(400).json({ error: 'Task title must be 200 characters or less' });
         if (description && description.length > 5000) return res.status(400).json({ error: 'Task description must be 5000 characters or less' });
+
+        // Stage 3: optional project assignment. Mirrors the validation in
+        // routes/tasks/crud.js so a missing/invalid project returns 400
+        // before we open the transaction. The matching task_number is
+        // reserved atomically below inside the transaction.
+        let validProjectId = null;
+        if (project_id !== undefined && project_id !== null && project_id !== '') {
+            const projNum = parseInt(project_id, 10);
+            if (!isNaN(projNum) && req.userOrgId) {
+                const proj = (await req.db.query(
+                    'SELECT id FROM projects WHERE id = $1 AND org_id = $2 AND is_archived = FALSE',
+                    [projNum, req.userOrgId]
+                )).rows[0];
+                if (!proj) return res.status(400).json({ error: 'Invalid project or project is archived' });
+                validProjectId = proj.id;
+            }
+        }
 
         const validPriority = ['low', 'medium', 'high'].includes(priority) ? priority : 'medium';
 
@@ -210,17 +227,34 @@ router.post('/backlog', auth, loadUserContext, async (req, res) => {
         }
 
         // Bug #1 (Stage 2): atomic INSERT + labels + history (see crud.js POST).
+        // Stage 3: when a project is assigned, reserve the next task_number
+        // within the project so the enricher can produce a WEB-123 style
+        // issue key.
         const taskId = await req.db.transaction(async (client) => {
+            let taskNumber = null;
+            if (validProjectId) {
+                const numRes = await client.query(
+                    `UPDATE projects
+                        SET next_task_number = next_task_number + 1,
+                            updated_at = NOW()
+                      WHERE id = $1
+                      RETURNING next_task_number - 1 AS task_number`,
+                    [validProjectId]
+                );
+                taskNumber = numRes.rows[0]?.task_number || null;
+            }
             const insertRes = await client.query(
                 `INSERT INTO tasks
                     (user_id, date, title, description, priority, status, assigned_to, due_date,
                      sprint_id, org_id, story_points, work_item_type_id, workflow_state_id,
-                     parent_task_id, acceptance_criteria, is_blocked, blocked_reason, lead_started_at)
-                 VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
+                     parent_task_id, acceptance_criteria, is_blocked, blocked_reason, lead_started_at,
+                     project_id, task_number)
+                 VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), $17, $18)
                  RETURNING id`,
                 [req.userId, title.trim(), description?.trim() || null, validPriority, statusKey,
                     assignedTo, validDueDate, validSprintId, req.userOrgId || null,
-                    sp, witId, wsId, parentTaskId, ac ? JSON.stringify(ac) : null, isBlocked, blockedReason]
+                    sp, witId, wsId, parentTaskId, ac ? JSON.stringify(ac) : null, isBlocked, blockedReason,
+                    validProjectId, taskNumber]
             );
             const newId = insertRes.rows[0].id;
             if (label_ids && Array.isArray(label_ids) && label_ids.length > 0) {

@@ -155,11 +155,27 @@ router.post('/', auth, loadUserContext, async (req, res) => {
     try {
         const { title, description, priority, date, assigned_to, due_date, label_ids, sprint_id,
             story_points, work_item_type_id, workflow_state_id, parent_task_id,
-            acceptance_criteria, is_blocked, blocked_reason } = req.body;
+            acceptance_criteria, is_blocked, blocked_reason, project_id } = req.body;
 
         if (!title || !title.trim()) return res.status(400).json({ error: 'Task title is required' });
         if (title.trim().length > 200) return res.status(400).json({ error: 'Task title must be 200 characters or less' });
         if (description && description.length > 5000) return res.status(400).json({ error: 'Task description must be 5000 characters or less' });
+
+        // Stage 3: optional project assignment + auto issue key. We validate
+        // the project here so a missing/invalid value returns 400 before we
+        // open the create transaction.
+        let validProjectId = null;
+        if (project_id !== undefined && project_id !== null && project_id !== '') {
+            const projNum = parseInt(project_id, 10);
+            if (!isNaN(projNum) && req.userOrgId) {
+                const proj = (await req.db.query(
+                    'SELECT id FROM projects WHERE id = $1 AND org_id = $2 AND is_archived = FALSE',
+                    [projNum, req.userOrgId]
+                )).rows[0];
+                if (!proj) return res.status(400).json({ error: 'Invalid project or project is archived' });
+                validProjectId = proj.id;
+            }
+        }
 
         const targetDate = date || getLocalToday(req);
         const validPriority = ['low', 'medium', 'high'].includes(priority) ? priority : 'medium';
@@ -225,17 +241,37 @@ router.post('/', auth, loadUserContext, async (req, res) => {
         // separate statements. A failure between them left orphan rows (e.g.
         // a task with no history entry, or labels mapped to a half-written
         // task). Wrap them in a transaction so the entire create is atomic.
+        //
+        // Stage 3: when a project is assigned, we also reserve the next
+        // `task_number` within the project. The UPDATE … RETURNING approach
+        // is concurrency-safe — the row-level lock around the project row
+        // serialises competing INSERTs so two requests can't both grab the
+        // same number.
         const taskId = await req.db.transaction(async (client) => {
+            let taskNumber = null;
+            if (validProjectId) {
+                const numRes = await client.query(
+                    `UPDATE projects
+                        SET next_task_number = next_task_number + 1,
+                            updated_at = NOW()
+                      WHERE id = $1
+                      RETURNING next_task_number - 1 AS task_number`,
+                    [validProjectId]
+                );
+                taskNumber = numRes.rows[0]?.task_number || null;
+            }
             const insertRes = await client.query(
                 `INSERT INTO tasks
                     (user_id, date, title, description, priority, status, assigned_to, due_date,
                      sprint_id, org_id, story_points, work_item_type_id, workflow_state_id,
-                     parent_task_id, acceptance_criteria, is_blocked, blocked_reason, lead_started_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW())
+                     parent_task_id, acceptance_criteria, is_blocked, blocked_reason, lead_started_at,
+                     project_id, task_number)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), $18, $19)
                  RETURNING id`,
                 [req.userId, targetDate, title.trim(), description?.trim() || null, validPriority,
                     statusKey, assignedTo, validDueDate, validSprintId, req.userOrgId || null,
-                    sp, witId, wsId, parentTaskId, ac ? JSON.stringify(ac) : null, isBlocked, blockedReason]
+                    sp, witId, wsId, parentTaskId, ac ? JSON.stringify(ac) : null, isBlocked, blockedReason,
+                    validProjectId, taskNumber]
             );
             const newId = insertRes.rows[0].id;
             if (label_ids && Array.isArray(label_ids) && label_ids.length > 0) {
@@ -392,10 +428,48 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
         if (isNaN(id)) return res.status(400).json({ error: 'Invalid task ID' });
         const { title, description, priority, assigned_to, due_date, label_ids, sprint_id,
             story_points, work_item_type_id, workflow_state_id, parent_task_id,
-            acceptance_criteria, is_blocked, blocked_reason } = req.body;
+            acceptance_criteria, is_blocked, blocked_reason, project_id } = req.body;
 
         const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [id])).rows[0];
         if (!await canAccessTask(task, req.userId, req.userOrgId, req.db, req.userRole)) return res.status(404).json({ error: 'Task not found' });
+
+        // Stage 3: allow assigning a task to a project *only if it has none
+        // yet*. Re-keying an existing task (PROJ-12 → OTHER-7) would orphan
+        // every external reference (branches, commits, links) that already
+        // mention the old key, so we deliberately make this one-way. To move
+        // a task to a different project, create a new one and link them.
+        let newProjectId = task.project_id;
+        let newTaskNumber = task.task_number;
+        const wantsProjectAssign = project_id !== undefined
+            && project_id !== null
+            && project_id !== ''
+            && !task.project_id;
+        if (project_id !== undefined && task.project_id) {
+            // Silently ignore attempts to change/clear an already-set project
+            // so the rest of the update still succeeds.
+        }
+        if (wantsProjectAssign) {
+            const projNum = parseInt(project_id, 10);
+            if (isNaN(projNum) || !req.userOrgId) {
+                return res.status(400).json({ error: 'Invalid project' });
+            }
+            const proj = (await req.db.query(
+                'SELECT id FROM projects WHERE id = $1 AND org_id = $2 AND is_archived = FALSE',
+                [projNum, req.userOrgId]
+            )).rows[0];
+            if (!proj) return res.status(400).json({ error: 'Invalid project or project is archived' });
+            // Reserve a task number atomically (same pattern as POST /tasks).
+            const numRes = await req.db.query(
+                `UPDATE projects
+                    SET next_task_number = next_task_number + 1,
+                        updated_at = NOW()
+                  WHERE id = $1
+                  RETURNING next_task_number - 1 AS task_number`,
+                [proj.id]
+            );
+            newProjectId = proj.id;
+            newTaskNumber = numRes.rows[0]?.task_number || null;
+        }
 
         const newTitle = title?.trim() || task.title;
         const newDesc = description !== undefined ? (description?.trim() || null) : task.description;
@@ -520,13 +594,22 @@ router.put('/:id', auth, loadUserContext, async (req, res) => {
             `UPDATE tasks SET title = $1, description = $2, priority = $3, assigned_to = $4,
                 due_date = $5, sprint_id = $6, story_points = $7, work_item_type_id = $8,
                 workflow_state_id = $9, status = $10, completed_at = $11, parent_task_id = $12,
-                acceptance_criteria = $13, is_blocked = $14, blocked_reason = $15
-              WHERE id = $16`,
+                acceptance_criteria = $13, is_blocked = $14, blocked_reason = $15,
+                project_id = $16, task_number = $17
+              WHERE id = $18`,
             [newTitle, newDesc, newPriority, newAssignedTo, newDueDate, newSprintId,
                 newStoryPoints, newWitId, newWsId, newStatusKey, newCompletedAt, newParentTaskId,
                 newAc !== null && newAc !== undefined ? JSON.stringify(newAc) : null,
-                newIsBlocked, newBlockedReason, id]
+                newIsBlocked, newBlockedReason, newProjectId, newTaskNumber, id]
         );
+
+        // Log a project assignment as a first-class history event so users
+        // can see when a previously-keyless task picked up an issue key.
+        if (wantsProjectAssign && newProjectId && newProjectId !== task.project_id) {
+            const projRow = (await req.db.query('SELECT key FROM projects WHERE id = $1', [newProjectId])).rows[0];
+            const newKey = projRow && newTaskNumber ? `${projRow.key}-${newTaskNumber}` : null;
+            await logHistory(id, req.userId, 'updated', 'project', 'none', newKey || `project #${newProjectId}`, null, req.db);
+        }
 
         if (newTitle !== task.title) await logHistory(id, req.userId, 'updated', 'title', task.title, newTitle, null, req.db);
         if (newDesc !== task.description) await logHistory(id, req.userId, 'updated', 'description', task.description ? task.description.slice(0, 100) : null, newDesc ? newDesc.slice(0, 100) : null, null, req.db);

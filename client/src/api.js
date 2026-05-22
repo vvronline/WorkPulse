@@ -130,6 +130,46 @@ export const getTaskLabelsManage = () => API.get('/tasks/labels/manage');
 export const createTaskLabel = (data) => API.post('/tasks/labels', data);
 export const updateTaskLabel = (id, data) => API.put(`/tasks/labels/${id}`, data);
 export const deleteTaskLabel = (id) => API.delete(`/tasks/labels/${id}`);
+// ── Stage 3: Projects, Git integration (GitHub OAuth), task git refs ─────
+// Projects = Jira-style folders with a unique KEY (e.g. WEB). Tasks inside
+// a project automatically get a per-project task_number, surfaced as
+// "WEB-123" (issue_key) by the server's enrich step.
+// Projects list — call without options for the legacy plain-array response,
+// or pass `{ limit, offset }` to opt-in to the paginated `{ projects, pagination }`
+// shape (page sizes are capped server-side).
+export const getProjects = (includeArchived = false, opts = null) => {
+    const params = {};
+    if (includeArchived) params.include_archived = 1;
+    if (opts && typeof opts === 'object') {
+        params.paginate = 1;
+        if (opts.limit != null) params.limit = opts.limit;
+        if (opts.offset != null) params.offset = opts.offset;
+    }
+    return API.get('/projects', { params });
+};
+export const getProject = (id) => API.get(`/projects/${id}`);
+export const createProject = (data) => API.post('/projects', data);
+export const updateProject = (id, data) => API.put(`/projects/${id}`, data);
+export const archiveProject = (id, isArchived) => API.patch(`/projects/${id}/archive`, { is_archived: isArchived });
+export const deleteProject = (id, { force = false } = {}) =>
+    API.delete(`/projects/${id}`, { params: force ? { force: 1 } : {} });
+export const getProjectTasks = (id, params) => API.get(`/projects/${id}/tasks`, { params });
+
+// GitHub integration — OAuth flow + repo selection.
+export const startGithubOAuth = () => API.post('/integrations/github/oauth/start');
+export const getGithubStatus = () => API.get('/integrations/github/status');
+export const listGithubRepos = () => API.get('/integrations/github/repos');
+export const connectGithubRepos = (repos) => API.post('/integrations/github/repos/connect', { repos });
+export const disconnectGithubRepo = (fullName) =>
+    API.delete(`/integrations/github/repos/${encodeURIComponent(fullName)}`);
+export const disconnectGithub = () => API.post('/integrations/github/disconnect');
+export const listIntegrations = () => API.get('/integrations');
+
+// Git refs (branches, PRs, commits) linked to a task.
+export const getTaskGitRefs = (taskId) => API.get(`/tasks/${taskId}/git`);
+export const linkTaskGitRef = (taskId, data) => API.post(`/tasks/${taskId}/git`, data);
+export const unlinkTaskGitRef = (taskId, refId) => API.delete(`/tasks/${taskId}/git/${refId}`);
+
 export const getTaskComments = (taskId) => API.get(`/tasks/${taskId}/comments`);
 export const addTaskComment = (taskId, content) => API.post(`/tasks/${taskId}/comments`, { content });
 export const updateTaskComment = (taskId, commentId, content) => API.put(`/tasks/${taskId}/comments/${commentId}`, { content });

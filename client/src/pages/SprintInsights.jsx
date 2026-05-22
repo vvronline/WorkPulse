@@ -18,7 +18,7 @@ import {
     BarChart3, LineChart, Layers, ListChecks, RefreshCw, ArrowLeft, MessageSquare,
 } from 'lucide-react';
 import {
-    getAvailableSprints, getSprintStats,
+    getSprints, getSprintStats, getSprintTasks,
     getSprintCumulativeFlow, getSprintCycleTime,
     getSprintRetrospective, updateSprintRetrospective,
 } from '../api';
@@ -32,14 +32,15 @@ export default function SprintInsights() {
     const [sprints, setSprints] = useState([]);
     const [selectedId, setSelectedId] = useState(null);
     const [stats, setStats] = useState(null);
+    const [sprintTasks, setSprintTasks] = useState([]);
     const [cfd, setCfd] = useState(null);
     const [cycle, setCycle] = useState(null);
     const [retro, setRetro] = useState(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        getAvailableSprints().then(r => {
-            const list = r.data || [];
+        getSprints().then(r => {
+            const list = r.data?.sprints || [];
             setSprints(list);
             // Honour deep-link ?sprint_id=… when present and valid; otherwise
             // fall back to the active sprint or the first one in the list.
@@ -68,8 +69,9 @@ export default function SprintInsights() {
             getSprintCumulativeFlow(selectedId).then(r => r.data).catch(() => null),
             getSprintCycleTime(selectedId).then(r => r.data).catch(() => null),
             getSprintRetrospective(selectedId).then(r => r.data?.retrospective).catch(() => null),
-        ]).then(([st, cf, cy, re]) => {
-            setStats(st); setCfd(cf); setCycle(cy); setRetro(re);
+            getSprintTasks(selectedId).then(r => r.data?.tasks || []).catch(() => []),
+        ]).then(([st, cf, cy, re, tk]) => {
+            setStats(st); setCfd(cf); setCycle(cy); setRetro(re); setSprintTasks(tk);
         }).finally(() => setLoading(false));
     };
     useEffect(reload, [selectedId]);
@@ -90,11 +92,17 @@ export default function SprintInsights() {
                         value={selectedId || ''}
                         onChange={e => setSelectedId(Number(e.target.value))}
                     >
-                        {sprints.map(sp => (
-                            <option key={sp.id} value={sp.id}>
-                                {sp.name} {sp.status === 'active' ? '(Active)' : sp.status === 'completed' ? '(Completed)' : ''}
-                            </option>
-                        ))}
+                        {['active', 'planned', 'completed'].map(status => {
+                            const group = sprints.filter(sp => sp.status === status);
+                            if (!group.length) return null;
+                            return (
+                                <optgroup key={status} label={status.charAt(0).toUpperCase() + status.slice(1)}>
+                                    {group.map(sp => (
+                                        <option key={sp.id} value={sp.id}>{sp.name}</option>
+                                    ))}
+                                </optgroup>
+                            );
+                        })}
                     </select>
                     <button className="btn btn-secondary btn-sm" onClick={reload} title="Refresh data">
                         <RefreshCw size={13} />
@@ -120,6 +128,12 @@ export default function SprintInsights() {
                             </div>
                         </section>
                     )}
+
+                    {/* Sprint Tickets */}
+                    <section className={s.card}>
+                        <h2 className={s.sectionTitle}><ListChecks size={16} /> Sprint Tickets</h2>
+                        <SprintTicketsPanel tasks={sprintTasks} />
+                    </section>
 
                     {/* Burndown + Velocity side-by-side on desktop */}
                     <section className={s.row2}>
@@ -302,6 +316,41 @@ function CycleTimePanel({ data }) {
                 </tbody>
             </table>
         </>
+    );
+}
+
+const PRIORITY_COLORS = { high: '#ef4444', medium: '#f59e0b', low: '#6b7280' };
+const STATUS_LABELS = { pending: 'To Do', in_progress: 'In Progress', in_review: 'In Review', done: 'Done' };
+
+function SprintTicketsPanel({ tasks }) {
+    if (!tasks.length) return <div className={s.chartEmpty}>No tickets in this sprint.</div>;
+    return (
+        <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+            <table className={s.table}>
+                <thead>
+                    <tr>
+                        <th>Ticket</th>
+                        <th>Status</th>
+                        <th>Priority</th>
+                        <th>Points</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {tasks.map(t => (
+                        <tr key={t.id}>
+                            <td>#{t.id} <a href={`/tasks?task=${t.id}`} className={s.taskLink}>{t.title}</a></td>
+                            <td>{STATUS_LABELS[t.status] || t.status}</td>
+                            <td>
+                                <span style={{ color: PRIORITY_COLORS[t.priority] || '#6b7280', fontWeight: 500, textTransform: 'capitalize' }}>
+                                    {t.priority}
+                                </span>
+                            </td>
+                            <td>{t.story_points != null ? t.story_points : '—'}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
     );
 }
 

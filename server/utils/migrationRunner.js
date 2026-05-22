@@ -800,6 +800,118 @@ const MIGRATIONS = [
             await query(`ALTER TABLE users DROP COLUMN IF EXISTS user_status_text`);
         },
     },
+    {
+        // Stage 3 — Projects, human-readable task keys, and per-org Git
+        // integration (GitHub OAuth + webhook handling). All of these tables
+        // are tenant-scoped — they're inside the per-tenant DB so each org's
+        // projects / integrations live alongside their tasks, never in the
+        // master DB. New tenants pick the same schema up directly from
+        // initTenantSchema(); this migration backfills existing tenants.
+        name: '2026_06_v6_projects_and_git_integration',
+        async up(query) {
+            await query(`
+                CREATE TABLE IF NOT EXISTS projects (
+                    id              SERIAL PRIMARY KEY,
+                    org_id          INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                    key             TEXT    NOT NULL,
+                    name            TEXT    NOT NULL,
+                    description     TEXT,
+                    color           TEXT    NOT NULL DEFAULT '#6366f1',
+                    lead_user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    next_task_number INTEGER NOT NULL DEFAULT 1,
+                    is_archived     BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    created_at      TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at      TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE (org_id, key)
+                )
+            `);
+            await query(`
+                DO $do$ BEGIN
+                    ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_key_format_check;
+                    ALTER TABLE projects ADD CONSTRAINT projects_key_format_check
+                        CHECK (key ~ '^[A-Z][A-Z0-9_]{1,9}$');
+                EXCEPTION WHEN others THEN NULL;
+                END $do$
+            `);
+            await query(`CREATE INDEX IF NOT EXISTS idx_projects_org ON projects(org_id, is_archived)`);
+            await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL`);
+            await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_number INTEGER`);
+            await query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_tasks_project_number ON tasks(project_id, task_number) WHERE project_id IS NOT NULL`);
+            await query(`CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id) WHERE project_id IS NOT NULL`);
+            await query(`
+                CREATE TABLE IF NOT EXISTS org_integrations (
+                    id           SERIAL PRIMARY KEY,
+                    org_id       INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                    provider     TEXT    NOT NULL CHECK (provider IN ('github','gitlab','bitbucket')),
+                    config       JSONB   NOT NULL DEFAULT '{}'::jsonb,
+                    is_active    BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    created_at   TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at   TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE (org_id, provider)
+                )
+            `);
+            await query(`CREATE INDEX IF NOT EXISTS idx_integrations_org ON org_integrations(org_id, is_active)`);
+            await query(`
+                CREATE TABLE IF NOT EXISTS org_integration_secrets (
+                    integration_id   INTEGER PRIMARY KEY REFERENCES org_integrations(id) ON DELETE CASCADE,
+                    webhook_secret   TEXT,
+                    access_token     TEXT,
+                    refresh_token    TEXT,
+                    token_expires_at TIMESTAMPTZ,
+                    github_login     TEXT,
+                    github_avatar    TEXT,
+                    scopes           TEXT,
+                    updated_at       TIMESTAMPTZ DEFAULT NOW()
+                )
+            `);
+            // Older tenants may already have org_integration_secrets without
+            // the GitHub identity columns — ensure they're present.
+            await query(`ALTER TABLE org_integration_secrets ADD COLUMN IF NOT EXISTS github_login TEXT`);
+            await query(`ALTER TABLE org_integration_secrets ADD COLUMN IF NOT EXISTS github_avatar TEXT`);
+            await query(`ALTER TABLE org_integration_secrets ADD COLUMN IF NOT EXISTS scopes TEXT`);
+            await query(`
+                CREATE TABLE IF NOT EXISTS task_git_refs (
+                    id              SERIAL PRIMARY KEY,
+                    task_id         INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                    integration_id  INTEGER REFERENCES org_integrations(id) ON DELETE SET NULL,
+                    ref_type        TEXT NOT NULL CHECK (ref_type IN ('branch','pull_request','commit')),
+                    status          TEXT NOT NULL DEFAULT 'open'
+                                         CHECK (status IN ('open','merged','closed','draft','committed')),
+                    external_id     TEXT,
+                    title           TEXT,
+                    url             TEXT,
+                    repository      TEXT,
+                    ref_name        TEXT,
+                    author_login    TEXT,
+                    commit_sha      TEXT,
+                    payload         JSONB,
+                    event_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    created_at      TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at      TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE (task_id, ref_type, external_id, repository)
+                )
+            `);
+            await query(`CREATE INDEX IF NOT EXISTS idx_task_git_refs_task ON task_git_refs(task_id, event_at DESC)`);
+            await query(`CREATE INDEX IF NOT EXISTS idx_task_git_refs_status ON task_git_refs(status) WHERE status != 'merged'`);
+            await query(`
+                CREATE TABLE IF NOT EXISTS github_repo_connections (
+                    id              SERIAL PRIMARY KEY,
+                    integration_id  INTEGER NOT NULL REFERENCES org_integrations(id) ON DELETE CASCADE,
+                    full_name       TEXT    NOT NULL,
+                    html_url        TEXT,
+                    default_branch  TEXT,
+                    hook_id         BIGINT,
+                    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at      TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at      TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE (integration_id, full_name)
+                )
+            `);
+            await query(`CREATE INDEX IF NOT EXISTS idx_gh_repo_conn_integration ON github_repo_connections(integration_id, is_active)`);
+        },
+    },
 ];
 
 /**

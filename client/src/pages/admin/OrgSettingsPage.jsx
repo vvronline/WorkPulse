@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings as SettingsIcon, Palette, Plug, ShieldCheck, UserCog, Mail } from 'lucide-react';
+import { Settings as SettingsIcon, Palette, ShieldCheck, UserCog, Mail } from 'lucide-react';
 import { getCurrentOrg } from '../../api';
 import OrgGeneralSettings from '../../components/organization/OrgSettings';
 import OrgRegistrationSettings from './OrgSettings';
@@ -17,10 +17,15 @@ import s from './OrgSettingsPage.module.css';
  * to that section.
  *
  * Sections:
- *   - General      (timezone, work hours, fiscal year, presence rules)
- *   - Registration (mode + invite codes — gated to super_admin / platform_admin)
- *   - Branding     (placeholder)
- *   - Integrations (placeholder)
+ *   - General        (timezone, work hours, fiscal year, presence rules)
+ *   - Registration   (mode + invite codes — gated to super_admin / platform_admin)
+ *   - Roles          (role labels and permission levels)
+ *   - Branding       (logo + accent colour)
+ *   - Email templates (per-event subject/body customisation)
+ *
+ * Note: Integrations (GitHub etc.) live under Admin → Integrations as a
+ * dedicated catalog page; they are intentionally not surfaced here to
+ * avoid two parallel "Integrations" surfaces.
  */
 export default function OrgSettingsPage({ userRole }) {
     const [org, setOrg] = useState(null);
@@ -49,7 +54,6 @@ export default function OrgSettingsPage({ userRole }) {
         { id: 'roles', label: 'Roles', icon: UserCog },
         { id: 'branding', label: 'Branding', icon: Palette },
         { id: 'email-templates', label: 'Email templates', icon: Mail },
-        { id: 'integrations', label: 'Integrations', icon: Plug },
     ]), [isSuper]);
 
     useEffect(() => {
@@ -204,29 +208,6 @@ export default function OrgSettingsPage({ userRole }) {
                     </header>
                     <div className={s.sectionBody}>
                         <EmailTemplatesSection canEdit={canEditBranding} />
-                    </div>
-                </section>
-
-                <section
-                    id="integrations"
-                    data-section-id="integrations"
-                    ref={el => (sectionRefs.current.integrations = el)}
-                    className={s.section}
-                >
-                    <header className={s.sectionHead}>
-                        <Plug size={18} className={s.sectionIcon} />
-                        <div>
-                            <h2 className={s.sectionTitle}>Integrations</h2>
-                            <p className={s.sectionDesc}>
-                                Connect WorkPulse with calendar providers, Slack, payroll systems, and SSO.
-                            </p>
-                        </div>
-                    </header>
-                    <div className={s.sectionBody}>
-                        <div className={s.placeholder}>
-                            Integrations are coming soon. Planned: Google / Microsoft calendar sync, Slack
-                            notifications, SAML SSO, and payroll exports.
-                        </div>
                     </div>
                 </section>
             </div>

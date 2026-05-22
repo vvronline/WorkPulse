@@ -51,6 +51,9 @@ const customFieldsRoutes = require('./routes/customFields');
 const publicRoutes = require('./routes/public');
 const compensationRoutes = require('./routes/compensation');
 const webhookRoutes = require('./routes/webhooks');
+// Stage 3 — Projects (Jira-style PROJ-123) + per-org Git/etc integrations.
+const projectsRoutes = require('./routes/projects');
+const integrationsRoutes = require('./routes/integrations');
 const { setupWebSocket } = require('./utils/ws');
 const { createCollaborationServer } = require('./utils/collaboration');
 const { initJobs, shutdownJobs } = require('./jobs');
@@ -301,6 +304,9 @@ app.use('/api/service-desk', apiLimiter, serviceDeskRoutes);
 app.use('/api/branding', apiLimiter, brandingRoutes);
 app.use('/api/custom-fields', apiLimiter, customFieldsRoutes);
 app.use('/api/compensation', apiLimiter, compensationRoutes);
+// Stage 3 routers
+app.use('/api/projects', apiLimiter, projectsRoutes);
+app.use('/api/integrations', apiLimiter, integrationsRoutes);
 // Public (unauthenticated) endpoints — share links, etc. Mounted with the
 // standard apiLimiter only (no auth, no tenant middleware). The route file
 // itself enforces token validity.

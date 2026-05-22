@@ -61,6 +61,30 @@
 .comment-icon:hover { transform: scale(1.15); }
 .comment-badge { background: var(--primary); color: #fff; font-size: 0.55rem; font-weight: 700; border-radius: 50%; min-width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; position: absolute; top: -6px; right: -8px; }
 
+/* Issue-key chip on the kanban card. Sits left of the comment icon and is
+   itself a click target — copies the key (e.g. WEB-12) to the clipboard. */
+.issue-key-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--border, #2a2f3a);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted, #9ca3af);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, transform 0.1s, border-color 0.15s;
+  max-width: 110px;
+}
+.issue-key-chip:hover { transform: translateY(-1px); filter: brightness(1.1); }
+.issue-key-chip:active { transform: translateY(0); }
+.issue-key-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 [data-theme="light"] .task-card { background: rgba(255, 255, 255, 0.9); border-color: rgba(0, 0, 0, 0.07); }
 
 @media (max-width: 768px) {

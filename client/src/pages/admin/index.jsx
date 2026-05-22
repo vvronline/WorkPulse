@@ -3,7 +3,7 @@ import {
     Home, Users, UserPlus, Building, UsersRound, GitBranch, ScrollText,
     RefreshCw, DollarSign, Tag, Settings as SettingsIcon,
     Menu, X, ChevronDown, ExternalLink, Workflow as WorkflowIcon,
-    Wallet, Receipt, CreditCard,
+    Wallet, Receipt, CreditCard, Folder, GitMerge,
 } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
 import { useSearchParams, useNavigate } from 'react-router-dom';
@@ -24,6 +24,11 @@ import Departments from '../../components/organization/Departments';
 import Teams from '../../components/organization/Teams';
 import OrgChartView from '../../components/organization/OrgChartView';
 import AgileSettings from '../AgileSettings';
+// Stage 3 — Projects + GitHub integrations live inside Admin → Structure /
+// Integrations rather than as separate top-level pages. The page components
+// themselves are still standalone files and unchanged.
+import Projects from '../Projects';
+import Integrations from '../Integrations';
 import s from './AdminLayout.module.css';
 
 // ─── Section registry ─────────────────────────────────────────────────────
@@ -45,6 +50,9 @@ const SECTIONS = [
     { key: 'teams',          label: 'Teams',             icon: UsersRound,   group: 'Structure', requires: 'orgId' },
     { key: 'org-chart',      label: 'Org Chart',         icon: GitBranch,    group: 'Structure', requires: 'orgId' },
     { key: 'agile',          label: 'Agile Config',      icon: WorkflowIcon, group: 'Structure', requires: 'orgId' },
+    { key: 'projects',       label: 'Projects',          icon: Folder,       group: 'Structure', requires: 'orgId' },
+
+    { key: 'integrations',   label: 'Integrations',      icon: GitMerge,     group: 'Settings',  requires: 'orgId' },
 
     { key: 'payroll',        label: 'Payroll Periods',   icon: DollarSign,   group: 'Operations' },
     { key: 'compensation',   label: 'Compensation',      icon: Wallet,       group: 'Operations', requires: 'orgId' },
@@ -214,6 +222,10 @@ export default function AdminPanel() {
                 return user.org_id ? <OrgChartView /> : <p>You are not assigned to an organization.</p>;
             case 'agile':
                 return user.org_id ? <AgileSettings /> : <p>You are not assigned to an organization.</p>;
+            case 'projects':
+                return user.org_id ? <Projects /> : <p>You are not assigned to an organization.</p>;
+            case 'integrations':
+                return user.org_id ? <Integrations /> : <p>You are not assigned to an organization.</p>;
             case 'org-settings':
                 return user.org_id
                     ? <OrgSettingsPage userRole={user.role} />

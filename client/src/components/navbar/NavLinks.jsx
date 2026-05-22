@@ -27,6 +27,10 @@ export default function NavLinks() {
     if (isTeamLead) moreItems.push({ to: '/manager', label: 'My Team', icon: Users });
     if (isHR) moreItems.push({ to: '/admin', label: 'Admin', icon: Settings });
     if (user?.role === 'platform_admin') moreItems.push({ to: '/tenants', label: 'Tenants', icon: Server });
+    // Stage 3 — Projects + Integrations are configured inside Admin
+    // (Admin → Structure → Projects, Admin → Settings → Integrations) since
+    // they are org-scoped configuration, not standalone "destinations".
+    // See client/src/pages/admin/index.jsx for the section registry.
 
     const moreIsActive = moreItems.some(item => location.pathname === item.to);
     const p = location.pathname;

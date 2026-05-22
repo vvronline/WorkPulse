@@ -126,6 +126,7 @@ router.put('/:id/comments/:commentId', auth, loadUserContext, async (req, res) =
 
         await req.db.query('UPDATE task_comments SET content = $1, updated_at = $2 WHERE id = $3',
             [content.trim(), new Date().toISOString(), req.params.commentId]);
+        await logHistory(req.params.id, req.userId, 'comment_edited', null, null, null, null, req.db);
 
         const updated = (await req.db.query(`
             SELECT tc.*, u.username, u.full_name, u.avatar
@@ -155,6 +156,7 @@ router.delete('/:id/comments/:commentId', auth, loadUserContext, async (req, res
         }
 
         await req.db.query('DELETE FROM task_comments WHERE id = $1', [req.params.commentId]);
+        await logHistory(req.params.id, req.userId, 'comment_deleted', null, null, null, null, req.db);
         res.json({ message: 'Comment deleted' });
     } catch (err) {
         req.log.error({ err: err }, 'Error deleting comment:');

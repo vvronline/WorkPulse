@@ -1,18 +1,65 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { HighlightedHtml, formatDueDate, isDueOverdue } from './utils.jsx';
 import { PRIORITIES } from './constants.js';
-import { User, CalendarDays, PenLine } from 'lucide-react';
+import { User, CalendarDays, PenLine, Check, Copy } from 'lucide-react';
 import { StoryPointBadge, WorkItemTypeBadge, BlockerBadge } from '../../components/agile/AgilePickers.jsx';
+import { useToast } from '../../components/common/Toast';
 import s from './TaskCard.module.css';
 
 function getPriority(p) {
   return PRIORITIES.find((pr) => pr.value === p) || PRIORITIES[1];
 }
 
+// Copy a string to the clipboard. Uses the modern async API when available,
+// and falls back to a hidden <textarea> + execCommand for older browsers
+// and non-secure contexts (e.g. plain-HTTP dev environments where
+// navigator.clipboard is unavailable).
+async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch { /* fall through */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'absolute';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 export default function TaskCard({ task, sprintMode, onOpenDetail, onOpenComments, onDragStart, onDragEnd }) {
   const pri = getPriority(task.priority);
   const dueFmt = formatDueDate(task.due_date);
   const overdue = isDueOverdue(task.due_date) && task.status !== 'done';
+  const toast = useToast();
+  const [copied, setCopied] = useState(false);
+
+  // Issue key (e.g. WEB-123) only exists once a task is assigned to a project;
+  // legacy / unkeyed tickets fall back to "#<id>" so the chip is always
+  // present and consistently placed.
+  const issueKey = task.issue_key || `#${task.id}`;
+
+  const onCopyKey = async (e) => {
+    e.stopPropagation();
+    const ok = await copyToClipboard(issueKey);
+    if (ok) {
+      setCopied(true);
+      try { toast.success(`Copied ${issueKey}`); } catch { /* toast optional */ }
+      setTimeout(() => setCopied(false), 1500);
+    } else {
+      try { toast.error('Copy failed'); } catch { /* ignore */ }
+    }
+  };
 
   return (
     <div
@@ -45,6 +92,22 @@ export default function TaskCard({ task, sprintMode, onOpenDetail, onOpenComment
           <BlockerBadge task={task} />
         </div>
         <div className={s['task-actions']}>
+          {/* Issue key chip — click to copy. Coloured with the project's
+              accent when known so it visually ties cards to their project. */}
+          <button
+            type="button"
+            className={s['issue-key-chip']}
+            onClick={onCopyKey}
+            title={`Click to copy ${issueKey}`}
+            style={task.project?.color ? {
+              background: `${task.project.color}22`,
+              color: task.project.color,
+              borderColor: `${task.project.color}55`,
+            } : undefined}
+          >
+            {copied ? <Check size={11} /> : <Copy size={11} />}
+            <span className={s['issue-key-text']}>{issueKey}</span>
+          </button>
           <span
             className={s['comment-icon']}
             onClick={() => onOpenComments(task.id)}

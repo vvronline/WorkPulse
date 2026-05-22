@@ -17,7 +17,7 @@ import { CustomFieldsEditor, CustomFieldsSummary } from '../../components/custom
 import { useAgileConfig } from '../../AgileConfigContext';
 import { useCustomFields } from '../../CustomFieldsContext';
 import { getTaskDetail, getTaskCustomFieldValues } from '../../api';
-import { X, Package, CalendarDays, Save, Pencil, MessageSquare, Clock, Trash2 } from 'lucide-react';
+import { X, Package, CalendarDays, Save, Pencil, MessageSquare, Clock, Trash2, Folder } from 'lucide-react';
 import s from './TaskDetailModal.module.css';
 
 export default function TaskDetailModal({
@@ -46,7 +46,7 @@ export default function TaskDetailModal({
   fetchBacklog,
   setError,
 }) {
-  const { assignableUsers, orgLabels, availableSprints, currentUser, activeTab } = useTaskCtx();
+  const { assignableUsers, orgLabels, availableSprints, availableProjects, currentUser, activeTab } = useTaskCtx();
   const { typeById } = useAgileConfig();
   const { fields: customFields } = useCustomFields();
   // Pull the task's custom-field values once when the modal opens so the
@@ -90,6 +90,7 @@ export default function TaskDetailModal({
   const [editLabelDropdownOpen, setEditLabelDropdownOpen] = useState(false);
   const [editStoryPoints, setEditStoryPoints] = useState(null);
   const [editWorkItemType, setEditWorkItemType] = useState('');
+  const [editProjectId, setEditProjectId] = useState('');
 
   // Initialise edit fields from detailTask whenever edit mode is entered.
   useEffect(() => {
@@ -104,6 +105,7 @@ export default function TaskDetailModal({
       setEditLabelDropdownOpen(false);
       setEditStoryPoints(detailTask.story_points ?? null);
       setEditWorkItemType(detailTask.work_item_type_id || '');
+      setEditProjectId(detailTask.project_id || '');
     }
   }, [detailEditing]);
 
@@ -118,6 +120,7 @@ export default function TaskDetailModal({
       labels: editLabels,
       storyPoints: editStoryPoints,
       workItemType: editWorkItemType,
+      projectId: editProjectId,
     });
   };
 
@@ -276,6 +279,53 @@ export default function TaskDetailModal({
                   <label>Type</label>
                   <WorkItemTypePicker value={editWorkItemType} onChange={setEditWorkItemType} />
                 </div>
+                {availableProjects && availableProjects.length > 0 && (
+                  <div className={s['form-extra-group']}>
+                    <label>
+                      <Folder size={13} style={{marginRight:4,verticalAlign:'middle'}} />Project
+                    </label>
+                    {detailTask.project_id ? (
+                      /* Project assignment is one-way — once a task has a
+                         project (and therefore an immutable issue key like
+                         WEB-123), we render a read-only chip. Letting users
+                         re-key it would orphan every branch/commit/link that
+                         already mentions the old key. */
+                      <div
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          padding: '6px 10px',
+                          borderRadius: 6,
+                          background: detailTask.project?.color
+                            ? `${detailTask.project.color}22`
+                            : 'rgba(255,255,255,0.06)',
+                          color: detailTask.project?.color || 'inherit',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          fontFamily: 'monospace',
+                        }}
+                        title="Project assignment is permanent (it would invalidate the issue key)"
+                      >
+                        <Folder size={12} />
+                        {detailTask.issue_key || detailTask.project?.key || '—'}
+                      </div>
+                    ) : (
+                      <select
+                        value={editProjectId || ''}
+                        onChange={(e) => setEditProjectId(e.target.value)}
+                        title="Assign to a project to get a stable issue key (e.g. WEB-123). This cannot be changed once set."
+                      >
+                        <option value="">— No project —</option>
+                        {availableProjects.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.key} · {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                )}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
                 <StoryPointPicker value={editStoryPoints} onChange={setEditStoryPoints} />
@@ -326,7 +376,23 @@ export default function TaskDetailModal({
             /* ─── VIEW MODE ─── */
             <>
               <div className={s['detail-title-row']}>
-                <span className={s['backlog-ticket-id']}>#{detailTask.id}</span>
+                {detailTask.issue_key ? (
+                  <span
+                    className={s['backlog-ticket-id']}
+                    title={detailTask.project?.name || 'Project issue key'}
+                    style={{
+                      background: detailTask.project?.color
+                        ? `${detailTask.project.color}22`
+                        : undefined,
+                      color: detailTask.project?.color || undefined,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {detailTask.issue_key}
+                  </span>
+                ) : (
+                  <span className={s['backlog-ticket-id']}>#{detailTask.id}</span>
+                )}
                 <WorkItemTypeBadge value={detailTask.work_item_type_id} />
                 <h2 className={s['detail-title']}>{detailTask.title}</h2>
                 <StoryPointBadge value={detailTask.story_points} />
@@ -538,6 +604,8 @@ export default function TaskDetailModal({
                     scheduled: '\u25b8',
                     unscheduled: '\u25a1',
                     comment_added: '\u2022',
+                    comment_edited: '\u270e',
+                    comment_deleted: '\u00d7',
                     deleted: '\u00d7',
                   };
                   const fieldLabels = {
@@ -549,6 +617,12 @@ export default function TaskDetailModal({
                     due_date: 'due date',
                     date: 'schedule',
                     labels: 'labels',
+                    story_points: 'story points',
+                    work_item_type: 'work item type',
+                    sprint: 'sprint',
+                    parent: 'parent task',
+                    is_blocked: 'blocked status',
+                    project: 'project',
                   };
                   const actionText = () => {
                     if (h.action === 'created') {
@@ -562,6 +636,8 @@ export default function TaskDetailModal({
                       return 'created this task';
                     }
                     if (h.action === 'comment_added') return 'added a comment';
+                    if (h.action === 'comment_edited') return 'edited a comment';
+                    if (h.action === 'comment_deleted') return 'deleted a comment';
                     if (h.action === 'status_change')
                       return (
                         <>

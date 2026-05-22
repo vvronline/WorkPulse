@@ -4,7 +4,7 @@ import {
   getTasks, updateTaskStatus, deleteTask, carryForwardTasks,
   getAssignableUsers, getTaskLabels, addTaskComment, updateTaskComment,
   getLocalToday, getTaskDetail, getTeamSprintConfig, getAvailableSprints,
-  getSprintStats,
+  getSprintStats, getProjects,
 } from '../api';
 import { useAgileConfig } from '../AgileConfigContext';
 import { SprintLifecycleControls } from '../components/agile/AgileWorkflowPanels.jsx';
@@ -50,6 +50,7 @@ export default function Tasks() {
   const [sprintImportOpen, setSprintImportOpen] = useState(false);
   const [assignableUsers, setAssignableUsers] = useState([]);
   const [orgLabels, setOrgLabels] = useState([]);
+  const [availableProjects, setAvailableProjects] = useState([]);
   const [sprintStats, setSprintStats] = useState(null);
   const { unitLabel, features } = useAgileConfig();
   const autoCarriedRef = useRef(null); // stores the last date carry-forward ran
@@ -96,6 +97,12 @@ export default function Tasks() {
   useEffect(() => {
     getAssignableUsers().then((r) => setAssignableUsers(r.data)).catch(() => {});
     getTaskLabels().then((r) => setOrgLabels(r.data)).catch(() => {});
+    // Stage 3: project list powers the "Project" picker in backlog create
+    // and task edit. Active projects only — archived ones can't accept new
+    // tickets. Failures are non-fatal; the picker just hides itself.
+    getProjects(false)
+      .then((r) => setAvailableProjects(Array.isArray(r.data) ? r.data : []))
+      .catch(() => setAvailableProjects([]));
     // Always ask the backend — it knows about platform_admin / super_admin /
     // hr_admin who can see every team's sprints, and will correctly return
     // [] for users with no team. Don't gate on currentUser.team_id here:
@@ -236,6 +243,7 @@ export default function Tasks() {
       assignableUsers={assignableUsers}
       orgLabels={orgLabels}
       availableSprints={availableSprints}
+      availableProjects={availableProjects}
       currentUser={currentUser}
       activeTab={activeTab}
     >
@@ -421,6 +429,13 @@ export default function Tasks() {
           setBacklogStoryPoints={backlog.setBacklogStoryPoints}
           backlogWorkItemType={backlog.backlogWorkItemType}
           setBacklogWorkItemType={backlog.setBacklogWorkItemType}
+          backlogProjectId={backlog.backlogProjectId}
+          setBacklogProjectId={backlog.setBacklogProjectId}
+          backlogLimit={backlog.backlogLimit}
+          setBacklogLimit={backlog.setBacklogLimit}
+          backlogOffset={backlog.backlogOffset}
+          setBacklogOffset={backlog.setBacklogOffset}
+          backlogTotal={backlog.backlogTotal}
           scheduleTaskId={backlog.scheduleTaskId}
           setScheduleTaskId={backlog.setScheduleTaskId}
           scheduleDate={backlog.scheduleDate}
