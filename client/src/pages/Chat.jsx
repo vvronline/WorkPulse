@@ -4,7 +4,7 @@ import ConfirmDialog from '../components/common/ConfirmDialog';
 import { uploadChatFile } from '../api';
 import {
     MessageSearch, ForwardModal, GroupModal,
-    StarredMessages, PollCreator, CallOverlay
+    PollCreator, CallOverlay
 } from '../components/chat';
 import ChatSidebar from './chat/ChatSidebar';
 import ChatHeader from './chat/ChatHeader';
@@ -219,6 +219,9 @@ export default function Chat() {
                             onUnpin={handleUnpin}
                             showSharedFiles={showSharedFiles}
                             onCloseSharedFiles={() => setShowSharedFiles(false)}
+                            showStarred={showStarred}
+                            onCloseStarred={() => setShowStarred(false)}
+                            onJumpToStarred={(convId, msgId) => { setShowStarred(false); jumpTo(msgId); }}
                         />
 
                         <ChatInputBar
@@ -249,12 +252,6 @@ export default function Chat() {
             </div>
 
             {/* ─── Modals ─── */}
-            {showStarred && (
-                <StarredMessages
-                    onJumpTo={(convId, msgId) => { setShowStarred(false); jumpTo(msgId); }}
-                    onClose={() => setShowStarred(false)}
-                />
-            )}
             {showPollCreator && (
                 <PollCreator
                     onSubmit={handleCreatePoll}

@@ -1,4 +1,4 @@
-import { ChatAvatar, MessageBubble, PinnedMessages, SharedFilesPanel } from '../../components/chat';
+import { ChatAvatar, MessageBubble, PinnedMessages, SharedFilesPanel, StarredMessages } from '../../components/chat';
 import SystemMessage from '../../components/chat/SystemMessage';
 import MeetingCard from '../../components/chat/MeetingCard';
 import s from './ChatMessages.module.css';
@@ -10,7 +10,8 @@ export default function ChatMessages({
     onLoadMore, onDragOver, onDragLeave, onDrop,
     onReply, onEdit, onDelete, onPin, onForward, onReact, onStar,
     showPinned, onClosePinned, onJumpTo, onUnpin,
-    showSharedFiles, onCloseSharedFiles
+    showSharedFiles, onCloseSharedFiles,
+    showStarred, onCloseStarred, onJumpToStarred
 }) {
     return (
         <div className={s.chatBody}>
@@ -138,6 +139,12 @@ export default function ChatMessages({
                 <SharedFilesPanel
                     convId={activeConv.id}
                     onClose={onCloseSharedFiles}
+                />
+            )}
+            {showStarred && (
+                <StarredMessages
+                    onJumpTo={onJumpToStarred}
+                    onClose={onCloseStarred}
                 />
             )}
         </div>
