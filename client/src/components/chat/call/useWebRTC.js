@@ -217,7 +217,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                     if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
                     params.encodings[0].maxBitrate = bitrate;
                     params.degradationPreference = 'maintain-framerate';
-                    sender.setParameters(params).catch(() => {});
+                    sender.setParameters(params).catch(() => { });
                 } catch { /* ignore */ }
             }
         };
@@ -228,7 +228,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 const params = sender.getParameters();
                 if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
                 params.encodings[0].maxBitrate = 48_000;
-                sender.setParameters(params).catch(() => {});
+                sender.setParameters(params).catch(() => { });
             } catch { /* ignore */ }
         }
 
@@ -262,11 +262,11 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                                 const p2 = sender.getParameters();
                                 if (p2.encodings?.length) {
                                     p2.encodings[0].active = true;
-                                    sender.setParameters(p2).catch(() => {});
+                                    sender.setParameters(p2).catch(() => { });
                                 }
                             } catch { /* ignore */ }
                         }, 50);
-                    }).catch(() => {});
+                    }).catch(() => { });
                 } catch { /* ignore */ }
             }
         }, 200);
@@ -652,15 +652,12 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 // so this explicit signal is the source of truth.
                 const videoOff = !!signal.videoOff;
                 setRemoteVideoOff(videoOff);
-                // In an AUDIO call the only video that ever exists is the
-                // peer's screen share. When they stop sharing we must also
-                // clear the remoteHasVideo flag (which controls whether the
-                // <video> tile renders at all) AND null-out the srcObject so
-                // the browser doesn't keep painting the last frozen frame.
-                // For video calls we leave remoteHasVideo alone — the camera
-                // transceiver should stay alive and may come back on at any
-                // moment, and we keep showing an avatar overlay instead.
+
                 if (callType !== 'video') {
+                    // ── Audio call ────────────────────────────────────────
+                    // The only video that ever exists here is the peer's
+                    // screen share. When they stop sharing we drop the video
+                    // entirely so the tile collapses back to the audio UI.
                     if (videoOff) {
                         setRemoteHasVideo(false);
                         if (remoteVideoRef.current) {
@@ -683,6 +680,40 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                             remoteVideoRef.current.srcObject = remoteStreamRef.current;
                             remoteVideoRef.current.play().catch(() => { });
                         }
+                    }
+                } else {
+                    // ── Video call ────────────────────────────────────────
+                    // The peer's transceiver stays alive even after they
+                    // turn off their camera (we want it ready for instant
+                    // re-enable), but the <video> element will otherwise
+                    // keep painting the LAST RECEIVED FRAME forever —
+                    // looking like a frozen image of the peer behind the
+                    // avatar/name overlay. Clear srcObject so the dark
+                    // overlay background shows through cleanly, then
+                    // restore srcObject when the peer turns video back on.
+                    if (videoOff) {
+                        if (remoteVideoRef.current) {
+                            try { remoteVideoRef.current.pause(); } catch { /* ignore */ }
+                            try { remoteVideoRef.current.srcObject = null; } catch { /* ignore */ }
+                        }
+                        // Also drop any frozen video tracks from the remote
+                        // stream so a fresh ontrack on resume re-paints
+                        // immediately rather than reusing a stale track.
+                        if (remoteStreamRef.current) {
+                            remoteStreamRef.current.getVideoTracks().forEach(t => {
+                                try { remoteStreamRef.current.removeTrack(t); } catch { /* ignore */ }
+                            });
+                        }
+                    } else if (remoteStreamRef.current && remoteVideoRef.current) {
+                        // Peer turned camera back on — reattach the stream
+                        // so the new incoming track (delivered via existing
+                        // transceiver + replaceTrack) starts rendering.
+                        try {
+                            if (remoteVideoRef.current.srcObject !== remoteStreamRef.current) {
+                                remoteVideoRef.current.srcObject = remoteStreamRef.current;
+                            }
+                            remoteVideoRef.current.play().catch(() => { });
+                        } catch { /* ignore */ }
                     }
                 }
             } else if (signal.type === 'audio-state') {
