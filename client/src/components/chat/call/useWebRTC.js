@@ -683,34 +683,54 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                     }
                 } else {
                     // ── Video call ────────────────────────────────────────
-                    // The peer's transceiver stays alive even after they
-                    // turn off their camera (we want it ready for instant
-                    // re-enable), but the <video> element will otherwise
-                    // keep painting the LAST RECEIVED FRAME forever —
-                    // looking like a frozen image of the peer behind the
-                    // avatar/name overlay. Clear srcObject so the dark
-                    // overlay background shows through cleanly, then
-                    // restore srcObject when the peer turns video back on.
+                    // The peer's transceiver stays alive after they turn
+                    // their camera off (we want it ready for instant
+                    // re-enable), but the <video> element will keep
+                    // painting the LAST RECEIVED FRAME forever — that's
+                    // the frozen image the user was seeing behind the
+                    // avatar.
+                    //
+                    // Important: we do NOT remove the receiver's track
+                    // from remoteStreamRef. The same MediaStreamTrack
+                    // persists on the RTCRtpReceiver across the peer's
+                    // replaceTrack(null) / replaceTrack(newTrack) cycle
+                    // (it just goes muted then unmuted). If we remove it
+                    // from the MediaStream, then when video resumes the
+                    // <video> element has nothing to render and we get a
+                    // black screen.
+                    //
+                    // So: on OFF — only clear srcObject (kills the frozen
+                    // frame, lets the dark overlay show through).
+                    //     on ON  — restore srcObject and play; the track
+                    //              that just unmuted will paint frames.
                     if (videoOff) {
                         if (remoteVideoRef.current) {
                             try { remoteVideoRef.current.pause(); } catch { /* ignore */ }
                             try { remoteVideoRef.current.srcObject = null; } catch { /* ignore */ }
                         }
-                        // Also drop any frozen video tracks from the remote
-                        // stream so a fresh ontrack on resume re-paints
-                        // immediately rather than reusing a stale track.
-                        if (remoteStreamRef.current) {
-                            remoteStreamRef.current.getVideoTracks().forEach(t => {
-                                try { remoteStreamRef.current.removeTrack(t); } catch { /* ignore */ }
-                            });
+                    } else if (remoteVideoRef.current) {
+                        // Build/restore the stream that drives the <video>.
+                        // Prefer the existing remoteStreamRef so we keep
+                        // any audio track in the same MediaStream. If for
+                        // any reason it has no video track, pull the live
+                        // video receiver track straight off the PC.
+                        let stream = remoteStreamRef.current;
+                        if (!stream || stream.getVideoTracks().length === 0) {
+                            const receivers = pcRef.current?.getReceivers?.() || [];
+                            const videoTracks = receivers
+                                .filter(r => r.track && r.track.kind === 'video')
+                                .map(r => r.track);
+                            if (!stream) stream = new MediaStream();
+                            for (const t of videoTracks) {
+                                if (!stream.getTracks().some(x => x.id === t.id)) {
+                                    try { stream.addTrack(t); } catch { /* ignore */ }
+                                }
+                            }
+                            remoteStreamRef.current = stream;
                         }
-                    } else if (remoteStreamRef.current && remoteVideoRef.current) {
-                        // Peer turned camera back on — reattach the stream
-                        // so the new incoming track (delivered via existing
-                        // transceiver + replaceTrack) starts rendering.
                         try {
-                            if (remoteVideoRef.current.srcObject !== remoteStreamRef.current) {
-                                remoteVideoRef.current.srcObject = remoteStreamRef.current;
+                            if (remoteVideoRef.current.srcObject !== stream) {
+                                remoteVideoRef.current.srcObject = stream;
                             }
                             remoteVideoRef.current.play().catch(() => { });
                         } catch { /* ignore */ }
