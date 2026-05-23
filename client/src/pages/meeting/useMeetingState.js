@@ -164,7 +164,12 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         for (const [peerId, pc] of pcsRef.current) {
             const senders = pc.getSenders().filter(s => s.track);
             if (senders.length === 0 && stream.getTracks().length > 0) {
-                stream.getTracks().forEach(track => pc.addTrack(track, stream));
+                stream.getTracks().forEach(track => {
+                    pc.addTrack(track, stream);
+                    if (track.kind === 'video') {
+                        try { track.contentHint = 'motion'; } catch { /* not supported */ }
+                    }
+                });
                 if (pc.signalingState === 'stable') {
                     pc.createOffer()
                         .then(offer => pc.setLocalDescription(offer))
@@ -219,7 +224,12 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         pcsRef.current.set(remoteUserId, pc);
 
         if (localStreamRef.current) {
-            localStreamRef.current.getTracks().forEach(track => pc.addTrack(track, localStreamRef.current));
+            localStreamRef.current.getTracks().forEach(track => {
+                pc.addTrack(track, localStreamRef.current);
+                if (track.kind === 'video') {
+                    try { track.contentHint = 'motion'; } catch { /* not supported */ }
+                }
+            });
         }
 
         // Bitrate caps — adaptive based on number of peer connections.
@@ -234,7 +244,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                     if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
                     if (sender.track.kind === 'video') {
                         params.encodings[0].maxBitrate = videoBitrate;
-                        params.degradationPreference = 'balanced';
+                        params.degradationPreference = 'maintain-framerate';
                     } else {
                         params.encodings[0].maxBitrate = 48_000;
                     }

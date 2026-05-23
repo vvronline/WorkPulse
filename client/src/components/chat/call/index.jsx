@@ -744,7 +744,7 @@ export default function CallOverlay({
             {!isVideoCall && !webrtc.remoteHasVideo && controls.muted && isConnected && (
                 <div
                     className={s.localVideoMuteBadge}
-                    style={{ position: 'absolute', top: 16, left: 16, bottom: 'auto', right: 'auto' }}
+                    style={{ position: 'absolute', top: 12, right: 12, bottom: 'auto', left: 'auto' }}
                     title="You are muted"
                     aria-label="You are muted"
                 >

@@ -270,8 +270,9 @@
 
 @media (max-width: 600px) {
     .localVideoMuteBadge {
-        bottom: 80px;
+        top: 12px;
         right: 12px;
+        bottom: auto;
     }
 }
 
@@ -625,6 +626,8 @@
     .topBar {
         top: 8px;
         right: 8px;
+        left: auto;
+        transform: none;
     }
 
     .deviceSelector {

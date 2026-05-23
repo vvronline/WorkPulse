@@ -85,6 +85,9 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     const networkOnlineRef = useRef(navigator.onLine);
     const initialIceConfigLoadedRef = useRef(false);
     const deferredOfferRef = useRef(null);
+    const preWarmStreamRef = useRef(null);
+    const preWarmAbortRef = useRef(false);
+    const bitrateRampTimersRef = useRef([]);
 
     // Fetch ICE config (STUN + optional TURN). Re-fetch when credentials are
     // about to expire (coturn ephemeral REST API issues short-lived creds).
@@ -99,6 +102,17 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
             }
         } catch (err) {
             console.warn('[call-webrtc] ICE config fetch failed, using fallback:', err?.message || err);
+        }
+    }, []);
+
+    const waitForIceConfig = useCallback(async (timeoutMs = 2000) => {
+        if (initialIceConfigLoadedRef.current) return;
+        const start = Date.now();
+        while (!initialIceConfigLoadedRef.current && (Date.now() - start) < timeoutMs) {
+            await new Promise(r => setTimeout(r, 100));
+        }
+        if (!initialIceConfigLoadedRef.current) {
+            console.warn('[call-webrtc] ICE config not loaded after', timeoutMs, 'ms — proceeding with fallback');
         }
     }, []);
 
@@ -183,7 +197,79 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         pendingIceCandidatesRef.current = [];
         clearTimeout(connectionTimeoutRef.current);
         clearTimeout(disconnectTimerRef.current);
+        bitrateRampTimersRef.current.forEach(t => clearTimeout(t));
+        bitrateRampTimersRef.current = [];
         iceRestartAttemptedRef.current = false;
+    }, []);
+
+    const applyBitrateRampUp = useCallback((pc) => {
+        if (!pc) return;
+        const INITIAL_BITRATE = isMobile ? 300_000 : 400_000;
+        const TARGET_BITRATE = isMobile ? 800_000 : 1_500_000;
+        const RAMP_STEPS = 3;
+        const RAMP_STEP_MS = 1000;
+
+        const setVideoBitrate = (bitrate) => {
+            for (const sender of pc.getSenders()) {
+                if (!sender.track || sender.track.kind !== 'video') continue;
+                try {
+                    const params = sender.getParameters();
+                    if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+                    params.encodings[0].maxBitrate = bitrate;
+                    params.degradationPreference = 'maintain-framerate';
+                    sender.setParameters(params).catch(() => {});
+                } catch { /* ignore */ }
+            }
+        };
+
+        for (const sender of pc.getSenders()) {
+            if (!sender.track || sender.track.kind !== 'audio') continue;
+            try {
+                const params = sender.getParameters();
+                if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+                params.encodings[0].maxBitrate = 48_000;
+                sender.setParameters(params).catch(() => {});
+            } catch { /* ignore */ }
+        }
+
+        setVideoBitrate(INITIAL_BITRATE);
+
+        for (let step = 1; step <= RAMP_STEPS; step++) {
+            const timer = setTimeout(() => {
+                if (pc.connectionState !== 'connected') return;
+                const bitrate = Math.round(INITIAL_BITRATE + ((TARGET_BITRATE - INITIAL_BITRATE) * step / RAMP_STEPS));
+                setVideoBitrate(bitrate);
+                if (step === RAMP_STEPS) {
+                    console.log('[call-webrtc] bitrate ramp-up complete:', TARGET_BITRATE);
+                }
+            }, RAMP_STEP_MS * step);
+            bitrateRampTimersRef.current.push(timer);
+        }
+    }, [isMobile]);
+
+    const forceKeyframe = useCallback((pc) => {
+        if (!pc) return;
+        setTimeout(() => {
+            for (const sender of pc.getSenders()) {
+                if (!sender.track || sender.track.kind !== 'video') continue;
+                try {
+                    const params = sender.getParameters();
+                    if (!params.encodings?.length) continue;
+                    params.encodings[0].active = false;
+                    sender.setParameters(params).then(() => {
+                        setTimeout(() => {
+                            try {
+                                const p2 = sender.getParameters();
+                                if (p2.encodings?.length) {
+                                    p2.encodings[0].active = true;
+                                    sender.setParameters(p2).catch(() => {});
+                                }
+                            } catch { /* ignore */ }
+                        }, 50);
+                    }).catch(() => {});
+                } catch { /* ignore */ }
+            }
+        }, 200);
     }, []);
 
     const addIceCandidateSafe = useCallback(async (candidate) => {
@@ -225,6 +311,10 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
             // Skip if this exact track is already on some sender
             const alreadyAttached = transceivers.some(t => t.sender.track && t.sender.track.id === track.id);
             if (alreadyAttached) continue;
+
+            if (track.kind === 'video') {
+                try { track.contentHint = 'motion'; } catch { /* not supported */ }
+            }
 
             // Find an unused transceiver of MATCHING kind that the remote offer
             // created. We must match by kind otherwise replaceTrack throws
@@ -296,7 +386,10 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         if (stream && addTracksNow) {
             stream.getTracks().forEach(track => {
                 const sender = pc.addTrack(track, stream);
-                if (track.kind === 'video') screenSenderRef.current = sender;
+                if (track.kind === 'video') {
+                    screenSenderRef.current = sender;
+                    try { track.contentHint = 'motion'; } catch { /* not supported */ }
+                }
             });
         }
 
@@ -450,6 +543,9 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 stopRingtone();
                 clearTimeout(disconnectTimerRef.current);
                 iceRestartAttemptedRef.current = false;
+                applyBitrateRampUp(pc);
+                forceKeyframe(pc);
+                iceRestartAttemptedRef.current = false;
             } else if (pc.connectionState === 'disconnected') {
                 // Grace period: temporary network hiccup — wait 5s before ending
                 clearTimeout(disconnectTimerRef.current);
@@ -499,7 +595,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         };
 
         return pc;
-    }, [conversationId, wsSend, stopRingtone, isMobile, onStatusChange, refreshIceConfig]);
+    }, [conversationId, wsSend, stopRingtone, isMobile, onStatusChange, refreshIceConfig, applyBitrateRampUp, forceKeyframe]);
 
     // ─── Signal handling with buffering ───
     const flushPendingSignals = useCallback(() => {
@@ -648,6 +744,11 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
 
     const handleReject = useCallback(() => {
         stopRingtone();
+        preWarmAbortRef.current = true;
+        if (preWarmStreamRef.current?.stream) {
+            preWarmStreamRef.current.stream.getTracks().forEach(t => t.stop());
+        }
+        preWarmStreamRef.current = null;
         wsSend('call_reject', { callId, conversationId });
         cleanup();
         onEnd();
@@ -658,11 +759,36 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         onStatusChange('connecting');
         stopRingtone();
         wsSend('call_accept', { callId, conversationId });
-        const stream = await startMedia();
+
+        let stream = null;
+        if (preWarmStreamRef.current) {
+            const warmup = preWarmStreamRef.current;
+            preWarmStreamRef.current = null;
+            if (warmup.stream) {
+                stream = warmup.stream;
+                localStreamRef.current = stream;
+                if (localVideoRef.current && callType === 'video' && stream.getVideoTracks().length) {
+                    localVideoRef.current.srcObject = stream;
+                }
+            } else if (warmup.promise) {
+                stream = await warmup.promise;
+                if (stream) {
+                    localStreamRef.current = stream;
+                    if (localVideoRef.current && callType === 'video' && stream.getVideoTracks().length) {
+                        localVideoRef.current.srcObject = stream;
+                    }
+                }
+            }
+        }
+        if (!stream) {
+            stream = await startMedia();
+        }
         if (!stream) { handleEnd(); return; }
+
+        await waitForIceConfig(2000);
         createPeerConnection(stream, callerId, false);
         flushPendingSignals();
-    }, [callId, conversationId, wsSend, startMedia, createPeerConnection, callerId, stopRingtone, flushPendingSignals, onStatusChange, handleEnd]);
+    }, [callId, conversationId, wsSend, startMedia, createPeerConnection, callerId, stopRingtone, flushPendingSignals, onStatusChange, handleEnd, callType, waitForIceConfig]);
 
     // ─── Auto-accept when call was accepted from global PiP notification ───
     const preAcceptedRef = useRef(preAccepted);
@@ -671,6 +797,50 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
             preAcceptedRef.current = false;
             handleAccept();
         }
+    }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+
+    // ─── Pre-warm media during incoming ringing ───
+    useEffect(() => {
+        if (!isIncoming || preAccepted || isReconnect) return;
+        preWarmAbortRef.current = false;
+        const warmup = { promise: null, stream: null, error: null };
+        warmup.promise = (async () => {
+            try {
+                const profiles = buildMediaConstraintProfiles(callType === 'video', isMobile);
+                let stream = null;
+                for (let i = 0; i < profiles.length; i++) {
+                    try {
+                        stream = await navigator.mediaDevices.getUserMedia(profiles[i]);
+                        break;
+                    } catch (err) {
+                        if (err?.name === 'NotAllowedError' || err?.name === 'SecurityError') break;
+                    }
+                }
+                if (preWarmAbortRef.current) {
+                    stream?.getTracks().forEach(t => t.stop());
+                    return null;
+                }
+                if (stream) {
+                    warmup.stream = stream;
+                    if (localVideoRef.current && callType === 'video' && stream.getVideoTracks().length) {
+                        localVideoRef.current.srcObject = stream;
+                    }
+                }
+                return stream;
+            } catch (err) {
+                warmup.error = err;
+                return null;
+            }
+        })();
+        preWarmStreamRef.current = warmup;
+
+        return () => {
+            preWarmAbortRef.current = true;
+            if (preWarmStreamRef.current?.stream) {
+                preWarmStreamRef.current.stream.getTracks().forEach(t => t.stop());
+            }
+            preWarmStreamRef.current = null;
+        };
     }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
     // ─── Register signal handler ───
@@ -743,6 +913,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 console.log('[call-webrtc] call accepted, creating offer. acceptedBy:', acceptedBy, 'hasStream:', !!localStreamRef.current);
                 onStatusChange('connecting');
                 stopRingtone();
+                await waitForIceConfig(2000);
                 const stream = localStreamRef.current;
                 if (!stream) {
                     console.log('[call-webrtc] stream not ready yet, deferring offer creation');
