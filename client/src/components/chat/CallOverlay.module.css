@@ -63,8 +63,7 @@
 .topBar {
     position: absolute;
     top: 12px;
-    left: 50%;
-    transform: translateX(-50%);
+    left: 12px;
     z-index: 20;
     display: flex;
     align-items: center;
@@ -278,25 +277,21 @@
 
 /* ── Remote mute badge (shown on remote video when peer is muted) ── */
 .remoteMuteBadge {
-    position: absolute;
-    bottom: 96px;
-    left: 16px;
-    z-index: 12;
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    background: rgba(239, 68, 68, 0.85);
-    color: #fff;
     display: flex;
     align-items: center;
     justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: rgba(239, 68, 68, 0.85);
+    color: #fff;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
     pointer-events: none;
 }
 
 .remoteMuteBadge svg {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
 }
 
 /* ── Local video avatar (shown when camera is off) ── */

@@ -75,6 +75,7 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     const [onHold, setOnHold] = useState(false);
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [connectionQuality, setConnectionQuality] = useState('unknown');
+    const [peerMuted, setPeerMuted] = useState(false);
     const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
     const canScreenShare = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
 
@@ -294,9 +295,11 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
             }
             if (remoteVideoRef.current) {
                 remoteVideoRef.current.srcObject = remoteStream;
-                // On mobile, mute video element audio to prevent loudspeaker bypass;
-                // audio routes through the <audio> element for earpiece control
                 if (isMobile) remoteVideoRef.current.muted = true;
+            }
+            if (e.track.kind === 'audio') {
+                e.track.onmute = () => setPeerMuted(true);
+                e.track.onunmute = () => setPeerMuted(false);
             }
         };
 
@@ -491,11 +494,29 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
     // ═══════════════════════════════════
     //  FEATURE: Toggle Video
     // ═══════════════════════════════════
-    const toggleVideo = () => {
-        if (localStreamRef.current) {
-            localStreamRef.current.getVideoTracks().forEach(t => { t.enabled = !t.enabled; });
-            setVideoOff(!videoOff);
+    const toggleVideo = async () => {
+        if (!localStreamRef.current) return;
+
+        if (!videoOff) {
+            localStreamRef.current.getVideoTracks().forEach(t => t.stop());
+            const sender = pcRef.current?.getSenders().find(s => s.track?.kind === 'video');
+            if (sender) sender.replaceTrack(null);
+            if (localVideoRef.current) localVideoRef.current.srcObject = null;
+        } else {
+            try {
+                const constraints = activeVideoDevice
+                    ? { video: { deviceId: { exact: activeVideoDevice } } }
+                    : { video: true };
+                const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+                const newTrack = newStream.getVideoTracks()[0];
+                localStreamRef.current.getVideoTracks().forEach(t => localStreamRef.current.removeTrack(t));
+                localStreamRef.current.addTrack(newTrack);
+                const sender = pcRef.current?.getSenders().find(s => s.track === null || s.track?.kind === 'video');
+                if (sender) await sender.replaceTrack(newTrack);
+                if (localVideoRef.current) localVideoRef.current.srcObject = localStreamRef.current;
+            } catch { return; }
         }
+        setVideoOff(!videoOff);
     };
 
     // ═══════════════════════════════════
@@ -755,6 +776,11 @@ export default function CallOverlay({ callState, user, wsSend, onEnd }) {
             {isConnected && (
                 <div className={s.topBar}>
                     <QualityBadge quality={connectionQuality} />
+                    {peerMuted && (
+                        <span className={s.remoteMuteBadge}>
+                            <MicOffIcon />
+                        </span>
+                    )}
                     {screenSharing && <span className={s.sharingBadge}>Screen Sharing</span>}
                     {onHold && <span className={s.holdBadge}>On Hold</span>}
                 </div>
