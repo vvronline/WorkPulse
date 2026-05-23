@@ -725,24 +725,89 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         });
     }, [meetingId, wsSend]);
 
+    // ─── Camera ON/OFF — fully releases the hardware when turned off ─────────
+    //
+    // Previously this only flipped `track.enabled = false`, which keeps the OS
+    // camera capture alive (LED stays on, camera shows as "in use"). We now
+    // stop the track and remove it from every peer connection sender so the
+    // camera is truly released, then re-acquire on next ON.
+    const videoToggleInFlightRef = useRef(false);
     const toggleVideo = useCallback(async () => {
-        const next = !videoOffRef.current;
-        if (next) {
-            if (localStreamRef.current) localStreamRef.current.getVideoTracks().forEach(t => { t.enabled = false; });
-        } else {
-            if (localStreamRef.current) {
-                const live = localStreamRef.current.getVideoTracks().filter(t => t.readyState === 'live');
-                if (live.length > 0) {
-                    live.forEach(t => { t.enabled = true; });
-                    // Ensure peers have this track (may not if originally joined without video)
-                    const vt = live[0];
+        if (videoToggleInFlightRef.current) return;
+        videoToggleInFlightRef.current = true;
+        try {
+            const next = !videoOffRef.current;
+            if (next) {
+                // ── Turn camera OFF ────────────────────────────────────────
+                // 1. Tell every peer to stop receiving our video immediately.
+                for (const [, pc] of pcsRef.current) {
+                    const videoSenders = pc.getSenders().filter(s => s.track && s.track.kind === 'video');
+                    for (const vs of videoSenders) {
+                        try { await vs.replaceTrack(null); } catch { /* ignore */ }
+                    }
+                }
+                // 2. Stop & remove all local video tracks → releases the camera.
+                if (localStreamRef.current) {
+                    const vts = localStreamRef.current.getVideoTracks();
+                    vts.forEach(t => {
+                        try { t.stop(); } catch { /* ignore */ }
+                        try { localStreamRef.current.removeTrack(t); } catch { /* ignore */ }
+                    });
+                    setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+                }
+            } else {
+                // ── Turn camera ON ─────────────────────────────────────────
+                if (!localStreamRef.current) {
+                    // No local stream at all — acquire fresh (audio + video).
+                    try {
+                        const ns = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+                        localStreamRef.current = ns;
+                        ns.getAudioTracks().forEach(t => { t.enabled = !mutedRef.current; });
+                        for (const [peerId, pc] of pcsRef.current) {
+                            ns.getTracks().forEach(track => pc.addTrack(track, ns));
+                            try {
+                                const offer = await pc.createOffer();
+                                await pc.setLocalDescription(offer);
+                                wsSend('meeting_signal', { meetingId, targetUserId: peerId, signal: { type: 'offer', sdp: pc.localDescription } });
+                            } catch { /* ignore */ }
+                        }
+                        setLocalStream(ns);
+                    } catch { return; }
+                } else {
+                    // Acquire a NEW video-only stream and graft it onto the
+                    // existing local stream. We use replaceTrack on existing
+                    // video senders so the peer's tile never goes through
+                    // an SDP renegotiation — no flicker, no spontaneous drop.
+                    let ns;
+                    try {
+                        ns = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                    } catch (err) {
+                        console.error('[meeting] re-acquire camera failed:', err);
+                        return;
+                    }
+                    const nt = ns.getVideoTracks()[0];
+                    if (!nt) return;
+                    try { nt.contentHint = 'motion'; } catch { /* ignore */ }
+                    localStreamRef.current.addTrack(nt);
+
                     for (const [peerId, pc] of pcsRef.current) {
-                        const vs = pc.getSenders().find(s => s.track?.kind === 'video');
+                        // Prefer an existing video sender (may currently be
+                        // null after we called replaceTrack(null) on OFF).
+                        const vs = pc.getSenders().find(s => s.track && s.track.kind === 'video')
+                            || pc.getSenders().find(s => !s.track);
                         if (vs) {
-                            await vs.replaceTrack(vt).catch(() => { });
+                            try { await vs.replaceTrack(nt); } catch (err) {
+                                console.warn('[meeting] replaceTrack failed, addTrack fallback:', err?.message || err);
+                                try { pc.addTrack(nt, localStreamRef.current); } catch { /* ignore */ }
+                                // Only renegotiate if we had to addTrack.
+                                try {
+                                    const offer = await pc.createOffer();
+                                    await pc.setLocalDescription(offer);
+                                    wsSend('meeting_signal', { meetingId, targetUserId: peerId, signal: { type: 'offer', sdp: pc.localDescription } });
+                                } catch { /* ignore */ }
+                            }
                         } else {
-                            pc.addTrack(vt, localStreamRef.current);
-                            // Renegotiate so remote peer gets the new track
+                            try { pc.addTrack(nt, localStreamRef.current); } catch { /* ignore */ }
                             try {
                                 const offer = await pc.createOffer();
                                 await pc.setLocalDescription(offer);
@@ -751,51 +816,13 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                         }
                     }
                     setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
-                } else {
-                    localStreamRef.current.getVideoTracks().filter(t => t.readyState === 'ended').forEach(t => localStreamRef.current.removeTrack(t));
-                    try {
-                        const ns = await navigator.mediaDevices.getUserMedia({ video: true });
-                        const nt = ns.getVideoTracks()[0];
-                        if (nt) {
-                            localStreamRef.current.addTrack(nt);
-                            for (const [peerId, pc] of pcsRef.current) {
-                                const vs = pc.getSenders().find(s => s.track?.kind === 'video');
-                                if (vs) {
-                                    await vs.replaceTrack(nt).catch(() => { });
-                                } else {
-                                    pc.addTrack(nt, localStreamRef.current);
-                                    // Renegotiate so remote peer gets the new track
-                                    try {
-                                        const offer = await pc.createOffer();
-                                        await pc.setLocalDescription(offer);
-                                        wsSend('meeting_signal', { meetingId, targetUserId: peerId, signal: { type: 'offer', sdp: pc.localDescription } });
-                                    } catch { /* ignore */ }
-                                }
-                            }
-                            setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
-                        }
-                    } catch { return; }
                 }
-            } else {
-                // No local stream at all — acquire fresh
-                try {
-                    const ns = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-                    localStreamRef.current = ns;
-                    ns.getAudioTracks().forEach(t => { t.enabled = !mutedRef.current; });
-                    for (const [peerId, pc] of pcsRef.current) {
-                        ns.getTracks().forEach(track => pc.addTrack(track, ns));
-                        try {
-                            const offer = await pc.createOffer();
-                            await pc.setLocalDescription(offer);
-                            wsSend('meeting_signal', { meetingId, targetUserId: peerId, signal: { type: 'offer', sdp: pc.localDescription } });
-                        } catch { /* ignore */ }
-                    }
-                    setLocalStream(ns);
-                } catch { return; }
             }
+            setVideoOff(next);
+            wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: next, screenSharing: screenSharingRef.current });
+        } finally {
+            videoToggleInFlightRef.current = false;
         }
-        setVideoOff(next);
-        wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: next, screenSharing: screenSharingRef.current });
     }, [meetingId, wsSend]);
 
     // Track the screen-share senders we ADDED per peer (so we can remove

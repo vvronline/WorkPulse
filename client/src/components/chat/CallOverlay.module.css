@@ -59,15 +59,28 @@
     to { opacity: 1; }
 }
 
-/* ── Top bar (quality + badges) ── */
+/* ── Top bar (status badges: Screen Sharing / On Hold / REC / NS) ──
+   Anchored at top-center so it doesn't collide with the caller info
+   overlay (.videoOverlayInfo) at top-left or the remote mute badge
+   at top-right. Wraps onto a second row on narrow screens so badges
+   never overlap each other. */
 .topBar {
     position: absolute;
     top: 12px;
-    left: 12px;
+    left: 50%;
+    transform: translateX(-50%);
     z-index: 20;
     display: flex;
     align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
     gap: 8px;
+    max-width: calc(100vw - 260px);
+    pointer-events: none;
+}
+
+.topBar > * {
+    pointer-events: auto;
 }
 
 .qualityBadge {
@@ -275,23 +288,50 @@
     }
 }
 
-/* ── Remote mute badge (shown on remote video when peer is muted) ── */
+/* ── Remote mute badge (shown on remote video when peer is muted) ──
+   Anchored at top-right of the call screen so it's always visible to
+   the local participant, regardless of layout (video / audio / swapped). */
 .remoteMuteBadge {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 15;
     display: flex;
     align-items: center;
     justify-content: center;
     width: 28px;
     height: 28px;
     border-radius: 50%;
-    background: rgba(239, 68, 68, 0.85);
+    background: rgba(239, 68, 68, 0.92);
     color: #fff;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
     pointer-events: none;
+    animation: badgePulse 2.4s ease-in-out infinite;
 }
 
 .remoteMuteBadge svg {
     width: 16px;
     height: 16px;
+}
+
+/* When the frameless Electron window controls are visible (top-right),
+   push the remote mute badge below them so it doesn't sit underneath. */
+.overlay .windowControls + .remoteMuteBadge,
+.windowControls ~ .remoteMuteBadge {
+    top: 44px;
+}
+
+@media (max-width: 600px) {
+    .remoteMuteBadge {
+        top: 8px;
+        right: 8px;
+        width: 24px;
+        height: 24px;
+    }
+    .remoteMuteBadge svg {
+        width: 14px;
+        height: 14px;
+    }
 }
 
 /* ── Local video avatar (shown when camera is off) ── */
@@ -620,9 +660,13 @@
 
     .topBar {
         top: 8px;
-        right: 8px;
-        left: auto;
-        transform: none;
+        left: 50%;
+        right: auto;
+        transform: translateX(-50%);
+        max-width: calc(100vw - 120px);
+        flex-wrap: wrap;
+        justify-content: center;
+        row-gap: 6px;
     }
 
     .deviceSelector {

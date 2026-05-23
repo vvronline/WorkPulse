@@ -117,12 +117,91 @@ export default function useCallControls({ localStreamRef, pcRef, screenStreamRef
         }
     };
 
-    const toggleVideo = () => {
-        if (localStreamRef.current) {
-            localStreamRef.current.getVideoTracks().forEach(t => { t.enabled = !t.enabled; });
-            setVideoOff(!videoOff);
+    // ─── Camera ON/OFF — releases the hardware (LED off) when turned off ─────
+    //
+    // The previous implementation only flipped `track.enabled`, which stops
+    // *transmitting* frames but keeps the OS-level camera capture alive. That
+    // is why the camera LED stayed on and the camera remained "in use" by the
+    // browser tab in the background. We now fully release the device when
+    // turning the camera off, and re-acquire a fresh track when turning it
+    // back on. We use `sender.replaceTrack()` so the peer's video tile stays
+    // attached to the same transceiver across the toggle — no renegotiation,
+    // no flicker, no spontaneous video drop.
+    const videoToggleInFlightRef = useRef(false);
+    const toggleVideo = useCallback(async () => {
+        if (videoToggleInFlightRef.current) return;
+        videoToggleInFlightRef.current = true;
+        try {
+            const stream = localStreamRef.current;
+            const pc = pcRef.current;
+            if (!stream) return;
+
+            if (!videoOff) {
+                // ── Turn camera OFF ────────────────────────────────────────
+                // 1. Tell every video sender to stop sending (peer sees track
+                //    end immediately, far faster than renegotiation).
+                if (pc) {
+                    const videoSenders = pc.getSenders().filter(s => s.track && s.track.kind === 'video');
+                    await Promise.all(videoSenders.map(s => s.replaceTrack(null).catch(() => { })));
+                }
+                // 2. Stop & remove every local video track — this is what
+                //    actually releases the camera hardware (LED off).
+                const tracks = stream.getVideoTracks();
+                tracks.forEach(t => {
+                    try { t.stop(); } catch { /* ignore */ }
+                    try { stream.removeTrack(t); } catch { /* ignore */ }
+                });
+                // 3. Reflect the change in the local preview element.
+                if (localVideoRef.current) {
+                    try { localVideoRef.current.srcObject = stream; } catch { /* ignore */ }
+                }
+                screenSenderRef.current = null;
+                setVideoOff(true);
+            } else {
+                // ── Turn camera ON ─────────────────────────────────────────
+                let newStream;
+                try {
+                    newStream = await navigator.mediaDevices.getUserMedia({
+                        video: activeVideoDevice
+                            ? { deviceId: { exact: activeVideoDevice }, width: { ideal: 1280 }, height: { ideal: 720 } }
+                            : { width: { ideal: 1280 }, height: { ideal: 720 } },
+                        audio: false,
+                    });
+                } catch (err) {
+                    console.error('[call] re-acquire camera failed:', err);
+                    return;
+                }
+                const newTrack = newStream.getVideoTracks()[0];
+                if (!newTrack) return;
+                try { newTrack.contentHint = 'motion'; } catch { /* ignore */ }
+                stream.addTrack(newTrack);
+
+                if (pc) {
+                    const videoSender = pc.getSenders().find(s => s.track == null && (s.transport || true)) // prefer empty sender
+                        || pc.getSenders().find(s => s.track && s.track.kind === 'video');
+                    if (videoSender) {
+                        try {
+                            await videoSender.replaceTrack(newTrack);
+                            screenSenderRef.current = videoSender;
+                        } catch (err) {
+                            console.warn('[call] replaceTrack failed, falling back to addTrack:', err?.message || err);
+                            try { screenSenderRef.current = pc.addTrack(newTrack, stream); } catch { /* ignore */ }
+                        }
+                    } else {
+                        try { screenSenderRef.current = pc.addTrack(newTrack, stream); } catch { /* ignore */ }
+                    }
+                }
+
+                if (localVideoRef.current) {
+                    try { localVideoRef.current.srcObject = stream; } catch { /* ignore */ }
+                    try { localVideoRef.current.play().catch(() => { }); } catch { /* ignore */ }
+                }
+                setVideoOff(false);
+            }
+        } finally {
+            videoToggleInFlightRef.current = false;
         }
-    };
+    }, [videoOff, localStreamRef, pcRef, localVideoRef, screenSenderRef, activeVideoDevice]);
 
     const toggleScreenShare = async () => {
         if (!pcRef.current) return;
@@ -264,7 +343,7 @@ export default function useCallControls({ localStreamRef, pcRef, screenStreamRef
                 a.download = `call-recording-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.webm`;
                 a.click();
                 URL.revokeObjectURL(url);
-                ctx.close().catch(() => {});
+                ctx.close().catch(() => { });
             };
             recorder.start(1000);
             recorderRef.current = recorder;
@@ -318,7 +397,7 @@ export default function useCallControls({ localStreamRef, pcRef, screenStreamRef
                 await sender.replaceTrack(originalTrackRef.current);
             }
             if (noiseCtxRef.current) {
-                noiseCtxRef.current.close().catch(() => {});
+                noiseCtxRef.current.close().catch(() => { });
                 noiseCtxRef.current = null;
             }
             setNoiseSuppression(false);
