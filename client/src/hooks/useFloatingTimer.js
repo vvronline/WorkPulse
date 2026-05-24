@@ -5,7 +5,7 @@ import { useWorkState } from '../WorkStateContext';
 // clock-out are time-tracking events, NOT presence events. Presence is
 // derived server-side from open WS sessions; idle/away is derived from
 // last_activity_at. See server/services/status/README.md.
-import { getStatus, clockIn, breakStart, breakEnd, clockOut } from '../api';
+import { getStatus, clockIn, breakStart, breakEnd, clockOut, getCurrentOrg } from '../api';
 import { useLiveTimer } from './useLiveTimer';
 import { useAutoDismiss } from './useAutoDismiss';
 import { STATUS_POLL_INTERVAL } from '../constants';
@@ -26,6 +26,10 @@ export function useFloatingTimer() {
     const [actionLoading, setActionLoading] = useState('');
     const [error, setError] = useAutoDismiss('');
     const [showClockOutConfirm, setShowClockOutConfirm] = useState(false);
+    // Tenant's attendance-verification flag. We fetch the org config once on
+    // mount so the WorkTimerCard knows whether to show the face+location
+    // modal before the actual /tracker/clock-in POST.
+    const [verificationRequired, setVerificationRequired] = useState(false);
 
     const { liveFloorSec, liveBreakSec, showConfetti, reset: resetTimer } = useLiveTimer(status);
 
@@ -37,6 +41,19 @@ export function useFloatingTimer() {
             if (res.data?.workMode) setWorkMode(res.data.workMode);
         } catch { /* keep defaults */ }
     }, [isAuthenticated]);
+
+    // Load org-level attendance verification flag once per session. Refresh
+    // when the user changes (re-login) so admin toggles take effect on the
+    // next sign-in without a full reload.
+    useEffect(() => {
+        if (!isAuthenticated) return;
+        let cancelled = false;
+        getCurrentOrg().then(res => {
+            if (cancelled) return;
+            setVerificationRequired(!!res?.data?.attendance_verification_enabled);
+        }).catch(() => { /* defaults to false */ });
+        return () => { cancelled = true; };
+    }, [isAuthenticated, user?.id]);
 
     useEffect(() => {
         let cancelled = false;
@@ -104,8 +121,31 @@ export function useFloatingTimer() {
     }, [fetchStatus, resetTimer]);
 
     const handleClockIn = useCallback(async () => {
+        // Legacy code path (no verification): pass the work_mode string
+        // directly and call /tracker/clock-in immediately.
         await handleAction(() => clockIn(workMode), 'clockIn');
     }, [handleAction, workMode]);
+
+    /**
+     * Verified clock-in entry point used by the WorkTimerCard when the org
+     * has attendance verification enabled. Accepts the full payload
+     * (work_mode + location + face_descriptor) produced by
+     * <ClockInVerifyModal/> and forwards it to /tracker/clock-in.
+     *
+     * Returns the API response on success; throws the AxiosError on failure
+     * so the modal can surface the server's error message + code.
+     */
+    const submitVerifiedClockIn = useCallback(async (payload) => {
+        setActionLoading('clockIn');
+        setError('');
+        try {
+            const res = await clockIn(payload);
+            await fetchStatus();
+            return res;
+        } finally {
+            setActionLoading('');
+        }
+    }, [fetchStatus]);
     const handleBreakStart = useCallback(async () => {
         await handleAction(breakStart, 'breakStart');
     }, [handleAction]);
@@ -140,5 +180,6 @@ export function useFloatingTimer() {
         showClockOutConfirm, setShowClockOutConfirm,
         handleClockIn, handleBreakStart, handleBreakEnd, handleConfirmClockOut,
         radius, circumference, strokeDashoffset,
+        verificationRequired, submitVerifiedClockIn,
     };
 }

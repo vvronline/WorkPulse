@@ -14,6 +14,7 @@ const { validatePassword, validateUsername, BCRYPT_ROUNDS } = require('../utils/
 const { logger } = require('../utils/logger');
 const { requireTenant } = require('../middleware/tenant');
 const { getUploadDir, getUploadUrl, UPLOADS_ROOT } = require('../utils/uploadPath');
+const { isValidDescriptor, FACE_DESCRIPTOR_LENGTH } = require('../utils/face');
 
 const router = express.Router();
 router.use(requireTenant);
@@ -438,6 +439,74 @@ router.delete('/', auth, async (req, res) => {
     } catch (err) {
         req.log.error({ err }, 'DELETE /profile error');
         res.status(500).json({ error: 'Failed to delete account' });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Face enrollment for attendance verification.
+//
+// Face detection/extraction runs entirely in the user's browser via
+// face-api.js. The browser captures a webcam frame, computes the 128-float
+// descriptor (the FaceRecognitionNet embedding), and POSTs only that array
+// — never the image — to /profile/face-enroll. The server stores it in
+// users.face_descriptor (JSONB) and uses it later to compare against the
+// descriptor sent at clock-in time.
+//
+// Endpoints:
+//   GET    /profile/face-status   — { enrolled, enrolled_at }
+//   POST   /profile/face-enroll   — body { descriptor: number[128] }
+//   DELETE /profile/face-enroll   — clear enrollment (for re-enroll)
+// ─────────────────────────────────────────────────────────────────────────
+
+router.get('/face-status', auth, async (req, res) => {
+    try {
+        const row = (await req.db.query(
+            'SELECT face_enrolled_at, (face_descriptor IS NOT NULL) AS enrolled FROM users WHERE id = $1',
+            [req.userId]
+        )).rows[0];
+        res.json({
+            enrolled: !!row?.enrolled,
+            enrolled_at: row?.face_enrolled_at || null,
+        });
+    } catch (err) {
+        req.log.error({ err }, 'GET /profile/face-status error');
+        res.status(500).json({ error: 'Failed to fetch face enrollment status' });
+    }
+});
+
+router.post('/face-enroll', auth, async (req, res) => {
+    try {
+        const { descriptor } = req.body || {};
+        if (!isValidDescriptor(descriptor)) {
+            return res.status(400).json({
+                error: `Invalid face descriptor — expected an array of ${FACE_DESCRIPTOR_LENGTH} numbers`,
+            });
+        }
+        // Store as a plain array (JSONB) so any client can read it back.
+        const json = JSON.stringify(descriptor);
+        await req.db.query(
+            `UPDATE users SET face_descriptor = $1::jsonb, face_enrolled_at = NOW() WHERE id = $2`,
+            [json, req.userId]
+        );
+        logAction(req, 'face_enroll', 'user', req.userId, { descriptor_length: descriptor.length });
+        res.json({ message: 'Face enrolled successfully', enrolled: true, enrolled_at: new Date().toISOString() });
+    } catch (err) {
+        req.log.error({ err }, 'POST /profile/face-enroll error');
+        res.status(500).json({ error: 'Failed to enroll face' });
+    }
+});
+
+router.delete('/face-enroll', auth, async (req, res) => {
+    try {
+        await req.db.query(
+            `UPDATE users SET face_descriptor = NULL, face_enrolled_at = NULL WHERE id = $1`,
+            [req.userId]
+        );
+        logAction(req, 'face_unenroll', 'user', req.userId, {});
+        res.json({ message: 'Face enrollment cleared', enrolled: false });
+    } catch (err) {
+        req.log.error({ err }, 'DELETE /profile/face-enroll error');
+        res.status(500).json({ error: 'Failed to clear face enrollment' });
     }
 });
 

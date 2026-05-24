@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useFloatingTimer } from '../../hooks/useFloatingTimer';
 import { formatTimeSec, formatTime } from '../../utils/time';
 import ConfirmDialog from '../common/ConfirmDialog';
+import ClockInVerifyModal from '../attendance/ClockInVerifyModal';
 import { Timer, Coffee, Play, LogOut, Building2, House, Clock, Zap } from 'lucide-react';
 import s from './WorkTimerCard.module.css';
 
@@ -17,7 +18,21 @@ export default function WorkTimerCard() {
         showClockOutConfirm, setShowClockOutConfirm,
         handleClockIn, handleBreakStart, handleBreakEnd, handleConfirmClockOut,
         radius, circumference, strokeDashoffset,
+        verificationRequired, submitVerifiedClockIn,
     } = useFloatingTimer();
+
+    // When the org has attendance verification enabled, the Login button
+    // opens this modal instead of POSTing /tracker/clock-in directly. The
+    // modal handles the geolocation prompt + webcam face capture and then
+    // calls `submitVerifiedClockIn(payload)`.
+    const [verifyOpen, setVerifyOpen] = useState(false);
+    const onLoginClick = () => {
+        if (verificationRequired) {
+            setVerifyOpen(true);
+        } else {
+            handleClockIn();
+        }
+    };
 
     return (
         <>
@@ -159,7 +174,7 @@ export default function WorkTimerCard() {
                                             <House size={13} /> Remote
                                         </button>
                                     </div>
-                                    <button className={`${s.btn} ${s.success}`} onClick={handleClockIn} disabled={!!actionLoading}>
+                                    <button className={`${s.btn} ${s.success}`} onClick={onLoginClick} disabled={!!actionLoading}>
                                         {actionLoading === 'clockIn' ? 'Logging in...' : '▶ Login'}
                                     </button>
                                 </>
@@ -203,6 +218,15 @@ export default function WorkTimerCard() {
                 onConfirm={handleConfirmClockOut}
                 onCancel={() => setShowClockOutConfirm(false)}
             />
+
+            {verifyOpen && (
+                <ClockInVerifyModal
+                    workMode={workMode}
+                    submitClockIn={submitVerifiedClockIn}
+                    onSuccess={() => setVerifyOpen(false)}
+                    onClose={() => setVerifyOpen(false)}
+                />
+            )}
         </>
     );
 }

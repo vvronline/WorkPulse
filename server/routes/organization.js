@@ -84,7 +84,10 @@ router.get('/current', async (req, res) => {
 
 router.put('/settings', requireRole('hr_admin'), requireSameOrg, async (req, res) => {
     try {
-        const { name, work_hours_per_day, work_days, timezone, fiscal_year_start, min_hours_present, office_start_time } = req.body;
+        const {
+            name, work_hours_per_day, work_days, timezone, fiscal_year_start, min_hours_present, office_start_time,
+            attendance_verification_enabled, office_latitude, office_longitude, office_radius_m, office_address,
+        } = req.body;
         const updates = [];
         const params = [];
         let pi = 1;
@@ -100,7 +103,30 @@ router.put('/settings', requireRole('hr_admin'), requireSameOrg, async (req, res
             if (isNaN(whpd) || whpd < 1 || whpd > 24) return res.status(400).json({ error: 'Work hours per day must be between 1 and 24' });
             updates.push(`work_hours_per_day = $${pi++}`); params.push(whpd);
         }
-        if (work_days && canEditAll) { updates.push(`work_days = $${pi++}`); params.push(work_days); }
+        // Work days are admin-configurable so HR admins can change which days
+        // of the week count as working days (i.e. which days are "weekend
+        // holidays"). Stored as a comma-separated list of JS day-of-week
+        // numbers — the same values returned by `Date#getUTCDay()`:
+        // **0=Sunday, 1=Monday, … 6=Saturday**. Default `"1,2,3,4,5"`
+        // means Mon–Fri working with Sat & Sun off.
+        //
+        // NOTE: we keep the JS DOW convention (rather than ISO 1..7) because
+        // the existing attendance pipeline (attendance.js, export.js, tracker
+        // clock-in, etc.) already compares this column against `getUTCDay()`
+        // results — switching to ISO would silently break all legacy rows.
+        if (work_days !== undefined) {
+            if (typeof work_days !== 'string' || !work_days.trim()) {
+                return res.status(400).json({ error: 'Work days must be a non-empty comma-separated list (e.g. "1,2,3,4,5")' });
+            }
+            const parts = work_days.split(',').map(s => s.trim()).filter(Boolean);
+            const nums = parts.map(p => Number(p));
+            if (nums.length === 0 || nums.some(n => !Number.isInteger(n) || n < 0 || n > 6)) {
+                return res.status(400).json({ error: 'Work days must contain integers 0–6 (0=Sun, 1=Mon … 6=Sat)' });
+            }
+            // De-duplicate and store sorted so the value is canonical.
+            const unique = Array.from(new Set(nums)).sort((a, b) => a - b);
+            updates.push(`work_days = $${pi++}`); params.push(unique.join(','));
+        }
         if (timezone) { updates.push(`timezone = $${pi++}`); params.push(timezone); }
         if (fiscal_year_start !== undefined) { updates.push(`fiscal_year_start = $${pi++}`); params.push(Number(fiscal_year_start)); }
         // Minimum hours required to be marked present on a working day. Settable by hr_admin+ (any admin).
@@ -129,6 +155,71 @@ router.put('/settings', requireRole('hr_admin'), requireSameOrg, async (req, res
                 updates.push(`office_start_time = $${pi++}`); params.push(office_start_time);
             }
         }
+
+        // Attendance verification (face + location). When enabled, the tracker
+        // clock-in endpoint enforces a geofence pass for office mode AND a
+        // face match for both office and remote modes.
+        if (attendance_verification_enabled !== undefined) {
+            const flag = !!attendance_verification_enabled;
+            // Guard: can't enable enforcement without an office location configured.
+            if (flag) {
+                // If the request itself isn't supplying the office point, check current DB row.
+                const incomingLat = office_latitude !== undefined ? office_latitude : null;
+                const incomingLng = office_longitude !== undefined ? office_longitude : null;
+                if (incomingLat == null || incomingLng == null) {
+                    const cur = (await req.db.query(
+                        'SELECT office_latitude, office_longitude FROM organizations WHERE id = $1',
+                        [req.userOrgId]
+                    )).rows[0];
+                    const lat = incomingLat != null ? Number(incomingLat) : (cur?.office_latitude != null ? Number(cur.office_latitude) : null);
+                    const lng = incomingLng != null ? Number(incomingLng) : (cur?.office_longitude != null ? Number(cur.office_longitude) : null);
+                    if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+                        return res.status(400).json({ error: 'Set the office location (latitude & longitude) before enabling attendance verification' });
+                    }
+                }
+            }
+            updates.push(`attendance_verification_enabled = $${pi++}`); params.push(flag);
+        }
+        if (office_latitude !== undefined) {
+            if (office_latitude === null || office_latitude === '') {
+                updates.push(`office_latitude = NULL`);
+            } else {
+                const lat = Number(office_latitude);
+                if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+                    return res.status(400).json({ error: 'Office latitude must be a number between -90 and 90' });
+                }
+                updates.push(`office_latitude = $${pi++}`); params.push(lat);
+            }
+        }
+        if (office_longitude !== undefined) {
+            if (office_longitude === null || office_longitude === '') {
+                updates.push(`office_longitude = NULL`);
+            } else {
+                const lng = Number(office_longitude);
+                if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+                    return res.status(400).json({ error: 'Office longitude must be a number between -180 and 180' });
+                }
+                updates.push(`office_longitude = $${pi++}`); params.push(lng);
+            }
+        }
+        if (office_radius_m !== undefined) {
+            const r = Number(office_radius_m);
+            if (!Number.isFinite(r) || r < 10 || r > 10000) {
+                return res.status(400).json({ error: 'Office radius must be between 10 and 10000 metres' });
+            }
+            updates.push(`office_radius_m = $${pi++}`); params.push(Math.round(r));
+        }
+        if (office_address !== undefined) {
+            if (office_address === null || office_address === '') {
+                updates.push(`office_address = NULL`);
+            } else {
+                if (typeof office_address !== 'string' || office_address.length > 500) {
+                    return res.status(400).json({ error: 'Office address must be 500 characters or less' });
+                }
+                updates.push(`office_address = $${pi++}`); params.push(office_address.trim());
+            }
+        }
+
         updates.push('updated_at = CURRENT_TIMESTAMP');
 
         if (updates.length <= 1) return res.status(400).json({ error: 'No fields to update' });

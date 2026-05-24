@@ -10,6 +10,11 @@ client/dist/
 # node_modules/@mediapipe/selfie_segmentation. Don't commit the ~12 MB
 # of WASM/model binaries — npm is the source of truth.
 client/public/mediapipe/
+
+# Generated at build time by client/scripts/copy-face-models.mjs from the
+# @vladmandic/face-api CDN. Don't commit the ~7 MB of model weights —
+# the script downloads them on demand.
+client/public/models/
 server/uploads/
 server/data/
 data/

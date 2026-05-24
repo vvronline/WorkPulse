@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings as SettingsIcon, Palette, ShieldCheck, UserCog, Mail } from 'lucide-react';
+import { Settings as SettingsIcon, Palette, ShieldCheck, UserCog, Mail, MapPin } from 'lucide-react';
 import { getCurrentOrg } from '../../api';
 import OrgGeneralSettings from '../../components/organization/OrgSettings';
+import OfficeLocationSettings from '../../components/organization/OfficeLocationSettings';
 import OrgRegistrationSettings from './OrgSettings';
 import OrgRoleLabels from './OrgRoleLabels';
 import BrandingSection from './BrandingSection';
@@ -48,13 +49,20 @@ export default function OrgSettingsPage({ userRole }) {
 
     useEffect(() => { fetchOrg(); }, [fetchOrg]);
 
+    // Attendance verification (face + location) is gated to admins who can
+    // already edit org settings — that's hr_admin / super_admin / platform_admin
+    // server-side. We surface it as its own scroll-anchored section so it's
+    // discoverable as a first-class feature, not buried in the General form.
+    const canEditAttendance = isSuper || userRole === 'hr_admin';
+
     const sections = useMemo(() => ([
         { id: 'general', label: 'General', icon: SettingsIcon },
+        ...(canEditAttendance ? [{ id: 'attendance', label: 'Attendance Verification', icon: MapPin }] : []),
         ...(isSuper ? [{ id: 'registration', label: 'Registration', icon: ShieldCheck }] : []),
         { id: 'roles', label: 'Roles', icon: UserCog },
         { id: 'branding', label: 'Branding', icon: Palette },
         { id: 'email-templates', label: 'Email templates', icon: Mail },
-    ]), [isSuper]);
+    ]), [isSuper, canEditAttendance]);
 
     useEffect(() => {
         if (loading) return;
@@ -121,6 +129,31 @@ export default function OrgSettingsPage({ userRole }) {
                         <OrgGeneralSettings org={org} onUpdate={fetchOrg} userRole={userRole} />
                     </div>
                 </section>
+
+                {canEditAttendance && (
+                    <section
+                        id="attendance"
+                        data-section-id="attendance"
+                        ref={el => (sectionRefs.current.attendance = el)}
+                        className={s.section}
+                    >
+                        <header className={s.sectionHead}>
+                            <MapPin size={18} className={s.sectionIcon} />
+                            <div>
+                                <h2 className={s.sectionTitle}>Attendance Verification</h2>
+                                <p className={s.sectionDesc}>
+                                    Pin the office on the map, set a geofence radius, and toggle
+                                    face + location checks for clock-in. When enabled, employees must
+                                    be within the geofence for office mode and pass a face match for
+                                    both office and remote modes.
+                                </p>
+                            </div>
+                        </header>
+                        <div className={s.sectionBody}>
+                            <OfficeLocationSettings org={org} onUpdate={fetchOrg} />
+                        </div>
+                    </section>
+                )}
 
                 {isSuper && (
                     <section

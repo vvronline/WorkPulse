@@ -9,6 +9,7 @@ const { logger } = require('../utils/logger');
 const { notifyByEmail } = require('../utils/mailer');
 const { sendToUser } = require('../utils/ws');
 const { requireTenant } = require('../middleware/tenant');
+const { parseWorkDays, isJsDowWorkDay } = require('../utils/workDays');
 
 const router = express.Router();
 router.use(auth, loadUserContext, requireTenant);
@@ -198,16 +199,21 @@ router.get('/team-analytics', async (req, res) => {
 
         let totalOrgFloor = 0, totalOrgDays = 0, totalTasksDone = 0, totalOrgBreak = 0;
         let expectedWeekdays = 0;
+        let orgWhpd = 8;
+        // Pull both work_hours_per_day AND the configurable work_days set so the
+        // "expected weekdays" denominator respects orgs that work Sat/Sun (or
+        // have a 4-day week, etc.) instead of always assuming Mon–Fri.
+        let orgWorkDaysValue = null;
+        if (req.userOrgId) {
+            const org = (await req.db.query('SELECT work_hours_per_day, work_days FROM organizations WHERE id = $1', [req.userOrgId])).rows[0];
+            if (org?.work_hours_per_day) orgWhpd = org.work_hours_per_day;
+            orgWorkDaysValue = org?.work_days || null;
+        }
+        const workDaySet = parseWorkDays(orgWorkDaysValue);
         const fromMs = new Date(fromDate).getTime();
         for (let i = 0; i < numDays; i++) {
             const d = new Date(fromMs + i * 86400000);
-            const dow = d.getUTCDay();
-            if (dow !== 0 && dow !== 6) expectedWeekdays++;
-        }
-        let orgWhpd = 8;
-        if (req.userOrgId) {
-            const org = (await req.db.query('SELECT work_hours_per_day FROM organizations WHERE id = $1', [req.userOrgId])).rows[0];
-            if (org?.work_hours_per_day) orgWhpd = org.work_hours_per_day;
+            if (isJsDowWorkDay(d.getUTCDay(), workDaySet)) expectedWeekdays++;
         }
         const targetMinutes = orgWhpd * 60;
         const expectedHours = expectedWeekdays * orgWhpd;
@@ -267,8 +273,10 @@ router.get('/team-analytics', async (req, res) => {
             let streak = 0;
             for (let i = 0; i <= numDays; i++) {
                 const d = new Date(Date.now() - offsetMin * 60000 - i * 86400000);
-                const dow = d.getUTCDay();
-                if (dow === 0 || dow === 6) continue;
+                // Skip non-working days per the org's configuration so the
+                // streak isn't broken by Saturdays/Sundays (or whichever days
+                // the admin marked as the org's weekend).
+                if (!isJsDowWorkDay(d.getUTCDay(), workDaySet)) continue;
                 const dateStr = d.toISOString().slice(0, 10);
                 if (userDays[dateStr] && userDays[dateStr].some(e => e.entry_type === 'clock_in')) streak++;
                 else break;

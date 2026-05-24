@@ -1,0 +1,120 @@
+.page {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 1.5rem 1rem 3rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+.header h1 {
+    margin: 0.4rem 0 0.4rem;
+    font-size: 1.6rem;
+}
+
+.back {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    color: var(--text-muted, #6b7280);
+    text-decoration: none;
+    font-size: 0.85rem;
+}
+
+.back:hover {
+    text-decoration: underline;
+}
+
+.lede {
+    color: var(--text-muted, #6b7280);
+    line-height: 1.5;
+    margin: 0;
+}
+
+.statusCard {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.85rem 1.05rem;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    align-self: flex-start;
+}
+
+.ok {
+    background: rgba(16, 185, 129, 0.12);
+    color: #047857;
+    border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.notEnrolled {
+    background: rgba(245, 158, 11, 0.12);
+    color: #b45309;
+    border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.toast {
+    padding: 0.65rem 0.9rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+}
+
+.toast.ok {
+    background: rgba(16, 185, 129, 0.12);
+    color: #047857;
+}
+
+.toast.err {
+    background: rgba(239, 68, 68, 0.12);
+    color: #b91c1c;
+}
+
+.actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.captureBox {
+    background: var(--surface, #fff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 12px;
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    align-items: center;
+}
+
+.captureBox h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+}
+
+.captureFoot {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.tips {
+    background: var(--surface-2, #f9fafb);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 10px;
+    padding: 1rem 1.1rem;
+}
+
+.tips h4 {
+    margin: 0 0 0.5rem;
+    font-size: 0.95rem;
+}
+
+.tips ul {
+    margin: 0;
+    padding-left: 1.1rem;
+    color: var(--text-muted, #6b7280);
+    line-height: 1.55;
+    font-size: 0.88rem;
+}

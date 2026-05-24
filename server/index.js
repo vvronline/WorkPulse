@@ -78,7 +78,16 @@ app.use(helmet({
             // use `URL.createObjectURL()` (e.g. the org logo preview in
             // Admin → Branding before saving). Helmet's default img-src is
             // `'self' data:` and silently blocks blob URLs otherwise.
-            "img-src": ["'self'", "data:", "blob:"],
+            //
+            // Leaflet (Attendance → Office location picker) loads:
+            //   - Map tile PNGs from {a,b,c}.tile.openstreetmap.org
+            //   - The default marker/marker-shadow PNGs from unpkg's CDN
+            // so we whitelist both origins here.
+            "img-src": [
+                "'self'", "data:", "blob:",
+                "https://*.tile.openstreetmap.org",
+                "https://unpkg.com",
+            ],
             // Allow loading MediaPipe Selfie Segmentation script + WASM from
             // jsdelivr at runtime (used for meeting background blur / virtual
             // backgrounds). Loaded lazily only when the user enables an

@@ -3,6 +3,7 @@ import { useAuth } from '../../AuthContext';
 import { useFloatingTimer } from '../../hooks/useFloatingTimer';
 import { formatTimeSec, formatTime } from '../../utils/time';
 import ConfirmDialog from '../common/ConfirmDialog';
+import ClockInVerifyModal from '../attendance/ClockInVerifyModal';
 import { Timer, Coffee, Pause, Play, Square, ChevronUp, ChevronDown, X, Building2, House, Clock, Zap } from 'lucide-react';
 import s from './FloatingTimer.module.css';
 
@@ -19,7 +20,16 @@ export default function FloatingTimer() {
         showClockOutConfirm, setShowClockOutConfirm,
         handleClockIn, handleBreakStart, handleBreakEnd, handleConfirmClockOut,
         radius, circumference, strokeDashoffset,
+        verificationRequired, submitVerifiedClockIn,
     } = useFloatingTimer();
+
+    // Same flow as WorkTimerCard: if the tenant has attendance verification
+    // enabled, open the face+location modal instead of the bare clock-in.
+    const [verifyOpen, setVerifyOpen] = useState(false);
+    const onLoginClick = () => {
+        if (verificationRequired) setVerifyOpen(true);
+        else handleClockIn();
+    };
 
     const [expanded, setExpanded] = useState(false);
     const [minimized, setMinimized] = useState(false);
@@ -189,7 +199,7 @@ export default function FloatingTimer() {
                                         <House size={13} /> Remote
                                     </button>
                                 </div>
-                                <button className={`${s['action-btn']} ${s.success}`} onClick={handleClockIn} disabled={!!actionLoading}>
+                                <button className={`${s['action-btn']} ${s.success}`} onClick={onLoginClick} disabled={!!actionLoading}>
                                     {actionLoading === 'clockIn' ? 'Logging in...' : '▶ Login'}
                                 </button>
                             </div>

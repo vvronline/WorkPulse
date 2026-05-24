@@ -6,11 +6,41 @@ import s from '../../pages/Admin.module.css';
 import sf from '../../pages/admin/AdminForms.module.css';
 import su from '../../pages/admin/AdminUtils.module.css';
 
+/* Day-of-week catalog used by the work-days picker.
+   `jsDow` matches what JavaScript's `Date#getDay()` / `getUTCDay()` returns
+   (0=Sunday … 6=Saturday) — the same convention the server stores in
+   `organizations.work_days` and the same one every attendance/tracker
+   helper compares against. Ordered Mon-first for readability. */
+const WEEK_DAYS = [
+    { jsDow: 1, label: 'Monday',    short: 'Mon' },
+    { jsDow: 2, label: 'Tuesday',   short: 'Tue' },
+    { jsDow: 3, label: 'Wednesday', short: 'Wed' },
+    { jsDow: 4, label: 'Thursday',  short: 'Thu' },
+    { jsDow: 5, label: 'Friday',    short: 'Fri' },
+    { jsDow: 6, label: 'Saturday',  short: 'Sat' },
+    { jsDow: 0, label: 'Sunday',    short: 'Sun' },
+];
+
+/* Parse a stored "1,2,3,4,5" string into a Set<number> of JS DOW values.
+   Falls back to Mon–Fri when the value is missing or malformed so legacy
+   tenants get a sane default in the UI. */
+function parseWorkDaysToSet(value) {
+    const raw = (value && typeof value === 'string') ? value : '1,2,3,4,5';
+    const nums = raw.split(',')
+        .map(s => parseInt(s.trim(), 10))
+        .filter(n => Number.isInteger(n) && n >= 0 && n <= 6);
+    return new Set(nums.length > 0 ? nums : [1, 2, 3, 4, 5]);
+}
+
+function setToCsv(set) {
+    return Array.from(set).sort((a, b) => a - b).join(',');
+}
+
 export default function OrgSettings({ org, onUpdate, userRole }) {
     const [form, setForm] = useState({
         name: org.name,
         work_hours_per_day: org.work_hours_per_day,
-        work_days: org.work_days,
+        work_days: org.work_days || '1,2,3,4,5',
         timezone: org.timezone,
         fiscal_year_start: org.fiscal_year_start,
         // Minimum hours an employee must log on a working day to be marked Present.
@@ -22,6 +52,23 @@ export default function OrgSettings({ org, onUpdate, userRole }) {
     });
     const [msg, setMsg] = useAutoDismiss('');
     const canEdit = ['hr_admin', 'super_admin', 'platform_admin'].includes(userRole);
+
+    /* Live Set<number> derived from the comma-separated string in the form so
+       the checkbox UI stays in sync with the underlying canonical format. */
+    const workDaySet = parseWorkDaysToSet(form.work_days);
+
+    const toggleWorkDay = (jsDow) => {
+        const next = new Set(workDaySet);
+        if (next.has(jsDow)) next.delete(jsDow);
+        else next.add(jsDow);
+        // Don't allow zero work days — that would lock everyone out of
+        // clock-in forever. Block the toggle and surface a hint.
+        if (next.size === 0) {
+            setMsg('Pick at least one working day');
+            return;
+        }
+        setForm({ ...form, work_days: setToCsv(next) });
+    };
 
     const handleSave = async (e) => {
         e.preventDefault();
@@ -58,11 +105,55 @@ export default function OrgSettings({ org, onUpdate, userRole }) {
                     <label>Work Hours Per Day</label>
                     <input type="number" step="0.5" min="1" max="24" value={form.work_hours_per_day} onChange={e => setForm({ ...form, work_hours_per_day: e.target.value })} />
                 </div>
-                <div className={sf.formGroup}>
-                    <label>Work Days (comma-separated: 1=Mon, 7=Sun)</label>
-                    <input value={form.work_days} onChange={e => setForm({ ...form, work_days: e.target.value })} placeholder="1,2,3,4,5" />
-                </div>
             </>}
+            <div className={sf.formGroup}>
+                <label>Working Days</label>
+                <div
+                    style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: 8,
+                        marginTop: 6,
+                    }}
+                >
+                    {WEEK_DAYS.map(d => {
+                        const checked = workDaySet.has(d.jsDow);
+                        return (
+                            <label
+                                key={d.jsDow}
+                                title={d.label}
+                                style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 6,
+                                    padding: '6px 10px',
+                                    borderRadius: 6,
+                                    border: '1px solid var(--border, #d0d7de)',
+                                    background: checked ? 'var(--primary, #6366f1)' : 'transparent',
+                                    color: checked ? '#fff' : 'inherit',
+                                    cursor: 'pointer',
+                                    userSelect: 'none',
+                                    fontSize: 13,
+                                }}
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => toggleWorkDay(d.jsDow)}
+                                    style={{ margin: 0 }}
+                                />
+                                {d.short}
+                            </label>
+                        );
+                    })}
+                </div>
+                <small style={{ color: 'var(--text-muted)', display: 'block', marginTop: 4 }}>
+                    Days not selected here are treated as <strong>weekend holidays</strong>.
+                    By default Saturday &amp; Sunday are off — toggle them on (or any other
+                    day) to match your organisation's schedule. Affects clock-in, attendance
+                    reports, the "Weekend Holiday" badge, and the analytics denominator.
+                </small>
+            </div>
             <div className={sf.formGroup}>
                 <label>Timezone</label>
                 <select value={form.timezone} onChange={e => setForm({ ...form, timezone: e.target.value })}>

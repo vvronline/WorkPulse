@@ -332,6 +332,16 @@ async function initTenantSchema(q) {
     // configured office hours, fall back to '09:00' on the client.
     await q(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS office_start_time TEXT`);
 
+    // Migration: attendance verification (face + location) for clock-in.
+    // When enabled, office mode requires a geofence pass AND a face match,
+    // and remote mode requires a face match. Default OFF so existing tenants
+    // are unaffected until an admin opts in.
+    await q(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS attendance_verification_enabled BOOLEAN NOT NULL DEFAULT FALSE`);
+    await q(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS office_latitude DOUBLE PRECISION`);
+    await q(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS office_longitude DOUBLE PRECISION`);
+    await q(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS office_radius_m INTEGER NOT NULL DEFAULT 150`);
+    await q(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS office_address TEXT`);
+
     await q(`
         CREATE TABLE IF NOT EXISTS users (
             id                   SERIAL PRIMARY KEY,
@@ -361,6 +371,12 @@ async function initTenantSchema(q) {
     // Add lockout columns to existing databases
     await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER NOT NULL DEFAULT 0`);
     await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ`);
+
+    // Migration: face recognition enrollment for attendance verification.
+    // Stores a 128-float face embedding extracted client-side (face-api.js).
+    // The raw image never leaves the browser — only the descriptor.
+    await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS face_descriptor JSONB`);
+    await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS face_enrolled_at TIMESTAMPTZ`);
 
     await q(`
         CREATE TABLE IF NOT EXISTS departments (
@@ -425,6 +441,15 @@ async function initTenantSchema(q) {
         CREATE INDEX IF NOT EXISTS idx_time_entries_ts     ON time_entries(user_id, timestamp);
         CREATE INDEX IF NOT EXISTS idx_time_entries_manual ON time_entries(user_id, is_manual, approval_status);
     `);
+
+    // Migration: attendance-verification capture fields on the clock-in entry.
+    // Recorded on the clock_in row only; break/clock_out rows leave these NULL.
+    await q(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_lat DOUBLE PRECISION`);
+    await q(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_lng DOUBLE PRECISION`);
+    await q(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_accuracy_m REAL`);
+    await q(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_distance_m INTEGER`);
+    await q(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS face_verified BOOLEAN`);
+    await q(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS face_match_score REAL`);
 
     await q(`
         CREATE TABLE IF NOT EXISTS leaves (

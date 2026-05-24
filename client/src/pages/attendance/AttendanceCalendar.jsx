@@ -23,6 +23,19 @@ function buildMonthMatrix(year, month /* 0-11 */) {
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+/* Parse a stored "1,2,3,4,5" work_days string into a `Set<number>` of JS DOW
+   values (the same numbers `Date#getDay()` returns: 0=Sun … 6=Sat) so cells
+   can directly check `set.has(date.getDay())`. Falls back to Mon–Fri when
+   the value is missing or malformed so legacy orgs keep their existing
+   Sat/Sun weekend. */
+function workDaysToJsDowSet(value) {
+    const raw = (value && typeof value === 'string') ? value : '1,2,3,4,5';
+    const nums = raw.split(',')
+        .map(s => parseInt(s.trim(), 10))
+        .filter(n => Number.isInteger(n) && n >= 0 && n <= 6);
+    return new Set(nums.length > 0 ? nums : [1, 2, 3, 4, 5]);
+}
+
 /* ---------- component ---------- */
 export default function AttendanceCalendar({ refreshKey = 0 }) {
     const today = useMemo(() => new Date(getLocalToday() + 'T00:00:00'), []);
@@ -71,6 +84,15 @@ export default function AttendanceCalendar({ refreshKey = 0 }) {
             : liveFloorSec;
         return Math.floor(sec / 60);
     }, [liveStatus, liveFloorSec]);
+
+    /* Set of JS day-of-week values (0=Sun..6=Sat) that count as working days
+       for this org. When the admin marks Saturday as a working day in OrgSettings,
+       Saturday cells stop showing the "Weekend" badge and start counting toward
+       absences. Defaults to Mon–Fri when the org has no explicit setting. */
+    const workDayJsDowSet = useMemo(
+        () => workDaysToJsDowSet(org?.work_days),
+        [org]
+    );
 
     /* Minimum hours an employee must log to be considered Present.
        Sourced from organization settings (min_hours_present). Falls back to
@@ -178,7 +200,8 @@ export default function AttendanceCalendar({ refreshKey = 0 }) {
             const ymd = fmtYMD(dt);
             if (dt > today) continue; // future days don't count
             const isToday = ymd === todayStr;
-            const isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
+            // "Weekend" = any day the org did NOT mark as a working day.
+            const isWeekend = !workDayJsDowSet.has(dt.getDay());
             const leave = leaveMap.get(ymd);
             const isHoliday = holidayMap.has(ymd);
             const isPresent = presentMap.has(ymd);
@@ -191,7 +214,7 @@ export default function AttendanceCalendar({ refreshKey = 0 }) {
             absent++;
         }
         return { present, absent, leave: leaveCount, holiday: holidayCount };
-    }, [year, month, presentMap, leaveMap, holidayMap, today, todayStr]);
+    }, [year, month, presentMap, leaveMap, holidayMap, today, todayStr, workDayJsDowSet]);
 
     const goPrev = () => setCursor(new Date(year, month - 1, 1));
     const goNext = () => setCursor(new Date(year, month + 1, 1));
@@ -205,7 +228,9 @@ export default function AttendanceCalendar({ refreshKey = 0 }) {
         const ymd = fmtYMD(dt);
         const isFuture = dt > today;
         const isToday = ymd === todayStr;
-        const isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
+        // Configurable "weekend" — driven by the org's work_days setting,
+        // not a hardcoded Sat/Sun assumption.
+        const isWeekend = !workDayJsDowSet.has(dt.getDay());
         const leave = leaveMap.get(ymd);
         const holiday = holidayMap.get(ymd);
         const present = presentMap.get(ymd);

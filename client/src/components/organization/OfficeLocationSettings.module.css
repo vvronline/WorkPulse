@@ -1,0 +1,154 @@
+.wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-top: 1.5rem;
+    padding: 1.25rem;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 12px;
+    background: var(--surface, #fff);
+}
+
+.header h3 {
+    margin: 0 0 0.4rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 1.05rem;
+}
+
+.iconOn {
+    color: #10b981;
+}
+
+.iconOff {
+    color: #6b7280;
+}
+
+.lede {
+    margin: 0;
+    color: var(--text-muted, #6b7280);
+    font-size: 0.88rem;
+    line-height: 1.5;
+}
+
+.row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.toggle input {
+    width: 1.05rem;
+    height: 1.05rem;
+    cursor: pointer;
+}
+
+.fieldGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.85rem;
+}
+
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.field label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-muted, #6b7280);
+}
+
+.field input {
+    padding: 0.5rem 0.6rem;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 6px;
+    font-size: 0.9rem;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.hint {
+    color: var(--text-muted, #9ca3af);
+    font-size: 0.75rem;
+}
+
+.gpsErr {
+    color: #b91c1c;
+    font-size: 0.82rem;
+}
+
+.mapHint {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    color: var(--text-muted, #6b7280);
+    font-size: 0.82rem;
+    margin-left: auto;
+}
+
+.mapBox {
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--border, #e5e7eb);
+    /* Defensive sizing — react-leaflet's <MapContainer> renders a div whose
+       height must be explicit (it doesn't grow to its content). We set it
+       on the wrapper too so the map can never collapse to 0px even if the
+       inline style is stripped or overridden. */
+    height: 360px;
+    min-height: 360px;
+    background: #e5e7eb;
+}
+
+.map {
+    height: 360px;
+    width: 100%;
+    min-height: 360px;
+}
+
+/* Belt-and-braces: pin the actual Leaflet container height in case any
+   global stylesheet zeroes it out via inheritance. */
+.mapBox :global(.leaflet-container) {
+    height: 360px;
+    width: 100%;
+    min-height: 360px;
+    z-index: 0;
+}
+
+.toast {
+    padding: 0.55rem 0.85rem;
+    border-radius: 6px;
+    font-size: 0.88rem;
+}
+
+.toast.ok {
+    background: rgba(16, 185, 129, 0.12);
+    color: #047857;
+}
+
+.toast.err {
+    background: rgba(239, 68, 68, 0.12);
+    color: #b91c1c;
+}
+
+.spin {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}

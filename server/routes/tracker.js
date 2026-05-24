@@ -10,6 +10,9 @@ const { notifyByEmail } = require('../utils/mailer');
 const { sendToUser } = require('../utils/ws');
 const redis = require('../redis');
 const { requireTenant } = require('../middleware/tenant');
+const { haversineMeters, isValidLat, isValidLng } = require('../utils/geo');
+const { isValidDescriptor, parseDescriptor, compareDescriptors } = require('../utils/face');
+const { parseWorkDays, isJsDowWorkDay } = require('../utils/workDays');
 
 const router = express.Router();
 router.use(requireTenant);
@@ -50,7 +53,6 @@ router.get('/status', auth, async (req, res) => {
         const today = getLocalToday(req);
         const tzMod = getTzModifier(req);
         const dow = getLocalDow(req);
-        const isWeekend = dow === 0 || dow === 6;
 
         // Load this user's org work hours target
         const orgRow = (await req.db.query(
@@ -58,6 +60,10 @@ router.get('/status', auth, async (req, res) => {
         )).rows[0];
         const orgConfig = await getOrgWorkConfig(orgRow?.org_id, req.db, req.tenantId);
         const targetMinutes = (orgConfig.work_hours_per_day || 8) * 60;
+        // "Weekend" is whatever the org has marked as non-working days. Default
+        // is Sat & Sun off (work_days = "1,2,3,4,5"). When the admin reconfigures
+        // work_days the UI's "Weekend Holiday" badge follows automatically.
+        const isWeekend = !isJsDowWorkDay(dow, orgConfig.work_days);
 
         const result = await req.db.query(
             `SELECT * FROM time_entries
@@ -124,15 +130,18 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
     try {
         const today = getLocalToday(req);
         const tzMod = getTzModifier(req);
-        const dow = getLocalDow(req);
+        const dow = getLocalDow(req); // JS DOW: 0=Sun..6=Sat
 
-        let workDays = [1, 2, 3, 4, 5];
+        let workDaysValue = null;
         if (req.userOrgId) {
             const orgConfig = await getOrgWorkConfig(req.userOrgId, req.db, req.tenantId);
-            const wd = orgConfig.work_days;
-            if (wd) workDays = wd.split(',').map(Number).filter(n => !isNaN(n));
+            workDaysValue = orgConfig.work_days;
         }
-        if (!workDays.includes(dow)) {
+        // work_days is stored as ISO weekday numbers (1=Mon..7=Sun). Convert
+        // the JS dow before checking so configurations like "Sun is a working
+        // day" (which previously failed because JS-Sun=0 and ISO-Sun=7 didn't
+        // line up) now behave correctly.
+        if (!isJsDowWorkDay(dow, workDaysValue)) {
             return res.status(400).json({ error: "It's a day off! Enjoy your rest. 🎉" });
         }
 
@@ -167,12 +176,114 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
         }
 
         const validWorkModes = ['office', 'remote', 'hybrid'];
-        const selectedWorkMode = validWorkModes.includes(req.body.work_mode) ? req.body.work_mode : 'office';
+        let selectedWorkMode = validWorkModes.includes(req.body.work_mode) ? req.body.work_mode : 'office';
 
         // Validate timezone offset before any DB writes
         const tzOffset = getOffsetMin(req);
         if (tzOffset < -840 || tzOffset > 720) {
             return res.status(400).json({ error: 'Invalid timezone offset' });
+        }
+
+        // ─── Attendance verification (face + location) ──────────────────
+        //
+        // Load the org's verification config and enforce face/location when
+        // enabled. The full config is fetched directly (not cached) since it
+        // includes infrequently-changing org-wide settings and we want every
+        // change to take effect immediately.
+        //
+        // Policy when attendance_verification_enabled is true:
+        //   - office  → must be inside geofence AND face must match
+        //   - remote  → face must match (no location required)
+        //   - hybrid  → face must match; in-geofence ⇒ recorded as office,
+        //               otherwise recorded as remote
+        let verifyMeta = {
+            clock_in_lat: null,
+            clock_in_lng: null,
+            clock_in_accuracy_m: null,
+            clock_in_distance_m: null,
+            face_verified: null,
+            face_match_score: null,
+        };
+        if (req.userOrgId) {
+            const orgVerify = (await req.db.query(
+                `SELECT attendance_verification_enabled, office_latitude, office_longitude, office_radius_m
+                 FROM organizations WHERE id = $1`,
+                [req.userOrgId]
+            )).rows[0];
+
+            if (orgVerify?.attendance_verification_enabled) {
+                const { latitude, longitude, accuracy, face_descriptor } = req.body || {};
+                const orgLat = orgVerify.office_latitude != null ? Number(orgVerify.office_latitude) : null;
+                const orgLng = orgVerify.office_longitude != null ? Number(orgVerify.office_longitude) : null;
+                const radiusM = Number(orgVerify.office_radius_m) || 150;
+
+                // — Location check (office + hybrid) —
+                const needsLocation = selectedWorkMode === 'office' || selectedWorkMode === 'hybrid';
+                if (needsLocation) {
+                    if (orgLat == null || orgLng == null) {
+                        return res.status(400).json({
+                            error: 'Office location is not configured. Contact your admin or switch to remote.',
+                            code: 'OFFICE_LOCATION_NOT_CONFIGURED',
+                        });
+                    }
+                    if (!isValidLat(latitude) || !isValidLng(longitude)) {
+                        return res.status(400).json({
+                            error: 'Location is required to clock in from office. Please allow location access.',
+                            code: 'LOCATION_REQUIRED',
+                        });
+                    }
+                    const distance = Math.round(haversineMeters(Number(latitude), Number(longitude), orgLat, orgLng));
+                    verifyMeta.clock_in_lat = Number(latitude);
+                    verifyMeta.clock_in_lng = Number(longitude);
+                    verifyMeta.clock_in_accuracy_m = (accuracy != null && Number.isFinite(Number(accuracy))) ? Number(accuracy) : null;
+                    verifyMeta.clock_in_distance_m = distance;
+
+                    const inside = distance <= radiusM;
+                    if (selectedWorkMode === 'office' && !inside) {
+                        return res.status(403).json({
+                            error: `You are ${distance} m from the office (allowed ${radiusM} m). Move closer or switch to remote.`,
+                            code: 'OUTSIDE_GEOFENCE',
+                            distance_m: distance,
+                            radius_m: radiusM,
+                        });
+                    }
+                    if (selectedWorkMode === 'hybrid') {
+                        // Hybrid auto-resolves to office/remote based on geofence.
+                        selectedWorkMode = inside ? 'office' : 'remote';
+                    }
+                }
+
+                // — Face check (always required when verification is on) —
+                const enrolledRow = (await req.db.query(
+                    'SELECT face_descriptor FROM users WHERE id = $1',
+                    [req.userId]
+                )).rows[0];
+                const enrolled = parseDescriptor(enrolledRow?.face_descriptor);
+                if (!enrolled) {
+                    return res.status(403).json({
+                        error: 'Please enroll your face from Profile → Face Enrollment before clocking in.',
+                        code: 'FACE_NOT_ENROLLED',
+                    });
+                }
+                if (!isValidDescriptor(face_descriptor)) {
+                    return res.status(400).json({
+                        error: 'Face verification required. Please complete the face scan and try again.',
+                        code: 'FACE_REQUIRED',
+                    });
+                }
+                const cmp = compareDescriptors(enrolled, face_descriptor);
+                verifyMeta.face_verified = cmp.match;
+                verifyMeta.face_match_score = Number.isFinite(cmp.distance) ? Number(cmp.distance.toFixed(4)) : null;
+                if (!cmp.match) {
+                    logAction(req, 'clock_in_face_mismatch', 'time_entry', null, {
+                        distance: verifyMeta.face_match_score, threshold: cmp.threshold,
+                    });
+                    return res.status(403).json({
+                        error: "Face didn't match your enrolled photo. Please ensure good lighting and try again.",
+                        code: 'FACE_MISMATCH',
+                    });
+                }
+            }
         }
 
         const txResult = await req.db.transaction(async (client) => {
@@ -188,8 +299,17 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
                 return { error: 'Already logged in. Logout first.' };
             }
             await client.query(
-                'INSERT INTO time_entries (user_id, entry_type, work_mode) VALUES ($1, $2, $3)',
-                [req.userId, 'clock_in', selectedWorkMode],
+                `INSERT INTO time_entries
+                    (user_id, entry_type, work_mode,
+                     clock_in_lat, clock_in_lng, clock_in_accuracy_m, clock_in_distance_m,
+                     face_verified, face_match_score)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                [
+                    req.userId, 'clock_in', selectedWorkMode,
+                    verifyMeta.clock_in_lat, verifyMeta.clock_in_lng,
+                    verifyMeta.clock_in_accuracy_m, verifyMeta.clock_in_distance_m,
+                    verifyMeta.face_verified, verifyMeta.face_match_score,
+                ],
             );
             return { ok: true };
         });
@@ -197,8 +317,12 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
         if (txResult.error) return res.status(400).json({ error: txResult.error });
 
         await req.db.query('UPDATE users SET timezone_offset = $1 WHERE id = $2', [tzOffset, req.userId]);
-        logAction(req, 'clock_in', 'time_entry', null, { work_mode: selectedWorkMode });
-        res.json({ message: 'Logged in successfully' });
+        logAction(req, 'clock_in', 'time_entry', null, {
+            work_mode: selectedWorkMode,
+            distance_m: verifyMeta.clock_in_distance_m,
+            face_verified: verifyMeta.face_verified,
+        });
+        res.json({ message: 'Logged in successfully', work_mode: selectedWorkMode });
     } catch (err) {
         req.log.error({ err }, 'Clock-in error');
         res.status(500).json({ error: 'Clock-in failed' });
@@ -862,10 +986,12 @@ router.get('/widgets', auth, async (req, res) => {
         });
         const monthStartDate = new Date(monthStart + 'T00:00:00Z');
         const todayDate = new Date(today + 'T00:00:00Z');
+        // Use the org's configured working days when counting the denominator
+        // of the attendance %. Falls back to Mon–Fri when unset.
+        const workDaySet = parseWorkDays(req.userOrgId ? (await getOrgWorkConfig(req.userOrgId, req.db, req.tenantId)).work_days : null);
         let totalWeekdays = 0;
         for (let d = new Date(monthStartDate); d <= todayDate; d.setDate(d.getDate() + 1)) {
-            const dow = d.getUTCDay();
-            if (dow !== 0 && dow !== 6) totalWeekdays++;
+            if (isJsDowWorkDay(d.getUTCDay(), workDaySet)) totalWeekdays++;
         }
         const presentDays = monthWorkDays + leaveCount;
         const attendancePercent = totalWeekdays > 0 ? Math.min(100, Math.round((presentDays / totalWeekdays) * 100)) : 0;

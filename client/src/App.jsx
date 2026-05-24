@@ -41,6 +41,8 @@ const CallPipPage = lazy(() => import('./pages/CallPipPage'));
 // Stage 3 — Projects + GitHub integrations admin pages.
 const Projects = lazy(() => import('./pages/Projects'));
 const Integrations = lazy(() => import('./pages/Integrations'));
+// Attendance verification — face enrollment.
+const FaceEnrollment = lazy(() => import('./pages/profile/FaceEnrollment'));
 
 // The Electron always-on-top mini call window loads /pip-call. That window
 // is independent of auth/providers/navbar — it just renders the avatar +
@@ -129,6 +131,7 @@ function AppRoutes() {
             }
           />
           <Route path="/sprint-insights" element={<ProtectedRoute><SprintInsights /></ProtectedRoute>} />
+          <Route path="/profile/face" element={<ProtectedRoute><FaceEnrollment /></ProtectedRoute>} />
           {/* Stage 3 — Projects + Integrations live inside the Admin panel
               (Admin → Structure → Projects, Admin → Settings → Integrations).
               Keep these legacy URLs working by redirecting into the

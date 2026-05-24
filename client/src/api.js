@@ -70,7 +70,25 @@ export const getStatus = () => {
     }
     return _statusInFlight;
 };
-export const clockIn = (workMode) => API.post('/tracker/clock-in', { work_mode: workMode || 'office' });
+export const clockIn = (payload) => {
+    // Backwards-compat: callers used to pass just the work_mode string.
+    if (typeof payload === 'string' || payload == null) {
+        return API.post('/tracker/clock-in', { work_mode: payload || 'office' });
+    }
+    return API.post('/tracker/clock-in', {
+        work_mode: payload.work_mode || 'office',
+        latitude: payload.latitude,
+        longitude: payload.longitude,
+        accuracy: payload.accuracy,
+        face_descriptor: payload.face_descriptor,
+    });
+};
+
+// Face enrollment for attendance verification (descriptor extracted in
+// browser via face-api.js — only the 128-float embedding is sent).
+export const getFaceStatus = () => API.get('/profile/face-status');
+export const enrollFace = (descriptor) => API.post('/profile/face-enroll', { descriptor });
+export const clearFaceEnrollment = () => API.delete('/profile/face-enroll');
 export const breakStart = () => API.post('/tracker/break-start');
 export const breakEnd = () => API.post('/tracker/break-end');
 export const clockOut = () => API.post('/tracker/clock-out');

@@ -912,6 +912,35 @@ const MIGRATIONS = [
             await query(`CREATE INDEX IF NOT EXISTS idx_gh_repo_conn_integration ON github_repo_connections(integration_id, is_active)`);
         },
     },
+    {
+        // Attendance verification — adds the office-location + face-enrollment
+        // columns required by the "Face + Location validation for clock-in"
+        // feature. Without this migration `PUT /api/org/settings` and
+        // `POST /api/tracker/clock-in` fail with 500 on tenants whose DB
+        // was bootstrapped before the feature shipped, because the runtime
+        // queries reference columns that don't exist yet.
+        name: '2026_05_attendance_face_location',
+        async up(query) {
+            // ── organizations ────────────────────────────────────────────
+            await query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS attendance_verification_enabled BOOLEAN NOT NULL DEFAULT FALSE`);
+            await query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS office_latitude DOUBLE PRECISION`);
+            await query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS office_longitude DOUBLE PRECISION`);
+            await query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS office_radius_m INTEGER`);
+            await query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS office_address TEXT`);
+
+            // ── users ────────────────────────────────────────────────────
+            await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS face_descriptor JSONB`);
+            await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS face_enrolled_at TIMESTAMPTZ`);
+
+            // ── time_entries ────────────────────────────────────────────
+            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_latitude DOUBLE PRECISION`);
+            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_longitude DOUBLE PRECISION`);
+            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_accuracy DOUBLE PRECISION`);
+            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_distance_m DOUBLE PRECISION`);
+            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS face_verified BOOLEAN`);
+            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS face_match_score DOUBLE PRECISION`);
+        },
+    },
 ];
 
 /**

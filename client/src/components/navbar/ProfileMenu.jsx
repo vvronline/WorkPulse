@@ -1,10 +1,11 @@
 import { useState, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../../AuthContext';
 import { useTheme } from '../../ThemeContext';
 import { useWorkState } from '../../WorkStateContext';
 import { useStatus } from '../../status/useStatus';
 import { clockOut as apiClockOut, uploadAvatar, removeAvatar, baseURL } from '../../api';
-import { Camera, Building2, House, Bell } from 'lucide-react';
+import { Camera, Building2, House, Bell, ScanFace } from 'lucide-react';
 import EditProfileModal from '../profile/EditProfileModal';
 import NotificationSoundsModal from '../profile/NotificationSoundsModal';
 import ConfirmDialog from '../common/ConfirmDialog';
@@ -232,6 +233,17 @@ export default function ProfileMenu() {
                             </span>
                             Notification Sounds
                         </button>
+                        <Link
+                            to="/profile/face"
+                            className={s['profile-dropdown-item']}
+                            onClick={() => setProfileOpen(false)}
+                            style={{ textDecoration: 'none', color: 'inherit', display: 'flex' }}
+                        >
+                            <span className={s['dd-item-icon']}>
+                                <ScanFace size={14} />
+                            </span>
+                            Face Enrollment
+                        </Link>
                         <button className={s['profile-dropdown-item']} onClick={toggleTheme}>
                             <span className={s['dd-item-icon']}>
                                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
