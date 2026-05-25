@@ -933,12 +933,119 @@ const MIGRATIONS = [
             await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS face_enrolled_at TIMESTAMPTZ`);
 
             // ── time_entries ────────────────────────────────────────────
-            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_latitude DOUBLE PRECISION`);
-            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_longitude DOUBLE PRECISION`);
-            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_accuracy DOUBLE PRECISION`);
-            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_distance_m DOUBLE PRECISION`);
+            // NOTE: column names MUST match those used by the runtime code in
+            // server/routes/tracker.js and the bootstrap in server/db.js.
+            // Earlier revisions of this migration used different names
+            // (clock_in_latitude/_longitude/_accuracy) which caused the
+            // INSERT in POST /api/tracker/clock-in to fail with
+            // `column "clock_in_lat" does not exist` → HTTP 500.
+            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_lat DOUBLE PRECISION`);
+            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_lng DOUBLE PRECISION`);
+            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_accuracy_m REAL`);
+            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_distance_m INTEGER`);
             await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS face_verified BOOLEAN`);
-            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS face_match_score DOUBLE PRECISION`);
+            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS face_match_score REAL`);
+
+            // Backfill: if a previous run of this migration created the
+            // mis-named columns, copy their values over and drop them so the
+            // runtime INSERT/SELECT statements work consistently.
+            await query(`
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'time_entries' AND column_name = 'clock_in_latitude'
+                    ) THEN
+                        UPDATE time_entries SET clock_in_lat = clock_in_latitude
+                            WHERE clock_in_lat IS NULL AND clock_in_latitude IS NOT NULL;
+                        ALTER TABLE time_entries DROP COLUMN clock_in_latitude;
+                    END IF;
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'time_entries' AND column_name = 'clock_in_longitude'
+                    ) THEN
+                        UPDATE time_entries SET clock_in_lng = clock_in_longitude
+                            WHERE clock_in_lng IS NULL AND clock_in_longitude IS NOT NULL;
+                        ALTER TABLE time_entries DROP COLUMN clock_in_longitude;
+                    END IF;
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'time_entries' AND column_name = 'clock_in_accuracy'
+                    ) THEN
+                        UPDATE time_entries SET clock_in_accuracy_m = clock_in_accuracy
+                            WHERE clock_in_accuracy_m IS NULL AND clock_in_accuracy IS NOT NULL;
+                        ALTER TABLE time_entries DROP COLUMN clock_in_accuracy;
+                    END IF;
+                END $$;
+            `);
+        },
+    },
+    {
+        // ── HOTFIX ───────────────────────────────────────────────────────
+        // The original `2026_05_attendance_face_location` migration created
+        // the time_entries columns with names that didn't match the runtime
+        // code:
+        //     migration              runtime (db.js + routes/tracker.js)
+        //     ───────────────────    ────────────────────────────────────
+        //     clock_in_latitude   →  clock_in_lat
+        //     clock_in_longitude  →  clock_in_lng
+        //     clock_in_accuracy   →  clock_in_accuracy_m
+        //
+        // For tenants whose DB was bootstrapped via the migration runner
+        // (not via initTenantSchema in db.js), the columns the route INSERTs
+        // into don't exist, so POST /api/tracker/clock-in fails with
+        //   `column "clock_in_lat" of relation "time_entries" does not exist`
+        // and returns HTTP 500 "Clock-in failed".
+        //
+        // We can't fix this by editing the original migration body — it has
+        // already been recorded in `_migrations` for those tenants and won't
+        // re-run. This dedicated hotfix migration runs once per tenant to:
+        //   1. Add the canonical columns (clock_in_lat / clock_in_lng /
+        //      clock_in_accuracy_m) if they're missing.
+        //   2. Copy data out of the mis-named columns if those exist.
+        //   3. Drop the mis-named columns.
+        //
+        // Every statement is idempotent so tenants that were never affected
+        // (e.g. brand-new ones bootstrapped post-fix) skip through without
+        // touching the schema.
+        name: '2026_05_attendance_face_location_column_rename_fix',
+        async up(query) {
+            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_lat DOUBLE PRECISION`);
+            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_lng DOUBLE PRECISION`);
+            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_accuracy_m REAL`);
+            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_distance_m INTEGER`);
+            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS face_verified BOOLEAN`);
+            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS face_match_score REAL`);
+
+            await query(`
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'time_entries' AND column_name = 'clock_in_latitude'
+                    ) THEN
+                        UPDATE time_entries SET clock_in_lat = clock_in_latitude
+                            WHERE clock_in_lat IS NULL AND clock_in_latitude IS NOT NULL;
+                        ALTER TABLE time_entries DROP COLUMN clock_in_latitude;
+                    END IF;
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'time_entries' AND column_name = 'clock_in_longitude'
+                    ) THEN
+                        UPDATE time_entries SET clock_in_lng = clock_in_longitude
+                            WHERE clock_in_lng IS NULL AND clock_in_longitude IS NOT NULL;
+                        ALTER TABLE time_entries DROP COLUMN clock_in_longitude;
+                    END IF;
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'time_entries' AND column_name = 'clock_in_accuracy'
+                    ) THEN
+                        UPDATE time_entries SET clock_in_accuracy_m = clock_in_accuracy
+                            WHERE clock_in_accuracy_m IS NULL AND clock_in_accuracy IS NOT NULL;
+                        ALTER TABLE time_entries DROP COLUMN clock_in_accuracy;
+                    END IF;
+                END $$;
+            `);
         },
     },
 ];
