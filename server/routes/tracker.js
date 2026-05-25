@@ -203,22 +203,74 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
             clock_in_distance_m: null,
             face_verified: null,
             face_match_score: null,
+            verified_via: null,
+            clock_in_wifi_bssid: null,
         };
         if (req.userOrgId) {
             const orgVerify = (await req.db.query(
-                `SELECT attendance_verification_enabled, office_latitude, office_longitude, office_radius_m
+                `SELECT attendance_verification_enabled, office_latitude, office_longitude, office_radius_m,
+                        office_wifi_bssids, office_wifi_verification_enabled
                  FROM organizations WHERE id = $1`,
                 [req.userOrgId]
             )).rows[0];
 
             if (orgVerify?.attendance_verification_enabled) {
-                const { latitude, longitude, accuracy, face_descriptor } = req.body || {};
+                const { latitude, longitude, accuracy, face_descriptor, wifi_bssid } = req.body || {};
                 const orgLat = orgVerify.office_latitude != null ? Number(orgVerify.office_latitude) : null;
                 const orgLng = orgVerify.office_longitude != null ? Number(orgVerify.office_longitude) : null;
                 const radiusM = Number(orgVerify.office_radius_m) || 150;
 
+                // ── Wi-Fi-first check ────────────────────────────────────────
+                // The geofence on its own is unreliable on laptops where
+                // Chromium falls back to IP-based geolocation (often off by
+                // tens of km). When the org has registered the BSSIDs of its
+                // office access points and the client (Electron desktop) can
+                // read its current BSSID, a match on that allow-list is
+                // sufficient proof that the user is physically at the office,
+                // regardless of GPS accuracy.
+                //
+                // Browser users (and any client that can't read a BSSID) just
+                // omit `wifi_bssid` and fall through to the geofence check
+                // below — keeping behaviour backwards-compatible for everyone
+                // who's not on the Electron desktop app.
+                const officeBssids = Array.isArray(orgVerify.office_wifi_bssids)
+                    ? orgVerify.office_wifi_bssids
+                        .map(e => (typeof e === 'string' ? e : e?.bssid))
+                        .filter(Boolean)
+                        .map(b => String(b).toUpperCase())
+                    : [];
+                const normalisedBssid = (typeof wifi_bssid === 'string' && wifi_bssid.trim())
+                    ? wifi_bssid.replace(/[^0-9a-fA-F]/g, '').toUpperCase()
+                    : null;
+                const formattedBssid = normalisedBssid && normalisedBssid.length === 12
+                    ? normalisedBssid.match(/.{2}/g).join(':')
+                    : null;
+                const wifiMatch = !!(
+                    orgVerify.office_wifi_verification_enabled &&
+                    formattedBssid &&
+                    officeBssids.includes(formattedBssid)
+                );
+
                 // — Location check (office + hybrid) —
-                const needsLocation = selectedWorkMode === 'office' || selectedWorkMode === 'hybrid';
+                // Skipped when the Wi-Fi check already proved the user is
+                // at the office. Hybrid still records the match as 'office'.
+                const needsLocation = (selectedWorkMode === 'office' || selectedWorkMode === 'hybrid') && !wifiMatch;
+                if (wifiMatch) {
+                    verifyMeta.verified_via = 'wifi';
+                    verifyMeta.clock_in_wifi_bssid = formattedBssid;
+                    // Capture any location data the client sent, for audit, but
+                    // don't enforce against the geofence.
+                    if (isValidLat(latitude) && isValidLng(longitude)) {
+                        verifyMeta.clock_in_lat = Number(latitude);
+                        verifyMeta.clock_in_lng = Number(longitude);
+                        verifyMeta.clock_in_accuracy_m = (accuracy != null && Number.isFinite(Number(accuracy))) ? Number(accuracy) : null;
+                        if (orgLat != null && orgLng != null) {
+                            verifyMeta.clock_in_distance_m = Math.round(haversineMeters(Number(latitude), Number(longitude), orgLat, orgLng));
+                        }
+                    }
+                    // Hybrid resolves to 'office' when Wi-Fi proves we're on-site.
+                    if (selectedWorkMode === 'hybrid') selectedWorkMode = 'office';
+                }
                 if (needsLocation) {
                     if (orgLat == null || orgLng == null) {
                         return res.status(400).json({
@@ -228,7 +280,7 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
                     }
                     if (!isValidLat(latitude) || !isValidLng(longitude)) {
                         return res.status(400).json({
-                            error: 'Location is required to clock in from office. Please allow location access.',
+                            error: 'Location is required to clock in from office. Please allow location access, or connect to the office Wi-Fi.',
                             code: 'LOCATION_REQUIRED',
                         });
                     }
@@ -237,11 +289,18 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
                     verifyMeta.clock_in_lng = Number(longitude);
                     verifyMeta.clock_in_accuracy_m = (accuracy != null && Number.isFinite(Number(accuracy))) ? Number(accuracy) : null;
                     verifyMeta.clock_in_distance_m = distance;
+                    if (formattedBssid) verifyMeta.clock_in_wifi_bssid = formattedBssid; // record even if not in allow-list
 
                     const inside = distance <= radiusM;
                     if (selectedWorkMode === 'office' && !inside) {
+                        // Include a hint about the Wi-Fi fallback when the org
+                        // has it configured but the user wasn't on the office
+                        // network (or is on a browser).
+                        const wifiHint = (orgVerify.office_wifi_verification_enabled && officeBssids.length > 0)
+                            ? ' Or connect to the office Wi-Fi.'
+                            : '';
                         return res.status(403).json({
-                            error: `You are ${distance} m from the office (allowed ${radiusM} m). Move closer or switch to remote.`,
+                            error: `You are ${distance} m from the office (allowed ${radiusM} m). Move closer or switch to remote.${wifiHint}`,
                             code: 'OUTSIDE_GEOFENCE',
                             distance_m: distance,
                             radius_m: radiusM,
@@ -251,6 +310,7 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
                         // Hybrid auto-resolves to office/remote based on geofence.
                         selectedWorkMode = inside ? 'office' : 'remote';
                     }
+                    if (inside) verifyMeta.verified_via = 'geofence';
                 }
 
                 // — Face check (always required when verification is on) —
@@ -302,13 +362,15 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
                 `INSERT INTO time_entries
                     (user_id, entry_type, work_mode,
                      clock_in_lat, clock_in_lng, clock_in_accuracy_m, clock_in_distance_m,
-                     face_verified, face_match_score)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                     face_verified, face_match_score,
+                     verified_via, clock_in_wifi_bssid)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
                 [
                     req.userId, 'clock_in', selectedWorkMode,
                     verifyMeta.clock_in_lat, verifyMeta.clock_in_lng,
                     verifyMeta.clock_in_accuracy_m, verifyMeta.clock_in_distance_m,
                     verifyMeta.face_verified, verifyMeta.face_match_score,
+                    verifyMeta.verified_via, verifyMeta.clock_in_wifi_bssid,
                 ],
             );
             return { ok: true };
@@ -321,8 +383,14 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
             work_mode: selectedWorkMode,
             distance_m: verifyMeta.clock_in_distance_m,
             face_verified: verifyMeta.face_verified,
+            verified_via: verifyMeta.verified_via,
+            wifi_bssid: verifyMeta.clock_in_wifi_bssid,
         });
-        res.json({ message: 'Logged in successfully', work_mode: selectedWorkMode });
+        res.json({
+            message: 'Logged in successfully',
+            work_mode: selectedWorkMode,
+            verified_via: verifyMeta.verified_via,
+        });
     } catch (err) {
         req.log.error({ err }, 'Clock-in error');
         res.status(500).json({ error: 'Clock-in failed' });

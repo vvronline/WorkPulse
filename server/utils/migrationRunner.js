@@ -1048,6 +1048,38 @@ const MIGRATIONS = [
             `);
         },
     },
+    {
+        // Wi-Fi-first attendance verification.
+        //
+        // The geofence-only flow that ships in `2026_05_attendance_face_location`
+        // is unreliable on most laptops: Chromium's geolocation falls back to
+        // IP-based lookup when no GOOGLE_API_KEY is configured (typical for
+        // packaged Electron builds), producing fixes that are tens of
+        // kilometres off the actual office. That makes the "you must be in
+        // the geofence" check effectively impossible to pass for many users.
+        //
+        // The fix is to layer a Wi-Fi check *in front of* the geofence:
+        //   - admin registers the BSSIDs (MAC addresses) of the office APs
+        //   - desktop client reads its current BSSID via the OS (netsh /
+        //     airport / iwgetid) and sends it with the clock-in
+        //   - server: if the BSSID is whitelisted → user is "at office",
+        //     skip the geofence; otherwise fall back to today's geofence
+        //     logic (which keeps working for Ethernet / non-Electron / etc.)
+        //
+        // We also add a `verified_via` column to `time_entries` so HR can
+        // see which signal (wifi, geofence, none) verified each clock-in.
+        name: '2026_06_v7_office_wifi_verification',
+        async up(query) {
+            // ── organizations ────────────────────────────────────────────
+            await query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS office_wifi_bssids JSONB NOT NULL DEFAULT '[]'::jsonb`);
+            await query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS office_wifi_verification_enabled BOOLEAN NOT NULL DEFAULT FALSE`);
+
+            // ── time_entries: audit which signal verified the clock-in ──
+            // Values are 'wifi' | 'geofence' | 'none' (NULL for pre-feature rows).
+            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS verified_via TEXT`);
+            await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_wifi_bssid TEXT`);
+        },
+    },
 ];
 
 /**

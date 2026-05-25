@@ -58,6 +58,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // can't ship publicly). See main.js → ipcMain.handle('get-ip-location').
     getIpLocation: () => ipcRenderer.invoke('get-ip-location'),
 
+    // ─── Wi-Fi info reader (attendance clock-in Wi-Fi-first verification) ──
+    // Returns { ok, bssid, ssid, signal } describing the AP the OS is
+    // currently associated with. Used by ClockInVerifyModal to send the
+    // BSSID alongside geolocation so the server can match against the org's
+    // office Wi-Fi allow-list (more reliable than the geofence on laptops
+    // where Chromium's geolocation is IP-based and wildly inaccurate).
+    getWifiInfo: () => ipcRenderer.invoke('get-wifi-info'),
+
     // ─── Main window hide/show lifecycle (renderer subscribers) ────────
     // Fired whenever the main BrowserWindow is minimized / hidden to the
     // tray / restored / shown / focused. The in-call overlay uses these

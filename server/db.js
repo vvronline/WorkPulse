@@ -342,6 +342,18 @@ async function initTenantSchema(q) {
     await q(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS office_radius_m INTEGER NOT NULL DEFAULT 150`);
     await q(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS office_address TEXT`);
 
+    // Wi-Fi-first attendance verification. When `office_wifi_verification_enabled`
+    // is on and the client sends a `wifi_bssid` that matches one of the
+    // BSSIDs in `office_wifi_bssids`, the geofence check is skipped — the
+    // user is treated as "at the office" regardless of GPS accuracy. This
+    // makes office clock-in reliable on laptops where Chromium's geolocation
+    // falls back to IP-based lookup and reports the user kilometres away.
+    // The geofence check stays in place as a fallback for Ethernet-only
+    // machines, browser users (BSSID isn't readable from a browser), and
+    // employees clocking in over LTE.
+    await q(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS office_wifi_bssids JSONB NOT NULL DEFAULT '[]'::jsonb`);
+    await q(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS office_wifi_verification_enabled BOOLEAN NOT NULL DEFAULT FALSE`);
+
     await q(`
         CREATE TABLE IF NOT EXISTS users (
             id                   SERIAL PRIMARY KEY,
@@ -450,6 +462,11 @@ async function initTenantSchema(q) {
     await q(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_distance_m INTEGER`);
     await q(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS face_verified BOOLEAN`);
     await q(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS face_match_score REAL`);
+    // Wi-Fi-first verification audit columns (Stage 7).
+    // `verified_via` is 'wifi' | 'geofence' | 'none' (NULL for pre-feature rows).
+    // `clock_in_wifi_bssid` records the BSSID that was matched (when wifi).
+    await q(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS verified_via TEXT`);
+    await q(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_wifi_bssid TEXT`);
 
     await q(`
         CREATE TABLE IF NOT EXISTS leaves (

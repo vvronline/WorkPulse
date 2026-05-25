@@ -40,14 +40,24 @@ export default function OrgSettingsPage({ userRole }) {
     const sectionRefs = useRef({});
     const [activeSection, setActiveSection] = useState('general');
 
-    const fetchOrg = useCallback(() => {
-        setLoading(true);
+    const fetchOrg = useCallback((opts = {}) => {
+        // Only flip the page-level loading flag on the very first load.
+        // Subsequent refetches (triggered by child onSave callbacks) must NOT
+        // unmount the section tree — otherwise child components lose their
+        // local state (e.g. OfficeLocationSettings would briefly drop the
+        // Wi-Fi list it just saved while the fetch is in flight).
+        const showSpinner = opts.silent !== true && !org;
+        if (showSpinner) setLoading(true);
         getCurrentOrg()
             .then(r => { setOrg(r.data); setLoading(false); })
             .catch(() => setLoading(false));
-    }, []);
+    }, [org]);
 
-    useEffect(() => { fetchOrg(); }, [fetchOrg]);
+    // Initial load only.
+    useEffect(() => { fetchOrg(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+
+    // Children call this after a successful save — silent refetch, no spinner.
+    const silentRefetch = useCallback(() => fetchOrg({ silent: true }), [fetchOrg]);
 
     // Attendance verification (face + location) is gated to admins who can
     // already edit org settings — that's hr_admin / super_admin / platform_admin
@@ -126,7 +136,7 @@ export default function OrgSettingsPage({ userRole }) {
                         </div>
                     </header>
                     <div className={s.sectionBody}>
-                        <OrgGeneralSettings org={org} onUpdate={fetchOrg} userRole={userRole} />
+                        <OrgGeneralSettings org={org} onUpdate={silentRefetch} userRole={userRole} />
                     </div>
                 </section>
 
@@ -150,7 +160,7 @@ export default function OrgSettingsPage({ userRole }) {
                             </div>
                         </header>
                         <div className={s.sectionBody}>
-                            <OfficeLocationSettings org={org} onUpdate={fetchOrg} />
+                            <OfficeLocationSettings org={org} onUpdate={silentRefetch} />
                         </div>
                     </section>
                 )}

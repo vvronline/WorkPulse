@@ -4,9 +4,10 @@
     gap: 1rem;
     margin-top: 1.5rem;
     padding: 1.25rem;
-    border: 1px solid var(--border, #e5e7eb);
+    border: 1px solid var(--border);
     border-radius: 12px;
-    background: var(--surface, #fff);
+    background: var(--card-bg, var(--bg-elevated));
+    color: var(--text-primary);
 }
 
 .header h3 {
@@ -15,19 +16,20 @@
     align-items: center;
     gap: 0.4rem;
     font-size: 1.05rem;
+    color: var(--text-primary);
 }
 
 .iconOn {
-    color: #10b981;
+    color: var(--success, #10b981);
 }
 
 .iconOff {
-    color: #6b7280;
+    color: var(--text-muted);
 }
 
 .lede {
     margin: 0;
-    color: var(--text-muted, #6b7280);
+    color: var(--text-secondary);
     font-size: 0.88rem;
     line-height: 1.5;
 }
@@ -45,12 +47,14 @@
     gap: 0.45rem;
     cursor: pointer;
     font-weight: 500;
+    color: var(--text-primary);
 }
 
 .toggle input {
     width: 1.05rem;
     height: 1.05rem;
     cursor: pointer;
+    accent-color: var(--accent);
 }
 
 .fieldGrid {
@@ -68,25 +72,33 @@
 .field label {
     font-size: 0.82rem;
     font-weight: 600;
-    color: var(--text-muted, #6b7280);
+    color: var(--text-secondary);
 }
 
 .field input {
     padding: 0.5rem 0.6rem;
-    border: 1px solid var(--border, #e5e7eb);
+    border: 1px solid var(--border);
     border-radius: 6px;
     font-size: 0.9rem;
     width: 100%;
     box-sizing: border-box;
+    background: var(--input-bg);
+    color: var(--text-primary);
+}
+
+.field input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(35, 131, 226, 0.18);
 }
 
 .hint {
-    color: var(--text-muted, #9ca3af);
+    color: var(--text-muted);
     font-size: 0.75rem;
 }
 
 .gpsErr {
-    color: #b91c1c;
+    color: var(--danger, #e03e3e);
     font-size: 0.82rem;
 }
 
@@ -94,22 +106,395 @@
     display: inline-flex;
     align-items: center;
     gap: 0.25rem;
-    color: var(--text-muted, #6b7280);
+    color: var(--text-secondary);
     font-size: 0.82rem;
     margin-left: auto;
 }
 
+/* ─── Office Wi-Fi section ─────────────────────────────────────── */
+.wifiSection {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.1rem;
+    background: var(--bg-secondary, var(--surface));
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+    color: var(--text-primary);
+}
+
+.wifiHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+}
+
+.wifiHeader h4 {
+    margin: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.wifiHint {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    line-height: 1.45;
+}
+
+.wifiHint strong {
+    color: var(--text-primary);
+}
+
+.wifiEmpty {
+    padding: 0.7rem 0.85rem;
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    color: var(--text-muted);
+    font-size: 0.83rem;
+    text-align: center;
+}
+
+.wifiList {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.wifiItem {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    padding: 0.55rem 0.75rem;
+    background: var(--card-bg, var(--bg-elevated));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.wifiItemMain {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.55rem;
+    min-width: 0;
+    flex: 1;
+}
+
+.wifiItemIcon {
+    color: var(--accent);
+    margin-top: 3px;
+    flex-shrink: 0;
+}
+
+.wifiItemText {
+    min-width: 0;
+}
+
+.wifiItemLabel {
+    font-weight: 600;
+    font-size: 0.88rem;
+    color: var(--text-primary);
+}
+
+.wifiItemMeta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+.wifiItemMeta code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.76rem;
+    color: var(--text-primary);
+}
+
+.wifiItemSsid {
+    font-style: italic;
+    color: var(--text-muted);
+}
+
+.wifiRemove {
+    background: transparent;
+    border: 0;
+    padding: 0.35rem;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background 0.15s, color 0.15s;
+}
+
+.wifiRemove:hover {
+    background: rgba(224, 62, 62, 0.12);
+    color: var(--danger, #e03e3e);
+}
+
+.wifiActions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.wifiCurrent {
+    margin-left: auto;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+.wifiCurrent strong {
+    color: var(--text-primary);
+}
+
+.wifiErr {
+    padding: 0.55rem 0.75rem;
+    background: rgba(224, 62, 62, 0.1);
+    border: 1px solid rgba(224, 62, 62, 0.3);
+    border-radius: 6px;
+    color: var(--danger, #e03e3e);
+    font-size: 0.82rem;
+}
+
+/* Inline label-edit input (click on a row's label to rename). */
+.wifiInlineInput {
+    width: 100%;
+    padding: 0.25rem 0.45rem;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-size: 0.88rem;
+    font-weight: 600;
+    box-sizing: border-box;
+}
+
+.wifiInlineInput:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(35, 131, 226, 0.18);
+}
+
+.wifiItemLabel {
+    cursor: pointer;
+}
+
+.wifiItemLabel:hover {
+    color: var(--accent);
+}
+
+/* Inline form to add a BSSID manually (replaces window.prompt). */
+.wifiManualForm {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background: var(--card-bg, var(--bg-elevated));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.wifiManualRow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0.5rem;
+}
+
+.wifiManualInput {
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    width: 100%;
+    box-sizing: border-box;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.wifiManualInput:nth-child(2) {
+    font-family: inherit;
+}
+
+.wifiManualInput::placeholder {
+    color: var(--text-muted);
+    font-family: inherit;
+}
+
+.wifiManualInput:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(35, 131, 226, 0.18);
+}
+
+.wifiManualActions {
+    display: flex;
+    gap: 0.4rem;
+}
+
+@media (max-width: 560px) {
+    .wifiManualRow {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ─── Place search ─────────────────────────────────────────────── */
+.searchRow {
+    display: flex;
+    width: 100%;
+}
+
+.searchInputWrap {
+    position: relative;
+    width: 100%;
+    max-width: 560px;
+}
+
+.searchIcon {
+    position: absolute;
+    top: 50%;
+    left: 0.6rem;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+    pointer-events: none;
+}
+
+.searchInput {
+    width: 100%;
+    padding: 0.5rem 2rem 0.5rem 2rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.9rem;
+    background: var(--input-bg);
+    color: var(--text-primary);
+    box-sizing: border-box;
+}
+
+.searchInput::placeholder {
+    color: var(--text-muted);
+}
+
+.searchInput:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(35, 131, 226, 0.18);
+}
+
+.searchSpin {
+    position: absolute;
+    top: 50%;
+    right: 0.6rem;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+}
+
+.searchClear {
+    position: absolute;
+    top: 50%;
+    right: 0.4rem;
+    transform: translateY(-50%);
+    background: transparent;
+    border: 0;
+    padding: 0.2rem;
+    cursor: pointer;
+    color: var(--text-muted);
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.searchClear:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.searchDropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    margin: 0;
+    padding: 0.25rem;
+    list-style: none;
+    background: var(--bg-elevated, var(--card-bg));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: var(--shadow-lg);
+    z-index: 500;
+    max-height: 280px;
+    overflow-y: auto;
+}
+
+.searchItem {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.4rem;
+    padding: 0.45rem 0.55rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    line-height: 1.35;
+}
+
+.searchItem:hover {
+    background: var(--bg-hover);
+}
+
+.searchItemIcon {
+    margin-top: 3px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.searchItemText {
+    flex: 1;
+    word-break: break-word;
+}
+
+.searchEmpty,
+.searchError {
+    padding: 0.5rem 0.6rem;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+}
+
+.searchError {
+    color: var(--danger, #e03e3e);
+}
+
+/* ─── Map ──────────────────────────────────────────────────────── */
 .mapBox {
     border-radius: 10px;
     overflow: hidden;
-    border: 1px solid var(--border, #e5e7eb);
+    border: 1px solid var(--border);
     /* Defensive sizing — react-leaflet's <MapContainer> renders a div whose
        height must be explicit (it doesn't grow to its content). We set it
        on the wrapper too so the map can never collapse to 0px even if the
        inline style is stripped or overridden. */
     height: 360px;
     min-height: 360px;
-    background: #e5e7eb;
+    background: var(--surface);
 }
 
 .map {
@@ -127,6 +512,7 @@
     z-index: 0;
 }
 
+/* ─── Toasts ───────────────────────────────────────────────────── */
 .toast {
     padding: 0.55rem 0.85rem;
     border-radius: 6px;
@@ -134,13 +520,15 @@
 }
 
 .toast.ok {
-    background: rgba(16, 185, 129, 0.12);
-    color: #047857;
+    background: rgba(77, 170, 87, 0.14);
+    color: var(--success, #4daa57);
+    border: 1px solid rgba(77, 170, 87, 0.3);
 }
 
 .toast.err {
-    background: rgba(239, 68, 68, 0.12);
-    color: #b91c1c;
+    background: rgba(224, 62, 62, 0.12);
+    color: var(--danger, #e03e3e);
+    border: 1px solid rgba(224, 62, 62, 0.3);
 }
 
 .spin {

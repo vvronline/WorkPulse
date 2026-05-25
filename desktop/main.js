@@ -1,6 +1,9 @@
 const { app, BrowserWindow, protocol, net, session, Menu, nativeImage, desktopCapturer, systemPreferences, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { execFile } = require('child_process');
+const util = require('util');
+const execFileP = util.promisify(execFile);
 const { setupTray } = require('./tray');
 const { setupUpdater } = require('./updater');
 const { setupCallPipWindow } = require('./callPipWindow');
@@ -243,6 +246,78 @@ app.whenReady().then(async () => {
     // the user is on a corporate VPN, and counts as "best effort". The
     // accuracy value returned reflects this so the server-side geofence
     // radius is the real source of truth.
+    // ─── Wi-Fi BSSID reader (Stage 7: Wi-Fi-first attendance) ──────────
+    // Returns `{ ok, bssid, ssid, signal }` describing the access point the
+    // OS is currently associated with. The attendance clock-in flow sends
+    // the BSSID alongside the geolocation; the server prefers BSSID match
+    // (against the org's allow-list) over geofence, which works around the
+    // inaccurate IP-based geolocation we get on packaged Electron builds.
+    //
+    // Privacy: we never persist any of this in the desktop app — the
+    // renderer reads it on demand at clock-in time only. BSSID lookup
+    // requires Windows Location Services to be ON; without it `netsh`
+    // returns `(blank)` for the BSSID and we surface `{ ok: false }`.
+    ipcMain.handle('get-wifi-info', async () => {
+        try {
+            if (process.platform === 'win32') {
+                const { stdout } = await execFileP('netsh', ['wlan', 'show', 'interfaces']);
+                const bssidM = /^\s*BSSID\s*:\s*([0-9A-Fa-f:]{17})\s*$/m.exec(stdout);
+                const ssidM = /^\s*SSID\s*:\s*(.+?)\s*$/m.exec(stdout);
+                const sigM = /^\s*Signal\s*:\s*(\d+)\s*%/m.exec(stdout);
+                const stateM = /^\s*State\s*:\s*(.+?)\s*$/m.exec(stdout);
+                if (!bssidM) {
+                    return {
+                        ok: false,
+                        error: stateM && /disconnected/i.test(stateM[1])
+                            ? 'wifi_disconnected'
+                            : 'bssid_unavailable',
+                    };
+                }
+                return {
+                    ok: true,
+                    bssid: bssidM[1].toUpperCase(),
+                    ssid: ssidM ? ssidM[1] : null,
+                    signal: sigM ? Number(sigM[1]) : null,
+                };
+            }
+            if (process.platform === 'darwin') {
+                const airport = '/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport';
+                const { stdout } = await execFileP(airport, ['-I']);
+                const bssidM = /\bBSSID:\s*([0-9a-fA-F:]{11,17})/.exec(stdout);
+                const ssidM = /\bSSID:\s*(.+)/.exec(stdout);
+                const rssiM = /\bagrCtlRSSI:\s*(-?\d+)/.exec(stdout);
+                if (!bssidM) return { ok: false, error: 'bssid_unavailable' };
+                // Pad single-digit hex octets — macOS reports `1:2:3:4:5:6`.
+                const padded = bssidM[1].split(':').map(s => s.padStart(2, '0')).join(':').toUpperCase();
+                return {
+                    ok: true,
+                    bssid: padded,
+                    ssid: ssidM ? ssidM[1].trim() : null,
+                    signal: rssiM ? Number(rssiM[1]) : null,
+                };
+            }
+            if (process.platform === 'linux') {
+                try {
+                    const { stdout: bssidOut } = await execFileP('iwgetid', ['-ra']);
+                    const bssid = bssidOut.trim().toUpperCase();
+                    if (!bssid) return { ok: false, error: 'bssid_unavailable' };
+                    let ssid = null;
+                    try {
+                        const { stdout: ssidOut } = await execFileP('iwgetid', ['-r']);
+                        ssid = ssidOut.trim() || null;
+                    } catch { /* ignore */ }
+                    return { ok: true, bssid, ssid, signal: null };
+                } catch (err) {
+                    return { ok: false, error: 'iwgetid_missing' };
+                }
+            }
+            return { ok: false, error: 'unsupported_platform' };
+        } catch (err) {
+            console.warn('[WorkPulse] get-wifi-info failed:', err?.message);
+            return { ok: false, error: err?.message || 'wifi_lookup_failed' };
+        }
+    });
+
     ipcMain.handle('get-ip-location', async () => {
         // Try a couple of providers for resilience; both are free / no key.
         const providers = [

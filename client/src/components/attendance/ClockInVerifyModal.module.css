@@ -112,7 +112,7 @@
 
 .locDone {
     text-align: center;
-    color: #047857;
+    color: var(--success, #047857);
     font-size: 0.85rem;
     margin-bottom: 0.6rem;
     display: inline-flex;
@@ -120,6 +120,20 @@
     gap: 0.3rem;
     justify-content: center;
     width: 100%;
+    flex-wrap: wrap;
+}
+
+.locInfo {
+    text-align: center;
+    color: var(--warning, #cb912f);
+    font-size: 0.85rem;
+    margin-bottom: 0.6rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    justify-content: center;
+    width: 100%;
+    flex-wrap: wrap;
 }
 
 .acc {

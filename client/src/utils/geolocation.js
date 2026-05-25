@@ -91,6 +91,62 @@ function getBrowserPosition(opts = {}) {
     });
 }
 
+/**
+ * Read the BSSID of the Wi-Fi access point the OS is currently associated
+ * with via the Electron preload bridge. Returns:
+ *   { ok: true,  bssid, ssid, signal }   — connected to Wi-Fi
+ *   { ok: false, error }                  — not on Wi-Fi / not Electron
+ *
+ * In a regular browser there is no privacy-preserving way to read the
+ * BSSID, so we resolve `{ ok: false, error: 'unavailable' }` and the
+ * server falls back to the geofence path.
+ */
+export async function getWifiInfo() {
+    try {
+        if (typeof window !== 'undefined' &&
+            window.electronAPI &&
+            typeof window.electronAPI.getWifiInfo === 'function') {
+            const res = await window.electronAPI.getWifiInfo();
+            if (res && res.ok) return res;
+            return { ok: false, error: res?.error || 'unavailable' };
+        }
+        return { ok: false, error: 'unavailable' };
+    } catch (err) {
+        return { ok: false, error: err?.message || 'unavailable' };
+    }
+}
+
+/**
+ * Gather every signal the server can use to verify the user is at the
+ * office, in priority order:
+ *   1. Wi-Fi BSSID (proves physical presence on the office network —
+ *      the most reliable signal on laptops where GPS is bad).
+ *   2. Geolocation (GPS / Wi-Fi-trilateration / IP fallback, in that
+ *      order, as provided by `getCurrentPosition()`).
+ *
+ * Both are best-effort: the server decides whether either is sufficient
+ * based on the org's configuration. Callers should send both fields in
+ * the clock-in payload so the server can pick whichever proves the user
+ * is on-site.
+ *
+ * Returns `{ wifi, location, locError }` where:
+ *   - `wifi`     is the result of `getWifiInfo()`
+ *   - `location` is the result of `getCurrentPosition()` (or null on error)
+ *   - `locError` is the rejection from getCurrentPosition (or null)
+ */
+export async function getOfficeSignals(opts = {}) {
+    // Kick off both in parallel — they're independent and the Wi-Fi
+    // lookup typically resolves in <50 ms, well before the geolocation
+    // permission prompt has even rendered.
+    const wifiP = getWifiInfo();
+    const locP = getCurrentPosition(opts).then(
+        (loc) => ({ loc, err: null }),
+        (err) => ({ loc: null, err }),
+    );
+    const [wifi, locRes] = await Promise.all([wifiP, locP]);
+    return { wifi, location: locRes.loc, locError: locRes.err };
+}
+
 /** Human-friendly message for a getCurrentPosition error code. */
 export function geolocationErrorMessage(code) {
     switch (code) {

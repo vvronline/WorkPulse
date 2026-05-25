@@ -87,6 +87,7 @@ router.put('/settings', requireRole('hr_admin'), requireSameOrg, async (req, res
         const {
             name, work_hours_per_day, work_days, timezone, fiscal_year_start, min_hours_present, office_start_time,
             attendance_verification_enabled, office_latitude, office_longitude, office_radius_m, office_address,
+            office_wifi_bssids, office_wifi_verification_enabled,
         } = req.body;
         const updates = [];
         const params = [];
@@ -218,6 +219,69 @@ router.put('/settings', requireRole('hr_admin'), requireSameOrg, async (req, res
                 }
                 updates.push(`office_address = $${pi++}`); params.push(office_address.trim());
             }
+        }
+
+        // ── Office Wi-Fi BSSID allow-list ─────────────────────────────────
+        // Stored as JSONB array of `{ bssid, label, added_by, added_at }`.
+        // BSSIDs are normalised to upper-case `AA:BB:CC:DD:EE:FF` and
+        // deduplicated. We hard-cap at 50 entries per org to keep the
+        // whitelist scan O(1) on every clock-in.
+        const MAC_RE = /^[0-9A-F]{2}(:[0-9A-F]{2}){5}$/;
+        function normaliseBssid(raw) {
+            if (typeof raw !== 'string') return null;
+            // Accept colon, dash, or no separator; uppercase + colon-normalise.
+            const cleaned = raw.replace(/[^0-9a-fA-F]/g, '').toUpperCase();
+            if (cleaned.length !== 12) return null;
+            const mac = cleaned.match(/.{2}/g).join(':');
+            return MAC_RE.test(mac) ? mac : null;
+        }
+        if (office_wifi_bssids !== undefined) {
+            if (!Array.isArray(office_wifi_bssids)) {
+                return res.status(400).json({ error: 'office_wifi_bssids must be an array' });
+            }
+            if (office_wifi_bssids.length > 50) {
+                return res.status(400).json({ error: 'You can register at most 50 office Wi-Fi access points' });
+            }
+            const seen = new Set();
+            const cleaned = [];
+            for (const raw of office_wifi_bssids) {
+                const entry = (raw && typeof raw === 'object') ? raw : { bssid: raw };
+                const mac = normaliseBssid(entry.bssid);
+                if (!mac) {
+                    return res.status(400).json({ error: `Invalid BSSID: ${entry.bssid || '(empty)'}. Expected MAC like AA:BB:CC:DD:EE:FF` });
+                }
+                if (seen.has(mac)) continue;
+                seen.add(mac);
+                cleaned.push({
+                    bssid: mac,
+                    label: (typeof entry.label === 'string') ? entry.label.slice(0, 100) : null,
+                    ssid: (typeof entry.ssid === 'string') ? entry.ssid.slice(0, 64) : null,
+                    added_by: req.userId,
+                    added_at: entry.added_at || new Date().toISOString(),
+                });
+            }
+            updates.push(`office_wifi_bssids = $${pi++}::jsonb`);
+            params.push(JSON.stringify(cleaned));
+        }
+        if (office_wifi_verification_enabled !== undefined) {
+            const flag = !!office_wifi_verification_enabled;
+            // Guard: can't enable Wi-Fi verification without any BSSIDs registered.
+            if (flag) {
+                const incomingList = Array.isArray(office_wifi_bssids) ? office_wifi_bssids : null;
+                let willHaveList = (incomingList && incomingList.length > 0);
+                if (!willHaveList) {
+                    const cur = (await req.db.query(
+                        'SELECT office_wifi_bssids FROM organizations WHERE id = $1',
+                        [req.userOrgId]
+                    )).rows[0];
+                    const arr = cur?.office_wifi_bssids;
+                    willHaveList = Array.isArray(arr) && arr.length > 0;
+                }
+                if (!willHaveList) {
+                    return res.status(400).json({ error: 'Add at least one office Wi-Fi BSSID before enabling Wi-Fi verification' });
+                }
+            }
+            updates.push(`office_wifi_verification_enabled = $${pi++}`); params.push(flag);
         }
 
         updates.push('updated_at = CURRENT_TIMESTAMP');
