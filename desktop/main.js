@@ -9,6 +9,52 @@ const { setupCallPipWindow } = require('./callPipWindow');
 app.setAppUserModelId('com.workpulse.desktop');
 app.name = 'WorkPulse';
 
+// ─── Chromium geolocation API key ─────────────────────────────────────────
+// Chromium's network-based geolocation (used by navigator.geolocation when
+// the renderer can't reach the OS location service) calls Google's
+// Geolocation API and **requires** an API key. Without one, every call
+// fails with POSITION_UNAVAILABLE, which surfaces in the UI as
+// "Location is required to clock in from office. Please allow location
+// access." even after the user clicks "Allow".
+//
+// We expose two ways to supply the key:
+//   1. Set GOOGLE_API_KEY in the environment (or in your shell before
+//      launching the packaged app).
+//   2. Drop a `google-api-key.txt` file next to main.js (dev) or in
+//      resources/ (packaged) containing only the raw key string.
+//
+// If neither is provided, Chromium will fall back to whatever the OS
+// location service returns (Windows 10/11 ships one when the user has
+// "Location" turned on in Windows Settings → Privacy → Location), but
+// in most office environments that still works because Wi-Fi based
+// positioning is available.
+(() => {
+    let apiKey = process.env.GOOGLE_API_KEY || '';
+    if (!apiKey) {
+        const candidates = [
+            path.join(__dirname, 'google-api-key.txt'),
+            app.isPackaged ? path.join(process.resourcesPath, 'google-api-key.txt') : null,
+        ].filter(Boolean);
+        for (const f of candidates) {
+            try {
+                if (fs.existsSync(f)) {
+                    apiKey = fs.readFileSync(f, 'utf-8').trim();
+                    if (apiKey) break;
+                }
+            } catch { /* ignore */ }
+        }
+    }
+    if (apiKey) {
+        // Both switches are honoured by different Chromium components
+        // depending on the platform / Electron version.
+        app.commandLine.appendSwitch('gl-api-key', apiKey);
+        process.env.GOOGLE_API_KEY = apiKey;
+        console.log('[WorkPulse] Geolocation API key configured');
+    } else {
+        console.log('[WorkPulse] No GOOGLE_API_KEY found — relying on OS location service for geolocation');
+    }
+})();
+
 // Safety net: log uncaught errors instead of letting Electron show the
 // fatal "A JavaScript error occurred in the main process" dialog and exit.
 process.on('uncaughtException', (err) => {
@@ -114,20 +160,29 @@ app.whenReady().then(async () => {
         }
     }
 
-    // Grant media permissions for camera/microphone/screen capture
+    // Grant media + geolocation permissions.
+    //   - media / display-capture / mediaKeySystem → camera, mic, screen share
+    //   - geolocation → required by the "clock-in from office" geofence flow
+    //                    (client/src/utils/geolocation.js → navigator.geolocation)
+    // Without geolocation in this list the renderer's getCurrentPosition()
+    // fires its error callback with PERMISSION_DENIED, the desktop client
+    // skips sending latitude/longitude, and the server responds 403
+    // "Location is required to clock in from office. Please allow location
+    // access." — which looks like the user can't "enable" location even
+    // though the Windows OS-level location toggle is on.
     session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-        const allowed = ['media', 'display-capture', 'mediaKeySystem'];
+        const allowed = ['media', 'display-capture', 'mediaKeySystem', 'geolocation'];
         callback(allowed.includes(permission));
     });
     session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
-        const allowed = ['media', 'display-capture', 'mediaKeySystem'];
+        const allowed = ['media', 'display-capture', 'mediaKeySystem', 'geolocation'];
         return allowed.includes(permission);
     });
 
     // macOS: request camera/mic access at OS level
     if (process.platform === 'darwin') {
-        systemPreferences.askForMediaAccess('camera').catch(() => {});
-        systemPreferences.askForMediaAccess('microphone').catch(() => {});
+        systemPreferences.askForMediaAccess('camera').catch(() => { });
+        systemPreferences.askForMediaAccess('microphone').catch(() => { });
     }
 
     // ─── Screen sharing: show picker so user can choose which screen/window ───
