@@ -1186,4 +1186,5 @@ module.exports = {
     MIGRATIONS,
     runTenantMigrations,
     sweepAllTenants,
+    expectedMigrationCount: MIGRATIONS.length,
 };

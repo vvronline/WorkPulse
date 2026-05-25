@@ -40,4 +40,4 @@ ENV NODE_ENV=production
 ENV PORT=5000
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["node", "index.js"]
+CMD ["sh", "-c", "node migrate.js && node index.js"]

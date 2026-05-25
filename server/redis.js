@@ -16,6 +16,46 @@ const TTL = {
     MEETING_PARTICIPANTS: 30 * 60, // 30 minutes
 };
 
+// One-shot guard so we don't print the same Redis error 1000+ times when
+// the host is unreachable (every ioredis reconnect attempt fires `error`).
+let redisErrorLogged = false;
+
+/**
+ * Stop a Redis client from looping forever when the host is unreachable.
+ *
+ * ioredis defaults are extremely aggressive: even with
+ * `maxRetriesPerRequest: 1` and a custom `retryStrategy`, every TCP
+ * connect attempt that times out (~30 s on Railway's private network when
+ * no Redis service exists) fires an `error` event, ioredis schedules
+ * another attempt, and the cycle never ends — flooding the log with
+ * `Error: connect ETIMEDOUT` and consuming CPU.
+ *
+ * We give the cluster a small grace window for transient blips, then
+ * disconnect for good and switch the in-memory fallback on. The next
+ * deploy will re-attempt. This is the right trade-off for a process-per-
+ * container model like Railway: failing loud at deploy time is fine,
+ * silent-spam-forever at runtime isn't.
+ */
+function attachFailFast(c, label) {
+    let attempts = 0;
+    let killed = false;
+    c.on('connect', () => { attempts = 0; });
+    c.on('error', (err) => {
+        attempts++;
+        if (!redisErrorLogged) {
+            logger.warn({ err: err.message, label }, 'Redis unreachable — falling back to in-memory cache');
+            redisErrorLogged = true;
+        }
+        if (attempts >= 3 && !killed) {
+            killed = true;
+            try { c.disconnect(); } catch { /* ignore */ }
+            // Mark as not-ready forever; the rest of the app silently uses
+            // its in-memory fallbacks (rate-limit MemoryStore, in-proc
+            // cache for org config + user context, etc.).
+        }
+    });
+}
+
 function initRedis() {
     const url = process.env.REDIS_URL || null;
     if (!url) {
@@ -24,10 +64,26 @@ function initRedis() {
     }
 
     const options = {
+        // Short per-request retry budget so the API doesn't stall behind a
+        // dead Redis.
         maxRetriesPerRequest: 1,
+        // Short TCP connect timeout so failures surface quickly instead
+        // of waiting for the OS default ~30 s ETIMEDOUT.
+        connectTimeout: 4_000,
+        // Don't buffer commands while the connection is down — return
+        // immediately so callers fall through to the in-memory fallback.
+        enableOfflineQueue: false,
+        // Cap retry attempts in the initial connect / reconnect loop.
+        // After 3 attempts we stop trying forever (see attachFailFast).
         retryStrategy(times) {
-            if (times > 5) return null; // stop retrying after 5 attempts
-            return Math.min(times * 200, 2000);
+            if (times >= 3) return null;
+            return Math.min(times * 500, 2_000);
+        },
+        // Reconnect on transient READONLY/ETIMEDOUT-style errors but bail
+        // on auth/host errors.
+        reconnectOnError(err) {
+            const msg = String(err && err.message || '');
+            return /READONLY|ETIMEDOUT|ECONNRESET|EPIPE/.test(msg);
         },
         lazyConnect: true,
     };
@@ -36,22 +92,30 @@ function initRedis() {
 
     client.on('connect', () => {
         isReady = true;
+        redisErrorLogged = false;
         logger.info('Redis connected');
     });
     client.on('ready', () => { isReady = true; });
-    client.on('error', (err) => {
-        isReady = false;
-        logger.warn({ err: err.message }, 'Redis error — falling back to DB');
-    });
     client.on('close', () => { isReady = false; });
+    client.on('end', () => { isReady = false; });
+    attachFailFast(client, 'client');
 
     client.connect().catch((err) => {
-        logger.warn({ err: err.message }, 'Redis initial connection failed — running without cache');
+        if (!redisErrorLogged) {
+            logger.warn({ err: err.message }, 'Redis initial connection failed — running without cache');
+            redisErrorLogged = true;
+        }
     });
 
-    // Dedicated subscriber connection for Pub/Sub
+    // Dedicated subscriber connection for Pub/Sub.
+    //
+    // Subscribers in ioredis intentionally allow infinite per-request
+    // retries (`maxRetriesPerRequest: null`) because subscribe state
+    // can't be replayed by the caller. We still want to stop the
+    // *reconnect loop* though, so we apply the same fail-fast guard.
     subscriber = new Redis(url, { ...options, maxRetriesPerRequest: null });
-    subscriber.connect().catch(() => { });
+    attachFailFast(subscriber, 'subscriber');
+    subscriber.connect().catch(() => { /* logged via 'error' */ });
 }
 
 // -- core helpers (all gracefully degrade) --

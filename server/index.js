@@ -324,6 +324,18 @@ app.use('/api/public', apiLimiter, publicRoutes);
 app.get('/api/health', async (req, res) => {
     try {
         await masterQuery('SELECT 1');
+        const detail = req.query.detail === 'true';
+        if (detail) {
+            const { expectedMigrationCount } = require('./utils/migrationRunner');
+            const migResult = await masterQuery('SELECT COUNT(*)::int AS count FROM _migrations');
+            const appliedCount = migResult.rows[0]?.count || 0;
+            const migrationsOk = appliedCount >= expectedMigrationCount;
+            return res.status(migrationsOk ? 200 : 503).json({
+                status: migrationsOk ? 'ok' : 'degraded',
+                time: new Date().toISOString(),
+                migrations: { applied: appliedCount, expected: expectedMigrationCount },
+            });
+        }
         res.json({ status: 'ok', time: new Date().toISOString() });
     } catch (err) {
         logger.error({ err }, 'Health check DB ping failed');
@@ -463,7 +475,7 @@ async function bootstrap() {
             await sweepAllTenants();
             logger.info('Migration sweep complete on bootstrap');
         } catch (err) {
-            logger.warn({ err: err.message }, 'Migration sweep failed (non-fatal)');
+            logger.error({ err: err.message }, 'Migration sweep FAILED on bootstrap — schema may be incomplete');
         }
     })();
     return bootstrapPromise;
