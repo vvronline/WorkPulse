@@ -50,6 +50,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     flashFrame: (flash) => ipcRenderer.send('flash-frame', flash),
     showAndFocus: () => ipcRenderer.send('show-and-focus'),
 
+    // IP-based geolocation fallback for the attendance clock-in flow.
+    // Resolves to { ok: true, latitude, longitude, accuracy } or
+    // { ok: false, error }. The renderer only calls this when
+    // navigator.geolocation has already failed (Chromium in Electron
+    // requires a GOOGLE_API_KEY for its built-in geolocation, which we
+    // can't ship publicly). See main.js → ipcMain.handle('get-ip-location').
+    getIpLocation: () => ipcRenderer.invoke('get-ip-location'),
+
     // ─── Main window hide/show lifecycle (renderer subscribers) ────────
     // Fired whenever the main BrowserWindow is minimized / hidden to the
     // tray / restored / shown / focused. The in-call overlay uses these

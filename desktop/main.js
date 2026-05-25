@@ -223,6 +223,59 @@ app.whenReady().then(async () => {
         }
     });
 
+    // ─── IP-based geolocation fallback ─────────────────────────────────
+    // Chromium's navigator.geolocation in Electron always routes through
+    // Google's Geolocation API and requires a GOOGLE_API_KEY to actually
+    // resolve a fix. When no key is configured (the default for our
+    // packaged desktop app), every getCurrentPosition() call fails with
+    // POSITION_UNAVAILABLE → the user sees
+    //    "Couldn't determine your location. Check your GPS / Wi-Fi …"
+    // and is blocked from clocking in.
+    //
+    // To unblock those users we expose a renderer-callable IPC
+    // (`get-ip-location`) that asks a free IP-geolocation service
+    // (ip-api.com) for an approximate {latitude, longitude, accuracy}.
+    // The renderer's geolocation util uses this as a last-resort
+    // fallback only when navigator.geolocation has already failed.
+    //
+    // Caveats (documented in the renderer): IP-based geolocation is
+    // typically city-level accurate (a few km), can be wildly off when
+    // the user is on a corporate VPN, and counts as "best effort". The
+    // accuracy value returned reflects this so the server-side geofence
+    // radius is the real source of truth.
+    ipcMain.handle('get-ip-location', async () => {
+        // Try a couple of providers for resilience; both are free / no key.
+        const providers = [
+            {
+                url: 'http://ip-api.com/json/?fields=status,lat,lon,city,regionName,country,query',
+                parse: (j) => (j && j.status === 'success')
+                    ? { latitude: j.lat, longitude: j.lon, accuracy: 5000 }
+                    : null,
+            },
+            {
+                url: 'https://ipapi.co/json/',
+                parse: (j) => (j && typeof j.latitude === 'number' && typeof j.longitude === 'number')
+                    ? { latitude: j.latitude, longitude: j.longitude, accuracy: 5000 }
+                    : null,
+            },
+        ];
+        for (const p of providers) {
+            try {
+                const resp = await net.fetch(p.url, { method: 'GET' });
+                if (!resp.ok) continue;
+                const json = await resp.json();
+                const coords = p.parse(json);
+                if (coords) {
+                    console.log(`[WorkPulse] IP geolocation via ${p.url} → ${coords.latitude},${coords.longitude}`);
+                    return { ok: true, ...coords };
+                }
+            } catch (err) {
+                console.warn(`[WorkPulse] IP geolocation provider failed (${p.url}):`, err?.message);
+            }
+        }
+        return { ok: false, error: 'All IP geolocation providers failed' };
+    });
+
     ipcMain.on('screen-source-selected', (_e, sourceId) => {
         if (!pendingSourceSelection) return;
         const { sources, callback } = pendingSourceSelection;
