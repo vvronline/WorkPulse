@@ -105,7 +105,7 @@ app.use(helmet({
             "worker-src": ["'self'", "blob:"],
             // MediaPipe also fetches the .wasm binary + .tflite model files
             // from jsdelivr at runtime — `connect-src` covers those XHR/fetches.
-            "connect-src": ["'self'", "https://cdn.jsdelivr.net", "ws:", "wss:"],
+            "connect-src": ["'self'", "https://cdn.jsdelivr.net", "https://nominatim.openstreetmap.org", "ws:", "wss:"],
         }
     },
     crossOriginOpenerPolicy: false,
