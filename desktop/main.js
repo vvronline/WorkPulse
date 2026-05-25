@@ -33,18 +33,25 @@ app.name = 'WorkPulse';
 // positioning is available.
 (() => {
     let apiKey = process.env.GOOGLE_API_KEY || '';
+    console.log('[WorkPulse] GOOGLE_API_KEY from env:', apiKey ? `set (${apiKey.length} chars)` : 'not set');
     if (!apiKey) {
         const candidates = [
             path.join(__dirname, 'google-api-key.txt'),
             app.isPackaged ? path.join(process.resourcesPath, 'google-api-key.txt') : null,
         ].filter(Boolean);
+        console.log('[WorkPulse] Checking API key file candidates:', candidates);
         for (const f of candidates) {
             try {
                 if (fs.existsSync(f)) {
                     apiKey = fs.readFileSync(f, 'utf-8').trim();
+                    console.log(`[WorkPulse] Found API key in ${f} (${apiKey.length} chars)`);
                     if (apiKey) break;
+                } else {
+                    console.log(`[WorkPulse] File not found: ${f}`);
                 }
-            } catch { /* ignore */ }
+            } catch (err) {
+                console.warn(`[WorkPulse] Error reading ${f}:`, err?.message);
+            }
         }
     }
     if (apiKey) {
@@ -175,11 +182,15 @@ app.whenReady().then(async () => {
     // though the Windows OS-level location toggle is on.
     session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
         const allowed = ['media', 'display-capture', 'mediaKeySystem', 'geolocation'];
-        callback(allowed.includes(permission));
+        const granted = allowed.includes(permission);
+        console.log(`[WorkPulse] Permission request: ${permission} → ${granted ? 'GRANTED' : 'DENIED'}`);
+        callback(granted);
     });
     session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
         const allowed = ['media', 'display-capture', 'mediaKeySystem', 'geolocation'];
-        return allowed.includes(permission);
+        const granted = allowed.includes(permission);
+        console.log(`[WorkPulse] Permission check: ${permission} → ${granted ? 'GRANTED' : 'DENIED'}`);
+        return granted;
     });
 
     // macOS: request camera/mic access at OS level
@@ -258,27 +269,36 @@ app.whenReady().then(async () => {
     // requires Windows Location Services to be ON; without it `netsh`
     // returns `(blank)` for the BSSID and we surface `{ ok: false }`.
     ipcMain.handle('get-wifi-info', async () => {
+        console.log('[WorkPulse] get-wifi-info: reading Wi-Fi interface...');
         try {
             if (process.platform === 'win32') {
                 const { stdout } = await execFileP('netsh', ['wlan', 'show', 'interfaces']);
+                console.log('[WorkPulse] get-wifi-info: netsh output length =', stdout.length);
                 const bssidM = /^\s*BSSID\s*:\s*([0-9A-Fa-f:]{17})\s*$/m.exec(stdout);
                 const ssidM = /^\s*SSID\s*:\s*(.+?)\s*$/m.exec(stdout);
                 const sigM = /^\s*Signal\s*:\s*(\d+)\s*%/m.exec(stdout);
                 const stateM = /^\s*State\s*:\s*(.+?)\s*$/m.exec(stdout);
+                console.log('[WorkPulse] get-wifi-info: parsed →', {
+                    bssid: bssidM?.[1] || null,
+                    ssid: ssidM?.[1] || null,
+                    signal: sigM?.[1] || null,
+                    state: stateM?.[1] || null,
+                });
                 if (!bssidM) {
-                    return {
-                        ok: false,
-                        error: stateM && /disconnected/i.test(stateM[1])
-                            ? 'wifi_disconnected'
-                            : 'bssid_unavailable',
-                    };
+                    const error = stateM && /disconnected/i.test(stateM[1])
+                        ? 'wifi_disconnected'
+                        : 'bssid_unavailable';
+                    console.warn('[WorkPulse] get-wifi-info: no BSSID →', error);
+                    return { ok: false, error };
                 }
-                return {
+                const result = {
                     ok: true,
                     bssid: bssidM[1].toUpperCase(),
                     ssid: ssidM ? ssidM[1] : null,
                     signal: sigM ? Number(sigM[1]) : null,
                 };
+                console.log('[WorkPulse] get-wifi-info: success →', result);
+                return result;
             }
             if (process.platform === 'darwin') {
                 const airport = '/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport';
@@ -319,6 +339,7 @@ app.whenReady().then(async () => {
     });
 
     ipcMain.handle('get-ip-location', async () => {
+        console.log('[WorkPulse] get-ip-location: attempting IP geolocation...');
         // Try a couple of providers for resilience; both are free / no key.
         const providers = [
             {
@@ -336,18 +357,23 @@ app.whenReady().then(async () => {
         ];
         for (const p of providers) {
             try {
+                console.log(`[WorkPulse] get-ip-location: trying ${p.url}...`);
                 const resp = await net.fetch(p.url, { method: 'GET' });
+                console.log(`[WorkPulse] get-ip-location: ${p.url} responded ${resp.status}`);
                 if (!resp.ok) continue;
                 const json = await resp.json();
+                console.log(`[WorkPulse] get-ip-location: ${p.url} body:`, JSON.stringify(json));
                 const coords = p.parse(json);
                 if (coords) {
                     console.log(`[WorkPulse] IP geolocation via ${p.url} → ${coords.latitude},${coords.longitude}`);
                     return { ok: true, ...coords };
                 }
+                console.warn(`[WorkPulse] get-ip-location: ${p.url} returned data but parse failed`);
             } catch (err) {
                 console.warn(`[WorkPulse] IP geolocation provider failed (${p.url}):`, err?.message);
             }
         }
+        console.error('[WorkPulse] get-ip-location: ALL providers failed');
         return { ok: false, error: 'All IP geolocation providers failed' };
     });
 
