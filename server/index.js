@@ -436,21 +436,54 @@ app.use((err, req, res, next) => {
 // Export app for testing (supertest)
 module.exports = { app };
 
-// Only start the server when run directly (not when imported for tests)
-if (require.main === module) {
-    const http = require('http');
-    (async () => {
+/**
+ * Bootstrap the database schema + run pending migrations.
+ *
+ * Why a dedicated function: the original code did this inside the
+ * `require.main === module` block so it would run only when `node index.js`
+ * was invoked directly. That broke production deployments on Railway (and
+ * other PaaS) whose container runtime imports the module via a wrapper
+ * (e.g. `node -e "require('./server/index.js')"`, pm2, Nixpacks, etc.),
+ * leaving the DB stuck on whatever schema it had at the original deploy.
+ *
+ * The new behaviour:
+ *   - In test mode (NODE_ENV === 'test'): skip bootstrap so supertest is fast
+ *     and isolated.
+ *   - Otherwise: always bootstrap, regardless of how the module was loaded.
+ *     We use a guard flag so concurrent imports don't run it twice.
+ */
+let bootstrapPromise = null;
+async function bootstrap() {
+    if (bootstrapPromise) return bootstrapPromise;
+    bootstrapPromise = (async () => {
         await initDB();
         redis.initRedis();
-        // Apply pending versioned migrations across every active tenant once
-        // at startup. Failures per-tenant are non-fatal — they're logged and
-        // retried on the next deploy.
         try {
             const { sweepAllTenants } = require('./utils/migrationRunner');
             await sweepAllTenants();
+            logger.info('Migration sweep complete on bootstrap');
         } catch (err) {
             logger.warn({ err: err.message }, 'Migration sweep failed (non-fatal)');
         }
+    })();
+    return bootstrapPromise;
+}
+
+// Auto-bootstrap when imported by something other than a test runner.
+// `require.main === module` (the direct-invocation path below) also calls
+// bootstrap(); the memoised promise means we never run twice.
+if (process.env.NODE_ENV !== 'test') {
+    bootstrap().catch(err => {
+        logger.error({ err }, 'Bootstrap failed at module load — server may run with stale schema');
+    });
+}
+
+// Only start the HTTP server when run directly (not when imported for tests
+// or by environments that just want the express app instance).
+if (require.main === module) {
+    const http = require('http');
+    (async () => {
+        await bootstrap();
         const httpServer = http.createServer(app);
         setupWebSocket(httpServer);
 

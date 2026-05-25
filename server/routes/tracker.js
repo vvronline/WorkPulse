@@ -251,6 +251,19 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
                     officeBssids.includes(formattedBssid)
                 );
 
+                // Diagnostic log — shows up in the server console for every
+                // clock-in. Helps debug "I'm on the office Wi-Fi but the
+                // server still failed me" by exposing exactly what the server
+                // saw (incoming BSSID, configured list, toggle state, match).
+                req.log.info({
+                    wifi_verification_enabled: !!orgVerify.office_wifi_verification_enabled,
+                    incoming_bssid_raw: wifi_bssid || null,
+                    incoming_bssid_normalised: formattedBssid,
+                    office_bssids: officeBssids,
+                    wifi_match: wifiMatch,
+                    work_mode: selectedWorkMode,
+                }, 'clock-in: wifi check');
+
                 // — Location check (office + hybrid) —
                 // Skipped when the Wi-Fi check already proved the user is
                 // at the office. Hybrid still records the match as 'office'.
@@ -293,17 +306,31 @@ router.post('/clock-in', auth, loadUserContext, async (req, res) => {
 
                     const inside = distance <= radiusM;
                     if (selectedWorkMode === 'office' && !inside) {
-                        // Include a hint about the Wi-Fi fallback when the org
-                        // has it configured but the user wasn't on the office
-                        // network (or is on a browser).
-                        const wifiHint = (orgVerify.office_wifi_verification_enabled && officeBssids.length > 0)
-                            ? ' Or connect to the office Wi-Fi.'
-                            : '';
+                        // Build a precise diagnostic message so the user knows
+                        // WHY the Wi-Fi fallback didn't kick in (toggle off,
+                        // BSSID not registered, or no BSSID sent at all).
+                        let wifiHint = '';
+                        if (!orgVerify.office_wifi_verification_enabled) {
+                            wifiHint = ' (Office Wi-Fi verification is disabled — ask an admin to enable it.)';
+                        } else if (officeBssids.length === 0) {
+                            wifiHint = ' (No office Wi-Fi APs registered yet.)';
+                        } else if (!formattedBssid) {
+                            wifiHint = ' Connect to the office Wi-Fi to skip the geofence check.';
+                        } else if (!officeBssids.includes(formattedBssid)) {
+                            wifiHint = ` Your network (${formattedBssid}) is not registered as an office AP — ask an admin to add it.`;
+                        }
                         return res.status(403).json({
                             error: `You are ${distance} m from the office (allowed ${radiusM} m). Move closer or switch to remote.${wifiHint}`,
                             code: 'OUTSIDE_GEOFENCE',
                             distance_m: distance,
                             radius_m: radiusM,
+                            // Diagnostics so the client can render which signal failed.
+                            wifi: {
+                                enabled: !!orgVerify.office_wifi_verification_enabled,
+                                registered_count: officeBssids.length,
+                                incoming_bssid: formattedBssid,
+                                matched: false,
+                            },
                         });
                     }
                     if (selectedWorkMode === 'hybrid') {
