@@ -327,8 +327,13 @@ app.whenReady().then(async () => {
                     // needed in script-src/connect-src.
                     "script-src 'self' workpulse://app 'unsafe-inline' 'wasm-unsafe-eval'; " +
                     "style-src 'self' workpulse://app 'unsafe-inline'; " +
-                    `connect-src 'self' workpulse://app ${RAILWAY_URL} wss://${new URL(RAILWAY_URL).host} https://embed.diagrams.net; ` +
-                    "img-src 'self' workpulse://app data: blob: https://embed.diagrams.net; " +
+                    // OpenStreetMap tile servers (a/b/c.tile.openstreetmap.org)
+                    // are needed by the Leaflet map used in Organization →
+                    // Attendance Settings to pick an office location. We also
+                    // allow unpkg.com so Leaflet's default marker icons load
+                    // (they're served from the npm package's CDN copy).
+                    `connect-src 'self' workpulse://app ${RAILWAY_URL} wss://${new URL(RAILWAY_URL).host} https://embed.diagrams.net https://*.tile.openstreetmap.org https://unpkg.com; ` +
+                    "img-src 'self' workpulse://app data: blob: https://embed.diagrams.net https://*.tile.openstreetmap.org https://unpkg.com; " +
                     "media-src 'self' workpulse://app blob:; " +
                     "font-src 'self' workpulse://app; " +
                     // MediaPipe spawns helper workers from blob: URLs.
