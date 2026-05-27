@@ -55,9 +55,7 @@ app.name = 'WorkPulse';
         }
     }
     if (apiKey) {
-        // Both switches are honoured by different Chromium components
-        // depending on the platform / Electron version.
-        app.commandLine.appendSwitch('gl-api-key', apiKey);
+        app.commandLine.appendSwitch('google-api-key', apiKey);
         process.env.GOOGLE_API_KEY = apiKey;
         console.log('[WorkPulse] Geolocation API key configured');
     } else {
