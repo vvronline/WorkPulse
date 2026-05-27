@@ -31,6 +31,12 @@ app.name = 'WorkPulse';
 // "Location" turned on in Windows Settings → Privacy → Location), but
 // in most office environments that still works because Wi-Fi based
 // positioning is available.
+// Track the api key we actually loaded so the post-ready startup probe can
+// independently verify with Google that the key is accepted. We deliberately
+// don't print the full key anywhere, only its length and first 4 chars, so
+// the desktop log can be shared without leaking the secret.
+let LOADED_GOOGLE_API_KEY = '';
+
 (() => {
     let apiKey = process.env.GOOGLE_API_KEY || '';
     console.log('[WorkPulse] GOOGLE_API_KEY from env:', apiKey ? `set (${apiKey.length} chars)` : 'not set');
@@ -43,8 +49,16 @@ app.name = 'WorkPulse';
         for (const f of candidates) {
             try {
                 if (fs.existsSync(f)) {
-                    apiKey = fs.readFileSync(f, 'utf-8').trim();
-                    console.log(`[WorkPulse] Found API key in ${f} (${apiKey.length} chars)`);
+                    const raw = fs.readFileSync(f, 'utf-8');
+                    // .trim() strips trailing \n / \r\n that `echo > file` adds.
+                    // We log both the raw and trimmed lengths so a future CI
+                    // regression that re-introduces a stray newline is visible.
+                    apiKey = raw.trim();
+                    console.log(
+                        `[WorkPulse] Found API key in ${f} ` +
+                        `(raw=${raw.length} bytes, trimmed=${apiKey.length} chars, ` +
+                        `prefix='${apiKey.slice(0, 4)}…')`
+                    );
                     if (apiKey) break;
                 } else {
                     console.log(`[WorkPulse] File not found: ${f}`);
@@ -57,7 +71,15 @@ app.name = 'WorkPulse';
     if (apiKey) {
         app.commandLine.appendSwitch('google-api-key', apiKey);
         process.env.GOOGLE_API_KEY = apiKey;
-        console.log('[WorkPulse] Geolocation API key configured');
+        LOADED_GOOGLE_API_KEY = apiKey;
+        // Confirm Chromium actually accepted the switch — `appendSwitch` is
+        // silent on validation errors, but `getSwitchValue` round-trips so
+        // we can verify the value is in the command line as expected.
+        const registered = app.commandLine.getSwitchValue('google-api-key');
+        console.log(
+            `[WorkPulse] Geolocation API key configured ` +
+            `(switch length=${registered.length}, matches=${registered === apiKey})`
+        );
     } else {
         console.log('[WorkPulse] No GOOGLE_API_KEY found — relying on OS location service for geolocation');
     }
@@ -391,6 +413,32 @@ $w.Stop()
         }
     });
 
+    // ─── Open OS-level Location settings ─────────────────────────────────
+    // The renderer surfaces this as a "Open Windows Location Settings" button
+    // when a clock-in fails because the geolocation fix is too coarse — the
+    // root cause is almost always that the user has Windows Location Services
+    // turned off, which is a fix the user has to make themselves in Settings.
+    ipcMain.handle('open-location-settings', async () => {
+        try {
+            const { shell } = require('electron');
+            if (process.platform === 'win32') {
+                await shell.openExternal('ms-settings:privacy-location');
+                return { ok: true };
+            }
+            if (process.platform === 'darwin') {
+                await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices');
+                return { ok: true };
+            }
+            // Linux desktops don't have a unified privacy-location URI;
+            // just open a help URL so the user can find the right toggle.
+            await shell.openExternal('https://www.google.com/search?q=enable+location+services+linux');
+            return { ok: true };
+        } catch (err) {
+            console.warn('[WorkPulse] open-location-settings failed:', err?.message);
+            return { ok: false, error: err?.message || 'open_failed' };
+        }
+    });
+
     ipcMain.handle('get-ip-location', async () => {
         console.log('[WorkPulse] get-ip-location: attempting IP geolocation...');
         // Try a couple of providers for resilience; both are free / no key.
@@ -706,6 +754,54 @@ $w.Stop()
     // Always-on-top mini call window (Teams-style "floatie") — opens via
     // IPC from the renderer when the user clicks the in-call PiP button.
     setupCallPipWindow(mainWindow);
+
+    // ─── One-time startup probe of Google Geolocation API ──────────────
+    // Chromium's navigator.geolocation calls into this same endpoint, but
+    // silently swallows any HTTP error and falls back to a *very* coarse
+    // built-in fix. That makes "the key isn't working" indistinguishable
+    // from "the user is in a poor-signal area" in user-facing symptoms.
+    //
+    // To convert that silent failure into a loud one, we explicitly hit
+    // the endpoint at startup with the same key. The result is logged
+    // (lat/lng truncated to 2 decimals so we don't leak the user's exact
+    // location into shareable logs) so you can tell at a glance from the
+    // desktop log whether the key is accepted by Google:
+    //
+    //   OK     → "GeoProbe: Google accepted key, accuracy ≈ X m at LAT,LNG"
+    //   FAIL   → "GeoProbe: HTTP 403 — REQUEST_DENIED — API has not been
+    //             used in project ..."
+    //
+    // Cost: 1 Geolocation API request per app start (~$0.005). Negligible.
+    if (LOADED_GOOGLE_API_KEY) {
+        (async () => {
+            try {
+                const url = `https://www.googleapis.com/geolocation/v1/geolocate?key=${encodeURIComponent(LOADED_GOOGLE_API_KEY)}`;
+                const resp = await net.fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ considerIp: true }),
+                });
+                const body = await resp.text();
+                if (!resp.ok) {
+                    console.warn(`[WorkPulse] GeoProbe: Google rejected the API key — HTTP ${resp.status}: ${body.slice(0, 500)}`);
+                    return;
+                }
+                let parsed;
+                try { parsed = JSON.parse(body); } catch { parsed = null; }
+                if (parsed && parsed.location) {
+                    const lat = Number(parsed.location.lat).toFixed(2);
+                    const lng = Number(parsed.location.lng).toFixed(2);
+                    console.log(`[WorkPulse] GeoProbe: Google accepted key, accuracy ≈ ${parsed.accuracy} m at ${lat},${lng} (IP-only, Chromium will do better with Wi-Fi scan)`);
+                } else {
+                    console.warn('[WorkPulse] GeoProbe: unexpected response shape:', body.slice(0, 500));
+                }
+            } catch (err) {
+                console.warn('[WorkPulse] GeoProbe: failed to reach Google Geolocation API:', err?.message);
+            }
+        })();
+    } else {
+        console.log('[WorkPulse] GeoProbe: skipped (no GOOGLE_API_KEY loaded)');
+    }
 });
 
 // macOS: re-create window when dock icon is clicked

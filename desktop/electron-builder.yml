@@ -21,6 +21,14 @@ extraResources:
     to: client/dist
     filter:
       - "**/*"
+  # NOTE: we deliberately do NOT duplicate google-api-key.txt into
+  # extraResources. The file is already packaged inside the asar via the
+  # `files:` array above, and Electron's asar shim lets main.js read it
+  # via `path.join(__dirname, 'google-api-key.txt')`. Adding an explicit
+  # `from: google-api-key.txt` entry here would make local dev builds
+  # (and CI builds without the GOOGLE_API_KEY secret) fail with
+  # "ENOENT: google-api-key.txt" because electron-builder treats missing
+  # extraResources source files as a hard error.
 
 win:
   target:

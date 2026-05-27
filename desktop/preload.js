@@ -59,6 +59,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getIpLocation: () => ipcRenderer.invoke('get-ip-location'),
     getNativeLocation: () => ipcRenderer.invoke('get-native-location'),
 
+    // Open the OS-level Location privacy settings page so users with a bad
+    // geolocation fix (typical for packaged Electron builds) can flip on
+    // Windows Location Services without leaving the app. No-op on platforms
+    // that don't have a privacy-location URI scheme.
+    openLocationSettings: () => ipcRenderer.invoke('open-location-settings'),
+
     // ─── Wi-Fi info reader (attendance clock-in Wi-Fi-first verification) ──
     // Returns { ok, bssid, ssid, signal } describing the AP the OS is
     // currently associated with. Used by ClockInVerifyModal to send the

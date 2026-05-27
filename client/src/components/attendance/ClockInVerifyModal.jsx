@@ -41,6 +41,9 @@ export default function ClockInVerifyModal({ workMode, submitClockIn, onSuccess,
     const [step, setStep] = useState(needsLocation ? 'location' : 'face'); // 'location' | 'face' | 'submitting'
     const [location, setLocation] = useState(null);
     const [wifi, setWifi] = useState(null); // { ok, bssid, ssid, signal } or null
+    // locErr is { message, code, accuracy, source } once set — `accuracy` /
+    // `source` are populated when we got a fix but it was too coarse to use,
+    // so the UI can offer the "Open Windows Location Settings" remediation.
     const [locErr, setLocErr] = useState(null);
     const [submitErr, setSubmitErr] = useState(null);
     const [busy, setBusy] = useState(false);
@@ -84,15 +87,44 @@ export default function ClockInVerifyModal({ workMode, submitClockIn, onSuccess,
             if (haveWifi || haveLoc) {
                 setStep('face');
             } else {
-                // Only fail hard when both signals failed.
-                setLocErr(geolocationErrorMessage(locError?.code));
+                // Only fail hard when both signals failed. Pass the accuracy
+                // and source from the rejected fix (if any) so the message
+                // can be specific — see geolocationErrorMessage().
+                setLocErr({
+                    message: geolocationErrorMessage(locError?.code, {
+                        accuracy: locError?.accuracy,
+                        source: locError?.source,
+                    }),
+                    code: locError?.code,
+                    accuracy: locError?.accuracy,
+                    source: locError?.source,
+                });
             }
         } catch (err) {
-            setLocErr(geolocationErrorMessage(err?.code));
+            setLocErr({
+                message: geolocationErrorMessage(err?.code, {
+                    accuracy: err?.accuracy,
+                    source: err?.source,
+                }),
+                code: err?.code,
+                accuracy: err?.accuracy,
+                source: err?.source,
+            });
         } finally {
             setBusy(false);
         }
     }
+
+    // Open the OS-level Location privacy settings (Windows / macOS) so the
+    // user can flip Location Services on. Only exposed inside Electron.
+    function openLocationSettings() {
+        try {
+            if (window?.electronAPI?.openLocationSettings) {
+                window.electronAPI.openLocationSettings();
+            }
+        } catch { /* swallow — non-critical */ }
+    }
+    const inElectron = !!(window?.electronAPI?.openLocationSettings);
 
     // Auto-collect signals as soon as the modal opens for office/hybrid.
     useEffect(() => {
@@ -174,10 +206,17 @@ export default function ClockInVerifyModal({ workMode, submitClockIn, onSuccess,
                         <div className={s.locBox}>
                             {locErr ? (
                                 <>
-                                    <div className={s.errMsg}><AlertTriangle size={16} /> {locErr}</div>
-                                    <button className="btn btn-primary" onClick={requestSignals} disabled={busy}>
-                                        {busy ? <><Loader2 size={14} className={s.spin} /> Requesting…</> : 'Try again'}
-                                    </button>
+                                    <div className={s.errMsg}><AlertTriangle size={16} /> {locErr.message}</div>
+                                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+                                        <button className="btn btn-primary" onClick={requestSignals} disabled={busy}>
+                                            {busy ? <><Loader2 size={14} className={s.spin} /> Requesting…</> : 'Try again'}
+                                        </button>
+                                        {inElectron && (locErr.code === 'POSITION_UNAVAILABLE' || locErr.code === 'PERMISSION_DENIED' || (Number.isFinite(locErr.accuracy) && locErr.accuracy > 200)) && (
+                                            <button className="btn btn-secondary" onClick={openLocationSettings} disabled={busy}>
+                                                Open Location Settings
+                                            </button>
+                                        )}
+                                    </div>
                                 </>
                             ) : (
                                 <>

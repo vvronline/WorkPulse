@@ -100,12 +100,29 @@ jobs:
         run: npm ci
 
       - name: Write Google API key for geolocation
-        if: env.GOOGLE_API_KEY != ''
-        env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        # NOTE: do NOT use `env.GOOGLE_API_KEY` here — step-level `if:` does NOT
+        # see step-level `env:`, it only sees job/workflow env. Reference the
+        # secret directly instead. (We also can't reference `secrets.*` in `if`
+        # for some hosted runners — so the bash guard inside also protects us.)
         shell: bash
         working-directory: desktop
-        run: echo "$GOOGLE_API_KEY" > google-api-key.txt
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: |
+          if [ -z "${GOOGLE_API_KEY}" ]; then
+            echo "::warning::GOOGLE_API_KEY secret is empty — packaged build will fall back to coarse network geolocation"
+            exit 0
+          fi
+          # Use printf (NOT echo) so we don't append a trailing \n (or \r\n on
+          # Windows runners). Chromium's --google-api-key switch is whitespace-
+          # sensitive and a stray newline can silently invalidate the key.
+          printf '%s' "${GOOGLE_API_KEY}" > google-api-key.txt
+          BYTES=$(wc -c < google-api-key.txt | tr -d ' ')
+          echo "Wrote google-api-key.txt (${BYTES} bytes)"
+          # Sanity check: a typical Google API key is 39 chars.
+          if [ "${BYTES}" -lt 30 ] || [ "${BYTES}" -gt 80 ]; then
+            echo "::warning::google-api-key.txt is ${BYTES} bytes — does not look like a valid Google API key"
+          fi
 
       # ──────────────────────────────────────────────────────────────────────
       # Cache the electron binary downloads (and app-builder helper binaries)
