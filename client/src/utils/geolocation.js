@@ -60,6 +60,29 @@ export async function getCurrentPosition(opts = {}) {
 
         if (!fallbackEligible) throw err;
 
+        // Try native Windows Location API first (GPS / Wi-Fi triangulation — accurate).
+        if (typeof window.electronAPI.getNativeLocation === 'function') {
+            try {
+                console.log('[Geolocation] Trying native Windows location...');
+                const native = await window.electronAPI.getNativeLocation();
+                console.log('[Geolocation] Native location response:', native);
+                if (native && native.ok && Number.isFinite(native.latitude) && Number.isFinite(native.longitude)) {
+                    const result = {
+                        latitude: native.latitude,
+                        longitude: native.longitude,
+                        accuracy: native.accuracy || 100,
+                        source: 'native',
+                    };
+                    console.log('[Geolocation] Using native location:', result);
+                    return result;
+                }
+                console.warn('[Geolocation] Native location returned unusable data:', native);
+            } catch (nativeErr) {
+                console.warn('[Geolocation] Native location threw:', nativeErr);
+            }
+        }
+
+        // Last resort: IP-based geolocation (city-level, ~5-50km accuracy).
         try {
             console.log('[Geolocation] Calling electronAPI.getIpLocation()...');
             const ipFix = await window.electronAPI.getIpLocation();

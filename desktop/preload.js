@@ -57,6 +57,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // requires a GOOGLE_API_KEY for its built-in geolocation, which we
     // can't ship publicly). See main.js → ipcMain.handle('get-ip-location').
     getIpLocation: () => ipcRenderer.invoke('get-ip-location'),
+    getNativeLocation: () => ipcRenderer.invoke('get-native-location'),
 
     // ─── Wi-Fi info reader (attendance clock-in Wi-Fi-first verification) ──
     // Returns { ok, bssid, ssid, signal } describing the AP the OS is

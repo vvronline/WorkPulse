@@ -336,6 +336,61 @@ app.whenReady().then(async () => {
         }
     });
 
+    // ─── Native Windows geolocation via .NET Location API ──────────────
+    // Bypasses Chromium entirely and uses the OS location service (GPS /
+    // Wi-Fi triangulation). Much more accurate than IP-based geolocation.
+    ipcMain.handle('get-native-location', async () => {
+        if (process.platform !== 'win32') {
+            return { ok: false, error: 'unsupported_platform' };
+        }
+        console.log('[WorkPulse] get-native-location: querying Windows Location API...');
+        try {
+            const script = `
+Add-Type -AssemblyName System.Device
+$w = New-Object System.Device.Location.GeoCoordinateWatcher([System.Device.Location.GeoPositionAccuracy]::High)
+$w.Start()
+$timeout = [DateTime]::Now.AddSeconds(15)
+while ($w.Status -ne 'Ready' -and [DateTime]::Now -lt $timeout) { Start-Sleep -Milliseconds 250 }
+if ($w.Status -eq 'Ready') {
+    $p = $w.Position.Location
+    if ($p.Latitude -ne [Double]::NaN) {
+        Write-Output "$($p.Latitude)|$($p.Longitude)|$($p.HorizontalAccuracy)"
+    } else { Write-Output "ERROR|NoFix" }
+} else { Write-Output "ERROR|$($w.Status)" }
+$w.Stop()
+`.trim();
+            const { stdout } = await execFileP('powershell.exe', [
+                '-NoProfile', '-NonInteractive', '-Command', script,
+            ], { timeout: 20000 });
+            const line = stdout.trim();
+            console.log('[WorkPulse] get-native-location: raw output:', line);
+            if (line.startsWith('ERROR|')) {
+                const reason = line.split('|')[1] || 'unknown';
+                console.warn('[WorkPulse] get-native-location: failed →', reason);
+                return { ok: false, error: reason };
+            }
+            const parts = line.split('|');
+            const latitude = parseFloat(parts[0]);
+            const longitude = parseFloat(parts[1]);
+            const accuracy = parseFloat(parts[2]);
+            if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+                console.warn('[WorkPulse] get-native-location: parse failed →', line);
+                return { ok: false, error: 'parse_failed' };
+            }
+            const result = {
+                ok: true,
+                latitude,
+                longitude,
+                accuracy: Number.isFinite(accuracy) ? accuracy : 100,
+            };
+            console.log('[WorkPulse] get-native-location: success →', result);
+            return result;
+        } catch (err) {
+            console.warn('[WorkPulse] get-native-location failed:', err?.message);
+            return { ok: false, error: err?.message || 'native_location_failed' };
+        }
+    });
+
     ipcMain.handle('get-ip-location', async () => {
         console.log('[WorkPulse] get-ip-location: attempting IP geolocation...');
         // Try a couple of providers for resilience; both are free / no key.
