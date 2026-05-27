@@ -13,7 +13,8 @@
     background: #000;
     border-radius: 12px;
     overflow: hidden;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
 }
 
 .video {
@@ -57,9 +58,10 @@
 .frameGuide {
     position: absolute;
     inset: 12% 18%;
-    border: 2px dashed rgba(255, 255, 255, 0.6);
+    border: 2.5px dashed rgba(255, 255, 255, 0.7);
     border-radius: 50%;
     pointer-events: none;
+    box-shadow: 0 0 0 2000px rgba(0, 0, 0, 0.2);
 }
 
 .err {

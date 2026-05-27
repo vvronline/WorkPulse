@@ -14,6 +14,7 @@ files:
   - callPipWindow.js
   - icons/**/*
   - package.json
+  - google-api-key.txt
 
 extraResources:
   - from: ../client/dist

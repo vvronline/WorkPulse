@@ -99,6 +99,14 @@ jobs:
         working-directory: desktop
         run: npm ci
 
+      - name: Write Google API key for geolocation
+        if: env.GOOGLE_API_KEY != ''
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        shell: bash
+        working-directory: desktop
+        run: echo "$GOOGLE_API_KEY" > google-api-key.txt
+
       # ──────────────────────────────────────────────────────────────────────
       # Cache the electron binary downloads (and app-builder helper binaries)
       # so that flaky 502s from github.com/electron/electron/releases/download

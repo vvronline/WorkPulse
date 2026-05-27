@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { MapPin, ShieldCheck, Loader2, X, AlertTriangle, CheckCircle2, Wifi, WifiOff } from 'lucide-react';
+import { ShieldCheck, Loader2, X, AlertTriangle, CheckCircle2, Wifi, WifiOff } from 'lucide-react';
 import FaceCapture from './FaceCapture';
 import { getOfficeSignals, geolocationErrorMessage } from '../../utils/geolocation';
 import { getCurrentOrg } from '../../api';
@@ -154,13 +154,18 @@ export default function ClockInVerifyModal({ workMode, submitClockIn, onSuccess,
                 <ol className={s.steps}>
                     {needsLocation && (
                         <li className={`${s.step} ${(step === 'location') ? s.active : ((location || wifiVerified) ? s.done : '')}`}>
-                            <span className={s.stepIcon}>{(location || wifiVerified) ? <CheckCircle2 size={14} /> : <MapPin size={14} />}</span>
-                            Location
+                            <span className={s.stepNum}>
+                                {(location || wifiVerified) ? <CheckCircle2 size={14} /> : '1'}
+                            </span>
+                            <span className={s.stepLabel}>Location</span>
                         </li>
                     )}
+                    {needsLocation && <li className={s.stepConnector} aria-hidden="true" />}
                     <li className={`${s.step} ${(step === 'face' || step === 'submitting') ? s.active : ''}`}>
-                        <span className={s.stepIcon}><ShieldCheck size={14} /></span>
-                        Face Match
+                        <span className={s.stepNum}>
+                            {needsLocation ? '2' : '1'}
+                        </span>
+                        <span className={s.stepLabel}>Face Match</span>
                     </li>
                 </ol>
 

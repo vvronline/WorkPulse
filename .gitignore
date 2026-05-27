@@ -21,6 +21,9 @@ data/
 .vite/
 
 # ── Environment / secrets ─────────────────────────────
+# Google geolocation API key (injected at build time from CI secrets)
+desktop/google-api-key.txt
+
 # All real .env files (and any per-tier variant) MUST stay local.
 # Only `.env.example` (no secrets) belongs in git.
 .env
