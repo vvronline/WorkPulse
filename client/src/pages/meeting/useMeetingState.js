@@ -1,6 +1,53 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useAuth } from '../../AuthContext';
-import { getIceConfig, uploadChatFile } from '../../api';
+import { getIceConfig, uploadChatFile, getMeetingMessages } from '../../api';
+import {
+    getCachedMessages,
+    setCachedMessages,
+    upsertCachedMessage,
+    applyCachedMessages,
+} from './messagesCache';
+import { retryWithBackoff } from '../../utils/retryWithBackoff';
+import { STATES, nextState as fsmNext, describeState } from './connectionStateMachine';
+// ADR-008 — MeetingStore singleton. We mirror the highest-traffic state
+// slices into the store on every change so future consumers can
+// subscribe to one slice instead of importing the whole hook return.
+// The hook's own `useState` values stay authoritative; the store is a
+// read-only projection during this incremental migration window.
+import { createMeetingStore, DEFAULT_MEETING_STATE } from './meetingStore';
+
+/**
+ * Singleton store shared by every meeting view in the tab. We use a
+ * module-scope instance (not a per-hook one) because the consumers we
+ * want to migrate later — MeetingChat, ParticipantTile, MeetingBottomBar —
+ * are siblings of the hook, not children, and React Context would mean
+ * a render-cascade-back to the parent for every state change.
+ */
+export const meetingStore = createMeetingStore({ ...DEFAULT_MEETING_STATE });
+
+/**
+ * Generate a stable, collision-resistant id for in-flight chat messages.
+ * Round-tripped to the server in the `clientMsgId` field so the server can
+ * INSERT idempotently (ON CONFLICT DO NOTHING on the partial unique index
+ * over `messages.client_msg_id`) and so the receiver can dedupe its
+ * optimistic bubble against the server echo regardless of text/file shape.
+ *
+ * crypto.randomUUID() is available in every modern browser + Electron.
+ * The Math.random fallback is for the test environment (jsdom older than
+ * 22) and exotic embedded WebViews.
+ */
+function newClientMsgId() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    return `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** How long an outgoing message can sit in the pending-send queue before we
+ *  surface it as `_failed` in the UI. */
+const PENDING_SEND_FAIL_AFTER_MS = 10_000;
+/** Retry cadence for the pending-send queue when WS is OPEN. */
+const PENDING_SEND_RETRY_EVERY_MS = 3_000;
 
 const DEFAULT_ICE_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -47,7 +94,7 @@ async function acquireMeetingMedia(wantVideo) {
  * Core meeting state hook — handles media, WebRTC mesh, signaling, and chat.
  * Optimized: no background effects, stable WS handler (no presenterId dep).
  */
-export function useMeetingState({ meetingId, ws, initialMuted = false, initialVideoOff = false, keepAliveOnUnmount = false, existingStream = null }) {
+export function useMeetingState({ meetingId, code, ws, initialMuted = false, initialVideoOff = false, keepAliveOnUnmount = false, existingStream = null }) {
     const { user } = useAuth();
 
     const [localStream, setLocalStream] = useState(null);
@@ -57,9 +104,55 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     const [screenSharing, setScreenSharing] = useState(false);
     const [participants, setParticipants] = useState(new Map());
     const [presenterId, setPresenterId] = useState(null);
+    // Phase 5 — Active speaker (the loudest participant in the last ~2 s,
+    // or null if nobody is talking). Computed from local + remote
+    // `meeting_audio_level` samples in a separate effect below.
+    const [activeSpeakerId, setActiveSpeakerId] = useState(null);
+    // Phase 5 — Map of userId → most recent audio level (0..1) with the
+    // sample timestamp. Stored in a ref because we read it from the
+    // active-speaker timer without wanting to re-render every 100 ms.
+    const audioLevelsRef = useRef(new Map()); // userId → { level, at }
+    // Phase 5 — Per-peer requested-quality cap (q/h/f). Receivers set this
+    // via `meeting_request_quality`; on every fresh RTCRtpSender (e.g. after
+    // an ICE restart or camera re-acquire) we re-apply the cap.
+    const requestedQualityRef = useRef(new Map()); // peerId → 'q' | 'h' | 'f'
+    // Phase 5 — Last quality level we asked of each peer (receiver-side
+    // throttle so we don't spam WS).
+    const lastRequestSentRef = useRef(new Map()); // peerId → 'q' | 'h' | 'f'
     const [activePanel, setActivePanel] = useState(null);
-    const [messages, setMessages] = useState([]);
+    // Seed from the per-meeting module-scope cache so a remount of
+    // MeetingRoom (PiP swap, navigation, Strict Mode) doesn't blank the
+    // chat panel for the ~200-800ms it takes to hydrate from the server.
+    const [messages, setMessages] = useState(() => getCachedMessages(code));
+    // `status` is the public flat string we've always exposed; `fsmState`
+    // is the new typed FSM state which drives the degraded-mode banner.
+    // We keep `status` as a back-compat shim — every existing consumer
+    // (MeetingRoom.jsx checks for 'ended' / 'left' / 'failed') continues
+    // to work because the FSM state names are a strict superset.
     const [status, setStatus] = useState('joining');
+    const [fsmState, setFsmState] = useState(STATES.IDLE);
+    const fsmStateRef = useRef(fsmState);
+    fsmStateRef.current = fsmState;
+    /**
+     * Single funnel for FSM transitions. Use this everywhere instead of
+     * calling setFsmState directly so transitions stay legal and so the
+     * legacy `status` string stays in sync (mostly so consumers like the
+     * `useEffect([status])` in MeetingRoom keep firing on `ended`/`left`).
+     */
+    const dispatchFsm = useCallback((event) => {
+        const cur = fsmStateRef.current;
+        const next = fsmNext(cur, event);
+        if (next !== cur) {
+            setFsmState(next);
+            // Mirror onto the legacy status string for back-compat.
+            // We collapse a few FSM states onto the same legacy strings
+            // so older code paths don't see a sudden new value.
+            const legacy = next === STATES.RECONNECTING || next === STATES.DEGRADED
+                ? 'connecting'
+                : next;
+            setStatus(legacy);
+        }
+    }, []);
     const [raisedHand, setRaisedHand] = useState(false);
     const [connectionQualities, setConnectionQualities] = useState(new Map());
     const [mediaReady, setMediaReady] = useState(!!existingStream);
@@ -84,6 +177,34 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
     const screenSharingRef = useRef(screenSharing);
     screenSharingRef.current = screenSharing;
 
+    // Mirror every messages change back into the cache so the next remount
+    // can seed from it. Cheap — array reference equality short-circuits when
+    // setMessages was a no-op.
+    useEffect(() => {
+        if (code) setCachedMessages(code, messages);
+    }, [code, messages]);
+
+    // ── Pending-send queue (at-least-once delivery for in-meeting chat) ──
+    // Every outgoing message is recorded here with its clientMsgId. The
+    // entry is removed when the server confirms persistence via
+    // `meeting_message_ack` (or the broadcast echo carrying the same
+    // clientMsgId, whichever arrives first). A periodic retry timer
+    // re-sends anything older than PENDING_SEND_RETRY_EVERY_MS while the
+    // WS is OPEN, and flips the optimistic message to `_failed` after
+    // PENDING_SEND_FAIL_AFTER_MS so the UI can surface a retry button.
+    const pendingSendsRef = useRef(new Map()); // clientMsgId → { payload, firstSentAt, lastSentAt }
+
+    const markMessageStatus = useCallback((clientMsgId, patch) => {
+        if (!clientMsgId) return;
+        setMessages(prev => {
+            const idx = prev.findIndex(m => m.clientMsgId === clientMsgId);
+            if (idx < 0) return prev;
+            const next = prev.slice();
+            next[idx] = { ...next[idx], ...patch };
+            return next;
+        });
+    }, []);
+
     const replaceVideoTrackOnPeers = useCallback(async (newTrack) => {
         const tasks = [];
         for (const [, pc] of pcsRef.current) {
@@ -98,6 +219,40 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             wsRef.current.send(JSON.stringify({ type, data }));
         }
     }, []);
+
+    // ─── Phase 5 — Per-peer adaptive bitrate helpers ───────────────────────
+    /**
+     * Apply the currently-requested quality cap for one peer's video sender.
+     * Called whenever a `meeting_request_quality` arrives AND whenever a
+     * fresh RTCRtpSender appears (ICE restart, camera re-acquire).
+     */
+    const applyQualityCapForPeer = useCallback((peerId) => {
+        const pc = pcsRef.current.get(peerId);
+        if (!pc) return;
+        const level = requestedQualityRef.current.get(peerId) || 'h';
+        const maxBitrate = level === 'q' ? 150_000 : level === 'h' ? 500_000 : 1_200_000;
+        for (const sender of pc.getSenders()) {
+            if (!sender.track || sender.track.kind !== 'video') continue;
+            try {
+                const params = sender.getParameters();
+                if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+                params.encodings[0].maxBitrate = maxBitrate;
+                sender.setParameters(params).catch(() => { });
+            } catch { /* ignore */ }
+        }
+    }, []);
+
+    /**
+     * Receiver-side helper: tell a peer to lower / raise their upstream
+     * quality (q/h/f). Throttles to one request per (peer, level).
+     * Wired into ParticipantTile via the returned `requestPeerQuality`.
+     */
+    const requestPeerQuality = useCallback((peerId, level) => {
+        if (!peerId || !['q', 'h', 'f'].includes(level)) return;
+        if (lastRequestSentRef.current.get(peerId) === level) return;
+        lastRequestSentRef.current.set(peerId, level);
+        wsSend('meeting_request_quality', { meetingId, targetUserId: peerId, level });
+    }, [meetingId, wsSend]);
 
     // Acquire local media
     useEffect(() => {
@@ -139,23 +294,156 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // Fetch ICE config
+    // Fetch ICE config.
+    //
+    // Wrapped in retryWithBackoff so a single transient HTTP failure at
+    // join time doesn't strand the user on the default STUN-only set
+    // (which can't traverse symmetric NATs / corporate firewalls).
+    // 4 attempts × 0.3-5s gives a worst-case ~10s before we give up and
+    // fall back to defaults — well under the user-visible "joining" budget.
     useEffect(() => {
+        let cancelled = false;
         const refresh = async () => {
             try {
-                const { data } = await getIceConfig();
+                const { data } = await retryWithBackoff(
+                    () => getIceConfig(),
+                    { maxAttempts: 4, baseDelayMs: 300, maxDelayMs: 4_000 }
+                );
+                if (cancelled) return;
                 if (data?.iceServers?.length) {
                     iceServersRef.current = data.iceServers;
                     iceExpiresAtRef.current = data.expiresAt || 0;
                 }
-            } catch { /* defaults */ }
+            } catch { /* keep defaults */ }
         };
         refresh();
         const t = setInterval(() => {
             if (iceExpiresAtRef.current && iceExpiresAtRef.current - Math.floor(Date.now() / 1000) < 300) refresh();
         }, 60_000);
-        return () => clearInterval(t);
+        return () => { cancelled = true; clearInterval(t); };
     }, []);
+
+    // ─── Devicechange listener ──────────────────────────────────────────────
+    // When the user unplugs / plugs a USB headset or a laptop lid wakes
+    // and the camera enumerates differently, the OS fires `devicechange`.
+    // The previous code didn't react at all — leaving the meeting using
+    // a track that no longer exists (silent black tile to the other side).
+    //
+    // We do the lightest possible thing: re-broadcast our current track
+    // state so peers can re-render the right indicator, and call
+    // `replaceVideoTrackOnPeers(currentTrack)` on each peer so any peer
+    // connection whose underlying track was severed gets a fresh sender.
+    // We DON'T force re-acquisition — that would surprise the user.
+    useEffect(() => {
+        if (!navigator.mediaDevices?.addEventListener) return;
+        const onChange = async () => {
+            try {
+                const vt = localStreamRef.current?.getVideoTracks?.()[0] || null;
+                // If the current video track has ended (camera unplugged)
+                // replace with null so peers see "video off" rather than a
+                // frozen frame.
+                if (vt && vt.readyState === 'ended') {
+                    await replaceVideoTrackOnPeers(null);
+                    setVideoOff(true);
+                }
+                wsSend('meeting_track_state', {
+                    meetingId,
+                    muted: mutedRef.current,
+                    videoOff: videoOffRef.current,
+                    screenSharing: screenSharingRef.current,
+                });
+            } catch { /* best-effort */ }
+        };
+        navigator.mediaDevices.addEventListener('devicechange', onChange);
+        return () => { try { navigator.mediaDevices.removeEventListener('devicechange', onChange); } catch { /* ignore */ } };
+    }, [meetingId, replaceVideoTrackOnPeers, wsSend]);
+
+    // ─── Network online/offline → FSM ───────────────────────────────────────
+    useEffect(() => {
+        const onOnline = () => dispatchFsm('network_online');
+        const onOffline = () => dispatchFsm('network_offline');
+        window.addEventListener('online', onOnline);
+        window.addEventListener('offline', onOffline);
+        return () => {
+            window.removeEventListener('online', onOnline);
+            window.removeEventListener('offline', onOffline);
+        };
+    }, [dispatchFsm]);
+
+    // ─── WS open/close → FSM ────────────────────────────────────────────────
+    useEffect(() => {
+        if (!ws) return;
+        const onOpen = () => dispatchFsm('ws_open');
+        const onClose = () => dispatchFsm('ws_close');
+        ws.addEventListener('open', onOpen);
+        ws.addEventListener('close', onClose);
+        // Sync initial state.
+        if (ws.readyState === 1) dispatchFsm('ws_open');
+        else if (ws.readyState >= 2) dispatchFsm('ws_close');
+        return () => {
+            try { ws.removeEventListener('open', onOpen); } catch { /* ignore */ }
+            try { ws.removeEventListener('close', onClose); } catch { /* ignore */ }
+        };
+    }, [ws, dispatchFsm]);
+
+    // ─── Hydrate chat history on join / rejoin / WS reconnect ───────────────
+    //
+    // The server persists every `meeting_chat` message to the meeting's
+    // underlying conversation row, so on join (and on every WS reconnect)
+    // we backfill missed messages via GET /meetings/:code/messages.
+    //
+    // We re-run when `ws` changes too, because:
+    //   • A flaky network can drop the WS for 5-15s. Any messages sent
+    //     during that gap won't have been broadcast to us. Refetching on
+    //     reconnect closes that hole without needing a server replay.
+    //   • The fetch is idempotent and de-duped by id + clientMsgId so
+    //     re-running it on every reconnect is cheap and never produces
+    //     duplicates.
+    //
+    // Live messages still arrive over WS via `meeting_message`; the handler
+    // de-dups by id / clientMsgId so a message that's both in history AND
+    // broadcast in-flight only appears once.
+    useEffect(() => {
+        if (!code) return;
+        let cancelled = false;
+        const hydrate = () => {
+            getMeetingMessages(code)
+                .then(res => {
+                    if (cancelled) return;
+                    const history = Array.isArray(res.data) ? res.data : [];
+                    if (!history.length) return;
+                    setMessages(prev => {
+                        // Merge by id AND clientMsgId — keep any optimistic /
+                        // live messages that arrived before the fetch resolved
+                        // (including pending-sends not yet acked).
+                        const seenIds = new Set(prev.filter(m => m.id != null).map(m => m.id));
+                        const seenClientIds = new Set(prev.filter(m => m.clientMsgId).map(m => m.clientMsgId));
+                        const merged = [
+                            ...history.filter(m =>
+                                (m.id == null || !seenIds.has(m.id))
+                                && (!m.client_msg_id || !seenClientIds.has(m.client_msg_id))
+                            ).map(m => ({ ...m, clientMsgId: m.client_msg_id || m.clientMsgId })),
+                            ...prev,
+                        ];
+                        // Sort by created_at (string ISO sorts lexicographically OK for ISO-8601)
+                        merged.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
+                        return merged;
+                    });
+                })
+                .catch(() => { /* silent — chat just stays whatever was cached */ });
+        };
+
+        hydrate();
+
+        // Re-hydrate every time the WS transitions to OPEN. This is the
+        // critical fix for the "chat disappears on reconnect" class of bug.
+        if (ws) {
+            const onOpen = () => hydrate();
+            ws.addEventListener('open', onOpen);
+            return () => { cancelled = true; try { ws.removeEventListener('open', onOpen); } catch { /* ignore */ } };
+        }
+        return () => { cancelled = true; };
+    }, [code, ws]);
 
     // Safety net: add tracks to peer connections
     useEffect(() => {
@@ -372,11 +660,13 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
 
             if (pc.connectionState === 'connected') {
                 setStatus('connected');
+                dispatchFsm('peer_connected');
                 iceRestartCountsRef.current.delete(remoteUserId);
                 if (pc._disconnectTimer) { clearTimeout(pc._disconnectTimer); pc._disconnectTimer = null; }
                 // Broadcast our track state so the peer knows our current mute/video status
                 wsSend('meeting_track_state', { meetingId, muted: mutedRef.current, videoOff: videoOffRef.current, screenSharing: screenSharingRef.current });
             } else if (pc.connectionState === 'failed') {
+                dispatchFsm('peer_failed');
                 setParticipants(prev => {
                     const n = new Map(prev);
                     const p = n.get(remoteUserId);
@@ -393,6 +683,7 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                     setTimeout(() => createPeerConnection(remoteUserId, true), 500);
                 }
             } else if (pc.connectionState === 'disconnected') {
+                dispatchFsm('peer_disconnected');
                 pc._disconnectTimer = setTimeout(() => {
                     if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
                         setParticipants(prev => {
@@ -612,18 +903,93 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
             case 'meeting_message': {
                 const incoming = data.message;
                 if (!incoming) break;
+                // Server echoes back the same `clientMsgId` we sent (or
+                // `client_msg_id` from the persisted-row shape). Once the
+                // echo arrives we know the server has the message — clear
+                // it from the pending-send retry queue.
+                const incClientId = incoming.clientMsgId || incoming.client_msg_id || null;
+                if (incClientId && pendingSendsRef.current.has(incClientId)) {
+                    pendingSendsRef.current.delete(incClientId);
+                }
                 setMessages(prev => {
+                    // De-dup #1 (preferred): by clientMsgId — bulletproof for
+                    // text + file messages alike, and survives identical-text
+                    // double-sends.
+                    if (incClientId) {
+                        const idx = prev.findIndex(m => m.clientMsgId === incClientId);
+                        if (idx >= 0) {
+                            const next = prev.slice();
+                            next[idx] = { ...next[idx], ...incoming, clientMsgId: incClientId, _optimistic: false, _failed: false };
+                            return next;
+                        }
+                    }
+                    // De-dup #2: legacy (sender + text) fallback for messages
+                    // sent before this fix shipped (no clientMsgId in flight).
                     if (incoming.sender_id === user?.id) {
-                        const idx = prev.findIndex(m => m._optimistic && m.sender_id === incoming.sender_id && m.text === incoming.text);
+                        const idx = prev.findIndex(m => m._optimistic && m.sender_id === incoming.sender_id && m.text === incoming.text && !m.clientMsgId);
                         if (idx >= 0) { const next = prev.slice(); next[idx] = incoming; return next; }
+                    }
+                    // De-dup #3: same persisted id arrived twice (history +
+                    // in-flight). Server always includes `id` on echo.
+                    if (incoming.id != null && prev.some(m => m.id === incoming.id)) {
+                        return prev;
                     }
                     return [...prev, incoming];
                 });
                 break;
             }
+            case 'meeting_message_ack': {
+                // Server confirmed persistence (decoupled from broadcast). We
+                // can clear the pending-send queue even if the broadcast
+                // hasn't reached us yet (which is the only way to clear it
+                // for messages whose broadcast is filtered out by the
+                // not-currently-joined check on the server).
+                const { clientMsgId, id, createdAt } = data;
+                if (clientMsgId) {
+                    pendingSendsRef.current.delete(clientMsgId);
+                    markMessageStatus(clientMsgId, {
+                        _optimistic: false,
+                        _failed: false,
+                        ...(id != null ? { id } : {}),
+                        ...(createdAt ? { created_at: createdAt } : {}),
+                    });
+                }
+                break;
+            }
+            case 'meeting_message_error': {
+                // Server rejected the message (validation, persist failure,
+                // etc.). Flip the optimistic bubble to _failed so the UI
+                // can surface a retry button. We DO leave it in the
+                // pending-send queue so the next periodic retry attempt
+                // gets another shot — most "error" cases are transient
+                // (DB hiccup, race during reconnect).
+                const { clientMsgId, reason } = data;
+                if (clientMsgId) {
+                    markMessageStatus(clientMsgId, { _failed: true, _failureReason: reason || 'unknown' });
+                }
+                break;
+            }
+            case 'meeting_request_quality': {
+                // Phase 5 — receiver-driven adaptive bitrate. Persist the
+                // request and immediately apply the cap to that peer's
+                // outbound video sender.
+                const { fromUserId, level } = data;
+                if (!fromUserId || !['q', 'h', 'f'].includes(level)) break;
+                requestedQualityRef.current.set(fromUserId, level);
+                applyQualityCapForPeer(fromUserId);
+                break;
+            }
+            case 'meeting_audio_level': {
+                // Phase 5 — active-speaker signal. Just record the level;
+                // the active-speaker timer (below) picks the loudest.
+                const { userId, level } = data;
+                if (typeof level !== 'number') break;
+                audioLevelsRef.current.set(userId, { level, at: performance.now() });
+                break;
+            }
             default: break;
         }
-    }, [user, createPeerConnection, handleSignal, meetingId, wsSend]);
+    }, [user, createPeerConnection, handleSignal, meetingId, wsSend, applyQualityCapForPeer]);
 
     // Register WS message handler
     const handleWsMessageRef = useRef(handleWsMessage);
@@ -925,22 +1291,70 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         }
     }, [screenSharing, meetingId, wsSend, user?.id]);
 
-    const raiseHand = useCallback(() => { const next = !raisedHand; setRaisedHand(next); wsSend('meeting_raise_hand', { meetingId, raised: next }); }, [raisedHand, meetingId, wsSend]);
+    const raiseHand = useCallback(() => {
+        const next = !raisedHand;
+        setRaisedHand(next);
+        // Phase 2 — at-least-once delivery for the hand-toggle. The server
+        // dedupes by (tenantId, senderId, type, clientMsgId) so the auto-
+        // reconnect retry path can re-send the same toggle without
+        // re-flipping the broadcast for every other participant.
+        wsSend('meeting_raise_hand', { meetingId, raised: next, clientMsgId: newClientMsgId() });
+    }, [raisedHand, meetingId, wsSend]);
 
-    const sendChatMessage = useCallback((text) => {
-        if (!text.trim()) return;
-        const trimmed = text.trim();
-        setMessages(prev => [...prev, { sender_id: user?.id, sender_name: user?.full_name || user?.username || 'You', text: trimmed, created_at: new Date().toISOString(), _optimistic: true }]);
-        wsSend('meeting_chat', { meetingId, text: trimmed });
+    /**
+     * Enqueue an outgoing chat payload + send-or-queue.
+     *
+     * The payload's `clientMsgId` lives in TWO places:
+     *   • on the optimistic message in `messages` (so dedup against the
+     *     server echo / ack is trivial)
+     *   • in `pendingSendsRef` (so the retry loop and `retryMessage` can
+     *     re-send the same logical message after a WS hiccup)
+     */
+    const enqueueChatSend = useCallback((payload, optimisticPatch) => {
+        const clientMsgId = payload.clientMsgId || newClientMsgId();
+        const fullPayload = { ...payload, clientMsgId, meetingId };
+        const now = Date.now();
+        pendingSendsRef.current.set(clientMsgId, {
+            payload: fullPayload,
+            firstSentAt: now,
+            lastSentAt: now,
+        });
+        setMessages(prev => [
+            ...prev,
+            {
+                clientMsgId,
+                sender_id: user?.id,
+                sender_name: user?.full_name || user?.username || 'You',
+                created_at: new Date(now).toISOString(),
+                _optimistic: true,
+                ...optimisticPatch,
+            },
+        ]);
+        wsSend('meeting_chat', fullPayload);
+        return clientMsgId;
     }, [meetingId, wsSend, user]);
 
+    const sendChatMessage = useCallback((text) => {
+        if (!text || !text.trim()) return;
+        const trimmed = text.trim();
+        enqueueChatSend({ text: trimmed }, { text: trimmed });
+    }, [enqueueChatSend]);
+
     const sendChatFile = useCallback(async (file) => {
+        if (!file) return;
         const formData = new FormData();
         formData.append('file', file);
         const previewUrl = URL.createObjectURL(file);
-        try {
-            // Optimistic local message
-            setMessages(prev => [...prev, {
+        // Use a stable clientMsgId so the optimistic row, the upload, and
+        // the WS broadcast all share one identity.
+        const clientMsgId = newClientMsgId();
+
+        // Optimistic row first — gives the user immediate feedback even
+        // while the upload is in flight.
+        setMessages(prev => [
+            ...prev,
+            {
+                clientMsgId,
                 sender_id: user?.id,
                 sender_name: user?.full_name || user?.username || 'You',
                 file_name: file.name,
@@ -948,18 +1362,129 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
                 file_url: previewUrl,
                 created_at: new Date().toISOString(),
                 _optimistic: true,
-            }]);
-            // Upload and broadcast via WS
+                _uploading: true,
+            },
+        ]);
+
+        try {
             const convId = sessionStorage.getItem('meeting_conv_id');
             if (convId) {
                 const res = await uploadChatFile(convId, formData);
-                wsSend('meeting_chat', { meetingId, file_url: res.data.fileUrl, file_name: res.data.fileName, file_size: res.data.fileSize });
+                enqueueChatSend(
+                    {
+                        clientMsgId,
+                        file_url: res.data.fileUrl,
+                        file_name: res.data.fileName,
+                        file_size: res.data.fileSize,
+                    },
+                    { file_name: res.data.fileName, file_size: res.data.fileSize, file_url: res.data.fileUrl, _uploading: false }
+                );
+                // The optimistic row was created above; enqueueChatSend
+                // adds a SECOND row. Collapse by clientMsgId.
+                setMessages(prev => {
+                    const idx = prev.findIndex((m, i) => m.clientMsgId === clientMsgId && i !== prev.length - 1);
+                    if (idx < 0) return prev;
+                    const next = prev.slice();
+                    next.splice(idx, 1); // keep the latest, which has the resolved file_url
+                    return next;
+                });
             } else {
-                wsSend('meeting_chat', { meetingId, text: `📎 ${file.name}`, file_name: file.name, file_size: file.size });
+                // No conversation context — degrade to filename-as-text.
+                enqueueChatSend(
+                    { clientMsgId, text: `📎 ${file.name}`, file_name: file.name, file_size: file.size },
+                    { text: `📎 ${file.name}`, file_name: file.name, file_size: file.size, _uploading: false }
+                );
+                setMessages(prev => {
+                    const idx = prev.findIndex((m, i) => m.clientMsgId === clientMsgId && i !== prev.length - 1);
+                    if (idx < 0) return prev;
+                    const next = prev.slice();
+                    next.splice(idx, 1);
+                    return next;
+                });
             }
-        } catch { /* silent */ }
+        } catch {
+            markMessageStatus(clientMsgId, { _failed: true, _uploading: false, _failureReason: 'upload-failed' });
+        }
         setTimeout(() => URL.revokeObjectURL(previewUrl), 60_000);
-    }, [meetingId, wsSend, user]);
+    }, [enqueueChatSend, markMessageStatus, user]);
+
+    /** Re-send a previously-failed chat message (UI's "tap to retry"). */
+    const retryMessage = useCallback((clientMsgId) => {
+        if (!clientMsgId) return;
+        const entry = pendingSendsRef.current.get(clientMsgId);
+        if (!entry) {
+            // Was already acked / cleared. Nothing to do.
+            markMessageStatus(clientMsgId, { _failed: false });
+            return;
+        }
+        entry.firstSentAt = Date.now();
+        entry.lastSentAt = Date.now();
+        markMessageStatus(clientMsgId, { _failed: false, _failureReason: null, _optimistic: true });
+        wsSend('meeting_chat', entry.payload);
+    }, [markMessageStatus, wsSend]);
+
+    // Periodic pending-send retry loop. Runs every PENDING_SEND_RETRY_EVERY_MS;
+    // resends anything still pending, and after PENDING_SEND_FAIL_AFTER_MS
+    // flips the optimistic bubble to `_failed` so the UI offers a retry.
+    useEffect(() => {
+        const t = setInterval(() => {
+            const now = Date.now();
+            const w = wsRef.current;
+            const wsOpen = w && w.readyState === 1;
+            for (const [clientMsgId, entry] of pendingSendsRef.current) {
+                const age = now - entry.firstSentAt;
+                const sinceLast = now - entry.lastSentAt;
+                if (age > PENDING_SEND_FAIL_AFTER_MS) {
+                    markMessageStatus(clientMsgId, { _failed: true, _failureReason: 'timeout' });
+                }
+                if (wsOpen && sinceLast > PENDING_SEND_RETRY_EVERY_MS) {
+                    entry.lastSentAt = now;
+                    try { w.send(JSON.stringify({ type: 'meeting_chat', data: entry.payload })); } catch { /* ignore */ }
+                }
+            }
+        }, 1500);
+        return () => clearInterval(t);
+    }, [markMessageStatus]);
+
+    // On every WS open:
+    //   1. Drain anything that was waiting for the socket (pending-send
+    //      retry queue gets a fast-path retry).
+    //   2. Ask the server to replay any chat messages we missed while
+    //      disconnected (`meeting_chat_replay` with `sinceMessageId =
+    //      highest id we've already seen`). The REST hydration runs in
+    //      parallel; the WS path is just faster and avoids the round-trip
+    //      to the meetings endpoint when the gap is tiny.
+    useEffect(() => {
+        if (!ws) return;
+        const flushAndReplay = () => {
+            const now = Date.now();
+            for (const [, entry] of pendingSendsRef.current) {
+                entry.lastSentAt = now;
+                try { ws.send(JSON.stringify({ type: 'meeting_chat', data: entry.payload })); } catch { /* ignore */ }
+            }
+            if (meetingId) {
+                // Find the highest persisted id we already have. Use a
+                // simple reduce — the message list is small (<200 typical).
+                let highest = 0;
+                for (const m of messages) {
+                    if (typeof m.id === 'number' && m.id > highest) highest = m.id;
+                }
+                try {
+                    ws.send(JSON.stringify({
+                        type: 'meeting_chat_replay',
+                        data: { meetingId, sinceMessageId: highest },
+                    }));
+                } catch { /* ignore */ }
+            }
+        };
+        if (ws.readyState === 1) {
+            // Already open at mount; drain immediately.
+            flushAndReplay();
+        }
+        ws.addEventListener('open', flushAndReplay);
+        return () => { try { ws.removeEventListener('open', flushAndReplay); } catch { /* ignore */ } };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [ws, meetingId]);
 
     const cleanupMedia = useCallback(() => {
         if (screenStreamRef.current) { screenStreamRef.current.getTracks().forEach(t => t.stop()); screenStreamRef.current = null; setScreenStream(null); }
@@ -970,7 +1495,13 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
 
     const endMeeting = useCallback(() => { wsSend('meeting_end', { meetingId }); cleanupMedia(); setStatus('ended'); }, [meetingId, wsSend, cleanupMedia]);
     const leaveMeeting = useCallback(() => { wsSend('meeting_leave', { meetingId }); cleanupMedia(); setStatus('left'); }, [meetingId, wsSend, cleanupMedia]);
-    const muteParticipant = useCallback((targetUserId, muted = true) => { wsSend('meeting_mute_participant', { meetingId, targetUserId, muted }); }, [meetingId, wsSend]);
+    const muteParticipant = useCallback((targetUserId, muted = true) => {
+        // Phase 2 — at-least-once delivery: host clicks "mute" once, the
+        // network drops, the auto-reconnect retries the message. With
+        // clientMsgId the second arrival is a free no-op instead of
+        // flipping the target's mic state back and forth.
+        wsSend('meeting_mute_participant', { meetingId, targetUserId, muted, clientMsgId: newClientMsgId() });
+    }, [meetingId, wsSend]);
     const addParticipant = useCallback((targetUserId) => { wsSend('meeting_add_participant', { meetingId, targetUserId }); }, [meetingId, wsSend]);
 
     const switchAudioDevice = useCallback(async (deviceId) => {
@@ -1001,12 +1532,162 @@ export function useMeetingState({ meetingId, ws, initialMuted = false, initialVi
         } catch { /* ignore */ }
     }, []);
 
+    // ─── Phase 5 — Local audio-level publisher ─────────────────────────────
+    // Sample the local mic's RMS via a WebAudio analyser ~5×/s and broadcast
+    // as `meeting_audio_level`. The receiver-side timer below picks the
+    // loudest publisher in the last 2 s as the active speaker.
+    //
+    // We mount our own AudioContext + analyser (the participant tile already
+    // has its own per-tile analyser, but it's scoped to *remote* tracks for
+    // speaking ring detection — sampling our own mic separately keeps the
+    // graph trivial and avoids touching the tile's render path).
+    useEffect(() => {
+        if (!localStream || muted) return;
+        const audioTrack = localStream.getAudioTracks?.()[0];
+        if (!audioTrack) return;
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        let ctx;
+        try { ctx = new AudioCtx(); } catch { return; }
+        let cancelled = false;
+        let timer = null;
+        let source, analyser;
+        try {
+            const audioOnly = new MediaStream([audioTrack]);
+            source = ctx.createMediaStreamSource(audioOnly);
+            analyser = ctx.createAnalyser();
+            analyser.fftSize = 256;
+            analyser.smoothingTimeConstant = 0.7;
+            source.connect(analyser);
+        } catch {
+            try { ctx.close(); } catch { /* ignore */ }
+            return;
+        }
+        if (ctx.state === 'suspended') ctx.resume().catch(() => { /* ignore */ });
+        const data = new Uint8Array(analyser.frequencyBinCount);
+        let lastSent = 0;
+        const tick = () => {
+            if (cancelled) return;
+            analyser.getByteFrequencyData(data);
+            let sum = 0;
+            for (let i = 0; i < data.length; i++) sum += data[i];
+            const level = Math.min(1, (sum / data.length) / 128);
+            // Always update our local entry so the active-speaker timer
+            // can rank us against everyone else.
+            audioLevelsRef.current.set(user?.id, { level, at: performance.now() });
+            // Throttle WS sends to ~2/s and only when there's audible
+            // activity, so we don't flood the channel with silence.
+            const now = Date.now();
+            if (level > 0.05 && now - lastSent > 500) {
+                lastSent = now;
+                wsSend('meeting_audio_level', { meetingId, level: +level.toFixed(3) });
+            }
+        };
+        timer = setInterval(tick, 200);
+        return () => {
+            cancelled = true;
+            if (timer) clearInterval(timer);
+            try { source.disconnect(); } catch { /* ignore */ }
+            try { analyser.disconnect(); } catch { /* ignore */ }
+            try { ctx.close(); } catch { /* ignore */ }
+        };
+    }, [localStream, muted, meetingId, wsSend, user?.id]);
+
+    // ─── Phase 5 — Active-speaker selector ──────────────────────────────────
+    // Picks the user with the highest recent audio level (within the last
+    // 2 s). Updates ~3×/s — slow enough to avoid flicker between two
+    // close-volume speakers, fast enough to feel responsive.
+    useEffect(() => {
+        const t = setInterval(() => {
+            const now = performance.now();
+            let bestId = null;
+            let bestLevel = 0;
+            for (const [uid, { level, at }] of audioLevelsRef.current) {
+                if (now - at > 2_000) continue;       // stale → ignore
+                if (level < 0.08) continue;           // below speaking floor
+                if (level > bestLevel) { bestLevel = level; bestId = uid; }
+            }
+            setActiveSpeakerId(prev => (prev === bestId ? prev : bestId));
+        }, 350);
+        return () => clearInterval(t);
+    }, []);
+
+    // ─── Phase 5 — Adaptive bitrate from active speaker + presenter ────────
+    // When the set of "active speaker" / "presenter" changes, downgrade
+    // everyone who isn't either to 'h' (half-rate). The presenter (and
+    // the active speaker if different) gets 'f' (full). Off-screen tiles
+    // are downgraded further to 'q' by the IntersectionObserver hook in
+    // ParticipantTile via the exported `requestPeerQuality` helper.
+    useEffect(() => {
+        if (participants.size === 0) return;
+        for (const [peerId] of participants) {
+            if (peerId === user?.id) continue;
+            const isPresenterPeer = peerId === presenterId;
+            const isSpeaker = peerId === activeSpeakerId;
+            const level = (isPresenterPeer || isSpeaker) ? 'f' : 'h';
+            requestPeerQuality(peerId, level);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeSpeakerId, presenterId, participants.size]);
+
+    // Pre-compute the banner descriptor so the consumer doesn't have to
+    // know about the FSM module to render it.
+    const connectionBanner = describeState(fsmState);
+
+    // ADR-008 — Mirror the high-traffic slices into the singleton
+    // MeetingStore. Sibling components (admin panels, future
+    // ParticipantTile selector consumers) can now subscribe to
+    // `meetingStore(s => s.muted)` etc. without re-rendering on every
+    // unrelated state tick.
+    //
+    // Cheap: setState is a shallow merge, the store does its own ref
+    // equality so unchanged values produce zero subscriber callbacks.
+    // We deliberately mirror only the slices that change at low-to-medium
+    // frequency — high-frequency stuff (audio levels, peer connection
+    // state) stays in refs to avoid store churn.
+    useEffect(() => {
+        meetingStore.setState({
+            muted,
+            videoOff,
+            screenSharing,
+            raisedHand,
+            status,
+            fsmState,
+            connectionBanner,
+            activeSpeakerId,
+            presenterId,
+            messages,
+        });
+    }, [
+        muted, videoOff, screenSharing, raisedHand,
+        status, fsmState, connectionBanner,
+        activeSpeakerId, presenterId, messages,
+    ]);
+
     return {
         localStream, screenStream, muted, videoOff, screenSharing,
         participants, status, raisedHand, messages,
         activePanel, setActivePanel, connectionQualities, presenterId,
         toggleMute, toggleVideo, toggleScreenShare, raiseHand,
-        sendChatMessage, sendChatFile, endMeeting, leaveMeeting, muteParticipant, addParticipant,
+        sendChatMessage, sendChatFile, retryMessage,
+        endMeeting, leaveMeeting, muteParticipant, addParticipant,
         switchAudioDevice, switchVideoDevice, handleWsMessage,
+        // Phase 1 — Resilience Pack additions:
+        fsmState, connectionBanner,
+        // Phase 5 — Mesh quality additions:
+        activeSpeakerId,
+        /**
+         * Receiver-driven quality request used by ParticipantTile's
+         * IntersectionObserver: tile reports 'q' when off-screen, 'h'
+         * when visible (the active-speaker effect then overrides to 'f'
+         * for the speaker/presenter).
+         */
+        requestPeerQuality,
     };
 }
+
+// Silence the unused-warning for these helpers — they're exported for tests
+// and may be consumed by Phase-4 store work; keeping them adjacent to the
+// hook documents the chat-reliability seam.
+void upsertCachedMessage;
+void applyCachedMessages;

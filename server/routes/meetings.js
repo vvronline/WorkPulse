@@ -7,6 +7,9 @@ const { notifyByEmail } = require('../utils/mailer');
 const redis = require('../redis');
 const { requireTenant } = require('../middleware/tenant');
 const { provisionBroadcast } = require('../utils/hlsBroadcast');
+// Phase 3 — Permission Presets. Single source of truth for
+// "can this user perform this action on this meeting?"
+const meetingPerms = require('../utils/meetingPermissions');
 
 const router = express.Router();
 router.use(auth, requireTenant);
@@ -155,6 +158,85 @@ router.get('/', async (req, res) => {
     }
 });
 
+// ─── Get persisted in-meeting chat messages ──────────────────────────────────
+// Returns the messages stored in the meeting's underlying conversation. Used by
+// the client to re-hydrate the chat panel on join / rejoin (mirrors videosdk's
+// PubSub `messages` replay for a topic with `persist: true`).
+router.get('/:code/messages', async (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit, 10) || 200, 500);
+        // `since` lets the client backfill incrementally on WS reconnect
+        // (so we don't keep refetching the last 200 messages). If absent,
+        // fall back to the full history (capped by LIMIT). Validated as a
+        // positive integer; bad input is treated as 0 (full history).
+        const sinceRaw = parseInt(req.query.since, 10);
+        const since = Number.isInteger(sinceRaw) && sinceRaw > 0 ? sinceRaw : 0;
+
+        const meeting = (await req.db.query(
+            'SELECT id, conversation_id, org_id, created_by FROM meetings WHERE meeting_code = $1',
+            [req.params.code]
+        )).rows[0];
+        if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
+        if (meeting.org_id && meeting.org_id !== req.userOrgId) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+
+        // Must be a participant or organizer
+        const access = (await req.db.query(
+            'SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2',
+            [meeting.id, req.userId]
+        )).rows[0];
+        if (!access && meeting.created_by !== req.userId) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+
+        if (!meeting.conversation_id) return res.json([]);
+
+        // Fetch oldest-first so the client can append to its existing buffer.
+        // We return both the user-visible text/file metadata and the same
+        // sender/created_at fields that the WS `meeting_message` payload uses,
+        // so MeetingChat.jsx renders both identically.
+        //
+        // `client_msg_id` is included so the client can dedupe persisted rows
+        // against any still-pending optimistic sends (closes the "duplicate
+        // message after reconnect" hole — see useMeetingState's hydration
+        // effect).
+        const rows = (await req.db.query(
+            `SELECT m.id, m.sender_id, m.content, m.metadata, m.created_at, m.format_type, m.client_msg_id,
+                    u.full_name AS sender_name
+             FROM messages m
+             JOIN users u ON u.id = m.sender_id
+             WHERE m.conversation_id = $1
+               AND m.id > $3
+               AND (m.format_type != 'system' OR (m.metadata->>'type' IN ('meeting_joined','meeting_ended')))
+             ORDER BY m.created_at ASC
+             LIMIT $2`,
+            [meeting.conversation_id, limit, since]
+        )).rows;
+
+        const messages = rows.map(r => {
+            const meta = r.metadata || {};
+            const isSystem = r.format_type === 'system';
+            return {
+                id: r.id,
+                client_msg_id: r.client_msg_id || null,
+                sender_id: r.sender_id,
+                sender_name: r.sender_name,
+                text: isSystem ? null : (meta.file_url ? (r.content && !r.content.startsWith('📎') ? r.content : null) : r.content),
+                file_url: meta.file_url || null,
+                file_name: meta.file_name || null,
+                file_size: meta.file_size || null,
+                system: isSystem ? meta : null,
+                created_at: r.created_at,
+            };
+        });
+        res.json(messages);
+    } catch (err) {
+        req.log.error({ err }, 'Get meeting messages error');
+        res.status(500).json({ error: 'Failed to fetch meeting messages' });
+    }
+});
+
 // ─── Get meeting by code ────────────────────────────────────────────────────
 router.get('/:code', async (req, res) => {
     try {
@@ -238,8 +320,19 @@ router.post('/', async (req, res) => {
                 );
             }
 
-            // 3. Create the meeting record
-            const meetingSettings = { muteOnJoin: false, allowScreenShare: true, ...(settings || {}) };
+            // 3. Create the meeting record.
+            //
+            // Phase 3 — Permission Presets: if the caller supplies `settings.preset`
+            // we validate it against the known set and silently drop it otherwise
+            // (so an old/typo'd preset doesn't slip into the DB and confuse
+            // `meetingPerms.can()` later). DEFAULT_PRESET is applied implicitly
+            // by `meetingPerms.can()` when no preset is stored — we don't write
+            // it explicitly to keep the JSONB blob clean.
+            const incomingSettings = settings || {};
+            if (incomingSettings.preset && !meetingPerms.listPresets().includes(incomingSettings.preset)) {
+                delete incomingSettings.preset;
+            }
+            const meetingSettings = { muteOnJoin: false, allowScreenShare: true, ...incomingSettings };
             const meeting = (await client.query(
                 `INSERT INTO meetings (org_id, title, description, meeting_code, created_by, conversation_id, calendar_event_id, settings)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
@@ -344,7 +437,16 @@ router.put('/:id', async (req, res) => {
         if (meeting.status === 'ended') return res.status(400).json({ error: 'Cannot update ended meeting' });
 
         const { title, description, settings } = req.body;
-        const newSettings = settings ? { ...meeting.settings, ...settings } : meeting.settings;
+        // Phase 3 — Permission Presets: same validation as on create.
+        // If the caller is trying to switch to an unknown preset (typo,
+        // outdated client), silently drop the preset key so the stored
+        // value stays a known good one rather than something
+        // meetingPermissions.can() would treat as the default + log noise.
+        const incomingSettings = settings || null;
+        if (incomingSettings && incomingSettings.preset && !meetingPerms.listPresets().includes(incomingSettings.preset)) {
+            delete incomingSettings.preset;
+        }
+        const newSettings = incomingSettings ? { ...meeting.settings, ...incomingSettings } : meeting.settings;
 
         const result = await req.db.query(
             `UPDATE meetings SET
@@ -469,7 +571,12 @@ router.post('/:id/participants', async (req, res) => {
 
         const meeting = (await req.db.query('SELECT * FROM meetings WHERE id = $1', [meetingId])).rows[0];
         if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
-        if (meeting.created_by !== req.userId) return res.status(403).json({ error: 'Only organizer can add participants' });
+        // Phase 3 — Permission Presets: route through meetingPerms.can()
+        // so the 'open' preset (which lets every joined participant invite
+        // others) works without modifying this handler.
+        if (!meetingPerms.can({ userId: req.userId }, meeting, meetingPerms.ACTIONS.ADD_PARTICIPANT)) {
+            return res.status(403).json({ error: 'You do not have permission to add participants' });
+        }
         if (meeting.status === 'ended') return res.status(400).json({ error: 'Meeting has ended' });
 
         const targetUser = (await req.db.query('SELECT id, full_name, avatar, username, org_id FROM users WHERE id = $1', [user_id])).rows[0];
@@ -561,12 +668,14 @@ router.post('/:code/hls/start', async (req, res) => {
         )).rows[0];
         if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
 
-        // Only organizer may start the broadcast (allow any participant if
-        // the meeting settings explicitly opt-in via `allowAnyBroadcaster`).
+        // Phase 3 — Permission Presets. The standard preset honours the
+        // existing `settings.allowAnyBroadcaster` flag (via the START_BROADCAST
+        // override) so this single can() call preserves the historic behaviour
+        // AND gives the `open` preset a way to let every participant broadcast.
         const settings = meeting.settings || {};
         const isOrganizer = meeting.created_by === req.userId;
-        if (!isOrganizer && !settings.allowAnyBroadcaster) {
-            return res.status(403).json({ error: 'Only the meeting organizer can start a broadcast' });
+        if (!meetingPerms.can({ userId: req.userId }, meeting, meetingPerms.ACTIONS.START_BROADCAST)) {
+            return res.status(403).json({ error: 'You do not have permission to start a broadcast' });
         }
 
         // Must be a participant

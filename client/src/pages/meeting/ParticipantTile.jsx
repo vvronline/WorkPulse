@@ -23,8 +23,17 @@ function getSharedAudioCtx() {
  * Name overlay at bottom, mic indicator. Raised hand at top-right.
  * Highlights the tile (green ring) when the participant is speaking.
  */
-const ParticipantTile = memo(function ParticipantTile({ participant, isLocal, quality, isMini }) {
+const ParticipantTile = memo(function ParticipantTile({
+    participant, isLocal, quality, isMini,
+    /** Phase 5 — true when this participant is the loudest speaker. */
+    isActiveSpeaker = false,
+    /** Phase 5 — fired with ('q' | 'h') when this tile scrolls in/out
+     *  of view. Sender flips its upstream bitrate accordingly. Pass
+     *  undefined for local / mini tiles where there's nothing to ask. */
+    onVisibilityChange,
+}) {
     const videoRef = useRef(null);
+    const tileRootRef = useRef(null);
     const { stream, name, muted: pMuted, videoOff: pVideoOff, raisedHand, connectionState, avatar } = participant || {};
     const [avatarFailed, setAvatarFailed] = useState(false);
 
@@ -187,8 +196,32 @@ const ParticipantTile = memo(function ParticipantTile({ participant, isLocal, qu
     const isReconnecting = !isLocal && (connectionState === 'disconnected' || connectionState === 'failed');
     const statusLabel = isConnecting ? 'Connecting…' : isReconnecting ? 'Reconnecting…' : null;
 
+    // ─── Phase 5 — IntersectionObserver receiver-side bandwidth saving ────
+    // Once a tile leaves the viewport (off-screen, hidden tab, collapsed
+    // sidebar) ask the sender to drop to 'q' (150 kbps). When it comes
+    // back into view, ask for 'h' (500 kbps). The active-speaker effect
+    // in useMeetingState upgrades to 'f' on top of this.
+    useEffect(() => {
+        if (!onVisibilityChange || isLocal || isMini) return;
+        const el = tileRootRef.current;
+        if (!el || typeof IntersectionObserver !== 'function') return;
+        const obs = new IntersectionObserver(
+            (entries) => {
+                for (const entry of entries) {
+                    onVisibilityChange(entry.isIntersecting ? 'h' : 'q');
+                }
+            },
+            { threshold: 0.1 }
+        );
+        obs.observe(el);
+        return () => obs.disconnect();
+    }, [onVisibilityChange, isLocal, isMini]);
+
     return (
-        <div className={`mr-tile ${isLocal ? 'mr-tile--local' : ''} ${speaking ? 'mr-tile--speaking' : ''}`}>
+        <div
+            ref={tileRootRef}
+            className={`mr-tile ${isLocal ? 'mr-tile--local' : ''} ${speaking ? 'mr-tile--speaking' : ''} ${isActiveSpeaker ? 'mr-tile--active-speaker' : ''}`}
+        >
             {/* Always-mounted video element. Keeping it in the tree (rather
                 than conditionally rendering) means srcObject sticks around
                 and the browser keeps the decoder warm — drastically reducing

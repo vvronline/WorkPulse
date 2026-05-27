@@ -98,6 +98,57 @@
   transform: scale(0.95);
 }
 
+/* Phase 1 — Resilience Pack: degraded-mode banner.
+   Sits between the header pill and the video grid on desktop, and
+   above the main pane on mobile. Non-blocking (the meeting keeps
+   working underneath), but visually distinct so the user knows the app
+   is aware of the problem. */
+.mr-degraded-banner {
+  position: relative;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px auto 0;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  width: fit-content;
+  max-width: calc(100% - 32px);
+  background: rgba(245, 158, 11, 0.18);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  color: #fde68a;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: degradedFadeIn 0.18s ease-out;
+}
+
+.mr-degraded-banner--error {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #fecaca;
+}
+
+.mr-degraded-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: degradedPulse 1.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes degradedFadeIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes degradedPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.5; transform: scale(0.8); }
+}
+
 /* Body — main content area */
 .mr-body {
   flex: 1;
@@ -240,6 +291,30 @@
     0 0 0 3px var(--mr-success),
     0 0 16px 2px rgba(16, 185, 129, 0.55);
   animation: speakingPulse 1.4s ease-in-out infinite;
+}
+
+/* Phase 5 — Active-speaker ring. Stronger and bluer than the
+   per-tile "speaking" ring so the user can immediately see who the
+   meeting-wide "loudest right now" person is. Wins over --speaking
+   when both are present (CSS source-order specificity). */
+.mr-tile--active-speaker {
+  box-shadow:
+    0 0 0 3px var(--mr-accent),
+    0 0 22px 4px rgba(59, 130, 246, 0.7);
+  animation: activeSpeakerPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes activeSpeakerPulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 3px var(--mr-accent),
+      0 0 18px 2px rgba(59, 130, 246, 0.55);
+  }
+  50% {
+    box-shadow:
+      0 0 0 3px var(--mr-accent),
+      0 0 28px 6px rgba(59, 130, 246, 0.85);
+  }
 }
 
 @keyframes speakingPulse {
@@ -855,6 +930,56 @@
 .mc-msg-time {
   font-size: 10px;
   color: var(--mr-text-muted);
+}
+
+/* Outbound message delivery status (Phase 0.5 — "chat disappears" fix) */
+.mc-msg-pending .mc-msg-text,
+.mc-msg-pending .mc-file-msg {
+  opacity: 0.65;
+}
+
+.mc-msg-failed .mc-msg-text,
+.mc-msg-failed .mc-file-msg {
+  opacity: 0.8;
+}
+
+.mc-msg-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  margin-top: 2px;
+  border: none;
+  background: transparent;
+  padding: 2px 6px;
+  border-radius: 6px;
+  cursor: default;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.mc-msg-status-pending,
+.mc-msg-status-uploading {
+  color: var(--mr-text-muted);
+}
+
+.mc-msg-status-failed {
+  color: #fff;
+  background: #ef4444;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.mc-msg-status-failed:hover {
+  background: #dc2626;
+}
+
+@keyframes mc-spin {
+  to { transform: rotate(360deg); }
+}
+
+.mc-spin {
+  animation: mc-spin 1s linear infinite;
 }
 
 .mc-input-wrap {

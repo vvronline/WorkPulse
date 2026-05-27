@@ -19,6 +19,23 @@ const { getTenantPool, getTenantById } = require('./tenantManager');
 const { logger } = require('./logger');
 const redis = require('../redis');
 const statusService = require('../services/status');
+const wsMetrics = require('./wsMetrics');
+const { withIdempotency } = require('./wsIdempotency');
+// Phase 6 part 2 (ADR-009) — extracted message handlers live in
+// utils/wsHandlers/. They take an injected `sendToUser` so the
+// extraction doesn't create a circular import with this module.
+const { chatMessage } = require('./wsHandlers/chatMessage');
+
+// Phase 6 — Per-message default soft-timeout. Most handlers should complete
+// in well under a second; if any handler hangs for > 5s it almost certainly
+// represents a runaway DB query (deadlock, missing index) or an upstream
+// service hang. Surface it as a timeout error in metrics so we can see
+// which handler is the culprit without piling up open WS frames.
+//
+// 0 means "no timeout" — set per-handler below for the few that are
+// allowed to be slow (notably the legacy /meeting_chat persist that we
+// already harden with its own try/catch).
+const WS_HANDLER_DEFAULT_TIMEOUT_MS = 5_000;
 
 /** Map<clientKey, Set<WebSocket>> — local instance connections, keyed by tenantId:userId */
 const clients = new Map();
@@ -27,6 +44,22 @@ const clients = new Map();
  *  Each browser tab uses ~4 WS connections (chat, calls, status, notifications)
  *  so allow enough for 2-3 tabs or a browser + desktop app. */
 const MAX_CONNECTIONS_PER_USER = 12;
+
+/**
+ * Pending meeting-leave timers — when a WS that was inside a meeting closes,
+ * we DON'T immediately broadcast `meeting_participant_left`. We schedule a
+ * delayed cleanup so that a flaky network / WS reconnect doesn't kick the
+ * user out of the meeting (and doesn't tear down the other participants'
+ * RTCPeerConnections). If the user re-opens a WS and sends `meeting_join`
+ * within the grace window, the timer is cancelled and the meeting continues
+ * uninterrupted. See `scheduleMeetingDisconnectCleanup` below.
+ *
+ * Keyed by `${tenantId}:${userId}:${meetingId}` → { timer, db }.
+ */
+const pendingMeetingLeaves = new Map();
+const MEETING_DISCONNECT_GRACE_MS = 15_000;
+const meetingLeaveKey = (tenantId, userId, meetingId) =>
+    `${tenantId || 0}:${userId}:${meetingId}`;
 
 /** Unique instance ID for Pub/Sub dedup */
 const INSTANCE_ID = `ws-${process.pid}-${Date.now()}`;
@@ -197,7 +230,16 @@ function setupWebSocket(server) {
 
             try {
                 const msg = JSON.parse(raw);
-                handleChatMessage(db, userId, tenantId, msg, ws).catch(err => {
+                // Phase 6 — wrap every dispatch with the metrics collector so
+                // /api/internal/ws-stats can show p50/p95 latency, count,
+                // errors, and timeouts per message type. Timeout defaults to
+                // 5s so a runaway DB query surfaces as a timeout error in
+                // metrics instead of piling up open WS frames.
+                wsMetrics.recordHandler(
+                    msg?.type || 'unknown',
+                    WS_HANDLER_DEFAULT_TIMEOUT_MS,
+                    () => handleChatMessage(db, userId, tenantId, msg, ws),
+                ).catch(err => {
                     logger.error({ err: err?.message, stack: err?.stack, userId, tenantId, type: msg?.type }, 'WS message handler error');
                 });
             } catch { /* ignore non-JSON */ }
@@ -230,47 +272,15 @@ function setupWebSocket(server) {
                 ws._meetingActivityRefId = null;
             }
 
-            // Clean up meeting if user was in one and didn't explicitly leave
+            // Clean up meeting if user was in one and didn't explicitly leave.
+            // IMPORTANT: do NOT mark them as "left" immediately — schedule a
+            // grace window so the user's auto-reconnecting WebSocket can
+            // re-join silently without ejecting them from the meeting and
+            // tearing down the other participants' RTCPeerConnections.
             if (ws._activeMeetingId) {
                 const mid = ws._activeMeetingId;
                 ws._activeMeetingId = null;
-                (async () => {
-                    try {
-                        const isJoined = (await db.query(
-                            `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
-                            [mid, userId]
-                        )).rows[0];
-                        if (!isJoined) return;
-
-                        await db.query(
-                            `UPDATE meeting_participants SET status = 'left', left_at = NOW() WHERE meeting_id = $1 AND user_id = $2`,
-                            [mid, userId]
-                        );
-
-                        const activeParticipants = (await db.query(
-                            `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined'`,
-                            [mid]
-                        )).rows;
-
-                        for (const p of activeParticipants) {
-                            sendToUser(tenantId, p.user_id, 'meeting_participant_left', { meetingId: mid, userId });
-                        }
-
-                        if (activeParticipants.length === 0) {
-                            await db.query(`UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1 AND status != 'ended'`, [mid]);
-                            // Status service v2: meeting truly ended (no one
-                            // left), clear in_meeting for every dangling
-                            // session referencing it. closeSession() above
-                            // already wiped this user's session, but a peer
-                            // who dropped to "leaving" without sending
-                            // meeting_leave could still be marked.
-                            statusService.clearActivityForRef({ db, tenantId }, 'in_meeting', mid)
-                                .catch(err => logger.warn({ err: err.message, meetingId: mid }, 'clearActivityForRef(in_meeting) on disconnect failed'));
-                        }
-                    } catch (err) {
-                        logger.warn({ err: err.message, userId, meetingId: mid }, 'Meeting cleanup on disconnect failed');
-                    }
-                })();
+                scheduleMeetingDisconnectCleanup({ db, tenantId, userId, meetingId: mid });
             }
 
             logger.debug({ userId, tenantId }, 'WS client disconnected');
@@ -298,12 +308,22 @@ function setupWebSocket(server) {
         });
     });
 
-    // Heartbeat interval
+    // Heartbeat interval — softer than before: a single missed pong no longer
+    // terminates the socket. We only kill the connection after `MAX_MISSED_PONGS`
+    // consecutive missed pings (~60s of silence), which matches videosdk-style
+    // SDK behaviour and prevents brief network blips from kicking users out of
+    // their meeting. Combined with `scheduleMeetingDisconnectCleanup` below,
+    // a short Wi-Fi drop now causes zero user-visible disruption.
+    const MAX_MISSED_PONGS = 2;
     const heartbeat = setInterval(() => {
         wss.clients.forEach(ws => {
-            if (!ws.isAlive) return ws.terminate();
+            ws._missedPongs = (ws._missedPongs || 0) + (ws.isAlive ? 0 : 1);
+            if (ws._missedPongs > MAX_MISSED_PONGS) {
+                logger.debug({ userId: ws.userId, missed: ws._missedPongs }, 'WS terminating after missed pongs');
+                return ws.terminate();
+            }
             ws.isAlive = false;
-            ws.ping();
+            try { ws.ping(); } catch { /* ignore */ }
         });
     }, 30000);
 
@@ -312,104 +332,114 @@ function setupWebSocket(server) {
     return wss;
 }
 
+/**
+ * Schedule a delayed "user left the meeting" cleanup after a WS close.
+ *
+ * Behaviour:
+ *   • Wait MEETING_DISCONNECT_GRACE_MS (~15s) for the user to reconnect.
+ *   • If a new `meeting_join` arrives from the same user/meeting within that
+ *     window, `cancelMeetingDisconnectCleanup` will be invoked and the
+ *     scheduled cleanup is skipped — other participants never see a
+ *     `meeting_participant_left` event, the meeting continues unaffected,
+ *     and the user's RTCPeerConnections re-negotiate via the existing
+ *     ICE-restart code in useMeetingState.
+ *   • If the grace window expires without a rejoin, we perform the same
+ *     cleanup that used to happen synchronously on close.
+ *
+ * This is the equivalent of videosdk's internal "reconnecting" window —
+ * brief network blips or laptop-sleep events no longer eject the user.
+ */
+function scheduleMeetingDisconnectCleanup({ db, tenantId, userId, meetingId }) {
+    const key = meetingLeaveKey(tenantId, userId, meetingId);
+    // If there's already a pending timer (rare — happens if the user opens
+    // and closes a second WS very quickly), replace it with a fresh one.
+    const existing = pendingMeetingLeaves.get(key);
+    if (existing?.timer) clearTimeout(existing.timer);
+
+    const timer = setTimeout(async () => {
+        pendingMeetingLeaves.delete(key);
+        try {
+            // Re-check: if the user reconnected and is `joined` via another
+            // session by the time we run, the upsert-on-join already cleared
+            // any stale row — but if they reconnected and then left properly
+            // (meeting_leave), they may already be `left`. Either way, only
+            // act if they are *still* `joined`.
+            const isJoined = (await db.query(
+                `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
+                [meetingId, userId]
+            )).rows[0];
+            if (!isJoined) return;
+
+            // Also: don't fire the cleanup if the user has reconnected with
+            // a new WS that's now associated with this meeting (clients
+            // Map will still contain at least one WS for them).
+            const hasOtherSessionForMeeting = (() => {
+                const set = clients.get(clientKey(tenantId, userId));
+                if (!set) return false;
+                for (const ws of set) {
+                    if (ws._activeMeetingId === meetingId) return true;
+                }
+                return false;
+            })();
+            if (hasOtherSessionForMeeting) return;
+
+            await db.query(
+                `UPDATE meeting_participants SET status = 'left', left_at = NOW() WHERE meeting_id = $1 AND user_id = $2`,
+                [meetingId, userId]
+            );
+
+            const activeParticipants = (await db.query(
+                `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined'`,
+                [meetingId]
+            )).rows;
+
+            for (const p of activeParticipants) {
+                sendToUser(tenantId, p.user_id, 'meeting_participant_left', { meetingId, userId });
+            }
+
+            if (activeParticipants.length === 0) {
+                await db.query(
+                    `UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1 AND status != 'ended'`,
+                    [meetingId]
+                );
+                statusService.clearActivityForRef({ db, tenantId }, 'in_meeting', meetingId)
+                    .catch(err => logger.warn({ err: err.message, meetingId }, 'clearActivityForRef(in_meeting) on grace expiry failed'));
+            }
+        } catch (err) {
+            logger.warn({ err: err.message, userId, meetingId }, 'Delayed meeting cleanup failed');
+        }
+    }, MEETING_DISCONNECT_GRACE_MS);
+
+    pendingMeetingLeaves.set(key, { timer, db });
+}
+
+/** Cancel a pending disconnect-cleanup timer (called when the user rejoins). */
+function cancelMeetingDisconnectCleanup({ tenantId, userId, meetingId }) {
+    const key = meetingLeaveKey(tenantId, userId, meetingId);
+    const existing = pendingMeetingLeaves.get(key);
+    if (existing?.timer) {
+        clearTimeout(existing.timer);
+        pendingMeetingLeaves.delete(key);
+        return true;
+    }
+    return false;
+}
+
 /** Handle incoming WS messages for chat */
 async function handleChatMessage(db, senderId, tenantId, msg, ws) {
     if (msg.type === 'chat_message') {
-        const { conversationId, content, replyToId, formatType, mentions, clientMsgId } = msg.data || {};
-        if (!conversationId || !content || typeof content !== 'string' || content.trim().length === 0 || content.length > 5000) return;
-
-        // Defense-in-depth: reject messages with obvious script injection patterns
-        if (/<script[\s>]|javascript:|on\w+\s*=/i.test(content)) {
-            logger.warn({ senderId, conversationId }, 'chat_message: rejected content with script-like pattern');
-            return;
-        }
-
-        // Verify sender is a participant
-        const participant = (await db.query(
-            'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
-            [conversationId, senderId]
-        )).rows[0];
-        if (!participant) return;
-
-        // Insert message
-        const replyId = replyToId ? parseInt(replyToId, 10) : null;
-        const fmtType = (formatType === 'markdown' || formatType === 'code') ? formatType : 'text';
-        const result = (await db.query(
-            `INSERT INTO messages (conversation_id, sender_id, content, reply_to_id, format_type)
-             VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
-            [conversationId, senderId, content.trim(), replyId, fmtType]
-        )).rows[0];
-
-        // Update conversation timestamp
-        await db.query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [conversationId]);
-
-        // Update sender's read cursor
-        await db.query(
-            `INSERT INTO message_reads (conversation_id, user_id, last_read_at)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = $3`,
-            [conversationId, senderId, result.created_at]
-        );
-
-        // Get all participants to broadcast
-        const participants = (await db.query(
-            'SELECT user_id FROM conversation_participants WHERE conversation_id = $1',
-            [conversationId]
-        )).rows;
-
-        // Get sender info
-        const sender = (await db.query('SELECT full_name, avatar, username FROM users WHERE id = $1', [senderId])).rows[0];
-
-        // Get reply details if replying (must belong to the same conversation)
-        let replyContent = null, replySenderName = null;
-        if (replyId) {
-            const replyMsg = (await db.query(
-                `SELECT m.content, u.full_name AS sender_name
-                 FROM messages m JOIN users u ON u.id = m.sender_id
-                 WHERE m.id = $1 AND m.conversation_id = $2`, [replyId, conversationId]
-            )).rows[0];
-            if (replyMsg) {
-                replyContent = replyMsg.content;
-                replySenderName = replyMsg.sender_name;
-            }
-        }
-
-        const outMsg = {
-            id: result.id,
-            conversationId,
-            senderId,
-            senderName: sender?.full_name,
-            senderAvatar: sender?.avatar,
-            senderUsername: sender?.username,
-            content: content.trim(),
-            formatType: fmtType,
-            replyToId: replyId,
-            replyContent,
-            replySenderName,
-            createdAt: result.created_at,
-            clientMsgId: clientMsgId || null
-        };
-
-        for (const p of participants) {
-            sendToUser(tenantId, p.user_id, 'chat_message', outMsg);
-            // Increment unread counter for recipients (not sender)
-            if (p.user_id !== senderId) {
-                redis.incrUnread(tenantId, p.user_id, conversationId);
-            }
-        }
-        if (Array.isArray(mentions) && mentions.length > 0) {
-            const participantIdSet = new Set(participants.map(p => p.user_id));
-            const mentionedIds = mentions.map(Number).filter(n => n > 0 && n !== senderId && participantIdSet.has(n));
-            for (const uid of mentionedIds) {
-                sendToUser(tenantId, uid, 'chat_mention', {
-                    conversationId,
-                    messageId: result.id,
-                    senderId,
-                    senderName: sender?.full_name,
-                    content: content.trim().slice(0, 100)
-                });
-            }
-        }
+        // Phase 6 part 2 (ADR-009): delegated to the extracted handler.
+        // `sendToUser` is injected so the handler module doesn't pull this
+        // file in via require (circular). Behaviour is preserved exactly,
+        // PLUS the handler now sends a typed `chat_message_error` ack on
+        // validation failure instead of silently dropping.
+        await chatMessage({
+            db, senderId, tenantId,
+            data: msg.data || {},
+            ws,
+            sendToUser,
+        });
+        return;
     } else if (msg.type === 'chat_typing') {
         const { conversationId } = msg.data || {};
         if (!conversationId) return;
@@ -831,6 +861,16 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
         const { meetingId } = msg.data || {};
         if (!meetingId) return;
 
+        // First thing: cancel any pending disconnect-cleanup. Happy path for
+        // a transient WS drop — the user reconnected within the grace window,
+        // so we silently keep them in the meeting (no `meeting_participant_left`
+        // was ever broadcast and the other participants' RTCPeerConnections
+        // are untouched).
+        const cancelledPending = cancelMeetingDisconnectCleanup({ tenantId, userId: senderId, meetingId });
+        if (cancelledPending) {
+            logger.debug({ userId: senderId, meetingId }, 'Cancelled pending meeting cleanup on rejoin');
+        }
+
         const meeting = (await db.query('SELECT * FROM meetings WHERE id = $1', [meetingId])).rows[0];
         if (!meeting) return;
 
@@ -990,6 +1030,9 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
 
         // Clear the tag so disconnect handler doesn't double-leave
         ws._activeMeetingId = null;
+        // An explicit leave overrides any scheduled grace-window cleanup
+        // — we do the cleanup synchronously below instead.
+        cancelMeetingDisconnectCleanup({ tenantId, userId: senderId, meetingId });
 
         // Verify sender is actually a joined participant
         const isJoined = (await db.query(
@@ -1034,6 +1077,7 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
         if (!meetingId) return;
 
         ws._activeMeetingId = null;
+        cancelMeetingDisconnectCleanup({ tenantId, userId: senderId, meetingId });
 
         const meeting = (await db.query(
             'SELECT * FROM meetings WHERE id = $1 AND created_by = $2',
@@ -1155,47 +1199,72 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
         });
 
     } else if (msg.type === 'meeting_mute_participant') {
-        // Organizer mutes/unmutes a participant
-        const { meetingId, targetUserId, muted } = msg.data || {};
+        // Organizer mutes/unmutes a participant. Phase 3 — Permission Presets:
+        // route through the shared `meetingPermissions` helper so the 'open'
+        // preset (which lets every joined participant mute anyone) works
+        // without an extra branch here. The previous behaviour was
+        // "only the organiser can mute"; the standard preset preserves that.
+        //
+        // Phase 2 — Idempotency: clients now send an optional `clientMsgId`
+        // for every mute toggle. `withIdempotency` dedupes the second
+        // click during a glitchy WS reconnect so the target doesn't see
+        // their mic toggled twice in a row. Legacy clients (no id) keep
+        // the previous behaviour — the wrapper is a no-op without an id.
+        const { meetingId, targetUserId, muted, clientMsgId: rawIdMute } = msg.data || {};
         if (!meetingId || !targetUserId) return;
+        await withIdempotency(
+            { tenantId, senderId, type: 'meeting_mute_participant', clientMsgId: rawIdMute },
+            async () => {
+                const meeting = (await db.query('SELECT * FROM meetings WHERE id = $1', [meetingId])).rows[0];
+                if (!meeting) return;
+                const meetingPerms = require('./meetingPermissions');
+                if (!meetingPerms.can({ userId: senderId }, meeting, meetingPerms.ACTIONS.MUTE_OTHERS)) return;
 
-        const meeting = (await db.query('SELECT * FROM meetings WHERE id = $1 AND created_by = $2', [meetingId, senderId])).rows[0];
-        if (!meeting) return;
+                // Notify the target to mute/unmute themselves
+                sendToUser(tenantId, targetUserId, 'meeting_muted', { meetingId, muted: muted !== false, byUserId: senderId });
 
-        // Notify the target to mute/unmute themselves
-        sendToUser(tenantId, targetUserId, 'meeting_muted', { meetingId, muted: muted !== false, byUserId: senderId });
-
-        // Broadcast updated mute state to all participants so UI reflects change
-        const participants = (await db.query(
-            `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined'`,
-            [meetingId]
-        )).rows;
-        for (const p of participants) {
-            if (p.user_id !== targetUserId) {
-                sendToUser(tenantId, p.user_id, 'meeting_track_state', { meetingId, userId: targetUserId, muted: muted !== false, videoOff: null, screenSharing: null });
+                // Broadcast updated mute state to all participants so UI reflects change
+                const participants = (await db.query(
+                    `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined'`,
+                    [meetingId]
+                )).rows;
+                for (const p of participants) {
+                    if (p.user_id !== targetUserId) {
+                        sendToUser(tenantId, p.user_id, 'meeting_track_state', { meetingId, userId: targetUserId, muted: muted !== false, videoOff: null, screenSharing: null });
+                    }
+                }
             }
-        }
+        );
 
     } else if (msg.type === 'meeting_raise_hand') {
-        const { meetingId, raised } = msg.data || {};
+        // Phase 2 — Idempotency: the hand-toggle button is one of the
+        // easiest things to double-fire on a flaky link (user taps, sees
+        // no response, taps again). With `clientMsgId` the second tap
+        // becomes a free no-op rather than re-flipping the state and
+        // re-broadcasting to every participant.
+        const { meetingId, raised, clientMsgId: rawIdHand } = msg.data || {};
         if (!meetingId) return;
+        await withIdempotency(
+            { tenantId, senderId, type: 'meeting_raise_hand', clientMsgId: rawIdHand },
+            async () => {
+                // Verify sender is an active participant
+                const senderOk = (await db.query(
+                    `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
+                    [meetingId, senderId]
+                )).rows[0];
+                if (!senderOk) return;
 
-        // Verify sender is an active participant
-        const senderOk = (await db.query(
-            `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
-            [meetingId, senderId]
-        )).rows[0];
-        if (!senderOk) return;
+                const participants = (await db.query(
+                    `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined'`,
+                    [meetingId]
+                )).rows;
 
-        const participants = (await db.query(
-            `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined'`,
-            [meetingId]
-        )).rows;
-
-        const raiser = (await db.query('SELECT full_name FROM users WHERE id = $1', [senderId])).rows[0];
-        for (const p of participants) {
-            sendToUser(tenantId, p.user_id, 'meeting_hand_raised', { meetingId, userId: senderId, name: raiser?.full_name, raised: !!raised });
-        }
+                const raiser = (await db.query('SELECT full_name FROM users WHERE id = $1', [senderId])).rows[0];
+                for (const p of participants) {
+                    sendToUser(tenantId, p.user_id, 'meeting_hand_raised', { meetingId, userId: senderId, name: raiser?.full_name, raised: !!raised });
+                }
+            }
+        );
 
     } else if (msg.type === 'meeting_track_state') {
         // Participant broadcasts their muted/videoOff state
@@ -1226,6 +1295,60 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
             }
         }
 
+    } else if (msg.type === 'meeting_request_quality') {
+        // Phase 5 — Mesh quality. The receiving peer is telling the sending
+        // peer "I only need 'q' / 'h' / 'f' (quality/half/full) right now"
+        // because the sender's tile is currently:
+        //   • off-screen (IntersectionObserver fired)
+        //   • a tiny PiP / sidebar mini tile
+        //   • NOT the active speaker (Phase 5 prioritisation)
+        //
+        // The sending peer flips `setParameters({ encodings: [{ maxBitrate }]})`
+        // on the matching RTCRtpSender. This is the mesh equivalent of an SFU's
+        // simulcast layer selection — done client-side because mesh has no
+        // server-side media routing.
+        //
+        // Server is a pure relay; no DB checks (both parties were verified at
+        // meeting_join). The payload is intentionally tiny so we don't
+        // care about validation overhead.
+        const { meetingId, targetUserId, level } = msg.data || {};
+        if (!meetingId || !targetUserId) return;
+        if (!['q', 'h', 'f'].includes(level)) return;
+        sendToUser(tenantId, targetUserId, 'meeting_request_quality', {
+            meetingId,
+            fromUserId: senderId,
+            level,
+        });
+
+    } else if (msg.type === 'meeting_audio_level') {
+        // Phase 5 — Active-speaker. Sender broadcasts their local RMS audio
+        // level (0..1) sampled every ~500ms via the existing WebAudio
+        // analyser. The server fans this out to every participant so they
+        // can independently compute "who's the active speaker right now"
+        // without needing a central SFU. We deliberately throttle on the
+        // CLIENT (not here) — server is a dumb relay.
+        const { meetingId, level } = msg.data || {};
+        if (!meetingId || typeof level !== 'number' || level < 0 || level > 1) return;
+        // Reuse the meeting-chat broadcast audience (joined + invited) so
+        // mid-reconnect participants don't miss active-speaker updates.
+        const senderOk = (await db.query(
+            `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
+            [meetingId, senderId]
+        )).rows[0];
+        if (!senderOk) return;
+        const participants = (await db.query(
+            `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined'`,
+            [meetingId]
+        )).rows;
+        for (const p of participants) {
+            if (p.user_id === senderId) continue;
+            sendToUser(tenantId, p.user_id, 'meeting_audio_level', {
+                meetingId,
+                userId: senderId,
+                level,
+            });
+        }
+
     } else if (msg.type === 'meeting_screen_track_id') {
         // Sender is announcing which of the tracks they sent over their
         // peer connection is the screen share. Client-side `useMeetingState`
@@ -1243,29 +1366,171 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
         });
 
     } else if (msg.type === 'meeting_chat') {
-        // In-meeting chat message relay (text or file)
-        const { meetingId, text, file_url, file_name, file_size } = msg.data || {};
+        // In-meeting chat message relay (text or file).
+        //
+        // RELIABILITY MODEL (Phase 0.5 "chat disappears" fix):
+        //   • The client mints a `clientMsgId` (UUID) for every send and
+        //     keeps the message in its pending-send queue until it sees
+        //     either an echo OR an explicit ack from us. This handler
+        //     therefore MUST be idempotent w.r.t. clientMsgId so retries
+        //     from a flaky network never create duplicates.
+        //   • Idempotency is enforced at the DB layer by the partial unique
+        //     index `idx_messages_client_msg_id` over
+        //     (conversation_id, sender_id, client_msg_id). We use
+        //     `INSERT ... ON CONFLICT DO NOTHING` and, on conflict, fetch
+        //     the canonical row so the echo always carries the persisted
+        //     `id` + `created_at`.
+        //   • We send a dedicated `meeting_message_ack` to the sender
+        //     immediately after persistence, decoupled from the broadcast
+        //     loop. This is critical because the broadcast only delivers
+        //     to participants whose `status='joined'` AT THIS MOMENT — if
+        //     the sender themselves is mid-reconnect, they'd never see the
+        //     echo and the message would sit in their pending queue
+        //     forever, eventually flipping to `_failed`. The ack closes
+        //     that hole.
+        //   • Persist errors are surfaced via `meeting_message_error`
+        //     instead of being silently swallowed.
+        //
+        // PERSISTENCE: messages are written to the same `messages` table
+        // used by regular chat, scoped to the meeting's `conversation_id`.
+        // This mirrors videosdk's PubSub `persist: true` semantic and lets
+        // participants who refresh / rejoin re-hydrate the full chat
+        // history via `GET /api/meetings/:code/messages`.
+        const { meetingId, text, file_url, file_name, file_size, clientMsgId } = msg.data || {};
         if (!meetingId) return;
-        if (!file_url && (!text || typeof text !== 'string' || !text.trim() || text.length > 5000)) return;
+        if (!file_url && (!text || typeof text !== 'string' || !text.trim() || text.length > 5000)) {
+            if (clientMsgId) sendToUser(tenantId, senderId, 'meeting_message_error', { clientMsgId, reason: 'invalid-payload' });
+            return;
+        }
+        // We accept messages without a clientMsgId for backwards-compat,
+        // but every new client supplies one. Sanity-cap the length so we
+        // don't index unbounded user input.
+        const safeClientMsgId = (typeof clientMsgId === 'string' && clientMsgId.length > 0 && clientMsgId.length <= 64)
+            ? clientMsgId
+            : null;
 
         // Verify sender is an active participant
         const senderOk = (await db.query(
             `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
             [meetingId, senderId]
         )).rows[0];
-        if (!senderOk) return;
+        if (!senderOk) {
+            if (safeClientMsgId) sendToUser(tenantId, senderId, 'meeting_message_error', { clientMsgId: safeClientMsgId, reason: 'not-a-participant' });
+            return;
+        }
 
-        const sender = (await db.query('SELECT full_name FROM users WHERE id = $1', [senderId])).rows[0];
-        const participants = (await db.query(
-            `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined'`,
-            [meetingId]
-        )).rows;
+        // Fetch sender + meeting info (we need the meeting's conversation_id
+        // to persist the message). Run in parallel for latency.
+        //
+        // BROADCAST AUDIENCE CHANGE: we no longer restrict to currently
+        // `status='joined'` participants. The set of recipients now
+        // includes everyone who has EVER joined this meeting — they may
+        // be momentarily disconnected (within the 15s
+        // MEETING_DISCONNECT_GRACE_MS window) and would otherwise miss
+        // the message entirely. For users who are well and truly offline,
+        // the message is already persisted and will reappear on their
+        // next hydration via GET /:code/messages. `sendToUser` is a
+        // no-op for users with no open WS connection so this is cheap.
+        const [senderResult, meetingResult, participantsResult] = await Promise.all([
+            db.query('SELECT full_name FROM users WHERE id = $1', [senderId]),
+            db.query('SELECT conversation_id FROM meetings WHERE id = $1', [meetingId]),
+            db.query(
+                `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status IN ('joined','invited')`,
+                [meetingId]
+            ),
+        ]);
+        const sender = senderResult.rows[0];
+        const conversationId = meetingResult.rows[0]?.conversation_id || null;
+        const participants = participantsResult.rows;
+
+        // Persist to DB. Failure here is now a HARD error (we tell the
+        // sender so the optimistic bubble can be marked _failed) — the
+        // earlier "warn and continue" silently produced ephemeral
+        // messages that vanished on the next rejoin.
+        let persistedId = null;
+        let persistedCreatedAt = new Date().toISOString();
+        let persistError = null;
+        if (conversationId) {
+            try {
+                // Encode file metadata in the messages.metadata JSONB column.
+                // The content column stores the visible text — for file-only
+                // messages we store the file name so legacy chat readers
+                // still see something meaningful.
+                const content = text && text.trim()
+                    ? text.trim()
+                    : (file_name ? `📎 ${file_name}` : '');
+                const metadata = {
+                    source: 'meeting',
+                    meetingId,
+                    ...(file_url ? { file_url, file_name: file_name || 'File', file_size: file_size || null } : {}),
+                };
+                const inserted = await db.query(
+                    `INSERT INTO messages (conversation_id, sender_id, content, format_type, metadata, client_msg_id)
+                     VALUES ($1, $2, $3, 'text', $4, $5)
+                     ON CONFLICT (conversation_id, sender_id, client_msg_id)
+                     WHERE client_msg_id IS NOT NULL
+                     DO NOTHING
+                     RETURNING id, created_at`,
+                    [conversationId, senderId, content, JSON.stringify(metadata), safeClientMsgId]
+                );
+                if (inserted.rows[0]) {
+                    persistedId = inserted.rows[0].id;
+                    persistedCreatedAt = inserted.rows[0].created_at;
+                    // Bump conversation updated_at so the meeting's chat row in
+                    // the user's main chat list also surfaces the activity.
+                    await db.query('UPDATE conversations SET updated_at = NOW() WHERE id = $1', [conversationId]);
+                } else if (safeClientMsgId) {
+                    // ON CONFLICT path: a previous attempt by this client
+                    // already inserted the row. Fetch its canonical id so
+                    // the echo carries the right primary key.
+                    const existing = (await db.query(
+                        `SELECT id, created_at FROM messages
+                          WHERE conversation_id = $1 AND sender_id = $2 AND client_msg_id = $3
+                          LIMIT 1`,
+                        [conversationId, senderId, safeClientMsgId]
+                    )).rows[0];
+                    if (existing) {
+                        persistedId = existing.id;
+                        persistedCreatedAt = existing.created_at;
+                    }
+                }
+            } catch (err) {
+                persistError = err;
+                logger.warn({ err: err.message, meetingId, conversationId }, 'meeting_chat: persist failed');
+            }
+        }
+
+        if (persistError) {
+            // Tell ONLY the sender so they can mark their optimistic bubble
+            // as failed. Other participants don't need to know.
+            if (safeClientMsgId) {
+                sendToUser(tenantId, senderId, 'meeting_message_error', {
+                    clientMsgId: safeClientMsgId,
+                    reason: 'persist-failed',
+                });
+            }
+            return;
+        }
+
+        // Send the ack to the sender FIRST. This is the signal the client's
+        // pending-send queue waits on; it's decoupled from the broadcast so
+        // even mid-reconnect senders get their queue drained.
+        if (safeClientMsgId) {
+            sendToUser(tenantId, senderId, 'meeting_message_ack', {
+                meetingId,
+                clientMsgId: safeClientMsgId,
+                id: persistedId,
+                createdAt: persistedCreatedAt,
+            });
+        }
 
         const message = {
+            id: persistedId,
+            clientMsgId: safeClientMsgId, // round-trip the id on every echo
             sender_id: senderId,
             sender_name: sender?.full_name || 'Participant',
             text: text ? text.trim() : null,
-            created_at: new Date().toISOString(),
+            created_at: persistedCreatedAt,
         };
         if (file_url) {
             message.file_url = file_url;
@@ -1276,6 +1541,66 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
         for (const p of participants) {
             sendToUser(tenantId, p.user_id, 'meeting_message', { meetingId, message });
         }
+    } else if (msg.type === 'meeting_chat_replay') {
+        // Reconnect-recovery: the client just opened (or reopened) its WS
+        // and wants to backfill any meeting chat that arrived while it
+        // was disconnected. We respond with one `meeting_message` per
+        // missed row plus a `meeting_chat_replay_done` marker so the
+        // client can clear any "Reconnecting…" indicator.
+        //
+        // Cap at 200 messages — anything older falls back to the existing
+        // GET /api/meetings/:code/messages REST endpoint.
+        const { meetingId, sinceMessageId } = msg.data || {};
+        if (!meetingId) return;
+
+        // Verify the requester is allowed to see this meeting's chat.
+        const allowed = (await db.query(
+            `SELECT 1 FROM meeting_participants
+              WHERE meeting_id = $1 AND user_id = $2`,
+            [meetingId, senderId]
+        )).rows[0];
+        if (!allowed) return;
+
+        const meetingRow = (await db.query(
+            'SELECT conversation_id FROM meetings WHERE id = $1', [meetingId]
+        )).rows[0];
+        if (!meetingRow?.conversation_id) {
+            sendToUser(tenantId, senderId, 'meeting_chat_replay_done', { meetingId, count: 0 });
+            return;
+        }
+
+        const since = Number.isInteger(sinceMessageId) && sinceMessageId > 0 ? sinceMessageId : 0;
+        const rows = (await db.query(
+            `SELECT m.id, m.sender_id, m.content, m.metadata, m.created_at, m.client_msg_id,
+                    u.full_name AS sender_name
+               FROM messages m
+               JOIN users u ON u.id = m.sender_id
+              WHERE m.conversation_id = $1
+                AND m.id > $2
+                AND (m.format_type != 'system' OR (m.metadata->>'type' IN ('meeting_joined','meeting_ended')))
+              ORDER BY m.id ASC
+              LIMIT 200`,
+            [meetingRow.conversation_id, since]
+        )).rows;
+
+        for (const r of rows) {
+            const meta = r.metadata || {};
+            const message = {
+                id: r.id,
+                clientMsgId: r.client_msg_id || null,
+                sender_id: r.sender_id,
+                sender_name: r.sender_name,
+                text: meta.file_url ? null : r.content,
+                created_at: r.created_at,
+                ...(meta.file_url ? {
+                    file_url: meta.file_url,
+                    file_name: meta.file_name || null,
+                    file_size: meta.file_size || null,
+                } : {}),
+            };
+            sendToUser(tenantId, senderId, 'meeting_message', { meetingId, message, _replay: true });
+        }
+        sendToUser(tenantId, senderId, 'meeting_chat_replay_done', { meetingId, count: rows.length });
 
     } else if (msg.type === 'call_add_participant') {
         // Add a participant to an ongoing call.

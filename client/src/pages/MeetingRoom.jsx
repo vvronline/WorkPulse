@@ -63,16 +63,22 @@ export default function MeetingRoom() {
         participants, status, raisedHand, messages,
         activePanel, setActivePanel, connectionQualities, presenterId,
         toggleMute, toggleVideo, toggleScreenShare, raiseHand,
-        sendChatMessage, sendChatFile, endMeeting, leaveMeeting, muteParticipant, addParticipant,
+        sendChatMessage, sendChatFile, retryMessage,
+        endMeeting, leaveMeeting, muteParticipant, addParticipant,
+        // Phase 1 — Resilience Pack: degraded-mode banner descriptor.
+        connectionBanner,
+        // Phase 5 — Mesh quality: active-speaker + receiver-driven bitrate.
+        activeSpeakerId,
+        requestPeerQuality,
     } = useMeetingState({
         meetingId: session?.meetingId,
+        code: session?.code || code,
         ws,
         initialMuted: session?.initialMuted,
         initialVideoOff: session?.initialVideoOff,
         keepAliveOnUnmount: true,
         existingStream: localStreamRef?.current || null,
     });
-
     // Sync local stream into MeetingContext so the floating PiP widget
     // (shown when the user navigates away from /meeting/:code/room) can
     // display the live self-view and toggle mic/video.
@@ -254,6 +260,22 @@ export default function MeetingRoom() {
                 </div>
             </div>
 
+            {/* Phase 1 — Resilience Pack: degraded-mode banner.
+                Shown when the meeting is in `reconnecting`, `degraded` or
+                `failed` state. Stays out of the user's way otherwise.
+                The string + severity come straight from the FSM so all
+                copy + colour decisions live in one place. */}
+            {connectionBanner?.showBanner && (
+                <div
+                    className={`mr-degraded-banner mr-degraded-banner--${connectionBanner.severity}`}
+                    role="status"
+                    aria-live="polite"
+                >
+                    <span className="mr-degraded-dot" />
+                    <span>{connectionBanner.label}</span>
+                </div>
+            )}
+
             {/* Body */}
             <div className="mr-body">
                 <div className="mr-main">
@@ -273,12 +295,13 @@ export default function MeetingRoom() {
                                 />
                             </div>
                             <div className="mr-presenter-sidebar">
-                                {tiles.map(({ key, participant, isLocal }) => (
+                            {tiles.map(({ key, participant, isLocal }) => (
                                     <ParticipantTile
                                         key={key}
                                         participant={participant}
                                         isLocal={isLocal}
                                         quality={connectionQualities.get(participant.userId)}
+                                        isActiveSpeaker={!isLocal && participant.userId === activeSpeakerId}
                                         isMini
                                     />
                                 ))}
@@ -295,6 +318,11 @@ export default function MeetingRoom() {
                                     participant={participant}
                                     isLocal={isLocal}
                                     quality={connectionQualities.get(participant.userId)}
+                                    isActiveSpeaker={!isLocal && participant.userId === activeSpeakerId}
+                                    /* Phase 5: IntersectionObserver in the tile
+                                       calls back here so the sender can flip
+                                       to 'q' (off-screen) or 'h' (visible). */
+                                    onVisibilityChange={!isLocal ? (level) => requestPeerQuality(participant.userId, level) : undefined}
                                 />
                             ))}
                         </div>
@@ -312,7 +340,7 @@ export default function MeetingRoom() {
                         </div>
                         <div className="mr-sidebar-body">
                             {activePanel === 'chat' && (
-                                <MeetingChat messages={messages} onSend={sendChatMessage} onSendFile={sendChatFile} />
+                                <MeetingChat messages={messages} onSend={sendChatMessage} onSendFile={sendChatFile} onRetry={retryMessage} />
                             )}
                             {activePanel === 'participants' && (
                                 <MeetingParticipants

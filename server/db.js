@@ -957,6 +957,17 @@ async function initTenantSchema(q) {
     await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS forwarded_from_id INTEGER REFERENCES messages(id) ON DELETE SET NULL`);
     await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ`);
     await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS pinned_by INTEGER REFERENCES users(id) ON DELETE SET NULL`);
+    // client_msg_id powers the at-least-once delivery story for in-meeting
+    // chat (and any future chat surface). The migration runner also adds
+    // this column on existing tenants; declaring it here keeps fresh
+    // tenants self-consistent and lets the WS handler always issue its
+    // `INSERT ... ON CONFLICT DO NOTHING` against a real column + index.
+    await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS client_msg_id TEXT`);
+    await q(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_client_msg_id
+        ON messages (conversation_id, sender_id, client_msg_id)
+        WHERE client_msg_id IS NOT NULL
+    `);
 
     await q(`
         CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, created_at DESC)

@@ -31,6 +31,7 @@ const taskRoutes = require('./routes/tasks');
 const profileRoutes = require('./routes/profile');
 const organizationRoutes = require('./routes/organization');
 const adminRoutes = require('./routes/admin');
+const internalRoutes = require('./routes/internal');
 const managerRoutes = require('./routes/manager');
 const leavePolicyRoutes = require('./routes/leavePolicy');
 const sprintsRoutes = require('./routes/sprints');
@@ -299,6 +300,10 @@ app.use('/api/profile', apiLimiter, profileRoutes);
 app.use('/api/org', apiLimiter, organizationRoutes);
 app.use('/api/admin', apiLimiter, adminRoutes);
 app.use('/api/admin/tenants', apiLimiter, tenantRoutes);
+// Phase 6 — Internal observability endpoints (platform_admin only).
+// Currently just /api/internal/ws-stats; future db-pool / redis stats
+// will mount under the same router.
+app.use('/api/internal', apiLimiter, internalRoutes);
 app.use('/api/manager', apiLimiter, managerRoutes);
 app.use('/api/leave-policy', apiLimiter, leavePolicyRoutes);
 app.use('/api/notes', apiLimiter, notesRoutes);

@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { MicOff, Mic, CameraOff, Camera, Check, ClipboardList, Volume2, Play } from 'lucide-react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getMeeting } from '../api';
+import { getMeeting, getIceConfig } from '../api';
 import { useAuth } from '../AuthContext';
 import { useMeeting } from '../MeetingContext';
+// ADR-010 — ICE preflight. Runs in parallel with media + network
+// checks so the user can be warned BEFORE clicking Join if their
+// network blocks WebRTC.
+import { runPreflight, summarisePreflight } from './meeting/preflight';
 import './MeetingJoin.css';
 
 export default function MeetingJoin() {
@@ -28,7 +32,10 @@ export default function MeetingJoin() {
     const [copied, setCopied] = useState(false);
     const [testingSpeaker, setTestingSpeaker] = useState(false);
 
-
+    // ADR-010 — ICE preflight result. Runs once in the background after
+    // the page mounts and persists through the join action so the user
+    // can see WHY they're being asked to wait. `null` while in-flight.
+    const [preflight, setPreflight] = useState(null);
 
     const videoRef = useRef(null);
     const audioCtxRef = useRef(null);
@@ -204,6 +211,25 @@ export default function MeetingJoin() {
 
     useEffect(() => { checkNetworkSpeed(); }, [checkNetworkSpeed]);
 
+    // ADR-010 — ICE preflight. Fire-and-forget on mount. Uses the
+    // production ICE config (so we exercise the actual TURN servers
+    // the user will join with) but falls back to public STUN if the
+    // config endpoint is slow / down. Runs in parallel with media
+    // acquisition; banner appears the moment it settles (~300ms typical).
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            let iceServers;
+            try {
+                const res = await getIceConfig();
+                iceServers = res?.data?.iceServers;
+            } catch { /* fall through to default */ }
+            const result = await runPreflight({ iceServers, timeoutMs: 5_000 });
+            if (!cancelled) setPreflight(result);
+        })();
+        return () => { cancelled = true; };
+    }, []);
+
     // Apply audio/video mute to local stream
     useEffect(() => {
         if (!stream) return;
@@ -332,6 +358,35 @@ export default function MeetingJoin() {
                     {meeting?.organizer_name && (
                         <p className="mj-host">Hosted by {meeting.organizer_name}</p>
                     )}
+
+                    {/* ADR-010 — Preflight banner. Hidden while in-flight
+                        (preflight === null) to avoid flashing "Checking…"
+                        for the ~200ms typical resolution time. */}
+                    {preflight && (() => {
+                        const s = summarisePreflight(preflight);
+                        if (s.severity === 'ok') return null; // OK = silent, don't clutter the UI
+                        const bg = s.severity === 'error' ? '#fef2f2' : '#fffbeb';
+                        const fg = s.severity === 'error' ? '#991b1b' : '#92400e';
+                        const border = s.severity === 'error' ? '#fecaca' : '#fde68a';
+                        return (
+                            <div
+                                role="alert"
+                                style={{
+                                    padding: '8px 12px',
+                                    margin: '8px 0',
+                                    background: bg,
+                                    color: fg,
+                                    border: `1px solid ${border}`,
+                                    borderRadius: 6,
+                                    fontSize: 13,
+                                    lineHeight: 1.4,
+                                }}
+                            >
+                                <strong>{s.severity === 'error' ? '⚠ ' : 'ⓘ '}</strong>
+                                {s.label}
+                            </div>
+                        );
+                    })()}
 
                     {/* Device selectors */}
                     <div className="mj-devices">

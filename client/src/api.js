@@ -579,6 +579,12 @@ export const cancelMeeting = (id) => API.delete(`/meetings/${id}`);
 export const getMeetingParticipants = (id) => API.get(`/meetings/${id}/participants`);
 export const addMeetingParticipant = (id, userId) => API.post(`/meetings/${id}/participants`, { user_id: userId });
 export const removeMeetingParticipant = (id, userId) => API.delete(`/meetings/${id}/participants/${userId}`);
+// Fetch the persisted in-meeting chat history for the meeting's conversation.
+// Used by useMeetingState to re-hydrate the chat panel on join/rejoin so
+// messages don't appear lost after a refresh or after leaving + rejoining
+// during the same session.
+export const getMeetingMessages = (code, limit = 200) =>
+    API.get(`/meetings/${code}/messages`, { params: { limit } });
 
 // Meeting HLS broadcast (videosdk-hls-style large-meeting mode)
 export const startMeetingHlsBroadcast = (code) => API.post(`/meetings/${code}/hls/start`);

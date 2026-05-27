@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Paperclip, FileText, Send } from 'lucide-react';
+import { Paperclip, FileText, Send, AlertCircle, Loader2, RefreshCcw } from 'lucide-react';
 import './MeetingRoom.css';
 
 function formatFileSize(bytes) {
@@ -9,9 +9,34 @@ function formatFileSize(bytes) {
 }
 
 /**
- * In-meeting chat panel (sidebar).
+ * Derive a STABLE React key for a message row. Using the array index as
+ * a key was masking a bug where dedupe/prepend mutations of the
+ * `messages` array reused the wrong DOM nodes — briefly flashing the
+ * wrong text into the wrong bubble while the React tree re-conciled.
+ *
+ * Priority:
+ *   1. Server primary key (`id`)        — set after persistence.
+ *   2. Client-minted UUID (`clientMsgId`) — present from the moment the
+ *      message is enqueued for send; survives the ack round-trip without
+ *      changing identity.
+ *   3. A composite of sender + timestamp — legacy fallback for messages
+ *      that pre-date the clientMsgId field.
  */
-export default function MeetingChat({ messages, onSend, onSendFile }) {
+function rowKey(m, i) {
+    if (m.id != null) return `id:${m.id}`;
+    if (m.clientMsgId) return `cid:${m.clientMsgId}`;
+    return `legacy:${m.sender_id || 'x'}:${m.created_at || ''}:${i}`;
+}
+
+/**
+ * In-meeting chat panel (sidebar).
+ *
+ * `onRetry(clientMsgId)` (optional) is invoked when the user taps the
+ * "Failed — retry" badge on an outbound message that didn't get acked
+ * within the pending-send timeout. Wired by `useMeetingState`'s
+ * `retryMessage`.
+ */
+export default function MeetingChat({ messages, onSend, onSendFile, onRetry }) {
     const [text, setText] = useState('');
     const bottomRef = useRef(null);
     const fileRef = useRef(null);
@@ -47,21 +72,56 @@ export default function MeetingChat({ messages, onSend, onSendFile }) {
                 {messages.length === 0 && (
                     <div className="mc-empty">No messages yet</div>
                 )}
-                {messages.map((m, i) => (
-                    <div key={i} className="mc-msg">
-                        <span className="mc-msg-sender">{m.sender_name || 'Participant'}</span>
-                        {m.file_url ? (
-                            <a className="mc-file-msg" href={m.file_url} target="_blank" rel="noopener noreferrer">
-                                <FileText size={16} />
-                                <span className="mc-file-name">{m.file_name || 'File'}</span>
-                                {m.file_size && <span className="mc-file-size">{formatFileSize(m.file_size)}</span>}
-                            </a>
-                        ) : (
-                            <span className="mc-msg-text">{m.text}</span>
-                        )}
-                        <span className="mc-msg-time">{new Date(m.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                    </div>
-                ))}
+                {messages.map((m, i) => {
+                    const isFailed = !!m._failed;
+                    const isUploading = !!m._uploading;
+                    const isPending = !isFailed && !isUploading && !!m._optimistic;
+                    return (
+                        <div
+                            key={rowKey(m, i)}
+                            className={`mc-msg${isFailed ? ' mc-msg-failed' : ''}${isPending ? ' mc-msg-pending' : ''}`}
+                        >
+                            <span className="mc-msg-sender">{m.sender_name || 'Participant'}</span>
+                            {m.file_url ? (
+                                <a className="mc-file-msg" href={m.file_url} target="_blank" rel="noopener noreferrer">
+                                    <FileText size={16} />
+                                    <span className="mc-file-name">{m.file_name || 'File'}</span>
+                                    {m.file_size && <span className="mc-file-size">{formatFileSize(m.file_size)}</span>}
+                                </a>
+                            ) : (
+                                <span className="mc-msg-text">{m.text}</span>
+                            )}
+                            <span className="mc-msg-time">
+                                {new Date(m.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+
+                            {isUploading && (
+                                <span className="mc-msg-status mc-msg-status-uploading" title="Uploading…">
+                                    <Loader2 size={12} className="mc-spin" />
+                                    <span>Uploading…</span>
+                                </span>
+                            )}
+                            {isPending && !isUploading && (
+                                <span className="mc-msg-status mc-msg-status-pending" title="Sending…">
+                                    <Loader2 size={12} className="mc-spin" />
+                                    <span>Sending…</span>
+                                </span>
+                            )}
+                            {isFailed && (
+                                <button
+                                    type="button"
+                                    className="mc-msg-status mc-msg-status-failed"
+                                    title={m._failureReason ? `Failed: ${m._failureReason}. Tap to retry.` : 'Failed — tap to retry'}
+                                    onClick={() => onRetry && m.clientMsgId && onRetry(m.clientMsgId)}
+                                >
+                                    <AlertCircle size={12} />
+                                    <span>Failed</span>
+                                    <RefreshCcw size={12} />
+                                </button>
+                            )}
+                        </div>
+                    );
+                })}
                 <div ref={bottomRef} />
             </div>
             <div className="mc-input-wrap">

@@ -1080,6 +1080,53 @@ const MIGRATIONS = [
             await query(`ALTER TABLE time_entries ADD COLUMN IF NOT EXISTS clock_in_wifi_bssid TEXT`);
         },
     },
+    {
+        // ── In-meeting chat reliability (Phase 0.5) ──────────────────────────
+        //
+        // Background: in-meeting chat messages were occasionally "disappearing"
+        // for users on flaky networks. Five overlapping issues caused it:
+        //
+        //   1. Chat lived only in React state inside useMeetingState; remounts
+        //      (PiP swap, navigation, Strict Mode) gave a fresh empty Map and
+        //      the network re-hydrate took ~200-800ms — perceived as data loss.
+        //   2. Hydration only ran on `code` change, never on WS reconnect, so
+        //      any messages sent during a brief WS drop were silently missed
+        //      (the server's broadcast loop only delivered to participants
+        //      currently in `status='joined'`).
+        //   3. Sender-side fire-and-forget WS send had no ack — if WS was
+        //      mid-reconnect the message went nowhere; the sender's optimistic
+        //      bubble sat there forever, but refreshing wiped it (never
+        //      persisted on the server).
+        //   4. Optimistic dedup matched by (sender_id + text) which broke for
+        //      files and double-sent identical text.
+        //   5. Server `meeting_chat` persist errors were swallowed silently
+        //      (`logger.warn` + continuing broadcast), so transient DB hiccups
+        //      produced ephemeral-only messages that vanished on rejoin.
+        //
+        // This migration adds the DB primitive that closes hole #4 and #5:
+        // a `client_msg_id` column on the messages table, with a partial
+        // unique index so the server can safely `INSERT ... ON CONFLICT DO
+        // NOTHING` when a client retries the same logical message after a
+        // missed ack. The same column also lets the client robustly dedup
+        // incoming server echoes against its pending-send queue.
+        //
+        // The column is nullable on purpose — every existing chat message in
+        // the database (DMs, group chat, in-meeting chat from before this
+        // change) keeps working unchanged.
+        name: '2026_06_v8_messages_client_msg_id',
+        async up(query) {
+            await query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS client_msg_id TEXT`);
+            // Partial unique index: only enforce uniqueness when the client
+            // actually supplied an id. Scoped by (conversation, sender) so two
+            // different users' random UUIDs can't collide (and a deleted-then-
+            // recreated conversation gets a fresh namespace via cascade).
+            await query(`
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_client_msg_id
+                ON messages (conversation_id, sender_id, client_msg_id)
+                WHERE client_msg_id IS NOT NULL
+            `);
+        },
+    },
 ];
 
 /**
