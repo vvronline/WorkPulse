@@ -730,7 +730,10 @@ export default function CallOverlay({
                 </div>
             )}
 
-            {/* Mute badge */}
+            {/* Mute badge — sits inside the local video PiP / avatar tile when
+                one is rendered (video call OR audio call where the remote is
+                sharing video). Audio-only calls render their own mute badge
+                INSIDE the new self-preview card below. */}
             {controls.muted && isConnected && (isVideoCall || webrtc.remoteHasVideo) && (
                 <div
                     className={`${s.localVideoMuteBadge} ${(isVideoCall && controls.videoOff) || !isVideoCall ? s.localVideoMuteBadgeAvatar : ''}`}
@@ -741,14 +744,28 @@ export default function CallOverlay({
                 </div>
             )}
 
-            {!isVideoCall && !webrtc.remoteHasVideo && controls.muted && isConnected && (
+            {/* ─── Audio-call self-preview card (1:1 AND group) ─────────────
+                Shown whenever the local participant has no other on-screen
+                representation (no local video PiP, no local avatar tile).
+                This gives the user a visual self-presence and a dedicated
+                place for the local mute badge so it doesn't collide with the
+                remote-mute badge in the top-right corner on mobile.
+                Draggable & corner-snapping just like the local video tile. */}
+            {isConnected && !isVideoCall && !webrtc.remoteHasVideo && !controls.screenSharing && (
                 <div
-                    className={s.localVideoMuteBadge}
-                    style={{ position: 'absolute', top: 12, right: 12, bottom: 'auto', left: 'auto' }}
-                    title="You are muted"
-                    aria-label="You are muted"
+                    className={`${s.selfPreviewCard} ${s[`selfPreviewCard_${localVideoCorner.replace('-', '_')}`] || ''}`}
+                    onMouseDown={handleLocalVideoDragStart}
+                    onTouchStart={handleLocalVideoDragStart}
+                    role="img"
+                    aria-label="Your preview"
                 >
-                    <MicOffIcon />
+                    <ChatAvatar name={user?.fullName || user?.name || 'You'} avatar={user?.avatar} size="md" />
+                    <span className={s.selfPreviewLabel}>You</span>
+                    {controls.muted && (
+                        <div className={s.selfPreviewMuteBadge} title="You are muted" aria-label="You are muted">
+                            <MicOffIcon />
+                        </div>
+                    )}
                 </div>
             )}
 
