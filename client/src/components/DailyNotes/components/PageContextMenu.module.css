@@ -1,6 +1,6 @@
 .ctxMenu {
   position: absolute; right: 0.4rem; top: calc(100% - 4px);
-  background: var(--bg-secondary); border: 1px solid var(--border);
+  background: var(--dropdown-bg, var(--bg-elevated)); border: 1px solid var(--dropdown-border, var(--border));
   border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,0.3);
   z-index: 300; min-width: 160px; overflow: hidden;
   animation: fadeSlideIn 0.12s ease;
@@ -15,7 +15,7 @@
   font-size: 0.78rem; color: var(--text-primary); cursor: pointer;
   text-align: left; transition: background 0.1s;
 }
-.ctxItem:hover    { background: var(--bg-hover, rgba(255,255,255,0.06)); }
+.ctxItem:hover    { background: var(--dropdown-hover, rgba(255,255,255,0.06)); }
 .ctxSmall         { padding-left: 1.5rem; font-size: 0.73rem; }
 .ctxActive        { color: var(--primary) !important; font-weight: 600; }
 .ctxDanger        { color: var(--danger, #f87171) !important; }
@@ -27,7 +27,7 @@
   color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em;
   display: block;
 }
-[data-theme="light"] .ctxMenu { background: #ffffff; box-shadow: 0 6px 20px rgba(0,0,0,0.12); }
+[data-theme="light"] .ctxMenu { background: var(--dropdown-bg); box-shadow: 0 6px 20px rgba(0,0,0,0.12); }
 
 /* ── Mobile: bigger tap targets ── */
 @media (hover: none) {

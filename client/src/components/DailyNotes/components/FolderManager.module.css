@@ -80,4 +80,4 @@
   padding: 0.15rem 0.25rem; box-sizing: border-box;
 }
 
-[data-theme="light"] .newFolderInput { background: #fff; }
+[data-theme="light"] .newFolderInput { background: var(--input-bg); }

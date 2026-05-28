@@ -26,4 +26,4 @@
   border: 1px solid var(--primary); border-radius: 12px;
   background: transparent; color: var(--text-primary); outline: none; width: 80px;
 }
-[data-theme="light"] .tagAddInput { background: #fff; }
+[data-theme="light"] .tagAddInput { background: var(--input-bg); }

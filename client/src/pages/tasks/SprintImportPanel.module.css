@@ -1,5 +1,5 @@
 /* ============= SPRINT IMPORT PANEL ============= */
-.sprint-import-panel { background: var(--bg-card, #1e1e2e); border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 12px; margin-bottom: 1rem; overflow: hidden; }
+.sprint-import-panel { background: var(--bg-elevated, #252525); border: 1px solid var(--border, rgba(255,255,255,0.09)); border-radius: 12px; margin-bottom: 1rem; overflow: hidden; }
 .sprint-import-header { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; border-bottom: 1px solid var(--border, rgba(255,255,255,0.08)); font-weight: 600; font-size: 0.9rem; color: var(--text-primary); }
 .sprint-import-title { } /* used in JSX className */
 .sprint-import-empty { padding: 1.5rem 1rem; text-align: center; color: var(--text-muted); font-size: 0.875rem; }
@@ -24,5 +24,5 @@
 [data-theme="light"] .date-input { color-scheme: light; }
 .backlog-ticket-id { font-family: monospace; font-size: 0.78rem; color: var(--text-muted); }
 
-[data-theme="light"] .sprint-import-panel { background: #ffffff; }
-[data-theme="light"] .sprint-import-select { background: #ffffff; }
+[data-theme="light"] .sprint-import-panel { background: var(--dropdown-bg); }
+[data-theme="light"] .sprint-import-select { background: var(--input-bg); }

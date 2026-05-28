@@ -21,8 +21,8 @@
     max-width: 760px;
     max-height: calc(100vh - 7rem);
     display: flex; flex-direction: column;
-    background: var(--notes-surface-elev, var(--bg-secondary));
-    border: 1px solid var(--notes-border, var(--border));
+    background: var(--dropdown-bg, var(--bg-elevated));
+    border: 1px solid var(--dropdown-border, var(--border));
     border-radius: var(--notes-radius-lg, 16px);
     box-shadow: var(--notes-shadow-lg, 0 24px 64px rgba(0, 0, 0, 0.45));
     overflow: hidden;
@@ -207,7 +207,7 @@
     opacity: 0.7;
 }
 
-[data-theme="light"] .panel { background: #fff; }
+[data-theme="light"] .panel { background: var(--dropdown-bg); }
 
 /* Mobile */
 @media (max-width: 640px) {

@@ -22,8 +22,8 @@
     box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
     overflow: hidden;
 }
-[data-theme="light"] .modal { background: #ffffff; }
-[data-theme="dark"] .modal { background: #1f2937; }
+[data-theme="light"] .modal { background: var(--dropdown-bg); }
+[data-theme="dark"] .modal { background: var(--bg-elevated); }
 
 .head {
     display: flex;

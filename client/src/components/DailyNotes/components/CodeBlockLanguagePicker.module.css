@@ -42,8 +42,8 @@
     max-height: 320px;
     display: flex;
     flex-direction: column;
-    background: var(--notes-surface-elev, var(--bg-secondary));
-    border: 1px solid var(--notes-border, var(--border));
+    background: var(--dropdown-bg, var(--bg-elevated));
+    border: 1px solid var(--dropdown-border, var(--border));
     border-radius: var(--notes-radius-md, 12px);
     box-shadow: var(--notes-shadow-lg, 0 22px 48px rgba(0, 0, 0, 0.32));
     overflow: hidden;
@@ -100,4 +100,4 @@
     flex-shrink: 0;
 }
 
-[data-theme="light"] .menu { background: #fff; }
+[data-theme="light"] .menu { background: var(--dropdown-bg); }

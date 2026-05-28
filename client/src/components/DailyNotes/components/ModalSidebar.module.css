@@ -42,9 +42,9 @@
   font-size: 0.78rem; color: var(--text-muted);
 }
 /* Light theme */
-[data-theme="light"] .sidebar      { background: #f5f5f7; }
-[data-theme="light"] .searchInput  { background: #f5f5f7; }
-[data-theme="light"] .select       { background: #fff; }
+[data-theme="light"] .sidebar      { background: var(--bg-secondary); }
+[data-theme="light"] .searchInput  { background: var(--bg-secondary); }
+[data-theme="light"] .select       { background: var(--input-bg); }
 
 /* ── Mobile: sidebar slides in from top as a collapsible panel ── */
 @media (max-width: 640px) {

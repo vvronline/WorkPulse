@@ -17,8 +17,8 @@
 .panel {
     width: 100%;
     max-width: 560px;
-    background: var(--notes-surface-elev, var(--bg-secondary));
-    border: 1px solid var(--notes-border, var(--border));
+    background: var(--dropdown-bg, var(--bg-elevated));
+    border: 1px solid var(--dropdown-border, var(--border));
     border-radius: var(--notes-radius-lg, 16px);
     box-shadow: var(--notes-shadow-lg, 0 22px 48px rgba(0, 0, 0, 0.4));
     overflow: hidden;
@@ -136,8 +136,8 @@
     box-shadow: 0 4px 10px rgba(34, 197, 94, 0.3);
 }
 
-[data-theme="light"] .panel { background: #fff; }
-[data-theme="light"] .input { background: #fff; }
+[data-theme="light"] .panel { background: var(--dropdown-bg); }
+[data-theme="light"] .input { background: var(--input-bg); }
 
 @media (max-width: 600px) {
     .overlay { padding: 1rem 0.75rem; }

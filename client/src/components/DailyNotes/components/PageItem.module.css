@@ -73,7 +73,7 @@
   border: 1px solid var(--primary); border-radius: 5px;
   padding: 0.25rem 0.5rem; outline: none; width: 100%; margin: 0.2rem 0;
 }
-[data-theme="light"] .renameInput { background: #fff; }
+[data-theme="light"] .renameInput { background: var(--input-bg); }
 
 .menuBtn {
   background: none; border: none; cursor: pointer;

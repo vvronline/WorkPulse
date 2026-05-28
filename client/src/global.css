@@ -7,7 +7,7 @@
   /* Notion Blue Light */
   --primary-dark: #1a6dbe;
   /* Notion Blue Dark */
-  --primary-glow: transparent;
+  --primary-glow: rgba(35, 131, 226, 0.15);
 
   --accent: #2383e2;
   --accent-hover: #529cca;
@@ -28,24 +28,29 @@
   --bg-hover: rgba(255, 255, 255, 0.055);
   --bg-elevated: #252525;
   --surface: rgba(255, 255, 255, 0.04);
-  --surface-hover: rgba(255, 255, 255, 0.055);
-  --glass: rgba(255, 255, 255, 0.03);
-  --glass-border: rgba(255, 255, 255, 0.07);
+  --surface-hover: rgba(255, 255, 255, 0.07);
+  --glass: rgba(255, 255, 255, 0.04);
+  --glass-border: rgba(255, 255, 255, 0.09);
   --text: rgba(255, 255, 255, 0.81);
   --text-primary: rgba(255, 255, 255, 0.81);
   --text-secondary: rgba(255, 255, 255, 0.53);
   --text-muted: rgba(255, 255, 255, 0.38);
-  --input-bg: rgba(255, 255, 255, 0.055);
-  --card-bg: rgba(255, 255, 255, 0.03);
-  --border: rgba(255, 255, 255, 0.08);
+  --input-bg: rgba(255, 255, 255, 0.065);
+  --input-border: rgba(255, 255, 255, 0.1);
+  --input-border-focus: rgba(35, 131, 226, 0.6);
+  --card-bg: rgba(255, 255, 255, 0.035);
+  --border: rgba(255, 255, 255, 0.09);
   --shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.5);
-  --modal-bg: rgba(25, 25, 25, 0.96);
-  --modal-border: rgba(255, 255, 255, 0.07);
+  --modal-bg: rgba(25, 25, 25, 0.97);
+  --modal-border: rgba(255, 255, 255, 0.09);
+  --dropdown-bg: #252525;
+  --dropdown-hover: rgba(255, 255, 255, 0.07);
+  --dropdown-border: rgba(255, 255, 255, 0.1);
   --chat-bubble-mine: rgba(35, 131, 226, 0.08);
   --chat-bubble-theirs: rgba(255, 255, 255, 0.04);
   --chat-bubble-mine-border: rgba(35, 131, 226, 0.12);
-  --separator: rgba(255, 255, 255, 0.04);
+  --separator: rgba(255, 255, 255, 0.05);
   --radius: 8px;
   --radius-sm: 6px;
   --radius-full: 9999px;
@@ -57,39 +62,44 @@
 [data-theme="light"] {
   --primary: #2383e2;
   /* Notion Blue */
-  --primary-light: #529cca;
-  /* Notion Blue Light */
+  --primary-light: #4a9de6;
+  /* Slightly deeper for better contrast on white */
   --primary-dark: #1a6dbe;
   /* Notion Blue Dark */
-  --primary-glow: transparent;
+  --primary-glow: rgba(35, 131, 226, 0.08);
 
   --accent: #2383e2;
-  --accent-hover: #529cca;
+  --accent-hover: #1b6fc2;
   --on-accent: #ffffff;
 
-  --bg: #ffffff;
-  --bg-secondary: #f7f6f3;
-  --bg-hover: rgba(55, 53, 47, 0.04);
+  --bg: #fbfbfa;
+  --bg-secondary: #f5f4f1;
+  --bg-hover: rgba(55, 53, 47, 0.06);
   --bg-elevated: #ffffff;
-  --surface: rgba(55, 53, 47, 0.03);
-  --surface-hover: rgba(55, 53, 47, 0.06);
-  --glass: rgba(255, 255, 255, 0.8);
-  --glass-border: rgba(55, 53, 47, 0.09);
+  --surface: rgba(55, 53, 47, 0.04);
+  --surface-hover: rgba(55, 53, 47, 0.08);
+  --glass: rgba(255, 255, 255, 0.88);
+  --glass-border: rgba(55, 53, 47, 0.12);
   --text: #37352f;
   --text-primary: #37352f;
   --text-secondary: rgba(55, 53, 47, 0.65);
   --text-muted: rgba(55, 53, 47, 0.45);
-  --input-bg: rgba(242, 241, 238, 0.6);
+  --input-bg: #f7f6f3;
+  --input-border: rgba(55, 53, 47, 0.16);
+  --input-border-focus: rgba(35, 131, 226, 0.5);
   --card-bg: #ffffff;
-  --border: rgba(55, 53, 47, 0.09);
-  --shadow: 0 4px 18px rgba(0, 0, 0, 0.06);
-  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.1);
-  --modal-bg: rgba(255, 255, 255, 0.97);
-  --modal-border: rgba(55, 53, 47, 0.09);
+  --border: rgba(55, 53, 47, 0.13);
+  --shadow: 0 1px 3px rgba(55, 53, 47, 0.04), 0 6px 16px rgba(55, 53, 47, 0.06);
+  --shadow-lg: 0 4px 8px rgba(55, 53, 47, 0.04), 0 16px 40px rgba(55, 53, 47, 0.08);
+  --modal-bg: rgba(255, 255, 255, 0.98);
+  --modal-border: rgba(55, 53, 47, 0.12);
+  --dropdown-bg: #ffffff;
+  --dropdown-hover: rgba(55, 53, 47, 0.06);
+  --dropdown-border: rgba(55, 53, 47, 0.13);
   --chat-bubble-mine: rgba(35, 131, 226, 0.07);
-  --chat-bubble-theirs: rgba(55, 53, 47, 0.03);
-  --chat-bubble-mine-border: rgba(35, 131, 226, 0.1);
-  --separator: rgba(55, 53, 47, 0.04);
+  --chat-bubble-theirs: rgba(55, 53, 47, 0.04);
+  --chat-bubble-mine-border: rgba(35, 131, 226, 0.12);
+  --separator: rgba(55, 53, 47, 0.06);
   color-scheme: light;
 }
 
@@ -127,7 +137,7 @@ body {
 }
 
 [data-theme="light"] * {
-  scrollbar-color: rgba(55, 53, 47, 0.14) transparent;
+  scrollbar-color: rgba(55, 53, 47, 0.16) transparent;
 }
 
 ::-webkit-scrollbar {
@@ -292,7 +302,7 @@ body {
 .form-group input {
   width: 100%;
   padding: 0.55rem 0.85rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--input-border, var(--border));
   border-radius: 6px;
   font-size: 0.875rem;
   font-family: inherit;
@@ -308,8 +318,8 @@ body {
 
 .form-group input:focus {
   outline: none;
-  border-color: var(--primary);
-  box-shadow: 0 0 0 2px var(--primary-glow);
+  border-color: var(--input-border-focus, var(--primary));
+  box-shadow: 0 0 0 3px var(--primary-glow);
 }
 
 .form-group input:disabled {
@@ -329,6 +339,12 @@ input[type="time"] {
 [data-theme="light"] .form-group input[type="time"],
 [data-theme="light"] .form-group input {
   color-scheme: light;
+  border-color: var(--input-border);
+}
+
+[data-theme="light"] .form-group input:focus {
+  border-color: var(--input-border-focus);
+  box-shadow: 0 0 0 3px rgba(35, 131, 226, 0.1);
 }
 
 /* ============= MESSAGES ============= */
@@ -626,7 +642,7 @@ h5 { font-size: 0.88rem; font-weight: 500; }
   background-color: var(--input-bg);
   color: var(--text);
   color-scheme: dark;
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--input-border);
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
@@ -641,7 +657,7 @@ h5 { font-size: 0.88rem; font-weight: 500; }
 
 [data-theme="dark"] select:hover,
 :root select:hover {
-  border-color: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.18);
 }
 
 [data-theme="dark"] select:focus,
@@ -653,15 +669,15 @@ h5 { font-size: 0.88rem; font-weight: 500; }
 
 [data-theme="dark"] select option,
 :root select option {
-  background: #0f0f0f;
-  color: #f0f0f5;
+  background: #252525;
+  color: rgba(255, 255, 255, 0.81);
   padding: 0.5rem;
 }
 
 [data-theme="dark"] select option:checked,
 :root select option:checked {
-  background: #161616;
-  color: #38bdf8;
+  background: #2d2d2d;
+  color: var(--primary-light);
 }
 
 [data-theme="light"] input,
@@ -683,13 +699,13 @@ h5 { font-size: 0.88rem; font-weight: 500; }
 }
 
 [data-theme="light"] select option {
-  background: #fff;
-  color: #1a1a2e;
+  background: #ffffff;
+  color: #37352f;
 }
 
 [data-theme="light"] select option:checked {
-  background: #e3f2ff;
-  color: #075985;
+  background: rgba(35, 131, 226, 0.08);
+  color: #1a6dbe;
 }
 
 /* ============= RESPONSIVE (shared classes) ============= */

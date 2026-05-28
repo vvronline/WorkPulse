@@ -193,8 +193,8 @@
     left: 0;
     z-index: 50;
     min-width: 250px;
-    background: var(--notes-surface-elev, var(--bg-secondary));
-    border: 1px solid var(--notes-border, var(--border));
+    background: var(--dropdown-bg, var(--bg-elevated));
+    border: 1px solid var(--dropdown-border, var(--border));
     border-radius: 10px;
     box-shadow: 0 8px 24px rgba(0,0,0,0.22), 0 2px 6px rgba(0,0,0,0.08);
     padding: 4px;
@@ -286,8 +286,8 @@
 .menuToggle:hover { background: var(--bg-hover, rgba(255,255,255,0.06)); }
 .menuToggle input { accent-color: var(--primary, #0ea5e9); cursor: pointer; }
 
-[data-theme="light"] .menu { background: #fff; }
-[data-theme="light"] .bar { background: #fff; border-bottom-color: rgba(0,0,0,0.06); }
+[data-theme="light"] .menu { background: var(--dropdown-bg); }
+[data-theme="light"] .bar { background: var(--bg-elevated); border-bottom-color: var(--border); }
 
 /* ── Responsive ── */
 @media (max-width: 900px) {

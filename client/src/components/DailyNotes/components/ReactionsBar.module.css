@@ -95,5 +95,5 @@
   flex-shrink: 0;
 }
 
-[data-theme="light"] .usersList { background: #fff; }
+[data-theme="light"] .usersList { background: var(--dropdown-bg); }
 
