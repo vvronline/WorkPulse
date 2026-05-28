@@ -237,10 +237,167 @@
     visibility: hidden;
 }
 
-/* ── Mute badge overlay on local self-view (shown when muted) ── */
+/* ═══════════════════════════════════════════════════════════════════
+   Mute badge anchor for the local video PiP / avatar tile.
+   We overlay an INVISIBLE wrapper that mirrors the tile's exact
+   position & size and corner-snap class, then pin the actual badge
+   INSIDE it at bottom:6 right:6. This way the badge always travels
+   with the tile when the user drags it to a different screen corner.
+   ═══════════════════════════════════════════════════════════════════ */
+.localTileBadgeAnchor {
+    position: absolute;
+    z-index: 12;
+    pointer-events: none;
+    /* Default size = local video tile size (desktop) */
+    width: 150px;
+    height: 200px;
+}
+
+/* When the tile being tracked is the AVATAR fallback, it has a
+   different aspect ratio — adjust the wrapper accordingly. */
+.localTileBadgeAnchorAvatar {
+    width: 180px;
+    height: 135px;
+}
+
+/* The actual circular badge, pinned to the bottom-right INSIDE the
+   wrapper so it always lands on the bottom-right corner of the tile. */
+.localTileMuteBadge {
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: rgba(239, 68, 68, 0.92);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    animation: badgePulse 2.4s ease-in-out infinite;
+}
+
+.localTileMuteBadge svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* Corner-snap positions for the anchor wrapper. Matches the same
+   coordinates used by `.localVideo_*` / `.localVideoAvatar_*` so the
+   wrapper sits exactly on top of the tile. */
+.localTileBadgeAnchor_bottom_right {
+    bottom: 100px;
+    right: 16px;
+    left: auto;
+    top: auto;
+}
+.localTileBadgeAnchor_bottom_left {
+    bottom: 100px;
+    left: 16px;
+    right: auto;
+    top: auto;
+}
+.localTileBadgeAnchor_top_right {
+    top: 56px;
+    right: 16px;
+    bottom: auto;
+    left: auto;
+}
+.localTileBadgeAnchor_top_left {
+    top: 56px;
+    left: 16px;
+    bottom: auto;
+    right: auto;
+}
+
+/* Tablet sizing — mirrors `.localVideo` / `.localVideoAvatar`
+   tablet sizes. */
+@media (max-width: 1024px) {
+    .localTileBadgeAnchor {
+        width: 130px;
+        height: 174px;
+    }
+    .localTileBadgeAnchorAvatar {
+        width: 150px;
+        height: 112px;
+    }
+    .localTileBadgeAnchor_bottom_right,
+    .localTileBadgeAnchor_bottom_left {
+        bottom: 80px;
+    }
+    .localTileMuteBadge {
+        width: 24px;
+        height: 24px;
+    }
+    .localTileMuteBadge svg {
+        width: 14px;
+        height: 14px;
+    }
+}
+
+/* Mobile sizing — mirrors the mobile (max-width:600px and
+   max-width:768px) sizes of `.localVideo` / `.localVideoAvatar`. */
+@media (max-width: 768px) {
+    .localTileBadgeAnchor,
+    .localTileBadgeAnchorAvatar {
+        width: 120px;
+        height: 160px;
+    }
+    .localTileBadgeAnchor_bottom_right,
+    .localTileBadgeAnchor_bottom_left {
+        bottom: 72px;
+    }
+    .localTileBadgeAnchor_bottom_right {
+        right: 8px;
+    }
+    .localTileBadgeAnchor_bottom_left {
+        left: 8px;
+    }
+    .localTileBadgeAnchor_top_right {
+        right: 8px;
+    }
+    .localTileBadgeAnchor_top_left {
+        left: 8px;
+    }
+}
+
+@media (max-width: 600px) {
+    .localTileBadgeAnchor {
+        width: 120px;
+        height: 180px;
+    }
+    .localTileBadgeAnchorAvatar {
+        width: 120px;
+        height: 90px;
+    }
+    .localTileBadgeAnchor_bottom_right,
+    .localTileBadgeAnchor_bottom_left {
+        bottom: 72px;
+    }
+    .localTileMuteBadge {
+        bottom: 4px;
+        right: 4px;
+        width: 22px;
+        height: 22px;
+    }
+    .localTileMuteBadge svg {
+        width: 12px;
+        height: 12px;
+    }
+}
+
+/* Hide when the call is minimized */
+.overlay.minimized .localTileBadgeAnchor {
+    display: none !important;
+}
+
+/* ── Legacy mute badge overlay (kept for backward compatibility but
+      no longer rendered by index.jsx — superseded by the anchor-based
+      `.localTileBadgeAnchor` + `.localTileMuteBadge` pair above). ── */
 .localVideoMuteBadge {
     position: absolute;
-    bottom: 110px;          /* sit just above the local video bottom edge */
+    bottom: 110px;
     right: 24px;
     z-index: 12;
     width: 28px;
@@ -261,36 +418,8 @@
     height: 16px;
 }
 
-/* When camera is off (we render the avatar tile instead) anchor the badge
-   on the avatar tile in the same corner. */
 .localVideoMuteBadgeAvatar {
     bottom: 110px;
-}
-
-@media (max-width: 1024px) {
-    .localVideoMuteBadge {
-        bottom: 90px;
-        right: 16px;
-        width: 24px;
-        height: 24px;
-    }
-    .localVideoMuteBadge svg {
-        width: 14px;
-        height: 14px;
-    }
-}
-
-/* On mobile keep the local mute badge anchored to the bottom-right of the
-   local PiP / avatar tile (rather than jumping to the top-right of the
-   screen). Otherwise it visually collides with `.remoteMuteBadge` which is
-   also pinned top-right when both peers are muted. */
-@media (max-width: 600px) {
-    .localVideoMuteBadge {
-        bottom: 82px;
-        right: 18px;
-        top: auto;
-        left: auto;
-    }
 }
 
 /* ── Remote mute badge (shown on remote video when peer is muted) ──

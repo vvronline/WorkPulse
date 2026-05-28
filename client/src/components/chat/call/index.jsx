@@ -730,17 +730,22 @@ export default function CallOverlay({
                 </div>
             )}
 
-            {/* Mute badge — sits inside the local video PiP / avatar tile when
-                one is rendered (video call OR audio call where the remote is
-                sharing video). Audio-only calls render their own mute badge
-                INSIDE the new self-preview card below. */}
-            {controls.muted && isConnected && (isVideoCall || webrtc.remoteHasVideo) && (
+            {/* Mute badge — anchored to the bottom-right CORNER of the local
+                video PiP / avatar tile so it follows the tile when the user
+                drags it to a different screen corner (top-left / top-right /
+                bottom-left / bottom-right). Implemented via an invisible
+                anchor element that mirrors the tile's position & size, with
+                the actual badge pinned at bottom:6 right:6 INSIDE it.
+                Audio-only calls (no remote video) render their mute badge
+                inside the self-preview card below instead. */}
+            {controls.muted && isConnected && (isVideoCall || webrtc.remoteHasVideo) && !swapped && (
                 <div
-                    className={`${s.localVideoMuteBadge} ${(isVideoCall && controls.videoOff) || !isVideoCall ? s.localVideoMuteBadgeAvatar : ''}`}
-                    title="You are muted"
-                    aria-label="You are muted"
+                    className={`${s.localTileBadgeAnchor} ${s[`localTileBadgeAnchor_${localVideoCorner.replace('-', '_')}`] || ''} ${(isVideoCall && controls.videoOff) || !isVideoCall ? s.localTileBadgeAnchorAvatar : s.localTileBadgeAnchorVideo}`}
+                    aria-hidden="true"
                 >
-                    <MicOffIcon />
+                    <div className={s.localTileMuteBadge} title="You are muted" aria-label="You are muted">
+                        <MicOffIcon />
+                    </div>
                 </div>
             )}
 
