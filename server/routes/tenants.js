@@ -650,16 +650,16 @@ router.get('/audit-logs', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 //  PLATFORM CONFIGURATION
 // ═══════════════════════════════════════════════════════════════
-// NOTE: These literal-path routes (/platform-config, /alerts, /smtp-test)
-// MUST be defined BEFORE the /:id routes below — otherwise Express's
-// path matcher will treat "platform-config", "alerts", etc. as the value
-// of the :id parameter and the handler will fail with a 500 trying to
-// look up a tenant whose id is "alerts".
+// NOTE: These literal-path routes (/platform-config, /alerts) MUST be
+// defined BEFORE the /:id routes below — otherwise Express's path matcher
+// will treat "platform-config", "alerts", etc. as the value of the :id
+// parameter and the handler will fail with a 500 trying to look up a
+// tenant whose id is "alerts".
 
 // GET /admin/tenants/platform-config — all platform settings
 router.get('/platform-config', async (req, res) => {
     try {
-        const config = await getPlatformConfig({ maskSensitive: true });
+        const config = await getPlatformConfig();
         res.json(config);
     } catch (err) {
         logger.error({ err }, 'Get platform config error');
@@ -675,7 +675,7 @@ router.put('/platform-config', async (req, res) => {
             invalidateMaintenanceCache();
         }
         logPlatformAction(req, 'platform_config_updated', 'platform', null, { updated_keys: Object.keys(updated) });
-        const config = await getPlatformConfig({ maskSensitive: true });
+        const config = await getPlatformConfig();
         res.json(config);
     } catch (err) {
         logger.error({ err }, 'Update platform config error');
@@ -811,37 +811,12 @@ router.get('/alerts', async (req, res) => {
     }
 });
 
-// POST /admin/tenants/smtp-test — send a test email
-router.post('/smtp-test', async (req, res) => {
-    try {
-        const { getSmtpConfig } = require('../utils/platformConfig');
-        const nodemailer = require('nodemailer');
-        const smtpCfg = await getSmtpConfig();
-
-        if (!smtpCfg.host) {
-            return res.status(400).json({ error: 'SMTP host is not configured' });
-        }
-
-        const transporter = nodemailer.createTransport({
-            host: smtpCfg.host,
-            port: smtpCfg.port,
-            secure: smtpCfg.secure,
-            auth: smtpCfg.user ? { user: smtpCfg.user, pass: smtpCfg.pass } : undefined,
-        });
-
-        await transporter.sendMail({
-            from: `"${smtpCfg.fromName}" <${smtpCfg.fromAddress}>`,
-            to: req.user.email,
-            subject: 'WorkPulse SMTP Test',
-            text: 'If you received this email, SMTP configuration is working correctly.',
-        });
-
-        res.json({ message: `Test email sent to ${req.user.email}` });
-    } catch (err) {
-        logger.error({ err }, 'SMTP test error');
-        res.status(500).json({ error: err.message || 'Failed to send test email' });
-    }
-});
+// NOTE: The legacy `POST /admin/tenants/smtp-test` route was removed.
+// Platform-level SMTP configuration is no longer exposed in the admin panel —
+// outbound email transport is configured via `process.env.SMTP_*` /
+// `GMAIL_*` and consumed by `server/utils/mailer.js`. Per-tenant email
+// template / branding overrides live under `/api/branding` (see
+// `server/routes/branding.js`).
 
 // ═══════════════════════════════════════════════════════════════
 //  SINGLE TENANT DETAIL & LIFECYCLE

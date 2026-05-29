@@ -377,6 +377,14 @@ async function initMasterDB() {
     `);
 
     // ── Platform configuration defaults ──
+    //
+    // NOTE: SMTP + branding keys (`smtp_*`, `brand_*`) used to be seeded
+    // here so the platform admin panel could surface them as editable
+    // fields. That feature was removed — outbound email transport now
+    // lives in `process.env.SMTP_*` / `GMAIL_*` (consumed by
+    // `utils/mailer.js`) and white-labeling is tenant-scoped via
+    // `org_branding` + `org_email_templates`. See `utils/platformConfig.js`
+    // for the canonical list of platform-wide keys.
     await masterQuery(`
         INSERT INTO app_settings (key, value) VALUES
             ('maintenance_mode',             'false'),
@@ -387,21 +395,22 @@ async function initMasterDB() {
             ('password_require_number',      'true'),
             ('password_require_special',     'false'),
             ('allowed_email_domains',        ''),
-            ('smtp_host',                    ''),
-            ('smtp_port',                    '587'),
-            ('smtp_user',                    ''),
-            ('smtp_pass',                    ''),
-            ('smtp_from_address',            ''),
-            ('smtp_from_name',               ''),
-            ('smtp_secure',                  'true'),
-            ('brand_name',                   'WorkPulse'),
-            ('brand_primary_color',          '#6366f1'),
-            ('brand_logo_url',               ''),
-            ('brand_favicon_url',            ''),
             ('audit_log_retention_days',     '365'),
             ('deleted_tenant_cleanup_days',  '90'),
             ('session_log_retention_days',   '90')
         ON CONFLICT (key) DO NOTHING
+    `);
+
+    // ── Cleanup: drop deprecated platform-level SMTP + branding rows.
+    // Idempotent on every startup so any tenant that upgraded across this
+    // change is automatically scrubbed without a manual migration step.
+    await masterQuery(`
+        DELETE FROM app_settings WHERE key IN (
+            'smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass',
+            'smtp_from_address', 'smtp_from_name', 'smtp_secure',
+            'brand_name', 'brand_primary_color',
+            'brand_logo_url', 'brand_favicon_url'
+        )
     `);
 
     logger.info('Master DB schema initialised');

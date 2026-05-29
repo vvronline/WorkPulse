@@ -2,15 +2,24 @@ import React, { useState, useEffect } from 'react';
 import {
   getAdminAnnouncements, createAnnouncement, updateAnnouncement, deleteAnnouncement,
   getImpersonationPolicy, updateImpersonationPolicy,
-  getPlatformConfig, updatePlatformConfig, sendSmtpTest,
+  getPlatformConfig, updatePlatformConfig,
 } from '../../api';
 import {
   Loader2, X, Megaphone, Trash2, ToggleLeft, ToggleRight, Shield, Save,
-  Wrench, Lock, Mail, Palette, Database, Send, Eye, EyeOff,
+  Wrench, Lock, Database,
 } from 'lucide-react';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
 import s from './Tenants.module.css';
 
+/**
+ * Platform-level settings panel (platform_admin only).
+ *
+ * NOTE: SMTP and Platform Branding fieldsets used to live here. They were
+ * removed — outbound email transport now lives in env vars
+ * (process.env.SMTP_* / GMAIL_*) and is consumed by server/utils/mailer.js,
+ * and white-labeling is fully tenant-scoped via the per-tenant Branding
+ * page (logo, accent color, email-template overrides under /api/branding).
+ */
 export default function PlatformSettings() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -32,8 +41,6 @@ export default function PlatformSettings() {
   const [config, setConfig] = useState(null);
   const [configDraft, setConfigDraft] = useState(null);
   const [configSaving, setConfigSaving] = useState(false);
-  const [smtpTesting, setSmtpTesting] = useState(false);
-  const [showSmtpPass, setShowSmtpPass] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -80,16 +87,6 @@ export default function PlatformSettings() {
     } catch (e) {
       setError(e.response?.data?.error || 'Failed to save settings');
     } finally { setConfigSaving(false); }
-  };
-
-  const handleSmtpTest = async () => {
-    setSmtpTesting(true); setError(''); setSuccess('');
-    try {
-      const r = await sendSmtpTest();
-      setSuccess(r.data?.message || 'Test email sent');
-    } catch (e) {
-      setError(e.response?.data?.error || 'SMTP test failed');
-    } finally { setSmtpTesting(false); }
   };
 
   const handleCreateAnnouncement = async () => {
@@ -365,201 +362,6 @@ export default function PlatformSettings() {
           >
             {configSaving ? <Loader2 size={14} className={s.spinner} /> : <Save size={14} />}
             Save security settings
-          </button>
-        </fieldset>
-      )}
-
-      {/* ─── SMTP / Email ─────────────────────────────────────────────── */}
-      {configDraft && (
-        <fieldset className={s.fieldset} style={{ marginBottom: 20 }}>
-          <legend className={s.legend} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Mail size={14} /> Email / SMTP
-          </legend>
-          <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 12px' }}>
-            Configure outbound email for password resets, notifications, and invites.
-            Falls back to environment variables if not set here.
-          </p>
-
-          <div className={s.fieldRowWrap}>
-            <div style={{ flex: '2 1 200px' }}>
-              <label className={s.fieldLabel}>SMTP Host</label>
-              <input
-                value={configDraft.smtp_host}
-                onChange={e => updateDraft('smtp_host', e.target.value)}
-                placeholder="smtp.example.com"
-                className={s.input}
-                style={{ width: '100%' }}
-              />
-            </div>
-            <div style={{ flex: '0 0 100px' }}>
-              <label className={s.fieldLabel}>Port</label>
-              <input
-                type="number"
-                value={configDraft.smtp_port}
-                onChange={e => updateDraft('smtp_port', e.target.value)}
-                className={s.inputSmall}
-              />
-            </div>
-            <label className={s.toggleRow} style={{ flex: '0 0 auto', alignSelf: 'flex-end' }}>
-              <input
-                type="checkbox"
-                checked={configDraft.smtp_secure === 'true'}
-                onChange={e => updateDraft('smtp_secure', e.target.checked ? 'true' : 'false')}
-              />
-              <span>TLS</span>
-            </label>
-          </div>
-
-          <div className={s.fieldRowWrap} style={{ marginTop: 10 }}>
-            <div style={{ flex: '1 1 200px' }}>
-              <label className={s.fieldLabel}>Username</label>
-              <input
-                value={configDraft.smtp_user}
-                onChange={e => updateDraft('smtp_user', e.target.value)}
-                className={s.input}
-                style={{ width: '100%' }}
-              />
-            </div>
-            <div style={{ flex: '1 1 200px', position: 'relative' }}>
-              <label className={s.fieldLabel}>Password</label>
-              <input
-                type={showSmtpPass ? 'text' : 'password'}
-                value={configDraft.smtp_pass}
-                onChange={e => updateDraft('smtp_pass', e.target.value)}
-                className={s.input}
-                style={{ width: '100%', paddingRight: 36 }}
-              />
-              <button
-                type="button"
-                onClick={() => setShowSmtpPass(!showSmtpPass)}
-                style={{ position: 'absolute', right: 8, top: 28, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
-              >
-                {showSmtpPass ? <EyeOff size={14} /> : <Eye size={14} />}
-              </button>
-            </div>
-          </div>
-
-          <div className={s.fieldRowWrap} style={{ marginTop: 10 }}>
-            <div style={{ flex: '1 1 200px' }}>
-              <label className={s.fieldLabel}>From Address</label>
-              <input
-                value={configDraft.smtp_from_address}
-                onChange={e => updateDraft('smtp_from_address', e.target.value)}
-                placeholder="noreply@yourcompany.com"
-                className={s.input}
-                style={{ width: '100%' }}
-              />
-            </div>
-            <div style={{ flex: '1 1 200px' }}>
-              <label className={s.fieldLabel}>From Name</label>
-              <input
-                value={configDraft.smtp_from_name}
-                onChange={e => updateDraft('smtp_from_name', e.target.value)}
-                placeholder="WorkPulse"
-                className={s.input}
-                style={{ width: '100%' }}
-              />
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
-            <button
-              className={s.btnPrimary}
-              onClick={() => handleSaveConfig([
-                'smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass',
-                'smtp_from_address', 'smtp_from_name', 'smtp_secure',
-              ])}
-              disabled={!configChanged([
-                'smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass',
-                'smtp_from_address', 'smtp_from_name', 'smtp_secure',
-              ]) || configSaving}
-            >
-              {configSaving ? <Loader2 size={14} className={s.spinner} /> : <Save size={14} />}
-              Save SMTP
-            </button>
-            <button
-              className={s.btnSmall}
-              onClick={handleSmtpTest}
-              disabled={smtpTesting || !configDraft.smtp_host}
-              title="Send a test email to your address"
-            >
-              {smtpTesting ? <Loader2 size={14} className={s.spinner} /> : <Send size={14} />}
-              Send Test
-            </button>
-          </div>
-        </fieldset>
-      )}
-
-      {/* ─── Platform Branding ────────────────────────────────────────── */}
-      {configDraft && (
-        <fieldset className={s.fieldset} style={{ marginBottom: 20 }}>
-          <legend className={s.legend} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Palette size={14} /> Platform Branding
-          </legend>
-          <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 12px' }}>
-            Customize the platform name, colors, and logo shown on the login page.
-          </p>
-
-          <div className={s.fieldRowWrap}>
-            <div style={{ flex: '1 1 200px' }}>
-              <label className={s.fieldLabel}>Platform Name</label>
-              <input
-                value={configDraft.brand_name}
-                onChange={e => updateDraft('brand_name', e.target.value)}
-                className={s.input}
-                style={{ width: '100%' }}
-              />
-            </div>
-            <div style={{ flex: '0 0 140px' }}>
-              <label className={s.fieldLabel}>Primary Color</label>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input
-                  type="color"
-                  value={configDraft.brand_primary_color}
-                  onChange={e => updateDraft('brand_primary_color', e.target.value)}
-                  style={{ width: 36, height: 36, border: 'none', cursor: 'pointer', borderRadius: 6 }}
-                />
-                <input
-                  value={configDraft.brand_primary_color}
-                  onChange={e => updateDraft('brand_primary_color', e.target.value)}
-                  className={s.inputSmall}
-                  style={{ width: 90 }}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className={s.fieldRowWrap} style={{ marginTop: 10 }}>
-            <div style={{ flex: '1 1 200px' }}>
-              <label className={s.fieldLabel}>Logo URL</label>
-              <input
-                value={configDraft.brand_logo_url}
-                onChange={e => updateDraft('brand_logo_url', e.target.value)}
-                placeholder="https://..."
-                className={s.input}
-                style={{ width: '100%' }}
-              />
-            </div>
-            <div style={{ flex: '1 1 200px' }}>
-              <label className={s.fieldLabel}>Favicon URL</label>
-              <input
-                value={configDraft.brand_favicon_url}
-                onChange={e => updateDraft('brand_favicon_url', e.target.value)}
-                placeholder="https://..."
-                className={s.input}
-                style={{ width: '100%' }}
-              />
-            </div>
-          </div>
-
-          <button
-            className={s.btnPrimary}
-            onClick={() => handleSaveConfig(['brand_name', 'brand_primary_color', 'brand_logo_url', 'brand_favicon_url'])}
-            disabled={!configChanged(['brand_name', 'brand_primary_color', 'brand_logo_url', 'brand_favicon_url']) || configSaving}
-            style={{ marginTop: 14 }}
-          >
-            {configSaving ? <Loader2 size={14} className={s.spinner} /> : <Save size={14} />}
-            Save branding
           </button>
         </fieldset>
       )}

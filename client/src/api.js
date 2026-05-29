@@ -423,7 +423,6 @@ export const resetPlatformUserPassword = (id, new_password) => API.post(`/admin/
 export const getPlatformConfig = () => API.get('/admin/tenants/platform-config');
 export const updatePlatformConfig = (data) => API.put('/admin/tenants/platform-config', data);
 export const getTenantAlerts = () => API.get('/admin/tenants/alerts');
-export const sendSmtpTest = () => API.post('/admin/tenants/smtp-test');
 
 // Manager Dashboard
 export const getTeamAttendance = (date) => API.get('/manager/team-attendance', { params: { date } });
