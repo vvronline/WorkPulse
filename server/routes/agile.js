@@ -34,7 +34,7 @@
 const express = require('express');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole } = require('../middleware/rbac');
-const { requireTenant } = require('../middleware/tenant');
+const { requireTenant, requireFeature } = require('../middleware/tenant');
 const { requireAgileEditor, isAgileEditor, isAgileReviewerRole } = require('../middleware/agileEditor');
 
 // Custom middleware: allow any reviewer role (super_admin / hr_admin /
@@ -49,7 +49,7 @@ function requireAgileReviewer(req, res, next) {
 const { logAction } = require('../utils/audit');
 
 const router = express.Router();
-router.use(requireTenant);
+router.use(requireTenant, requireFeature('agile'));
 router.use(auth);
 router.use(loadUserContext);
 

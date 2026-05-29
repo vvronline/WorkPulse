@@ -44,14 +44,14 @@
 
 .ok {
     background: rgba(16, 185, 129, 0.12);
-    color: #047857;
-    border: 1px solid rgba(16, 185, 129, 0.35);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.25);
 }
 
 .notEnrolled {
     background: rgba(245, 158, 11, 0.12);
-    color: #b45309;
-    border: 1px solid rgba(245, 158, 11, 0.35);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.25);
 }
 
 .toast {
@@ -62,12 +62,12 @@
 
 .toast.ok {
     background: rgba(16, 185, 129, 0.12);
-    color: #047857;
+    color: #10b981;
 }
 
 .toast.err {
     background: rgba(239, 68, 68, 0.12);
-    color: #b91c1c;
+    color: #ef4444;
 }
 
 .actions {
@@ -77,8 +77,8 @@
 }
 
 .captureBox {
-    background: var(--surface, #fff);
-    border: 1px solid var(--border, #e5e7eb);
+    background: var(--card-bg, rgba(255, 255, 255, 0.035));
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.09));
     border-radius: 12px;
     padding: 1.25rem;
     display: flex;
@@ -100,8 +100,8 @@
 }
 
 .tips {
-    background: var(--surface-2, #f9fafb);
-    border: 1px solid var(--border, #e5e7eb);
+    background: var(--surface, rgba(255, 255, 255, 0.04));
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.09));
     border-radius: 10px;
     padding: 1rem 1.1rem;
 }
@@ -109,12 +109,13 @@
 .tips h4 {
     margin: 0 0 0.5rem;
     font-size: 0.95rem;
+    color: var(--text-primary, rgba(255, 255, 255, 0.81));
 }
 
 .tips ul {
     margin: 0;
     padding-left: 1.1rem;
-    color: var(--text-muted, #6b7280);
+    color: var(--text-secondary, rgba(255, 255, 255, 0.53));
     line-height: 1.55;
     font-size: 0.88rem;
 }

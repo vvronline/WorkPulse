@@ -73,14 +73,22 @@ function safeLogoPath(rel) {
     return abs;
 }
 
-// ── GET branding (logo + accent) ─────────────────────────────────────────
+// ── GET branding (logo + accent + org name) ─────────────────────────────
 router.get('/', requireSameOrg, async (req, res) => {
     try {
         const row = (await req.db.query(
-            `SELECT logo_url, accent_color, updated_at FROM org_branding WHERE org_id = $1`,
+            `SELECT b.logo_url, b.accent_color, b.updated_at, o.name AS org_name
+             FROM organizations o
+             LEFT JOIN org_branding b ON b.org_id = o.id
+             WHERE o.id = $1`,
             [req.userOrgId]
         )).rows[0];
-        res.json(row || { logo_url: null, accent_color: '#6366f1', updated_at: null });
+        res.json({
+            logo_url: row?.logo_url || null,
+            accent_color: row?.accent_color || '#6366f1',
+            org_name: row?.org_name || null,
+            updated_at: row?.updated_at || null,
+        });
     } catch (err) {
         req.log.error({ err }, 'GET /branding failed');
         res.status(500).json({ error: 'Failed to fetch branding' });

@@ -46,6 +46,7 @@ const statusRoutes = require('./routes/status');
 const searchRoutes = require('./routes/search');
 const meetingsRoutes = require('./routes/meetings');
 const tenantRoutes = require('./routes/tenants');
+const platformAccessRoutes = require('./routes/platformAccess');
 const serviceDeskRoutes = require('./routes/serviceDesk');
 const brandingRoutes = require('./routes/branding');
 const customFieldsRoutes = require('./routes/customFields');
@@ -287,6 +288,10 @@ const apiLimiter = rateLimit({ ...rlOpts('api', 5000), message: { error: 'Too ma
 const impersonationAudit = require('./middleware/impersonationAudit');
 app.use('/api', impersonationAudit);
 
+// Maintenance mode — returns 503 for non-platform-admin users when active
+const { maintenanceModeMiddleware } = require('./middleware/maintenanceMode');
+app.use('/api', maintenanceModeMiddleware);
+
 app.use('/api/auth/register', registerLimiter);
 app.use('/api/auth/forgot-password', forgotPasswordLimiter);
 app.use('/api/auth', authLimiter, authRoutes);
@@ -300,6 +305,12 @@ app.use('/api/profile', apiLimiter, profileRoutes);
 app.use('/api/org', apiLimiter, organizationRoutes);
 app.use('/api/admin', apiLimiter, adminRoutes);
 app.use('/api/admin/tenants', apiLimiter, tenantRoutes);
+// Tenant-side endpoints for the Just-In-Time platform-access consent flow.
+// Used by tenant super_admins to approve/deny/revoke platform-admin
+// impersonation requests. Lives at /api/platform-access so it's clearly
+// separated from the platform-side /api/admin/tenants/access-requests
+// endpoints (which run under the platform_admin guard).
+app.use('/api/platform-access', apiLimiter, platformAccessRoutes);
 // Phase 6 — Internal observability endpoints (platform_admin only).
 // Currently just /api/internal/ws-stats; future db-pool / redis stats
 // will mount under the same router.

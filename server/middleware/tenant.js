@@ -182,16 +182,58 @@ function requireTenant(req, res, next) {
 }
 
 /**
- * Middleware: check tenant feature flags.
+ * Middleware: check tenant feature flags (plan-aware).
+ * Computes effective features from plan defaults + per-tenant overrides.
  * Usage: requireFeature('meetings')
+ *
+ * - Master-context requests (no `req.tenant`) bypass gating. Those routes
+ *   are platform-admin-only by other middleware.
+ * - Rejections are logged via `req.log.info` so we can surface
+ *   `feature_gate_rejected` upsell metrics without an extra metrics layer.
  */
 function requireFeature(featureName) {
     return (req, res, next) => {
-        if (!req.tenant) return next(); // master context — no feature gating
-        const features = req.tenant.features || {};
-        // Default: all features enabled if not explicitly set to false
-        if (features[featureName] === false) {
-            return res.status(403).json({ error: `The ${featureName} feature is not enabled for your organization.` });
+        if (!req.tenant) return next();
+        const { isFeatureEnabled, FEATURE_LABELS } = require('../utils/planCatalog');
+        if (!isFeatureEnabled(req.tenant, featureName)) {
+            // Structured log line — easy to grep / pipe into a metrics
+            // exporter ("how many tenants hit the chat gate this week?").
+            if (req.log?.info) {
+                req.log.info({
+                    event: 'feature_gate_rejected',
+                    feature: featureName,
+                    plan: req.tenant.plan,
+                    tenantId: req.tenant.id,
+                    userId: req.userId || null,
+                    path: req.originalUrl,
+                }, 'feature gate rejected');
+            }
+            return res.status(403).json({
+                error: `The ${FEATURE_LABELS[featureName] || featureName} feature is not enabled for your subscription plan.`,
+                feature: featureName,
+                plan: req.tenant.plan,
+                code: 'FEATURE_NOT_AVAILABLE',
+            });
+        }
+        next();
+    };
+}
+
+/**
+ * Convenience: gate a route on a minimum plan tier (e.g. `requireMinPlan('pro')`).
+ * Use this when a feature isn't yet split out into a separate flag.
+ */
+function requireMinPlan(minPlan) {
+    return (req, res, next) => {
+        if (!req.tenant) return next();
+        const { isAtLeastPlan, PLANS } = require('../utils/planCatalog');
+        if (!isAtLeastPlan(req.tenant.plan, minPlan)) {
+            return res.status(403).json({
+                error: `This feature requires the ${PLANS[minPlan]?.label || minPlan} plan or higher.`,
+                required_plan: minPlan,
+                current_plan: req.tenant.plan,
+                code: 'PLAN_TIER_REQUIRED',
+            });
         }
         next();
     };
@@ -230,6 +272,7 @@ module.exports = {
     resolveTenant,
     requireTenant,
     requireFeature,
+    requireMinPlan,
     checkUserLimit,
     invalidateTenantCache,
 };

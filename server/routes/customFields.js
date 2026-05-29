@@ -26,12 +26,15 @@
 const express = require('express');
 const auth = require('../middleware/auth');
 const { loadUserContext } = require('../middleware/rbac');
-const { requireTenant } = require('../middleware/tenant');
+const { requireTenant, requireFeature } = require('../middleware/tenant');
 const { isAgileEditorRole } = require('../middleware/agileEditor');
 const { logAction } = require('../utils/audit');
 
 const router = express.Router();
-router.use(requireTenant);
+// Custom fields are an Enterprise-only feature (see planCatalog.js). The
+// gate must come BEFORE auth so the 403 returns immediately without forcing
+// a DB lookup on every blocked request.
+router.use(requireTenant, requireFeature('custom_fields'));
 router.use(auth);
 router.use(loadUserContext);
 

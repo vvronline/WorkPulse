@@ -10,6 +10,7 @@ const { validatePassword, validateUsername, BCRYPT_ROUNDS } = require('../utils/
 const { logger } = require('../utils/logger');
 const { getTransporter, sendMail } = require('../utils/mailer');
 const auth = require('../middleware/auth');
+const { getEffectiveFeatures } = require('../utils/planCatalog');
 
 const router = express.Router();
 
@@ -128,7 +129,7 @@ router.post('/register', async (req, res) => {
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
             return res.status(400).json({ error: 'Invalid email address' });
         }
-        const pwError = validatePassword(password);
+        const pwError = await validatePassword(password);
         if (pwError) return res.status(400).json({ error: pwError });
         const usernameError = validateUsername(username);
         if (usernameError) return res.status(400).json({ error: usernameError });
@@ -191,9 +192,30 @@ router.post('/register', async (req, res) => {
         }
 
         // ── Registration mode check ──
+        // `registration_mode` lives in `tenants.features` JSON next to the real
+        // feature flags. It is NOT a plan-gated feature — every plan supports
+        // open/invite_only/closed registration. The key is preserved verbatim
+        // (the planCatalog sanitiser drops unknown keys from gating but
+        // leaves them in the underlying JSON column).
         const mode = tenantRecord?.features?.registration_mode || 'invite_only';
         if (mode === 'closed') {
             return res.status(403).json({ error: 'Registration is currently closed. Contact an administrator.' });
+        }
+
+        // ── Plan user-cap check ──
+        // Enforce the per-tenant `max_users` from the subscription plan BEFORE
+        // we create the row. Without this, a Standard tenant (25 user limit)
+        // could be filled to thousands via self-signup. Counts active users
+        // only — deactivated accounts don't take up a seat.
+        if (tenantRecord?.max_users) {
+            const countRes = await db.query('SELECT COUNT(*)::int AS c FROM users WHERE is_active = TRUE');
+            const current = parseInt(countRes.rows[0].c, 10);
+            if (current >= tenantRecord.max_users) {
+                return res.status(403).json({
+                    error: `This organization has reached its user limit (${tenantRecord.max_users}). Contact your administrator to upgrade the plan.`,
+                    code: 'USER_LIMIT_REACHED',
+                });
+            }
         }
 
         let inviteRow = null;
@@ -625,7 +647,7 @@ router.post('/reset-password', async (req, res) => {
         if (!token || !password) return res.status(400).json({ error: 'Token and new password are required' });
         if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
         if (password.length > 72) return res.status(400).json({ error: 'Password must be 72 characters or less' });
-        const pwError = validatePassword(password);
+        const pwError = await validatePassword(password);
         if (pwError) return res.status(400).json({ error: pwError });
 
         // Resolve the correct tenant DB

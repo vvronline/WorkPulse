@@ -1,16 +1,17 @@
 import { useState, useRef } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../AuthContext';
+import { useFeatures } from '../../FeaturesContext';
 import { useChatUnread } from '../../ChatContext';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import { Home, Calendar, ClipboardList, MessageSquare, CalendarCheck, FileText, Building2, Users, Settings, Server } from 'lucide-react';
-// (ClipboardList retained — was used for the now-removed Leave Policy entry; harmless to keep import)
 import s from './Navbar.module.css';
 
 const ROLE_LEVELS = { employee: 1, team_lead: 2, manager: 3, hr_admin: 4, super_admin: 5, platform_admin: 6 };
 
 export default function MobileTabBar() {
     const { user } = useAuth();
+    const { hasFeature } = useFeatures();
     const location = useLocation();
     const { unreadCount: chatUnread } = useChatUnread();
     const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
@@ -23,10 +24,9 @@ export default function MobileTabBar() {
     const isHR = userLevel >= 4;
 
     // Secondary items shown in More sheet
-    const moreItems = [
-        { to: '/notes', label: 'Notes', icon: FileText },
-        { to: '/attendance', label: 'Attendance', icon: CalendarCheck },
-    ];
+    const moreItems = [];
+    if (hasFeature('notes')) moreItems.push({ to: '/notes', label: 'Notes', icon: FileText });
+    if (hasFeature('attendance')) moreItems.push({ to: '/attendance', label: 'Attendance', icon: CalendarCheck });
     if (user?.org_id && user?.role !== 'platform_admin') moreItems.push({ to: '/organization', label: 'Organization', icon: Building2 });
     if (isTeamLead) moreItems.push({ to: '/manager', label: 'My Team', icon: Users });
     if (isHR) moreItems.push({ to: '/admin', label: 'Admin', icon: Settings });
@@ -41,14 +41,19 @@ export default function MobileTabBar() {
                 <span className={s['nav-icon']}><Home size={22} /></span>
                 <span className={s['tab-label']}>Home</span>
             </NavLink>
+            {hasFeature('calendar') && (
             <NavLink to="/calendar" className={p === '/calendar' ? s.active : ''}>
                 <span className={s['nav-icon']}><Calendar size={22} /></span>
                 <span className={s['tab-label']}>Calendar</span>
             </NavLink>
+            )}
+            {hasFeature('tasks') && (
             <NavLink to="/tasks" className={p === '/tasks' ? s.active : ''}>
                 <span className={s['nav-icon']}><ClipboardList size={22} /></span>
                 <span className={s['tab-label']}>Tasks</span>
             </NavLink>
+            )}
+            {hasFeature('chat') && (
             <NavLink to="/chat" className={`${p === '/chat' ? s.active : ''}`}>
                 <span className={`${s['nav-icon']} ${s.mobileIconWrap}`}>
                     <MessageSquare size={22} />
@@ -56,6 +61,7 @@ export default function MobileTabBar() {
                 </span>
                 <span className={s['tab-label']}>Chat</span>
             </NavLink>
+            )}
             <div className={s['mobile-more-wrapper']} ref={mobileMoreRef}>
                 <button
                     className={`${s['mobile-more-btn']} ${mobileMoreOpen || moreIsActive ? s.active : ''}`}

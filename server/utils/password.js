@@ -1,24 +1,44 @@
 /**
  * Shared password validation utility.
  * Enforces complexity rules across registration, reset, and change flows.
+ * Reads platform-level policy from app_settings when available.
  */
 
 /** Bcrypt cost factor — OWASP recommends 10+ for enterprise applications */
 const BCRYPT_ROUNDS = 12;
 
+let cachedPolicy = null;
+let policyCacheTime = 0;
+const POLICY_CACHE_TTL = 60_000;
+
+async function loadPolicy() {
+    const now = Date.now();
+    if (cachedPolicy && (now - policyCacheTime < POLICY_CACHE_TTL)) return cachedPolicy;
+    try {
+        const { getPasswordPolicy } = require('./platformConfig');
+        cachedPolicy = await getPasswordPolicy();
+        policyCacheTime = now;
+    } catch {
+        cachedPolicy = { minLength: 8, requireUppercase: true, requireNumber: true, requireSpecial: true };
+    }
+    return cachedPolicy;
+}
+
 /**
  * Validate password meets complexity requirements.
+ * Uses platform config policy (async). Falls back to strict defaults.
  * @param {string} password
- * @returns {string|null} Error message or null if valid
+ * @returns {Promise<string|null>} Error message or null if valid
  */
-function validatePassword(password) {
+async function validatePassword(password) {
     if (!password) return 'Password is required';
-    if (password.length < 8) return 'Password must be at least 8 characters';
+    const policy = await loadPolicy();
+    if (password.length < policy.minLength) return `Password must be at least ${policy.minLength} characters`;
     if (Buffer.byteLength(password, 'utf8') > 72) return 'Password must be 72 bytes or less';
     if (!/[a-z]/.test(password)) return 'Password must contain at least one lowercase letter';
-    if (!/[A-Z]/.test(password)) return 'Password must contain at least one uppercase letter';
-    if (!/[0-9]/.test(password)) return 'Password must contain at least one digit';
-    if (!/[^a-zA-Z0-9]/.test(password)) return 'Password must contain at least one special character';
+    if (policy.requireUppercase && !/[A-Z]/.test(password)) return 'Password must contain at least one uppercase letter';
+    if (policy.requireNumber && !/[0-9]/.test(password)) return 'Password must contain at least one digit';
+    if (policy.requireSpecial && !/[^a-zA-Z0-9]/.test(password)) return 'Password must contain at least one special character';
     return null;
 }
 

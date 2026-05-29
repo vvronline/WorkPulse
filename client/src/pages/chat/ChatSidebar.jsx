@@ -1,6 +1,7 @@
 import { Pin, Star, Users, UserPlus, X, Search, Phone, MessageSquare, Video, BellDot } from 'lucide-react';
 import { useState } from 'react';
 import { ChatAvatar } from '../../components/chat';
+import { useFeatures } from '../../FeaturesContext';
 import { isUserOnline } from './chatUtils';
 import ConversationItem from './ConversationItem';
 import CallsTab from './CallsTab';
@@ -13,6 +14,7 @@ export default function ChatSidebar({
     onSearchUser, onOpenConv, onMenuToggle, onPinConv, onFavConv, onDeleteConv,
     onNewGroup, searchInputRef
 }) {
+    const { hasFeature } = useFeatures();
     const totalUnread = conversations.reduce((sum, c) => sum + (c.unread_count || 0), 0);
     const [sidebarTab, setSidebarTab] = useState('msgs');
 
@@ -44,6 +46,7 @@ export default function ChatSidebar({
                     <MessageSquare size={14} /> Messages
                     {totalUnread > 0 && <span className={s.totalBadge}>{totalUnread}</span>}
                 </button>
+                {hasFeature('meetings') && (
                 <button
                     className={`${s.tabBtn} ${sidebarTab === 'meetings' ? s.tabActive : ''}`}
                     onClick={() => switchTab('meetings')}
@@ -51,6 +54,7 @@ export default function ChatSidebar({
                     <Video size={14} /> Meetings
                     {meetingConvs.some(c => c.unread_count > 0) && <span className={s.totalBadge}>{meetingConvs.reduce((s, c) => s + (c.unread_count || 0), 0)}</span>}
                 </button>
+                )}
                 <button
                     className={`${s.tabBtn} ${sidebarTab === 'calls' ? s.tabActive : ''}`}
                     onClick={() => switchTab('calls')}
@@ -70,7 +74,7 @@ export default function ChatSidebar({
             {sidebarTab === 'calls' && <CallsTab userId={userId} />}
 
             {/* ── Meetings tab ── */}
-            {sidebarTab === 'meetings' && (
+            {hasFeature('meetings') && sidebarTab === 'meetings' && (
                 <div className={s.convList}>
                     {meetingConvs.length === 0 ? (
                         <div className={s.empty}>

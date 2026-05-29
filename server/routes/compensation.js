@@ -1,7 +1,7 @@
 const express = require('express');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole, getVisibleUserIds } = require('../middleware/rbac');
-const { requireTenant } = require('../middleware/tenant');
+const { requireTenant, requireFeature } = require('../middleware/tenant');
 const { calculateAttendance } = require('../utils/attendance');
 const { encrypt, decrypt, maskAccountNumber } = require('../utils/encryption');
 const { sendSalarySlipPDF } = require('../utils/salarySlipPdf');
@@ -9,7 +9,7 @@ const { getPayoutService } = require('../services/razorpayPayout');
 const { logger } = require('../utils/logger');
 
 const router = express.Router();
-router.use(auth, loadUserContext, requireTenant);
+router.use(auth, loadUserContext, requireTenant, requireFeature('payroll'));
 
 function requireSameOrg(req, res, next) {
     if (!req.userOrgId && req.userRole !== 'platform_admin') {

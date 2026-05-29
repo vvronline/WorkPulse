@@ -45,7 +45,7 @@ export default function Navbar() {
           ) : (
             <div className={s['logo-icon']}>💼</div>
           )}
-          <h1 className={s.title}>WorkPulse</h1>
+          <h1 className={s.title}>{branding?.org_name || 'WorkPulse'}</h1>
         </NavLink>
         <div className={s['navbar-right']}>
           <NavLinks />

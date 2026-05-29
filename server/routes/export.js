@@ -10,8 +10,8 @@ const { sendCSV, sendPDF, sendPayrollCSV, sendPayrollPDF } = require('../utils/e
 const { logger } = require('../utils/logger');
 
 const router = express.Router();
-const { requireTenant } = require('../middleware/tenant');
-router.use(auth, loadUserContext, requireTenant);
+const { requireTenant, requireFeature } = require('../middleware/tenant');
+router.use(auth, loadUserContext, requireTenant, requireFeature('export'));
 
 // Helper: fetch org work hours config for the current user
 async function getUserTargetMs(userId, db) {

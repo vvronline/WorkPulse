@@ -1,6 +1,7 @@
 import React, { Suspense, lazy, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext';
+import { FeaturesProvider, useFeatures } from './FeaturesContext';
 import { ROLE_LEVEL } from './constants';
 import { ThemeProvider } from './ThemeContext';
 import { WorkStateProvider } from './WorkStateContext';
@@ -30,6 +31,7 @@ import PageSkeleton from './components/common/PageSkeleton';
 import ImpersonationBanner from './components/common/ImpersonationBanner';
 import ElectronTitleBar from './components/common/ElectronTitleBar';
 import UpdateNotification from './components/common/UpdateNotification';
+import InspectorSessionBanner from './components/common/InspectorSessionBanner';
 import ScreenPicker from './components/common/ScreenPicker';
 import KeepAlive from './components/common/KeepAlive';
 
@@ -98,6 +100,7 @@ function AppRoutes() {
       {isAuthenticated && <ImpersonationBanner />}
       {!isAuthenticated && <ElectronTitleBar />}
       {isAuthenticated && !location.pathname.match(/^\/meeting\/[^/]+\/room/) && <Navbar />}
+      {isAuthenticated && <InspectorSessionBanner />}
       <UpdateNotification />
       <ScreenPicker />
 
@@ -248,6 +251,7 @@ function MainApp() {
 
   return (
     <AuthProvider>
+      <FeaturesProvider>
       <ThemeProvider>
         <WorkStateProvider>
           <ToastProvider>
@@ -284,6 +288,7 @@ function MainApp() {
           </ToastProvider>
         </WorkStateProvider>
       </ThemeProvider>
+      </FeaturesProvider>
     </AuthProvider>
   );
 }

@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  getTenant, getTenantStats, getTenantUsers, impersonateTenant,
+  getTenant, getTenantStats, getTenantUsers,
   suspendTenant, reactivateTenant, updateTenantDomain, updateTenantLimits,
   getAdminOrganizations, updateAdminOrganization,
+  getPlanCatalog, updateTenantPlan, updateTenantFeatures,
 } from '../../api';
 import {
   ArrowLeft, Building2, Users, Shield, Globe, Database, HardDrive,
@@ -13,6 +14,7 @@ import Departments from '../../components/organization/Departments';
 import Teams from '../../components/organization/Teams';
 import OrgChartView from '../../components/organization/OrgChartView';
 import OrgModal from '../admin/OrgModal';
+import RequestAccessModal from './RequestAccessModal';
 import s from './Tenants.module.css';
 
 function InfoCard({ icon: Icon, label, value }) {
@@ -52,6 +54,7 @@ export default function TenantDetail({ tenantId, onBack }) {
   const [error, setError] = useState('');
   const [tab, setTab] = useState('overview');
   const [editingOrg, setEditingOrg] = useState(null);
+  const [showAccessModal, setShowAccessModal] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -77,13 +80,10 @@ export default function TenantDetail({ tenantId, onBack }) {
 
   const org = tenant && orgs.find(o => o.slug === tenant.slug || o.name === tenant.org_name);
 
-  const handleImpersonate = async () => {
-    try {
-      await impersonateTenant(tenantId);
-      // Server sets the impersonation cookie (HttpOnly) and saves the original token
-      window.location.href = '/';
-    } catch (e) { setError(e.response?.data?.error || 'Failed to impersonate'); }
-  };
+  // Open the multi-step consent flow instead of dropping in silently. The
+  // legacy direct-impersonate path was removed in the consent-gated
+  // refactor — see RequestAccessModal for the new UX.
+  const openAccessFlow = () => setShowAccessModal(true);
 
   const handleSuspend = async () => {
     try { await suspendTenant(tenantId, 'Suspended by platform admin'); loadData(); }
@@ -125,8 +125,8 @@ export default function TenantDetail({ tenantId, onBack }) {
         </div>
         <div className={s.detailActions}>
           {tenant.status === 'active' && (
-            <button className={s.btnPrimary} onClick={handleImpersonate}>
-              <Shield size={14} /> Enter Tenant
+            <button className={s.btnPrimary} onClick={openAccessFlow}>
+              <Shield size={14} /> Request Access
             </button>
           )}
           {tenant.status === 'active' && (
@@ -218,6 +218,13 @@ export default function TenantDetail({ tenantId, onBack }) {
       )}
 
       {editingOrg && <OrgModal org={editingOrg} onClose={() => setEditingOrg(null)} onSave={(data) => handleOrgUpdate(editingOrg.id, data)} />}
+
+      {showAccessModal && (
+        <RequestAccessModal
+          tenant={tenant}
+          onClose={() => setShowAccessModal(false)}
+        />
+      )}
     </div>
   );
 }
@@ -231,13 +238,28 @@ function TenantSettings({ tenant, org, onEditOrg, onReload }) {
   const [msg, setMsg] = useState('');
   const [domainError, setDomainError] = useState('');
 
+  // Plan & Features
+  const [plans, setPlans] = useState(null);
+  const [featureLabels, setFeatureLabels] = useState({});
+  const [currentPlan, setCurrentPlan] = useState(tenant.plan || 'standard');
+  const [overrides, setOverrides] = useState(tenant.features || {});
+
   useEffect(() => {
     setDomain(tenant.custom_domain || '');
     setMaxUsers(tenant.max_users || '');
     setMaxStorage(tenant.max_storage_mb || '');
+    setCurrentPlan(tenant.plan || 'standard');
+    setOverrides(tenant.features || {});
     setMsg('');
     setDomainError('');
   }, [tenant.id]);
+
+  useEffect(() => {
+    getPlanCatalog().then(res => {
+      setPlans(res.data.plans);
+      setFeatureLabels(res.data.feature_labels || {});
+    }).catch(() => {});
+  }, []);
 
   const DOMAIN_RE = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i;
 
@@ -266,9 +288,104 @@ function TenantSettings({ tenant, org, onEditOrg, onReload }) {
     finally { setSaving(false); }
   };
 
+  const handlePlanChange = async (newPlan) => {
+    setSaving(true); setMsg('');
+    try {
+      await updateTenantPlan(tenant.id, newPlan, true);
+      setCurrentPlan(newPlan);
+      setMsg('Plan updated');
+      onReload();
+    } catch (e) { setMsg(e.response?.data?.error || 'Failed to change plan'); }
+    finally { setSaving(false); }
+  };
+
+  const handleFeatureOverride = (featureKey, value) => {
+    const planDefault = plans?.[currentPlan]?.features?.[featureKey];
+    const newOverrides = { ...overrides };
+    if (value === 'default') {
+      delete newOverrides[featureKey];
+    } else {
+      newOverrides[featureKey] = value === 'on';
+    }
+    setOverrides(newOverrides);
+  };
+
+  const saveFeatures = async () => {
+    setSaving(true); setMsg('');
+    try {
+      await updateTenantFeatures(tenant.id, overrides);
+      setMsg('Features updated');
+      onReload();
+    } catch (e) { setMsg(e.response?.data?.error || 'Failed'); }
+    finally { setSaving(false); }
+  };
+
+  const allFeatureKeys = plans ? Object.keys(plans[currentPlan]?.features || {}) : [];
+
   return (
     <div className={s.settingsWrap}>
       {msg && <div className={s.settingsMsg}>{msg}</div>}
+
+      {/* Plan Management */}
+      <fieldset className={s.fieldset}>
+        <legend className={s.legend}>Subscription Plan</legend>
+        <div className={s.planSelector}>
+          <span className={s.planBadge}>{plans?.[currentPlan]?.label || currentPlan}</span>
+          <select
+            value={currentPlan}
+            onChange={e => handlePlanChange(e.target.value)}
+            disabled={saving}
+          >
+            {plans && Object.entries(plans).map(([key, p]) => (
+              <option key={key} value={key}>{p.label} — {p.description}</option>
+            ))}
+          </select>
+        </div>
+      </fieldset>
+
+      {/* Feature Overrides */}
+      {plans && (
+        <fieldset className={s.fieldset}>
+          <legend className={s.legend}>Feature Overrides</legend>
+          <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>
+            Override individual features from the plan defaults. "Default" uses the plan setting.
+          </p>
+          <div className={s.featureGrid}>
+            {allFeatureKeys.map(key => {
+              const planDefault = plans[currentPlan].features[key];
+              const hasOverride = key in overrides;
+              const currentState = hasOverride ? (overrides[key] ? 'on' : 'off') : 'default';
+              return (
+                <div key={key} className={s.featureRow}>
+                  <div className={s.featureRowLabel}>
+                    <span>{featureLabels[key] || key}</span>
+                    <span className={`${s.featureDefault} ${planDefault ? s.featureDefaultOn : s.featureDefaultOff}`}>
+                      {planDefault ? 'Plan: ON' : 'Plan: OFF'}
+                    </span>
+                  </div>
+                  <div className={s.featureToggle}>
+                    <button
+                      className={currentState === 'default' ? s.featureToggleActive : ''}
+                      onClick={() => handleFeatureOverride(key, 'default')}
+                    >Default</button>
+                    <button
+                      className={currentState === 'on' ? s.featureToggleActive : ''}
+                      onClick={() => handleFeatureOverride(key, 'on')}
+                    >On</button>
+                    <button
+                      className={currentState === 'off' ? s.featureToggleActive : ''}
+                      onClick={() => handleFeatureOverride(key, 'off')}
+                    >Off</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
+            <button onClick={saveFeatures} disabled={saving} className={s.saveBtn}>Save Features</button>
+          </div>
+        </fieldset>
+      )}
 
       <fieldset className={s.fieldset}>
         <legend className={s.legend}>Custom Domain</legend>

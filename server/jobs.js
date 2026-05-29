@@ -3,6 +3,8 @@
  * Falls back to setInterval when Redis is unavailable.
  */
 const { logger } = require('./utils/logger');
+const { forEachTenant } = require('./utils/tenantManager');
+const { masterQuery } = require('./db');
 
 let Queue, Worker;
 try {
@@ -13,8 +15,114 @@ try {
 
 let autoClockOutQueue = null;
 let tokenCleanupQueue = null;
+let inspectorPruneQueue = null;
+let retentionCleanupQueue = null;
 let workers = [];
 let fallbackIntervals = [];
+
+/**
+ * Daily housekeeping: remove synthetic Platform Inspector `users` rows that
+ * have not produced any audit_logs in the last 30 days.
+ *
+ * Background: each (tenant, platform_admin) pair gets a dedicated synthetic
+ * users row the first time a platform admin enters the tenant
+ * (see `utils/impersonationApproval.getOrCreateInspectorUser`). The row is
+ * hidden from every directory query (`hidden_from_directory = TRUE`) and
+ * only exists so that actions during the support session have a real
+ * `users.id` FK to attach to.
+ *
+ * Once the audit window has elapsed and the inspector has not been back,
+ * the row is dead weight. Pruning is safe because:
+ *   - `audit_logs.actor_id` keeps `actor_username` snapshotted at write time
+ *     and the FK to `users` is `ON DELETE SET NULL`, so historical logs are
+ *     not disturbed.
+ *   - A future support session will simply recreate the row on demand.
+ */
+async function pruneStaleInspectorUsers() {
+    let pruned = 0;
+    const result = await forEachTenant(
+        async (db) => {
+            const r = await db.query(`
+                DELETE FROM users
+                 WHERE hidden_from_directory = TRUE
+                   AND username LIKE 'platform_inspector_%'
+                   AND NOT EXISTS (
+                       SELECT 1 FROM audit_logs a
+                        WHERE a.actor_id = users.id
+                          AND a.created_at > NOW() - INTERVAL '30 days'
+                   )
+            `);
+            pruned += r.rowCount || 0;
+        },
+        { label: 'pruneStaleInspectorUsers' },
+    );
+    if (pruned > 0) {
+        logger.info({ pruned, tenantsOk: result.ok, tenantsFailed: result.failed },
+            'Pruned stale Platform Inspector users');
+    }
+    return pruned;
+}
+
+/**
+ * Data retention cleanup: purge old audit logs, expired sessions, and
+ * permanently remove soft-deleted tenants past the retention window.
+ * Reads retention settings from platform config (app_settings).
+ */
+async function runRetentionCleanup() {
+    const { getRetentionPolicy } = require('./utils/platformConfig');
+    const policy = await getRetentionPolicy();
+    let stats = { audit_logs: 0, session_logs: 0, tenants: 0 };
+
+    // Purge old platform audit logs
+    if (policy.auditLogRetentionDays > 0) {
+        const r = await masterQuery(
+            `DELETE FROM platform_audit_logs WHERE created_at < NOW() - ($1 || ' days')::interval`,
+            [String(policy.auditLogRetentionDays)],
+        );
+        stats.audit_logs = r.rowCount || 0;
+    }
+
+    // Purge old impersonation session requests
+    if (policy.sessionLogRetentionDays > 0) {
+        const r = await masterQuery(
+            `DELETE FROM tenant_access_requests
+             WHERE status IN ('expired', 'consumed', 'denied', 'cancelled', 'revoked')
+               AND created_at < NOW() - ($1 || ' days')::interval`,
+            [String(policy.sessionLogRetentionDays)],
+        );
+        stats.session_logs = r.rowCount || 0;
+    }
+
+    // Hard-delete soft-deleted tenants past retention window
+    if (policy.deletedTenantCleanupDays > 0) {
+        const r = await masterQuery(
+            `DELETE FROM tenants
+             WHERE status = 'deleted'
+               AND updated_at < NOW() - ($1 || ' days')::interval`,
+            [String(policy.deletedTenantCleanupDays)],
+        );
+        stats.tenants = r.rowCount || 0;
+    }
+
+    // Purge per-tenant audit logs
+    if (policy.auditLogRetentionDays > 0) {
+        await forEachTenant(
+            async (db) => {
+                await db.query(
+                    `DELETE FROM audit_logs WHERE created_at < NOW() - ($1 || ' days')::interval`,
+                    [String(policy.auditLogRetentionDays)],
+                );
+            },
+            { label: 'retentionCleanup' },
+        );
+    }
+
+    const total = stats.audit_logs + stats.session_logs + stats.tenants;
+    if (total > 0) {
+        logger.info(stats, 'Data retention cleanup completed');
+    }
+    return stats;
+}
 
 /**
  * Initialize job queues. Must be called after Redis is connected.
@@ -32,6 +140,16 @@ function initJobs({ autoClockOut, cleanupTokens }) {
         autoClockOut();
         fallbackIntervals.push(setInterval(autoClockOut, 5 * 60 * 1000));
         fallbackIntervals.push(setInterval(cleanupTokens, 60 * 60 * 1000));
+        fallbackIntervals.push(setInterval(
+            () => pruneStaleInspectorUsers().catch(err =>
+                logger.error({ err }, 'Inspector prune (interval) failed')),
+            24 * 60 * 60 * 1000,
+        ));
+        fallbackIntervals.push(setInterval(
+            () => runRetentionCleanup().catch(err =>
+                logger.error({ err }, 'Retention cleanup (interval) failed')),
+            24 * 60 * 60 * 1000,
+        ));
         return;
     }
 
@@ -82,10 +200,46 @@ function initJobs({ autoClockOut, cleanupTokens }) {
     });
     workers.push(cleanupWorker);
 
+    // Stale inspector prune: once a day. Synthetic Platform Inspector rows
+    // accumulate over time — one per (tenant, platform_admin) pair — and
+    // this nightly sweep removes any whose audit-log activity has gone cold
+    // (no writes in the last 30 days). Cheap and safe; see
+    // `pruneStaleInspectorUsers` for the rationale.
+    inspectorPruneQueue = new Queue('inspector-prune', { connection });
+    inspectorPruneQueue.upsertJobScheduler('inspector-prune-schedule', {
+        every: 24 * 60 * 60 * 1000, // 24 hours
+    }, {
+        name: 'inspector-prune',
+    }).catch((err) => logger.warn({ err: err.message }, 'Failed to set inspector-prune schedule'));
+
+    const inspectorPruneWorker = new Worker('inspector-prune', async () => {
+        await pruneStaleInspectorUsers();
+    }, { connection, concurrency: 1 });
+    inspectorPruneWorker.on('failed', (job, err) => {
+        logger.error({ err, jobId: job?.id }, 'Inspector prune job failed');
+    });
+    workers.push(inspectorPruneWorker);
+
+    // Data retention cleanup: once a day
+    retentionCleanupQueue = new Queue('retention-cleanup', { connection });
+    retentionCleanupQueue.upsertJobScheduler('retention-cleanup-schedule', {
+        every: 24 * 60 * 60 * 1000,
+    }, {
+        name: 'retention-cleanup',
+    }).catch((err) => logger.warn({ err: err.message }, 'Failed to set retention-cleanup schedule'));
+
+    const retentionWorker = new Worker('retention-cleanup', async () => {
+        await runRetentionCleanup();
+    }, { connection, concurrency: 1 });
+    retentionWorker.on('failed', (job, err) => {
+        logger.error({ err, jobId: job?.id }, 'Retention cleanup job failed');
+    });
+    workers.push(retentionWorker);
+
     // Run auto clock-out immediately on startup
     autoClockOut();
 
-    logger.info('BullMQ job queues initialized (auto-clock-out: 5m, token-cleanup: 1h)');
+    logger.info('BullMQ job queues initialized (auto-clock-out: 5m, token-cleanup: 1h, inspector-prune: 24h, retention-cleanup: 24h)');
 }
 
 async function shutdownJobs() {
@@ -100,6 +254,12 @@ async function shutdownJobs() {
     if (tokenCleanupQueue) {
         try { await tokenCleanupQueue.close(); } catch { /* ignore */ }
     }
+    if (inspectorPruneQueue) {
+        try { await inspectorPruneQueue.close(); } catch { /* ignore */ }
+    }
+    if (retentionCleanupQueue) {
+        try { await retentionCleanupQueue.close(); } catch { /* ignore */ }
+    }
 }
 
-module.exports = { initJobs, shutdownJobs };
+module.exports = { initJobs, shutdownJobs, pruneStaleInspectorUsers, runRetentionCleanup };

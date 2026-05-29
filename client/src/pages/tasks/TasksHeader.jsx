@@ -3,6 +3,7 @@ import { PRIORITIES, COLUMNS } from './constants.js';
 import { formatDate } from './utils.jsx';
 import { getLocalToday } from '../../api';
 import { useTaskCtx } from './TaskContext.jsx';
+import { useFeatures } from '../../FeaturesContext';
 import { CalendarDays, Package, Search, Headset, BarChart3 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import s from './TasksHeader.module.css';
@@ -43,6 +44,7 @@ export default function TasksHeader({
   clearFilters,
 }) {
   const { assignableUsers, orgLabels, availableSprints, currentUser } = useTaskCtx();
+  const { hasFeature } = useFeatures();
   const currentSprint = availableSprints.find((sp) => sp.id === selectedSprintId);
   const teamName = currentUser?.team_name || 'Team';
   const daysLeft = currentSprint
@@ -134,6 +136,7 @@ export default function TasksHeader({
               is intentionally NOT linked from here — it lives only inside
               Admin → Structure → Agile Config so it doesn't leak through to
               team members from the tasks page. */}
+          {hasFeature('agile') && (
           <Link
             to="/sprint-insights"
             className={`btn btn-secondary btn-sm ${s['add-task-toggle']}`}
@@ -142,6 +145,7 @@ export default function TasksHeader({
           >
             <BarChart3 size={14} style={{verticalAlign:'middle',marginRight:4}} />Insights
           </Link>
+          )}
 
           {/* Sprint select (when multiple sprints) */}
           {activeTab === 'sprint' && availableSprints.length > 1 && (

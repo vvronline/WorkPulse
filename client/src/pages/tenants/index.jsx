@@ -2,15 +2,17 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
     Building2, Plus, Shield, Settings2, ScrollText, Activity,
-    Menu, X, ChevronDown, ArrowLeft,
+    LayoutDashboard, Menu, X, ChevronDown, ArrowLeft, CreditCard,
 } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
+import PlatformDashboard from './PlatformDashboard';
 import TenantList from './TenantList';
 import TenantDetail from './TenantDetail';
 import CreateTenant from './CreateTenant';
 import PlatformAdmins from './PlatformAdmins';
 import PlatformSettings from './PlatformSettings';
 import PlatformAuditLogs from './PlatformAuditLogs';
+import PlanManagement from './PlanManagement';
 import s from '../admin/AdminLayout.module.css';
 
 // ─── Section registry ────────────────────────────────────────────────────────
@@ -21,22 +23,25 @@ import s from '../admin/AdminLayout.module.css';
 // to anyone already comfortable with /admin.
 
 const SECTIONS = [
+    { key: 'dashboard', label: 'Dashboard',        icon: LayoutDashboard, group: 'Overview' },
+
     { key: 'tenants',  label: 'Tenants',         icon: Building2, group: 'Tenants' },
     { key: 'create',   label: 'New Tenant',      icon: Plus,      group: 'Tenants' },
 
+    { key: 'plans',    label: 'Plans',           icon: CreditCard, group: 'Configuration' },
     { key: 'admins',   label: 'Platform Admins', icon: Shield,    group: 'Access' },
     { key: 'settings', label: 'Platform Settings', icon: Settings2, group: 'Access' },
 
     { key: 'audit',    label: 'Audit Trail',     icon: ScrollText, group: 'Compliance' },
 ];
 
-const GROUP_ORDER = ['Tenants', 'Access', 'Compliance'];
+const GROUP_ORDER = ['Overview', 'Tenants', 'Configuration', 'Access', 'Compliance'];
 
 export default function TenantsPage() {
     const { user } = useAuth();
     const [searchParams, setSearchParams] = useSearchParams();
 
-    const initialSection = searchParams.get('tab') || 'tenants';
+    const initialSection = searchParams.get('tab') || 'dashboard';
     const [section, setSection] = useState(initialSection);
 
     // Selected tenant for the drill-down detail view
@@ -58,7 +63,7 @@ export default function TenantsPage() {
 
     // Sync ?tab= changes from outside (e.g. global search deep-links)
     useEffect(() => {
-        const t = searchParams.get('tab') || 'tenants';
+        const t = searchParams.get('tab') || 'dashboard';
         if (t !== section) setSection(t);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [searchParams]);
@@ -68,7 +73,7 @@ export default function TenantsPage() {
         setSelectedTenantId(null);
         setMobileOpen(false);
         const next = new URLSearchParams(searchParams);
-        if (key === 'tenants') next.delete('tab');
+        if (key === 'dashboard') next.delete('tab');
         else next.set('tab', key);
         setSearchParams(next, { replace: true });
     }, [searchParams, setSearchParams]);
@@ -86,8 +91,9 @@ export default function TenantsPage() {
     const currentSection = SECTIONS.find(sec => sec.key === section) || SECTIONS[0];
     const currentTitle = selectedTenantId ? 'Tenant Details' : currentSection.label;
 
-    // Access check: only platform_admin and super_admin can see this console
-    if (!user || !['super_admin', 'platform_admin'].includes(user.role)) {
+    // Access check: platform_admin only — tenant super_admins must not see the
+    // platform-wide console; they administer their own org from /admin.
+    if (!user || user.role !== 'platform_admin') {
         return (
             <div className={s.shell}>
                 <div className={s.content}>
@@ -115,10 +121,14 @@ export default function TenantsPage() {
             );
         }
         switch (section) {
+            case 'dashboard':
+                return <PlatformDashboard />;
             case 'tenants':
                 return <TenantList onSelectTenant={setSelectedTenantId} />;
             case 'create':
                 return <CreateTenant onCreated={(id) => setSelectedTenantId(id)} />;
+            case 'plans':
+                return <PlanManagement />;
             case 'admins':
                 return <PlatformAdmins />;
             case 'settings':
@@ -126,7 +136,7 @@ export default function TenantsPage() {
             case 'audit':
                 return <PlatformAuditLogs />;
             default:
-                return <TenantList onSelectTenant={setSelectedTenantId} />;
+                return <PlatformDashboard />;
         }
     };
 

@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
-import { createTenant, createTenantUser, seedTenant } from '../../api';
-import { Building2, Users, UserPlus, Sprout, Check, ChevronRight, Loader2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { createTenant, createTenantUser, seedTenant, getPlanCatalog } from '../../api';
+import { Building2, Users, UserPlus, Sprout, Check, ChevronRight, Loader2, CreditCard } from 'lucide-react';
 import s from './Tenants.module.css';
 
 const STEPS = [
   { key: 'basics', label: 'Basics', icon: Building2 },
+  { key: 'plan', label: 'Plan', icon: CreditCard },
   { key: 'limits', label: 'Limits', icon: Users },
   { key: 'admin', label: 'Super Admin', icon: UserPlus },
   { key: 'seed', label: 'Seed Data', icon: Sprout },
@@ -21,22 +22,34 @@ export default function CreateTenant({ onCreated }) {
   const [slug, setSlug] = useState('');
   const [slugError, setSlugError] = useState('');
 
-  // Step 2: Limits
+  // Step 2: Plan
+  const [plans, setPlans] = useState(null);
+  const [featureLabels, setFeatureLabels] = useState({});
+  const [selectedPlan, setSelectedPlan] = useState('standard');
+
+  // Step 3: Limits
   const [maxUsers, setMaxUsers] = useState('');
   const [maxStorage, setMaxStorage] = useState('');
 
-  // Step 3: Super Admin
+  // Step 4: Super Admin
   const [adminUsername, setAdminUsername] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
   const [adminFullName, setAdminFullName] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
   const [adminCreated, setAdminCreated] = useState(false);
 
-  // Step 4: Seed
+  // Step 5: Seed
   const [seedDone, setSeedDone] = useState(false);
   const [seedResult, setSeedResult] = useState(null);
 
   const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,48}[a-z0-9])?$/;
+
+  useEffect(() => {
+    getPlanCatalog().then(res => {
+      setPlans(res.data.plans);
+      setFeatureLabels(res.data.feature_labels || {});
+    }).catch(() => {});
+  }, []);
 
   const handleOrgNameChange = (name) => {
     setOrgName(name);
@@ -50,6 +63,15 @@ export default function CreateTenant({ onCreated }) {
     setSlugError(val && !SLUG_RE.test(val) ? 'Lowercase alphanumeric with hyphens, 2–50 chars' : '');
   };
 
+  const handlePlanSelect = (planKey) => {
+    setSelectedPlan(planKey);
+    if (plans?.[planKey]?.limits) {
+      const { max_users, max_storage_mb } = plans[planKey].limits;
+      setMaxUsers(max_users != null ? String(max_users) : '');
+      setMaxStorage(max_storage_mb != null ? String(max_storage_mb) : '');
+    }
+  };
+
   const handleCreateTenant = async () => {
     if (!orgName.trim() || !slug.trim()) { setError('Organization name and slug are required'); return; }
     if (slug && !SLUG_RE.test(slug)) { setSlugError('Invalid slug format'); return; }
@@ -58,11 +80,12 @@ export default function CreateTenant({ onCreated }) {
       const res = await createTenant({
         org_name: orgName.trim(),
         slug: slug.trim(),
+        plan: selectedPlan,
         max_users: maxUsers ? Number(maxUsers) : null,
         max_storage_mb: maxStorage ? Number(maxStorage) : null,
       });
       setCreatedTenantId(res.data.tenant.id);
-      setStep(2); // Move to admin step
+      setStep(3);
     } catch (e) {
       setError(e.response?.data?.error || 'Failed to create tenant');
     } finally {
@@ -84,7 +107,7 @@ export default function CreateTenant({ onCreated }) {
         role: 'super_admin',
       });
       setAdminCreated(true);
-      setStep(3);
+      setStep(4);
     } catch (e) {
       setError(e.response?.data?.error || 'Failed to create admin user');
     } finally {
@@ -118,7 +141,7 @@ export default function CreateTenant({ onCreated }) {
       <div className={s.wizardSteps}>
         {STEPS.map((st, i) => {
           const Icon = st.icon;
-          const isDone = i < step || (i === 3 && seedDone);
+          const isDone = i < step || (i === 4 && seedDone);
           const isActive = i === step;
           return (
             <div key={st.key} className={`${s.wizardStep} ${isActive ? s.wizardStepActive : ''} ${isDone ? s.wizardStepDone : ''}`}>
@@ -136,7 +159,7 @@ export default function CreateTenant({ onCreated }) {
         </div>
       )}
 
-      {/* Step 1: Basics + Limits combined */}
+      {/* Step 1: Basics */}
       {step === 0 && (
         <>
           <div className={s.wizardGrid}>
@@ -152,15 +175,59 @@ export default function CreateTenant({ onCreated }) {
           </div>
           <div className={s.wizardActions}>
             <button className={s.btnPrimary} onClick={() => { if (orgName.trim() && slug.trim() && !slugError) setStep(1); }}>
+              Next: Plan <ChevronRight size={14} />
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* Step 2: Plan Selection */}
+      {step === 1 && (
+        <>
+          {plans ? (
+            <div className={s.planCards}>
+              {Object.entries(plans).map(([key, plan]) => {
+                const enabledFeatures = Object.entries(plan.features).filter(([, v]) => v).map(([k]) => featureLabels[k] || k);
+                return (
+                  <div
+                    key={key}
+                    className={`${s.planCard} ${selectedPlan === key ? s.planCardSelected : ''}`}
+                    onClick={() => handlePlanSelect(key)}
+                  >
+                    <div className={s.planCardHeader}>
+                      <strong>{plan.label}</strong>
+                      {selectedPlan === key && <Check size={16} />}
+                    </div>
+                    <p className={s.planCardDesc}>{plan.description}</p>
+                    <div className={s.planCardLimits}>
+                      <span>{plan.limits.max_users ?? '∞'} users</span>
+                      <span>{plan.limits.max_storage_mb ? `${plan.limits.max_storage_mb} MB` : '∞ storage'}</span>
+                    </div>
+                    <ul className={s.planCardFeatures}>
+                      {enabledFeatures.map(f => <li key={f}><Check size={12} /> {f}</li>)}
+                    </ul>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center', padding: 20 }}><Loader2 size={20} className={s.spinner} /></div>
+          )}
+          <div className={s.wizardActions}>
+            <button className={s.btnSmall} onClick={() => setStep(0)}>Back</button>
+            <button className={s.btnPrimary} onClick={() => setStep(2)}>
               Next: Limits <ChevronRight size={14} />
             </button>
           </div>
         </>
       )}
 
-      {/* Step 2: Limits */}
-      {step === 1 && (
+      {/* Step 3: Limits */}
+      {step === 2 && (
         <>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 12 }}>
+            Pre-filled from the <strong>{plans?.[selectedPlan]?.label || selectedPlan}</strong> plan. Override if needed.
+          </p>
           <div className={s.wizardGrid}>
             <div>
               <label className={s.fieldLabelSec}>Max Users (leave empty for unlimited)</label>
@@ -172,7 +239,7 @@ export default function CreateTenant({ onCreated }) {
             </div>
           </div>
           <div className={s.wizardActions}>
-            <button className={s.btnSmall} onClick={() => setStep(0)}>Back</button>
+            <button className={s.btnSmall} onClick={() => setStep(1)}>Back</button>
             <button className={s.btnPrimary} onClick={handleCreateTenant} disabled={submitting}>
               {submitting ? <><Loader2 size={14} className={s.spinner} /> Creating…</> : <>Create & Continue <ChevronRight size={14} /></>}
             </button>
@@ -180,8 +247,8 @@ export default function CreateTenant({ onCreated }) {
         </>
       )}
 
-      {/* Step 3: Super Admin */}
-      {step === 2 && (
+      {/* Step 4: Super Admin */}
+      {step === 3 && (
         <>
           <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginBottom: 16 }}>
             Create the initial super admin for <strong>{orgName}</strong>. This user will be the primary administrator.
@@ -205,7 +272,7 @@ export default function CreateTenant({ onCreated }) {
             </div>
           </div>
           <div className={s.wizardActions}>
-            <button className={s.btnSmall} onClick={() => setStep(3)}>Skip</button>
+            <button className={s.btnSmall} onClick={() => setStep(4)}>Skip</button>
             <button className={s.btnPrimary} onClick={handleCreateAdmin} disabled={submitting}>
               {submitting ? <><Loader2 size={14} className={s.spinner} /> Creating…</> : <>Create Admin & Continue <ChevronRight size={14} /></>}
             </button>
@@ -213,8 +280,8 @@ export default function CreateTenant({ onCreated }) {
         </>
       )}
 
-      {/* Step 4: Seed Data */}
-      {step === 3 && (
+      {/* Step 5: Seed Data */}
+      {step === 4 && (
         <>
           {!seedDone ? (
             <>

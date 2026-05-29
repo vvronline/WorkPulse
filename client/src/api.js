@@ -355,6 +355,33 @@ export const createAnnouncement = (data) => API.post('/admin/announcements', dat
 export const updateAnnouncement = (id, data) => API.put(`/admin/announcements/${id}`, data);
 export const deleteAnnouncement = (id) => API.delete(`/admin/announcements/${id}`);
 
+// ─── Platform-Access (consent-gated impersonation) ────────────────────────
+// Platform-side (the inspector — runs while authenticated as platform_admin):
+export const createTenantAccessRequest = (tenantId, data) =>
+    API.post(`/admin/tenants/${tenantId}/access-requests`, data);
+export const listMyAccessRequests = (params) =>
+    API.get('/admin/tenants/access-requests', { params });
+export const listTenantAccessRequests = (tenantId) =>
+    API.get(`/admin/tenants/${tenantId}/access-requests`);
+export const cancelAccessRequest = (id) =>
+    API.delete(`/admin/tenants/access-requests/${id}`);
+export const getImpersonationPolicy = () =>
+    API.get('/admin/tenants/impersonation-policy');
+export const updateImpersonationPolicy = (data) =>
+    API.put('/admin/tenants/impersonation-policy', data);
+
+// Tenant-side (the approver — runs while authenticated as super_admin):
+export const listIncomingAccessRequests = (params) =>
+    API.get('/platform-access', { params });
+export const approveAccessRequest = (id) =>
+    API.post(`/platform-access/${id}/approve`);
+export const denyAccessRequest = (id, reason) =>
+    API.post(`/platform-access/${id}/deny`, { reason });
+export const revokeAccessSession = (id, reason) =>
+    API.post(`/platform-access/${id}/revoke`, { reason });
+export const getActiveInspectorSession = () =>
+    API.get('/platform-access/active-session');
+
 // Tenant Management (platform_admin)
 export const getTenants = (params) => API.get('/admin/tenants', { params });
 export const getTenantOverview = () => API.get('/admin/tenants/overview');
@@ -368,7 +395,12 @@ export const getTenantStats = (id) => API.get(`/admin/tenants/${id}/stats`);
 export const updateTenantDomain = (id, domain) => API.put(`/admin/tenants/${id}/domain`, { custom_domain: domain });
 export const updateTenantFeatures = (id, features) => API.put(`/admin/tenants/${id}/features`, { features });
 export const updateTenantLimits = (id, limits) => API.put(`/admin/tenants/${id}/limits`, limits);
-export const impersonateTenant = (id) => API.post(`/admin/tenants/${id}/impersonate`);
+// The consent-gated flow needs to send { approval_code, password, break_glass }
+// in the body. The old single-argument signature dropped the body silently,
+// which made every modal submission hit the server with no password and
+// fail with 400 REAUTH_REQUIRED.
+export const impersonateTenant = (id, body) =>
+    API.post(`/admin/tenants/${id}/impersonate`, body || {});
 export const exitImpersonation = (id) => API.post(`/admin/tenants/${id}/exit-impersonate`);
 export const getImpersonationSession = (id) => API.get(`/admin/tenants/${id}/impersonation-session`);
 export const getTenantUsers = (id, params) => API.get(`/admin/tenants/${id}/users`, { params });
@@ -376,12 +408,22 @@ export const createTenantUser = (id, data) => API.post(`/admin/tenants/${id}/use
 export const deactivateTenantUser = (tenantId, userId) => API.put(`/admin/tenants/${tenantId}/users/${userId}/deactivate`);
 export const seedTenant = (id) => API.post(`/admin/tenants/${id}/seed`);
 export const getPlatformAuditLogs = (params) => API.get('/admin/tenants/audit-logs', { params });
+export const getPlanCatalog = () => API.get('/admin/tenants/plan-catalog');
+export const updatePlanCatalog = (plans) => API.put('/admin/tenants/plan-catalog', { plans });
+export const resetPlanCatalog = () => API.post('/admin/tenants/plan-catalog/reset');
+export const updateTenantPlan = (id, plan, applyPlanLimits) => API.put(`/admin/tenants/${id}/plan`, { plan, apply_plan_limits: applyPlanLimits });
 
 // Platform Admin Management (platform_admin)
 export const getPlatformUsers = () => API.get('/admin/tenants/platform-users');
 export const createPlatformUser = (data) => API.post('/admin/tenants/platform-users', data);
 export const deactivatePlatformUser = (id) => API.put(`/admin/tenants/platform-users/${id}/deactivate`);
 export const resetPlatformUserPassword = (id, new_password) => API.post(`/admin/tenants/platform-users/${id}/reset-password`, { new_password });
+
+// Platform Configuration (platform_admin)
+export const getPlatformConfig = () => API.get('/admin/tenants/platform-config');
+export const updatePlatformConfig = (data) => API.put('/admin/tenants/platform-config', data);
+export const getTenantAlerts = () => API.get('/admin/tenants/alerts');
+export const sendSmtpTest = () => API.post('/admin/tenants/smtp-test');
 
 // Manager Dashboard
 export const getTeamAttendance = (date) => API.get('/manager/team-attendance', { params: { date } });

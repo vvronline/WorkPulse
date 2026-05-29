@@ -1,6 +1,43 @@
 const jwt = require('jsonwebtoken');
 const { logger } = require('../utils/logger');
 const redis = require('../redis');
+const { masterQuery } = require('../db');
+
+// ── Impersonation revocation cache ────────────────────────────────────────
+// Cache the per-request liveness check for an access-request row for 10s so
+// the master DB doesn't get hammered during a busy impersonation session.
+// 10s is short enough that a tenant revoke takes effect almost immediately.
+const _impCache = new Map();   // requestId -> { allowed: boolean, expiresAt: number }
+const IMP_CACHE_TTL_MS = 10_000;
+
+async function checkImpersonationStillAllowed(requestId) {
+    const now = Date.now();
+    const cached = _impCache.get(requestId);
+    if (cached && cached.expiresAt > now) return cached.allowed;
+
+    const row = (await masterQuery(
+        `SELECT status, revoked_at, session_ends_at
+           FROM tenant_access_requests WHERE id = $1`,
+        [requestId],
+    )).rows[0];
+
+    let allowed = true;
+    if (!row) {
+        allowed = false;
+    } else if (row.status === 'revoked' || row.revoked_at) {
+        allowed = false;
+    } else if (row.session_ends_at && new Date(row.session_ends_at) < new Date(now)) {
+        allowed = false;
+    }
+
+    _impCache.set(requestId, { allowed, expiresAt: now + IMP_CACHE_TTL_MS });
+    // Bound the cache to avoid an unbounded growth in pathological cases.
+    if (_impCache.size > 1000) {
+        const oldest = _impCache.keys().next().value;
+        _impCache.delete(oldest);
+    }
+    return allowed;
+}
 
 async function authMiddleware(req, res, next) {
     const token = req.cookies.token;
@@ -65,6 +102,27 @@ async function authMiddleware(req, res, next) {
         req.isImpersonated = !!decoded.impersonated;
         req.impersonatedBy = decoded.impersonated_by || null;
         req.impersonatedTenantName = decoded.impersonated_tenant_name || null;
+        req.accessRequestId = decoded.access_request_id || null;
+
+        // ── Impersonation session revocation check ──
+        // If this is an impersonation token tied to a tenant_access_requests
+        // row, verify the row hasn't been revoked / expired. We use a
+        // tiny in-memory TTL cache so we don't hit the master DB on every
+        // request during a long session (10 second TTL is plenty — a
+        // revocation is meant to kill activity *promptly*, not instantly).
+        if (req.isImpersonated && decoded.access_request_id) {
+            try {
+                const allowed = await checkImpersonationStillAllowed(decoded.access_request_id);
+                if (!allowed) {
+                    return res.status(401).json({
+                        error: 'Your impersonation session was revoked by the tenant.',
+                        code: 'IMPERSONATION_REVOKED',
+                    });
+                }
+            } catch (e) {
+                logger.warn({ err: e.message }, 'auth: failed to verify impersonation session');
+            }
+        }
         next();
     } catch (err) {
         if (err.name === 'TokenExpiredError') {

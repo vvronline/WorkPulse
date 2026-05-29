@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { getAdminAnnouncements, createAnnouncement, updateAnnouncement, deleteAnnouncement } from '../../api';
-import { Loader2, X, Megaphone, Trash2, ToggleLeft, ToggleRight } from 'lucide-react';
+import {
+  getAdminAnnouncements, createAnnouncement, updateAnnouncement, deleteAnnouncement,
+  getImpersonationPolicy, updateImpersonationPolicy,
+  getPlatformConfig, updatePlatformConfig, sendSmtpTest,
+} from '../../api';
+import {
+  Loader2, X, Megaphone, Trash2, ToggleLeft, ToggleRight, Shield, Save,
+  Wrench, Lock, Mail, Palette, Database, Send, Eye, EyeOff,
+} from 'lucide-react';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
 import s from './Tenants.module.css';
 
@@ -16,12 +23,74 @@ export default function PlatformSettings() {
   const [newDuration, setNewDuration] = useState('');
   const [deleteModal, setDeleteModal] = useState({ open: false, id: null });
 
+  // Impersonation policy
+  const [policy, setPolicy] = useState(null);
+  const [policyDraft, setPolicyDraft] = useState(null);
+  const [policySaving, setPolicySaving] = useState(false);
+
+  // Platform config
+  const [config, setConfig] = useState(null);
+  const [configDraft, setConfigDraft] = useState(null);
+  const [configSaving, setConfigSaving] = useState(false);
+  const [smtpTesting, setSmtpTesting] = useState(false);
+  const [showSmtpPass, setShowSmtpPass] = useState(false);
+
   useEffect(() => {
-    getAdminAnnouncements()
-      .then(r => setAnnouncements(Array.isArray(r.data) ? r.data : []))
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    Promise.all([
+      getAdminAnnouncements().then(r => setAnnouncements(Array.isArray(r.data) ? r.data : [])).catch(() => {}),
+      getImpersonationPolicy().then(r => { setPolicy(r.data); setPolicyDraft(r.data); }).catch(() => {}),
+      getPlatformConfig().then(r => { setConfig(r.data); setConfigDraft(r.data); }).catch(() => {}),
+    ]).finally(() => setLoading(false));
   }, []);
+
+  const handleSavePolicy = async () => {
+    if (!policyDraft) return;
+    setPolicySaving(true); setError(''); setSuccess('');
+    try {
+      const r = await updateImpersonationPolicy({
+        requires_consent: !!policyDraft.requiresConsent,
+        break_glass_allowed: !!policyDraft.breakGlassAllowed,
+        max_session_minutes: Number(policyDraft.maxSessionMinutes),
+        code_ttl_minutes: Number(policyDraft.codeTtlMinutes),
+      });
+      setPolicy(r.data);
+      setPolicyDraft(r.data);
+      setSuccess('Impersonation policy updated');
+    } catch (e) {
+      setError(e.response?.data?.error || 'Failed to update policy');
+    } finally { setPolicySaving(false); }
+  };
+
+  const policyDirty = policy && policyDraft && (
+    policy.requiresConsent !== policyDraft.requiresConsent ||
+    policy.breakGlassAllowed !== policyDraft.breakGlassAllowed ||
+    Number(policy.maxSessionMinutes) !== Number(policyDraft.maxSessionMinutes) ||
+    Number(policy.codeTtlMinutes) !== Number(policyDraft.codeTtlMinutes)
+  );
+
+  const handleSaveConfig = async (keys) => {
+    setConfigSaving(true); setError(''); setSuccess('');
+    try {
+      const patch = {};
+      for (const k of keys) patch[k] = configDraft[k];
+      const r = await updatePlatformConfig(patch);
+      setConfig(r.data);
+      setConfigDraft(r.data);
+      setSuccess('Settings saved');
+    } catch (e) {
+      setError(e.response?.data?.error || 'Failed to save settings');
+    } finally { setConfigSaving(false); }
+  };
+
+  const handleSmtpTest = async () => {
+    setSmtpTesting(true); setError(''); setSuccess('');
+    try {
+      const r = await sendSmtpTest();
+      setSuccess(r.data?.message || 'Test email sent');
+    } catch (e) {
+      setError(e.response?.data?.error || 'SMTP test failed');
+    } finally { setSmtpTesting(false); }
+  };
 
   const handleCreateAnnouncement = async () => {
     if (!newMsg.trim()) return;
@@ -61,6 +130,9 @@ export default function PlatformSettings() {
     }
   };
 
+  const updateDraft = (key, value) => setConfigDraft(d => ({ ...d, [key]: value }));
+  const configChanged = (keys) => config && configDraft && keys.some(k => config[k] !== configDraft[k]);
+
   if (loading) return <div className={s.loading}><Loader2 size={20} className={s.spinner} /> Loading…</div>;
 
   return (
@@ -78,14 +150,484 @@ export default function PlatformSettings() {
         </div>
       )}
 
-      {/* Global Announcements */}
+      {/* ─── Maintenance Mode ────────────────────────────────────────── */}
+      {configDraft && (
+        <fieldset className={s.fieldset} style={{ marginBottom: 20 }}>
+          <legend className={s.legend} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Wrench size={14} /> Maintenance Mode
+          </legend>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 12px' }}>
+            When enabled, all non-platform-admin users receive a 503 maintenance page.
+            Use during deployments, migrations, or emergency fixes.
+          </p>
+
+          <label className={s.toggleRow}>
+            <input
+              type="checkbox"
+              checked={configDraft.maintenance_mode === 'true'}
+              onChange={e => updateDraft('maintenance_mode', e.target.checked ? 'true' : 'false')}
+            />
+            <div>
+              <strong>Enable maintenance mode</strong>
+              <div className={s.toggleHint}>
+                All API requests (except login and health) will return 503 for non-platform-admin users.
+              </div>
+            </div>
+          </label>
+
+          <div style={{ marginTop: 12 }}>
+            <label className={s.fieldLabel}>Maintenance message</label>
+            <textarea
+              value={configDraft.maintenance_message}
+              onChange={e => updateDraft('maintenance_message', e.target.value)}
+              placeholder="The system is currently under maintenance. Please try again later."
+              className={s.input}
+              rows={2}
+              style={{ width: '100%', resize: 'vertical' }}
+            />
+          </div>
+
+          <button
+            className={s.btnPrimary}
+            onClick={() => handleSaveConfig(['maintenance_mode', 'maintenance_message'])}
+            disabled={!configChanged(['maintenance_mode', 'maintenance_message']) || configSaving}
+            style={{ marginTop: 12 }}
+          >
+            {configSaving ? <Loader2 size={14} className={s.spinner} /> : <Save size={14} />}
+            Save
+          </button>
+        </fieldset>
+      )}
+
+      {/* ─── Impersonation Policy ────────────────────────────────────── */}
+      {policyDraft && (
+        <fieldset className={s.fieldset} style={{ marginBottom: 20 }}>
+          <legend className={s.legend} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Shield size={14} /> Impersonation Policy
+          </legend>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 12px' }}>
+            Controls how platform admins access tenant workspaces. Tightening these
+            settings improves SOC2 / ISO 27001 support-access posture.
+          </p>
+
+          <label className={s.toggleRow}>
+            <input
+              type="checkbox"
+              checked={!!policyDraft.requiresConsent}
+              onChange={e => setPolicyDraft({ ...policyDraft, requiresConsent: e.target.checked })}
+            />
+            <div>
+              <strong>Require tenant consent</strong>
+              <div className={s.toggleHint}>
+                When on, platform admins must submit an access request that a tenant super-admin
+                approves before they can enter the workspace. Strongly recommended.
+              </div>
+            </div>
+          </label>
+
+          <label className={s.toggleRow}>
+            <input
+              type="checkbox"
+              checked={!!policyDraft.breakGlassAllowed}
+              onChange={e => setPolicyDraft({ ...policyDraft, breakGlassAllowed: e.target.checked })}
+              disabled={!policyDraft.requiresConsent}
+            />
+            <div>
+              <strong>Allow break-glass access</strong>
+              <div className={s.toggleHint}>
+                Lets platform admins bypass tenant consent for genuine emergencies. Every
+                bypass is heavily audited and notifies the tenant after the fact. Keep off
+                unless you have a documented incident-response policy.
+              </div>
+            </div>
+          </label>
+
+          <div className={s.fieldRowWrap} style={{ marginTop: 14 }}>
+            <div>
+              <label className={s.fieldLabel}>Max session length (minutes)</label>
+              <input
+                type="number" min="5" max="240"
+                value={policyDraft.maxSessionMinutes}
+                onChange={e => setPolicyDraft({ ...policyDraft, maxSessionMinutes: e.target.value })}
+                className={s.inputSmall}
+              />
+              <small style={{ color: 'var(--text-muted)', fontSize: 11, display: 'block' }}>5–240 min</small>
+            </div>
+            <div>
+              <label className={s.fieldLabel}>Approval code TTL (minutes)</label>
+              <input
+                type="number" min="1" max="60"
+                value={policyDraft.codeTtlMinutes}
+                onChange={e => setPolicyDraft({ ...policyDraft, codeTtlMinutes: e.target.value })}
+                className={s.inputSmall}
+              />
+              <small style={{ color: 'var(--text-muted)', fontSize: 11, display: 'block' }}>How long an approved code stays valid before expiry.</small>
+            </div>
+            <button
+              className={s.btnPrimary}
+              onClick={handleSavePolicy}
+              disabled={!policyDirty || policySaving}
+              style={{ alignSelf: 'flex-end' }}
+            >
+              {policySaving ? <Loader2 size={14} className={s.spinner} /> : <Save size={14} />}
+              Save policy
+            </button>
+          </div>
+        </fieldset>
+      )}
+
+      {/* ─── Security Settings ────────────────────────────────────────── */}
+      {configDraft && (
+        <fieldset className={s.fieldset} style={{ marginBottom: 20 }}>
+          <legend className={s.legend} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Lock size={14} /> Security
+          </legend>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 12px' }}>
+            Platform-wide password and session policies. Changes apply to all tenants.
+          </p>
+
+          <div className={s.fieldRowWrap}>
+            <div>
+              <label className={s.fieldLabel}>Session timeout (minutes)</label>
+              <input
+                type="number" min="15" max="1440"
+                value={configDraft.session_timeout_minutes}
+                onChange={e => updateDraft('session_timeout_minutes', e.target.value)}
+                className={s.inputSmall}
+              />
+              <small style={{ color: 'var(--text-muted)', fontSize: 11, display: 'block' }}>15–1440 min (default: 480)</small>
+            </div>
+            <div>
+              <label className={s.fieldLabel}>Password min length</label>
+              <input
+                type="number" min="6" max="32"
+                value={configDraft.password_min_length}
+                onChange={e => updateDraft('password_min_length', e.target.value)}
+                className={s.inputSmall}
+              />
+            </div>
+          </div>
+
+          <div style={{ marginTop: 12, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+            <label className={s.toggleRow} style={{ flex: '0 0 auto' }}>
+              <input
+                type="checkbox"
+                checked={configDraft.password_require_uppercase === 'true'}
+                onChange={e => updateDraft('password_require_uppercase', e.target.checked ? 'true' : 'false')}
+              />
+              <span>Require uppercase</span>
+            </label>
+            <label className={s.toggleRow} style={{ flex: '0 0 auto' }}>
+              <input
+                type="checkbox"
+                checked={configDraft.password_require_number === 'true'}
+                onChange={e => updateDraft('password_require_number', e.target.checked ? 'true' : 'false')}
+              />
+              <span>Require number</span>
+            </label>
+            <label className={s.toggleRow} style={{ flex: '0 0 auto' }}>
+              <input
+                type="checkbox"
+                checked={configDraft.password_require_special === 'true'}
+                onChange={e => updateDraft('password_require_special', e.target.checked ? 'true' : 'false')}
+              />
+              <span>Require special character</span>
+            </label>
+          </div>
+
+          <div style={{ marginTop: 12 }}>
+            <label className={s.fieldLabel}>Allowed email domains (comma-separated, leave empty for any)</label>
+            <input
+              value={configDraft.allowed_email_domains}
+              onChange={e => updateDraft('allowed_email_domains', e.target.value)}
+              placeholder="e.g. company.com, subsidiary.com"
+              className={s.input}
+              style={{ width: '100%' }}
+            />
+            <small style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+              When set, only users with emails matching these domains can register.
+            </small>
+          </div>
+
+          <button
+            className={s.btnPrimary}
+            onClick={() => handleSaveConfig([
+              'session_timeout_minutes', 'password_min_length',
+              'password_require_uppercase', 'password_require_number', 'password_require_special',
+              'allowed_email_domains',
+            ])}
+            disabled={!configChanged([
+              'session_timeout_minutes', 'password_min_length',
+              'password_require_uppercase', 'password_require_number', 'password_require_special',
+              'allowed_email_domains',
+            ]) || configSaving}
+            style={{ marginTop: 14 }}
+          >
+            {configSaving ? <Loader2 size={14} className={s.spinner} /> : <Save size={14} />}
+            Save security settings
+          </button>
+        </fieldset>
+      )}
+
+      {/* ─── SMTP / Email ─────────────────────────────────────────────── */}
+      {configDraft && (
+        <fieldset className={s.fieldset} style={{ marginBottom: 20 }}>
+          <legend className={s.legend} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Mail size={14} /> Email / SMTP
+          </legend>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 12px' }}>
+            Configure outbound email for password resets, notifications, and invites.
+            Falls back to environment variables if not set here.
+          </p>
+
+          <div className={s.fieldRowWrap}>
+            <div style={{ flex: '2 1 200px' }}>
+              <label className={s.fieldLabel}>SMTP Host</label>
+              <input
+                value={configDraft.smtp_host}
+                onChange={e => updateDraft('smtp_host', e.target.value)}
+                placeholder="smtp.example.com"
+                className={s.input}
+                style={{ width: '100%' }}
+              />
+            </div>
+            <div style={{ flex: '0 0 100px' }}>
+              <label className={s.fieldLabel}>Port</label>
+              <input
+                type="number"
+                value={configDraft.smtp_port}
+                onChange={e => updateDraft('smtp_port', e.target.value)}
+                className={s.inputSmall}
+              />
+            </div>
+            <label className={s.toggleRow} style={{ flex: '0 0 auto', alignSelf: 'flex-end' }}>
+              <input
+                type="checkbox"
+                checked={configDraft.smtp_secure === 'true'}
+                onChange={e => updateDraft('smtp_secure', e.target.checked ? 'true' : 'false')}
+              />
+              <span>TLS</span>
+            </label>
+          </div>
+
+          <div className={s.fieldRowWrap} style={{ marginTop: 10 }}>
+            <div style={{ flex: '1 1 200px' }}>
+              <label className={s.fieldLabel}>Username</label>
+              <input
+                value={configDraft.smtp_user}
+                onChange={e => updateDraft('smtp_user', e.target.value)}
+                className={s.input}
+                style={{ width: '100%' }}
+              />
+            </div>
+            <div style={{ flex: '1 1 200px', position: 'relative' }}>
+              <label className={s.fieldLabel}>Password</label>
+              <input
+                type={showSmtpPass ? 'text' : 'password'}
+                value={configDraft.smtp_pass}
+                onChange={e => updateDraft('smtp_pass', e.target.value)}
+                className={s.input}
+                style={{ width: '100%', paddingRight: 36 }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowSmtpPass(!showSmtpPass)}
+                style={{ position: 'absolute', right: 8, top: 28, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+              >
+                {showSmtpPass ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+          </div>
+
+          <div className={s.fieldRowWrap} style={{ marginTop: 10 }}>
+            <div style={{ flex: '1 1 200px' }}>
+              <label className={s.fieldLabel}>From Address</label>
+              <input
+                value={configDraft.smtp_from_address}
+                onChange={e => updateDraft('smtp_from_address', e.target.value)}
+                placeholder="noreply@yourcompany.com"
+                className={s.input}
+                style={{ width: '100%' }}
+              />
+            </div>
+            <div style={{ flex: '1 1 200px' }}>
+              <label className={s.fieldLabel}>From Name</label>
+              <input
+                value={configDraft.smtp_from_name}
+                onChange={e => updateDraft('smtp_from_name', e.target.value)}
+                placeholder="WorkPulse"
+                className={s.input}
+                style={{ width: '100%' }}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+            <button
+              className={s.btnPrimary}
+              onClick={() => handleSaveConfig([
+                'smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass',
+                'smtp_from_address', 'smtp_from_name', 'smtp_secure',
+              ])}
+              disabled={!configChanged([
+                'smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass',
+                'smtp_from_address', 'smtp_from_name', 'smtp_secure',
+              ]) || configSaving}
+            >
+              {configSaving ? <Loader2 size={14} className={s.spinner} /> : <Save size={14} />}
+              Save SMTP
+            </button>
+            <button
+              className={s.btnSmall}
+              onClick={handleSmtpTest}
+              disabled={smtpTesting || !configDraft.smtp_host}
+              title="Send a test email to your address"
+            >
+              {smtpTesting ? <Loader2 size={14} className={s.spinner} /> : <Send size={14} />}
+              Send Test
+            </button>
+          </div>
+        </fieldset>
+      )}
+
+      {/* ─── Platform Branding ────────────────────────────────────────── */}
+      {configDraft && (
+        <fieldset className={s.fieldset} style={{ marginBottom: 20 }}>
+          <legend className={s.legend} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Palette size={14} /> Platform Branding
+          </legend>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 12px' }}>
+            Customize the platform name, colors, and logo shown on the login page.
+          </p>
+
+          <div className={s.fieldRowWrap}>
+            <div style={{ flex: '1 1 200px' }}>
+              <label className={s.fieldLabel}>Platform Name</label>
+              <input
+                value={configDraft.brand_name}
+                onChange={e => updateDraft('brand_name', e.target.value)}
+                className={s.input}
+                style={{ width: '100%' }}
+              />
+            </div>
+            <div style={{ flex: '0 0 140px' }}>
+              <label className={s.fieldLabel}>Primary Color</label>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="color"
+                  value={configDraft.brand_primary_color}
+                  onChange={e => updateDraft('brand_primary_color', e.target.value)}
+                  style={{ width: 36, height: 36, border: 'none', cursor: 'pointer', borderRadius: 6 }}
+                />
+                <input
+                  value={configDraft.brand_primary_color}
+                  onChange={e => updateDraft('brand_primary_color', e.target.value)}
+                  className={s.inputSmall}
+                  style={{ width: 90 }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className={s.fieldRowWrap} style={{ marginTop: 10 }}>
+            <div style={{ flex: '1 1 200px' }}>
+              <label className={s.fieldLabel}>Logo URL</label>
+              <input
+                value={configDraft.brand_logo_url}
+                onChange={e => updateDraft('brand_logo_url', e.target.value)}
+                placeholder="https://..."
+                className={s.input}
+                style={{ width: '100%' }}
+              />
+            </div>
+            <div style={{ flex: '1 1 200px' }}>
+              <label className={s.fieldLabel}>Favicon URL</label>
+              <input
+                value={configDraft.brand_favicon_url}
+                onChange={e => updateDraft('brand_favicon_url', e.target.value)}
+                placeholder="https://..."
+                className={s.input}
+                style={{ width: '100%' }}
+              />
+            </div>
+          </div>
+
+          <button
+            className={s.btnPrimary}
+            onClick={() => handleSaveConfig(['brand_name', 'brand_primary_color', 'brand_logo_url', 'brand_favicon_url'])}
+            disabled={!configChanged(['brand_name', 'brand_primary_color', 'brand_logo_url', 'brand_favicon_url']) || configSaving}
+            style={{ marginTop: 14 }}
+          >
+            {configSaving ? <Loader2 size={14} className={s.spinner} /> : <Save size={14} />}
+            Save branding
+          </button>
+        </fieldset>
+      )}
+
+      {/* ─── Data Retention ────────────────────────────────────────────── */}
+      {configDraft && (
+        <fieldset className={s.fieldset} style={{ marginBottom: 20 }}>
+          <legend className={s.legend} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Database size={14} /> Data Retention
+          </legend>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 12px' }}>
+            Control how long various logs and deleted data are retained before cleanup.
+          </p>
+
+          <div className={s.fieldRowWrap}>
+            <div>
+              <label className={s.fieldLabel}>Audit log retention (days)</label>
+              <input
+                type="number" min="30" max="3650"
+                value={configDraft.audit_log_retention_days}
+                onChange={e => updateDraft('audit_log_retention_days', e.target.value)}
+                className={s.inputSmall}
+              />
+              <small style={{ color: 'var(--text-muted)', fontSize: 11, display: 'block' }}>Platform and tenant audit logs.</small>
+            </div>
+            <div>
+              <label className={s.fieldLabel}>Deleted tenant cleanup (days)</label>
+              <input
+                type="number" min="7" max="365"
+                value={configDraft.deleted_tenant_cleanup_days}
+                onChange={e => updateDraft('deleted_tenant_cleanup_days', e.target.value)}
+                className={s.inputSmall}
+              />
+              <small style={{ color: 'var(--text-muted)', fontSize: 11, display: 'block' }}>Days before soft-deleted tenants are permanently removed.</small>
+            </div>
+            <div>
+              <label className={s.fieldLabel}>Session log retention (days)</label>
+              <input
+                type="number" min="7" max="365"
+                value={configDraft.session_log_retention_days}
+                onChange={e => updateDraft('session_log_retention_days', e.target.value)}
+                className={s.inputSmall}
+              />
+              <small style={{ color: 'var(--text-muted)', fontSize: 11, display: 'block' }}>Impersonation session history.</small>
+            </div>
+          </div>
+
+          <button
+            className={s.btnPrimary}
+            onClick={() => handleSaveConfig(['audit_log_retention_days', 'deleted_tenant_cleanup_days', 'session_log_retention_days'])}
+            disabled={!configChanged(['audit_log_retention_days', 'deleted_tenant_cleanup_days', 'session_log_retention_days']) || configSaving}
+            style={{ marginTop: 14 }}
+          >
+            {configSaving ? <Loader2 size={14} className={s.spinner} /> : <Save size={14} />}
+            Save retention policy
+          </button>
+        </fieldset>
+      )}
+
+      {/* ─── Global Announcements ─────────────────────────────────────── */}
       <fieldset className={s.fieldset}>
-        <legend className={s.legend}>Global Announcements</legend>
+        <legend className={s.legend}>
+          <Megaphone size={14} style={{ marginRight: 6 }} />Global Announcements
+        </legend>
         <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 12px' }}>
           Announcements visible to all tenants across the platform.
         </p>
 
-        {/* Create form */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
           <input value={newMsg} onChange={e => setNewMsg(e.target.value)} placeholder="Announcement message…"
             className={s.input} style={{ flex: 1, minWidth: 200 }} />
@@ -107,7 +649,6 @@ export default function PlatformSettings() {
           </button>
         </div>
 
-        {/* List */}
         {announcements.length === 0 ? (
           <div className={s.emptyMsg}>No announcements</div>
         ) : (

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AlertTriangle, Video, X } from 'lucide-react';
 import { searchChatUsers, getMeeting, checkMeetingConflicts } from '../../api';
+import { useFeatures } from '../../FeaturesContext';
 import s from './Calendar.module.css';
 
 function pad(n) { return String(n).padStart(2, '0'); }
@@ -143,6 +144,7 @@ function MeetingParticipantPicker({ participants, excludeIds = [], onChange, con
 }
 
 export default function EventFormModal({ modal, form, setForm, nowMin, tasks, onSave, onDelete, onClose, onStartChange, existingMeetingCode, isOrganizer = true }) {
+    const { hasFeature } = useFeatures();
     const [addMeeting, setAddMeeting] = useState(false);
     const [requiredParticipants, setRequiredParticipants] = useState([]);
     const [optionalParticipants, setOptionalParticipants] = useState([]);
@@ -431,8 +433,8 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
           </div>
         )}
 
-        {/* Meeting section */}
-        {hasMeeting ? (
+        {/* Meeting section — only available when meetings feature is enabled */}
+        {hasFeature('meetings') && (hasMeeting ? (
           <div className={s.meetingBanner}>
             <span className={s.meetingIcon}><Video size={16} /></span>
             <span>Online meeting</span>
@@ -510,9 +512,9 @@ export default function EventFormModal({ modal, form, setForm, nowMin, tasks, on
               <span className={s.toggleThumb} />
             </button>
           </div>
-        )}
+        ))}
 
-        {modal === 'create' && addMeeting && (
+        {hasFeature('meetings') && modal === 'create' && addMeeting && (
           <div className={s.meetingOptions}>
             <div className={s.formGroup}>
               <label>Required participants</label>

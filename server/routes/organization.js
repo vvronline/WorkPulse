@@ -310,7 +310,14 @@ router.get('/members', requireRole('team_lead'), requireSameOrg, async (req, res
         const effectiveOrgId = resolveOrgId(req, 'query');
         if (!effectiveOrgId) return res.json({ data: [], total: 0, page: 1, perPage });
 
-        const where = ['u.org_id = $1'];
+        const where = [
+            'u.org_id = $1',
+            // Synthetic Platform Inspector users (hidden_from_directory=TRUE)
+            // are never surfaced in tenant-facing member listings. They have
+            // role='platform_admin' and exist only to back impersonation
+            // sessions — see getOrCreateInspectorUser() for the rationale.
+            'u.hidden_from_directory = FALSE',
+        ];
         const params = [effectiveOrgId];
         let pi = 2;
 
@@ -739,6 +746,7 @@ router.get('/chart', requireSameOrg, async (req, res) => {
             LEFT JOIN departments d ON d.id = u.department_id
             LEFT JOIN teams t ON t.id = u.team_id
             WHERE u.org_id = $1 AND u.is_active = TRUE
+              AND u.hidden_from_directory = FALSE
             ORDER BY u.full_name
         `, [effectiveOrgId])).rows;
 

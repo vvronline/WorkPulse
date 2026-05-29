@@ -65,7 +65,8 @@ function nodeToMd(node, ctx = {}) {
         return tex ? `\n\n$$${tex}$$\n\n` : '';
     }
     if (node.classList?.contains('ql-drawio')) {
-        return `\n\n_[Diagram — open in WorkPulse to view]_\n\n`;
+        const appName = ctx.appName || 'WorkPulse';
+        return `\n\n_[Diagram — open in ${appName} to view]_\n\n`;
     }
     if (node.classList?.contains('ql-callout')) {
         const variant = node.getAttribute('data-callout') || 'info';
@@ -81,7 +82,8 @@ function nodeToMd(node, ctx = {}) {
         return tableToMd(node);
     }
     if (node.classList?.contains('ql-audio')) {
-        return `\n\n_[Audio recording — open in WorkPulse to play]_\n\n`;
+        const appName = ctx.appName || 'WorkPulse';
+        return `\n\n_[Audio recording — open in ${appName} to play]_\n\n`;
     }
 
     switch (tag) {
@@ -205,11 +207,11 @@ function tableToMd(root) {
 }
 
 /** Public: convert a Quill HTML string to Markdown. */
-export function htmlToMarkdown(html) {
+export function htmlToMarkdown(html, appName) {
     if (!html) return '';
     const doc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html');
     const root = doc.body.firstElementChild;
-    let md = childrenToMd(root, {});
+    let md = childrenToMd(root, { appName });
     md = decodeEntities(md);
     // Collapse 3+ blank lines and trim
     md = md.replace(/\n{3,}/g, '\n\n').trim();

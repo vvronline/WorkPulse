@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
+import { useBranding } from '../BrandingContext';
 import { register as registerApi, getRegistrationMode } from '../api';
 import { Lock, Briefcase } from 'lucide-react';
 import PasswordInput from '../components/common/PasswordInput';
@@ -9,6 +10,7 @@ import s from './Auth.module.css';
 
 export default function Register() {
   const { saveAuth } = useAuth();
+  const { branding } = useBranding();
   const [searchParams] = useSearchParams();
   const tenantSlug = searchParams.get('tenant') || '';
   const inviteFromUrl = searchParams.get('invite') || '';
@@ -67,7 +69,7 @@ export default function Register() {
       <div className={s['auth-card']}>
         <div className={s['auth-icon']}><Briefcase size={28} strokeWidth={1.5} /></div>
         <h2>Create Account</h2>
-        <p>Register to get started with WorkPulse</p>
+        <p>Register to get started with {branding?.org_name || 'WorkPulse'}</p>
         {error && <div className="error-msg">{error}</div>}
         <form onSubmit={handleSubmit}>
           <div className="form-group">

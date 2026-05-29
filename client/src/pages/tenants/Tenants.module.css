@@ -1195,3 +1195,334 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* ─── Plan Cards (Create Tenant Wizard) ─── */
+.planCards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.planCard {
+  background: var(--card-bg);
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.planCard:hover {
+  border-color: var(--accent);
+}
+
+.planCardSelected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.planCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 1.05rem;
+  margin-bottom: 4px;
+  color: var(--text);
+}
+
+.planCardDesc {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin: 0 0 10px;
+}
+
+.planCardLimits {
+  display: flex;
+  gap: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 10px;
+}
+
+.planCardFeatures {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.planCardFeatures li {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.planCardFeatures li svg {
+  color: var(--success);
+  flex-shrink: 0;
+}
+
+/* ─── Feature Overrides (Tenant Detail) ─── */
+.featureGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.featureRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+.featureRowLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.featureDefault {
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.featureDefaultOn {
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  color: var(--success);
+}
+
+.featureDefaultOff {
+  background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+  color: var(--text-muted);
+}
+
+.featureToggle {
+  display: flex;
+  gap: 4px;
+}
+
+.featureToggle button {
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--text-secondary);
+  transition: all 0.15s;
+}
+
+.featureToggle button:hover {
+  border-color: var(--accent);
+}
+
+.featureToggleActive {
+  background: var(--accent) !important;
+  color: #fff !important;
+  border-color: var(--accent) !important;
+}
+
+.planSelector {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.planSelector select {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+
+.planBadge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  text-transform: capitalize;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Platform-Access flow — modals, step indicator, OTP input, banners.
+ * Added by the consent-gated impersonation refactor.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+.modalScrim {
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000; padding: 16px;
+    animation: fadeIn 120ms ease-out;
+}
+
+.modalCard {
+    width: min(560px, 100%);
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    background: var(--bg-panel, #1b1d22);
+    border: 1px solid var(--border, #2a2d33);
+    border-radius: 12px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+    padding: 20px 22px 18px;
+}
+
+.modalHeader {
+    display: flex; align-items: center; justify-content: space-between;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border, #2a2d33);
+    margin-bottom: 14px;
+}
+
+.modalBody { padding-top: 6px; }
+.modalActions {
+    display: flex; gap: 8px; justify-content: flex-end;
+    margin-top: 18px; padding-top: 14px;
+    border-top: 1px solid var(--border, #2a2d33);
+}
+
+/* Step indicator across the top of the modal */
+.stepIndicator {
+    display: flex; justify-content: space-between;
+    gap: 4px; margin-bottom: 14px;
+}
+.step {
+    flex: 1;
+    display: flex; flex-direction: column; align-items: center;
+    gap: 4px; opacity: 0.5; transition: opacity 150ms;
+    position: relative;
+}
+.step:not(:last-child)::after {
+    content: ''; position: absolute; top: 11px; left: 60%;
+    width: 80%; height: 2px; background: var(--border, #2a2d33);
+    z-index: 0;
+}
+.stepActive { opacity: 1; }
+.stepActive .stepDot {
+    background: var(--accent, #6366f1);
+    color: #fff; border-color: var(--accent, #6366f1);
+}
+.stepDot {
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 2px solid var(--border, #2a2d33);
+    background: var(--bg-panel, #1b1d22);
+    color: var(--text-muted, #888);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 600;
+    z-index: 1; position: relative;
+}
+.stepLabel { font-size: 10px; color: var(--text-muted, #888); text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* OTP-style 6-digit code input */
+.otpInput {
+    width: 100%; padding: 14px 16px;
+    font-size: 24px; letter-spacing: 12px;
+    text-align: center; font-family: 'SF Mono', 'Cascadia Mono', monospace;
+    background: var(--bg-input, #14161a);
+    color: var(--text-primary, #e8e9eb);
+    border: 1px solid var(--border, #2a2d33);
+    border-radius: 8px;
+}
+.otpInput:focus {
+    outline: 2px solid var(--accent, #6366f1);
+    outline-offset: 0;
+    border-color: var(--accent, #6366f1);
+}
+
+/* Inline notice surfaces used inside the modal */
+.breakGlassNotice {
+    display: flex; gap: 8px; align-items: center;
+    margin-top: 14px; padding: 10px 12px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--warning) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+    color: var(--warning);
+    font-size: 12px;
+}
+.dangerBanner {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 12px 14px; border-radius: 8px;
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+    color: var(--danger);
+}
+.linkBtn {
+    background: none; border: 0; color: var(--accent, #6366f1);
+    text-decoration: underline; cursor: pointer; padding: 0;
+}
+
+/* Cancel/danger CTA inside the modal */
+.btnDanger {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 14px; border-radius: 6px;
+    border: 1px solid var(--danger);
+    background: var(--danger); color: #fff;
+    font-size: 13px; cursor: pointer;
+}
+.btnDanger:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* Tenant-side inspector banner */
+.inspectorBanner {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 14px;
+    background: color-mix(in srgb, var(--warning) 18%, transparent);
+    border-bottom: 2px solid var(--warning);
+    color: var(--text-primary);
+    font-size: 13px;
+}
+.inspectorBanner strong { color: var(--warning); }
+.inspectorBanner .spacer { flex: 1; }
+
+.detailGrid {
+    display: grid; grid-template-columns: 1fr;
+    gap: 6px; text-align: left;
+    background: var(--bg-input, #14161a);
+    border: 1px solid var(--border, #2a2d33);
+    border-radius: 8px; padding: 10px 12px;
+    font-size: 12px;
+}
+.detailGrid strong { color: var(--text-primary); }
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+/* Policy toggle rows (Impersonation Policy in Platform Settings) */
+.toggleRow {
+    display: flex; gap: 12px; align-items: flex-start;
+    padding: 10px 12px; margin-bottom: 8px;
+    background: var(--bg-input, #14161a);
+    border: 1px solid var(--border, #2a2d33);
+    border-radius: 8px;
+    cursor: pointer; font-size: 13px;
+}
+.toggleRow input[type='checkbox'] {
+    margin-top: 2px; width: 16px; height: 16px; flex-shrink: 0;
+    cursor: pointer; accent-color: var(--accent, #6366f1);
+}
+.toggleRow strong { display: block; font-size: 13px; color: var(--text-primary); }
+.toggleHint {
+    margin-top: 4px; font-size: 12px; color: var(--text-secondary);
+    line-height: 1.4; font-weight: 400;
+}

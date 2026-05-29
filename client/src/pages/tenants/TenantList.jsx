@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   getTenants, getTenantOverview, suspendTenant, reactivateTenant,
-  deleteTenantApi, impersonateTenant,
+  deleteTenantApi,
 } from '../../api';
 import {
   Building2, Plus, Pause, Play, Trash2, Users, Shield, X, Search, Calendar, Loader2,
 } from 'lucide-react';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
+import RequestAccessModal from './RequestAccessModal';
 import s from './Tenants.module.css';
 
 const STATUS_COLORS = {
@@ -46,6 +47,8 @@ export default function TenantList({ onSelectTenant }) {
   const [suspendModal, setSuspendModal] = useState({ open: false, id: null });
   const [suspendReason, setSuspendReason] = useState('');
   const [deleteModal, setDeleteModal] = useState({ open: false, id: null, name: '' });
+  // Tenant object whose Request-Access modal is currently open. null when closed.
+  const [accessTenant, setAccessTenant] = useState(null);
 
   useEffect(() => {
     const id = setTimeout(() => setDebouncedSearch(search), 300);
@@ -91,13 +94,10 @@ export default function TenantList({ onSelectTenant }) {
     catch (e) { setError(e.response?.data?.error || 'Failed to delete'); }
   };
 
-  const handleImpersonate = async (id) => {
-    try {
-      await impersonateTenant(id);
-      // Server sets the impersonation cookie (HttpOnly) and saves the original token
-      window.location.href = '/';
-    } catch (e) { setError(e.response?.data?.error || 'Failed to impersonate'); }
-  };
+  // The legacy direct-impersonate path was replaced by the consent-gated
+  // Request Access flow. Clicking the card-level button just opens the
+  // multi-step modal (the same one TenantDetail uses).
+  const openAccessFlow = (tenant) => setAccessTenant(tenant);
 
   if (loading) return <div className={s.loading}><Loader2 size={20} className={s.spinner} /> Loading tenants…</div>;
 
@@ -158,8 +158,8 @@ export default function TenantList({ onSelectTenant }) {
               </div>
               <div className={s.cardActions} onClick={e => e.stopPropagation()}>
                 {t.status === 'active' && (
-                  <button className={s.btnSmall} onClick={() => handleImpersonate(t.id)} title="Enter as tenant admin">
-                    <Shield size={13} /> Enter Tenant
+                  <button className={s.btnSmall} onClick={() => openAccessFlow(t)} title="Request consent-gated access to this tenant">
+                    <Shield size={13} /> Request Access
                   </button>
                 )}
                 {t.status === 'active' && (
@@ -218,6 +218,14 @@ export default function TenantList({ onSelectTenant }) {
         onConfirm={handleDelete}
         onCancel={() => setDeleteModal({ open: false, id: null, name: '' })}
       />
+
+      {/* Consent-gated impersonation modal — same component used in TenantDetail */}
+      {accessTenant && (
+        <RequestAccessModal
+          tenant={accessTenant}
+          onClose={() => setAccessTenant(null)}
+        />
+      )}
     </div>
   );
 }

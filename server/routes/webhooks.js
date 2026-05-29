@@ -16,9 +16,17 @@ const crypto = require('crypto');
 const { logger } = require('../utils/logger');
 const { getTenantPool } = require('../utils/tenantManager');
 const { masterQuery } = require('../db');
+const { isFeatureEnabled } = require('../utils/planCatalog');
 const { extractIssueKeys, resolveIssueKeys } = require('./tasks/_helpers/issueKey');
 
 const router = express.Router();
+
+// NOTE: `requireFeature('webhooks')` was previously mounted here as router
+// middleware. That was a bug — inbound GitHub webhooks land WITHOUT a tenant
+// cookie / JWT, so `req.tenant` is null when `resolveTenant` runs, which
+// causes `requireFeature` to short-circuit to next() (master context). The
+// gate is therefore enforced INSIDE the handler, after we resolve the tenant
+// from the integration id. See `getDbForIntegration` below.
 
 // Constant-time signature check. GitHub computes:
 //   `sha256=` + HEX(HMAC_SHA256(secret, raw_body))
@@ -74,7 +82,33 @@ router.post('/github/:integrationId', express.raw({ type: '*/*', limit: '5mb' })
 
         const resolved = await getDbForIntegration(integrationId);
         if (!resolved) return res.status(404).send('Integration not found');
-        const { db, orgId } = resolved;
+        const { db, orgId, tenantId } = resolved;
+
+        // ── Plan gate ───────────────────────────────────────────────────
+        // We can only check the gate AFTER tenant resolution; doing it via
+        // router-level requireFeature() short-circuits because the inbound
+        // GitHub request has no tenant cookie.
+        if (tenantId) {
+            const tenantRow = (await masterQuery(
+                'SELECT plan, features, status FROM tenants WHERE id = $1',
+                [tenantId]
+            )).rows[0];
+            if (!tenantRow || tenantRow.status === 'deleted') {
+                return res.status(404).send('Integration not found');
+            }
+            if (!isFeatureEnabled(tenantRow, 'webhooks')) {
+                logger.warn({
+                    event: 'feature_gate_rejected',
+                    feature: 'webhooks',
+                    plan: tenantRow.plan,
+                    tenantId,
+                    integrationId,
+                }, 'GitHub webhook rejected — plan does not include webhooks');
+                // Use 410 Gone so GitHub auto-disables redelivery rather than
+                // retrying forever (a plain 403 would keep retrying).
+                return res.status(410).send('Webhooks are not enabled for this organization\'s subscription plan.');
+            }
+        }
 
         // Load the stored secret to verify the signature.
         const secretRow = (await db.query(

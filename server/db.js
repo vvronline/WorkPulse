@@ -139,6 +139,8 @@ async function initMasterDB() {
         )
     `);
     await masterQuery(`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT FALSE`);
+    await masterQuery(`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'standard'`);
+    await masterQuery(`DO $$ BEGIN ALTER TABLE tenants ADD CONSTRAINT tenants_plan_check CHECK(plan IN ('standard', 'pro', 'enterprise')); EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
     await masterQuery(`CREATE INDEX IF NOT EXISTS idx_tenants_domain ON tenants(custom_domain)`);
     await masterQuery(`CREATE INDEX IF NOT EXISTS idx_tenants_status ON tenants(status)`);
 
@@ -286,9 +288,119 @@ async function initMasterDB() {
     await masterQuery(`CREATE INDEX IF NOT EXISTS idx_platform_audit_tenant ON platform_audit_logs(tenant_id, created_at)`);
     await masterQuery(`CREATE INDEX IF NOT EXISTS idx_platform_audit_action ON platform_audit_logs(action, created_at)`);
 
+    // ---- Tenant access requests (impersonation approval workflow) ----
+    //
+    // The legacy "Enter Tenant" flow let any platform_admin silently drop
+    // into a tenant as super_admin with no consent, no re-authentication,
+    // and no bounded duration — failing SOC2 / ISO 27001 / HIPAA support-
+    // access controls. This table backs the new "Just-In-Time Access with
+    // Tenant Consent" flow:
+    //   1. Platform admin POSTs a request (reason, scope, duration).
+    //   2. A tenant super_admin sees it in their inbox and either:
+    //        a. Approves → server generates a one-time 6-digit code,
+    //           hashes it, returns the plaintext to the approver ONCE.
+    //        b. Denies → request is dead.
+    //   3. Platform admin enters the code + their own password on
+    //      POST /:id/impersonate. Both must match. JWT TTL is bounded
+    //      to the request's remaining duration.
+    //   4. Active sessions can be revoked by any tenant super_admin at
+    //      any time.
+    //
+    // Every state transition is mirrored into platform_audit_logs.
+    await masterQuery(`
+        CREATE TABLE IF NOT EXISTS tenant_access_requests (
+            id                  BIGSERIAL PRIMARY KEY,
+            tenant_id           INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+            requested_by        INTEGER NOT NULL REFERENCES platform_users(id) ON DELETE CASCADE,
+            requested_by_name   TEXT,
+            requested_by_email  TEXT,
+            requested_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            reason              TEXT NOT NULL,
+            scope               TEXT NOT NULL DEFAULT 'write'
+                                    CHECK(scope IN ('read','write')),
+            duration_minutes    INTEGER NOT NULL DEFAULT 30
+                                    CHECK(duration_minutes BETWEEN 5 AND 240),
+            status              TEXT NOT NULL DEFAULT 'pending'
+                                    CHECK(status IN ('pending','approved','denied',
+                                                     'consumed','expired','revoked','cancelled')),
+
+            approved_by         INTEGER,
+            approved_by_name    TEXT,
+            approved_at         TIMESTAMPTZ,
+            denied_reason       TEXT,
+
+            approval_code_hash  TEXT,
+            code_expires_at     TIMESTAMPTZ,
+
+            consumed_at         TIMESTAMPTZ,
+            session_ends_at     TIMESTAMPTZ,
+            session_audit_log_id BIGINT,
+
+            revoked_at          TIMESTAMPTZ,
+            revoked_by          INTEGER,
+            revoked_by_name     TEXT,
+            revoked_reason      TEXT,
+
+            cancelled_at        TIMESTAMPTZ,
+
+            created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    `);
+    await masterQuery(`CREATE INDEX IF NOT EXISTS idx_tenant_access_req_tenant_status ON tenant_access_requests(tenant_id, status)`);
+    await masterQuery(`CREATE INDEX IF NOT EXISTS idx_tenant_access_req_requester ON tenant_access_requests(requested_by, requested_at DESC)`);
+    await masterQuery(`CREATE INDEX IF NOT EXISTS idx_tenant_access_req_active ON tenant_access_requests(tenant_id) WHERE status = 'consumed' AND revoked_at IS NULL`);
+
     // Seed defaults
     await masterQuery(`
         INSERT INTO app_settings (key, value) VALUES ('registration_mode', 'open')
+        ON CONFLICT (key) DO NOTHING
+    `);
+
+    // ── Impersonation policy defaults ──
+    // `impersonation_requires_consent` — when 'true', platform admins must
+    //   request access and have it approved by a tenant super_admin before
+    //   the impersonate endpoint will mint a session token.
+    // `impersonation_break_glass_allowed` — when 'true', platform admins may
+    //   bypass consent for emergencies; every bypass is heavily audited and
+    //   notifies all tenant super_admins post-hoc. Off by default.
+    // `impersonation_max_session_minutes` — hard cap on requested duration.
+    // `impersonation_code_ttl_minutes` — how long a generated approval code
+    //   is valid before the platform admin must request a fresh approval.
+    await masterQuery(`
+        INSERT INTO app_settings (key, value) VALUES
+            ('impersonation_requires_consent',  'true'),
+            ('impersonation_break_glass_allowed','false'),
+            ('impersonation_max_session_minutes','60'),
+            ('impersonation_code_ttl_minutes',  '15')
+        ON CONFLICT (key) DO NOTHING
+    `);
+
+    // ── Platform configuration defaults ──
+    await masterQuery(`
+        INSERT INTO app_settings (key, value) VALUES
+            ('maintenance_mode',             'false'),
+            ('maintenance_message',          ''),
+            ('session_timeout_minutes',      '480'),
+            ('password_min_length',          '8'),
+            ('password_require_uppercase',   'true'),
+            ('password_require_number',      'true'),
+            ('password_require_special',     'false'),
+            ('allowed_email_domains',        ''),
+            ('smtp_host',                    ''),
+            ('smtp_port',                    '587'),
+            ('smtp_user',                    ''),
+            ('smtp_pass',                    ''),
+            ('smtp_from_address',            ''),
+            ('smtp_from_name',               ''),
+            ('smtp_secure',                  'true'),
+            ('brand_name',                   'WorkPulse'),
+            ('brand_primary_color',          '#6366f1'),
+            ('brand_logo_url',               ''),
+            ('brand_favicon_url',            ''),
+            ('audit_log_retention_days',     '365'),
+            ('deleted_tenant_cleanup_days',  '90'),
+            ('session_log_retention_days',   '90')
         ON CONFLICT (key) DO NOTHING
     `);
 
@@ -389,6 +501,12 @@ async function initTenantSchema(q) {
     // The raw image never leaves the browser — only the descriptor.
     await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS face_descriptor JSONB`);
     await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS face_enrolled_at TIMESTAMPTZ`);
+
+    // Synthetic Platform Inspector users carry hidden_from_directory=TRUE so
+    // they never surface in People / Chat / @mention lists. See the matching
+    // migration in utils/migrationRunner.js for the rollout to legacy tenants.
+    await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS hidden_from_directory BOOLEAN NOT NULL DEFAULT FALSE`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_users_directory_visible ON users (org_id) WHERE hidden_from_directory = FALSE`);
 
     await q(`
         CREATE TABLE IF NOT EXISTS departments (

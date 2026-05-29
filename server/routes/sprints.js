@@ -1,10 +1,12 @@
 const express = require('express');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole } = require('../middleware/rbac');
+const { requireTenant, requireFeature } = require('../middleware/tenant');
 const { logger } = require('../utils/logger');
 const redis = require('../redis');
 
 const router = express.Router();
+router.use(requireTenant, requireFeature('agile'));
 
 // ─── Helper: take a daily burndown snapshot for a sprint ────────────────────
 //

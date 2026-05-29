@@ -5,14 +5,14 @@ const { loadUserContext } = require('../middleware/rbac');
 const { sendToUser } = require('../utils/ws');
 const { notifyByEmail } = require('../utils/mailer');
 const redis = require('../redis');
-const { requireTenant } = require('../middleware/tenant');
+const { requireTenant, requireFeature } = require('../middleware/tenant');
 const { provisionBroadcast } = require('../utils/hlsBroadcast');
 // Phase 3 — Permission Presets. Single source of truth for
 // "can this user perform this action on this meeting?"
 const meetingPerms = require('../utils/meetingPermissions');
 
 const router = express.Router();
-router.use(auth, requireTenant);
+router.use(auth, requireTenant, requireFeature('meetings'));
 router.use(loadUserContext);
 
 // In-memory registry of active HLS broadcasts per meeting (single-process). For

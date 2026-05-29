@@ -13,8 +13,28 @@ const { masterQuery } = require('../db');
 const { getTenantById } = require('../utils/tenantManager');
 const { getTenantPool } = require('../utils/tenantManager');
 const { logger } = require('../utils/logger');
+const { PLANS, FEATURE_LABELS } = require('../utils/planCatalog');
 
 const router = express.Router();
+
+/**
+ * GET /api/public/plan-catalog
+ *
+ * Returns the subscription plan definitions (label / description / features
+ * matrix / per-plan limits) so a marketing or pricing page can render the
+ * plan comparison table directly from the server — no need to duplicate the
+ * catalog client-side.
+ *
+ * Public on purpose: plans, prices and feature lists are marketing info.
+ * The endpoint never exposes per-tenant overrides or any user data.
+ */
+router.get('/plan-catalog', (req, res) => {
+    res.set('Cache-Control', 'public, max-age=300'); // 5-min CDN cache
+    res.json({
+        plans: PLANS,
+        feature_labels: FEATURE_LABELS,
+    });
+});
 
 /**
  * GET /api/public/branding

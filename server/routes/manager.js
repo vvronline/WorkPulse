@@ -36,7 +36,11 @@ router.get('/team-attendance', async (req, res) => {
         const tzMod = getTzModifier(req);
 
         const users = (await req.db.query(
-            'SELECT id, full_name, avatar, role, team_id, department_id FROM users WHERE id = ANY($1) AND is_active = TRUE',
+            // hidden_from_directory excludes synthetic Platform Inspector
+            // rows in case any of them somehow leaked into the visible-ids
+            // set (e.g. an accidental manager_id pointing at them). They
+            // must never appear in a manager's team-attendance roll.
+            'SELECT id, full_name, avatar, role, team_id, department_id FROM users WHERE id = ANY($1) AND is_active = TRUE AND hidden_from_directory = FALSE',
             [visibleIds]
         )).rows;
 
@@ -150,7 +154,7 @@ router.get('/team-analytics', async (req, res) => {
              FROM users u
              LEFT JOIN departments d ON d.id = u.department_id
              LEFT JOIN teams t ON t.id = u.team_id
-             WHERE u.id = ANY($1) AND u.is_active = TRUE`,
+             WHERE u.id = ANY($1) AND u.is_active = TRUE AND u.hidden_from_directory = FALSE`,
             [visibleIds]
         )).rows;
 

@@ -200,12 +200,16 @@ async function destroyAllPools() {
  * @param {object} opts
  * @param {string} opts.orgName - Display name
  * @param {string} opts.slug    - URL slug (lowercase, hyphen-separated)
- * @param {object} [opts.features] - Feature flags
+ * @param {string} [opts.plan]  - Subscription plan (standard, pro, enterprise)
+ * @param {object} [opts.features] - Feature flag overrides
  * @param {number} [opts.maxUsers] - User limit
  * @param {number} [opts.maxStorageMb] - Storage limit
  * @returns {Promise<{ tenant: object, db: { pool, query, transaction } }>}
  */
-async function createTenant({ orgName, slug, features, maxUsers, maxStorageMb }) {
+async function createTenant({ orgName, slug, plan, features, maxUsers, maxStorageMb }) {
+    const { getPlanLimits, PLAN_KEYS } = require('./planCatalog');
+    const effectivePlan = PLAN_KEYS.includes(plan) ? plan : 'standard';
+    const planLimits = getPlanLimits(effectivePlan);
     const dbName = `wp_${slug.replace(/-/g, '_')}`;
 
     // Sanitize: only allow safe identifiers to prevent DDL injection
@@ -215,10 +219,10 @@ async function createTenant({ orgName, slug, features, maxUsers, maxStorageMb })
 
     // 1. Register in master tenants catalog
     const result = await masterQuery(
-        `INSERT INTO tenants (org_name, slug, db_name, features, max_users, max_storage_mb)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO tenants (org_name, slug, db_name, plan, features, max_users, max_storage_mb)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
-        [orgName, slug, dbName, JSON.stringify(features || {}), maxUsers || null, maxStorageMb || null]
+        [orgName, slug, dbName, effectivePlan, JSON.stringify(features || {}), maxUsers ?? planLimits.max_users, maxStorageMb ?? planLimits.max_storage_mb]
     );
     const tenant = result.rows[0];
 

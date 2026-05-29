@@ -24,9 +24,11 @@ import {
 } from '../../api';
 import useCollaboration from './useCollaboration';
 import { useAuth } from '../../AuthContext';
+import { useBranding } from '../../BrandingContext';
 
 export function useNotesStore(userId) {
     const { user } = useAuth();
+    const { branding } = useBranding();
     const {
         pages, setPages, folders, setFolders,
         activePageId, setActivePageId,
@@ -848,13 +850,13 @@ export function useNotesStore(userId) {
 
     /* ── Markdown / HTML export + import ────────────────── */
     const handleExportMarkdown = (page) => {
-        savePageAsMarkdown(page || activePage);
+        savePageAsMarkdown(page || activePage, branding?.org_name);
     };
     const handleExportHtml = (page) => {
         savePageAsHtml(page || activePage);
     };
     const handleExportAllMarkdown = () => {
-        exportAllPagesAsMarkdown(pages, folders);
+        exportAllPagesAsMarkdown(pages, folders, branding?.org_name);
     };
 
     /** Import one or more .md / .markdown files as new pages. */

@@ -219,7 +219,25 @@ const MIGRATIONS = [
                     created_at  TIMESTAMPTZ DEFAULT NOW()
                 )
             `);
-            await query(`CREATE INDEX IF NOT EXISTS idx_retro_sprint ON sprint_retrospectives(sprint_id, category)`);
+            // Guard: a fresh tenant may have been bootstrapped with the
+            // MODERN sprint_retrospectives shape by initTenantSchema() (which
+            // tracks v3/v4 and has no `category` column). In that case the
+            // CREATE TABLE IF NOT EXISTS above was a no-op and creating an
+            // index on the non-existent `category` column would abort the
+            // entire v1 migration, blocking v2/v3/v4 forever. Skip the index
+            // when the column isn't there — v4 drops this index anyway.
+            await query(`
+                DO $do$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                         WHERE table_name  = 'sprint_retrospectives'
+                           AND column_name = 'category'
+                    ) THEN
+                        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_retro_sprint ON sprint_retrospectives(sprint_id, category)';
+                    END IF;
+                END $do$;
+            `);
             await query(`
                 CREATE TABLE IF NOT EXISTS sprint_retro_votes (
                     retro_id INTEGER NOT NULL REFERENCES sprint_retrospectives(id) ON DELETE CASCADE,
@@ -1125,6 +1143,34 @@ const MIGRATIONS = [
                 ON messages (conversation_id, sender_id, client_msg_id)
                 WHERE client_msg_id IS NOT NULL
             `);
+        },
+    },
+    {
+        // Synthetic Platform Inspector users.
+        //
+        // The consent-gated impersonation flow used to mint its JWT against
+        // the tenant's highest-role active user (e.g. "Vaishak Pramod"), so
+        // the inspector spent the whole session wearing a teammate's
+        // identity. Every avatar, "created by", chat presence, task
+        // assignee — all wrong, and very confusing for tenant staff who
+        // saw their colleague making changes they hadn't actually made.
+        //
+        // The new model creates a dedicated synthetic `users` row per
+        // (tenant, platform_admin) pair:
+        //   - role = 'platform_admin'        ← full access by design
+        //   - full_name = "<Vishnu V R> (Platform Support)"
+        //   - org_id / team_id / department_id = NULL
+        //   - is_active = TRUE
+        //   - hidden_from_directory = TRUE   ← new column
+        //
+        // Every "list users" / "directory" / "chat search" endpoint adds
+        // `AND hidden_from_directory = FALSE` so synthetic rows never show
+        // up as teammates. FK joins, RBAC, audit logs, history tables all
+        // keep working because the row is real.
+        name: '2026_06_v9_users_hidden_from_directory',
+        async up(query) {
+            await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS hidden_from_directory BOOLEAN NOT NULL DEFAULT FALSE`);
+            await query(`CREATE INDEX IF NOT EXISTS idx_users_directory_visible ON users (org_id) WHERE hidden_from_directory = FALSE`);
         },
     },
 ];

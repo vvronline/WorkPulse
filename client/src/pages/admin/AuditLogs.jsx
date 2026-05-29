@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { ScrollText, Filter, X as XIcon, ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { ScrollText, Filter, X as XIcon, ChevronLeft, ChevronRight, Search, ShieldAlert } from 'lucide-react';
 import { getAuditLogs, getAdminUsers } from '../../api';
 import s from '../Admin.module.css';
 import al from './AuditLogs.module.css';
@@ -281,7 +281,7 @@ export default function AuditLogs() {
                     {logs.map(log => (
                         <tr key={log.id}>
                             <td className={al['audit-time']}>{new Date(log.created_at).toLocaleString()}</td>
-                            <td>{log.actor_name || log.actor_username || `User #${log.actor_id}`}</td>
+                            <td>{renderActor(log)}</td>
                             <td><span className={`${s.badge} ${al['badge-accent']}`}>{log.action}</span></td>
                             <td>{log.entity_type}{log.entity_id ? ` #${log.entity_id}` : ''}</td>
                             <td className={al['audit-details']}>
@@ -308,6 +308,40 @@ export default function AuditLogs() {
                 </div>
             )}
         </div>
+    );
+}
+
+/**
+ * Render the "Actor" cell for an audit log row.
+ *
+ * Synthetic Platform Inspector rows are emitted when a platform admin enters
+ * the tenant via consent-gated impersonation. The tenant `users` row that
+ * the action is attributed to has username `platform_inspector_<adminId>`,
+ * full_name "<Inspector Name> (Platform Support)". The server (audit.js
+ * `annotateInspectorActors`) additionally resolves the real platform admin's
+ * username/full_name from the master DB and attaches them as
+ * `actor_inspector_real_name` / `actor_inspector_username` — surface that
+ * here so tenant auditors can see *who* the human behind the support badge
+ * was, not just that "Support" did it.
+ */
+function renderActor(log) {
+    const baseLabel = log.actor_name || log.actor_username || `User #${log.actor_id}`;
+    if (!log.actor_is_inspector) return baseLabel;
+    const realName = log.actor_inspector_real_name || log.actor_inspector_username;
+    return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <ShieldAlert size={12} style={{ color: 'var(--warning, #f59e0b)', flexShrink: 0 }} />
+            <span>{baseLabel}</span>
+            {realName && (
+                <span style={{
+                    fontSize: '0.72rem',
+                    color: 'var(--text-secondary)',
+                    fontStyle: 'italic',
+                }}>
+                    (real: {realName})
+                </span>
+            )}
+        </span>
     );
 }
 

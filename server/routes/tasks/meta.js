@@ -13,8 +13,12 @@ router.get('/assignable-users', auth, loadUserContext, async (req, res) => {
     try {
         let users;
         if (req.userOrgId) {
+            // Exclude synthetic Platform Inspector users so they never
+            // appear as assignees in the task editor / @mention picker.
+            // They have org_id=NULL anyway, but the explicit filter is
+            // defence-in-depth in case the model evolves.
             users = (await req.db.query(
-                'SELECT id, username, full_name, avatar FROM users WHERE org_id = $1 AND is_active = TRUE ORDER BY full_name ASC',
+                'SELECT id, username, full_name, avatar FROM users WHERE org_id = $1 AND is_active = TRUE AND hidden_from_directory = FALSE ORDER BY full_name ASC',
                 [req.userOrgId]
             )).rows;
         } else {

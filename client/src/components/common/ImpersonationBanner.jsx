@@ -147,7 +147,8 @@ export default function ImpersonationBanner() {
           <ShieldAlert size={15} />
           <span className={s.text}>
             <span className={s.tenantName}>{user.impersonated_by_name || 'Platform Admin'}</span>
-            {' '}inspecting <span className={s.tenantName}>{user.impersonated_tenant_name || user.tenant_id}</span>
+            {' '}inspecting{' '}
+            <span className={s.tenantName}>{user.impersonated_tenant_name || user.tenant_id}</span>
           </span>
 
           <div className={s.divider} />

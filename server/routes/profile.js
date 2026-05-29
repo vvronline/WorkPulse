@@ -159,6 +159,11 @@ router.get('/', auth, async (req, res) => {
             user.impersonated_tenant_name = req.impersonatedTenantName || null;
             user.tenant_id = req.tenantId || null;
         }
+        if (req.tenant) {
+            const { getEffectiveFeatures } = require('../utils/planCatalog');
+            user.tenant_features = getEffectiveFeatures(req.tenant.plan, req.tenant.features);
+            user.tenant_plan = req.tenant.plan || 'standard';
+        }
         res.json(user);
     } catch (err) {
         req.log.error({ err }, 'GET /profile error');
@@ -242,7 +247,7 @@ router.put('/password', auth, loadUserContext, async (req, res) => {
         if (!current_password || !new_password) return res.status(400).json({ error: 'Both current and new password are required' });
         if (new_password.length < 8) return res.status(400).json({ error: 'New password must be at least 8 characters' });
         if (new_password.length > 72) return res.status(400).json({ error: 'New password must be 72 characters or less' });
-        const pwError = validatePassword(new_password);
+        const pwError = await validatePassword(new_password);
         if (pwError) return res.status(400).json({ error: pwError });
 
         const user = (await req.db.query('SELECT password FROM users WHERE id = $1', [req.userId])).rows[0];

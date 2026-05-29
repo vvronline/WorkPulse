@@ -17,7 +17,7 @@ const express = require('express');
 const crypto = require('crypto');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole } = require('../middleware/rbac');
-const { requireTenant } = require('../middleware/tenant');
+const { requireTenant, requireFeature } = require('../middleware/tenant');
 const { logAction } = require('../utils/audit');
 const github = require('../services/github');
 
@@ -119,7 +119,11 @@ router.get('/github/oauth/callback', async (req, res) => {
     }
 });
 
-router.use(requireTenant);
+// Integration management requires the `webhooks` feature (Enterprise). The
+// OAuth callback above is intentionally NOT gated — it has no tenant cookie
+// and is a no-op for tenants that lost the feature (they simply can't act
+// on the resulting integration).
+router.use(requireTenant, requireFeature('webhooks'));
 
 router.get('/', auth, loadUserContext, requireRole('manager'), async (req, res) => {
     try {

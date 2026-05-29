@@ -11,12 +11,15 @@
 const express = require('express');
 const auth = require('../middleware/auth');
 const { loadUserContext, requireRole } = require('../middleware/rbac');
-const { requireTenant } = require('../middleware/tenant');
+const { requireTenant, requireFeature } = require('../middleware/tenant');
 const { logAction } = require('../utils/audit');
 const { enrichTasks } = require('./tasks/_helpers/enrich');
 
 const router = express.Router();
-router.use(requireTenant);
+// Projects are part of the Agile feature bundle — same gate as /api/agile
+// and /api/sprints. Without this, a Standard-plan tenant could create
+// projects through the API even though the UI hides the section.
+router.use(requireTenant, requireFeature('agile'));
 
 const KEY_RE = /^[A-Z][A-Z0-9_]{1,9}$/;
 

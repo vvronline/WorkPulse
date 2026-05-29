@@ -146,9 +146,9 @@ export async function savePageAsPdf(page) {
 export const downloadPdf = savePageAsPdf;
 
 /* ── Markdown export (single page) ──────────────────────── */
-export function savePageAsMarkdown(page) {
+export function savePageAsMarkdown(page, orgName) {
   if (!page) return;
-  const md = `# ${page.title || 'Untitled'}\n\n` + htmlToMarkdown(page.content || '');
+  const md = `# ${page.title || 'Untitled'}\n\n` + htmlToMarkdown(page.content || '', orgName);
   const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
   downloadBlob(blob, `${safeFileName(page.title)}.md`);
 }
@@ -186,7 +186,7 @@ export function savePageAsHtml(page) {
 }
 
 /* ── Bulk Markdown export — every active page in one .md ─ */
-export function exportAllPagesAsMarkdown(pages, folders) {
+export function exportAllPagesAsMarkdown(pages, folders, orgName) {
   if (!Array.isArray(pages) || pages.length === 0) return;
   const folderName = (id) =>
     id ? (folders.find(f => f.id === id)?.name || 'Folder') : '';
@@ -200,9 +200,10 @@ export function exportAllPagesAsMarkdown(pages, folders) {
         p.tags?.length ? `*Tags: ${p.tags.map(t => `#${t}`).join(' ')}*` : '',
         p.updatedAt ? `*Edited ${new Date(p.updatedAt).toLocaleString()}*` : '',
       ].filter(Boolean).join('  \n');
-      return `${head}\n\n${meta ? meta + '\n\n' : ''}${htmlToMarkdown(p.content || '')}\n\n---\n`;
+      return `${head}\n\n${meta ? meta + '\n\n' : ''}${htmlToMarkdown(p.content || '', orgName)}\n\n---\n`;
     });
-  const out = `# WorkPulse Notes export\n\n` +
+  const appName = orgName || 'WorkPulse';
+  const out = `# ${appName} Notes export\n\n` +
     `Exported ${new Date().toLocaleString()} · ${sections.length} pages\n\n---\n\n` +
     sections.join('\n');
   const blob = new Blob([out], { type: 'text/markdown;charset=utf-8' });

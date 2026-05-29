@@ -3,9 +3,10 @@ import {
     Home, Users, UserPlus, Building, UsersRound, GitBranch, ScrollText,
     RefreshCw, DollarSign, Tag, Settings as SettingsIcon,
     Menu, X, ChevronDown, ExternalLink, Workflow as WorkflowIcon,
-    Wallet, Receipt, CreditCard, Folder, GitMerge,
+    Wallet, Receipt, CreditCard, Folder, GitMerge, Shield,
 } from 'lucide-react';
 import { useAuth } from '../../AuthContext';
+import { useFeatures } from '../../FeaturesContext';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { getRoleChangeRequests, getCurrentOrg } from '../../api';
 import UserManagement from './UserManagement';
@@ -19,6 +20,7 @@ import SalarySlips from './SalarySlips';
 import PaymentSettings from './PaymentSettings';
 import TaskLabelsTab from './TaskLabelsTab';
 import AdminHome from './AdminHome';
+import PlatformAccessInbox from './PlatformAccessInbox';
 import OrgSettingsPage from './OrgSettingsPage';
 import Departments from '../../components/organization/Departments';
 import Teams from '../../components/organization/Teams';
@@ -49,19 +51,25 @@ const SECTIONS = [
     { key: 'departments',    label: 'Departments',       icon: Building,     group: 'Structure', requires: 'orgId' },
     { key: 'teams',          label: 'Teams',             icon: UsersRound,   group: 'Structure', requires: 'orgId' },
     { key: 'org-chart',      label: 'Org Chart',         icon: GitBranch,    group: 'Structure', requires: 'orgId' },
-    { key: 'agile',          label: 'Agile Config',      icon: WorkflowIcon, group: 'Structure', requires: 'orgId' },
-    { key: 'projects',       label: 'Projects',          icon: Folder,       group: 'Structure', requires: 'orgId' },
+    { key: 'agile',          label: 'Agile Config',      icon: WorkflowIcon, group: 'Structure', requires: 'orgId', feature: 'agile' },
+    { key: 'projects',       label: 'Projects',          icon: Folder,       group: 'Structure', requires: 'orgId', feature: 'agile' },
 
     { key: 'integrations',   label: 'Integrations',      icon: GitMerge,     group: 'Settings',  requires: 'orgId' },
 
-    { key: 'payroll',        label: 'Payroll Periods',   icon: DollarSign,   group: 'Operations' },
-    { key: 'compensation',   label: 'Compensation',      icon: Wallet,       group: 'Operations', requires: 'orgId' },
-    { key: 'salary-slips',   label: 'Salary Slips',      icon: Receipt,      group: 'Operations', requires: 'orgId' },
-    { key: 'payment-config', label: 'Payment Settings',  icon: CreditCard,   group: 'Operations', requires: 'orgId' },
+    { key: 'payroll',        label: 'Payroll Periods',   icon: DollarSign,   group: 'Operations', feature: 'payroll' },
+    { key: 'compensation',   label: 'Compensation',      icon: Wallet,       group: 'Operations', requires: 'orgId', feature: 'payroll' },
+    { key: 'salary-slips',   label: 'Salary Slips',      icon: Receipt,      group: 'Operations', requires: 'orgId', feature: 'payroll' },
+    { key: 'payment-config', label: 'Payment Settings',  icon: CreditCard,   group: 'Operations', requires: 'orgId', feature: 'payroll' },
     // Task Labels moved into Agile Config → Labels tab; the legacy
     // ?tab=labels URL still routes to the Agile Config page below.
 
     { key: 'audit',          label: 'Audit Logs',        icon: ScrollText,   group: 'Compliance' },
+    // Platform Support Access — tenant super admins approve / deny incoming
+    // platform_admin impersonation requests here, and revoke active sessions.
+    // Visible to super_admin AND hr_admin — both can approve incoming
+    // platform-admin support sessions. Matches server-side APPROVER_ROLES
+    // in routes/platformAccess.js.
+    { key: 'platform-access', label: 'Platform Access', icon: Shield,        group: 'Compliance', requires: 'approver' },
     // Org Settings owns branding/email templates/general org config — it's
     // a configuration surface, not a compliance one. Promote it into its
     // own "Settings" group so it's findable.
@@ -80,11 +88,16 @@ const TAB_ALIASES = {
 
 const GROUP_ORDER = ['Overview', 'People', 'Structure', 'Operations', 'Compliance', 'Settings'];
 
-function isAllowed(section, user) {
+function isAllowed(section, user, hasFeature) {
+    if (section.feature && !hasFeature(section.feature)) return false;
     if (!section.requires) return true;
     if (section.requires === 'orgId') return !!user?.org_id;
     if (section.requires === 'super') {
         return user?.role === 'super_admin' || user?.role === 'platform_admin';
+    }
+    if (section.requires === 'approver') {
+        // Roles that can approve platform-admin support sessions
+        return ['super_admin', 'hr_admin', 'platform_admin'].includes(user?.role);
     }
     if (typeof section.requires === 'function') return section.requires(user);
     return true;
@@ -92,10 +105,12 @@ function isAllowed(section, user) {
 
 export default function AdminPanel() {
     const { user } = useAuth();
+    const { hasFeature } = useFeatures();
     const [searchParams, setSearchParams] = useSearchParams();
     const navigate = useNavigate();
     const isPlatform = user?.role === 'platform_admin';
     const isSuper = user?.role === 'super_admin' || isPlatform;
+    const canSeePlatformConsole = isPlatform;
 
     // Resolve current section from URL (back-compat with old ?tab= values)
     const initialSection = (() => {
@@ -157,12 +172,12 @@ export default function AdminPanel() {
     const navGroups = useMemo(() => {
         const groups = new Map();
         for (const sec of SECTIONS) {
-            if (!isAllowed(sec, user)) continue;
+            if (!isAllowed(sec, user, hasFeature)) continue;
             if (!groups.has(sec.group)) groups.set(sec.group, []);
             groups.get(sec.group).push(sec);
         }
         return GROUP_ORDER.filter(g => groups.has(g)).map(g => ({ name: g, items: groups.get(g) }));
-    }, [user]);
+    }, [user, hasFeature]);
 
     const currentSection = SECTIONS.find(sec => sec.key === section) || SECTIONS[0];
     const currentTitle = currentSection.label === 'Home' ? 'Admin Panel' : currentSection.label;
@@ -210,6 +225,8 @@ export default function AdminPanel() {
                 return <PaymentSettings />;
             case 'audit':
                 return <AuditLogs />;
+            case 'platform-access':
+                return <PlatformAccessInbox />;
             case 'departments':
                 return user.org_id && orgId
                     ? <Departments orgId={orgId} userRole={user.role} />
@@ -331,8 +348,12 @@ export default function AdminPanel() {
                     );
                 })}
 
-                {/* Platform Console link (super / platform admin only) */}
-                {isSuper && (
+                {/* Platform Console link (platform_admin only).
+                    Tenant super_admins are intentionally excluded — the
+                    console manages every tenant on the install, not their
+                    own org. They can still administer their own org from
+                    this Admin panel. */}
+                {canSeePlatformConsole && (
                     <div className={s.group}>
                         <div className={s.groupLabel} style={{ cursor: 'default' }}>
                             <span>Platform</span>

@@ -17,6 +17,7 @@
 //      a disabled CTA.
 
 import { useState } from 'react';
+import { useBranding } from '../BrandingContext';
 import {
     GitBranch as Github, GitMerge, GitPullRequest,
     ChevronRight, ArrowLeft, CheckCircle2, Clock,
@@ -42,7 +43,7 @@ const PROVIDERS = [
         id: 'gitlab',
         name: 'GitLab',
         group: 'Source Control',
-        description: 'Connect GitLab projects and merge requests to WorkPulse tasks.',
+        description: 'Connect GitLab projects and merge requests to your tasks.',
         icon: GitMerge,
         status: 'coming_soon',
     },
@@ -59,6 +60,7 @@ const PROVIDERS = [
 const GROUP_ORDER = ['Source Control'];
 
 export default function Integrations() {
+    const { branding } = useBranding();
     const [selectedId, setSelectedId] = useState(null);
     // Live status overlays per-provider, populated by the detail panels via
     // onStatusChange so we can keep the catalog cards' subtitle accurate
@@ -103,7 +105,7 @@ export default function Integrations() {
             <header style={styles.header}>
                 <h1 style={styles.title}>Integrations</h1>
                 <p style={styles.subtitle}>
-                    Connect WorkPulse with the tools your team already uses. Pick a provider
+                    Connect {branding?.org_name || 'WorkPulse'} with the tools your team already uses. Pick a provider
                     below to configure it. New integrations are added regularly — items marked
                     <em> Coming soon</em> are on the roadmap.
                 </p>
