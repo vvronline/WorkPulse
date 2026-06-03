@@ -56,6 +56,7 @@ const webhookRoutes = require('./routes/webhooks');
 // Stage 3 — Projects (Jira-style PROJ-123) + per-org Git/etc integrations.
 const projectsRoutes = require('./routes/projects');
 const integrationsRoutes = require('./routes/integrations');
+const mfaRoutes = require('./routes/mfa');
 const { setupWebSocket } = require('./utils/ws');
 const { createCollaborationServer } = require('./utils/collaboration');
 const { initJobs, shutdownJobs } = require('./jobs');
@@ -302,6 +303,7 @@ app.use('/api/sprints', apiLimiter, sprintsRoutes);
 app.use('/api/agile', apiLimiter, agileRoutes);
 app.use('/api/profile/password', passwordLimiter);
 app.use('/api/profile', apiLimiter, profileRoutes);
+app.use('/api/mfa', authLimiter, mfaRoutes);
 app.use('/api/org', apiLimiter, organizationRoutes);
 app.use('/api/admin', apiLimiter, adminRoutes);
 app.use('/api/admin/tenants', apiLimiter, tenantRoutes);

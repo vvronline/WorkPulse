@@ -1173,6 +1173,21 @@ const MIGRATIONS = [
             await query(`CREATE INDEX IF NOT EXISTS idx_users_directory_visible ON users (org_id) WHERE hidden_from_directory = FALSE`);
         },
     },
+    {
+        // MFA (TOTP) columns on tenant `users`. Opt-in for tenant admins
+        // (super_admin / hr_admin). initTenantSchema() also adds these for
+        // new tenants — this migration backfills existing tenant DBs so the
+        // /api/mfa endpoints and the login MFA gate don't 500 on a missing
+        // column. All additive + idempotent.
+        name: '2026_06_v10_user_mfa',
+        async up(query) {
+            await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_secret TEXT`);
+            await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE`);
+            await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enrolled_at TIMESTAMPTZ`);
+            await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_pending_secret TEXT`);
+            await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_recovery_codes JSONB`);
+        },
+    },
 ];
 
 /**

@@ -31,6 +31,7 @@ import AgileSettings from '../AgileSettings';
 // themselves are still standalone files and unchanged.
 import Projects from '../Projects';
 import Integrations from '../Integrations';
+import SecurityMfa from '../SecurityMfa';
 import s from './AdminLayout.module.css';
 
 // ─── Section registry ─────────────────────────────────────────────────────
@@ -74,6 +75,11 @@ const SECTIONS = [
     // a configuration surface, not a compliance one. Promote it into its
     // own "Settings" group so it's findable.
     { key: 'org-settings',   label: 'Org Settings',      icon: SettingsIcon, group: 'Settings',   requires: 'orgId' },
+    // Two-Factor Authentication — opt-in for tenant admins (super_admin /
+    // hr_admin), mandatory for platform_admin. The SecurityMfa component is
+    // role-aware: it shows enable/disable for opt-in roles and a "mandatory"
+    // notice for platform admins.
+    { key: 'security',       label: 'Two-Factor Auth',   icon: Shield,       group: 'Settings' },
 ];
 
 // Back-compat alias map (old ?tab= values → new section keys)
@@ -247,6 +253,8 @@ export default function AdminPanel() {
                 return user.org_id
                     ? <OrgSettingsPage userRole={user.role} />
                     : <p>You are not assigned to an organization.</p>;
+            case 'security':
+                return <SecurityMfa />;
             case 'my-org':
                 return user.org_id ? <MyOrganization userRole={user.role} /> : null;
             default:

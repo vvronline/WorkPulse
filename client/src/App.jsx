@@ -45,6 +45,8 @@ const Projects = lazy(() => import('./pages/Projects'));
 const Integrations = lazy(() => import('./pages/Integrations'));
 // Attendance verification — face enrollment.
 const FaceEnrollment = lazy(() => import('./pages/profile/FaceEnrollment'));
+// Account security — Two-Factor Authentication (TOTP).
+const SecurityMfa = lazy(() => import('./pages/SecurityMfa'));
 
 // The Electron always-on-top mini call window loads /pip-call. That window
 // is independent of auth/providers/navbar — it just renders the avatar +
@@ -135,6 +137,7 @@ function AppRoutes() {
           />
           <Route path="/sprint-insights" element={<ProtectedRoute><SprintInsights /></ProtectedRoute>} />
           <Route path="/profile/face" element={<ProtectedRoute><FaceEnrollment /></ProtectedRoute>} />
+          <Route path="/profile/security" element={<ProtectedRoute><SecurityMfa /></ProtectedRoute>} />
           {/* Stage 3 — Projects + Integrations live inside the Admin panel
               (Admin → Structure → Projects, Admin → Settings → Integrations).
               Keep these legacy URLs working by redirecting into the

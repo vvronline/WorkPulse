@@ -56,6 +56,16 @@ export const refreshToken = () => API.post('/auth/refresh');
 export const forgotPassword = (data) => API.post('/auth/forgot-password', data);
 export const resetPassword = (data) => API.post('/auth/reset-password', data);
 
+// MFA (TOTP)
+export const verifyMfaLogin = (data) => API.post('/auth/mfa/verify-login', data);
+export const setupMfaEnroll = (mfa_token) => API.post('/auth/mfa/setup-enroll', { mfa_token });
+export const confirmMfaEnroll = (mfa_token, code) => API.post('/auth/mfa/confirm-enroll', { mfa_token, code });
+export const getMfaStatus = () => API.get('/mfa/status');
+export const setupMfa = () => API.post('/mfa/setup');
+export const enableMfa = (code) => API.post('/mfa/enable', { code });
+export const disableMfa = (password, code) => API.post('/mfa/disable', { password, code });
+export const regenerateMfaRecoveryCodes = (code) => API.post('/mfa/recovery-codes/regenerate', { code });
+
 // Tracker
 // getStatus is deduplicated: concurrent calls within the same event loop
 // tick share a single HTTP request (e.g. Dashboard + WorkStateContext on mount).

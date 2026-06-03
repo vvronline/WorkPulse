@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings as SettingsIcon, Palette, ShieldCheck, UserCog, Mail, MapPin } from 'lucide-react';
+import { Settings as SettingsIcon, Palette, ShieldCheck, UserCog, Mail, MapPin, KeyRound } from 'lucide-react';
 import { getCurrentOrg } from '../../api';
 import OrgGeneralSettings from '../../components/organization/OrgSettings';
 import OfficeLocationSettings from '../../components/organization/OfficeLocationSettings';
@@ -7,6 +7,7 @@ import OrgRegistrationSettings from './OrgSettings';
 import OrgRoleLabels from './OrgRoleLabels';
 import BrandingSection from './BrandingSection';
 import EmailTemplatesSection from './EmailTemplatesSection';
+import SecurityMfa from '../SecurityMfa';
 import s from './OrgSettingsPage.module.css';
 
 /**
@@ -70,6 +71,7 @@ export default function OrgSettingsPage({ userRole }) {
         ...(canEditAttendance ? [{ id: 'attendance', label: 'Attendance Verification', icon: MapPin }] : []),
         ...(isSuper ? [{ id: 'registration', label: 'Registration', icon: ShieldCheck }] : []),
         { id: 'roles', label: 'Roles', icon: UserCog },
+        { id: 'security', label: 'Two-Factor Auth', icon: KeyRound },
         { id: 'branding', label: 'Branding', icon: Palette },
         { id: 'email-templates', label: 'Email templates', icon: Mail },
     ]), [isSuper, canEditAttendance]);
@@ -208,6 +210,28 @@ export default function OrgSettingsPage({ userRole }) {
                     </header>
                     <div className={s.sectionBody}>
                         <OrgRoleLabels canEdit={isSuper} />
+                    </div>
+                </section>
+
+                <section
+                    id="security"
+                    data-section-id="security"
+                    ref={el => (sectionRefs.current.security = el)}
+                    className={s.section}
+                >
+                    <header className={s.sectionHead}>
+                        <KeyRound size={18} className={s.sectionIcon} />
+                        <div>
+                            <h2 className={s.sectionTitle}>Two-Factor Authentication</h2>
+                            <p className={s.sectionDesc}>
+                                Add a one-time authenticator code to your sign-in. Optional for
+                                admins (you can enable or disable it here) and mandatory for
+                                platform admins. This controls your own account's 2FA.
+                            </p>
+                        </div>
+                    </header>
+                    <div className={s.sectionBody}>
+                        <SecurityMfa embedded />
                     </div>
                 </section>
 

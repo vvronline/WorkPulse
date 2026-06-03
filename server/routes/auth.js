@@ -11,6 +11,11 @@ const { logger } = require('../utils/logger');
 const { getTransporter, sendMail } = require('../utils/mailer');
 const auth = require('../middleware/auth');
 const { getEffectiveFeatures } = require('../utils/planCatalog');
+const {
+    verifyToken: verifyTotp, decryptSecret, verifyRecoveryCode,
+    generateSecret, buildOtpAuthUrl, buildQrDataUrl, encryptSecret, generateRecoveryCodes,
+} = require('../utils/mfa');
+const { loginMfaRequirement } = require('../utils/mfaPolicy');
 
 const router = express.Router();
 
@@ -310,6 +315,210 @@ router.post('/register', async (req, res) => {
     }
 });
 
+/**
+ * Complete a successful authentication: create the session, mint the JWT,
+ * set the cookie and return the user payload. Shared by the direct login
+ * path (no MFA required) and the post-MFA verification path so the
+ * platform-admin tenant-provisioning logic lives in exactly one place.
+ *
+ * @param {object} params
+ * @param {object} params.user            – the authenticated user row
+ * @param {object} params.db              – tenant/master db handle ({ query, transaction })
+ * @param {number|null} params.tenantId   – tenant id (null for pure platform users)
+ * @param {boolean} params.isPlatformUser – true if this is a platform_users account
+ */
+async function finishLogin(req, res, { user, db, tenantId, isPlatformUser }) {
+    const sid = await createSession(user.id, req.headers['user-agent'], db, tenantId);
+    const token = jwt.sign(
+        { id: user.id, username: user.username, tv: user.token_version || 0, sid, tenant_id: tenantId, platform: isPlatformUser || undefined },
+        process.env.JWT_SECRET,
+        { expiresIn: '8h' },
+    );
+    res.cookie('token', token, cookieOptions(req));
+
+    if (isPlatformUser) {
+        // If user was already resolved with a tenant context (via user_directory),
+        // we already have the correct JWT with platform: true and tenant_id.
+        // Ensure DB role is platform_admin and return.
+        if (tenantId) {
+            if (user.role !== 'platform_admin') {
+                await db.query('UPDATE users SET role = $1 WHERE id = $2', ['platform_admin', user.id]);
+                user.role = 'platform_admin';
+            }
+            const reportsRes = await db.query(
+                'SELECT 1 FROM users WHERE manager_id = $1 AND is_active = TRUE LIMIT 1',
+                [user.id],
+            );
+            return res.json({
+                user: {
+                    id: user.id,
+                    username: user.username,
+                    full_name: user.full_name,
+                    email: user.email || null,
+                    avatar: user.avatar || null,
+                    role: 'platform_admin',
+                    org_id: user.org_id || 1,
+                    tenant_id: tenantId,
+                    has_reports: reportsRes.rowCount > 0,
+                },
+            });
+        }
+
+        // Platform admin without tenant context — find or create tenant
+        // Find their primary tenant and ensure they have a corresponding user account.
+        const tenantsRes = await masterQuery(
+            'SELECT * FROM tenants WHERE status = $1 ORDER BY id LIMIT 1', ['active']
+        );
+        const primaryTenant = tenantsRes.rows[0];
+
+        if (primaryTenant) {
+            const poolEntry = await getTenantPool(primaryTenant.db_name, primaryTenant.db_host);
+            const tenantDb = { query: poolEntry.query, transaction: poolEntry.transaction };
+
+            // Check if platform admin already has a user record in this tenant
+            let tenantUser = (await tenantDb.query(
+                'SELECT * FROM users WHERE username = $1 OR email = $2',
+                [user.username, user.email || '']
+            )).rows[0];
+
+            if (!tenantUser) {
+                // Create a platform_admin user in the tenant DB
+                tenantUser = (await tenantDb.query(
+                    `INSERT INTO users (username, password, full_name, email, org_id, role)
+                     VALUES ($1, $2, $3, $4, 1, 'platform_admin') RETURNING *`,
+                    [user.username, user.password, user.full_name, user.email || `${user.username}@platform.local`]
+                )).rows[0];
+
+                // Register in user_directory for future logins
+                if (user.email) {
+                    await masterQuery(
+                        'INSERT INTO user_directory (email, username, tenant_id, user_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
+                        [user.email.toLowerCase(), user.username.toLowerCase(), primaryTenant.id, tenantUser.id]
+                    );
+                }
+            } else if (tenantUser.role !== 'platform_admin') {
+                // Upgrade existing linked user to platform_admin
+                await tenantDb.query('UPDATE users SET role = $1 WHERE id = $2', ['platform_admin', tenantUser.id]);
+                tenantUser.role = 'platform_admin';
+            }
+
+            // Re-issue JWT with tenant context + platform flag so routes use tenant DB
+            // while retaining platform_admin powers for tenant management
+            const tenantSid = await createSession(tenantUser.id, req.headers['user-agent'], tenantDb, primaryTenant.id);
+            const tenantToken = jwt.sign(
+                { id: tenantUser.id, username: tenantUser.username, tv: tenantUser.token_version || 0, sid: tenantSid, tenant_id: primaryTenant.id, platform: true },
+                process.env.JWT_SECRET,
+                { expiresIn: '8h' },
+            );
+            res.cookie('token', tenantToken, cookieOptions(req));
+
+            const reportsRes = await tenantDb.query(
+                'SELECT 1 FROM users WHERE manager_id = $1 AND is_active = TRUE LIMIT 1',
+                [tenantUser.id],
+            );
+            return res.json({
+                user: {
+                    id: tenantUser.id,
+                    username: tenantUser.username,
+                    full_name: tenantUser.full_name,
+                    email: tenantUser.email || null,
+                    avatar: tenantUser.avatar || null,
+                    role: 'platform_admin',
+                    org_id: tenantUser.org_id || 1,
+                    tenant_id: primaryTenant.id,
+                    has_reports: reportsRes.rowCount > 0,
+                },
+            });
+        }
+
+        // No tenant exists yet — auto-provision a default tenant so the app is usable
+        const orgName = user.full_name ? `${user.full_name}'s Organization` : 'Default Organization';
+        const slug = 'default';
+        let newTenant, newDb;
+        try {
+            ({ tenant: newTenant, db: newDb } = await createTenant({ orgName, slug }));
+            // Mark this tenant as the default (platform) tenant so that
+            // service-desk tickets from every tenant get mirrored here.
+            try {
+                await masterQuery(
+                    `UPDATE tenants SET is_default = TRUE WHERE id = $1`,
+                    [newTenant.id]
+                );
+                newTenant.is_default = true;
+            } catch (flagErr) {
+                logger.warn({ err: flagErr, tenantId: newTenant.id }, 'Failed to flag tenant as default (non-fatal)');
+            }
+        } catch (err) {
+            logger.error({ err }, 'Auto-provision default tenant failed');
+            return res.json({
+                user: {
+                    id: user.id,
+                    username: user.username,
+                    full_name: user.full_name,
+                    email: user.email || null,
+                    avatar: user.avatar || null,
+                    role: 'platform_admin',
+                    org_id: null,
+                    tenant_id: null,
+                },
+            });
+        }
+
+        const tenantDb = { query: newDb.query, transaction: newDb.transaction };
+        const tenantUser = (await tenantDb.query(
+            `INSERT INTO users (username, password, full_name, email, org_id, role)
+             VALUES ($1, $2, $3, $4, 1, 'platform_admin') RETURNING *`,
+            [user.username, user.password, user.full_name, user.email || `${user.username}@platform.local`]
+        )).rows[0];
+
+        if (user.email) {
+            await masterQuery(
+                'INSERT INTO user_directory (email, username, tenant_id, user_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
+                [user.email.toLowerCase(), user.username.toLowerCase(), newTenant.id, tenantUser.id]
+            );
+        }
+
+        const newSid = await createSession(tenantUser.id, req.headers['user-agent'], tenantDb, newTenant.id);
+        const newToken = jwt.sign(
+            { id: tenantUser.id, username: tenantUser.username, tv: 0, sid: newSid, tenant_id: newTenant.id, platform: true },
+            process.env.JWT_SECRET,
+            { expiresIn: '8h' },
+        );
+        res.cookie('token', newToken, cookieOptions(req));
+        return res.json({
+            user: {
+                id: tenantUser.id,
+                username: tenantUser.username,
+                full_name: tenantUser.full_name,
+                email: tenantUser.email || null,
+                avatar: tenantUser.avatar || null,
+                role: 'platform_admin',
+                org_id: 1,
+                tenant_id: newTenant.id,
+            },
+        });
+    }
+
+    const reportsRes = await db.query(
+        'SELECT 1 FROM users WHERE manager_id = $1 AND is_active = TRUE LIMIT 1',
+        [user.id],
+    );
+    return res.json({
+        user: {
+            id: user.id,
+            username: user.username,
+            full_name: user.full_name,
+            email: user.email || null,
+            avatar: user.avatar || null,
+            role: user.role || 'employee',
+            org_id: user.org_id || null,
+            tenant_id: tenantId,
+            has_reports: reportsRes.rowCount > 0,
+            must_change_password: !!user.must_change_password,
+        },
+    });
+}
+
 // Login
 router.post('/login', async (req, res) => {
     try {
@@ -371,198 +580,232 @@ router.post('/login', async (req, res) => {
             }
         }
 
-        const sid = await createSession(user.id, req.headers['user-agent'], db, tenantId);
-        const token = jwt.sign(
-            { id: user.id, username: user.username, tv: user.token_version || 0, sid, tenant_id: tenantId, platform: isPlatformUser || undefined },
-            process.env.JWT_SECRET,
-            { expiresIn: '8h' },
-        );
-        res.cookie('token', token, cookieOptions(req));
-
-        if (isPlatformUser) {
-            // If user was already resolved with a tenant context (via user_directory),
-            // we already have the correct JWT with platform: true and tenant_id.
-            // Ensure DB role is platform_admin and return.
-            if (tenantId) {
-                if (user.role !== 'platform_admin') {
-                    await db.query('UPDATE users SET role = $1 WHERE id = $2', ['platform_admin', user.id]);
-                    user.role = 'platform_admin';
-                }
-                const reportsRes = await db.query(
-                    'SELECT 1 FROM users WHERE manager_id = $1 AND is_active = TRUE LIMIT 1',
-                    [user.id],
-                );
-                return res.json({
-                    user: {
-                        id: user.id,
-                        username: user.username,
-                        full_name: user.full_name,
-                        email: user.email || null,
-                        avatar: user.avatar || null,
-                        role: 'platform_admin',
-                        org_id: user.org_id || 1,
-                        tenant_id: tenantId,
-                        has_reports: reportsRes.rowCount > 0,
-                    },
-                });
-            }
-
-            // Platform admin without tenant context — find or create tenant
-            // Find their primary tenant and ensure they have a corresponding user account.
-            const tenantsRes = await masterQuery(
-                'SELECT * FROM tenants WHERE status = $1 ORDER BY id LIMIT 1', ['active']
-            );
-            const primaryTenant = tenantsRes.rows[0];
-
-            if (primaryTenant) {
-                const poolEntry = await getTenantPool(primaryTenant.db_name, primaryTenant.db_host);
-                const tenantDb = { query: poolEntry.query, transaction: poolEntry.transaction };
-
-                // Check if platform admin already has a user record in this tenant
-                let tenantUser = (await tenantDb.query(
-                    'SELECT * FROM users WHERE username = $1 OR email = $2',
-                    [user.username, user.email || '']
-                )).rows[0];
-
-                if (!tenantUser) {
-                    // Create a platform_admin user in the tenant DB
-                    tenantUser = (await tenantDb.query(
-                        `INSERT INTO users (username, password, full_name, email, org_id, role)
-                         VALUES ($1, $2, $3, $4, 1, 'platform_admin') RETURNING *`,
-                        [user.username, user.password, user.full_name, user.email || `${user.username}@platform.local`]
-                    )).rows[0];
-
-                    // Register in user_directory for future logins
-                    if (user.email) {
-                        await masterQuery(
-                            'INSERT INTO user_directory (email, username, tenant_id, user_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
-                            [user.email.toLowerCase(), user.username.toLowerCase(), primaryTenant.id, tenantUser.id]
-                        );
-                    }
-                } else if (tenantUser.role !== 'platform_admin') {
-                    // Upgrade existing linked user to platform_admin
-                    await tenantDb.query('UPDATE users SET role = $1 WHERE id = $2', ['platform_admin', tenantUser.id]);
-                    tenantUser.role = 'platform_admin';
-                }
-
-                // Re-issue JWT with tenant context + platform flag so routes use tenant DB
-                // while retaining platform_admin powers for tenant management
-                const tenantSid = await createSession(tenantUser.id, req.headers['user-agent'], tenantDb, primaryTenant.id);
-                const tenantToken = jwt.sign(
-                    { id: tenantUser.id, username: tenantUser.username, tv: tenantUser.token_version || 0, sid: tenantSid, tenant_id: primaryTenant.id, platform: true },
-                    process.env.JWT_SECRET,
-                    { expiresIn: '8h' },
-                );
-                res.cookie('token', tenantToken, cookieOptions(req));
-
-                const reportsRes = await tenantDb.query(
-                    'SELECT 1 FROM users WHERE manager_id = $1 AND is_active = TRUE LIMIT 1',
-                    [tenantUser.id],
-                );
-                return res.json({
-                    user: {
-                        id: tenantUser.id,
-                        username: tenantUser.username,
-                        full_name: tenantUser.full_name,
-                        email: tenantUser.email || null,
-                        avatar: tenantUser.avatar || null,
-                        role: 'platform_admin',
-                        org_id: tenantUser.org_id || 1,
-                        tenant_id: primaryTenant.id,
-                        has_reports: reportsRes.rowCount > 0,
-                    },
-                });
-            }
-
-            // No tenant exists yet — auto-provision a default tenant so the app is usable
-            const orgName = user.full_name ? `${user.full_name}'s Organization` : 'Default Organization';
-            const slug = 'default';
-            let newTenant, newDb;
-            try {
-                ({ tenant: newTenant, db: newDb } = await createTenant({ orgName, slug }));
-                // Mark this tenant as the default (platform) tenant so that
-                // service-desk tickets from every tenant get mirrored here.
-                try {
-                    await masterQuery(
-                        `UPDATE tenants SET is_default = TRUE WHERE id = $1`,
-                        [newTenant.id]
-                    );
-                    newTenant.is_default = true;
-                } catch (flagErr) {
-                    logger.warn({ err: flagErr, tenantId: newTenant.id }, 'Failed to flag tenant as default (non-fatal)');
-                }
-            } catch (err) {
-                logger.error({ err }, 'Auto-provision default tenant failed');
-                return res.json({
-                    user: {
-                        id: user.id,
-                        username: user.username,
-                        full_name: user.full_name,
-                        email: user.email || null,
-                        avatar: user.avatar || null,
-                        role: 'platform_admin',
-                        org_id: null,
-                        tenant_id: null,
-                    },
-                });
-            }
-
-            const tenantDb = { query: newDb.query, transaction: newDb.transaction };
-            const tenantUser = (await tenantDb.query(
-                `INSERT INTO users (username, password, full_name, email, org_id, role)
-                 VALUES ($1, $2, $3, $4, 1, 'platform_admin') RETURNING *`,
-                [user.username, user.password, user.full_name, user.email || `${user.username}@platform.local`]
-            )).rows[0];
-
-            if (user.email) {
-                await masterQuery(
-                    'INSERT INTO user_directory (email, username, tenant_id, user_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
-                    [user.email.toLowerCase(), user.username.toLowerCase(), newTenant.id, tenantUser.id]
-                );
-            }
-
-            const newSid = await createSession(tenantUser.id, req.headers['user-agent'], tenantDb, newTenant.id);
-            const newToken = jwt.sign(
-                { id: tenantUser.id, username: tenantUser.username, tv: 0, sid: newSid, tenant_id: newTenant.id, platform: true },
-                process.env.JWT_SECRET,
-                { expiresIn: '8h' },
-            );
-            res.cookie('token', newToken, cookieOptions(req));
-            return res.json({
-                user: {
-                    id: tenantUser.id,
-                    username: tenantUser.username,
-                    full_name: tenantUser.full_name,
-                    email: tenantUser.email || null,
-                    avatar: tenantUser.avatar || null,
-                    role: 'platform_admin',
-                    org_id: 1,
-                    tenant_id: newTenant.id,
+        // ── MFA gate ──
+        // platform_admin → MFA mandatory; tenant super_admin/hr_admin → opt-in.
+        // When required, we do NOT issue a session yet — instead return a
+        // short-lived (5 min) purpose-scoped token the client exchanges on
+        // POST /auth/mfa/verify-login with a TOTP / recovery code.
+        const requirement = loginMfaRequirement({
+            isPlatformUser,
+            role: user.role,
+            mfaEnabled: !!user.mfa_enabled,
+        });
+        if (requirement !== 'none') {
+            const mfaToken = jwt.sign(
+                {
+                    id: user.id,
+                    tenant_id: tenantId,
+                    platform: isPlatformUser || undefined,
+                    purpose: 'mfa',
+                    setup: requirement === 'setup' || undefined,
                 },
+                process.env.JWT_SECRET,
+                { expiresIn: '5m' },
+            );
+            return res.json({
+                mfa_required: requirement === 'verify',
+                mfa_setup_required: requirement === 'setup',
+                mfa_token: mfaToken,
             });
         }
 
-        const reportsRes = await db.query(
-            'SELECT 1 FROM users WHERE manager_id = $1 AND is_active = TRUE LIMIT 1',
-            [user.id],
-        );
-        res.json({
-            user: {
-                id: user.id,
-                username: user.username,
-                full_name: user.full_name,
-                email: user.email || null,
-                avatar: user.avatar || null,
-                role: user.role || 'employee',
-                org_id: user.org_id || null,
-                tenant_id: tenantId,
-                has_reports: reportsRes.rowCount > 0,
-                must_change_password: !!user.must_change_password,
-            },
-        });
+        return finishLogin(req, res, { user, db, tenantId, isPlatformUser });
     } catch (err) {
         req.log.error({ err }, 'Login error');
         res.status(500).json({ error: 'Login failed' });
+    }
+});
+
+// Verify a second factor and complete login.
+// Body: { mfa_token, code }  where `code` is a 6-digit TOTP or a recovery code.
+router.post('/mfa/verify-login', async (req, res) => {
+    try {
+        const { mfa_token, code } = req.body || {};
+        if (!mfa_token || !code) {
+            return res.status(400).json({ error: 'mfa_token and code are required' });
+        }
+
+        let decoded;
+        try {
+            decoded = jwt.verify(mfa_token, process.env.JWT_SECRET);
+        } catch {
+            return res.status(401).json({ error: 'Your verification session expired. Please sign in again.' });
+        }
+        if (decoded.purpose !== 'mfa') {
+            return res.status(401).json({ error: 'Invalid verification token.' });
+        }
+
+        const isPlatformUser = !!decoded.platform;
+        const tenantId = decoded.tenant_id || null;
+
+        // Resolve the correct DB + user row.
+        let db, user;
+        if (isPlatformUser && !tenantId) {
+            db = { query: masterQuery };
+            user = (await masterQuery('SELECT * FROM platform_users WHERE id = $1', [decoded.id])).rows[0];
+        } else {
+            const tdb = await getTenantDb(tenantId);
+            if (!tdb) return res.status(403).json({ error: 'Organization is not available.' });
+            db = tdb;
+            user = (await tdb.query('SELECT * FROM users WHERE id = $1', [decoded.id])).rows[0];
+        }
+        if (!user || !user.is_active) {
+            return res.status(401).json({ error: 'Account is not available.' });
+        }
+
+        // If this was a setup token (mandatory MFA, not yet enrolled), the
+        // client must complete enrollment via /api/mfa first — it cannot be
+        // satisfied here.
+        if (decoded.setup && !user.mfa_enabled) {
+            return res.status(409).json({
+                error: 'MFA setup is required before you can sign in.',
+                code: 'MFA_SETUP_REQUIRED',
+            });
+        }
+
+        const userTable = (isPlatformUser && !tenantId) ? 'platform_users' : 'users';
+        const cleaned = String(code).replace(/\s+/g, '');
+
+        let verified = false;
+        // 6-digit → try TOTP first.
+        if (/^\d{6}$/.test(cleaned)) {
+            const secret = decryptSecret(user.mfa_secret);
+            verified = verifyTotp(secret, cleaned);
+        }
+        // Fall back to recovery codes (consume on use).
+        if (!verified) {
+            const hashes = Array.isArray(user.mfa_recovery_codes) ? user.mfa_recovery_codes : [];
+            const idx = await verifyRecoveryCode(code, hashes);
+            if (idx >= 0) {
+                verified = true;
+                const remaining = hashes.filter((_, i) => i !== idx);
+                await db.query(
+                    `UPDATE ${userTable} SET mfa_recovery_codes = $1 WHERE id = $2`,
+                    [JSON.stringify(remaining), user.id]
+                );
+            }
+        }
+
+        if (!verified) {
+            return res.status(401).json({ error: 'Invalid verification code.' });
+        }
+
+        return finishLogin(req, res, { user, db, tenantId, isPlatformUser });
+    } catch (err) {
+        req.log.error({ err }, 'MFA verify-login error');
+        res.status(500).json({ error: 'Verification failed' });
+    }
+});
+
+/**
+ * Resolve the user + db handle from a short-lived MFA token (purpose='mfa').
+ * Returns { error } | { db, user, tenantId, isPlatformUser, userTable }.
+ */
+async function resolveMfaTokenUser(mfaToken) {
+    let decoded;
+    try {
+        decoded = jwt.verify(mfaToken, process.env.JWT_SECRET);
+    } catch {
+        return { error: 'Your verification session expired. Please sign in again.', status: 401 };
+    }
+    if (decoded.purpose !== 'mfa') {
+        return { error: 'Invalid verification token.', status: 401 };
+    }
+    const isPlatformUser = !!decoded.platform;
+    const tenantId = decoded.tenant_id || null;
+
+    let db, user;
+    if (isPlatformUser && !tenantId) {
+        db = { query: masterQuery };
+        user = (await masterQuery('SELECT * FROM platform_users WHERE id = $1', [decoded.id])).rows[0];
+    } else {
+        const tdb = await getTenantDb(tenantId);
+        if (!tdb) return { error: 'Organization is not available.', status: 403 };
+        db = tdb;
+        user = (await tdb.query('SELECT * FROM users WHERE id = $1', [decoded.id])).rows[0];
+    }
+    if (!user || !user.is_active) {
+        return { error: 'Account is not available.', status: 401 };
+    }
+    const userTable = (isPlatformUser && !tenantId) ? 'platform_users' : 'users';
+    return { db, user, tenantId, isPlatformUser, userTable };
+}
+
+// Begin inline MFA enrollment during login (mandatory MFA, not yet enrolled).
+// Uses the short-lived mfa_token from /auth/login instead of a full session
+// (the user has no session yet). Returns a provisional secret + QR.
+// Body: { mfa_token }
+router.post('/mfa/setup-enroll', async (req, res) => {
+    try {
+        const { mfa_token } = req.body || {};
+        if (!mfa_token) return res.status(400).json({ error: 'mfa_token is required' });
+
+        const ctx = await resolveMfaTokenUser(mfa_token);
+        if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
+
+        const secret = generateSecret();
+        const label = ctx.user.email || ctx.user.username || `user-${ctx.user.id}`;
+        const otpauthUrl = buildOtpAuthUrl(secret, label);
+        const qr = await buildQrDataUrl(otpauthUrl);
+
+        await ctx.db.query(
+            `UPDATE ${ctx.userTable} SET mfa_pending_secret = $1 WHERE id = $2`,
+            [encryptSecret(secret), ctx.user.id]
+        );
+
+        res.json({ otpauth_url: otpauthUrl, qr_data_url: qr, secret });
+    } catch (err) {
+        req.log.error({ err }, 'MFA setup-enroll error');
+        res.status(500).json({ error: 'Failed to start MFA setup' });
+    }
+});
+
+// Confirm inline MFA enrollment: verify the provisional secret, enable MFA,
+// return one-time recovery codes, and complete login (issue the session).
+// Body: { mfa_token, code }
+router.post('/mfa/confirm-enroll', async (req, res) => {
+    try {
+        const { mfa_token, code } = req.body || {};
+        if (!mfa_token || !code) {
+            return res.status(400).json({ error: 'mfa_token and code are required' });
+        }
+
+        const ctx = await resolveMfaTokenUser(mfa_token);
+        if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
+
+        const pending = decryptSecret(ctx.user.mfa_pending_secret);
+        if (!pending) {
+            return res.status(400).json({ error: 'No pending MFA setup. Start setup again.' });
+        }
+        const cleaned = String(code).replace(/\s+/g, '');
+        if (!verifyTotp(pending, cleaned)) {
+            return res.status(401).json({ error: 'Invalid verification code.' });
+        }
+
+        const { plaintext, hashes } = await generateRecoveryCodes();
+        await ctx.db.query(
+            `UPDATE ${ctx.userTable}
+                SET mfa_secret = $1,
+                    mfa_enabled = TRUE,
+                    mfa_enrolled_at = NOW(),
+                    mfa_pending_secret = NULL,
+                    mfa_recovery_codes = $2
+              WHERE id = $3`,
+            [ctx.user.mfa_pending_secret, JSON.stringify(hashes), ctx.user.id]
+        );
+        ctx.user.mfa_enabled = true;
+
+        // Complete the login (issue session) AND surface the recovery codes
+        // once so the user can store them. finishLogin writes res — we capture
+        // its json via a thin wrapper so we can merge the recovery codes in.
+        const origJson = res.json.bind(res);
+        res.json = (payload) => origJson({ ...payload, recovery_codes: plaintext });
+        return finishLogin(req, res, {
+            user: ctx.user, db: ctx.db, tenantId: ctx.tenantId, isPlatformUser: ctx.isPlatformUser,
+        });
+    } catch (err) {
+        req.log.error({ err }, 'MFA confirm-enroll error');
+        res.status(500).json({ error: 'Failed to enable MFA' });
     }
 });
 

@@ -1509,12 +1509,29 @@ router.get('/:id/impersonation-session', async (req, res) => {
 //  CROSS-TENANT USER MANAGEMENT
 // ═══════════════════════════════════════════════════════════════
 
+// Default-tenant guard: per the privacy model, platform admins may only see
+// individual user data (PII) for the DEFAULT tenant. For every other tenant,
+// row-level user access is gated behind the consent-based impersonation flow.
+// Aggregate counts (no PII) are unaffected — only these row-returning user
+// endpoints are restricted.
+const NON_DEFAULT_USER_DATA_MSG =
+    'User data for non-default tenants is only accessible via approved impersonation.';
+
+function ensureDefaultTenant(tenant, res) {
+    if (!tenant.is_default) {
+        res.status(403).json({ error: NON_DEFAULT_USER_DATA_MSG, code: 'TENANT_USER_DATA_RESTRICTED' });
+        return false;
+    }
+    return true;
+}
+
 // GET /admin/tenants/:id/users
 router.get('/:id/users', async (req, res) => {
     try {
         const tid = Number(req.params.id);
         const tenant = await getTenantById(tid);
         if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
+        if (!ensureDefaultTenant(tenant, res)) return;
 
         const db = await getTenantPool(tenant.db_name, tenant.db_host);
         const { search, limit: rawLimit, offset } = req.query;
@@ -1552,6 +1569,7 @@ router.post('/:id/users', async (req, res) => {
         if (!tenant || tenant.status !== 'active') {
             return res.status(404).json({ error: 'Tenant not found or not active' });
         }
+        if (!ensureDefaultTenant(tenant, res)) return;
 
         const { username, password, full_name, email, role } = req.body;
         if (!username || !password || !full_name || !email) {
@@ -1610,6 +1628,7 @@ router.put('/:tenantId/users/:userId/deactivate', async (req, res) => {
         const uid = Number(req.params.userId);
         const tenant = await getTenantById(tid);
         if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
+        if (!ensureDefaultTenant(tenant, res)) return;
 
         const db = await getTenantPool(tenant.db_name, tenant.db_host);
         const result = await db.query(
