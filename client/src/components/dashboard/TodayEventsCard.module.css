@@ -2,6 +2,10 @@
   text-align: left !important;
   padding: 1.2rem !important;
   margin-bottom: 0;
+  /* Hard safety net: never let the card grow without limit. Even with the
+     per-section caps, the whole card scrolls internally past this height. */
+  max-height: 520px;
+  overflow-y: auto;
 }
 .title {
   margin-bottom: 0.35rem;
@@ -263,6 +267,27 @@
   color: var(--text-muted);
   text-align: center;
   margin: 0.3rem 0 0;
+}
+
+/* Clickable "+N more" row that navigates to the calendar. */
+.more-link {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--primary, #0ea5e9);
+  text-align: center;
+  cursor: pointer;
+  padding: 0.45rem 0 0.1rem;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+.more-link:hover {
+  background: var(--surface-hover, rgba(255,255,255,0.04));
+  color: var(--primary-light, var(--primary));
 }
 
 [data-theme="light"] .item { border-color: rgba(0,0,0,0.07); }

@@ -1,8 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import ReactQuill from 'react-quill-new';
 import DOMPurify from 'dompurify';
+import { Paperclip, X } from 'lucide-react';
 import hljs from '../../hljs-setup';
 import MentionInput from '../common/MentionInput';
+import CommentAttachment from '../common/CommentAttachment';
 import s from './CommentSection.module.css';
 
 const COMMENT_QUILL_MODULES = {
@@ -72,11 +74,20 @@ export default function CommentSection({ comments, loading, currentUserId, users
   const strippedCommentText = useMemo(() => stripHtml(commentText), [commentText]);
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState('');
+  const [file, setFile] = useState(null);
+  const fileInputRef = useRef(null);
 
   const handleAdd = async () => {
-    if (!strippedCommentText.trim()) return;
-    await onAdd(commentText);
+    if (!strippedCommentText.trim() && !file) return;
+    await onAdd(commentText, file);
     setCommentText('');
+    setFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const onPickFile = (e) => {
+    const f = e.target.files?.[0];
+    if (f) setFile(f);
   };
 
   const handleEdit = async (id) => {
@@ -117,11 +128,12 @@ export default function CommentSection({ comments, loading, currentUserId, users
               </div>
             ) : (
               <>
-                <HighlightedHtml html={c.content} className={s['comment-body']} />
+                {c.content && <HighlightedHtml html={c.content} className={s['comment-body']} />}
+                <CommentAttachment comment={c} />
                 <div className={s['comment-actions']}>
                   {c.user_id === currentUserId && (
                     <>
-                      <button onClick={() => { setEditingId(c.id); setEditText(c.content); }}>Edit</button>
+                      {c.content && <button onClick={() => { setEditingId(c.id); setEditText(c.content); }}>Edit</button>}
                       <button onClick={() => onDelete(c.id)}>Delete</button>
                     </>
                   )}
@@ -131,7 +143,29 @@ export default function CommentSection({ comments, loading, currentUserId, users
           </div>
         ))}
       </div>
+      {file && (
+        <div className={s['comment-file-chip']}>
+          <Paperclip size={13} />
+          <span className={s['comment-file-name']}>{file.name}</span>
+          <button
+            type="button"
+            className={s['comment-file-remove']}
+            onClick={() => { setFile(null); if (fileInputRef.current) fileInputRef.current.value = ''; }}
+            title="Remove attachment"
+            aria-label="Remove attachment"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      )}
       <div className={s['comment-input']}>
+        <input
+          ref={fileInputRef}
+          type="file"
+          style={{ display: 'none' }}
+          onChange={onPickFile}
+          accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip"
+        />
         <div className={s['comment-quill-wrapper']}>
           <MentionInput
             value={commentText}
@@ -141,16 +175,25 @@ export default function CommentSection({ comments, loading, currentUserId, users
             onSubmit={handleAdd}
           />
           <button
+            type="button"
+            className={s['comment-attach-btn']}
+            onClick={() => fileInputRef.current?.click()}
+            title="Attach a file"
+            aria-label="Attach a file"
+          >
+            <Paperclip size={16} />
+          </button>
+          <button
             className={`${s['comment-send-fab']} btn btn-primary btn-sm`}
             onClick={handleAdd}
-            disabled={!stripHtml(commentText).trim()}
+            disabled={!stripHtml(commentText).trim() && !file}
             title="Send comment"
             aria-label="Send comment"
           >
             ➤
           </button>
         </div>
-        <button className={`btn btn-primary btn-sm ${s['comment-send-desktop']}`} onClick={handleAdd} disabled={!stripHtml(commentText).trim()}>Send</button>
+        <button className={`btn btn-primary btn-sm ${s['comment-send-desktop']}`} onClick={handleAdd} disabled={!stripHtml(commentText).trim() && !file}>Send</button>
       </div>
     </>
   );

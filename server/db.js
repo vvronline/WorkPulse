@@ -967,6 +967,13 @@ async function initTenantSchema(q) {
         )
     `);
     await q(`CREATE INDEX IF NOT EXISTS idx_task_comments_task ON task_comments(task_id, created_at)`);
+    // File attachments on comments (image/doc). Either content or a file may
+    // be present, so content is no longer required at the DB level.
+    await q(`ALTER TABLE task_comments ALTER COLUMN content DROP NOT NULL`);
+    await q(`ALTER TABLE task_comments ADD COLUMN IF NOT EXISTS file_url   TEXT`);
+    await q(`ALTER TABLE task_comments ADD COLUMN IF NOT EXISTS file_name  VARCHAR(255)`);
+    await q(`ALTER TABLE task_comments ADD COLUMN IF NOT EXISTS file_type  VARCHAR(100)`);
+    await q(`ALTER TABLE task_comments ADD COLUMN IF NOT EXISTS file_size  INTEGER`);
 
     await q(`
         CREATE TABLE IF NOT EXISTS task_history (

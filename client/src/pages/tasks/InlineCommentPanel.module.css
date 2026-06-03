@@ -42,13 +42,20 @@
 .comment-quill-wrapper :global(.ql-toolbar .ql-picker-label) { color: var(--text-secondary); }
 .comment-quill-wrapper :global(.ql-editor pre.ql-syntax) { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 0.65rem; font-family: 'Fira Code', 'Consolas', 'Monaco', monospace; font-size: 0.8rem; overflow-x: auto; }
 
+.comment-attach-btn { display: inline-flex; align-items: center; justify-content: center; position: absolute; bottom: 8px; left: 8px; width: 28px; height: 28px; padding: 0; border: none; background: transparent; color: var(--text-muted); cursor: pointer; border-radius: 6px; z-index: 2; transition: color 0.15s, background 0.15s; }
+.comment-attach-btn:hover { color: var(--primary); background: var(--surface-hover); }
+.comment-file-chip { display: inline-flex; align-items: center; gap: 0.4rem; margin: 0 1.25rem; padding: 0.4rem 0.6rem; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; font-size: 0.78rem; color: var(--text); max-width: calc(100% - 2.5rem); }
+.comment-file-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.comment-file-remove { display: inline-flex; align-items: center; justify-content: center; background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 0.1rem; border-radius: 4px; flex-shrink: 0; }
+.comment-file-remove:hover { color: var(--text); background: var(--surface-hover); }
+
 .comment-input { display: flex; gap: 0.5rem; padding: 0.75rem 1.25rem; border-top: 1px solid var(--border); align-items: flex-end; }
 .comment-input textarea { flex: 1; border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.75rem; font-size: 0.85rem; font-family: inherit; resize: none; background: var(--surface); color: var(--text); min-height: 40px; }
 .comment-input textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-glow); }
 
 .comment-send-fab { display: inline-flex; align-items: center; justify-content: center; position: absolute; bottom: 8px; right: 8px; padding: 0.25rem 0.6rem; font-size: 0.9rem; line-height: 1; min-width: 0; z-index: 2; border-radius: 6px; }
 .comment-send-desktop { display: none; }
-.comment-quill-wrapper :global(.ql-editor) { padding-right: 2.75rem; }
+.comment-quill-wrapper :global(.ql-editor) { padding-right: 2.75rem; padding-left: 2.5rem; }
 @media (max-width: 768px) {
   .comment-panel { width: 100%; height: 100%; border-radius: 0; }
 }

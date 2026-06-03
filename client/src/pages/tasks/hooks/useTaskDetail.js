@@ -100,10 +100,10 @@ export function useTaskDetail({ activeTab, showConfirm, closeConfirm, setTasks, 
     );
   };
 
-  const handleAddDetailComment = useCallback(async (content) => {
+  const handleAddDetailComment = useCallback(async (content, file = null) => {
     if (!detailTask) return;
     try {
-      const res = await addTaskComment(detailTask.id, content);
+      const res = await addTaskComment(detailTask.id, content, file);
       setDetailComments(prev => [...prev, res.data]);
       setTasks(prev => prev.map(t => t.id === detailTask.id ? { ...t, comment_count: (t.comment_count || 0) + 1 } : t));
       setBacklogTasks(prev => prev.map(t => t.id === detailTask.id ? { ...t, comment_count: (t.comment_count || 0) + 1 } : t));

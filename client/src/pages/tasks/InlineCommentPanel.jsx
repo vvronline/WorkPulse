@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useState, useRef } from 'react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { COMMENT_QUILL_MODULES } from './constants.js';
 import { HighlightedHtml, stripHtml, getAvatarUrl } from './utils.jsx';
-import { MessageSquare, X } from 'lucide-react';
+import { MessageSquare, X, Paperclip } from 'lucide-react';
+import CommentAttachment from '../../components/common/CommentAttachment';
 import s from './InlineCommentPanel.module.css';
 
 export default function InlineCommentPanel({
@@ -22,7 +23,22 @@ export default function InlineCommentPanel({
   onEditComment,
   onDeleteComment,
 }) {
+  const [file, setFile] = useState(null);
+  const fileInputRef = useRef(null);
+
   if (!task) return null;
+
+  const onPickFile = (e) => {
+    const f = e.target.files?.[0];
+    if (f) setFile(f);
+  };
+
+  const handleSend = async () => {
+    if (!stripHtml(commentText).trim() && !file) return;
+    await onAddComment(file);
+    setFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   return (
     <div className={s['comment-overlay']} onClick={onClose}>
@@ -96,9 +112,10 @@ export default function InlineCommentPanel({
                 </div>
               ) : (
                 <>
-                  <HighlightedHtml html={c.content} className={s['comment-body']} />
+                  {c.content && <HighlightedHtml html={c.content} className={s['comment-body']} />}
+                  <CommentAttachment comment={c} />
                   <div className={s['comment-actions']}>
-                    {c.user_id === currentUser?.id && (
+                    {c.user_id === currentUser?.id && c.content && (
                       <button
                         onClick={() => {
                           setEditingCommentId(c.id);
@@ -108,7 +125,9 @@ export default function InlineCommentPanel({
                         Edit
                       </button>
                     )}
-                    <button onClick={() => onDeleteComment(c.id)}>Delete</button>
+                    {c.user_id === currentUser?.id && (
+                      <button onClick={() => onDeleteComment(c.id)}>Delete</button>
+                    )}
                   </div>
                 </>
               )}
@@ -116,7 +135,29 @@ export default function InlineCommentPanel({
           ))}
         </div>
 
+        {file && (
+          <div className={s['comment-file-chip']}>
+            <Paperclip size={13} />
+            <span className={s['comment-file-name']}>{file.name}</span>
+            <button
+              type="button"
+              className={s['comment-file-remove']}
+              onClick={() => { setFile(null); if (fileInputRef.current) fileInputRef.current.value = ''; }}
+              title="Remove attachment"
+              aria-label="Remove attachment"
+            >
+              <X size={13} />
+            </button>
+          </div>
+        )}
         <div className={s['comment-input']}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            style={{ display: 'none' }}
+            onChange={onPickFile}
+            accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip"
+          />
           <div className={s['comment-quill-wrapper']}>
             <ReactQuill
               theme="snow"
@@ -126,9 +167,18 @@ export default function InlineCommentPanel({
               placeholder="Write a comment..."
             />
             <button
+              type="button"
+              className={s['comment-attach-btn']}
+              onClick={() => fileInputRef.current?.click()}
+              title="Attach a file"
+              aria-label="Attach a file"
+            >
+              <Paperclip size={16} />
+            </button>
+            <button
               className={`${s['comment-send-fab']} btn btn-primary btn-sm`}
-              onClick={onAddComment}
-              disabled={!stripHtml(commentText).trim()}
+              onClick={handleSend}
+              disabled={!stripHtml(commentText).trim() && !file}
               title="Send comment"
               aria-label="Send comment"
             >
@@ -137,8 +187,8 @@ export default function InlineCommentPanel({
           </div>
           <button
             className={`btn btn-primary btn-sm ${s['comment-send-desktop']}`}
-            onClick={onAddComment}
-            disabled={!stripHtml(commentText).trim()}
+            onClick={handleSend}
+            disabled={!stripHtml(commentText).trim() && !file}
           >
             Send
           </button>

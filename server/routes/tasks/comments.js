@@ -5,15 +5,60 @@
 //   DELETE /:id/comments/:commentId
 
 const express = require('express');
+const multer = require('multer');
+const fsPromises = require('fs').promises;
 const auth = require('../../middleware/auth');
 const { loadUserContext } = require('../../middleware/rbac');
 const { notifyByEmail } = require('../../utils/mailer');
 const { sendToUser } = require('../../utils/ws');
+const { getUploadDir, getUploadUrl } = require('../../utils/uploadPath');
 
 const { logHistory } = require('./_helpers/logHistory');
 const { canAccessTask } = require('./_helpers/access');
 
 const router = express.Router();
+
+// Allowlist of safe MIME types → canonical extension (mirrors chat uploads).
+const ALLOWED_TYPES = {
+    'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif',
+    'image/webp': 'webp', 'image/bmp': 'bmp',
+    'application/pdf': 'pdf',
+    'application/zip': 'zip', 'application/x-zip-compressed': 'zip',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+    'application/msword': 'doc',
+    'application/vnd.ms-excel': 'xls',
+    'text/plain': 'txt', 'text/csv': 'csv',
+};
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        try {
+            // Per-tenant layout: uploads/tenant_<tid>/org_<oid>/task-comments/
+            const dir = getUploadDir(req.tenantId, req.userOrgId, 'task-comments');
+            cb(null, dir);
+        } catch (err) {
+            cb(err);
+        }
+    },
+    filename: (req, file, cb) => {
+        // Use canonical extension from MIME type — never trust originalname.
+        const ext = ALLOWED_TYPES[file.mimetype] || 'bin';
+        cb(null, `${req.userId}_${Date.now()}.${ext}`);
+    },
+});
+
+const commentUpload = multer({
+    storage,
+    limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB
+    fileFilter: (req, file, cb) => {
+        if (!ALLOWED_TYPES[file.mimetype]) {
+            return cb(new Error('File type not allowed'));
+        }
+        cb(null, true);
+    },
+});
 
 // ─── Get comments for a task ──────────────────────────────────────────────
 router.get('/:id/comments', auth, loadUserContext, async (req, res) => {
@@ -38,18 +83,59 @@ router.get('/:id/comments', auth, loadUserContext, async (req, res) => {
 });
 
 // ─── Add comment ──────────────────────────────────────────────────────────
-router.post('/:id/comments', auth, loadUserContext, async (req, res) => {
+// Accepts multipart/form-data: a `content` text field and/or a single `file`.
+// `commentUpload` runs after loadUserContext so req.tenantId / req.userOrgId
+// are available to build the per-tenant upload path. Multer errors (bad type,
+// too large) are caught and returned as 400s.
+const handleUpload = (req, res, next) => {
+    commentUpload.single('file')(req, res, (err) => {
+        if (err) {
+            return res.status(400).json({ error: err.message || 'File upload failed' });
+        }
+        next();
+    });
+};
+
+router.post('/:id/comments', auth, loadUserContext, handleUpload, async (req, res) => {
+    // Helper to remove an orphaned upload if the request fails after the file
+    // was already written to disk.
+    const cleanupFile = async () => {
+        if (req.file?.path) {
+            try { await fsPromises.unlink(req.file.path); } catch { /* ignore */ }
+        }
+    };
     try {
         const task = (await req.db.query('SELECT * FROM tasks WHERE id = $1', [req.params.id])).rows[0];
-        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db, req.userRole)) return res.status(404).json({ error: 'Task not found' });
+        if (!await canAccessTask(task, req.userId, req.userOrgId, req.db, req.userRole)) {
+            await cleanupFile();
+            return res.status(404).json({ error: 'Task not found' });
+        }
 
-        const { content } = req.body;
-        if (!content || !content.trim()) return res.status(400).json({ error: 'Comment cannot be empty' });
-        if (content.length > 2000) return res.status(400).json({ error: 'Comment must be 2000 characters or less' });
+        const content = (req.body.content || '').trim();
+        const hasFile = !!req.file;
+
+        // A comment must carry text, a file, or both.
+        if (!content && !hasFile) {
+            return res.status(400).json({ error: 'Comment cannot be empty' });
+        }
+        if (content.length > 2000) {
+            await cleanupFile();
+            return res.status(400).json({ error: 'Comment must be 2000 characters or less' });
+        }
+
+        // Build the canonical per-tenant file URL when a file was uploaded.
+        let fileUrl = null, fileName = null, fileType = null, fileSize = null;
+        if (hasFile) {
+            fileUrl = getUploadUrl(req.tenantId, req.userOrgId, 'task-comments', req.file.filename);
+            fileName = req.file.originalname;
+            fileType = req.file.mimetype;
+            fileSize = req.file.size;
+        }
 
         const result = await req.db.query(
-            'INSERT INTO task_comments (task_id, user_id, content) VALUES ($1, $2, $3) RETURNING id',
-            [req.params.id, req.userId, content.trim()]
+            `INSERT INTO task_comments (task_id, user_id, content, file_url, file_name, file_type, file_size)
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+            [req.params.id, req.userId, content || null, fileUrl, fileName, fileType, fileSize]
         );
         await logHistory(req.params.id, req.userId, 'comment_added', null, null, null, null, req.db);
 

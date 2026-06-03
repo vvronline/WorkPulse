@@ -199,7 +199,17 @@ export const linkTaskGitRef = (taskId, data) => API.post(`/tasks/${taskId}/git`,
 export const unlinkTaskGitRef = (taskId, refId) => API.delete(`/tasks/${taskId}/git/${refId}`);
 
 export const getTaskComments = (taskId) => API.get(`/tasks/${taskId}/comments`);
-export const addTaskComment = (taskId, content) => API.post(`/tasks/${taskId}/comments`, { content });
+// Add a comment with optional file attachment. When a file is present we send
+// multipart/form-data; otherwise a plain JSON body keeps backward compat.
+export const addTaskComment = (taskId, content, file) => {
+    if (file) {
+        const fd = new FormData();
+        if (content) fd.append('content', content);
+        fd.append('file', file);
+        return API.post(`/tasks/${taskId}/comments`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+    }
+    return API.post(`/tasks/${taskId}/comments`, { content });
+};
 export const updateTaskComment = (taskId, commentId, content) => API.put(`/tasks/${taskId}/comments/${commentId}`, { content });
 export const deleteTaskComment = (taskId, commentId) => API.delete(`/tasks/${taskId}/comments/${commentId}`);
 

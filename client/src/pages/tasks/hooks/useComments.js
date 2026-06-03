@@ -30,10 +30,12 @@ export function useComments({ showConfirm, closeConfirm, setTasks, setError }) {
     setEditingCommentId(null);
   };
 
-  const handleAddComment = async () => {
-    if (!stripHtml(commentText).trim() || !commentTaskId) return;
+  const handleAddComment = async (file = null) => {
+    if (!commentTaskId) return;
+    // Require either text or a file attachment.
+    if (!stripHtml(commentText).trim() && !file) return;
     try {
-      const res = await addTaskComment(commentTaskId, commentText);
+      const res = await addTaskComment(commentTaskId, commentText, file);
       setComments((prev) => [...prev, res.data]);
       setCommentText('');
       setTasks((prev) =>

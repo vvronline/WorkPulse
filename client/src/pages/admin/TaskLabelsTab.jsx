@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Tag } from 'lucide-react';
 import { useAutoDismiss } from '../../hooks/useAutoDismiss';
+import ConfirmDialog from '../../components/common/ConfirmDialog';
 import {
     getTaskLabelsManage, createTaskLabel, updateTaskLabel, deleteTaskLabel
 } from '../../api';
@@ -21,6 +22,7 @@ export default function TaskLabelsTab() {
     const [editColor, setEditColor] = useState('#0ea5e9');
     const [error, setError] = useAutoDismiss('');
     const [success, setSuccess] = useAutoDismiss('');
+    const [deleteId, setDeleteId] = useState(null);
 
     const fetchLabels = useCallback(async () => {
         try {
@@ -64,8 +66,10 @@ export default function TaskLabelsTab() {
         }
     };
 
-    const handleDelete = async (id) => {
-        if (!confirm('Delete this label? It will be removed from all tasks.')) return;
+    const confirmDelete = async () => {
+        const id = deleteId;
+        setDeleteId(null);
+        if (id == null) return;
         try {
             await deleteTaskLabel(id);
             setSuccess('Label deleted');
@@ -165,7 +169,7 @@ export default function TaskLabelsTab() {
                                         ) : (
                                             <div className={su['actions-row']}>
                                                 <button className="btn btn-secondary btn-sm" onClick={() => startEdit(label)}>Edit</button>
-                                                <button className="btn btn-danger btn-sm" onClick={() => handleDelete(label.id)}>Delete</button>
+                                                <button className="btn btn-danger btn-sm" onClick={() => setDeleteId(label.id)}>Delete</button>
                                             </div>
                                         )}
                                     </td>
@@ -175,6 +179,16 @@ export default function TaskLabelsTab() {
                     </table>
                 </div>
             )}
+
+            <ConfirmDialog
+                isOpen={deleteId != null}
+                title="Delete Label"
+                message="Delete this label? It will be removed from all tasks. This cannot be undone."
+                confirmText="Delete"
+                onConfirm={confirmDelete}
+                onCancel={() => setDeleteId(null)}
+                isDanger
+            />
         </div>
     );
 }

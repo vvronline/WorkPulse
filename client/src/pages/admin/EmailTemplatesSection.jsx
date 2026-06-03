@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Mail, RotateCcw, Save, Eye, ChevronRight, Check, AlertCircle } from 'lucide-react';
+import ConfirmDialog from '../../components/common/ConfirmDialog';
 import {
     getEmailTemplates, updateEmailTemplate, revertEmailTemplate, previewEmailTemplate,
 } from '../../api';
@@ -103,6 +104,7 @@ function TemplateEditor({ template, canEdit, onSaved, onReverted }) {
     const [reverting, setReverting] = useState(false);
     const [savedFlash, setSavedFlash] = useState(false);
     const [error, setError] = useState('');
+    const [confirmRevert, setConfirmRevert] = useState(false);
     const debounceRef = useRef(null);
 
     const dirty =
@@ -140,9 +142,13 @@ function TemplateEditor({ template, canEdit, onSaved, onReverted }) {
         }
     };
 
-    const revert = async () => {
+    const revert = () => {
         if (!template.is_overridden || !canEdit) return;
-        if (!confirm('Revert to the built-in template? Your custom subject and body will be deleted.')) return;
+        setConfirmRevert(true);
+    };
+
+    const doRevert = async () => {
+        setConfirmRevert(false);
         setReverting(true); setError('');
         try {
             await revertEmailTemplate(template.template_key);
@@ -262,6 +268,16 @@ function TemplateEditor({ template, canEdit, onSaved, onReverted }) {
                     the real recipient name, dates, task titles, etc.
                 </p>
             </div>
+
+            <ConfirmDialog
+                isOpen={confirmRevert}
+                title="Revert to built-in template"
+                message="Revert to the built-in template? Your custom subject and body will be deleted. This cannot be undone."
+                confirmText="Revert"
+                onConfirm={doRevert}
+                onCancel={() => setConfirmRevert(false)}
+                isDanger
+            />
         </div>
     );
 }

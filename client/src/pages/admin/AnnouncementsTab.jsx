@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Megaphone } from 'lucide-react';
 import { useAutoDismiss } from '../../hooks/useAutoDismiss';
+import ConfirmDialog from '../../components/common/ConfirmDialog';
 import {
     getAdminAnnouncements, createAnnouncement, updateAnnouncement, deleteAnnouncement
 } from '../../api';
@@ -88,6 +89,7 @@ export default function AnnouncementsTab({ userRole }) {
     const [editDuration, setEditDuration] = useState('');
     const [error, setError] = useAutoDismiss('');
     const [success, setSuccess] = useAutoDismiss('');
+    const [deleteId, setDeleteId] = useState(null);
 
     const fetchAnnouncements = useCallback(async () => {
         try {
@@ -145,8 +147,10 @@ export default function AnnouncementsTab({ userRole }) {
         }
     };
 
-    const handleDelete = async (id) => {
-        if (!confirm('Delete this announcement permanently?')) return;
+    const confirmDelete = async () => {
+        const id = deleteId;
+        setDeleteId(null);
+        if (id == null) return;
         try {
             await deleteAnnouncement(id);
             setSuccess('Announcement deleted');
@@ -302,7 +306,7 @@ export default function AnnouncementsTab({ userRole }) {
                                                     {a.is_active ? 'Hide' : 'Show'}
                                                 </button>
                                                 <button className="btn btn-secondary btn-sm" onClick={() => startEdit(a)}>Edit</button>
-                                                <button className="btn btn-danger btn-sm" onClick={() => handleDelete(a.id)}>Delete</button>
+                                                <button className="btn btn-danger btn-sm" onClick={() => setDeleteId(a.id)}>Delete</button>
                                             </div>
                                         )}
                                     </td>
@@ -312,6 +316,16 @@ export default function AnnouncementsTab({ userRole }) {
                     </table>
                 </div>
             )}
+
+            <ConfirmDialog
+                isOpen={deleteId != null}
+                title="Delete Announcement"
+                message="Delete this announcement permanently? This cannot be undone."
+                confirmText="Delete"
+                onConfirm={confirmDelete}
+                onCancel={() => setDeleteId(null)}
+                isDanger
+            />
         </div>
     );
 }

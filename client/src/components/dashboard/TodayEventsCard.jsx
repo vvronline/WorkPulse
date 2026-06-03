@@ -130,10 +130,18 @@ const TodayEventsCard = memo(function TodayEventsCard({ events, tomorrowEvents }
 
   // Remaining non-meeting events for today
   const meetingIds = useMemo(() => new Set(upcomingMeetings.map(m => m.id)), [upcomingMeetings]);
-  const otherEvents = useMemo(
+  const allOtherEvents = useMemo(
     () => todaySorted.filter(ev => !meetingIds.has(ev.id)),
     [todaySorted, meetingIds]
   );
+  // Cap the visible list so the card can't grow unbounded — show a "+N more"
+  // row linking to the calendar when there are extra events.
+  const OTHER_EVENTS_LIMIT = 4;
+  const otherEvents = useMemo(
+    () => allOtherEvents.slice(0, OTHER_EVENTS_LIMIT),
+    [allOtherEvents]
+  );
+  const hiddenOtherCount = allOtherEvents.length - otherEvents.length;
 
   return (
     <div className={`status-card ${s.card}`}>
@@ -164,6 +172,15 @@ const TodayEventsCard = memo(function TodayEventsCard({ events, tomorrowEvents }
             {otherEvents.map(ev => (
               <EventItem key={ev.id} ev={ev} accentColor={accentColor} />
             ))}
+            {hiddenOtherCount > 0 && (
+              <button
+                type="button"
+                className={s['more-link']}
+                onClick={() => navigate('/calendar')}
+              >
+                +{hiddenOtherCount} more
+              </button>
+            )}
           </div>
         </>
       )}

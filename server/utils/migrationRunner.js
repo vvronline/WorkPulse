@@ -1188,6 +1188,20 @@ const MIGRATIONS = [
             await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_recovery_codes JSONB`);
         },
     },
+    {
+        // File attachments on task comments. Adds nullable file_* columns and
+        // relaxes the content NOT NULL constraint so a comment may carry just
+        // a file (or text, or both). initTenantSchema() also applies these for
+        // new tenants — this backfills existing tenant DBs. All idempotent.
+        name: '2026_06_v11_task_comment_attachments',
+        async up(query) {
+            await query(`ALTER TABLE task_comments ALTER COLUMN content DROP NOT NULL`);
+            await query(`ALTER TABLE task_comments ADD COLUMN IF NOT EXISTS file_url   TEXT`);
+            await query(`ALTER TABLE task_comments ADD COLUMN IF NOT EXISTS file_name  VARCHAR(255)`);
+            await query(`ALTER TABLE task_comments ADD COLUMN IF NOT EXISTS file_type  VARCHAR(100)`);
+            await query(`ALTER TABLE task_comments ADD COLUMN IF NOT EXISTS file_size  INTEGER`);
+        },
+    },
 ];
 
 /**
