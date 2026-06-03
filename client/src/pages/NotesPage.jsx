@@ -9,9 +9,6 @@ import PageSwitcherPopover from '../components/DailyNotes/components/PageSwitche
 import QuickCapture from '../components/DailyNotes/components/QuickCapture';
 import PageLinkPicker from '../components/DailyNotes/components/PageLinkPicker';
 import AudioRecorder from '../components/DailyNotes/components/AudioRecorder';
-import AIAssistPanel from '../components/DailyNotes/components/AIAssistPanel';
-import SmartSuggestionsPanel from '../components/DailyNotes/components/SmartSuggestionsPanel';
-import ActivityFeedPanel from '../components/DailyNotes/components/ActivityFeedPanel';
 import { preloadNotesAssets } from '../components/DailyNotes/notesAssetsSetup';
 import '../components/DailyNotes/notesTokens.css';
 import s from './NotesPage.module.css';
@@ -71,28 +68,6 @@ export default function NotesPage() {
         <AudioRecorder
           onSave={store.insertAudioRecording}
           onClose={store.closeAudioRecorder}
-        />
-      )}
-      {store.aiPanelOpen && (
-        <AIAssistPanel
-          activePage={store.activePage}
-          quillRef={store.modalQuillRef}
-          onClose={() => store.setAiPanelOpen(false)}
-        />
-      )}
-      {store.suggestionsPanelOpen && (
-        <SmartSuggestionsPanel
-          activePage={store.activePage}
-          pages={store.pages}
-          onSelectPage={(id) => { store.openEditor(id); store.setSuggestionsPanelOpen(false); }}
-          onClose={() => store.setSuggestionsPanelOpen(false)}
-        />
-      )}
-      {store.activityFeedOpen && (
-        <ActivityFeedPanel
-          pages={store.pages}
-          onSelectPage={(id) => { store.openEditor(id); store.setActivityFeedOpen(false); }}
-          onClose={() => store.setActivityFeedOpen(false)}
         />
       )}
       <ConfirmDialog

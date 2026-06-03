@@ -112,18 +112,23 @@
     color: #f87171;
 }
 
-/* ── Meta row — folder selector + tags ── */
+/* ── Meta toolbar — folder, tags, reactions, tabs (single quiet row) ── */
 .metaRow {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.4rem;
     flex-wrap: wrap;
     width: 100%;
     margin: 0;
-    padding: 0.25rem 1.5rem 0.35rem;
+    padding: 0.3rem 1.5rem 0.5rem;
     flex-shrink: 0;
     box-sizing: border-box;
+    opacity: 0.75;
+    transition: opacity 0.15s;
 }
+.editorArea:hover .metaRow,
+.metaRow:focus-within { opacity: 1; }
+.metaSpacer { flex: 1; min-width: 0.5rem; }
 .folderSelect {
     font-size: 0.74rem;
     padding: 0.25rem 0.5rem;
@@ -141,21 +146,7 @@
     color: var(--notes-text, var(--text-primary));
 }
 
-/* ── Tabs row — like + sub-pages + linked items ── */
-.tabsRow {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 0.15rem 1.5rem 0.35rem;
-    flex-shrink: 0;
-}
-.tabsDivider {
-    width: 1px;
-    height: 14px;
-    background: color-mix(in srgb, var(--notes-border, var(--border)) 50%, transparent);
-    margin: 0 4px;
-    flex-shrink: 0;
-}
+/* ── Sub-pages + linked items tabs (live in the meta toolbar) ── */
 .tab {
     display: inline-flex;
     align-items: center;
@@ -339,7 +330,6 @@
     .crumbsRow,
     .titleRow,
     .metaRow,
-    .tabsRow,
     .tabPanel,
     .editorScroll > * {
         padding-left: 1rem;
@@ -363,7 +353,6 @@
         padding: 0.15rem 0.75rem 0.25rem;
         gap: 0.35rem;
     }
-    .tabsRow { padding: 0 0.75rem 0.25rem; }
     .tabPanel { padding: 0 0.75rem 0.25rem; }
     .editorScroll > * { padding: 0 0.75rem 1rem; }
     .wordCount {

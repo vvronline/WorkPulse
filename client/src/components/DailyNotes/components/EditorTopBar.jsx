@@ -19,8 +19,6 @@ import {
     Inbox,
     Download,
     Zap,
-    Sparkles,
-    Clock,
     Upload,
     Link2,
 } from '../../../constants/icons';
@@ -41,12 +39,6 @@ export default function EditorTopBar({ store, embedded, onClose }) {
         handleExportHtml,
         handleExportAllMarkdown,
         handleImportMarkdownFiles,
-        toggleAiPanel,
-        toggleSuggestionsPanel,
-        toggleActivityFeed,
-        aiPanelOpen,
-        suggestionsPanelOpen,
-        activityFeedOpen,
         showArchived, setShowArchived,
     } = store;
 
@@ -132,32 +124,6 @@ export default function EditorTopBar({ store, embedded, onClose }) {
                         e.target.value = '';
                     }}
                 />
-
-                {/* Tier 4 quick toggles */}
-                <button
-                    className={`${s.iconBtnSquare} ${aiPanelOpen ? s.iconBtnSquareActive : ''}`}
-                    onClick={() => toggleAiPanel?.()}
-                    title="AI assist"
-                    aria-label="AI assist"
-                >
-                    <Sparkles size={14} />
-                </button>
-                <button
-                    className={`${s.iconBtnSquare} ${suggestionsPanelOpen ? s.iconBtnSquareActive : ''}`}
-                    onClick={() => toggleSuggestionsPanel?.()}
-                    title="Smart suggestions"
-                    aria-label="Smart suggestions"
-                >
-                    <Inbox size={14} />
-                </button>
-                <button
-                    className={`${s.iconBtnSquare} ${activityFeedOpen ? s.iconBtnSquareActive : ''}`}
-                    onClick={() => toggleActivityFeed?.()}
-                    title="Activity feed"
-                    aria-label="Activity feed"
-                >
-                    <Clock size={14} />
-                </button>
 
                 <button className={s.primaryBtn} onClick={handleNewPage} title="New page (Ctrl+N)">
                     <Plus size={13} />

@@ -14,8 +14,6 @@ import BacklinksPanel from './BacklinksPanel';
 import LinkedEntitiesPanel from './LinkedEntitiesPanel';
 import TableOfContents from './TableOfContents';
 import DrawioEditor from './DrawioEditor';
-import AIAssistPanel from './AIAssistPanel';
-import SmartSuggestionsPanel from './SmartSuggestionsPanel';
 import PresenceAvatars from './PresenceAvatars';
 import SprintEmbedBlock from './SprintEmbedBlock';
 import TimeTrackingBlock from './TimeTrackingBlock';
@@ -234,7 +232,7 @@ export default function ModalEditor({
                 </div>
             </div>
 
-            {/* Folder + tag row */}
+            {/* Unified meta toolbar — folder, tags, reactions, sub-pages, linked */}
             <div className={s.metaRow}>
                 <select
                     className={s.folderSelect}
@@ -258,17 +256,15 @@ export default function ModalEditor({
                     onRemoveTag={onRemoveTag}
                     pageId={activePage.id}
                 />
-            </div>
 
-            {/* Reactions + Sub-pages & Linked items tabs — single row */}
-            <div className={s.tabsRow}>
+                <div className={s.metaSpacer} />
+
                 <ReactionsBar
                     reactions={activePage.reactions || {}}
                     currentUserId={user?.id}
                     onToggle={(emoji) => onToggleReaction?.(activePage.id, emoji, user?.id)}
                     mentionableUsers={mentionableUsers}
                 />
-                <div className={s.tabsDivider} />
                 <button
                     type="button"
                     className={`${s.tab} ${activeTab === 'subpages' ? s.tabActive : ''}`}

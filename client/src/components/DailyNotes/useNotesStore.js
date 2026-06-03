@@ -62,11 +62,6 @@ export function useNotesStore(userId) {
     const [drawioEditor, setDrawioEditor] = useState(null); // { node, initialXml }
     /* Audio recorder modal — open via slash menu /record */
     const [audioRecorder, setAudioRecorder] = useState(null); // { quill, range } | null
-    /* Tier 3/4 side panels (only one open at a time on the right) */
-    const [aiPanelOpen, setAiPanelOpen] = useState(false);
-    const [suggestionsPanelOpen, setSuggestionsPanelOpen] = useState(false);
-    const [activityFeedOpen, setActivityFeedOpen] = useState(false);
-
     /* ── Rename ─────────────────────────────────────────────── */
     const [renamingId, setRenamingId] = useState(null);
     const [renameValue, setRenameValue] = useState('');
@@ -889,23 +884,6 @@ export function useNotesStore(userId) {
         setView('editor');
     };
 
-    /* ── Tier 3/4 panel toggles (only one open at a time) ── */
-    const toggleAiPanel = () => {
-        setAiPanelOpen(o => {
-            const next = !o;
-            if (next) { setSuggestionsPanelOpen(false); }
-            return next;
-        });
-    };
-    const toggleSuggestionsPanel = () => {
-        setSuggestionsPanelOpen(o => {
-            const next = !o;
-            if (next) { setAiPanelOpen(false); }
-            return next;
-        });
-    };
-    const toggleActivityFeed = () => setActivityFeedOpen(o => !o);
-
     /* ── Export the active page as a downloadable PDF ─────
        The persisted notebook state may be stale (debounced auto-save), so
        always grab the LIVE HTML from the active Quill editor for the
@@ -1042,10 +1020,6 @@ export function useNotesStore(userId) {
         // Tier 5 — Markdown / HTML import & export
         handleExportMarkdown, handleExportHtml, handleExportAllMarkdown,
         handleImportMarkdownFiles,
-        // Tier 4 — AI / suggestions / activity panels
-        aiPanelOpen, setAiPanelOpen, toggleAiPanel,
-        suggestionsPanelOpen, setSuggestionsPanelOpen, toggleSuggestionsPanel,
-        activityFeedOpen, setActivityFeedOpen, toggleActivityFeed,
         persist,
         // Collaboration — @mentions + presence
         mentionableUsers, handleMention,
