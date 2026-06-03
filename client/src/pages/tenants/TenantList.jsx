@@ -46,7 +46,9 @@ export default function TenantList({ onSelectTenant }) {
 
   const [suspendModal, setSuspendModal] = useState({ open: false, id: null });
   const [suspendReason, setSuspendReason] = useState('');
+  const [suspendPassword, setSuspendPassword] = useState('');
   const [deleteModal, setDeleteModal] = useState({ open: false, id: null, name: '' });
+  const [deletePassword, setDeletePassword] = useState('');
   // Tenant object whose Request-Access modal is currently open. null when closed.
   const [accessTenant, setAccessTenant] = useState(null);
 
@@ -77,8 +79,16 @@ export default function TenantList({ onSelectTenant }) {
 
   const handleSuspend = async () => {
     const { id } = suspendModal;
+    const password = suspendPassword;
+    const reason = suspendReason;
+    // Close the dialog immediately, then perform the request. Any failure
+    // (e.g. wrong password) surfaces in the page-level error banner.
     setSuspendModal({ open: false, id: null });
-    try { await suspendTenant(id, suspendReason); loadTenants(); }
+    setSuspendPassword('');
+    try {
+      await suspendTenant(id, reason, password);
+      loadTenants();
+    }
     catch (e) { setError(e.response?.data?.error || 'Failed to suspend'); }
   };
 
@@ -89,8 +99,13 @@ export default function TenantList({ onSelectTenant }) {
 
   const handleDelete = async () => {
     const { id } = deleteModal;
+    const password = deletePassword;
     setDeleteModal({ open: false, id: null, name: '' });
-    try { await deleteTenantApi(id, false); loadTenants(); }
+    setDeletePassword('');
+    try {
+      await deleteTenantApi(id, false, password);
+      loadTenants();
+    }
     catch (e) { setError(e.response?.data?.error || 'Failed to delete'); }
   };
 
@@ -164,7 +179,7 @@ export default function TenantList({ onSelectTenant }) {
                 )}
                 {t.status === 'active' && (
                   <button className={s.btnSmall} style={{ color: 'var(--warning)' }}
-                    onClick={() => { setSuspendReason(''); setSuspendModal({ open: true, id: t.id }); }}>
+                    onClick={() => { setSuspendReason(''); setSuspendPassword(''); setSuspendModal({ open: true, id: t.id }); }}>
                     <Pause size={13} /> Suspend
                   </button>
                 )}
@@ -174,10 +189,12 @@ export default function TenantList({ onSelectTenant }) {
                     <Play size={13} /> Reactivate
                   </button>
                 )}
-                <button className={s.btnSmall} style={{ color: 'var(--danger)' }}
-                  onClick={() => setDeleteModal({ open: true, id: t.id, name: t.org_name })}>
-                  <Trash2 size={13} /> Delete
-                </button>
+                {!t.is_default && (
+                  <button className={s.btnSmall} style={{ color: 'var(--danger)' }}
+                    onClick={() => { setDeletePassword(''); setDeleteModal({ open: true, id: t.id, name: t.org_name }); }}>
+                    <Trash2 size={13} /> Delete
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -196,27 +213,54 @@ export default function TenantList({ onSelectTenant }) {
               onChange={e => setSuspendReason(e.target.value)}
               placeholder="Suspension reason…"
               className={s.input}
+              style={{ width: '100%', marginBottom: 10 }}
+            />
+            <p style={{ margin: '0 0 6px' }}>Re-enter your password to confirm:</p>
+            <input
+              type="password"
+              value={suspendPassword}
+              onChange={e => setSuspendPassword(e.target.value)}
+              placeholder="Your password"
+              autoComplete="current-password"
+              className={s.input}
               style={{ width: '100%' }}
-              onKeyDown={e => { if (e.key === 'Enter' && suspendReason.trim()) handleSuspend(); }}
+              onKeyDown={e => { if (e.key === 'Enter' && suspendReason.trim() && suspendPassword) handleSuspend(); }}
             />
           </div>
         }
         confirmText="Suspend"
         cancelText="Cancel"
-        onConfirm={() => { if (suspendReason.trim()) handleSuspend(); }}
-        onCancel={() => setSuspendModal({ open: false, id: null })}
+        onConfirm={() => { if (suspendReason.trim() && suspendPassword) handleSuspend(); }}
+        onCancel={() => { setSuspendModal({ open: false, id: null }); setSuspendPassword(''); }}
       />
 
       {/* Delete dialog */}
       <ConfirmDialog
         isOpen={deleteModal.open}
         title="Delete Tenant"
-        message={`Are you sure you want to delete "${deleteModal.name}"? This marks the tenant as deleted.`}
+        message={
+          <div>
+            <p style={{ margin: '0 0 10px' }}>
+              Are you sure you want to delete "{deleteModal.name}"? This marks the tenant as deleted and is recorded in the audit log.
+            </p>
+            <p style={{ margin: '0 0 6px' }}>Re-enter your password to confirm:</p>
+            <input
+              type="password"
+              value={deletePassword}
+              onChange={e => setDeletePassword(e.target.value)}
+              placeholder="Your password"
+              autoComplete="current-password"
+              className={s.input}
+              style={{ width: '100%' }}
+              onKeyDown={e => { if (e.key === 'Enter' && deletePassword) handleDelete(); }}
+            />
+          </div>
+        }
         confirmText="Delete"
         cancelText="Cancel"
         isDanger
-        onConfirm={handleDelete}
-        onCancel={() => setDeleteModal({ open: false, id: null, name: '' })}
+        onConfirm={() => { if (deletePassword) handleDelete(); }}
+        onCancel={() => { setDeleteModal({ open: false, id: null, name: '' }); setDeletePassword(''); }}
       />
 
       {/* Consent-gated impersonation modal — same component used in TenantDetail */}

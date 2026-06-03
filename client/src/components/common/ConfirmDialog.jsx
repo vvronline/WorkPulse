@@ -15,13 +15,23 @@ export default function ConfirmDialog({
 }) {
     const modalRef = useRef(null);
 
+    // Keep the latest onCancel without making it an effect dependency.
+    // TenantList (and other callers) pass an inline arrow function for
+    // onCancel, so its identity changes on every render. If the focus
+    // effect below depended on it, every keystroke in a message input
+    // would re-run the effect and steal focus back to the first button
+    // (you could only type one character). Reading it through a ref keeps
+    // the effect stable (open/close only).
+    const onCancelRef = useRef(onCancel);
+    useEffect(() => { onCancelRef.current = onCancel; }, [onCancel]);
+
     // Focus trap and Escape key handler
     useEffect(() => {
         if (!isOpen) return;
 
         const handleKeyDown = (e) => {
             if (e.key === 'Escape') {
-                onCancel();
+                onCancelRef.current?.();
                 return;
             }
             if (e.key === 'Tab') {
@@ -55,7 +65,7 @@ export default function ConfirmDialog({
             document.removeEventListener('keydown', handleKeyDown);
             clearTimeout(timer);
         };
-    }, [isOpen, onCancel]);
+    }, [isOpen]);
 
     if (!isOpen) return null;
 
@@ -67,7 +77,7 @@ export default function ConfirmDialog({
                     <button className={s.closeBtn} onClick={onCancel}><X size={16} /></button>
                 </div>
                 <div className={s.body}>
-                    <p>{message}</p>
+                    {typeof message === 'string' ? <p>{message}</p> : message}
                 </div>
                 <div className={s.footer}>
                     <button className={s.cancelBtn} onClick={onCancel}>{cancelText}</button>

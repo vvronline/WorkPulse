@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   getTenant, getTenantStats, getTenantUsers,
-  suspendTenant, reactivateTenant, updateTenantDomain, updateTenantLimits,
+  suspendTenant, reactivateTenant, deleteTenantApi, updateTenantDomain, updateTenantLimits,
   getAdminOrganizations, updateAdminOrganization,
   getPlanCatalog, updateTenantPlan, updateTenantFeatures,
 } from '../../api';
@@ -55,6 +55,13 @@ export default function TenantDetail({ tenantId, onBack }) {
   const [tab, setTab] = useState('overview');
   const [editingOrg, setEditingOrg] = useState(null);
   const [showAccessModal, setShowAccessModal] = useState(false);
+  // Password-confirm modal for destructive lifecycle actions (suspend/delete).
+  // { action: 'suspend' | 'delete', hard?: boolean }
+  const [confirmAction, setConfirmAction] = useState(null);
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [confirmReason, setConfirmReason] = useState('');
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmError, setConfirmError] = useState('');
 
   const loadData = useCallback(async () => {
     try {
@@ -85,14 +92,37 @@ export default function TenantDetail({ tenantId, onBack }) {
   // refactor — see RequestAccessModal for the new UX.
   const openAccessFlow = () => setShowAccessModal(true);
 
-  const handleSuspend = async () => {
-    try { await suspendTenant(tenantId, 'Suspended by platform admin'); loadData(); }
-    catch (e) { setError(e.response?.data?.error || 'Failed'); }
-  };
-
   const handleReactivate = async () => {
     try { await reactivateTenant(tenantId); loadData(); }
     catch (e) { setError(e.response?.data?.error || 'Failed'); }
+  };
+
+  const openConfirm = (action, opts = {}) => {
+    setConfirmAction({ action, ...opts });
+    setConfirmPassword('');
+    setConfirmReason(action === 'suspend' ? 'Suspended by platform admin' : '');
+    setConfirmError('');
+  };
+
+  const submitConfirm = async (e) => {
+    e.preventDefault();
+    if (!confirmPassword) { setConfirmError('Password is required.'); return; }
+    setConfirmBusy(true); setConfirmError('');
+    try {
+      if (confirmAction.action === 'suspend') {
+        await suspendTenant(tenantId, confirmReason || 'Suspended by platform admin', confirmPassword);
+        setConfirmAction(null);
+        loadData();
+      } else if (confirmAction.action === 'delete') {
+        await deleteTenantApi(tenantId, confirmAction.hard, confirmPassword);
+        setConfirmAction(null);
+        onBack();
+      }
+    } catch (err) {
+      setConfirmError(err.response?.data?.error || 'Action failed');
+    } finally {
+      setConfirmBusy(false);
+    }
   };
 
   const handleOrgUpdate = async (id, data) => {
@@ -130,7 +160,7 @@ export default function TenantDetail({ tenantId, onBack }) {
             </button>
           )}
           {tenant.status === 'active' && (
-            <button className={s.btnSmall} style={{ color: 'var(--warning)' }} onClick={handleSuspend}>
+            <button className={s.btnSmall} style={{ color: 'var(--warning)' }} onClick={() => openConfirm('suspend')}>
               <Pause size={14} /> Suspend
             </button>
           )}
@@ -139,13 +169,21 @@ export default function TenantDetail({ tenantId, onBack }) {
               <Play size={14} /> Reactivate
             </button>
           )}
+          {!tenant.is_default && tenant.status !== 'deleted' && (
+            <button className={s.btnSmall} style={{ color: 'var(--danger)' }} onClick={() => openConfirm('delete', { hard: false })}>
+              <X size={14} /> Delete
+            </button>
+          )}
         </div>
       </div>
 
       <div className={s.detailTabs}>
         {[
           { key: 'overview', label: 'Overview', icon: BarChart3 },
-          { key: 'users', label: `Users (${users.length})`, icon: Users },
+          // Individual user data (PII) is only exposed for the default tenant —
+          // for privacy, every other tenant's user list is hidden here. The
+          // aggregate user count is still surfaced on the Overview tab.
+          ...(tenant.is_default ? [{ key: 'users', label: `Users (${users.length})`, icon: Users }] : []),
           { key: 'departments', label: 'Departments', icon: Building },
           { key: 'teams', label: 'Teams', icon: UsersRound },
           { key: 'chart', label: 'Org Chart', icon: GitBranch },
@@ -179,8 +217,8 @@ export default function TenantDetail({ tenantId, onBack }) {
         </div>
       )}
 
-      {/* Users */}
-      {tab === 'users' && (
+      {/* Users — default tenant only (PII privacy guard) */}
+      {tab === 'users' && tenant.is_default && (
         <div>
           {users.length === 0 ? <div className={s.emptyMsg}>No users found</div> : (
             <table className={s.table}>
@@ -224,6 +262,64 @@ export default function TenantDetail({ tenantId, onBack }) {
           tenant={tenant}
           onClose={() => setShowAccessModal(false)}
         />
+      )}
+
+      {confirmAction && (
+        <div className={s.modalScrim} onClick={() => !confirmBusy && setConfirmAction(null)}>
+          <div className={s.modalCard} onClick={e => e.stopPropagation()} style={{ maxWidth: 440 }}>
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <Shield size={18} />
+              {confirmAction.action === 'suspend' ? 'Suspend tenant' : 'Delete tenant'}
+            </h3>
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+              {confirmAction.action === 'suspend'
+                ? `This will suspend "${tenant.org_name}" and block all its users from signing in.`
+                : `This will ${confirmAction.hard ? 'PERMANENTLY delete' : 'mark as deleted'} "${tenant.org_name}". This action is recorded in the audit log.`}
+              {' '}Re-enter your password to confirm.
+            </p>
+            {confirmError && <div className={s.errorBanner}><span className={s.errorText}>{confirmError}</span></div>}
+            <form onSubmit={submitConfirm}>
+              {confirmAction.action === 'suspend' && (
+                <div style={{ marginBottom: 10 }}>
+                  <label className={s.fieldLabel}>Reason (optional)</label>
+                  <input
+                    type="text"
+                    value={confirmReason}
+                    onChange={e => setConfirmReason(e.target.value)}
+                    className={s.inputFull}
+                    placeholder="Reason for suspension"
+                  />
+                </div>
+              )}
+              <div style={{ marginBottom: 12 }}>
+                <label className={s.fieldLabel}>Your password</label>
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                  className={s.inputFull}
+                  placeholder="Enter your password"
+                  autoFocus
+                  autoComplete="current-password"
+                  required
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button type="button" className={s.btnSmall} onClick={() => setConfirmAction(null)} disabled={confirmBusy}>
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className={s.btnPrimary}
+                  style={{ color: confirmAction.action === 'delete' ? 'var(--danger)' : undefined }}
+                  disabled={confirmBusy}
+                >
+                  {confirmBusy ? 'Working…' : confirmAction.action === 'suspend' ? 'Suspend' : 'Delete'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

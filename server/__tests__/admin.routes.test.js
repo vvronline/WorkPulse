@@ -25,6 +25,21 @@ jest.mock('../utils/audit', () => ({
     queryLogs: jest.fn().mockResolvedValue({ rows: [], total: 0 }),
 }));
 
+jest.mock('../utils/platformConfig', () => ({
+    getPasswordPolicy: jest.fn().mockResolvedValue({
+        minLength: 8, requireUppercase: true, requireNumber: true, requireSpecial: true,
+    }),
+    isMaintenanceMode: jest.fn().mockResolvedValue(false),
+    getMaintenanceMessage: jest.fn().mockResolvedValue(''),
+    getAllowedEmailDomains: jest.fn().mockResolvedValue([]),
+    getPlatformConfig: jest.fn().mockResolvedValue({}),
+    getSessionTimeout: jest.fn().mockResolvedValue(480),
+    getRetentionPolicy: jest.fn().mockResolvedValue({ auditLogRetentionDays: 365, deletedTenantCleanupDays: 90, sessionLogRetentionDays: 90 }),
+    updatePlatformConfig: jest.fn().mockResolvedValue({}),
+    PLATFORM_KEYS: [],
+    DEFAULTS: {},
+}));
+
 const jwt = require('jsonwebtoken');
 const request = require('supertest');
 

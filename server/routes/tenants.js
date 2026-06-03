@@ -40,6 +40,44 @@ const router = express.Router();
 router.use(auth, loadUserContext, requireRole('platform_admin'));
 
 /**
+ * Re-verify the acting platform admin's password before a destructive
+ * tenant action (suspend / delete). Defends against session-cookie theft
+ * and gives a fresh proof-of-identity moment for the audit trail.
+ *
+ * Works in both auth contexts:
+ *   • pure platform user (no tenant)  → checks master `platform_users`.
+ *   • platform admin in tenant ctx    → checks the tenant `users` row
+ *     (its password hash is mirrored from the platform account on login).
+ *
+ * Returns { ok: true, actor } | { status, error, code? }.
+ */
+async function verifyActorPassword(req, password) {
+    if (!password || typeof password !== 'string') {
+        return { status: 400, error: 'Your password is required to confirm this action.', code: 'REAUTH_REQUIRED' };
+    }
+    let actor;
+    if (req.tenantId) {
+        actor = (await req.db.query(
+            'SELECT id, password, full_name, is_active FROM users WHERE id = $1',
+            [req.userId],
+        )).rows[0];
+    } else {
+        actor = (await masterQuery(
+            'SELECT id, password, full_name, is_active FROM platform_users WHERE id = $1',
+            [req.userId],
+        )).rows[0];
+    }
+    if (!actor || actor.is_active === false) {
+        return { status: 403, error: 'Your account is no longer active.' };
+    }
+    const ok = await bcrypt.compare(password, actor.password);
+    if (!ok) {
+        return { status: 401, error: 'Password did not match. Please try again.', mismatch: true, actor };
+    }
+    return { ok: true, actor };
+}
+
+/**
  * Build session summary from in-memory session data.
  */
 function buildSessionSummary(session) {
@@ -297,6 +335,25 @@ router.put('/platform-users/:id/deactivate', async (req, res) => {
         if (!target) return res.status(404).json({ error: 'Platform user not found' });
 
         const newActive = !target.is_active;
+
+        // Guard against locking everyone out of the platform: never allow the
+        // last active platform admin to be deactivated. (The self-deactivate
+        // guard above already protects the common case, but this defends
+        // against deactivating the *other* admin when only two remain and one
+        // is already inactive.)
+        if (!newActive && target.is_active) {
+            const activeCount = parseInt(
+                (await masterQuery('SELECT COUNT(*) FROM platform_users WHERE is_active = TRUE')).rows[0].count,
+                10,
+            );
+            if (activeCount <= 1) {
+                return res.status(400).json({
+                    error: 'Cannot deactivate the last active platform admin. Create or reactivate another platform admin first.',
+                    code: 'LAST_PLATFORM_ADMIN',
+                });
+            }
+        }
+
         await masterQuery('UPDATE platform_users SET is_active = $1, updated_at = NOW() WHERE id = $2', [newActive, uid]);
 
         logPlatformAction(req, newActive ? 'platform_admin_reactivated' : 'platform_admin_deactivated', 'platform_user', uid, { full_name: target.full_name });
@@ -898,17 +955,41 @@ router.put('/:id', async (req, res) => {
 });
 
 // PUT /admin/tenants/:id/suspend
+// Requires the acting platform admin to re-enter their password. The action
+// (with the actor's identity) is recorded in the platform audit log.
 router.put('/:id/suspend', async (req, res) => {
     try {
-        const { reason } = req.body;
+        const { reason, password } = req.body || {};
         const tid = Number(req.params.id);
+
+        // Prevent suspension of the default (master) tenant. Suspending it would
+        // 503 the default workspace and break email-based login routing for
+        // platform admins (see auth.js resolveDefaultDomainUser), so it is
+        // blocked here exactly like deletion is.
+        const defaultCheck = await masterQuery('SELECT is_default FROM tenants WHERE id = $1', [tid]);
+        if (defaultCheck.rows[0]?.is_default) {
+            return res.status(403).json({ error: 'The default platform tenant cannot be suspended.' });
+        }
+
+        const check = await verifyActorPassword(req, password);
+        if (!check.ok) {
+            if (check.mismatch) {
+                logPlatformAction(req, 'tenant_suspend_reauth_failed', 'tenant', tid, {}, tid);
+            }
+            return res.status(check.status).json({ error: check.error, code: check.code });
+        }
+
         const tenant = await suspendTenant(tid, reason);
         if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
 
         await redis.del(`tenant:id:${tid}`);
         if (tenant.custom_domain) await redis.del(`tenant:domain:${tenant.custom_domain}`);
 
-        logPlatformAction(req, 'tenant_suspended', 'tenant', tid, { reason }, tid);
+        logPlatformAction(req, 'tenant_suspended', 'tenant', tid, {
+            reason,
+            actor_id: check.actor.id,
+            actor_name: check.actor.full_name,
+        }, tid);
         res.json({ tenant });
     } catch (err) {
         logger.error({ err }, 'Suspend tenant error');
@@ -935,6 +1016,9 @@ router.put('/:id/reactivate', async (req, res) => {
 });
 
 // DELETE /admin/tenants/:id?hard=true
+// Requires the acting platform admin to re-enter their password (accepted via
+// the request body — DELETE with a JSON body). The action (with the actor's
+// identity) is recorded in the platform audit log.
 router.delete('/:id', async (req, res) => {
     try {
         const tid = Number(req.params.id);
@@ -945,13 +1029,26 @@ router.delete('/:id', async (req, res) => {
             return res.status(403).json({ error: 'The default platform tenant cannot be deleted.' });
         }
 
+        const { password } = req.body || {};
+        const check = await verifyActorPassword(req, password);
+        if (!check.ok) {
+            if (check.mismatch) {
+                logPlatformAction(req, 'tenant_delete_reauth_failed', 'tenant', tid, {}, tid);
+            }
+            return res.status(check.status).json({ error: check.error, code: check.code });
+        }
+
         const hard = req.query.hard === 'true';
         const result = await deleteTenant(tid, hard);
         if (!result) return res.status(404).json({ error: 'Tenant not found' });
 
         await redis.del(`tenant:id:${tid}`);
 
-        logPlatformAction(req, hard ? 'tenant_hard_deleted' : 'tenant_soft_deleted', 'tenant', tid, null, tid);
+        logPlatformAction(req, hard ? 'tenant_hard_deleted' : 'tenant_soft_deleted', 'tenant', tid, {
+            hard,
+            actor_id: check.actor.id,
+            actor_name: check.actor.full_name,
+        }, tid);
         res.json({ message: hard ? 'Tenant permanently deleted.' : 'Tenant marked as deleted.' });
     } catch (err) {
         logger.error({ err }, 'Delete tenant error');
