@@ -49,7 +49,18 @@ const storage = multer.diskStorage({
         }
     },
     filename(_req, file, cb) {
-        const ext = path.extname(file.originalname).toLowerCase().slice(0, 6) || '.png';
+        // Derive the stored extension from the validated MIME type, never from
+        // the user-supplied originalname (which could carry a misleading or
+        // unsafe extension). fileFilter below restricts mimetype to images.
+        const MIME_EXT = {
+            'image/png': '.png',
+            'image/jpeg': '.jpg',
+            'image/jpg': '.jpg',
+            'image/gif': '.gif',
+            'image/webp': '.webp',
+            'image/svg+xml': '.svg',
+        };
+        const ext = MIME_EXT[String(file.mimetype).toLowerCase()] || '.png';
         cb(null, `logo-${Date.now()}${ext}`);
     },
 });

@@ -253,6 +253,12 @@ app.use('/uploads', authMiddleware, async (req, res, next) => {
             return res.status(403).json({ error: 'Forbidden' });
         }
     }
+    // Uploaded files may include user-supplied SVGs (avatars, chat files,
+    // logos) which the browser executes as an active document if opened
+    // directly — a stored-XSS vector. Forbid MIME sniffing and sandbox the
+    // response so embedded script can't run. (Does not affect <img> embedding.)
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
     next();
 }, express.static(path.join(__dirname, 'uploads')));
 

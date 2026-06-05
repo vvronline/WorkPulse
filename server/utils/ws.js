@@ -37,6 +37,11 @@ const { chatMessage } = require('./wsHandlers/chatMessage');
 // already harden with its own try/catch).
 const WS_HANDLER_DEFAULT_TIMEOUT_MS = 5_000;
 
+// How often (per socket) to re-validate the JWT's token_version against the
+// live value while the socket is open. Closes sockets whose session was
+// revoked (logout / forced sign-out / password change) or whose JWT expired.
+const WS_AUTH_RECHECK_MS = 60_000;
+
 /** Map<clientKey, Set<WebSocket>> — local instance connections, keyed by tenantId:userId */
 const clients = new Map();
 
@@ -67,6 +72,60 @@ const INSTANCE_ID = `ws-${process.pid}-${Date.now()}`;
 /** Composite key for the clients Map to prevent cross-tenant collisions */
 function clientKey(tenantId, userId) {
     return `${tenantId || 0}:${userId}`;
+}
+
+// ── WS relay membership cache ──────────────────────────────────────────────
+// WebRTC signaling (ICE candidates / *-state) trickles at high frequency; a
+// DB round-trip per frame would exhaust the connection pool. We cache
+// per-(room-kind, roomId, userId) membership for a short TTL so every relay
+// can cheaply verify BOTH the sender AND the target are members of the
+// conversation/meeting before forwarding. This closes the IDOR where any
+// authenticated tenant user could inject signaling/control frames to an
+// arbitrary userId. A removed/revoked participant is shut out within
+// MEMBERSHIP_TTL_MS. Checks fail CLOSED on DB error.
+const _membershipCache = new Map(); // key -> { ok: boolean, expiresAt: number }
+const MEMBERSHIP_TTL_MS = 10_000;
+const MEMBERSHIP_CACHE_MAX = 5000;
+
+async function _checkMembership(db, key, sql, params) {
+    const now = Date.now();
+    const cached = _membershipCache.get(key);
+    if (cached && cached.expiresAt > now) return cached.ok;
+    let ok = false;
+    try {
+        ok = !!(await db.query(sql, params)).rows[0];
+    } catch (err) {
+        logger.warn({ err: err.message, key }, 'ws membership check failed');
+        return false; // fail closed — don't relay if we can't verify
+    }
+    _membershipCache.set(key, { ok, expiresAt: now + MEMBERSHIP_TTL_MS });
+    if (_membershipCache.size > MEMBERSHIP_CACHE_MAX) {
+        const oldest = _membershipCache.keys().next().value;
+        _membershipCache.delete(oldest);
+    }
+    return ok;
+}
+
+/** Is `userId` a participant of the given conversation? (cached) */
+async function isConversationMember(db, conversationId, userId) {
+    if (!conversationId || !userId) return false;
+    return _checkMembership(
+        db,
+        `conv:${conversationId}:${userId}`,
+        'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
+        [conversationId, userId],
+    );
+}
+
+/** Is `userId` a participant (joined or invited) of the given meeting? (cached) */
+async function isMeetingMember(db, meetingId, userId) {
+    if (!meetingId || !userId) return false;
+    return _checkMembership(
+        db,
+        `meet:${meetingId}:${userId}`,
+        `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status IN ('joined','invited')`,
+        [meetingId, userId],
+    );
 }
 
 function setupWebSocket(server) {
@@ -169,6 +228,13 @@ function setupWebSocket(server) {
                 ws.close(4001, 'Token revoked');
                 return;
             }
+            // Stash the token version + JWT expiry so the message handler can
+            // periodically re-validate. Without this, a socket opened before a
+            // logout / forced-revoke / password change stays fully functional
+            // forever because the token version is otherwise only checked once.
+            ws._tokenVersion = tokenVersion;
+            ws._tokenExpMs = payload.exp ? payload.exp * 1000 : null;
+            ws._lastAuthCheckAt = Date.now();
         } catch {
             ws.close(4001, 'Auth check failed');
             return;
@@ -219,6 +285,37 @@ function setupWebSocket(server) {
             // Per-connection rate limiting: max 60 messages per second
             // (WebRTC ICE candidate trickling can burst during call setup)
             const now = Date.now();
+
+            // Re-validate the session periodically (and on JWT expiry) so a
+            // socket opened before a logout / forced-revoke / password change
+            // is torn down instead of remaining fully functional. The check is
+            // throttled and runs asynchronously so it never blocks message
+            // dispatch; it fails open on transient Redis/DB errors.
+            if (ws._tokenExpMs && now > ws._tokenExpMs) {
+                ws.close(4001, 'Token expired');
+                return;
+            }
+            if (!ws._authCheckInFlight && now - (ws._lastAuthCheckAt || 0) > WS_AUTH_RECHECK_MS) {
+                ws._lastAuthCheckAt = now;
+                ws._authCheckInFlight = true;
+                Promise.resolve()
+                    .then(async () => {
+                        let dbTv = await redis.getTokenVersion(tenantId, userId);
+                        if (dbTv === null) {
+                            const row = (await db.query('SELECT token_version FROM users WHERE id = $1', [userId])).rows[0];
+                            if (!row) { ws.close(4001, 'Token revoked'); return; }
+                            dbTv = row.token_version || 0;
+                            await redis.setTokenVersion(tenantId, userId, dbTv);
+                        }
+                        if ((ws._tokenVersion ?? 0) !== dbTv) {
+                            logger.debug({ userId, tenantId }, 'WS session revoked — closing socket');
+                            ws.close(4001, 'Session revoked');
+                        }
+                    })
+                    .catch(() => { /* fail open on transient error */ })
+                    .finally(() => { ws._authCheckInFlight = false; });
+            }
+
             if (!ws._rlWindow || now - ws._rlWindow > 1000) {
                 ws._rlWindow = now;
                 ws._rlCount = 0;
@@ -793,22 +890,15 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
             if (typeof signal.videoOff !== 'boolean') return;
         }
 
-        // For offer/answer: verify both sender and target are in the conversation.
-        // For ICE candidates: skip DB checks to avoid pool exhaustion during rapid trickle.
-        // (Both parties were already verified during call_initiate / call_accept.)
-        if (signal.type === 'offer' || signal.type === 'answer') {
-            const senderOk = (await db.query(
-                'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
-                [conversationId, senderId]
-            )).rows[0];
-            const targetOk = (await db.query(
-                'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
-                [conversationId, targetUserId]
-            )).rows[0];
-            if (!senderOk || !targetOk) {
-                logger.warn({ senderId, targetUserId, conversationId, senderOk: !!senderOk, targetOk: !!targetOk, signalType: signal.type }, 'call_signal: participant check failed');
-                return;
-            }
+        // Verify BOTH sender and target are members of the conversation for
+        // EVERY signal type (not just offer/answer). ICE/state frames were
+        // previously relayed with no membership check, letting any tenant user
+        // inject signaling to an arbitrary userId. Cached to survive ICE bursts.
+        const senderOk = await isConversationMember(db, conversationId, senderId);
+        const targetOk = await isConversationMember(db, conversationId, targetUserId);
+        if (!senderOk || !targetOk) {
+            logger.warn({ senderId, targetUserId, conversationId, senderOk, targetOk, signalType: signal.type }, 'call_signal: participant check failed');
+            return;
         }
 
         logger.debug({ senderId, targetUserId, conversationId, signalType: signal.type, tenantId }, 'call_signal: relaying');
@@ -857,11 +947,12 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
         if (!conversationId || !targetUserId || !emoji) return;
         const allowedEmojis = ['\u{1F44D}', '\u{1F44F}', '\u{2764}\u{FE0F}', '\u{1F602}', '\u{1F389}', '\u{1F914}'];
         if (!allowedEmojis.includes(emoji)) return;
-        const participant = (await db.query(
-            'SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2',
-            [conversationId, senderId]
-        )).rows[0];
-        if (!participant) return;
+        // Both sender AND target must be in the conversation — otherwise a
+        // participant could spam reactions at arbitrary users (privacy/harassment).
+        const senderInConv = await isConversationMember(db, conversationId, senderId);
+        if (!senderInConv) return;
+        const targetInConv = await isConversationMember(db, conversationId, targetUserId);
+        if (!targetInConv) return;
         sendToUser(tenantId, targetUserId, 'call_reaction', {
             conversationId,
             fromUserId: senderId,
@@ -1153,18 +1244,15 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
         const { meetingId, targetUserId, signal } = msg.data || {};
         if (!meetingId || !targetUserId || !signal) return;
 
-        // For offer/answer: verify sender is a joined participant.
-        // For ICE candidates: skip DB checks to avoid pool exhaustion during rapid trickle.
-        // (Both parties were verified during meeting_join.)
-        if (signal.type === 'offer' || signal.type === 'answer') {
-            const senderOk = (await db.query(
-                `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
-                [meetingId, senderId]
-            )).rows[0];
-            if (!senderOk) {
-                logger.warn({ senderId, targetUserId, meetingId, signalType: signal.type }, 'meeting_signal: sender not joined');
-                return;
-            }
+        // Verify BOTH sender and target are participants of the meeting for
+        // EVERY signal type. Previously only offer/answer checked the sender
+        // (never the target) and ICE skipped all checks, letting any tenant
+        // user inject mesh signaling to an arbitrary userId. Cached for ICE bursts.
+        const senderOk = await isMeetingMember(db, meetingId, senderId);
+        const targetOk = await isMeetingMember(db, meetingId, targetUserId);
+        if (!senderOk || !targetOk) {
+            logger.warn({ senderId, targetUserId, meetingId, senderOk, targetOk, signalType: signal?.type }, 'meeting_signal: participant check failed');
+            return;
         }
 
         logger.debug({ senderId, targetUserId, meetingId, signalType: signal.type, tenantId }, 'meeting_signal: relaying');
@@ -1327,6 +1415,11 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
         const { meetingId, targetUserId, level } = msg.data || {};
         if (!meetingId || !targetUserId) return;
         if (!['q', 'h', 'f'].includes(level)) return;
+        // Verify sender and target are both meeting participants before relaying
+        // — otherwise any user could force an arbitrary user's encoder to the
+        // lowest bitrate (media-sabotage DoS). Cached.
+        if (!(await isMeetingMember(db, meetingId, senderId))) return;
+        if (!(await isMeetingMember(db, meetingId, targetUserId))) return;
         sendToUser(tenantId, targetUserId, 'meeting_request_quality', {
             meetingId,
             fromUserId: senderId,
@@ -1371,6 +1464,11 @@ async function handleChatMessage(db, senderId, tenantId, msg, ws) {
         // needed since both peers were already verified at meeting_join.
         const { meetingId, targetUserId, sharing, trackId } = msg.data || {};
         if (!meetingId || !targetUserId) return;
+        // Verify sender and target are both meeting participants before relaying
+        // — otherwise any user could inject screen-routing signals at an
+        // arbitrary user. Cached.
+        if (!(await isMeetingMember(db, meetingId, senderId))) return;
+        if (!(await isMeetingMember(db, meetingId, targetUserId))) return;
         sendToUser(tenantId, targetUserId, 'meeting_screen_track_id', {
             meetingId,
             fromUserId: senderId,
@@ -1749,4 +1847,4 @@ async function notifyUser(db, tenantId, userId, type, title, body, linkTaskId) {
     } catch { /* ignore — notification delivery is best-effort */ }
 }
 
-module.exports = { setupWebSocket, sendToUser, broadcast, notifyUser };
+module.exports = { setupWebSocket, sendToUser, broadcast, notifyUser, handleChatMessage, isConversationMember, isMeetingMember };

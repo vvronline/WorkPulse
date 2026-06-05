@@ -145,6 +145,12 @@ router.get('/branding/logo', async (req, res) => {
     }
     if (!fs.existsSync(abs)) return res.status(404).json({ error: 'Not found' });
 
+    // Logos can be SVG, which the browser will execute as an active document
+    // (inline <script>) if opened directly — a stored-XSS vector on this
+    // PUBLIC, same-origin endpoint. Neutralise it: forbid MIME sniffing and
+    // sandbox the response so any embedded script can't run.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
     res.sendFile(abs);
 });
 
