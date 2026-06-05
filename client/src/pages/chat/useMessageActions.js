@@ -99,7 +99,25 @@ export default function useMessageActions(state) {
 
     const handleReact = async (msgId, emoji) => {
         if (String(msgId).startsWith('pending_')) return;
-        try { await toggleReaction(msgId, emoji); } catch { /* ignore */ }
+        // Optimistic toggle: update UI immediately, the WS echo reconciles.
+        const toggle = (prev) => prev.map(m => {
+            if (m.id !== msgId) return m;
+            const reactions = m.reactions || [];
+            const mine = reactions.some(r => r.userId === user.id && r.emoji === emoji);
+            return {
+                ...m,
+                reactions: mine
+                    ? reactions.filter(r => !(r.userId === user.id && r.emoji === emoji))
+                    : [...reactions, { userId: user.id, fullName: user.full_name, emoji }],
+            };
+        });
+        setMessages(toggle);
+        try {
+            await toggleReaction(msgId, emoji);
+        } catch {
+            // Revert on failure (toggle is its own inverse).
+            setMessages(toggle);
+        }
     };
 
     const handleForward = (msg) => {

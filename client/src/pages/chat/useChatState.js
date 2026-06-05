@@ -162,7 +162,10 @@ export default function useChatState() {
                         if (m.id !== d.messageId) return m;
                         let reactions = [...(m.reactions || [])];
                         if (d.action === 'added') {
-                            reactions.push({ userId: d.userId, fullName: d.fullName, emoji: d.emoji });
+                            // Idempotent: avoid duplicating an optimistically-added reaction.
+                            if (!reactions.some(r => r.userId === d.userId && r.emoji === d.emoji)) {
+                                reactions.push({ userId: d.userId, fullName: d.fullName, emoji: d.emoji });
+                            }
                         } else {
                             reactions = reactions.filter(r => !(r.userId === d.userId && r.emoji === d.emoji));
                         }
