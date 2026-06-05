@@ -30,7 +30,7 @@ export default function NotesPage() {
   const isEditor = store.view !== 'home';
 
   return (
-    <div className={`notesScope ${s.page} ${isEditor ? s.pageEditor : ''}`}>
+    <div className={`notesScope ${s.page} ${s.pageEditor}`}>
       {isEditor
         ? <NotesModal store={store} embedded />
         : <NotesHome store={store} />}

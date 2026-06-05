@@ -1,6 +1,7 @@
 /* ─────────────────────────────────────────────────────────
-   NotesHome — clean, calm, simple styling.
-   Uses tokens from notesTokens.css (.notesScope wrapper).
+   NotesHome — redesigned dashboard with a left sidebar +
+   centered main canvas. Driven by the themeable --notes-*
+   tokens (notesTokens.css) so it respects theme + brand.
    ───────────────────────────────────────────────────────── */
 
 @keyframes fadeInUp {
@@ -11,41 +12,189 @@
 .home {
     flex: 1;
     min-height: 0;
-    overflow-y: auto;
-    padding: 1.5rem clamp(1rem, 4vw, 3rem) 3rem;
+    width: 100%;
+    display: flex;
     background: var(--notes-surface-0, var(--bg-primary));
     animation: fadeInUp 0.24s var(--notes-ease, ease);
     box-sizing: border-box;
-    max-width: 1180px;
-    margin: 0 auto;
-    width: 100%;
+    overflow: hidden;
 }
 
-/* ───── Header ──────────────────────────────────────────── */
-.header {
+/* ════════════════ Sidebar ════════════════════════════════ */
+.sidebar {
+    width: 280px;
+    flex-shrink: 0;
+    height: 100%;
     display: flex;
-    align-items: flex-end;
+    flex-direction: column;
+    background: var(--notes-surface-1, #1b1b1d);
+    border-right: 1px solid var(--notes-border);
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.sideUser {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1.25rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--notes-border) 60%, transparent);
+}
+.avatar {
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    overflow: hidden;
+    flex-shrink: 0;
+    background: var(--notes-accent-soft);
+    border: 1px solid var(--notes-border);
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--notes-accent);
+    font-weight: 700;
+    font-size: 1rem;
+}
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.sideUserText { min-width: 0; display: flex; flex-direction: column; }
+.sideUserName {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--notes-text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sideUserPlan {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--notes-accent);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.sideCta { padding: 1rem; }
+.notebookInput {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.6rem 0.85rem;
+    border-radius: var(--notes-radius-md);
+    border: 1px solid var(--notes-accent);
+    background: var(--notes-surface-elev);
+    color: var(--notes-text);
+    font-size: 0.85rem;
+    font-weight: 500;
+    outline: none;
+}
+.notebookInput::placeholder { color: var(--notes-text-muted); font-weight: 400; }
+.notebookBtn {
+    width: 100%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    border-radius: var(--notes-radius-md);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--notes-accent);
+    color: var(--on-primary, #fff);
+    border: none;
+    transition: opacity 0.15s, transform 0.15s var(--notes-ease);
+}
+.notebookBtn:hover { opacity: 0.92; transform: translateY(-1px); }
+
+/* ── Primary nav + tree (scrolls) ───────────────────────── */
+.sideNav {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0.5rem 0.5rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+.navLink {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    border-left: 3px solid transparent;
+    color: var(--notes-text-muted);
+    padding: 0.7rem 0.85rem;
+    border-radius: 0 var(--notes-radius-md) var(--notes-radius-md) 0;
+    cursor: pointer;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    transition: background 0.15s, color 0.15s;
+}
+.navLink:hover {
+    background: var(--notes-surface-2);
+    color: var(--notes-text);
+}
+.navLinkActive {
+    background: var(--notes-accent-soft);
+    color: var(--notes-accent);
+    border-left-color: var(--notes-accent);
+}
+.navLink svg { flex-shrink: 0; }
+
+.sideTree {
+    margin-top: 1.25rem;
+    min-width: 0;
+    scroll-margin-top: 1rem;
+}
+
+/* ════════════════ Main canvas ════════════════════════════ */
+.main {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    background: var(--notes-surface-0, var(--bg-primary));
+}
+
+/* ───── Header (scrolls with content) ───────────────────── */
+.header {
+    position: static;
+    background: var(--notes-surface-0, #131315);
+    border-bottom: 1px solid var(--notes-border);
+}
+.headerInner {
+    width: 100%;
+    margin: 0 auto;
+    padding: 1.75rem clamp(1.5rem, 4vw, 3rem) 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    box-sizing: border-box;
+}
+.headerTop {
+    display: flex;
+    align-items: flex-start;
     justify-content: space-between;
     gap: 1.25rem;
     flex-wrap: wrap;
-    margin-bottom: 1rem;
 }
 .headerText { min-width: 0; }
 .headerDate {
-    font-size: 0.74rem;
+    font-size: 0.72rem;
     color: var(--notes-text-muted);
-    margin: 0 0 0.3rem;
+    margin: 0 0 0.4rem;
     text-transform: uppercase;
-    letter-spacing: 0.07em;
+    letter-spacing: 0.12em;
     font-weight: 600;
 }
 .greeting {
-    font-size: clamp(1.5rem, 2vw, 1.9rem);
+    font-size: clamp(1.9rem, 4vw, 3rem);
     font-weight: 700;
     color: var(--notes-text);
-    margin: 0 0 0.3rem;
-    line-height: 1.15;
-    letter-spacing: -0.01em;
+    margin: 0 0 0.55rem;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
 }
 .name { color: var(--notes-accent); }
 .meta {
@@ -55,7 +204,7 @@
     display: inline-flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 0.4rem;
+    gap: 0.85rem;
 }
 .dot { opacity: 0.5; }
 
@@ -63,13 +212,13 @@
     display: inline-flex;
     align-items: center;
     gap: 0.45rem;
-    padding: 0.6rem 1rem;
+    padding: 0.6rem 1.1rem;
     border-radius: var(--notes-radius-md);
-    font-size: 0.85rem;
+    font-size: 0.88rem;
     font-weight: 600;
     cursor: pointer;
     background: var(--notes-accent);
-    color: #fff;
+    color: var(--on-primary, #fff);
     border: none;
     flex-shrink: 0;
     transition: transform 0.15s var(--notes-ease), opacity 0.15s;
@@ -85,8 +234,7 @@
     background: var(--notes-surface-elev);
     border: 1px solid var(--notes-border);
     border-radius: var(--notes-radius-md);
-    padding: 0.7rem 0.9rem;
-    margin-bottom: 1.75rem;
+    padding: 0.8rem 0.95rem;
     transition: border-color 0.15s, box-shadow 0.15s;
 }
 .searchBar:focus-within {
@@ -160,28 +308,40 @@
     flex-shrink: 0;
 }
 
+/* ───── Content column ──────────────────────────────────── */
+.content {
+    width: 100%;
+    margin: 0 auto;
+    padding: 1rem clamp(1.5rem, 4vw, 3rem) 3rem;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
 /* ───── Sections ────────────────────────────────────────── */
 .section {
-    margin-bottom: 1.75rem;
     min-width: 0;
+    scroll-margin-top: 1rem;
 }
+.twoCol { scroll-margin-top: 1rem; }
 .sectionHead {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
-    margin-bottom: 0.7rem;
+    margin-bottom: 1rem;
 }
 .sectionTitle {
-    margin: 0 0 0.7rem;
-    font-size: 0.82rem;
-    font-weight: 700;
+    margin: 0 0 1rem;
+    font-size: 0.74rem;
+    font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--notes-text-soft);
+    letter-spacing: 0.12em;
+    color: var(--notes-text-muted);
     display: inline-flex;
     align-items: center;
-    gap: 0.45rem;
+    gap: 0.5rem;
 }
 .sectionHead .sectionTitle { margin: 0; }
 .viewAll {
@@ -203,8 +363,8 @@
     gap: 1.5rem;
     align-items: start;
 }
-@media (max-width: 860px) {
-    .twoCol { grid-template-columns: 1fr; gap: 0; }
+@media (max-width: 980px) {
+    .twoCol { grid-template-columns: 1fr; gap: 2rem; }
 }
 
 /* ───── Jump back in ────────────────────────────────────── */
@@ -213,6 +373,7 @@
     text-align: left;
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 1rem;
     background: var(--notes-surface-elev);
     border: 1px solid var(--notes-border);
@@ -220,54 +381,55 @@
     padding: 1rem 1.15rem;
     cursor: pointer;
     color: var(--notes-text);
-    transition: transform 0.15s var(--notes-ease), border-color 0.15s, box-shadow 0.15s;
+    transition: border-color 0.18s, box-shadow 0.18s, transform 0.18s var(--notes-ease);
     box-shadow: var(--notes-shadow-sm);
 }
 .resumeCard:hover {
-    transform: translateY(-2px);
-    border-color: color-mix(in srgb, var(--notes-accent) 45%, transparent);
+    border-color: color-mix(in srgb, var(--notes-accent) 55%, transparent);
     box-shadow: var(--notes-shadow-md);
+}
+.resumeLeft {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    min-width: 0;
 }
 .resumeIcon {
     width: 44px; height: 44px;
     display: inline-flex; align-items: center; justify-content: center;
     background: var(--notes-accent-soft);
+    color: var(--notes-accent);
+    border: 1px solid color-mix(in srgb, var(--notes-border) 70%, transparent);
     border-radius: var(--notes-radius-md);
     font-size: 1.35rem;
     flex-shrink: 0;
 }
-.resumeBody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.resumeBody { min-width: 0; display: flex; flex-direction: column; gap: 0.3rem; }
 .resumeTitle {
-    font-size: 1.05rem;
-    font-weight: 700;
+    font-size: 1.1rem;
+    font-weight: 600;
     color: var(--notes-text);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    transition: color 0.15s;
 }
-.resumeSnippet {
-    font-size: 0.83rem;
-    color: var(--notes-text-soft);
-    line-height: 1.45;
-    display: -webkit-box;
-    -webkit-line-clamp: 1;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-}
+.resumeCard:hover .resumeTitle { color: var(--notes-accent); }
 .resumeMeta {
-    font-size: 0.74rem;
+    font-size: 0.8rem;
     color: var(--notes-text-muted);
-    margin-top: 0.1rem;
 }
 .resumeCta {
     align-self: center;
     width: 36px; height: 36px;
     display: inline-flex; align-items: center; justify-content: center;
     background: var(--notes-accent);
-    color: #fff;
+    color: var(--on-primary, #fff);
     border-radius: 50%;
     flex-shrink: 0;
-    transition: transform 0.18s var(--notes-ease);
+    opacity: 0;
+    transform: translateX(6px);
+    transition: opacity 0.2s var(--notes-ease), transform 0.2s var(--notes-ease);
 }
-.resumeCard:hover .resumeCta { transform: translate(2px, -2px); }
+.resumeCard:hover .resumeCta { opacity: 1; transform: translateX(0); }
 
 /* ───── Empty state ─────────────────────────────────────── */
 .emptyState {
@@ -276,7 +438,6 @@
     background: var(--notes-surface-elev);
     border: 1px dashed var(--notes-border);
     border-radius: var(--notes-radius-lg);
-    margin-bottom: 1.75rem;
 }
 .emptyIcon {
     color: var(--notes-text-muted);
@@ -304,7 +465,7 @@
     font-weight: 600;
     cursor: pointer;
     background: var(--notes-accent);
-    color: #fff;
+    color: var(--on-primary, #fff);
     border: none;
     transition: transform 0.15s var(--notes-ease), opacity 0.15s;
 }
@@ -316,48 +477,49 @@
     padding: 0; margin: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
+    gap: 0.5rem;
 }
 .recentRow {
     display: flex;
     align-items: center;
-    gap: 0.7rem;
+    gap: 0.75rem;
     width: 100%;
     text-align: left;
     background: var(--notes-surface-elev);
     border: 1px solid var(--notes-border);
     border-radius: var(--notes-radius-md);
-    padding: 0.65rem 0.8rem;
+    padding: 0.7rem 0.85rem;
     cursor: pointer;
     color: var(--notes-text);
-    transition: border-color 0.15s, background 0.15s, transform 0.1s var(--notes-ease);
+    transition: border-color 0.15s, background 0.15s, transform 0.12s var(--notes-ease);
 }
 .recentRow:hover {
     transform: translateX(2px);
-    border-color: color-mix(in srgb, var(--notes-accent) 40%, transparent);
-    background: var(--notes-accent-soft);
+    border-color: color-mix(in srgb, var(--notes-accent) 45%, transparent);
 }
 .recentRowIcon {
-    width: 26px; height: 26px;
+    width: 32px; height: 32px;
     display: inline-flex; align-items: center; justify-content: center;
-    color: var(--notes-text-muted);
+    background: var(--notes-surface-1);
+    border: 1px solid color-mix(in srgb, var(--notes-border) 70%, transparent);
+    border-radius: var(--notes-radius-sm);
+    color: var(--notes-accent);
     font-size: 1.05rem;
     flex-shrink: 0;
 }
-.recentRow:hover .recentRowIcon { color: var(--notes-accent); }
-.recentRowMain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.recentRowMain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; }
 .recentRowTitle {
-    font-size: 0.88rem;
+    font-size: 0.9rem;
     font-weight: 600;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .recentRowSnippet {
-    font-size: 0.74rem;
+    font-size: 0.75rem;
     color: var(--notes-text-muted);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .recentRowMeta {
-    font-size: 0.7rem;
+    font-size: 0.72rem;
     color: var(--notes-text-muted);
     flex-shrink: 0;
 }
@@ -365,26 +527,26 @@
 /* ───── Pinned list ─────────────────────────────────────── */
 .pinList {
     list-style: none; padding: 0; margin: 0;
-    display: flex; flex-direction: column; gap: 0.4rem;
+    display: flex; flex-direction: column; gap: 0.5rem;
 }
 .pinRow {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
+    gap: 0.7rem;
     width: 100%;
     background: var(--notes-surface-elev);
     border: 1px solid var(--notes-border);
     border-radius: var(--notes-radius-md);
-    padding: 0.6rem 0.75rem;
+    padding: 0.7rem 0.85rem;
     cursor: pointer;
     text-align: left;
     color: var(--notes-text);
-    transition: transform 0.1s var(--notes-ease), border-color 0.15s;
+    transition: transform 0.12s var(--notes-ease), border-color 0.15s;
     overflow: hidden;
 }
 .pinRow:hover {
     transform: translateX(2px);
-    border-color: color-mix(in srgb, var(--notes-accent) 40%, transparent);
+    border-color: color-mix(in srgb, var(--notes-accent) 45%, transparent);
 }
 .pinAccent {
     width: 3px;
@@ -394,133 +556,137 @@
 }
 .pinTitle {
     flex: 1;
-    font-size: 0.86rem;
+    font-size: 0.88rem;
     font-weight: 500;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     min-width: 0;
 }
 .pinDate {
-    font-size: 0.7rem;
+    font-size: 0.72rem;
     color: var(--notes-text-muted);
     flex-shrink: 0;
 }
 
-/* ───── Template tiles ──────────────────────────────────── */
+/* ───── Liked notes ─────────────────────────────────────── */
+.likedGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 0.75rem;
+}
+.likedCard {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    width: 100%;
+    text-align: left;
+    background: var(--notes-surface-elev);
+    border: 1px solid var(--notes-border);
+    border-radius: var(--notes-radius-md);
+    padding: 0.7rem 0.85rem;
+    cursor: pointer;
+    color: var(--notes-text);
+    transition: border-color 0.15s, box-shadow 0.15s, transform 0.12s var(--notes-ease);
+    overflow: hidden;
+}
+.likedCard:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in srgb, #ef4444 45%, transparent);
+    box-shadow: var(--notes-shadow-md);
+}
+.likedIcon {
+    width: 32px; height: 32px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--notes-surface-1);
+    border-radius: var(--notes-radius-sm);
+    color: var(--notes-text-muted);
+    font-size: 1.05rem;
+    flex-shrink: 0;
+}
+.likedMain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+.likedTitle {
+    font-size: 0.88rem;
+    font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.likedMeta {
+    font-size: 0.72rem;
+    color: var(--notes-text-muted);
+}
+.likedHeart {
+    display: inline-flex;
+    align-items: center;
+    color: #ef4444;
+    flex-shrink: 0;
+}
+.likedHeart svg { fill: currentColor; }
+
+/* ───── Template cards ──────────────────────────────────── */
 .templateGrid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: 0.7rem;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
 }
+@media (min-width: 640px)  { .templateGrid { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 1100px) { .templateGrid { grid-template-columns: repeat(5, 1fr); } }
+
 .templateTile {
     background: var(--notes-surface-elev);
     border: 1px solid var(--notes-border);
     border-radius: var(--notes-radius-md);
-    padding: 0.9rem 0.9rem 1rem;
+    padding: 1rem;
     cursor: pointer;
     text-align: left;
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
     color: var(--notes-text);
-    transition: transform 0.12s var(--notes-ease), border-color 0.15s, box-shadow 0.15s;
+    transition: transform 0.14s var(--notes-ease), border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }
 .templateTile:hover {
     transform: translateY(-2px);
-    border-color: color-mix(in srgb, var(--notes-accent) 45%, transparent);
+    border-color: color-mix(in srgb, var(--notes-accent) 55%, transparent);
+    background: var(--notes-surface-1);
     box-shadow: var(--notes-shadow-md);
 }
 .templateIcon {
     width: 34px; height: 34px;
     display: inline-flex; align-items: center; justify-content: center;
-    background: var(--notes-accent-soft);
+    background: var(--notes-surface-1);
     color: var(--notes-accent);
-    border-radius: 9px;
-    margin-bottom: 0.4rem;
+    border-radius: var(--notes-radius-sm);
+    margin-bottom: 0.85rem;
 }
 .templateName {
-    font-size: 0.9rem;
+    font-size: 0.92rem;
     font-weight: 600;
     color: var(--notes-text);
+    margin-bottom: 0.2rem;
 }
 .templateDesc {
-    font-size: 0.73rem;
+    font-size: 0.78rem;
     color: var(--notes-text-muted);
-    line-height: 1.4;
-}
-
-/* ───── Folders grid ────────────────────────────────────── */
-.folderGrid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 0.7rem;
-}
-.folderCard {
-    background: var(--notes-surface-elev);
-    border: 1px solid var(--notes-border);
-    border-radius: var(--notes-radius-md);
-    padding: 0.85rem;
-    cursor: pointer;
-    text-align: left;
-    color: var(--notes-text);
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-    transition: transform 0.12s var(--notes-ease), border-color 0.15s, box-shadow 0.15s;
-}
-.folderCard:hover {
-    transform: translateY(-2px);
-    border-color: color-mix(in srgb, var(--notes-accent) 45%, transparent);
-    box-shadow: var(--notes-shadow-md);
-}
-.folderIcon {
-    width: 32px; height: 32px;
-    display: inline-flex; align-items: center; justify-content: center;
-    background: color-mix(in srgb, #f59e0b 14%, transparent);
-    color: #f59e0b;
-    border-radius: 8px;
-}
-.folderName {
-    font-size: 0.86rem;
-    font-weight: 600;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.folderCount {
-    font-size: 0.72rem;
-    color: var(--notes-text-muted);
-}
-.newFolderCard {
-    border-style: dashed;
-    color: var(--notes-text-muted);
-    background: transparent;
-}
-.newFolderCard .folderIcon {
-    background: var(--notes-surface-1);
-    color: var(--notes-text-muted);
-}
-.newFolderCard:hover {
-    border-color: var(--notes-accent);
-    color: var(--notes-accent);
-}
-.newFolderCard:hover .folderIcon {
-    background: var(--notes-accent-soft);
-    color: var(--notes-accent);
+    line-height: 1.45;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
 }
 
 /* ───── Tag cloud ───────────────────────────────────────── */
 .tagCloud {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.45rem;
+    gap: 0.5rem;
 }
 .tagChip {
     display: inline-flex;
     align-items: center;
-    gap: 0.35rem;
+    gap: 0.4rem;
     background: var(--notes-surface-elev);
     border: 1px solid var(--notes-border);
     border-radius: 999px;
-    padding: 0.32rem 0.75rem;
-    font-size: 0.78rem;
+    padding: 0.4rem 0.85rem;
+    font-size: 0.8rem;
     color: var(--notes-text);
     cursor: pointer;
     transition: border-color 0.15s, background 0.15s, transform 0.1s;
@@ -543,15 +709,28 @@
     font-weight: 600;
 }
 
-/* ───── Mobile ──────────────────────────────────────────── */
+/* ════════════════ Responsive ═════════════════════════════ */
+@media (max-width: 860px) {
+    .home { flex-direction: column; overflow-y: auto; }
+    .sidebar {
+        width: 100%;
+        height: auto;
+        flex-direction: column;
+        border-right: none;
+        border-bottom: 1px solid var(--notes-border);
+    }
+    .sideNav { max-height: 320px; }
+    .main { height: auto; overflow: visible; }
+}
+
 @media (max-width: 700px) {
-    .home { padding: 1rem 0.9rem 2rem; }
-    .header { gap: 0.75rem; align-items: flex-start; }
+    .headerInner { padding: 1.25rem 0.9rem 1rem; }
+    .content { padding: 1rem 0.9rem 2.5rem; gap: 1.75rem; }
+    .headerTop { gap: 0.85rem; align-items: flex-start; }
     .newBtn { width: 100%; justify-content: center; }
-    .greeting { font-size: 1.35rem; }
-    .templateGrid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.55rem; }
-    .folderGrid { grid-template-columns: repeat(auto-fill, minmax(125px, 1fr)); }
-    .resumeCard { padding: 0.85rem 0.95rem; gap: 0.75rem; }
-    .resumeIcon { width: 38px; height: 38px; font-size: 1.2rem; }
-    .resumeTitle { font-size: 0.98rem; }
+    .greeting { font-size: 1.75rem; }
+    .resumeCard { padding: 0.85rem 0.95rem; }
+    .resumeIcon { width: 40px; height: 40px; font-size: 1.2rem; }
+    .resumeTitle { font-size: 1rem; }
+    .resumeCta { opacity: 1; transform: translateX(0); }
 }

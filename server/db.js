@@ -225,12 +225,6 @@ async function initMasterDB() {
         )
     `);
     await masterQuery(`ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`);
-    // ---- MFA (TOTP) columns — mandatory for platform admins ----
-    await masterQuery(`ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS mfa_secret TEXT`);
-    await masterQuery(`ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE`);
-    await masterQuery(`ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS mfa_enrolled_at TIMESTAMPTZ`);
-    await masterQuery(`ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS mfa_pending_secret TEXT`);
-    await masterQuery(`ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS mfa_recovery_codes JSONB`);
 
     // ---- App settings (platform-wide) ----
     await masterQuery(`
@@ -511,13 +505,6 @@ async function initTenantSchema(q) {
     // Add lockout columns to existing databases
     await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER NOT NULL DEFAULT 0`);
     await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ`);
-
-    // MFA (TOTP) columns — opt-in for tenant admins (super_admin / hr_admin).
-    await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_secret TEXT`);
-    await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE`);
-    await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enrolled_at TIMESTAMPTZ`);
-    await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_pending_secret TEXT`);
-    await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_recovery_codes JSONB`);
 
     // Migration: face recognition enrollment for attendance verification.
     // Stores a 128-float face embedding extracted client-side (face-api.js).

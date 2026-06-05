@@ -1202,6 +1202,28 @@ const MIGRATIONS = [
             await query(`ALTER TABLE task_comments ADD COLUMN IF NOT EXISTS file_size  INTEGER`);
         },
     },
+    {
+        // Email-based MFA recovery tokens for tenant users (super_admin /
+        // hr_admin lockout escape hatch). initTenantSchema() also creates this
+        // for new tenants — this backfills existing tenant DBs so the
+        // /auth/mfa/request-reset + /auth/mfa/confirm-reset endpoints don't
+        // 500 on a missing table. All additive + idempotent.
+        name: '2026_06_v12_mfa_reset_tokens',
+        async up(query) {
+            await query(`
+                CREATE TABLE IF NOT EXISTS mfa_reset_tokens (
+                    id         SERIAL PRIMARY KEY,
+                    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    token      TEXT NOT NULL,
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    used       BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            `);
+            await query(`CREATE INDEX IF NOT EXISTS idx_mfa_reset_tokens_token ON mfa_reset_tokens(token)`);
+            await query(`CREATE INDEX IF NOT EXISTS idx_mfa_reset_tokens_user ON mfa_reset_tokens(user_id)`);
+        },
+    },
 ];
 
 /**

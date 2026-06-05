@@ -14,19 +14,173 @@
  *     (no DB hit). This keeps existing call sites working unchanged.
  */
 const nodemailer = require('nodemailer');
+const dns = require('dns');
+const https = require('https');
 const { logger } = require('./logger');
 
 let transporter = null;
+let gmailAccessToken = { value: null, expiresAt: 0 };
+
+/**
+ * Whether the Gmail HTTPS API path is usable: requires OAuth2 creds. The Gmail
+ * API talks over port 443, so it works on networks that block SMTP (465/587).
+ */
+function canUseGmailApi() {
+    return !!(process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET &&
+        process.env.GMAIL_REFRESH_TOKEN && process.env.SMTP_USER);
+}
+
+/** Minimal JSON POST over HTTPS (port 443). Resolves with parsed body. */
+function httpsPostJson(hostname, path, headers, bodyString) {
+    return new Promise((resolve, reject) => {
+        const req = https.request({
+            hostname, path, method: 'POST', family: 4,
+            headers: { 'Content-Length': Buffer.byteLength(bodyString), ...headers },
+        }, res => {
+            let data = '';
+            res.on('data', c => { data += c; });
+            res.on('end', () => {
+                let parsed = null;
+                try { parsed = data ? JSON.parse(data) : {}; } catch { parsed = { raw: data }; }
+                if (res.statusCode >= 200 && res.statusCode < 300) resolve(parsed);
+                else {
+                    // Surface the FULL Gmail error body — the top-level message is
+                    // often generic ("Bad Request"); the real cause lives in
+                    // error.errors[].reason/message. Include raw body as a last resort.
+                    const e = parsed && parsed.error;
+                    const detail = e
+                        ? `${e.message || ''}${e.errors ? ' | ' + e.errors.map(x => `${x.reason || ''}:${x.message || ''}`).join('; ') : ''}`.trim()
+                        : (parsed && parsed.error_description) || data || res.statusMessage;
+                    const err = new Error(`HTTP ${res.statusCode}: ${detail}`);
+                    err.statusCode = res.statusCode;
+                    err.body = data;
+                    reject(err);
+                }
+            });
+        });
+        req.setTimeout(Number(process.env.SMTP_SOCKET_TIMEOUT_MS) || 20000, () => req.destroy(new Error('Gmail API request timeout')));
+        req.on('error', reject);
+        req.write(bodyString);
+        req.end();
+    });
+}
+
+/** Exchange the OAuth2 refresh token for a short-lived access token. Cached. */
+async function getGmailAccessToken() {
+    if (gmailAccessToken.value && Date.now() < gmailAccessToken.expiresAt) {
+        return gmailAccessToken.value;
+    }
+    const form = new URLSearchParams({
+        client_id: process.env.GMAIL_CLIENT_ID,
+        client_secret: process.env.GMAIL_CLIENT_SECRET,
+        refresh_token: process.env.GMAIL_REFRESH_TOKEN,
+        grant_type: 'refresh_token',
+    }).toString();
+    const res = await httpsPostJson('oauth2.googleapis.com', '/token',
+        { 'Content-Type': 'application/x-www-form-urlencoded' }, form);
+    gmailAccessToken = {
+        value: res.access_token,
+        // Refresh 60s early to avoid edge expiry
+        expiresAt: Date.now() + ((res.expires_in || 3600) - 60) * 1000,
+    };
+    return gmailAccessToken.value;
+}
+
+/** Build a base64url-encoded RFC 5322 message for the Gmail API. */
+function buildRawMessage({ from, to, subject, html }) {
+    // RFC 2047 encode the subject so non-ASCII (em dashes etc.) survive.
+    const encSubject = `=?UTF-8?B?${Buffer.from(subject, 'utf8').toString('base64')}?=`;
+    const message = [
+        `From: ${from}`,
+        `To: ${to}`,
+        `Subject: ${encSubject}`,
+        'MIME-Version: 1.0',
+        'Content-Type: text/html; charset="UTF-8"',
+        'Content-Transfer-Encoding: base64',
+        '',
+        Buffer.from(html, 'utf8').toString('base64'),
+    ].join('\r\n');
+    return Buffer.from(message, 'utf8').toString('base64')
+        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** Send an email via the Gmail HTTPS API (port 443). Throws on failure. */
+async function sendViaGmailApi({ from, to, subject, html }) {
+    const accessToken = await getGmailAccessToken();
+    const raw = buildRawMessage({ from, to, subject, html });
+    try {
+        await httpsPostJson('gmail.googleapis.com', '/gmail/v1/users/me/messages/send',
+            { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+            JSON.stringify({ raw }));
+    } catch (err) {
+        // Log the raw Gmail response body so the exact rejection reason is visible.
+        logger.error({ statusCode: err.statusCode, body: err.body, from, to }, 'Gmail API: messages.send rejected');
+        throw err;
+    }
+}
+
+/**
+ * Build a custom DNS lookup that forces a specific IP family (default IPv4).
+ *
+ * Why: many networks (this dev box, Railway, corporate/ISP networks) publish
+ * an IPv6 AAAA record for smtp.gmail.com but have NO working IPv6 route, so a
+ * plain connect picks the IPv6 address and fails instantly with
+ * `ENETUNREACH <ipv6>:port`. nodemailer's socket-level `family` option is not
+ * reliably honored because it resolves DNS through its own path, so we pin the
+ * family here at the lookup layer where it is always respected.
+ *
+ * Pass SMTP_IP_FAMILY=6 to force IPv6, or SMTP_IP_FAMILY=0 to disable pinning
+ * (let the OS choose).
+ */
+function makeLookup(family) {
+    if (!family) return undefined; // 0/undefined → use default OS resolver
+    return (hostname, options, callback) => {
+        // Normalize: dns.lookup may be called as (host, cb) or (host, opts, cb)
+        if (typeof options === 'function') { callback = options; options = {}; }
+        dns.lookup(hostname, { ...options, family }, callback);
+    };
+}
 
 function getTransporter() {
     if (transporter) return transporter;
 
+    // When the Gmail HTTPS API is the chosen transport, skip building an SMTP
+    // transport entirely — otherwise the startup verify() pointlessly attempts
+    // a blocked SMTP port and logs a misleading "verification FAILED" error.
+    if ((process.env.EMAIL_TRANSPORT || '').toLowerCase() === 'gmail-api') {
+        return null;
+    }
+
+    // Fail fast instead of waiting for the OS-level TCP timeout. Many hosts
+    // (Railway, corporate networks, some ISPs) block outbound :465; with these
+    // timeouts a blocked port surfaces in ~10s rather than ~2min.
+    const TIMEOUTS = {
+        connectionTimeout: Number(process.env.SMTP_CONN_TIMEOUT_MS) || 10000,
+        greetingTimeout: Number(process.env.SMTP_GREETING_TIMEOUT_MS) || 10000,
+        socketTimeout: Number(process.env.SMTP_SOCKET_TIMEOUT_MS) || 20000,
+    };
+
+    // Force IPv4 DNS resolution by default. Many hosts (this dev box, Railway,
+    // corporate/ISP networks) advertise an IPv6 AAAA record for smtp.gmail.com
+    // but have no working IPv6 route, so Node picks the IPv6 address and the
+    // connect() fails with `ENETUNREACH <ipv6>:port`. We pin the family at the
+    // DNS lookup layer (a socket-level `family` option is NOT reliably honored
+    // by nodemailer). Set SMTP_IP_FAMILY=6 or 0 to override.
+    const family = process.env.SMTP_IP_FAMILY != null ? Number(process.env.SMTP_IP_FAMILY) : 4;
+    const lookup = makeLookup(family);
+    if (lookup) TIMEOUTS.dnsTimeout = Number(process.env.SMTP_DNS_TIMEOUT_MS) || 10000;
+
     // ── Mode 1: Gmail OAuth2 ────────────────────────────────────────
     if (process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET && process.env.GMAIL_REFRESH_TOKEN) {
+        // Default to 587 (STARTTLS) — port 465 (SMTPS) is blocked on many
+        // networks/ISPs and surfaces as a connection timeout. Set SMTP_PORT=465
+        // explicitly if your environment permits implicit TLS.
+        const port = Number(process.env.SMTP_PORT) || 587;
         transporter = nodemailer.createTransport({
-            host: 'smtp.gmail.com',
-            port: 465,
-            secure: true,
+            host: process.env.SMTP_HOST || 'smtp.gmail.com',
+            port,
+            secure: port === 465, // 465 = implicit TLS; 587 = STARTTLS
+            ...(lookup ? { lookup } : {}),
             auth: {
                 type: 'OAuth2',
                 user: process.env.SMTP_USER,
@@ -34,12 +188,16 @@ function getTransporter() {
                 clientSecret: process.env.GMAIL_CLIENT_SECRET,
                 refreshToken: process.env.GMAIL_REFRESH_TOKEN,
             },
+            ...TIMEOUTS,
         });
         // Verify connection at startup so OAuth errors surface early
         transporter.verify().then(() => {
-            logger.info('Email transport: Gmail OAuth2 — verified');
+            logger.info({ port }, 'Email transport: Gmail OAuth2 — verified');
         }).catch(err => {
-            logger.error({ err: err.message }, 'Email transport: Gmail OAuth2 — verification FAILED (check refresh token / credentials)');
+            const hint = /ETIMEDOUT|ECONNREFUSED|ESOCKET/.test(err.message)
+                ? ' — network appears to block this port; try SMTP_PORT=587'
+                : ' (check refresh token / credentials)';
+            logger.error({ err: err.message, port }, `Email transport: Gmail OAuth2 — verification FAILED${hint}`);
             transporter = null;
         });
         return transporter;
@@ -47,13 +205,16 @@ function getTransporter() {
 
     // ── Mode 2: Plain SMTP (app-password) ───────────────────────────
     if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+        const port = Number(process.env.SMTP_PORT) || 587;
         transporter = nodemailer.createTransport({
             host: process.env.SMTP_HOST || 'smtp.gmail.com',
-            port: Number(process.env.SMTP_PORT) || 587,
-            secure: false,
+            port,
+            secure: port === 465,
+            ...(lookup ? { lookup } : {}),
             auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+            ...TIMEOUTS,
         });
-        logger.info('Email transport: SMTP (password)');
+        logger.info({ port }, 'Email transport: SMTP (password)');
         return transporter;
     }
 
@@ -74,14 +235,35 @@ const RETRY_DELAY_MS = 3000;
 /**
  * Send an email with automatic retry. Never throws.
  */
+/** True for errors that indicate the SMTP port/host is unreachable. */
+function isConnError(err) {
+    return /ETIMEDOUT|ECONNREFUSED|ESOCKET|ENETUNREACH|EHOSTUNREACH|ECONNRESET|timeout/i.test(err && (err.code || err.message) || '');
+}
+
 function sendMail({ to, subject, html }) {
-    const mailer = getTransporter();
-    if (!mailer) {
-        logger.debug({ to, subject }, 'Email skipped (SMTP not configured)');
-        return Promise.resolve(false);
-    }
     if (!to || !to.includes('@')) {
         logger.warn({ to, subject }, 'Email skipped — invalid recipient');
+        return Promise.resolve(false);
+    }
+
+    // EMAIL_TRANSPORT=gmail-api forces the HTTPS API path (use when the network
+    // blocks SMTP ports 465/587, which is common on corporate/VPN networks).
+    const forceApi = (process.env.EMAIL_TRANSPORT || '').toLowerCase() === 'gmail-api';
+    if (forceApi && canUseGmailApi()) {
+        return sendViaGmailApi({ from: FROM(), to, subject, html })
+            .then(() => { logger.info({ to, subject }, 'Email sent successfully (Gmail API)'); return true; })
+            .catch(err => { logger.error({ err: err.message, to, subject }, 'Gmail API send failed'); return false; });
+    }
+
+    const mailer = getTransporter();
+    if (!mailer) {
+        // No SMTP transport — try the HTTPS API if creds allow it.
+        if (canUseGmailApi()) {
+            return sendViaGmailApi({ from: FROM(), to, subject, html })
+                .then(() => { logger.info({ to, subject }, 'Email sent successfully (Gmail API)'); return true; })
+                .catch(err => { logger.error({ err: err.message, to, subject }, 'Gmail API send failed'); return false; });
+        }
+        logger.debug({ to, subject }, 'Email skipped (SMTP not configured)');
         return Promise.resolve(false);
     }
 
@@ -93,6 +275,15 @@ function sendMail({ to, subject, html }) {
                 logger.info({ to, subject }, 'Email sent successfully');
                 resolve(true);
             }).catch(err => {
+                // If SMTP is unreachable (blocked port), fall back to the Gmail
+                // HTTPS API which uses port 443 — no point retrying SMTP.
+                if (isConnError(err) && canUseGmailApi()) {
+                    logger.warn({ err: err.message, to, subject }, 'SMTP unreachable — falling back to Gmail API');
+                    sendViaGmailApi({ from: FROM(), to, subject, html })
+                        .then(() => { logger.info({ to, subject }, 'Email sent successfully (Gmail API)'); resolve(true); })
+                        .catch(apiErr => { logger.error({ err: apiErr.message, to, subject }, 'Gmail API fallback failed'); resolve(false); });
+                    return;
+                }
                 if (attempt <= MAX_RETRIES) {
                     logger.warn({ err: err.message, to, subject, attempt }, 'Email send failed — retrying');
                     setTimeout(trySend, RETRY_DELAY_MS * attempt);

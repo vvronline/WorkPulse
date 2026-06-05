@@ -720,6 +720,28 @@ export function useNotesStore(userId) {
         persist(updatedPages, updatedFolders, activePageId);
     };
 
+    /* ── Rename a folder ──────────────────────────────────── */
+    const handleRenameFolder = (folderId, name) => {
+        const clean = (name || '').trim();
+        if (!clean) return;
+        const updated = folders.map(f => f.id === folderId ? { ...f, name: clean } : f);
+        setFolders(updated);
+        persist(pages, updated, activePageId);
+    };
+
+    /* ── Move (re-parent) a folder, with cycle prevention ──── */
+    const handleMoveFolder = (folderId, newParentId) => {
+        if (!folderId || folderId === newParentId) return;
+        // A folder cannot become a descendant of itself.
+        const descendantIds = getDescendantFolderIds(folderId, folders);
+        if (newParentId && descendantIds.includes(newParentId)) return;
+        const updated = folders.map(f =>
+            f.id === folderId ? { ...f, parentId: newParentId || null } : f,
+        );
+        setFolders(updated);
+        persist(pages, updated, activePageId);
+    };
+
     const handleSortChange = (val) => {
         setSortBy(val);
         persist(pages, folders, activePageId, val);
@@ -989,7 +1011,7 @@ export function useNotesStore(userId) {
         handleTogglePin, handleToggleArchive, handleDuplicatePage,
         handleMoveToFolder,
         handleAddTag, handleRemoveTag,
-        handleNewFolder, handleDeleteFolder,
+        handleNewFolder, handleDeleteFolder, handleRenameFolder, handleMoveFolder,
         handleSortChange,
         handleRestoreSnapshot,
         handleDragStart, handleDragOver, handleDrop, handleDragEnd,

@@ -6,7 +6,7 @@
        (works immediately with no backend; can be swapped for an
        upload pipeline later by replacing the FileReader with an
        upload call). */
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import '../collabCursors.css';
@@ -67,6 +67,7 @@ export default function QuillEditor({
   onNewOneOnOne,
 }) {
   const wrapClass = variant === 'modal' ? s.modalWrap : s.inlineWrap;
+  const wrapRef = useRef(null);
 
   /* Lazy-load math runtime once. (Diagrams use the draw.io
      iframe — no client lib needed.) */
@@ -165,8 +166,47 @@ export default function QuillEditor({
     quill.enable(!readOnly);
   }, [quillRef, pageId, resetKey, readOnly]);
 
+  /* ── Add hover tooltips to the toolbar buttons ──────────── */
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const toolbar = wrap.querySelector('.ql-toolbar');
+    if (!toolbar) return;
+
+    // [selector, tooltip] — selector is matched within the toolbar
+    const TIPS = [
+      ['.ql-bold', 'Bold (Ctrl+B)'],
+      ['.ql-italic', 'Italic (Ctrl+I)'],
+      ['.ql-underline', 'Underline (Ctrl+U)'],
+      ['.ql-blockquote', 'Quote'],
+      ['.ql-link', 'Insert link'],
+      ['.ql-image', 'Insert image'],
+      ['.ql-clean', 'Clear formatting'],
+      ['.ql-divider', 'Divider'],
+      ['.ql-timestamp', 'Insert date & time'],
+      ['.ql-table', 'Insert table'],
+      ['.ql-list[value="ordered"]', 'Numbered list'],
+      ['.ql-list[value="bullet"]', 'Bullet list'],
+      ['.ql-list[value="check"]', 'Checklist'],
+      ['.ql-color', 'Text color'],
+      ['.ql-background', 'Highlight color'],
+      ['.ql-header', 'Heading style'],
+    ];
+
+    TIPS.forEach(([sel, tip]) => {
+      toolbar.querySelectorAll(sel).forEach((el) => {
+        // For pickers, the clickable label is `.ql-picker-label`.
+        const target = el.classList.contains('ql-picker')
+          ? el.querySelector('.ql-picker-label') || el
+          : el;
+        target.setAttribute('title', tip);
+        target.setAttribute('aria-label', tip);
+      });
+    });
+  }, [quillRef, pageId, resetKey]);
+
   return (
-    <div className={`${wrapClass} ${readOnly ? 'notes-readonly' : ''}`}>
+    <div ref={wrapRef} className={`${wrapClass} ${readOnly ? 'notes-readonly' : ''}`}>
       <ReactQuill
         key={`${pageId}-${resetKey}`}
         ref={quillRef}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Settings as SettingsIcon, Palette, ShieldCheck, UserCog, Mail, MapPin, KeyRound } from 'lucide-react';
+import { Settings as SettingsIcon, Palette, ShieldCheck, UserCog, Mail, MapPin } from 'lucide-react';
 import { getCurrentOrg } from '../../api';
 import OrgGeneralSettings from '../../components/organization/OrgSettings';
 import OfficeLocationSettings from '../../components/organization/OfficeLocationSettings';
@@ -7,7 +7,6 @@ import OrgRegistrationSettings from './OrgSettings';
 import OrgRoleLabels from './OrgRoleLabels';
 import BrandingSection from './BrandingSection';
 import EmailTemplatesSection from './EmailTemplatesSection';
-import SecurityMfa from '../SecurityMfa';
 import s from './OrgSettingsPage.module.css';
 
 /**
@@ -71,7 +70,6 @@ export default function OrgSettingsPage({ userRole }) {
         ...(canEditAttendance ? [{ id: 'attendance', label: 'Attendance Verification', icon: MapPin }] : []),
         ...(isSuper ? [{ id: 'registration', label: 'Registration', icon: ShieldCheck }] : []),
         { id: 'roles', label: 'Roles', icon: UserCog },
-        { id: 'security', label: 'Two-Factor Auth', icon: KeyRound },
         { id: 'branding', label: 'Branding', icon: Palette },
         { id: 'email-templates', label: 'Email templates', icon: Mail },
     ]), [isSuper, canEditAttendance]);
