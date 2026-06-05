@@ -28,8 +28,10 @@ import {
     History,
     LayoutTemplate,
     Archive,
+    CheckSquare,
 } from '../../../constants/icons';
 import s from './NotesHome.module.css';
+import TodoApp from './TodoApp';
 
 function getGreeting() {
     const h = new Date().getHours();
@@ -80,6 +82,8 @@ export default function NotesHome({ store }) {
     const [search, setSearch] = useState('');
     const [notebookInput, setNotebookInput] = useState(false);
     const [notebookName, setNotebookName] = useState('');
+    // Which main-canvas view is active: 'home' (dashboard) or 'todo' (to-do app).
+    const [section, setSection] = useState('home');
     const mainRef = useRef(null);
     const recentRef = useRef(null);
     const templatesRef = useRef(null);
@@ -175,8 +179,9 @@ export default function NotesHome({ store }) {
     const scrollMainTop = () => {
         mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     };
-    const goHome = () => scrollMainTop();
+    const goHome = () => { setSection('home'); scrollMainTop(); };
     const goRecent = () => {
+        setSection('home');
         if (recentRef.current) {
             recentRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
         } else {
@@ -184,6 +189,7 @@ export default function NotesHome({ store }) {
         }
     };
     const goTemplates = () => {
+        setSection('home');
         templatesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     };
     const goArchive = () => {
@@ -191,6 +197,7 @@ export default function NotesHome({ store }) {
         setShowArchived(true);
         openEditor();
     };
+    const goTodo = () => { setSection('todo'); };
     const submitNotebook = () => {
         const name = notebookName.trim();
         if (name) handleNewFolder(null, name);
@@ -242,7 +249,7 @@ export default function NotesHome({ store }) {
                 </div>
 
                 <nav className={s.sideNav}>
-                    <button type="button" className={`${s.navLink} ${s.navLinkActive}`} onClick={goHome}>
+                    <button type="button" className={`${s.navLink} ${section === 'home' ? s.navLinkActive : ''}`} onClick={goHome}>
                         <Home size={18} />
                         <span>Home</span>
                     </button>
@@ -257,6 +264,10 @@ export default function NotesHome({ store }) {
                     <button type="button" className={s.navLink} onClick={goArchive}>
                         <Archive size={18} />
                         <span>Archive</span>
+                    </button>
+                    <button type="button" className={`${s.navLink} ${section === 'todo' ? s.navLinkActive : ''}`} onClick={goTodo}>
+                        <CheckSquare size={18} />
+                        <span>Todo</span>
                     </button>
 
                     <div className={s.sideTree}>
@@ -278,6 +289,11 @@ export default function NotesHome({ store }) {
             </aside>
 
             {/* ── Main canvas ──────────────────────────────────────── */}
+            {section === 'todo' ? (
+                <main className={s.main} ref={mainRef}>
+                    <TodoApp store={store} />
+                </main>
+            ) : (
             <main className={s.main} ref={mainRef}>
                 {/* ── Sticky header ───────────────────────────────── */}
                 <header className={s.header}>
@@ -595,6 +611,7 @@ export default function NotesHome({ store }) {
                     )}
                 </div>
             </main>
+            )}
         </div>
     );
 }

@@ -49,6 +49,19 @@ export function newFolder(name, parentId = null) {
   return { id: generateId(), name, parentId, sortOrder: Date.now() };
 }
 
+export function newTodo(text = '') {
+  return {
+    id: generateId(),
+    text: text.trim(),
+    done: false,
+    priority: null,        // 'low' | 'medium' | 'high' | null
+    dueDate: null,         // ISO date string (YYYY-MM-DD) or null
+    createdAt: new Date().toISOString(),
+    completedAt: null,
+    sortOrder: Date.now(),
+  };
+}
+
 // ── Data migration ───────────────────────────────────────
 
 export function migratePageModel(page) {

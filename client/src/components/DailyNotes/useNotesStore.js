@@ -5,7 +5,7 @@
    passed down as props to child components.
    ───────────────────────────────────────────────────────── */
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { newPage, newFolder, getDescendantFolderIds, getDescendantPageIds, extractHeadings } from './notesUtils';
+import { newPage, newFolder, newTodo, getDescendantFolderIds, getDescendantPageIds, extractHeadings } from './notesUtils';
 import { useNotesPersistence } from './useNotesPersistence';
 import { useNotesFilters } from './useNotesFilters';
 import { useClickOutside } from '../../hooks/useClickOutside';
@@ -31,6 +31,7 @@ export function useNotesStore(userId) {
     const { branding } = useBranding();
     const {
         pages, setPages, folders, setFolders,
+        todos, setTodos,
         activePageId, setActivePageId,
         sortBy, setSortBy,
         savedFlash, setSavedFlash,
@@ -980,6 +981,89 @@ export function useNotesStore(userId) {
         sendNoteMention(mentionedUser.id, activePageId, page?.title || 'Untitled').catch(() => { /* best effort */ });
     }, [activePageId, pages]);
 
+    /* ── Todos (standalone checklist, persisted in notebook) ── */
+    const handleAddTodo = useCallback((text) => {
+        const t = (text || '').trim();
+        if (!t) return;
+        setTodos(prev => {
+            const next = [...prev, newTodo(t)];
+            persist(undefined, undefined, undefined, undefined, next);
+            return next;
+        });
+    }, [setTodos, persist]);
+
+    const handleToggleTodo = useCallback((id) => {
+        setTodos(prev => {
+            const next = prev.map(td => td.id === id
+                ? { ...td, done: !td.done, completedAt: !td.done ? new Date().toISOString() : null }
+                : td);
+            persist(undefined, undefined, undefined, undefined, next);
+            return next;
+        });
+    }, [setTodos, persist]);
+
+    const handleEditTodo = useCallback((id, text) => {
+        const t = (text || '').trim();
+        setTodos(prev => {
+            const next = t
+                ? prev.map(td => td.id === id ? { ...td, text: t } : td)
+                : prev.filter(td => td.id !== id);
+            persist(undefined, undefined, undefined, undefined, next);
+            return next;
+        });
+    }, [setTodos, persist]);
+
+    const handleDeleteTodo = useCallback((id) => {
+        setTodos(prev => {
+            const next = prev.filter(td => td.id !== id);
+            persist(undefined, undefined, undefined, undefined, next);
+            return next;
+        });
+    }, [setTodos, persist]);
+
+    const handleSetTodoPriority = useCallback((id, priority) => {
+        setTodos(prev => {
+            const next = prev.map(td => td.id === id
+                ? { ...td, priority: td.priority === priority ? null : priority }
+                : td);
+            persist(undefined, undefined, undefined, undefined, next);
+            return next;
+        });
+    }, [setTodos, persist]);
+
+    const handleSetTodoDue = useCallback((id, dueDate) => {
+        setTodos(prev => {
+            const next = prev.map(td => td.id === id
+                ? { ...td, dueDate: dueDate || null }
+                : td);
+            persist(undefined, undefined, undefined, undefined, next);
+            return next;
+        });
+    }, [setTodos, persist]);
+
+    const handleReorderTodos = useCallback((fromId, toId) => {
+        setTodos(prev => {
+            if (fromId === toId) return prev;
+            const fromIdx = prev.findIndex(td => td.id === fromId);
+            const toIdx = prev.findIndex(td => td.id === toId);
+            if (fromIdx === -1 || toIdx === -1) return prev;
+            const next = [...prev];
+            const [moved] = next.splice(fromIdx, 1);
+            next.splice(toIdx, 0, moved);
+            const stamped = next.map((td, i) => ({ ...td, sortOrder: i }));
+            persist(undefined, undefined, undefined, undefined, stamped);
+            return stamped;
+        });
+    }, [setTodos, persist]);
+
+    const handleClearCompletedTodos = useCallback(() => {
+        setTodos(prev => {
+            const next = prev.filter(td => !td.done);
+            persist(undefined, undefined, undefined, undefined, next);
+            return next;
+        });
+    }, [setTodos, persist]);
+
     /* ── Return everything consumers need ─────────────────── */
     return {
         // data
@@ -1050,5 +1134,9 @@ export function useNotesStore(userId) {
         handleNewOneOnOneWithPrefill,
         handleConvertToTask,
         reportPickerOpen, setReportPickerOpen,
+        // Todos (standalone checklist)
+        todos,
+        handleAddTodo, handleToggleTodo, handleEditTodo, handleDeleteTodo,
+        handleSetTodoPriority, handleSetTodoDue, handleReorderTodos, handleClearCompletedTodos,
     };
 }

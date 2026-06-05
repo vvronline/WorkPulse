@@ -10,6 +10,7 @@ import { newPage, newFolder, migratePageModel } from './notesUtils';
 export function useNotesPersistence(userId) {
     const [pages, setPages] = useState([]);
     const [folders, setFolders] = useState([]);
+    const [todos, setTodos] = useState([]);
     const [activePageId, setActivePageId] = useState(null);
     const [sortBy, setSortBy] = useState('modified');
     const [savedFlash, setSavedFlash] = useState(false);
@@ -19,12 +20,14 @@ export function useNotesPersistence(userId) {
     // Snapshot refs — used in async callbacks & unmount flush
     const latestPages = useRef([]);
     const latestFolders = useRef([]);
+    const latestTodos = useRef([]);
     const latestActiveId = useRef(null);
     const latestSortBy = useRef('modified');
     const userIdRef = useRef(userId);
 
     useEffect(() => { latestPages.current = pages; }, [pages]);
     useEffect(() => { latestFolders.current = folders; }, [folders]);
+    useEffect(() => { latestTodos.current = todos; }, [todos]);
     useEffect(() => { latestActiveId.current = activePageId; }, [activePageId]);
     useEffect(() => { latestSortBy.current = sortBy; }, [sortBy]);
     useEffect(() => { userIdRef.current = userId; }, [userId]);
@@ -39,10 +42,11 @@ export function useNotesPersistence(userId) {
         }
     }, []);
 
-    const persist = useCallback((pgs, flds, aid, sort) => {
+    const persist = useCallback((pgs, flds, aid, sort, tds) => {
         saveToServer({
             pages: pgs ?? latestPages.current,
             folders: flds ?? latestFolders.current,
+            todos: tds ?? latestTodos.current,
             activePageId: aid ?? latestActiveId.current,
             sortBy: sort ?? latestSortBy.current,
         });
@@ -72,6 +76,7 @@ export function useNotesPersistence(userId) {
                     if (pgs.length > 0) {
                         setPages(pgs);
                         setFolders(flds);
+                        setTodos(Array.isArray(nb.todos) ? nb.todos : []);
                         setActivePageId(nb.activePageId || pgs[0]?.id);
                         setSortBy(nb.sortBy || 'modified');
                         return;
@@ -87,12 +92,14 @@ export function useNotesPersistence(userId) {
                     if (nb.pages?.length > 0) {
                         const pgs = nb.pages.map(migratePageModel);
                         const flds = nb.folders || [];
+                        const tds = Array.isArray(nb.todos) ? nb.todos : [];
                         if (!cancelled) {
                             setPages(pgs);
                             setFolders(flds);
+                            setTodos(tds);
                             setActivePageId(nb.activePageId || pgs[0]?.id);
                             setSortBy(nb.sortBy || 'modified');
-                            saveToServer({ pages: pgs, folders: flds, activePageId: nb.activePageId || pgs[0]?.id, sortBy: nb.sortBy || 'modified' });
+                            saveToServer({ pages: pgs, folders: flds, todos: tds, activePageId: nb.activePageId || pgs[0]?.id, sortBy: nb.sortBy || 'modified' });
                         }
                         return;
                     }
@@ -114,6 +121,7 @@ export function useNotesPersistence(userId) {
             if (userIdRef.current && latestPages.current.length > 0) {
                 const data = {
                     pages: latestPages.current, folders: latestFolders.current,
+                    todos: latestTodos.current,
                     activePageId: latestActiveId.current, sortBy: latestSortBy.current,
                 };
                 localStorage.setItem('workpulse-notes-' + userIdRef.current, JSON.stringify(data));
@@ -127,6 +135,7 @@ export function useNotesPersistence(userId) {
     return {
         pages, setPages,
         folders, setFolders,
+        todos, setTodos,
         activePageId, setActivePageId,
         sortBy, setSortBy,
         savedFlash,
