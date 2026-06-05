@@ -35,11 +35,14 @@
 .chatHeaderMeta {
     font-size: 0.75rem;
     color: var(--text-muted);
-    margin-top: 1px;
+    margin-top: 2px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
 }
 .headerActions {
     display: flex;
-    gap: 2px;
+    gap: 6px;
     align-items: center;
 }
 .headerActions > button,
@@ -49,10 +52,15 @@
     border: none;
     cursor: pointer;
     font-size: 0.95rem;
-    padding: 0.25rem 0.4rem;
-    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border-radius: 50%;
     color: var(--text-muted);
-    transition: background var(--transition-fast), color var(--transition-fast);
+    transition: all 0.2s ease;
 }
 .headerActions > button:hover,
 .headerActions .desktopActions button:hover,

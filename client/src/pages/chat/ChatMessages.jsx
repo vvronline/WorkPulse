@@ -90,7 +90,7 @@ export default function ChatMessages({
                                 isMine={isMine}
                                 userId={user.id}
                                 showAvatar={isNewGroup}
-                                showName={isNewGroup}
+                                showName={isNewGroup && activeConv?.is_group}
                                 onReply={onReply}
                                 onEdit={onEdit}
                                 onDelete={onDelete}

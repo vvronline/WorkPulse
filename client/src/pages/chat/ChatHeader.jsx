@@ -33,6 +33,7 @@ export default function ChatHeader({ activeConv, onlineUsers, userStatusMap = {}
     ];
 
     const otherStatus = !activeConv.is_group && activeConv.other_user_id ? userStatusMap[activeConv.other_user_id] : undefined;
+    const online = isUserOnline(activeConv, onlineUsers);
 
     return (
         <div className={s.chatHeader}>
@@ -54,7 +55,7 @@ export default function ChatHeader({ activeConv, onlineUsers, userStatusMap = {}
                         ? `${activeConv.member_count || ''} members`
                         : otherStatus && otherStatus !== 'available'
                             ? STATUS_LABEL[otherStatus] || otherStatus
-                            : isUserOnline(activeConv, onlineUsers) ? 'Online' : activeConv.other_username ? `@${activeConv.other_username}` : ''}
+                            : online ? 'Online' : activeConv.other_username ? `@${activeConv.other_username}` : ''}
                 </div>
             </div>
             <div className={s.headerActions}>

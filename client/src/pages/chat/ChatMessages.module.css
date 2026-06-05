@@ -35,23 +35,19 @@
 .dateDivider {
     display: flex;
     align-items: center;
-    gap: 12px;
+    justify-content: center;
     padding: 16px 16px 8px;
-}
-.dateDivider::before,
-.dateDivider::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: var(--separator);
 }
 .dateDivider span {
     color: var(--text-muted);
-    font-size: 0.72rem;
-    font-weight: 500;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
     white-space: nowrap;
     background: var(--bg-secondary);
-    padding: 4px 12px;
+    border: 1px solid var(--separator);
+    padding: 4px 14px;
     border-radius: var(--radius-full);
 }
 

@@ -277,7 +277,7 @@
     background: var(--surface-hover);
 }
 .convItem.active {
-    background: var(--surface-hover);
+    background: var(--chat-active-bg);
 }
 
 /* Section headers */

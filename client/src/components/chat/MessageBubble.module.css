@@ -57,8 +57,8 @@
 /* ─── Bubble ─── */
 .bubble {
     position: relative;
-    padding: 10px 14px 8px;
-    border-radius: 16px;
+    padding: 10px 16px 8px;
+    border-radius: 14px;
     word-break: break-word;
     line-height: 1.55;
     font-size: 0.9375rem;
@@ -71,18 +71,18 @@
 .myBubble {
     background: var(--chat-bubble-mine);
     color: var(--text);
-    border-radius: 16px;
+    border-radius: 14px;
     border: 1px solid var(--chat-bubble-mine-border);
 }
 /* Theirs – elevated surface, no border */
 .theirBubble {
     background: var(--chat-bubble-theirs);
     color: var(--text);
-    border-radius: 16px;
+    border-radius: 14px;
 }
 /* Grouped continuation – consistent radius */
-.mine.grouped .myBubble   { border-radius: 16px; }
-.theirs.grouped .theirBubble { border-radius: 16px; }
+.mine.grouped .myBubble   { border-radius: 14px; }
+.theirs.grouped .theirBubble { border-radius: 14px; }
 
 .pinned { border-left: 2px solid #f59e0b; padding-left: 8px; }
 .pendingBubble { opacity: 0.6; }

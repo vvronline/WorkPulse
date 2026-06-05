@@ -48,8 +48,11 @@
   --dropdown-hover: rgba(255, 255, 255, 0.07);
   --dropdown-border: rgba(255, 255, 255, 0.1);
   --chat-bubble-mine: rgba(35, 131, 226, 0.08);
-  --chat-bubble-theirs: rgba(255, 255, 255, 0.04);
+  --chat-bubble-theirs: rgba(255, 255, 255, 0.06);
   --chat-bubble-mine-border: rgba(35, 131, 226, 0.12);
+  --chat-active-bg: rgba(255, 255, 255, 0.05);
+  --code-block-bg: #15171c;
+  --code-block-border: rgba(255, 255, 255, 0.08);
   --separator: rgba(255, 255, 255, 0.05);
   --radius: 8px;
   --radius-sm: 6px;
@@ -97,8 +100,11 @@
   --dropdown-hover: rgba(55, 53, 47, 0.06);
   --dropdown-border: rgba(55, 53, 47, 0.13);
   --chat-bubble-mine: rgba(35, 131, 226, 0.07);
-  --chat-bubble-theirs: rgba(55, 53, 47, 0.04);
+  --chat-bubble-theirs: rgba(55, 53, 47, 0.05);
   --chat-bubble-mine-border: rgba(35, 131, 226, 0.12);
+  --chat-active-bg: rgba(55, 53, 47, 0.05);
+  --code-block-bg: #1e1e2e;
+  --code-block-border: rgba(255, 255, 255, 0.08);
   --separator: rgba(55, 53, 47, 0.06);
   color-scheme: light;
 }
