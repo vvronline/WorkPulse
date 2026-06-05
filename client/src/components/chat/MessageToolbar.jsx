@@ -3,8 +3,9 @@ import s from './MessageBubble.module.css';
 
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '🔥', '🎉'];
 
-export default function MessageToolbar({ msg, isMine, onReply, onReact, onOpenReactions, onOpenContextMenu, onCloseToolbar }) {
+export default function MessageToolbar({ msg, isMine, onReply, onEdit, onReact, onOpenReactions, onOpenContextMenu, onCloseToolbar }) {
     const moreRef = useRef(null);
+    const canEdit = isMine && !msg.file_url && msg.format_type !== 'poll';
 
     // Open context menu positioned from the "..." button (works on both touch and mouse)
     const handleMoreOptions = useCallback((e) => {
@@ -36,6 +37,11 @@ export default function MessageToolbar({ msg, isMine, onReply, onReact, onOpenRe
             <button className={s.toolbarBtn} onClick={() => { onReply?.(msg); onCloseToolbar?.(); }} title="Reply">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L2 7l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 7h7a5 5 0 010 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
             </button>
+            {canEdit && (
+                <button className={s.toolbarBtn} onClick={() => { onEdit?.(msg); onCloseToolbar?.(); }} title="Edit">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M11.5 2.5l2 2L6 12l-2.5.5L4 10l7.5-7.5z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                </button>
+            )}
             <button ref={moreRef} className={s.toolbarBtn} onClick={handleMoreOptions} title="More options">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="4" cy="8" r="1.2" fill="currentColor"/><circle cx="8" cy="8" r="1.2" fill="currentColor"/><circle cx="12" cy="8" r="1.2" fill="currentColor"/></svg>
             </button>

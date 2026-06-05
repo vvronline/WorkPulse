@@ -17,14 +17,14 @@
     padding: 2px;
 }
 .emoji {
-    width: 34px;
-    height: 34px;
+    width: 40px;
+    height: 40px;
     display: flex;
     align-items: center;
     justify-content: center;
     border: none;
     background: none;
-    font-size: 1.2rem;
+    font-size: 1.5rem;
     cursor: pointer;
     border-radius: 8px;
     transition: background var(--transition-fast), transform 0.12s;
@@ -69,8 +69,8 @@
         justify-content: center;
     }
     .emoji {
-        width: 38px;
-        height: 38px;
-        font-size: 1.3rem;
+        width: 42px;
+        height: 42px;
+        font-size: 1.6rem;
     }
 }

@@ -224,6 +224,7 @@ export default function MessageBubble({
                             msg={msg}
                             isMine={isMine}
                             onReply={onReply}
+                            onEdit={onEdit}
                             onReact={onReact}
                             onOpenReactions={() => { setShowReactions(true); setToolbarOpen(false); }}
                             onOpenContextMenu={handleContext}

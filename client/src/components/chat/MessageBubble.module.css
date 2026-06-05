@@ -282,14 +282,14 @@
 .reactionChip {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
+    gap: 3px;
+    padding: 3px 7px;
     font-size: 0.72rem;
     background: var(--surface-hover);
-    border: 1.5px solid var(--glass-border);
-    border-radius: 12px;
+    border: none;
+    border-radius: 999px;
     cursor: pointer;
-    transition: background 0.15s, transform 0.12s, border-color 0.15s, box-shadow 0.15s;
+    transition: background 0.15s, transform 0.12s, box-shadow 0.15s;
     animation: chipPop 0.2s ease-out;
 }
 @keyframes chipPop {
@@ -305,8 +305,13 @@
 .reactionChip:active {
     transform: scale(0.95);
 }
+.reactionChip:focus,
+.reactionChip:focus-visible {
+    outline: none;
+    box-shadow: none;
+}
 .reactionEmoji {
-    font-size: 0.85rem;
+    font-size: 1.05rem;
     line-height: 1;
 }
 .reactionCount {
@@ -317,16 +322,13 @@
     text-align: center;
 }
 .myReaction {
-    border-color: var(--primary);
-    background: rgba(14, 165, 233, .12);
-    box-shadow: 0 0 0 1px rgba(14, 165, 233, .08);
+    background: var(--chat-bubble-mine);
 }
 .myReaction .reactionCount {
-    color: var(--primary);
+    color: var(--text);
 }
 .myReaction:hover {
-    background: rgba(14, 165, 233, .18);
-    border-color: var(--primary);
+    background: var(--chat-bubble-mine);
 }
 
 .addReactionBtn {
