@@ -230,6 +230,19 @@ function setupWebSocket(server) {
 
             try {
                 const msg = JSON.parse(raw);
+                // Application-level heartbeat: the client (web + desktop) sends
+                // `{ type: 'ping' }` on a timer and arms a watchdog that closes
+                // the socket if no frame comes back. Reply immediately with a
+                // `pong` so a healthy-but-quiet connection isn't torn down.
+                // Handled here (before the metrics-wrapped dispatch) so it stays
+                // cheap and doesn't pollute the per-handler stats. We also treat
+                // it as proof of life for the server-side pong heartbeat.
+                if (msg && msg.type === 'ping') {
+                    ws.isAlive = true;
+                    ws._missedPongs = 0;
+                    try { ws.send(JSON.stringify({ type: 'pong' })); } catch { /* ignore */ }
+                    return;
+                }
                 // Phase 6 — wrap every dispatch with the metrics collector so
                 // /api/internal/ws-stats can show p50/p95 latency, count,
                 // errors, and timeouts per message type. Timeout defaults to

@@ -669,6 +669,13 @@ $w.Stop()
             contextIsolation: true,
             nodeIntegration: false,
             sandbox: true,
+            // Keep timers, the WebSocket reconnect loop, and incoming
+            // real-time message processing running at full speed even when
+            // the window is hidden/minimized to the tray. Without this,
+            // Chromium throttles hidden-window timers to ~once/minute, which
+            // makes the desktop app feel "out of sync" — it only catches up
+            // on live updates after you reopen it from the tray.
+            backgroundThrottling: false,
         },
         show: false,
     });

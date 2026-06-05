@@ -212,28 +212,6 @@ export default function OrgSettingsPage({ userRole }) {
                 </section>
 
                 <section
-                    id="security"
-                    data-section-id="security"
-                    ref={el => (sectionRefs.current.security = el)}
-                    className={s.section}
-                >
-                    <header className={s.sectionHead}>
-                        <KeyRound size={18} className={s.sectionIcon} />
-                        <div>
-                            <h2 className={s.sectionTitle}>Two-Factor Authentication</h2>
-                            <p className={s.sectionDesc}>
-                                Add a one-time authenticator code to your sign-in. Optional for
-                                admins (you can enable or disable it here) and mandatory for
-                                platform admins. This controls your own account's 2FA.
-                            </p>
-                        </div>
-                    </header>
-                    <div className={s.sectionBody}>
-                        <SecurityMfa embedded />
-                    </div>
-                </section>
-
-                <section
                     id="branding"
                     data-section-id="branding"
                     ref={el => (sectionRefs.current.branding = el)}

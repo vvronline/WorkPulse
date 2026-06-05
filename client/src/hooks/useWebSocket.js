@@ -3,10 +3,30 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 /** Bound the outbound queue so a long offline stretch can't grow unboundedly. */
 const MAX_QUEUED_MESSAGES = 100;
 
+/** Heartbeat: how often the client sends a ping while the socket is open. */
+const HEARTBEAT_INTERVAL_MS = 25_000;
+/** If no frame (pong or any message) arrives within this window after a ping,
+ *  treat the socket as dead and force a reconnect. After laptop sleep/wake or a
+ *  network blip a socket can look "open" but be silently dead — without this the
+ *  client would keep believing it's connected and miss every live update. */
+const HEARTBEAT_TIMEOUT_MS = 10_000;
+
+/** Reconnect backoff bounds. We start fast (so a transient blip recovers almost
+ *  instantly) and back off up to a cap so a downed server isn't hammered. */
+const RECONNECT_BASE_MS = 1_000;
+const RECONNECT_MAX_MS = 15_000;
+
 /**
  * Hook that maintains a WebSocket connection for real-time updates.
  * Reconnects automatically on disconnect. Auth is via HttpOnly cookie.
  * Queues outbound messages while disconnected and flushes on reconnect.
+ *
+ * Reliability features (important for the desktop app, which spends long
+ * stretches minimized to the tray and survives laptop sleep/wake):
+ *   • Client heartbeat detects dead-but-"open" sockets and reconnects.
+ *   • Exponential backoff with jitter on reconnect.
+ *   • Immediate reconnect when the app regains focus / comes back online /
+ *     becomes visible (web + Electron `window-shown`).
  */
 export default function useWebSocket(onMessage) {
     const wsRef = useRef(null);
@@ -16,6 +36,11 @@ export default function useWebSocket(onMessage) {
     const onMessageRef = useRef(onMessage);
     onMessageRef.current = onMessage;
     const queueRef = useRef([]);
+    // Backoff state: number of consecutive failed/closed attempts.
+    const retryCountRef = useRef(0);
+    // Heartbeat timers.
+    const heartbeatTimer = useRef(null);
+    const heartbeatTimeout = useRef(null);
 
     const flushQueue = useCallback(() => {
         if (!wsRef.current || wsRef.current.readyState !== 1) return;
@@ -25,11 +50,40 @@ export default function useWebSocket(onMessage) {
         }
     }, []);
 
+    const stopHeartbeat = useCallback(() => {
+        clearInterval(heartbeatTimer.current);
+        clearTimeout(heartbeatTimeout.current);
+        heartbeatTimer.current = null;
+        heartbeatTimeout.current = null;
+    }, []);
+
+    const startHeartbeat = useCallback(() => {
+        stopHeartbeat();
+        heartbeatTimer.current = setInterval(() => {
+            const ws = wsRef.current;
+            if (!ws || ws.readyState !== 1) return;
+            try {
+                ws.send(JSON.stringify({ type: 'ping' }));
+            } catch { /* send can throw if the socket died mid-flight */ }
+            // Arm a watchdog: if nothing arrives before it fires, the socket is
+            // dead. Any inbound frame (see onmessage) clears it.
+            clearTimeout(heartbeatTimeout.current);
+            heartbeatTimeout.current = setTimeout(() => {
+                if (wsRef.current) {
+                    // Force-close; onclose will schedule a reconnect.
+                    try { wsRef.current.close(); } catch { /* ignore */ }
+                }
+            }, HEARTBEAT_TIMEOUT_MS);
+        }, HEARTBEAT_INTERVAL_MS);
+    }, [stopHeartbeat]);
+
     const connect = useCallback(() => {
         // Prevent duplicate connections: skip if already open, connecting, or a connect is in-flight
         if (connectingRef.current) return;
         if (wsRef.current && wsRef.current.readyState <= 1) return;
         connectingRef.current = true;
+        // A new connect attempt supersedes any pending reconnect timer.
+        clearTimeout(reconnectTimer.current);
 
         let wsUrl;
         if (import.meta.env.VITE_WS_URL) {
@@ -43,13 +97,21 @@ export default function useWebSocket(onMessage) {
 
         ws.onopen = () => {
             connectingRef.current = false;
+            retryCountRef.current = 0; // reset backoff on a successful open
             setConnected(true);
             flushQueue();
+            startHeartbeat();
         };
 
         ws.onmessage = (event) => {
+            // Any inbound frame proves the socket is alive — clear the
+            // heartbeat watchdog so a healthy-but-quiet connection isn't
+            // torn down.
+            clearTimeout(heartbeatTimeout.current);
             try {
                 const msg = JSON.parse(event.data);
+                // Server may answer our ping with a pong; swallow it.
+                if (msg && msg.type === 'pong') return;
                 if (onMessageRef.current) onMessageRef.current(msg);
             } catch { /* ignore non-JSON */ }
         };
@@ -58,9 +120,14 @@ export default function useWebSocket(onMessage) {
             connectingRef.current = false;
             setConnected(false);
             wsRef.current = null;
+            stopHeartbeat();
             // Reconnect after a delay unless auth failure or too-many-connections
             if (e.code !== 4001 && e.code !== 4029) {
-                reconnectTimer.current = setTimeout(connect, 3000);
+                const attempt = retryCountRef.current++;
+                // Exponential backoff with full jitter, capped.
+                const ceiling = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** attempt);
+                const delay = Math.round(Math.random() * ceiling);
+                reconnectTimer.current = setTimeout(connect, delay);
             }
         };
 
@@ -69,7 +136,18 @@ export default function useWebSocket(onMessage) {
         };
 
         wsRef.current = ws;
-    }, [flushQueue]);
+    }, [flushQueue, startHeartbeat, stopHeartbeat]);
+
+    // Force an immediate reconnect (used on focus / online / visibility). If the
+    // socket is already open this is a no-op; otherwise we reset the backoff so
+    // the user doesn't wait out a long timer after returning to the app.
+    const reconnectNow = useCallback(() => {
+        const ws = wsRef.current;
+        if (ws && ws.readyState === 1) return; // already healthy
+        retryCountRef.current = 0;
+        clearTimeout(reconnectTimer.current);
+        connect();
+    }, [connect]);
 
     const sendMessage = useCallback((type, data) => {
         const msg = JSON.stringify({ type, data });
@@ -106,6 +184,34 @@ export default function useWebSocket(onMessage) {
             connect();
         }
     }, [onMessage, connect]);
+
+    // Force an immediate reconnect when the app comes back to the foreground or
+    // the network returns. On the desktop app the window is minimized to the
+    // tray for long stretches and survives laptop sleep/wake — without these
+    // triggers the socket can stay dead (or wait out a backoff timer) so live
+    // updates feel laggy when you reopen the app. Listening to focus / online /
+    // visibilitychange (web) and the Electron `window-shown` IPC covers every
+    // "user is back" path.
+    useEffect(() => {
+        const onVisible = () => {
+            if (document.visibilityState === 'visible') reconnectNow();
+        };
+        window.addEventListener('focus', reconnectNow);
+        window.addEventListener('online', reconnectNow);
+        document.addEventListener('visibilitychange', onVisible);
+
+        let unsubscribeWindowShown = null;
+        if (window.electronAPI && typeof window.electronAPI.onWindowShown === 'function') {
+            unsubscribeWindowShown = window.electronAPI.onWindowShown(() => reconnectNow());
+        }
+
+        return () => {
+            window.removeEventListener('focus', reconnectNow);
+            window.removeEventListener('online', reconnectNow);
+            document.removeEventListener('visibilitychange', onVisible);
+            if (typeof unsubscribeWindowShown === 'function') unsubscribeWindowShown();
+        };
+    }, [reconnectNow]);
 
     return { connected, sendMessage };
 }
