@@ -1,6 +1,7 @@
-const { app, BrowserWindow, protocol, net, session, Menu, nativeImage, desktopCapturer, systemPreferences, ipcMain } = require('electron');
+const { app, BrowserWindow, protocol, net, session, Menu, nativeImage, desktopCapturer, systemPreferences, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { execFile } = require('child_process');
 const util = require('util');
 const execFileP = util.promisify(execFile);
@@ -120,6 +121,36 @@ function clearCacheIfVersionChanged() {
 }
 
 const shouldClearCache = clearCacheIfVersionChanged();
+
+// ─── Open an uploaded file (document) in the OS default app ───
+// Uploaded files live behind the authenticated `/uploads/*` route, so they
+// can only be fetched with the Electron session's auth cookies — an external
+// browser would get a 403. We therefore download the file through the same
+// authenticated session the in-app proxy uses, write it to a temp file, and
+// hand it to the OS to open with the user's default application.
+async function openRemoteUpload(pathWithQuery, suggestedName) {
+    const resp = await net.fetch(`${RAILWAY_URL}${pathWithQuery}`, {
+        method: 'GET',
+        headers: {
+            origin: 'workpulse://app',
+            'x-requested-with': 'WorkPulse',
+        },
+        credentials: 'include',
+        bypassCustomProtocolHandlers: true,
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const buf = Buffer.from(await resp.arrayBuffer());
+
+    const rawName = suggestedName || path.basename(pathWithQuery.split('?')[0]) || 'download';
+    // Strip anything unsafe for a filename; keep the extension so the OS picks
+    // the right default app.
+    const safeName = rawName.replace(/[^\w.\- ]+/g, '_').slice(-120) || 'download';
+    const tmpPath = path.join(os.tmpdir(), `workpulse-${Date.now()}-${safeName}`);
+    await fs.promises.writeFile(tmpPath, buf);
+
+    const err = await shell.openPath(tmpPath);
+    if (err) throw new Error(err);
+}
 
 // ─── Custom protocol registration (must happen before app.ready) ───
 protocol.registerSchemesAsPrivileged([{
@@ -420,7 +451,6 @@ $w.Stop()
     // turned off, which is a fix the user has to make themselves in Settings.
     ipcMain.handle('open-location-settings', async () => {
         try {
-            const { shell } = require('electron');
             if (process.platform === 'win32') {
                 await shell.openExternal('ms-settings:privacy-location');
                 return { ok: true };
@@ -739,8 +769,25 @@ $w.Stop()
 
     // Open external links in the default browser
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+        // Uploaded files (documents) open behind the authenticated /uploads/*
+        // route. They can't be opened directly in an external browser (no auth
+        // cookies there → 403), so download them via the in-app session and
+        // hand the file to the OS default app instead.
+        try {
+            const u = new URL(url);
+            const pathname = decodeURIComponent(u.pathname);
+            const isUpload = pathname.startsWith('/uploads/');
+            const isOwnHost = url.startsWith('workpulse://') || u.host === new URL(RAILWAY_URL).host;
+            if (isUpload && isOwnHost) {
+                openRemoteUpload(pathname + (u.search || '')).catch((err) => {
+                    console.error('[WorkPulse] Failed to open uploaded file:', err?.message);
+                });
+                return { action: 'deny' };
+            }
+        } catch { /* not a parseable URL — fall through */ }
+
         if (url.startsWith('http://') || url.startsWith('https://')) {
-            require('electron').shell.openExternal(url);
+            shell.openExternal(url);
         }
         return { action: 'deny' };
     });
