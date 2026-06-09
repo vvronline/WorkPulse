@@ -83,8 +83,38 @@ foreach ($procId in $procIds) {
 }
 if ($procIds) { Start-Sleep -Milliseconds 500 }
 
+# ── load server .env into the current environment ──
+# index.ts statically imports db.ts, whose DATABASE_URL check runs before
+# dotenv loads (ESM imports are hoisted). Loading env vars here guarantees
+# they're present before node starts.
+$envFile = Join-Path $Server '.env'
+if (Test-Path $envFile) {
+    Log "Loading environment from server\.env"
+    foreach ($line in Get-Content $envFile) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith('#')) { continue }
+        $eq = $trimmed.IndexOf('=')
+        if ($eq -lt 1) { continue }
+        $key = $trimmed.Substring(0, $eq).Trim()
+        $val = $trimmed.Substring($eq + 1).Trim()
+        # strip surrounding quotes if present
+        if (($val.StartsWith('"') -and $val.EndsWith('"')) -or
+            ($val.StartsWith("'") -and $val.EndsWith("'"))) {
+            $val = $val.Substring(1, $val.Length - 2)
+        }
+        Set-Item -Path "Env:$key" -Value $val
+    }
+} else {
+    Warn "server\.env not found — relying on existing environment variables"
+}
+
+# ── run database migrations ──
+Log "Running database migrations…"
+Set-Location $Server
+& npx tsx migrate.ts
+if ($LASTEXITCODE -ne 0) { Abort "database migrations failed" }
+
 # ── start server ──
 Log "Starting server on http://localhost:$port"
 Log "Open http://localhost:$port in your browser to use WorkPulse"
-Set-Location $Server
-node index.js
+& npx tsx index.ts

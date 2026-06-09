@@ -1,0 +1,101 @@
+import React, { useMemo } from "react";
+import DOMPurify from "dompurify";
+import hljs from "../../hljs-setup";
+import { getLocalToday } from "../../api";
+
+/** Pre-process HTML: syntax-highlight code blocks before React renders */
+const DOMPURIFY_CONFIG = {
+    ALLOWED_TAGS: ["b", "i", "em", "strong", "a", "code", "pre", "ul", "ol", "li", "p", "br", "span"],
+    ALLOWED_ATTR: ["href", "title", "target", "rel", "class"],
+    ALLOW_UNKNOWN_PROTOCOLS: false,
+    ALLOWED_URI_REGEXP: /^(?:(?:f|ht)tps?|mailto|tel):/i,
+};
+
+export function highlightHtml(raw: string): string {
+    if (!raw) return "";
+    const clean = DOMPurify.sanitize(raw, DOMPURIFY_CONFIG);
+    const highlighted = clean.replace(/<pre\b[^>]*>([\s\S]*?)<\/pre>/gi, (match, code) => {
+        const txt = code
+            .replace(/&lt;/g, "<")
+            .replace(/&gt;/g, ">")
+            .replace(/&amp;/g, "&")
+            .replace(/&#39;/g, "'")
+            .replace(/&quot;/g, '"');
+        try {
+            const result = (hljs as any).highlightAuto(txt);
+            return `<pre class="hljs">${result.value}</pre>`;
+        } catch {
+            return match;
+        }
+    });
+    // Re-sanitize after hljs mutation to prevent entity-decode XSS
+    return DOMPurify.sanitize(highlighted, DOMPURIFY_CONFIG);
+}
+
+interface HighlightedHtmlProps {
+    html: string;
+    className?: string;
+    [key: string]: unknown;
+}
+
+export function HighlightedHtml({ html, className, ...rest }: HighlightedHtmlProps) {
+    const highlighted = useMemo(() => highlightHtml(html), [html]);
+    return <div className={className} dangerouslySetInnerHTML={{ __html: highlighted }} {...rest} />;
+}
+
+export function stripHtml(html: string): string {
+    if (!html) return "";
+    const tmp = document.createElement("div");
+    tmp.innerHTML = DOMPurify.sanitize(html);
+    return tmp.textContent || tmp.innerText || "";
+}
+
+export function parseLocalDate(value: string): Date {
+    return new Date(`${value}T00:00:00`);
+}
+
+export function formatDueDate(d: string | null | undefined): string | null {
+    if (!d) return null;
+    const today = getLocalToday();
+    if (d === today) return "Today";
+    const diff = Math.ceil((parseLocalDate(d).getTime() - parseLocalDate(today).getTime()) / 86400000);
+    if (diff === 1) return "Tomorrow";
+    if (diff === -1) return "Yesterday";
+    if (diff < 0) return `${Math.abs(diff)}d overdue`;
+    if (diff <= 7) return `${diff}d left`;
+    return parseLocalDate(d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+export function formatDate(d: string | null | undefined): string {
+    if (!d) return "";
+    return parseLocalDate(d).toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+    });
+}
+
+export function formatRelativeTime(dateStr: string | null | undefined): string {
+    if (!dateStr) return "";
+    const d = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now.getTime() - d.getTime();
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1) return "just now";
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffH = Math.floor(diffMin / 60);
+    if (diffH < 24) return `${diffH}h ago`;
+    const diffD = Math.floor(diffH / 24);
+    if (diffD < 7) return `${diffD}d ago`;
+    if (diffD < 30) return `${Math.floor(diffD / 7)}w ago`;
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+export function getAvatarUrl(avatar: string | null | undefined): string {
+    if (!avatar) return "";
+    return avatar.startsWith("/") ? avatar : `/uploads/avatars/${avatar}`;
+}
+
+export function isDueOverdue(d: string | null | undefined): boolean {
+    return !!(d && d < getLocalToday());
+}

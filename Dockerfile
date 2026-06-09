@@ -6,7 +6,15 @@ RUN npm ci
 COPY client/ ./
 RUN npm run build
 
-# Stage 2: Setup the Express backend & Serve
+# Stage 2: Compile the TypeScript backend
+FROM node:20-alpine AS backend-builder
+WORKDIR /app/server
+COPY server/package*.json ./
+RUN npm ci
+COPY server/ ./
+RUN npm run build
+
+# Stage 3: Setup the Express backend & Serve
 FROM node:20-alpine
 WORKDIR /app/server
 
@@ -19,7 +27,11 @@ RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 COPY server/package*.json ./
 RUN npm ci --omit=dev
 
-COPY server/ ./
+# Copy compiled JS output from the backend builder stage.
+# The dist/ *contents* are flattened into /app/server so that index.js sits at
+# /app/server/index.js. This matches the __dirname-relative paths in the code
+# (client static files at /app/client/dist, uploads at /app/server/uploads).
+COPY --from=backend-builder /app/server/dist ./
 
 # Copy built React files from the builder stage
 COPY --from=frontend-builder /app/client/dist /app/client/dist

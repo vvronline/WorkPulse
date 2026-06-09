@@ -1,0 +1,137 @@
+import { useState, useRef } from "react";
+import { NavLink, useLocation } from "react-router-dom";
+import { useAuth } from "../../AuthContext";
+import { useFeatures } from "../../FeaturesContext";
+import { useChatUnread } from "../../ChatContext";
+import { useClickOutside } from "../../hooks/useClickOutside";
+import {
+    Home,
+    Calendar,
+    ClipboardList,
+    MessageSquare,
+    CalendarCheck,
+    FileText,
+    Building2,
+    Users,
+    Settings,
+    Server,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import s from "./Navbar.module.css";
+
+const ROLE_LEVELS: Record<string, number> = {
+    employee: 1,
+    team_lead: 2,
+    manager: 3,
+    hr_admin: 4,
+    super_admin: 5,
+    platform_admin: 6,
+};
+
+interface MoreItem {
+    to: string;
+    label: string;
+    icon: LucideIcon;
+}
+
+export default function MobileTabBar() {
+    const { user } = useAuth() as any;
+    const { hasFeature } = useFeatures() as any;
+    const location = useLocation();
+    const { unreadCount: chatUnread } = useChatUnread() as any;
+    const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+    const mobileMoreRef = useRef<HTMLDivElement | null>(null);
+
+    useClickOutside(mobileMoreRef, () => setMobileMoreOpen(false));
+
+    const userLevel = ROLE_LEVELS[user?.role] || 1;
+    const isTeamLead = userLevel >= 2 || user?.has_reports;
+    const isHR = userLevel >= 4;
+
+    // Secondary items shown in More sheet
+    const moreItems: MoreItem[] = [];
+    if (hasFeature("notes")) moreItems.push({ to: "/notes", label: "Notes", icon: FileText });
+    if (hasFeature("attendance"))
+        moreItems.push({ to: "/attendance", label: "Attendance", icon: CalendarCheck });
+    if (user?.org_id && user?.role !== "platform_admin")
+        moreItems.push({ to: "/organization", label: "Organization", icon: Building2 });
+    if (isTeamLead) moreItems.push({ to: "/manager", label: "My Team", icon: Users });
+    if (isHR) moreItems.push({ to: "/admin", label: "Admin", icon: Settings });
+    if (user?.role === "platform_admin")
+        moreItems.push({ to: "/tenants", label: "Tenants", icon: Server });
+
+    const moreIsActive = moreItems.some((item) => location.pathname === item.to);
+    const p = location.pathname;
+
+    return (
+        <div className={s["mobile-tab-bar"]}>
+            <NavLink to="/" className={p === "/" ? s.active : ""}>
+                <span className={s["nav-icon"]}>
+                    <Home size={22} />
+                </span>
+                <span className={s["tab-label"]}>Home</span>
+            </NavLink>
+            {hasFeature("calendar") && (
+                <NavLink to="/calendar" className={p === "/calendar" ? s.active : ""}>
+                    <span className={s["nav-icon"]}>
+                        <Calendar size={22} />
+                    </span>
+                    <span className={s["tab-label"]}>Calendar</span>
+                </NavLink>
+            )}
+            {hasFeature("tasks") && (
+                <NavLink to="/tasks" className={p === "/tasks" ? s.active : ""}>
+                    <span className={s["nav-icon"]}>
+                        <ClipboardList size={22} />
+                    </span>
+                    <span className={s["tab-label"]}>Tasks</span>
+                </NavLink>
+            )}
+            {hasFeature("chat") && (
+                <NavLink to="/chat" className={`${p === "/chat" ? s.active : ""}`}>
+                    <span className={`${s["nav-icon"]} ${s.mobileIconWrap}`}>
+                        <MessageSquare size={22} />
+                        {chatUnread > 0 && (
+                            <span className={s.chatBadge}>{chatUnread > 99 ? "99+" : chatUnread}</span>
+                        )}
+                    </span>
+                    <span className={s["tab-label"]}>Chat</span>
+                </NavLink>
+            )}
+            <div className={s["mobile-more-wrapper"]} ref={mobileMoreRef}>
+                <button
+                    className={`${s["mobile-more-btn"]} ${
+                        mobileMoreOpen || moreIsActive ? s.active : ""
+                    }`}
+                    onClick={() => setMobileMoreOpen((prev) => !prev)}
+                >
+                    <span className={s["nav-icon"]}>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                            <path
+                                d="M4 6h16M4 12h16M4 18h16"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                            />
+                        </svg>
+                    </span>
+                    <span className={s["tab-label"]}>More</span>
+                </button>
+                {mobileMoreOpen && (
+                    <div className={s["mobile-more-popup"]}>
+                        {moreItems.map((item) => (
+                            <NavLink
+                                key={item.to}
+                                to={item.to}
+                                className={p === item.to ? s.active : ""}
+                                onClick={() => setMobileMoreOpen(false)}
+                            >
+                                {item.icon && <item.icon size={18} />} {item.label}
+                            </NavLink>
+                        ))}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}

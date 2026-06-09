@@ -1,3 +1,14 @@
 node_modules/
 dist/
 *.log
+
+# Compiled main-process output (generated from *.ts by `npm run build:main`).
+# These sit next to their .ts sources because tsconfig outDir is "." so the
+# Electron `main` field + electron-builder `files:` keep working unchanged.
+main.js
+preload.js
+tray.js
+updater.js
+callPipWindow.js
+generate-icons.js
+*.js.map
