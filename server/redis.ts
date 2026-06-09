@@ -66,6 +66,13 @@ function initRedis(): void {
     }
 
     const options = {
+        // Railway private networking (*.railway.internal) resolves to IPv6
+        // ONLY. ioredis defaults to family: 4 (IPv4), so the DNS lookup
+        // returns an AAAA record the IPv4 socket can't reach → connect
+        // ETIMEDOUT (retried forever). family: 0 lets Node pick whichever
+        // address family DNS returns (IPv4 or IPv6), which is required for
+        // the internal Redis host and harmless for public hosts.
+        family: 0,
         // Short per-request retry budget so the API doesn't stall behind a
         // dead Redis.
         maxRetriesPerRequest: 1,

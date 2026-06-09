@@ -169,6 +169,11 @@ function initJobs({ autoClockOut, cleanupTokens }: InitJobsOpts): void {
         port: redisClient.options.port || 6379,
         password: redisClient.options.password || undefined,
         db: redisClient.options.db || 0,
+        // Inherit dual-stack DNS resolution from the cache client. Railway's
+        // private host (*.railway.internal) is IPv6-only, so without family: 0
+        // BullMQ's own ioredis connections default to IPv4 and loop forever on
+        // connect ETIMEDOUT.
+        family: redisClient.options.family ?? 0,
         maxRetriesPerRequest: null,
         enableReadyCheck: false,
     };
