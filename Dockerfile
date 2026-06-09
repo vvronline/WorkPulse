@@ -2,7 +2,7 @@
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app/client
 COPY client/package*.json ./
-RUN npm ci
+RUN npm ci --cache /tmp/npm-cache-frontend
 COPY client/ ./
 RUN npm run build
 
@@ -10,7 +10,7 @@ RUN npm run build
 FROM node:20-alpine AS backend-builder
 WORKDIR /app/server
 COPY server/package*.json ./
-RUN npm ci
+RUN npm ci --cache /tmp/npm-cache-backend
 COPY server/ ./
 RUN npm run build
 
@@ -25,7 +25,7 @@ RUN apk add --no-cache dumb-init su-exec
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
 COPY server/package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --cache /tmp/npm-cache-runtime
 
 # Copy compiled JS output from the backend builder stage.
 # The dist/ *contents* are flattened into /app/server so that index.js sits at
