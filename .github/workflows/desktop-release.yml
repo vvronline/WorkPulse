@@ -99,6 +99,16 @@ jobs:
         working-directory: desktop
         run: npm ci
 
+      - name: Compile desktop TypeScript (main process)
+        # The compiled *.js (main.js, preload.js, tray.js, updater.js,
+        # callPipWindow.js) are gitignored and therefore NOT in the checkout.
+        # electron-builder's `files:` array references them directly, so without
+        # this step electron-builder packages an app with no entry point and
+        # produces no installer — which then makes the upload-artifact step fail
+        # with "No files were found with the provided path".
+        working-directory: desktop
+        run: npm run build:main
+
       - name: Write Google API key for geolocation
         # NOTE: do NOT use `env.GOOGLE_API_KEY` here — step-level `if:` does NOT
         # see step-level `env:`, it only sees job/workflow env. Reference the
