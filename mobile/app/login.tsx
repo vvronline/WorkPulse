@@ -34,7 +34,21 @@ export default function LoginScreen() {
       router.replace("/(tabs)");
     } catch (e) {
       const err = e as AxiosError<{ error?: string }>;
-      setError(err.response?.data?.error || "Login failed");
+      // Prefer the server's error message. If there is no HTTP response it's a
+      // network-layer failure (or an exception thrown after the request) —
+      // surface the axios code/message so the cause is visible on-device
+      // (release builds strip the JS console).
+      const serverMsg = err.response?.data?.error;
+      const detail =
+        serverMsg ||
+        (err.response
+          ? `Login failed (HTTP ${err.response.status})`
+          : err.code || err.message
+            ? `Login failed: ${err.code ?? ""} ${err.message ?? ""}`.trim()
+            : e instanceof Error && e.message
+              ? e.message
+              : "Login failed");
+      setError(detail);
     } finally {
       setBusy(false);
     }
