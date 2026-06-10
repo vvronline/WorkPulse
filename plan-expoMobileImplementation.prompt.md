@@ -190,3 +190,59 @@ eas build --profile development --platform android   # + ios
 1. Mobile MVP scope: **REST-only first** (tracker/tasks/leaves/chat) vs include calls now? (Recommend REST-first.)
 2. Push notifications in v1 or deferred? (Recommend deferred to Phase 6.)
 3. Custom-domain handling on login: dropdown of known orgs vs free-text domain entry?
+
+---
+
+## Implementation status (audit 2026-06-10)
+
+The `mobile/` app is already built out well beyond the original phase plan.
+The following feature parity has been verified against the web mobile view and
+the shared backend:
+
+**Implemented & wired to the live backend:**
+- Auth (Bearer + secure-store), session restore, 401 → logout.
+- Dashboard: greeting + announcements, Work Timer (clock in/out, breaks,
+  office/remote), Today's Events (meetings + join), Today's Planner, Sprint
+  progress / backlog fallback, Pending Approvals (managers).
+- Tracker / Attendance: overview calendar + day detail, manual entry,
+  analytics ranges.
+- Tasks: backlog list, create ticket (assignee/labels/sprint/points/due),
+  task detail (status workflow, schedule/unschedule, comments, history),
+  Kanban board with drag-and-drop + workflow-state columns + WIP limits,
+  sprint lifecycle (start/complete), Service Desk.
+- Leaves: balances, history, apply.
+- Chat: conversation list (live unread), 1:1 + group creation, message thread
+  over WebSocket (send/typing/read), reactions, edit/delete/pin/star, image
+  attachments.
+- Calendar: month/week/day views, create/edit/delete events.
+- Notifications: list, mark-read, mark-all, unread badge in TopBar.
+- Profile: avatar upload/remove, edit profile, change password, presence
+  status picker (+ Appear Offline), notification sounds, face enrollment.
+- Organization (members + counts), My Team (attendance + approve/reject),
+  Notes, Meetings.
+- Realtime: singleton WS client with backoff reconnect, 25s ping, app-state
+  aware; server accepts the `?token=` param (confirmed in `server/utils/ws.ts`).
+
+**Broken backend wiring found & fixed in this pass:**
+1. **Task schedule state** — `mobile/app/tasks/[id].tsx` inferred "scheduled"
+   from `task.due_date`, but the schedule/unschedule endpoints set `task.date`
+   (web uses `!detailTask.date && !detailTask.sprint_id` for backlog). Added
+   `date`/`sprint_id` to the `Task` type and switched the screen to read
+   `task.date`; `due_date` is now shown separately as the deadline.
+2. **Organization members empty** — `GET /org/members` returns the standard
+   `{ data, total, page, perPage }` envelope, but the screen read
+   `data.members`. Fixed the type + screen to read `data.data`.
+3. **Organization stats/settings blank** — `GET /org/current` returns the row
+   directly with camelCase counts (`memberCount`/`deptCount`/`teamCount`) and
+   flattened work-policy columns (`work_hours_per_day`/`timezone`), but the
+   screen read `member_count` and a nested `settings` object. Fixed the type +
+   screen to the actual payload shape.
+4. **New-chat single-keystroke "no results"** — the screen searched at length
+   ≥ 1 while `GET /chat/search` ignores queries under 2 chars. Raised the
+   client threshold to 2 to match the server.
+
+All four fixes pass `tsc --noEmit` with no errors.
+
+**Deferred (optional, per plan):** push notifications (Phase 6) and native
+WebRTC 1:1 calls (Phase 7) — these require native modules + an EAS dev build
+and are intentionally out of the REST/WS MVP scope.

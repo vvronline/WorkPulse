@@ -45,7 +45,10 @@ export default function NewChatScreen() {
   useEffect(() => {
     if (debounce.current) clearTimeout(debounce.current);
     const q = query.trim();
-    if (q.length < 1) {
+    // The backend `/chat/search` endpoint ignores queries shorter than 2
+    // characters (returns []), so mirror that threshold here to avoid showing
+    // a misleading "No people found" state after a single keystroke.
+    if (q.length < 2) {
       setResults([]);
       return;
     }

@@ -12,7 +12,12 @@ export type Task = {
   status: TaskStatus;
   priority: TaskPriority;
   issue_key?: string | null;
+  // `date` is the daily-planner schedule date (YYYY-MM-DD). A task is in the
+  // backlog when both `date` and `sprint_id` are null. `due_date` is a
+  // separate target/deadline field — do NOT use it to infer scheduled state.
+  date?: string | null;
   due_date?: string | null;
+  sprint_id?: number | null;
 };
 
 export type TaskStats = {
@@ -829,23 +834,29 @@ export function rejectRequest(id: number, reason?: string) {
 
 /* ───────────────────────── Organization ───────────────────────── */
 
+// Mirrors GET /org/current. The server returns the `organizations` row
+// directly (NOT wrapped) with camelCase aggregate counts and the work-policy
+// columns flattened at the top level — do NOT expect a nested `settings`
+// object or snake_case `*_count` fields here.
 export type OrgInfo = {
   id: number;
   name: string;
+  slug?: string | null;
+  custom_domain?: string | null;
   domain?: string | null;
-  settings?: {
-    daily_hours?: number;
-    work_days?: string[];
-    timezone?: string;
-    fiscal_year_start?: string;
-  };
-  member_count?: number;
-  department_count?: number;
-  team_count?: number;
+  // Work-policy columns (top-level on the organizations table).
+  work_hours_per_day?: number | null;
+  work_days?: string | null;
+  timezone?: string | null;
+  fiscal_year_start?: string | null;
+  // Aggregate counts (hr_admin+ only — omitted for lower roles).
+  memberCount?: number;
+  deptCount?: number;
+  teamCount?: number;
 };
 
 export function getCurrentOrg() {
-  return api.get<OrgInfo>("/org/current");
+  return api.get<OrgInfo | null>("/org/current");
 }
 
 export type OrgMember = {
@@ -859,10 +870,14 @@ export type OrgMember = {
   team_name?: string | null;
 };
 
+// GET /org/members returns the standard backend envelope
+// `{ data, total, page, perPage }` — the member rows are under `data`, not
+// `members`.
 export function getOrgMembers(params?: Record<string, string>) {
-  return api.get<{ members: OrgMember[]; total: number }>("/org/members", {
-    params,
-  });
+  return api.get<{ data: OrgMember[]; total: number; page: number; perPage: number }>(
+    "/org/members",
+    { params },
+  );
 }
 
 export function getOrgDepartments() {

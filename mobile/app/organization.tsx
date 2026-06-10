@@ -37,7 +37,9 @@ export default function OrganizationScreen() {
       getOrgMembers({ limit: "100" }),
     ]);
     if (oRes.status === "fulfilled") setOrg(oRes.value.data || null);
-    if (mRes.status === "fulfilled") setMembers(mRes.value.data.members || []);
+    // GET /org/members returns the standard `{ data, total, ... }` envelope —
+    // the rows are under `data`, not `members`.
+    if (mRes.status === "fulfilled") setMembers(mRes.value.data.data || []);
     setLoading(false);
     setRefreshing(false);
   }, []);
@@ -83,24 +85,26 @@ export default function OrganizationScreen() {
                 {org.domain ? (
                   <Text style={styles.orgDomain}>{org.domain}</Text>
                 ) : null}
+                {/* Counts are camelCase on the server payload and only
+                    present for hr_admin+; default to 0 when masked. */}
                 <View style={styles.statsRow}>
-                  <Stat label="Members" value={org.member_count ?? 0} />
+                  <Stat label="Members" value={org.memberCount ?? 0} />
                   <View style={styles.statDivider} />
-                  <Stat label="Departments" value={org.department_count ?? 0} />
+                  <Stat label="Departments" value={org.deptCount ?? 0} />
                   <View style={styles.statDivider} />
-                  <Stat label="Teams" value={org.team_count ?? 0} />
+                  <Stat label="Teams" value={org.teamCount ?? 0} />
                 </View>
-                {org.settings ? (
+                {/* Work-policy columns are flattened at the top level of the
+                    organizations row (no nested `settings` object). */}
+                {org.work_hours_per_day || org.timezone ? (
                   <View style={styles.settingsRow}>
-                    {org.settings.daily_hours ? (
+                    {org.work_hours_per_day ? (
                       <Text style={styles.settingChip}>
-                        {org.settings.daily_hours}h/day
+                        {org.work_hours_per_day}h/day
                       </Text>
                     ) : null}
-                    {org.settings.timezone ? (
-                      <Text style={styles.settingChip}>
-                        {org.settings.timezone}
-                      </Text>
+                    {org.timezone ? (
+                      <Text style={styles.settingChip}>{org.timezone}</Text>
                     ) : null}
                   </View>
                 ) : null}

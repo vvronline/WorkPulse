@@ -331,14 +331,23 @@ export default function TaskDetail() {
               </View>
 
               {/* Schedule / Unschedule */}
+              {/* `task.date` is the daily-planner schedule date set by the
+                  schedule/unschedule endpoints. `due_date` is a separate
+                  deadline field and must not be used to infer schedule state
+                  (mirrors the web TaskDetailModal `isBacklogItem` check). */}
               <Text style={styles.sectionTitle}>Schedule</Text>
-              {task.due_date ? (
+              {task.date ? (
                 <Text style={styles.dueText}>
-                  Scheduled for {new Date(task.due_date).toLocaleDateString()}
+                  Scheduled for {new Date(task.date).toLocaleDateString()}
                 </Text>
               ) : (
                 <Text style={styles.noDesc}>In backlog (unscheduled)</Text>
               )}
+              {task.due_date ? (
+                <Text style={styles.dueText}>
+                  Due {new Date(task.due_date).toLocaleDateString()}
+                </Text>
+              ) : null}
               <View style={styles.scheduleRow}>
                 <Pressable
                   style={[styles.scheduleBtn, scheduling && styles.disabled]}
