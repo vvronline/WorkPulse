@@ -1,5 +1,5 @@
 import express from "express";
-import type { Request, Response } from "express";
+import type { Request, Response, NextFunction } from "express";
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -17,6 +17,35 @@ const { logPlatformAction } = require("../utils/platformAudit");
 const router = express.Router();
 
 const { cookieOptions } = require("../utils/cookie");
+
+// Native mobile clients (React Native) can't use HttpOnly cookies, so they need
+// the JWT in the response body. This wraps res.cookie/res.json once for the
+// whole auth router: whenever an auth flow sets the `token` cookie, the same
+// token is mirrored into the JSON body as `token`. Web/desktop clients keep
+// using the cookie and simply ignore the extra field.
+router.use((req: Request, res: Response, next: NextFunction) => {
+    const originalCookie = res.cookie.bind(res);
+    res.cookie = ((name: string, value: string, options?: any) => {
+        if (name === "token") res.locals.authToken = value;
+        return originalCookie(name, value, options);
+    }) as any;
+
+    const originalJson = res.json.bind(res);
+    res.json = ((body: any) => {
+        if (
+            res.locals.authToken &&
+            body &&
+            typeof body === "object" &&
+            !Array.isArray(body) &&
+            body.token === undefined
+        ) {
+            body.token = res.locals.authToken;
+        }
+        return originalJson(body);
+    }) as any;
+
+    next();
+});
 
 // Allow up to two concurrent active sessions per user (e.g. desktop app +
 // browser, or laptop + phone). When a user signs in on a third device, the

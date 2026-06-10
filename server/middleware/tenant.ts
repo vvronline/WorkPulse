@@ -30,7 +30,15 @@ const DOMAIN_CACHE_TTL = 5 * 60; // 5 minutes
  */
 async function resolveFromJwt(req: any): Promise<number | null> {
     const jwt = require("jsonwebtoken");
-    const token = req.cookies?.token;
+    // Web/desktop send the JWT in a cookie; native mobile clients send it as
+    // an `Authorization: Bearer <jwt>` header. Support both so tenant context
+    // resolves before the auth middleware runs.
+    const authHeader = req.headers?.authorization;
+    const token =
+        req.cookies?.token ||
+        (typeof authHeader === "string" && authHeader.startsWith("Bearer ")
+            ? authHeader.slice(7)
+            : null);
     if (!token) return null;
 
     try {

@@ -1,0 +1,125 @@
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useRouter } from "expo-router";
+import {
+  Building2,
+  CalendarCheck,
+  CalendarDays,
+  ChevronRight,
+  FileText,
+  Server,
+  Settings,
+  Users,
+  type LucideIcon,
+} from "lucide-react-native";
+import { useAuth } from "../../src/auth/AuthContext";
+import { theme } from "../../src/theme";
+
+const ROLE_LEVELS: Record<string, number> = {
+  employee: 1,
+  user: 1,
+  team_lead: 2,
+  manager: 3,
+  hr_admin: 4,
+  super_admin: 5,
+  platform_admin: 6,
+};
+
+type Item = {
+  label: string;
+  icon: LucideIcon;
+  onPress: () => void;
+};
+
+export default function MoreScreen() {
+  const router = useRouter();
+  const { user } = useAuth();
+
+  const level = ROLE_LEVELS[user?.role ?? "user"] || 1;
+  const isTeamLead = level >= 2 || !!user?.has_reports;
+  const isHR = level >= 4;
+  const soon = (name: string) =>
+    Alert.alert(name, "This section is managed from the web app.");
+
+  const items: Item[] = [
+    { label: "Leaves", icon: CalendarDays, onPress: () => router.push("/leaves") },
+    { label: "Notes", icon: FileText, onPress: () => router.push("/notes") },
+    {
+      label: "Attendance",
+      icon: CalendarCheck,
+      onPress: () => router.push("/attendance"),
+    },
+  ];
+
+  if (user?.org_id && user?.role !== "platform_admin") {
+    items.push({
+      label: "Organization",
+      icon: Building2,
+      onPress: () => router.push("/organization"),
+    });
+  }
+  if (isTeamLead)
+    items.push({ label: "My Team", icon: Users, onPress: () => router.push("/team") });
+  if (isHR) items.push({ label: "Admin", icon: Settings, onPress: () => soon("Admin") });
+  if (user?.role === "platform_admin") {
+    items.push({ label: "Tenants", icon: Server, onPress: () => soon("Tenants") });
+  }
+
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
+      <Text style={styles.heading}>More</Text>
+      <View style={styles.card}>
+        {items.map((item, i) => (
+          <Pressable
+            key={item.label}
+            style={[styles.row, i < items.length - 1 && styles.rowBorder]}
+            onPress={item.onPress}
+            android_ripple={{ color: theme.surfaceHover }}
+          >
+            <View style={styles.iconWrap}>
+              <item.icon size={18} color={theme.textSecondary} />
+            </View>
+            <Text style={styles.label}>{item.label}</Text>
+            <ChevronRight size={18} color={theme.textMuted} />
+          </Pressable>
+        ))}
+      </View>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: theme.bg },
+  container: { padding: 16, gap: 12 },
+  heading: {
+    fontSize: 24,
+    fontWeight: "800",
+    color: theme.text,
+    letterSpacing: -0.5,
+  },
+  card: {
+    backgroundColor: theme.glass,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radiusLg,
+    overflow: "hidden",
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  rowBorder: { borderBottomWidth: 1, borderBottomColor: theme.border },
+  iconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 9,
+    backgroundColor: theme.surface,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  label: { flex: 1, fontSize: 15, fontWeight: "500", color: theme.text },
+});

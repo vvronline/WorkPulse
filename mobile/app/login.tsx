@@ -1,0 +1,256 @@
+import { useRouter } from "expo-router";
+import { useState } from "react";
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import { AxiosError } from "axios";
+import { ShieldCheck, ArrowRight, Eye, EyeOff } from "lucide-react-native";
+import { useAuth } from "../src/auth/AuthContext";
+import { theme } from "../src/theme";
+
+export default function LoginScreen() {
+  const { login } = useAuth();
+  const router = useRouter();
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function onSubmit() {
+    setError(null);
+    setBusy(true);
+    try {
+      await login(username.trim(), password);
+      router.replace("/(tabs)");
+    } catch (e) {
+      const err = e as AxiosError<{ error?: string }>;
+      setError(err.response?.data?.error || "Login failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const canSubmit = username.trim().length > 0 && password.length > 0 && !busy;
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
+      {/* Ambient glow accents (mirror the web auth-container ::before/::after) */}
+      <View style={styles.glowTop} pointerEvents="none" />
+      <View style={styles.glowBottom} pointerEvents="none" />
+
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.card}>
+          <View style={styles.icon}>
+            <ShieldCheck size={28} strokeWidth={1.5} color="#fff" />
+          </View>
+
+          <Text style={styles.title}>Welcome Back</Text>
+          <Text style={styles.subtitle}>Sign in to WorkPulse</Text>
+
+          {error ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
+
+          {/* Username */}
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Username</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter your username"
+              placeholderTextColor={theme.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              value={username}
+              onChangeText={setUsername}
+            />
+          </View>
+
+          {/* Password */}
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Password</Text>
+            <View style={styles.passwordWrap}>
+              <TextInput
+                style={[styles.input, styles.passwordInput]}
+                placeholder="Enter your password"
+                placeholderTextColor={theme.textMuted}
+                secureTextEntry={!showPassword}
+                value={password}
+                onChangeText={setPassword}
+              />
+              <Pressable
+                style={styles.eyeBtn}
+                onPress={() => setShowPassword((v) => !v)}
+                hitSlop={8}
+              >
+                {showPassword ? (
+                  <EyeOff size={18} color={theme.textMuted} />
+                ) : (
+                  <Eye size={18} color={theme.textMuted} />
+                )}
+              </Pressable>
+            </View>
+          </View>
+
+          <Text style={styles.forgot}>Forgot password?</Text>
+
+          <TouchableOpacity
+            style={[styles.button, !canSubmit && styles.buttonDisabled]}
+            onPress={onSubmit}
+            disabled={!canSubmit}
+            activeOpacity={0.85}
+          >
+            {busy ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <View style={styles.buttonContent}>
+                <Text style={styles.buttonText}>Sign In</Text>
+                <ArrowRight size={16} color="#fff" />
+              </View>
+            )}
+          </TouchableOpacity>
+
+          <Text style={styles.switch}>
+            Don&apos;t have an account?{" "}
+            <Text style={styles.switchLink}>Register</Text>
+          </Text>
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: theme.bg },
+  scroll: {
+    flexGrow: 1,
+    justifyContent: "center",
+    padding: 24,
+  },
+  glowTop: {
+    position: "absolute",
+    width: 600,
+    height: 600,
+    borderRadius: 300,
+    backgroundColor: "rgba(35, 131, 226, 0.12)",
+    top: -260,
+    right: -160,
+  },
+  glowBottom: {
+    position: "absolute",
+    width: 500,
+    height: 500,
+    borderRadius: 250,
+    backgroundColor: "rgba(35, 131, 226, 0.08)",
+    bottom: -240,
+    left: -160,
+  },
+  card: {
+    backgroundColor: theme.glass,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radiusXl,
+    padding: 28,
+    width: "100%",
+    maxWidth: 440,
+    alignSelf: "center",
+  },
+  icon: {
+    width: 56,
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: theme.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 20,
+  },
+  title: {
+    fontSize: 26,
+    fontWeight: "700",
+    color: theme.text,
+    letterSpacing: -0.5,
+    marginBottom: 6,
+  },
+  subtitle: {
+    fontSize: 14,
+    color: theme.textSecondary,
+    marginBottom: 24,
+  },
+  errorBox: {
+    backgroundColor: "rgba(224, 62, 62, 0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(224, 62, 62, 0.3)",
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom: 16,
+  },
+  errorText: { color: "#fca5a5", fontSize: 13 },
+  formGroup: { marginBottom: 18 },
+  label: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: theme.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: 8,
+  },
+  input: {
+    backgroundColor: theme.inputBg,
+    borderWidth: 1,
+    borderColor: theme.inputBorder,
+    borderRadius: theme.radiusSm,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: theme.text,
+  },
+  passwordWrap: { position: "relative", justifyContent: "center" },
+  passwordInput: { paddingRight: 44 },
+  eyeBtn: {
+    position: "absolute",
+    right: 12,
+    height: "100%",
+    justifyContent: "center",
+  },
+  forgot: {
+    color: theme.textSecondary,
+    fontSize: 13,
+    textAlign: "right",
+    marginBottom: 18,
+  },
+  button: {
+    backgroundColor: theme.primary,
+    borderRadius: theme.radiusSm,
+    paddingVertical: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  buttonDisabled: { opacity: 0.4 },
+  buttonContent: { flexDirection: "row", alignItems: "center", gap: 6 },
+  buttonText: { color: "#fff", fontSize: 15, fontWeight: "600" },
+  switch: {
+    textAlign: "center",
+    marginTop: 22,
+    fontSize: 14,
+    color: theme.textSecondary,
+  },
+  switchLink: { color: theme.primaryLight, fontWeight: "600" },
+});

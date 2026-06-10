@@ -208,9 +208,23 @@ function setupWebSocket(server: HTTPServer): any {
     }
 
     wss.on("connection", async (ws: ExtWS, req: IncomingMessage) => {
-        // Authenticate via cookie
+        // Authenticate via cookie (web/desktop) or, for native mobile clients
+        // that can't send cookies on the WS handshake, via a `token` query
+        // param or the `Sec-WebSocket-Protocol` header. Cookie takes precedence.
         const cookies = cookie.parse(req.headers.cookie || "");
-        const token = cookies.token;
+        let token: string | undefined = cookies.token;
+        if (!token) {
+            try {
+                const url = new URL(req.url || "", "http://localhost");
+                token = url.searchParams.get("token") || undefined;
+            } catch { /* malformed url — ignore */ }
+        }
+        if (!token) {
+            const proto = req.headers["sec-websocket-protocol"];
+            if (typeof proto === "string" && proto.length > 0) {
+                token = proto.split(",")[0].trim();
+            }
+        }
         if (!token) {
             ws.close(4001, "Unauthorized");
             return;

@@ -1,4 +1,21 @@
 node_modules/
+
+# ── Expo / React Native (mobile) ──────────────────────
+# Expo dev cache. The mobile/ workspace has its own .gitignore covering its
+# generated native projects (/android, /ios), .expo/, dist/, keystores, etc.,
+# but a root-level .expo/ can appear if expo tooling is run from the repo root.
+.expo/
+**/.expo/
+
+# Local AI assistant settings (committed docs like CLAUDE.md/AGENTS.md are kept,
+# but the per-tool settings dir is local-only)
+.claude/
+**/.claude/
+
+# Scratch / debug files
+apkcheck.txt
+r.txt
+
 *.db
 *.db-shm
 *.db-wal

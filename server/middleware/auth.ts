@@ -41,7 +41,15 @@ async function checkImpersonationStillAllowed(requestId: number): Promise<boolea
 }
 
 async function authMiddleware(req: any, res: Response, next: NextFunction): Promise<void | Response> {
-    const token = req.cookies.token;
+    // Web/desktop clients send the JWT in an HttpOnly cookie. Native mobile
+    // clients (React Native) can't manage cookies easily, so fall back to an
+    // `Authorization: Bearer <jwt>` header. Cookie takes precedence.
+    const authHeader = req.headers.authorization;
+    const token =
+        req.cookies.token ||
+        (typeof authHeader === "string" && authHeader.startsWith("Bearer ")
+            ? authHeader.slice(7)
+            : null);
     if (!token) {
         return res.status(401).json({ error: "No token provided" });
     }
