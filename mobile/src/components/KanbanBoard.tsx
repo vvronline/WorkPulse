@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Dimensions,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { ChevronLeft, ChevronRight } from "lucide-react-native";
+import {
+  CalendarDays,
+  ChevronDown,
+  ChevronUp,
+  MessageSquare,
+} from "lucide-react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   runOnJS,
@@ -24,6 +27,7 @@ import {
   type Task,
   type TaskStatus,
   type WorkflowState,
+  type WorkItemType,
 } from "../features";
 
 const DEFAULT_COLUMNS: { key: TaskStatus; name: string; color: string }[] = [
@@ -33,17 +37,14 @@ const DEFAULT_COLUMNS: { key: TaskStatus; name: string; color: string }[] = [
   { key: "done", name: "Done", color: TASK_STATUS.done.color },
 ];
 
-const COLUMN_WIDTH = Math.min(300, Dimensions.get("window").width * 0.8);
-const COLUMN_GAP = 12;
-
 type Col = { key: string; name: string; color: string; wip_limit?: number | null };
 
 /**
- * Horizontal Kanban board with long-press drag-and-drop (mirrors the web board).
- * - Columns come from the tenant's agile workflow states (falls back to the 4
- *   defaults). WIP limits are surfaced like the web.
- * - Long-press a card to pick it up, drag it over another column, release to
- *   change its status. ‹ › arrows remain as an accessibility fallback.
+ * Vertical Kanban board: columns are stacked one below another (mirrors the web
+ * mobile view). Each card shows the full ticket metadata — issue key, work-item
+ * type, story points, blocked status, priority, labels, assignee, due date and
+ * comment count. Long-press a card to pick it up and drag it onto another
+ * column to change its status; ▲ ▼ arrows remain as an accessibility fallback.
  */
 export default function KanbanBoard({
   tasks,
@@ -55,9 +56,10 @@ export default function KanbanBoard({
   const router = useRouter();
   const [columns, setColumns] = useState<Col[]>(DEFAULT_COLUMNS);
   const [wipLimits, setWipLimits] = useState(false);
-  // Column screen x-ranges for hit-testing during drag.
-  const colRanges = useRef<{ key: string; x: number; width: number }[]>([]);
-  const scrollX = useRef(0);
+  const [typeMap, setTypeMap] = useState<Record<string, WorkItemType>>({});
+  const [storyPointsEnabled, setStoryPointsEnabled] = useState(true);
+  // Column screen y-ranges for hit-testing during drag.
+  const colRanges = useRef<{ key: string; y: number; height: number }[]>([]);
 
   useEffect(() => {
     getAgileConfig()
@@ -75,7 +77,15 @@ export default function KanbanBoard({
               })),
           );
         }
+        const types = (r.data.workItemTypes || []).filter(Boolean);
+        const map: Record<string, WorkItemType> = {};
+        for (const t of types) {
+          map[String(t.id)] = t;
+          if (t.key) map[String(t.key)] = t;
+        }
+        setTypeMap(map);
         setWipLimits(!!r.data.features?.wipLimits);
+        setStoryPointsEnabled(r.data.features?.storyPoints !== false);
       })
       .catch(() => {
         /* keep defaults */
@@ -110,24 +120,16 @@ export default function KanbanBoard({
     moveTo(task, keys[nextIdx]);
   }
 
-  // Resolve which column an absolute screen-x falls into.
-  function columnAtX(absX: number): string | null {
+  // Resolve which column an absolute screen-y falls into.
+  function columnAtY(absY: number): string | null {
     for (const r of colRanges.current) {
-      if (absX >= r.x && absX <= r.x + r.width) return r.key;
+      if (absY >= r.y && absY <= r.y + r.height) return r.key;
     }
     return null;
   }
 
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.board}
-      scrollEventThrottle={16}
-      onScroll={(e) => {
-        scrollX.current = e.nativeEvent.contentOffset.x;
-      }}
-    >
+    <View style={styles.board}>
       {columns.map((col, ci) => {
         const items = grouped[col.key] || [];
         const wipExceeded = !!(
@@ -140,9 +142,9 @@ export default function KanbanBoard({
             key={col.key}
             style={[styles.column, wipExceeded && styles.wipExceeded]}
             onLayout={(e) => {
-              // Store absolute x of each column for drag hit-testing.
-              e.target.measure?.((_x, _y, width, _h, pageX) => {
-                colRanges.current[ci] = { key: col.key, x: pageX, width };
+              // Store absolute y of each column for drag hit-testing.
+              e.target.measure?.((_x, _y, _w, height, _pageX, pageY) => {
+                colRanges.current[ci] = { key: col.key, y: pageY, height };
               });
             }}
           >
@@ -156,11 +158,7 @@ export default function KanbanBoard({
                 </Text>
               </View>
             </View>
-            <ScrollView
-              style={styles.colScroll}
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.colBody}
-            >
+            <View style={styles.colBody}>
               {items.length === 0 ? (
                 <Text style={styles.colEmpty}>No tasks</Text>
               ) : (
@@ -168,6 +166,8 @@ export default function KanbanBoard({
                   <DraggableCard
                     key={t.id}
                     task={t}
+                    typeMap={typeMap}
+                    storyPointsEnabled={storyPointsEnabled}
                     isFirst={keys.indexOf(t.status) === 0}
                     isLast={keys.indexOf(t.status) === keys.length - 1}
                     onOpen={() =>
@@ -177,23 +177,40 @@ export default function KanbanBoard({
                       })
                     }
                     onArrow={(dir) => moveArrow(t, dir)}
-                    onDrop={(absX) => {
-                      const target = columnAtX(absX);
+                    onDrop={(absY) => {
+                      const target = columnAtY(absY);
                       if (target) moveTo(t, target);
                     }}
                   />
                 ))
               )}
-            </ScrollView>
+            </View>
           </View>
         );
       })}
-    </ScrollView>
+    </View>
   );
+}
+
+function formatPoints(value: number | string | null | undefined): string {
+  if (value == null || value === "") return "";
+  const num = typeof value === "number" ? value : parseFloat(value);
+  if (Number.isNaN(num)) return String(value);
+  if (Number.isInteger(num)) return String(num);
+  return num.toFixed(2).replace(/\.?0+$/, "");
+}
+
+function formatDueDate(due?: string | null): string {
+  if (!due) return "";
+  const d = new Date(due);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 function DraggableCard({
   task,
+  typeMap,
+  storyPointsEnabled,
   isFirst,
   isLast,
   onOpen,
@@ -201,13 +218,24 @@ function DraggableCard({
   onDrop,
 }: {
   task: Task;
+  typeMap: Record<string, WorkItemType>;
+  storyPointsEnabled: boolean;
   isFirst: boolean;
   isLast: boolean;
   onOpen: () => void;
   onArrow: (dir: -1 | 1) => void;
-  onDrop: (absX: number) => void;
+  onDrop: (absY: number) => void;
 }) {
   const pr = TASK_PRIORITY[task.priority];
+  const wit = task.work_item_type_id != null
+    ? typeMap[String(task.work_item_type_id)]
+    : undefined;
+  const points = storyPointsEnabled ? formatPoints(task.story_points) : "";
+  const due = formatDueDate(task.due_date);
+  const assigneeName =
+    task.assignee?.full_name || task.assignee?.username || "";
+  const labels = task.labels || [];
+
   const tx = useSharedValue(0);
   const ty = useSharedValue(0);
   const dragging = useSharedValue(0);
@@ -222,7 +250,7 @@ function DraggableCard({
       ty.value = e.translationY;
     })
     .onEnd((e) => {
-      runOnJS(onDrop)(e.absoluteX);
+      runOnJS(onDrop)(e.absoluteY);
     })
     .onFinalize(() => {
       tx.value = withSpring(0);
@@ -247,12 +275,94 @@ function DraggableCard({
   return (
     <GestureDetector gesture={composed}>
       <Animated.View style={[styles.card, animStyle]}>
-        {task.issue_key ? (
-          <Text style={styles.cardKey}>{task.issue_key}</Text>
-        ) : null}
+        {/* Header badges row */}
+        <View style={styles.badgeRow}>
+          {task.issue_key ? (
+            <Text style={styles.cardKey}>{task.issue_key}</Text>
+          ) : null}
+          {wit ? (
+            <View
+              style={[
+                styles.witBadge,
+                { borderColor: (wit.color || theme.primary) + "66" },
+              ]}
+            >
+              <View
+                style={[
+                  styles.witDot,
+                  { backgroundColor: wit.color || theme.primary },
+                ]}
+              />
+              <Text style={styles.witText}>{wit.name}</Text>
+            </View>
+          ) : null}
+          {points ? (
+            <View style={styles.spBadge}>
+              <Text style={styles.spText}>{points}</Text>
+            </View>
+          ) : null}
+          {task.is_blocked ? (
+            <View style={styles.blockedBadge}>
+              <Text style={styles.blockedText}>⛔ Blocked</Text>
+            </View>
+          ) : null}
+        </View>
+
         <Text style={styles.cardTitle} numberOfLines={3}>
           {task.title}
         </Text>
+
+        {/* Labels */}
+        {labels.length > 0 ? (
+          <View style={styles.labelRow}>
+            {labels.map((l) => (
+              <View
+                key={l.id}
+                style={[
+                  styles.labelPill,
+                  { backgroundColor: (l.color || theme.primary) + "22" },
+                ]}
+              >
+                <Text
+                  style={[styles.labelPillText, { color: l.color || theme.primary }]}
+                  numberOfLines={1}
+                >
+                  {l.name}
+                </Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
+
+        {/* Meta footer */}
+        <View style={styles.metaRow}>
+          {assigneeName ? (
+            <View style={styles.metaChip}>
+              <View style={styles.avatarPlaceholder}>
+                <Text style={styles.avatarText}>
+                  {assigneeName[0]?.toUpperCase()}
+                </Text>
+              </View>
+              <Text style={styles.metaText} numberOfLines={1}>
+                {assigneeName}
+              </Text>
+            </View>
+          ) : null}
+          {due ? (
+            <View style={styles.metaChip}>
+              <CalendarDays size={11} color={theme.textMuted} />
+              <Text style={styles.metaText}>{due}</Text>
+            </View>
+          ) : null}
+          {task.comment_count && task.comment_count > 0 ? (
+            <View style={styles.metaChip}>
+              <MessageSquare size={11} color={theme.textMuted} />
+              <Text style={styles.metaText}>{task.comment_count}</Text>
+            </View>
+          ) : null}
+        </View>
+
+        {/* Priority + move controls */}
         <View style={styles.cardFooter}>
           {pr ? (
             <View style={styles.priority}>
@@ -269,7 +379,7 @@ function DraggableCard({
               disabled={isFirst}
               hitSlop={6}
             >
-              <ChevronLeft size={16} color={theme.textSecondary} />
+              <ChevronUp size={16} color={theme.textSecondary} />
             </Pressable>
             <Pressable
               style={[styles.moveBtn, isLast && styles.moveDisabled]}
@@ -277,7 +387,7 @@ function DraggableCard({
               disabled={isLast}
               hitSlop={6}
             >
-              <ChevronRight size={16} color={theme.textSecondary} />
+              <ChevronDown size={16} color={theme.textSecondary} />
             </Pressable>
           </View>
         </View>
@@ -287,14 +397,12 @@ function DraggableCard({
 }
 
 const styles = StyleSheet.create({
-  board: { gap: COLUMN_GAP, paddingHorizontal: 16, paddingBottom: 16 },
+  board: { gap: 14, paddingHorizontal: 16, paddingBottom: 16 },
   column: {
-    width: COLUMN_WIDTH,
     backgroundColor: theme.bgSecondary,
     borderRadius: theme.radius,
     borderWidth: 1,
     borderColor: theme.glassBorder,
-    maxHeight: 560,
   },
   wipExceeded: { borderColor: theme.danger },
   colHeader: {
@@ -318,7 +426,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
   },
   colCountText: { fontSize: 12, color: theme.textSecondary, fontWeight: "600" },
-  colScroll: { flexGrow: 0 },
   colBody: { padding: 10, gap: 10 },
   colEmpty: {
     color: theme.textMuted,
@@ -332,10 +439,58 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.glassBorder,
     padding: 12,
-    gap: 6,
+    gap: 7,
   },
+  badgeRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 },
   cardKey: { fontSize: 11, fontWeight: "700", color: theme.primaryLight },
+  witBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    borderWidth: 1,
+    borderRadius: theme.radiusFull,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  witDot: { width: 7, height: 7, borderRadius: 4 },
+  witText: { fontSize: 10, fontWeight: "600", color: theme.textSecondary },
+  spBadge: {
+    backgroundColor: theme.surface,
+    borderRadius: theme.radiusFull,
+    minWidth: 20,
+    height: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 6,
+  },
+  spText: { fontSize: 11, fontWeight: "700", color: theme.text },
+  blockedBadge: {
+    backgroundColor: "rgba(224,62,62,0.15)",
+    borderRadius: theme.radiusFull,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  blockedText: { fontSize: 10, fontWeight: "700", color: theme.danger },
   cardTitle: { fontSize: 14, color: theme.text, lineHeight: 19 },
+  labelRow: { flexDirection: "row", flexWrap: "wrap", gap: 5 },
+  labelPill: {
+    borderRadius: theme.radiusFull,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  labelPillText: { fontSize: 10, fontWeight: "600" },
+  metaRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 10 },
+  metaChip: { flexDirection: "row", alignItems: "center", gap: 4 },
+  avatarPlaceholder: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: theme.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: { fontSize: 9, fontWeight: "700", color: "#fff" },
+  metaText: { fontSize: 11, color: theme.textSecondary },
   cardFooter: {
     flexDirection: "row",
     alignItems: "center",

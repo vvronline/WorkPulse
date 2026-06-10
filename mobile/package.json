@@ -1,6 +1,6 @@
 {
   "name": "mobile",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "main": "expo-router/entry",
   "dependencies": {
     "@tanstack/react-query": "^5.101.0",

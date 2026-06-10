@@ -12,9 +12,11 @@ import {
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { theme } from "../../src/theme";
 import { TASK_PRIORITY } from "../../src/constants";
+import { Dropdown, MultiDropdown } from "../../src/components/Dropdown";
 import {
   addBacklogTask,
   createTask,
+  getAgileConfig,
   getAssignableUsers,
   getAvailableSprints,
   getTaskLabels,
@@ -22,6 +24,7 @@ import {
   type Sprint,
   type TaskLabel,
   type TaskPriority,
+  type WorkItemType,
 } from "../../src/features";
 
 const PRIORITIES: TaskPriority[] = ["low", "medium", "high"];
@@ -38,11 +41,13 @@ export default function NewTaskScreen() {
   const [storyPoints, setStoryPoints] = useState("");
   const [selectedLabels, setSelectedLabels] = useState<number[]>([]);
   const [sprintId, setSprintId] = useState<number | null>(null);
+  const [workItemType, setWorkItemType] = useState<string | number | null>(null);
   const [busy, setBusy] = useState(false);
 
   const [users, setUsers] = useState<AssignableUser[]>([]);
   const [labels, setLabels] = useState<TaskLabel[]>([]);
   const [sprints, setSprints] = useState<Sprint[]>([]);
+  const [workItemTypes, setWorkItemTypes] = useState<WorkItemType[]>([]);
 
   useEffect(() => {
     if (!isBacklog) return;
@@ -55,13 +60,13 @@ export default function NewTaskScreen() {
     getAvailableSprints()
       .then((r) => setSprints(r.data || []))
       .catch(() => {});
+    getAgileConfig()
+      .then((r) => {
+        const types = (r.data.workItemTypes || []).filter(Boolean);
+        setWorkItemTypes(types);
+      })
+      .catch(() => {});
   }, [isBacklog]);
-
-  function toggleLabel(id: number) {
-    setSelectedLabels((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    );
-  }
 
   async function submit() {
     if (!title.trim()) return;
@@ -77,6 +82,7 @@ export default function NewTaskScreen() {
           label_ids: selectedLabels.length ? selectedLabels : undefined,
           story_points: storyPoints ? Number(storyPoints) : undefined,
           sprint_id: sprintId ?? undefined,
+          work_item_type_id: workItemType ?? undefined,
         });
       } else {
         await createTask({
@@ -138,60 +144,32 @@ export default function NewTaskScreen() {
         <>
           {/* Assignee */}
           <Text style={styles.label}>Assignee</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.chipRow}
-          >
-            <Pressable
-              style={[styles.chip, assignedTo === null && styles.chipActive]}
-              onPress={() => setAssignedTo(null)}
-            >
-              <Text
-                style={[styles.chipText, assignedTo === null && styles.chipTextActive]}
-              >
-                Unassigned
-              </Text>
-            </Pressable>
-            {users.map((u) => {
-              const active = assignedTo === u.id;
-              return (
-                <Pressable
-                  key={u.id}
-                  style={[styles.chip, active && styles.chipActive]}
-                  onPress={() => setAssignedTo(active ? null : u.id)}
-                >
-                  <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                    {u.full_name}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
+          <Dropdown
+            label="Assignee"
+            value={assignedTo}
+            placeholder="Unassigned"
+            onChange={(v) => setAssignedTo(v == null ? null : Number(v))}
+            options={[
+              { value: null, label: "Unassigned" },
+              ...users.map((u) => ({ value: u.id, label: u.full_name })),
+            ]}
+          />
 
           {/* Labels */}
           {labels.length > 0 ? (
             <>
               <Text style={styles.label}>Labels</Text>
-              <View style={styles.wrapRow}>
-                {labels.map((l) => {
-                  const active = selectedLabels.includes(l.id);
-                  return (
-                    <Pressable
-                      key={l.id}
-                      style={[
-                        styles.chip,
-                        active && { backgroundColor: l.color || theme.primary, borderColor: l.color || theme.primary },
-                      ]}
-                      onPress={() => toggleLabel(l.id)}
-                    >
-                      <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                        {l.name}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
+              <MultiDropdown
+                label="Labels"
+                values={selectedLabels}
+                placeholder="No labels"
+                onChange={(vals) => setSelectedLabels(vals.map((v) => Number(v)))}
+                options={labels.map((l) => ({
+                  value: l.id,
+                  label: l.name,
+                  color: l.color || theme.primary,
+                }))}
+              />
             </>
           ) : null}
 
@@ -199,36 +177,49 @@ export default function NewTaskScreen() {
           {sprints.length > 0 ? (
             <>
               <Text style={styles.label}>Sprint (optional)</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.chipRow}
-              >
-                <Pressable
-                  style={[styles.chip, sprintId === null && styles.chipActive]}
-                  onPress={() => setSprintId(null)}
-                >
-                  <Text
-                    style={[styles.chipText, sprintId === null && styles.chipTextActive]}
-                  >
-                    None
-                  </Text>
-                </Pressable>
-                {sprints.map((sp) => {
-                  const active = sprintId === sp.id;
-                  return (
-                    <Pressable
-                      key={sp.id}
-                      style={[styles.chip, active && styles.chipActive]}
-                      onPress={() => setSprintId(active ? null : sp.id)}
-                    >
-                      <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                        {sp.name}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
+              <Dropdown
+                label="Sprint"
+                value={sprintId}
+                placeholder="None"
+                onChange={(v) => {
+                  const id = v == null ? null : Number(v);
+                  setSprintId(id);
+                  if (!id) {
+                    setDueDate("");
+                  } else {
+                    const sp = sprints.find((s) => s.id === id);
+                    if (sp?.end_date) setDueDate(sp.end_date);
+                  }
+                }}
+                options={[
+                  { value: null, label: "None" },
+                  ...sprints.map((sp) => ({
+                    value: sp.id,
+                    label: sp.name + (sp.status === "active" ? " ●" : ""),
+                  })),
+                ]}
+              />
+            </>
+          ) : null}
+
+          {/* Type */}
+          {workItemTypes.length > 0 ? (
+            <>
+              <Text style={styles.label}>Type</Text>
+              <Dropdown
+                label="Type"
+                value={workItemType}
+                placeholder="— Type —"
+                onChange={(v) => setWorkItemType(v)}
+                options={[
+                  { value: null, label: "— Type —" },
+                  ...workItemTypes.map((t) => ({
+                    value: t.id || t.key,
+                    label: t.name,
+                    color: t.color,
+                  })),
+                ]}
+              />
             </>
           ) : null}
 
@@ -314,19 +305,6 @@ const styles = StyleSheet.create({
   },
   segmentText: { fontSize: 13, color: theme.textSecondary, fontWeight: "600" },
   segmentTextActive: { color: "#fff" },
-  chipRow: { gap: 8, paddingVertical: 2 },
-  wrapRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: theme.radiusFull,
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-  },
-  chipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
-  chipText: { fontSize: 13, color: theme.textSecondary, fontWeight: "500" },
-  chipTextActive: { color: "#fff", fontWeight: "600" },
   row: { flexDirection: "row", gap: 12 },
   half: { flex: 1 },
   submit: {

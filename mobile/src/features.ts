@@ -5,6 +5,13 @@ import { api } from "./api";
 export type TaskStatus = "pending" | "in_progress" | "in_review" | "done";
 export type TaskPriority = "low" | "medium" | "high";
 
+export type TaskAssignee = {
+  id: number;
+  full_name?: string;
+  username?: string;
+  avatar?: string | null;
+};
+
 export type Task = {
   id: number;
   title: string;
@@ -18,6 +25,15 @@ export type Task = {
   date?: string | null;
   due_date?: string | null;
   sprint_id?: number | null;
+  // Agile / card metadata (mirrors the web ticket card)
+  story_points?: number | string | null;
+  work_item_type_id?: number | string | null;
+  is_blocked?: boolean;
+  blocked_reason?: string | null;
+  comment_count?: number;
+  assigned_to?: number | null;
+  assignee?: TaskAssignee | null;
+  labels?: TaskLabel[];
 };
 
 export type TaskStats = {
@@ -82,6 +98,7 @@ export function addBacklogTask(data: {
   label_ids?: number[];
   story_points?: number | null;
   sprint_id?: number | null;
+  work_item_type_id?: number | string | null;
 }) {
   return api.post<Task>("/tasks/backlog", data);
 }
@@ -119,8 +136,20 @@ export type WorkflowState = {
   order_index?: number;
 };
 
+export type WorkItemType = {
+  id: number | string;
+  key: string;
+  name: string;
+  color?: string;
+  icon?: string;
+  is_default?: boolean;
+  is_epic?: boolean;
+  sort_order?: number;
+};
+
 export type AgileConfig = {
   workflowStates: WorkflowState[];
+  workItemTypes?: WorkItemType[];
   features?: { wipLimits?: boolean; storyPoints?: boolean; [k: string]: unknown };
 };
 
@@ -159,6 +188,37 @@ export function getLeaves(startDate?: string, endDate?: string) {
   return api.get<Leave[]>("/leaves", {
     params: { start_date: startDate, end_date: endDate },
   });
+}
+
+export type LeavePolicy = {
+  id: number;
+  leave_type: string;
+  name?: string | null;
+  color?: string | null;
+  annual_quota?: number | string;
+  half_day_allowed?: boolean;
+  quarter_day_allowed?: boolean;
+};
+
+export function getLeavePolicies() {
+  return api.get<LeavePolicy[]>("/leave-policy/policies");
+}
+
+// Withdraw a pending or approved leave. Pending leaves are cancelled outright;
+// approved leaves create a withdrawal-approval request for the manager.
+export function withdrawLeave(id: number | string) {
+  return api.post(`/leaves/${id}/withdraw`);
+}
+
+// Apply for one or more leaves. The server's POST /leaves accepts a `dates`
+// array (multi-day) and shares the same endpoint for single-day requests.
+export function addLeavesBatch(data: {
+  dates: string[];
+  leave_type: string;
+  duration?: "full" | "half" | "quarter";
+  reason?: string;
+}) {
+  return api.post("/leaves", data);
 }
 
 /* ──────────────────────── Notifications ──────────────────── */

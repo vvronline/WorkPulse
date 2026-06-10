@@ -10,16 +10,18 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { Stack } from "expo-router";
+import { Stack, useLocalSearchParams } from "expo-router";
 import {
   BarChart3,
   CalendarDays,
   ChevronLeft,
   ChevronRight,
   FileEdit,
+  Palmtree,
 } from "lucide-react-native";
 import { theme } from "../src/theme";
 import { formatTime } from "../src/utils/time";
+import LeavesTab from "../src/components/LeavesTab";
 import {
   addManualEntry,
   getTrackerAnalytics,
@@ -50,10 +52,16 @@ function buildMonthGrid(cursor: Date): Date[] {
   return days;
 }
 
-type Tab = "overview" | "manual" | "analytics";
+type Tab = "overview" | "leaves" | "manual" | "analytics";
+
+const VALID_TABS: Tab[] = ["overview", "leaves", "manual", "analytics"];
 
 export default function AttendanceScreen() {
-  const [tab, setTab] = useState<Tab>("overview");
+  const params = useLocalSearchParams<{ tab?: string }>();
+  const initialTab: Tab = VALID_TABS.includes(params.tab as Tab)
+    ? (params.tab as Tab)
+    : "overview";
+  const [tab, setTab] = useState<Tab>(initialTab);
 
   return (
     <View style={styles.screen}>
@@ -64,6 +72,12 @@ export default function AttendanceScreen() {
           icon={CalendarDays}
           active={tab === "overview"}
           onPress={() => setTab("overview")}
+        />
+        <TabBtn
+          label="Leaves"
+          icon={Palmtree}
+          active={tab === "leaves"}
+          onPress={() => setTab("leaves")}
         />
         <TabBtn
           label="Manual"
@@ -80,6 +94,8 @@ export default function AttendanceScreen() {
       </View>
       {tab === "overview" ? (
         <OverviewTab />
+      ) : tab === "leaves" ? (
+        <LeavesTab />
       ) : tab === "manual" ? (
         <ManualTab />
       ) : (
@@ -583,12 +599,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
+    gap: 4,
     paddingVertical: 9,
+    paddingHorizontal: 2,
     borderRadius: 5,
   },
   tabBtnActive: { backgroundColor: theme.primary },
-  tabText: { fontSize: 13, color: theme.textSecondary, fontWeight: "600" },
+  tabText: { fontSize: 12, color: theme.textSecondary, fontWeight: "600" },
   tabTextActive: { color: "#fff" },
   // calendar
   monthHeader: {

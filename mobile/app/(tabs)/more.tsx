@@ -41,7 +41,11 @@ export default function MoreScreen() {
     Alert.alert(name, "This section is managed from the web app.");
 
   const items: Item[] = [
-    { label: "Leaves", icon: CalendarDays, onPress: () => router.push("/leaves") },
+    {
+      label: "Leaves",
+      icon: CalendarDays,
+      onPress: () => router.push("/attendance?tab=leaves"),
+    },
     { label: "Notes", icon: FileText, onPress: () => router.push("/notes") },
     {
       label: "Attendance",
