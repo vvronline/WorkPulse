@@ -15,13 +15,27 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Stack, useLocalSearchParams } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
-import { Paperclip, Pencil, Pin, Send, Star, Trash2 } from "lucide-react-native";
+import * as Linking from "expo-linking";
+import {
+  CornerUpLeft,
+  FileText,
+  MoreVertical,
+  Paperclip,
+  Pencil,
+  Pin,
+  Send,
+  Star,
+  Trash2,
+  X as XIcon,
+} from "lucide-react-native";
 import { theme } from "../../src/theme";
 import { uploadUrl } from "../../src/config";
 import { useAuth } from "../../src/auth/AuthContext";
 import {
   deleteMessage,
   editMessage,
+  forwardMessage,
+  getConversations,
   getMessages,
   markConversationRead,
   pinMessage,
@@ -29,10 +43,29 @@ import {
   toggleReaction,
   uploadChatFile,
   type ChatMessage,
+  type Conversation,
 } from "../../src/features";
+import { Forward } from "lucide-react-native";
 import { socket } from "../../src/realtime/socket";
+import {
+  useKeyboardInset,
+  scrollFocusedIntoView,
+} from "../../src/hooks/useKeyboardInset";
 
 const EMOJIS = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F64F}"];
+
+function isImageFile(m: ChatMessage): boolean {
+  if (m.file_type && m.file_type.startsWith("image/")) return true;
+  const name = (m.file_name || m.file_url || "").toLowerCase();
+  return /\.(png|jpe?g|gif|webp|heic|bmp)$/.test(name);
+}
+
+function fmtSize(bytes?: number | null): string {
+  if (!bytes || bytes <= 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function fmtTime(iso: string) {
   const d = new Date(iso);
@@ -47,6 +80,7 @@ export default function ChatThread() {
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
   const convId = Number(id);
   const insets = useSafeAreaInsets();
+  const kbInset = useKeyboardInset();
   const { user } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,6 +88,9 @@ export default function ChatThread() {
   const [peerTyping, setPeerTyping] = useState(false);
   const [reactTarget, setReactTarget] = useState<ChatMessage | null>(null);
   const [actionTarget, setActionTarget] = useState<ChatMessage | null>(null);
+  const [forwardTarget, setForwardTarget] = useState<ChatMessage | null>(null);
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const listRef = useRef<FlatList<ChatMessage>>(null);
@@ -105,6 +142,11 @@ export default function ChatThread() {
               created_at: d.createdAt,
               file_url: d.fileUrl,
               file_name: d.fileName,
+              file_type: d.fileType,
+              file_size: d.fileSize,
+              reply_to_id: d.replyToId ?? null,
+              reply_to_content: d.replyContent ?? null,
+              reply_to_sender_name: d.replySenderName ?? null,
               clientMsgId: d.clientMsgId,
             };
             return copy;
@@ -121,6 +163,11 @@ export default function ChatThread() {
             created_at: d.createdAt,
             file_url: d.fileUrl,
             file_name: d.fileName,
+            file_type: d.fileType,
+            file_size: d.fileSize,
+            reply_to_id: d.replyToId ?? null,
+            reply_to_content: d.replyContent ?? null,
+            reply_to_sender_name: d.replySenderName ?? null,
           },
         ];
       });
@@ -133,6 +180,7 @@ export default function ChatThread() {
     const content = text.trim();
     if (!content || !user) return;
     const clientMsgId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const replyToId = replyTo?.id;
     // Optimistic append.
     setMessages((prev) => [
       ...prev,
@@ -142,13 +190,22 @@ export default function ChatThread() {
         sender_name: user.full_name,
         content,
         created_at: new Date().toISOString(),
+        reply_to_id: replyToId ?? null,
+        reply_to_content: replyTo?.content ?? null,
+        reply_to_sender_name: replyTo?.sender_name ?? null,
         _pending: true,
         clientMsgId,
       },
     ]);
-    socket.send("chat_message", { conversationId: convId, content, clientMsgId });
+    socket.send("chat_message", {
+      conversationId: convId,
+      content,
+      clientMsgId,
+      ...(replyToId ? { replyToId } : {}),
+    });
     setText("");
-  }, [text, user, convId]);
+    setReplyTo(null);
+  }, [text, user, convId, replyTo]);
 
   const onChangeText = useCallback(
     (v: string) => {
@@ -237,6 +294,30 @@ export default function ChatThread() {
     starMessage(message.id).catch(() => {});
   }
 
+  function startReply(message: ChatMessage) {
+    setActionTarget(null);
+    setReactTarget(null);
+    setReplyTo(message);
+  }
+
+  function openForward(message: ChatMessage) {
+    setActionTarget(null);
+    setReactTarget(null);
+    setForwardTarget(message);
+    getConversations()
+      .then((r) => setConversations(r.data || []))
+      .catch(() => setConversations([]));
+  }
+
+  function doForward(targetConvId: number) {
+    if (!forwardTarget) return;
+    const msg = forwardTarget;
+    setForwardTarget(null);
+    forwardMessage(msg.id, [targetConvId])
+      .then(() => {})
+      .catch(() => {});
+  }
+
   async function react(message: ChatMessage, emoji: string) {
     setReactTarget(null);
     try {
@@ -299,36 +380,84 @@ export default function ChatThread() {
                 <View
                   style={[styles.bubbleRow, mine ? styles.rowMine : styles.rowTheirs]}
                 >
-                  <Pressable
-                    onLongPress={() =>
-                      !deleted &&
-                      (mine ? setActionTarget(item) : setReactTarget(item))
-                    }
-                    delayLongPress={250}
-                    style={[
-                      styles.bubble,
-                      mine ? styles.bubbleMine : styles.bubbleTheirs,
-                      item._pending && styles.bubblePending,
-                    ]}
-                  >
-                    {!mine && item.sender_name ? (
-                      <Text style={styles.sender}>{item.sender_name}</Text>
-                    ) : null}
-                    {item.file_url && !deleted ? (
-                      <Image
-                        source={{ uri: uploadUrl(item.file_url) || undefined }}
-                        style={styles.fileImage}
-                        resizeMode="cover"
-                      />
-                    ) : null}
-                    {item.content || deleted ? (
-                      <Text style={[styles.content, deleted && styles.deleted]}>
-                        {deleted ? "This message was deleted" : item.content}
-                      </Text>
-                    ) : null}
-                    <Text style={styles.time}>{fmtTime(item.created_at)}</Text>
+                  <View style={styles.bubbleCol}>
+                    <Pressable
+                      onLongPress={() =>
+                        !deleted &&
+                        (mine ? setActionTarget(item) : setReactTarget(item))
+                      }
+                      delayLongPress={250}
+                      style={[
+                        styles.bubble,
+                        mine ? styles.bubbleMine : styles.bubbleTheirs,
+                        item._pending && styles.bubblePending,
+                      ]}
+                    >
+                      {!mine && item.sender_name ? (
+                        <Text style={styles.sender}>{item.sender_name}</Text>
+                      ) : null}
+                      {/* Quoted reply preview */}
+                      {item.reply_to_id && !deleted ? (
+                        <View style={styles.replyQuote}>
+                          <Text style={styles.replyQuoteName} numberOfLines={1}>
+                            {item.reply_to_sender_name || "Reply"}
+                          </Text>
+                          <Text style={styles.replyQuoteText} numberOfLines={1}>
+                            {item.reply_to_content || "Attachment"}
+                          </Text>
+                        </View>
+                      ) : null}
+                      {/* Attachment: image inline, other files as a card */}
+                      {item.file_url && !deleted ? (
+                        isImageFile(item) ? (
+                          <Image
+                            source={{ uri: uploadUrl(item.file_url) || undefined }}
+                            style={styles.fileImage}
+                            resizeMode="cover"
+                          />
+                        ) : (
+                          <Pressable
+                            style={styles.fileCard}
+                            onPress={() => {
+                              const u = uploadUrl(item.file_url);
+                              if (u) Linking.openURL(u);
+                            }}
+                          >
+                            <FileText size={20} color={theme.primary} />
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.fileName} numberOfLines={1}>
+                                {item.file_name || "File"}
+                              </Text>
+                              {item.file_size ? (
+                                <Text style={styles.fileSize}>
+                                  {fmtSize(item.file_size)}
+                                </Text>
+                              ) : null}
+                            </View>
+                          </Pressable>
+                        )
+                      ) : null}
+                      {item.content || deleted ? (
+                        <Text style={[styles.content, deleted && styles.deleted]}>
+                          {deleted ? "This message was deleted" : item.content}
+                        </Text>
+                      ) : null}
+                      <View style={styles.metaLine}>
+                        {item.edited_at && !deleted ? (
+                          <Text style={styles.edited}>edited</Text>
+                        ) : null}
+                        <Text style={styles.time}>{fmtTime(item.created_at)}</Text>
+                      </View>
+                    </Pressable>
+
+                    {/* Reactions sit just below/outside the bubble */}
                     {Object.keys(counts).length > 0 ? (
-                      <View style={styles.reactions}>
+                      <View
+                        style={[
+                          styles.reactions,
+                          mine ? styles.reactionsMine : styles.reactionsTheirs,
+                        ]}
+                      >
                         {Object.entries(counts).map(([emoji, count]) => (
                           <Pressable
                             key={emoji}
@@ -342,7 +471,21 @@ export default function ChatThread() {
                         ))}
                       </View>
                     ) : null}
-                  </Pressable>
+                  </View>
+
+                  {/* Always-visible ⋯ affordance (reliable tap fallback for
+                      long-press, which can be flaky in release builds). */}
+                  {!deleted ? (
+                    <Pressable
+                      style={styles.moreBtn}
+                      hitSlop={8}
+                      onPress={() =>
+                        mine ? setActionTarget(item) : setReactTarget(item)
+                      }
+                    >
+                      <MoreVertical size={16} color={theme.textMuted} />
+                    </Pressable>
+                  ) : null}
                 </View>
               );
             }}
@@ -350,7 +493,29 @@ export default function ChatThread() {
           {peerTyping ? (
             <Text style={styles.typing}>typing…</Text>
           ) : null}
-          <View style={[styles.inputBar, { paddingBottom: insets.bottom + 8 }]}>
+          {/* Reply composing strip */}
+          {replyTo ? (
+            <View style={styles.replyBar}>
+              <CornerUpLeft size={16} color={theme.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.replyBarName} numberOfLines={1}>
+                  Replying to {replyTo.sender_name || "message"}
+                </Text>
+                <Text style={styles.replyBarText} numberOfLines={1}>
+                  {replyTo.content || "Attachment"}
+                </Text>
+              </View>
+              <Pressable onPress={() => setReplyTo(null)} hitSlop={8}>
+                <XIcon size={18} color={theme.textSecondary} />
+              </Pressable>
+            </View>
+          ) : null}
+          <View
+            style={[
+              styles.inputBar,
+              { paddingBottom: Math.max(insets.bottom, kbInset) + 8 },
+            ]}
+          >
             <Pressable
               style={styles.attachBtn}
               onPress={attachFile}
@@ -368,6 +533,7 @@ export default function ChatThread() {
               placeholderTextColor={theme.textMuted}
               value={text}
               onChangeText={onChangeText}
+              onFocus={scrollFocusedIntoView}
               multiline
             />
             <Pressable
@@ -389,16 +555,36 @@ export default function ChatThread() {
         onRequestClose={() => setReactTarget(null)}
       >
         <Pressable style={styles.pickerOverlay} onPress={() => setReactTarget(null)}>
-          <View style={styles.picker}>
-            {EMOJIS.map((e) => (
-              <Pressable
-                key={e}
-                style={styles.pickerEmoji}
-                onPress={() => reactTarget && react(reactTarget, e)}
-              >
-                <Text style={styles.pickerEmojiText}>{e}</Text>
-              </Pressable>
-            ))}
+          <View style={styles.pickerWrap}>
+            <View style={styles.picker}>
+              {EMOJIS.map((e) => (
+                <Pressable
+                  key={e}
+                  style={styles.pickerEmoji}
+                  onPress={() => reactTarget && react(reactTarget, e)}
+                >
+                  <Text style={styles.pickerEmojiText}>{e}</Text>
+                </Pressable>
+              ))}
+            </View>
+            {reactTarget ? (
+              <View style={styles.reactExtraRow}>
+                <Pressable
+                  style={styles.forwardRow}
+                  onPress={() => reactTarget && startReply(reactTarget)}
+                >
+                  <CornerUpLeft size={16} color={theme.text} />
+                  <Text style={styles.actionText}>Reply</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.forwardRow}
+                  onPress={() => reactTarget && openForward(reactTarget)}
+                >
+                  <Forward size={16} color={theme.text} />
+                  <Text style={styles.actionText}>Forward</Text>
+                </Pressable>
+              </View>
+            ) : null}
           </View>
         </Pressable>
       </Modal>
@@ -426,6 +612,13 @@ export default function ChatThread() {
                 </Pressable>
                 <Pressable
                   style={styles.actionRow}
+                  onPress={() => actionTarget && startReply(actionTarget)}
+                >
+                  <CornerUpLeft size={18} color={theme.text} />
+                  <Text style={styles.actionText}>Reply</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.actionRow}
                   onPress={() => actionTarget && doPin(actionTarget)}
                 >
                   <Pin size={18} color={theme.text} />
@@ -437,6 +630,13 @@ export default function ChatThread() {
                 >
                   <Star size={18} color={theme.text} />
                   <Text style={styles.actionText}>Star</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.actionRow}
+                  onPress={() => actionTarget && openForward(actionTarget)}
+                >
+                  <Forward size={18} color={theme.text} />
+                  <Text style={styles.actionText}>Forward</Text>
                 </Pressable>
                 <Pressable
                   style={styles.actionRow}
@@ -463,6 +663,42 @@ export default function ChatThread() {
           </View>
         </Pressable>
       </Modal>
+
+      {/* Forward picker — choose a conversation to forward to */}
+      <Modal
+        visible={!!forwardTarget}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setForwardTarget(null)}
+      >
+        <Pressable
+          style={styles.pickerOverlay}
+          onPress={() => setForwardTarget(null)}
+        >
+          <View style={styles.forwardSheet}>
+            <Text style={styles.forwardTitle}>Forward to…</Text>
+            {conversations.length === 0 ? (
+              <Text style={styles.forwardEmpty}>No conversations</Text>
+            ) : (
+              conversations.map((c) => (
+                <Pressable
+                  key={c.id}
+                  style={styles.forwardConv}
+                  onPress={() => doForward(c.id)}
+                >
+                  <Text style={styles.forwardConvName} numberOfLines={1}>
+                    {c.is_group
+                      ? c.group_name || `Group #${c.id}`
+                      : c.other_full_name ||
+                        c.other_username ||
+                        `Conversation #${c.id}`}
+                  </Text>
+                </Pressable>
+              ))
+            )}
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -471,11 +707,17 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   list: { padding: 12, gap: 8, paddingBottom: 16 },
-  bubbleRow: { flexDirection: "row" },
+  bubbleRow: { flexDirection: "row", alignItems: "center", gap: 4 },
   rowMine: { justifyContent: "flex-end" },
   rowTheirs: { justifyContent: "flex-start" },
+  bubbleCol: { maxWidth: "82%" },
+  moreBtn: {
+    width: 24,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   bubble: {
-    maxWidth: "80%",
     borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -495,7 +737,40 @@ const styles = StyleSheet.create({
   sender: { fontSize: 11, fontWeight: "700", color: theme.primaryLight },
   content: { fontSize: 15, color: theme.text, lineHeight: 20 },
   deleted: { fontStyle: "italic", color: theme.textMuted },
-  time: { fontSize: 10, color: theme.textMuted, alignSelf: "flex-end" },
+  metaLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    alignSelf: "flex-end",
+  },
+  edited: { fontSize: 10, color: theme.textMuted, fontStyle: "italic" },
+  time: { fontSize: 10, color: theme.textMuted },
+  replyQuote: {
+    borderLeftWidth: 3,
+    borderLeftColor: theme.primary,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginBottom: 4,
+    gap: 1,
+  },
+  replyQuoteName: { fontSize: 11, fontWeight: "700", color: theme.primaryLight },
+  replyQuoteText: { fontSize: 12, color: theme.textSecondary },
+  fileCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: theme.bgElevated,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 4,
+    minWidth: 180,
+  },
+  fileName: { fontSize: 14, color: theme.text, fontWeight: "500" },
+  fileSize: { fontSize: 11, color: theme.textMuted },
   fileImage: {
     width: 200,
     height: 150,
@@ -503,7 +778,16 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     backgroundColor: theme.surface,
   },
-  reactions: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 4 },
+  reactions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 4,
+    marginTop: -6,
+    marginHorizontal: 6,
+  },
+  reactionsMine: { justifyContent: "flex-end" },
+  reactionsTheirs: { justifyContent: "flex-start" },
+  reactExtraRow: { flexDirection: "row", gap: 8 },
   reactionChip: {
     backgroundColor: theme.bgElevated,
     borderWidth: 1,
@@ -536,8 +820,56 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.glassBorder,
   },
+  pickerWrap: { alignItems: "center", gap: 8 },
+  replyBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: theme.bgSecondary,
+    borderTopWidth: 1,
+    borderTopColor: theme.border,
+  },
+  replyBarName: { fontSize: 12, fontWeight: "700", color: theme.primaryLight },
+  replyBarText: { fontSize: 12, color: theme.textSecondary },
   pickerEmoji: { padding: 6 },
   pickerEmojiText: { fontSize: 26 },
+  forwardRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: theme.bgElevated,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radiusFull,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  forwardSheet: {
+    backgroundColor: theme.bgElevated,
+    borderRadius: theme.radius,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    paddingVertical: 8,
+    minWidth: 260,
+    maxHeight: "70%",
+  },
+  forwardTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: theme.text,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+  },
+  forwardEmpty: {
+    fontSize: 13,
+    color: theme.textMuted,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+  },
+  forwardConv: { paddingHorizontal: 18, paddingVertical: 12 },
+  forwardConvName: { fontSize: 15, color: theme.text },
   actionSheet: {
     backgroundColor: theme.bgElevated,
     borderRadius: theme.radius,

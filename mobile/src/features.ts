@@ -279,8 +279,16 @@ export type ChatMessage = {
   created_at: string;
   file_url?: string | null;
   file_name?: string | null;
+  file_type?: string | null;
+  file_size?: number | null;
   deleted_at?: string | null;
+  edited_at?: string | null;
   reactions?: ChatReaction[];
+  // Reply-to (server stores reply_to_id; list endpoint returns the quoted
+  // snippet fields when a message is a reply).
+  reply_to_id?: number | null;
+  reply_to_content?: string | null;
+  reply_to_sender_name?: string | null;
   // Optimistic/local fields
   _pending?: boolean;
   clientMsgId?: string | null;

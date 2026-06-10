@@ -1,4 +1,4 @@
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import {
   Building2,
@@ -37,8 +37,6 @@ export default function MoreScreen() {
   const level = ROLE_LEVELS[user?.role ?? "user"] || 1;
   const isTeamLead = level >= 2 || !!user?.has_reports;
   const isHR = level >= 4;
-  const soon = (name: string) =>
-    Alert.alert(name, "This section is managed from the web app.");
 
   const items: Item[] = [
     {
@@ -63,9 +61,18 @@ export default function MoreScreen() {
   }
   if (isTeamLead)
     items.push({ label: "My Team", icon: Users, onPress: () => router.push("/team") });
-  if (isHR) items.push({ label: "Admin", icon: Settings, onPress: () => soon("Admin") });
+  if (isHR)
+    items.push({
+      label: "Admin",
+      icon: Settings,
+      onPress: () => router.push("/admin"),
+    });
   if (user?.role === "platform_admin") {
-    items.push({ label: "Tenants", icon: Server, onPress: () => soon("Tenants") });
+    items.push({
+      label: "Tenants",
+      icon: Server,
+      onPress: () => router.push("/tenants"),
+    });
   }
 
   return (

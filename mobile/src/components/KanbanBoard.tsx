@@ -4,6 +4,7 @@ import {
   StyleSheet,
   Text,
   View,
+  type View as RNView,
 } from "react-native";
 import { useRouter } from "expo-router";
 import {
@@ -58,8 +59,14 @@ export default function KanbanBoard({
   const [wipLimits, setWipLimits] = useState(false);
   const [typeMap, setTypeMap] = useState<Record<string, WorkItemType>>({});
   const [storyPointsEnabled, setStoryPointsEnabled] = useState(true);
+  // Which column is currently under the dragged card (for highlight).
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
   // Column screen y-ranges for hit-testing during drag.
   const colRanges = useRef<{ key: string; y: number; height: number }[]>([]);
+  // Refs to each column View so we can re-measure their window position at the
+  // start of every drag — `measureInWindow` is reliable on web, unlike
+  // measuring inside onLayout which often returns stale/empty values there.
+  const colRefs = useRef<Record<string, RNView | null>>({});
 
   useEffect(() => {
     getAgileConfig()
@@ -120,6 +127,25 @@ export default function KanbanBoard({
     moveTo(task, keys[nextIdx]);
   }
 
+  // Re-measure every column's window rect. Called when a drag begins so the
+  // hit-test ranges are always fresh (accounts for scroll position, layout
+  // shifts, and works on web where onLayout measuring is unreliable).
+  function measureColumns() {
+    const next: { key: string; y: number; height: number }[] = [];
+    for (const c of columns) {
+      const node = colRefs.current[c.key];
+      if (!node?.measureInWindow) continue;
+      node.measureInWindow((_x, y, _w, height) => {
+        // Replace any existing entry for this key, then keep sorted by y.
+        const idx = next.findIndex((r) => r.key === c.key);
+        const entry = { key: c.key, y, height };
+        if (idx >= 0) next[idx] = entry;
+        else next.push(entry);
+        colRanges.current = next;
+      });
+    }
+  }
+
   // Resolve which column an absolute screen-y falls into.
   function columnAtY(absY: number): string | null {
     for (const r of colRanges.current) {
@@ -130,7 +156,7 @@ export default function KanbanBoard({
 
   return (
     <View style={styles.board}>
-      {columns.map((col, ci) => {
+      {columns.map((col) => {
         const items = grouped[col.key] || [];
         const wipExceeded = !!(
           wipLimits &&
@@ -140,13 +166,15 @@ export default function KanbanBoard({
         return (
           <View
             key={col.key}
-            style={[styles.column, wipExceeded && styles.wipExceeded]}
-            onLayout={(e) => {
-              // Store absolute y of each column for drag hit-testing.
-              e.target.measure?.((_x, _y, _w, height, _pageX, pageY) => {
-                colRanges.current[ci] = { key: col.key, y: pageY, height };
-              });
+            ref={(node) => {
+              colRefs.current[col.key] = node;
             }}
+            style={[
+              styles.column,
+              wipExceeded && styles.wipExceeded,
+              dropTarget === col.key && styles.dropTarget,
+            ]}
+            onLayout={() => measureColumns()}
           >
             <View style={styles.colHeader}>
               <View style={[styles.colDot, { backgroundColor: col.color }]} />
@@ -177,8 +205,11 @@ export default function KanbanBoard({
                       })
                     }
                     onArrow={(dir) => moveArrow(t, dir)}
+                    onDragBegin={() => measureColumns()}
+                    onDragMove={(absY) => setDropTarget(columnAtY(absY))}
                     onDrop={(absY) => {
                       const target = columnAtY(absY);
+                      setDropTarget(null);
                       if (target) moveTo(t, target);
                     }}
                   />
@@ -215,6 +246,8 @@ function DraggableCard({
   isLast,
   onOpen,
   onArrow,
+  onDragBegin,
+  onDragMove,
   onDrop,
 }: {
   task: Task;
@@ -224,6 +257,8 @@ function DraggableCard({
   isLast: boolean;
   onOpen: () => void;
   onArrow: (dir: -1 | 1) => void;
+  onDragBegin: () => void;
+  onDragMove: (absY: number) => void;
   onDrop: (absY: number) => void;
 }) {
   const pr = TASK_PRIORITY[task.priority];
@@ -244,10 +279,12 @@ function DraggableCard({
     .activateAfterLongPress(220)
     .onStart(() => {
       dragging.value = 1;
+      runOnJS(onDragBegin)();
     })
     .onUpdate((e) => {
       tx.value = e.translationX;
       ty.value = e.translationY;
+      runOnJS(onDragMove)(e.absoluteY);
     })
     .onEnd((e) => {
       runOnJS(onDrop)(e.absoluteY);
@@ -405,6 +442,10 @@ const styles = StyleSheet.create({
     borderColor: theme.glassBorder,
   },
   wipExceeded: { borderColor: theme.danger },
+  dropTarget: {
+    borderColor: theme.primary,
+    backgroundColor: theme.primaryGlow,
+  },
   colHeader: {
     flexDirection: "row",
     alignItems: "center",

@@ -39,6 +39,10 @@ import {
   type TaskPriority,
   type TaskStatus,
 } from "../../src/features";
+import {
+  useKeyboardInset,
+  scrollFocusedIntoView,
+} from "../../src/hooks/useKeyboardInset";
 
 const STATUSES: TaskStatus[] = ["pending", "in_progress", "in_review", "done"];
 const PRIORITIES: TaskPriority[] = ["low", "medium", "high"];
@@ -59,6 +63,7 @@ export default function TaskDetail() {
   const taskId = Number(id);
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const kbInset = useKeyboardInset();
 
   const [task, setTask] = useState<(Task & { comments?: TaskComment[] }) | null>(null);
   const [comments, setComments] = useState<TaskComment[]>([]);
@@ -442,13 +447,19 @@ export default function TaskDetail() {
         </ScrollView>
 
         {/* Comment composer */}
-        <View style={[styles.composer, { paddingBottom: insets.bottom + 8 }]}>
+        <View
+          style={[
+            styles.composer,
+            { paddingBottom: Math.max(insets.bottom, kbInset) + 8 },
+          ]}
+        >
           <TextInput
             style={styles.commentInput}
             placeholder="Add a comment"
             placeholderTextColor={theme.textMuted}
             value={commentText}
             onChangeText={setCommentText}
+            onFocus={scrollFocusedIntoView}
             multiline
           />
           <Pressable

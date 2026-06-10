@@ -22,7 +22,25 @@ export type User = {
   tenant_id?: number | null;
   has_reports?: boolean;
   must_change_password?: boolean;
+  // Plan / feature gating (mirrors the web profile payload).
+  tenant_features?: Record<string, boolean> | null;
+  tenant_plan?: string | null;
 };
+
+/**
+ * Fail-closed feature check (mirrors client/src/FeaturesContext.tsx).
+ * Platform admins with no tenant are never gated. A missing key = off.
+ */
+export function userHasFeature(
+  user: User | null,
+  name: string,
+): boolean {
+  if (!user) return false;
+  if (user.role === "platform_admin" && !user.tenant_id) return true;
+  const features = user.tenant_features;
+  if (!features) return false;
+  return features[name] === true;
+}
 
 type AuthContextValue = {
   user: User | null;
