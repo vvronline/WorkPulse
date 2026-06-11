@@ -5,6 +5,7 @@ import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider } from "../src/auth/AuthContext";
+import IncomingCallListener from "../src/realtime/IncomingCallListener";
 import { theme } from "../src/theme";
 
 const queryClient = new QueryClient({
@@ -20,6 +21,7 @@ export default function RootLayout() {
       <AuthProvider>
         <SafeAreaProvider>
           <StatusBar style="light" />
+          <IncomingCallListener />
           <Stack
             screenOptions={{
               headerShown: false,
@@ -81,6 +83,14 @@ export default function RootLayout() {
                 headerTitleStyle: { color: theme.text },
                 headerTintColor: theme.primary,
                 headerShadowVisible: false,
+              }}
+            />
+            <Stack.Screen
+              name="call/[conversationId]"
+              options={{
+                headerShown: false,
+                animation: "fade",
+                presentation: "fullScreenModal",
               }}
             />
             <Stack.Screen

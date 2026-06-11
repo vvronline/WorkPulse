@@ -7,29 +7,43 @@ import {
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Stack, useLocalSearchParams } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import * as Linking from "expo-linking";
 import {
+  AudioModule,
+  RecordingPresets,
+  setAudioModeAsync,
+  useAudioRecorder,
+  useAudioRecorderState,
+} from "expo-audio";
+import {
   CornerUpLeft,
   FileText,
-  MoreVertical,
+  Mic,
+  MoreHorizontal,
   Paperclip,
   Pencil,
+  Phone,
   Pin,
+  Plus,
   Send,
+  Smile,
   Star,
   Trash2,
+  Video as VideoIcon,
   X as XIcon,
 } from "lucide-react-native";
 import { theme } from "../../src/theme";
 import { uploadUrl } from "../../src/config";
+import VoicePlayer from "../../src/components/VoicePlayer";
 import { useAuth } from "../../src/auth/AuthContext";
 import {
   deleteMessage,
@@ -52,7 +66,33 @@ import {
   scrollFocusedIntoView,
 } from "../../src/hooks/useKeyboardInset";
 
-const EMOJIS = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F64F}"];
+// Quick-reaction row — matches the web ReactionPicker exactly.
+const EMOJIS = [
+  "\u{1F44D}", // 👍
+  "\u2764\uFE0F", // ❤️
+  "\u{1F602}", // 😂
+  "\u{1F62E}", // 😮
+  "\u{1F622}", // 😢
+  "\u{1F525}", // 🔥
+  "\u{1F44F}", // 👏
+  "\u{1F389}", // 🎉
+  "\u{1F44E}", // 👎
+  "\u{1F4AF}", // 💯
+];
+
+// Full emoji set for the "All Emoji" browser (grouped, common reactions).
+const ALL_EMOJIS = [
+  "\u{1F600}","\u{1F603}","\u{1F604}","\u{1F601}","\u{1F606}","\u{1F605}","\u{1F923}","\u{1F602}",
+  "\u{1F642}","\u{1F643}","\u{1F609}","\u{1F60A}","\u{1F607}","\u{1F970}","\u{1F60D}","\u{1F929}",
+  "\u{1F618}","\u{1F617}","\u{1F61A}","\u{1F619}","\u{1F60B}","\u{1F61B}","\u{1F61C}","\u{1F92A}",
+  "\u{1F60E}","\u{1F913}","\u{1F9D0}","\u{1F914}","\u{1F910}","\u{1F644}","\u{1F60F}","\u{1F612}",
+  "\u{1F62E}","\u{1F627}","\u{1F632}","\u{1F633}","\u{1F97A}","\u{1F622}","\u{1F62D}","\u{1F624}",
+  "\u{1F620}","\u{1F621}","\u{1F92C}","\u{1F634}","\u{1F60C}","\u{1F614}","\u{1F61F}","\u{1F625}",
+  "\u{1F44D}","\u{1F44E}","\u{1F44F}","\u{1F64C}","\u{1F450}","\u{1F932}","\u{1F91D}","\u{1F64F}",
+  "\u270C\uFE0F","\u{1F91E}","\u{1F44C}","\u{1F90F}","\u{1F44A}","\u270A","\u{1F4AA}","\u{1F525}",
+  "\u2764\uFE0F","\u{1F9E1}","\u{1F49B}","\u{1F49A}","\u{1F499}","\u{1F49C}","\u{1F5A4}","\u{1F90D}",
+  "\u{1F389}","\u{1F38A}","\u2728","\u2B50","\u{1F31F}","\u{1F4AF}","\u2705","\u274C",
+];
 
 function isImageFile(m: ChatMessage): boolean {
   if (m.file_type && m.file_type.startsWith("image/")) return true;
@@ -60,11 +100,24 @@ function isImageFile(m: ChatMessage): boolean {
   return /\.(png|jpe?g|gif|webp|heic|bmp)$/.test(name);
 }
 
+function isAudioFile(m: ChatMessage): boolean {
+  if (m.file_type && m.file_type.startsWith("audio/")) return true;
+  const name = (m.file_name || m.file_url || "").toLowerCase();
+  return /\.(m4a|mp3|aac|ogg|wav|webm)$/.test(name);
+}
+
 function fmtSize(bytes?: number | null): string {
   if (!bytes || bytes <= 0) return "";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function fmtRecTime(ms?: number): string {
+  const total = Math.round((ms || 0) / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 function fmtTime(iso: string) {
@@ -79,6 +132,7 @@ function fmtTime(iso: string) {
 export default function ChatThread() {
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
   const convId = Number(id);
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const kbInset = useKeyboardInset();
   const { user } = useAuth();
@@ -89,10 +143,14 @@ export default function ChatThread() {
   const [reactTarget, setReactTarget] = useState<ChatMessage | null>(null);
   const [actionTarget, setActionTarget] = useState<ChatMessage | null>(null);
   const [forwardTarget, setForwardTarget] = useState<ChatMessage | null>(null);
+  const [showAllEmoji, setShowAllEmoji] = useState(false);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
+  // Voice recording (expo-audio).
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorderState = useAudioRecorderState(recorder);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const typingSentAt = useRef(0);
   const typingClear = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -219,6 +277,44 @@ export default function ChatThread() {
     },
     [convId],
   );
+
+  async function startRecording() {
+    try {
+      const perm = await AudioModule.requestRecordingPermissionsAsync();
+      if (!perm.granted) return;
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await recorder.prepareToRecordAsync();
+      recorder.record();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function stopRecordingAndSend() {
+    try {
+      await recorder.stop();
+      const uri = recorder.uri;
+      if (!uri) return;
+      setUploading(true);
+      const fileName = `voice-${Date.now()}.m4a`;
+      const { data } = await uploadChatFile(convId, uri, fileName);
+      setMessages((prev) =>
+        prev.some((m) => m.id === data.id) ? prev : [...prev, data],
+      );
+    } catch {
+      /* ignore */
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function cancelRecording() {
+    try {
+      await recorder.stop();
+    } catch {
+      /* ignore */
+    }
+  }
 
   async function attachFile() {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -347,9 +443,35 @@ export default function ChatThread() {
     );
   }
 
+  function startCall(type: "voice" | "video") {
+    router.push({
+      pathname: "/call/[conversationId]",
+      params: {
+        conversationId: String(convId),
+        mode: "outgoing",
+        callType: type,
+        peerName: name || "Call",
+      },
+    });
+  }
+
   return (
     <View style={styles.screen}>
-      <Stack.Screen options={{ title: name || "Chat" }} />
+      <Stack.Screen
+        options={{
+          title: name || "Chat",
+          headerRight: () => (
+            <View style={styles.headerActions}>
+              <Pressable onPress={() => startCall("voice")} hitSlop={8}>
+                <Phone size={20} color={theme.primary} />
+              </Pressable>
+              <Pressable onPress={() => startCall("video")} hitSlop={8}>
+                <VideoIcon size={20} color={theme.primary} />
+              </Pressable>
+            </View>
+          ),
+        }}
+      />
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={theme.primary} />
@@ -372,9 +494,14 @@ export default function ChatThread() {
               const mine = item.sender_id === user?.id;
               const deleted = !!item.deleted_at;
               // Aggregate reactions by emoji.
-              const counts: Record<string, number> = {};
+              const groups: Record<
+                string,
+                { count: number; mine: boolean }
+              > = {};
               (item.reactions || []).forEach((r) => {
-                counts[r.emoji] = (counts[r.emoji] || 0) + 1;
+                if (!groups[r.emoji]) groups[r.emoji] = { count: 0, mine: false };
+                groups[r.emoji].count += 1;
+                if (r.userId === user?.id) groups[r.emoji].mine = true;
               });
               return (
                 <View
@@ -382,10 +509,7 @@ export default function ChatThread() {
                 >
                   <View style={styles.bubbleCol}>
                     <Pressable
-                      onLongPress={() =>
-                        !deleted &&
-                        (mine ? setActionTarget(item) : setReactTarget(item))
-                      }
+                      onLongPress={() => !deleted && setReactTarget(item)}
                       delayLongPress={250}
                       style={[
                         styles.bubble,
@@ -407,13 +531,17 @@ export default function ChatThread() {
                           </Text>
                         </View>
                       ) : null}
-                      {/* Attachment: image inline, other files as a card */}
+                      {/* Attachment: image inline, audio player, else file card */}
                       {item.file_url && !deleted ? (
                         isImageFile(item) ? (
                           <Image
                             source={{ uri: uploadUrl(item.file_url) || undefined }}
                             style={styles.fileImage}
                             resizeMode="cover"
+                          />
+                        ) : isAudioFile(item) ? (
+                          <VoicePlayer
+                            uri={uploadUrl(item.file_url) || ""}
                           />
                         ) : (
                           <Pressable
@@ -450,42 +578,37 @@ export default function ChatThread() {
                       </View>
                     </Pressable>
 
-                    {/* Reactions sit just below/outside the bubble */}
-                    {Object.keys(counts).length > 0 ? (
+                    {/* Reactions render as a separate row BELOW the bubble
+                        (outside it), exactly like the web MessageBubble. */}
+                    {Object.keys(groups).length > 0 ? (
                       <View
                         style={[
                           styles.reactions,
                           mine ? styles.reactionsMine : styles.reactionsTheirs,
                         ]}
                       >
-                        {Object.entries(counts).map(([emoji, count]) => (
+                        {Object.entries(groups).map(([emoji, g]) => (
                           <Pressable
                             key={emoji}
-                            style={styles.reactionChip}
+                            style={[
+                              styles.reactionChip,
+                              g.mine && styles.myReactionChip,
+                            ]}
                             onPress={() => react(item, emoji)}
                           >
-                            <Text style={styles.reactionText}>
-                              {emoji} {count > 1 ? count : ""}
-                            </Text>
+                            <Text style={styles.reactionEmoji}>{emoji}</Text>
+                            <Text style={styles.reactionCount}>{g.count}</Text>
                           </Pressable>
                         ))}
+                        <Pressable
+                          style={styles.addReactionBtn}
+                          onPress={() => setReactTarget(item)}
+                        >
+                          <Plus size={13} color={theme.textMuted} />
+                        </Pressable>
                       </View>
                     ) : null}
                   </View>
-
-                  {/* Always-visible ⋯ affordance (reliable tap fallback for
-                      long-press, which can be flaky in release builds). */}
-                  {!deleted ? (
-                    <Pressable
-                      style={styles.moreBtn}
-                      hitSlop={8}
-                      onPress={() =>
-                        mine ? setActionTarget(item) : setReactTarget(item)
-                      }
-                    >
-                      <MoreVertical size={16} color={theme.textMuted} />
-                    </Pressable>
-                  ) : null}
                 </View>
               );
             }}
@@ -516,38 +639,78 @@ export default function ChatThread() {
               { paddingBottom: Math.max(insets.bottom, kbInset) + 8 },
             ]}
           >
-            <Pressable
-              style={styles.attachBtn}
-              onPress={attachFile}
-              disabled={uploading || editingId != null}
-            >
-              {uploading ? (
-                <ActivityIndicator size="small" color={theme.textSecondary} />
-              ) : (
-                <Paperclip size={20} color={theme.textSecondary} />
-              )}
-            </Pressable>
-            <TextInput
-              style={styles.input}
-              placeholder={editingId != null ? "Edit message" : "Message"}
-              placeholderTextColor={theme.textMuted}
-              value={text}
-              onChangeText={onChangeText}
-              onFocus={scrollFocusedIntoView}
-              multiline
-            />
-            <Pressable
-              style={[styles.sendBtn, !text.trim() && styles.sendBtnDisabled]}
-              onPress={editingId != null ? saveEdit : send}
-              disabled={!text.trim()}
-            >
-              <Send size={18} color="#fff" />
-            </Pressable>
+            {recorderState.isRecording ? (
+              <>
+                <Pressable
+                  style={styles.attachBtn}
+                  onPress={cancelRecording}
+                  hitSlop={6}
+                >
+                  <XIcon size={22} color={theme.danger} />
+                </Pressable>
+                <View style={styles.recordingBar}>
+                  <View style={styles.recDot} />
+                  <Text style={styles.recText}>
+                    Recording… {fmtRecTime(recorderState.durationMillis)}
+                  </Text>
+                </View>
+                <Pressable
+                  style={styles.sendBtn}
+                  onPress={stopRecordingAndSend}
+                >
+                  <Send size={18} color="#fff" />
+                </Pressable>
+              </>
+            ) : (
+              <>
+                <Pressable
+                  style={styles.attachBtn}
+                  onPress={attachFile}
+                  disabled={uploading || editingId != null}
+                >
+                  {uploading ? (
+                    <ActivityIndicator
+                      size="small"
+                      color={theme.textSecondary}
+                    />
+                  ) : (
+                    <Paperclip size={20} color={theme.textSecondary} />
+                  )}
+                </Pressable>
+                <TextInput
+                  style={styles.input}
+                  placeholder={editingId != null ? "Edit message" : "Message"}
+                  placeholderTextColor={theme.textMuted}
+                  value={text}
+                  onChangeText={onChangeText}
+                  onFocus={scrollFocusedIntoView}
+                  multiline
+                />
+                {text.trim() || editingId != null ? (
+                  <Pressable
+                    style={styles.sendBtn}
+                    onPress={editingId != null ? saveEdit : send}
+                  >
+                    <Send size={18} color="#fff" />
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    style={styles.sendBtn}
+                    onPress={startRecording}
+                    disabled={uploading}
+                  >
+                    <Mic size={18} color="#fff" />
+                  </Pressable>
+                )}
+              </>
+            )}
           </View>
         </KeyboardAvoidingView>
       )}
 
-      {/* Emoji reaction picker */}
+      {/* Emoji reaction bar — STRICTLY matches the web screenshot: one single
+          horizontal pill row → quick emojis · smiley(all emoji) · divider ·
+          reply · ⋯(more). */}
       <Modal
         visible={!!reactTarget}
         transparent
@@ -555,38 +718,81 @@ export default function ChatThread() {
         onRequestClose={() => setReactTarget(null)}
       >
         <Pressable style={styles.pickerOverlay} onPress={() => setReactTarget(null)}>
-          <View style={styles.pickerWrap}>
-            <View style={styles.picker}>
-              {EMOJIS.map((e) => (
-                <Pressable
-                  key={e}
-                  style={styles.pickerEmoji}
-                  onPress={() => reactTarget && react(reactTarget, e)}
-                >
-                  <Text style={styles.pickerEmojiText}>{e}</Text>
-                </Pressable>
-              ))}
-            </View>
-            {reactTarget ? (
-              <View style={styles.reactExtraRow}>
-                <Pressable
-                  style={styles.forwardRow}
-                  onPress={() => reactTarget && startReply(reactTarget)}
-                >
-                  <CornerUpLeft size={16} color={theme.text} />
-                  <Text style={styles.actionText}>Reply</Text>
-                </Pressable>
-                <Pressable
-                  style={styles.forwardRow}
-                  onPress={() => reactTarget && openForward(reactTarget)}
-                >
-                  <Forward size={16} color={theme.text} />
-                  <Text style={styles.actionText}>Forward</Text>
-                </Pressable>
-              </View>
-            ) : null}
-          </View>
+          <Pressable style={styles.pickerBar} onPress={() => {}}>
+            {EMOJIS.map((e) => (
+              <Pressable
+                key={e}
+                style={styles.emojiBtn}
+                onPress={() => reactTarget && react(reactTarget, e)}
+              >
+                <Text style={styles.emojiText}>{e}</Text>
+              </Pressable>
+            ))}
+            <Pressable
+              style={styles.barIconBtn}
+              onPress={() => setShowAllEmoji(true)}
+            >
+              <Smile size={22} color={theme.textSecondary} />
+            </Pressable>
+            <View style={styles.barDivider} />
+            <Pressable
+              style={styles.barIconBtn}
+              onPress={() => reactTarget && startReply(reactTarget)}
+            >
+              <CornerUpLeft size={20} color={theme.textSecondary} />
+            </Pressable>
+            <Pressable
+              style={styles.barIconBtn}
+              onPress={() => {
+                const t = reactTarget;
+                setReactTarget(null);
+                if (t) setActionTarget(t);
+              }}
+            >
+              <MoreHorizontal size={20} color={theme.textSecondary} />
+            </Pressable>
+          </Pressable>
         </Pressable>
+      </Modal>
+
+      {/* Full emoji grid (opened from "All Emoji"). */}
+      <Modal
+        visible={showAllEmoji}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowAllEmoji(false)}
+      >
+        <View style={styles.allOverlay}>
+          <Pressable
+            style={styles.allScrim}
+            onPress={() => setShowAllEmoji(false)}
+          />
+          <View style={styles.allSheet}>
+            <View style={styles.allHeader}>
+              <Text style={styles.allTitle}>Pick a reaction</Text>
+              <Pressable onPress={() => setShowAllEmoji(false)} hitSlop={8}>
+                <XIcon size={22} color={theme.textSecondary} />
+              </Pressable>
+            </View>
+            <FlatList
+              data={ALL_EMOJIS}
+              keyExtractor={(e, i) => `${e}-${i}`}
+              numColumns={8}
+              contentContainerStyle={styles.allGrid}
+              renderItem={({ item: e }) => (
+                <Pressable
+                  style={styles.gridEmoji}
+                  onPress={() => {
+                    if (reactTarget) react(reactTarget, e);
+                    setShowAllEmoji(false);
+                  }}
+                >
+                  <Text style={styles.gridEmojiText}>{e}</Text>
+                </Pressable>
+              )}
+            />
+          </View>
+        </View>
       </Modal>
 
       {/* Own-message action sheet (edit / pin / star / react / delete) */}
@@ -605,24 +811,10 @@ export default function ChatThread() {
               <>
                 <Pressable
                   style={styles.actionRow}
-                  onPress={() => actionTarget && startEdit(actionTarget)}
+                  onPress={() => actionTarget && openForward(actionTarget)}
                 >
-                  <Pencil size={18} color={theme.text} />
-                  <Text style={styles.actionText}>Edit</Text>
-                </Pressable>
-                <Pressable
-                  style={styles.actionRow}
-                  onPress={() => actionTarget && startReply(actionTarget)}
-                >
-                  <CornerUpLeft size={18} color={theme.text} />
-                  <Text style={styles.actionText}>Reply</Text>
-                </Pressable>
-                <Pressable
-                  style={styles.actionRow}
-                  onPress={() => actionTarget && doPin(actionTarget)}
-                >
-                  <Pin size={18} color={theme.text} />
-                  <Text style={styles.actionText}>Pin</Text>
+                  <Forward size={18} color={theme.text} />
+                  <Text style={styles.actionText}>Forward</Text>
                 </Pressable>
                 <Pressable
                   style={styles.actionRow}
@@ -631,33 +823,33 @@ export default function ChatThread() {
                   <Star size={18} color={theme.text} />
                   <Text style={styles.actionText}>Star</Text>
                 </Pressable>
-                <Pressable
-                  style={styles.actionRow}
-                  onPress={() => actionTarget && openForward(actionTarget)}
-                >
-                  <Forward size={18} color={theme.text} />
-                  <Text style={styles.actionText}>Forward</Text>
-                </Pressable>
-                <Pressable
-                  style={styles.actionRow}
-                  onPress={() => {
-                    const t = actionTarget;
-                    setActionTarget(null);
-                    if (t) setReactTarget(t);
-                  }}
-                >
-                  <Text style={styles.actionEmoji}>{"\u{1F642}"}</Text>
-                  <Text style={styles.actionText}>React</Text>
-                </Pressable>
-                <Pressable
-                  style={styles.actionRow}
-                  onPress={() => actionTarget && doDelete(actionTarget)}
-                >
-                  <Trash2 size={18} color={theme.danger} />
-                  <Text style={[styles.actionText, { color: theme.danger }]}>
-                    Delete
-                  </Text>
-                </Pressable>
+                {actionTarget.sender_id === user?.id ? (
+                  <>
+                    <Pressable
+                      style={styles.actionRow}
+                      onPress={() => actionTarget && startEdit(actionTarget)}
+                    >
+                      <Pencil size={18} color={theme.text} />
+                      <Text style={styles.actionText}>Edit</Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.actionRow}
+                      onPress={() => actionTarget && doPin(actionTarget)}
+                    >
+                      <Pin size={18} color={theme.text} />
+                      <Text style={styles.actionText}>Pin</Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.actionRow}
+                      onPress={() => actionTarget && doDelete(actionTarget)}
+                    >
+                      <Trash2 size={18} color={theme.danger} />
+                      <Text style={[styles.actionText, { color: theme.danger }]}>
+                        Delete
+                      </Text>
+                    </Pressable>
+                  </>
+                ) : null}
               </>
             ) : null}
           </View>
@@ -706,6 +898,7 @@ export default function ChatThread() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  headerActions: { flexDirection: "row", gap: 18, alignItems: "center" },
   list: { padding: 12, gap: 8, paddingBottom: 16 },
   bubbleRow: { flexDirection: "row", alignItems: "center", gap: 4 },
   rowMine: { justifyContent: "flex-end" },
@@ -778,25 +971,45 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     backgroundColor: theme.surface,
   },
+  // Reaction chips row BELOW the bubble (web .reactions: margin-top 4px).
   reactions: {
     flexDirection: "row",
     flexWrap: "wrap",
+    alignItems: "center",
     gap: 4,
-    marginTop: -6,
-    marginHorizontal: 6,
+    marginTop: 4,
+    paddingHorizontal: 2,
   },
   reactionsMine: { justifyContent: "flex-end" },
   reactionsTheirs: { justifyContent: "flex-start" },
   reactExtraRow: { flexDirection: "row", gap: 8 },
   reactionChip: {
-    backgroundColor: theme.bgElevated,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: theme.surface,
     borderWidth: 1,
     borderColor: theme.glassBorder,
-    borderRadius: 12,
+    borderRadius: theme.radiusFull,
     paddingHorizontal: 7,
-    paddingVertical: 2,
+    paddingVertical: 3,
   },
-  reactionText: { fontSize: 13, color: theme.text },
+  myReactionChip: {
+    backgroundColor: "rgba(35,131,226,0.18)",
+    borderColor: "rgba(35,131,226,0.35)",
+  },
+  reactionEmoji: { fontSize: 15 },
+  reactionCount: { fontSize: 11, color: theme.textSecondary, fontWeight: "600" },
+  addReactionBtn: {
+    width: 26,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.surface,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radiusFull,
+  },
   typing: {
     color: theme.textMuted,
     fontSize: 12,
@@ -810,17 +1023,80 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  picker: {
+  // Single horizontal reaction bar matching the web screenshot: rounded pill,
+  // quick emojis, then a smiley (all-emoji), divider, reply, and ⋯ (more).
+  pickerBar: {
     flexDirection: "row",
-    gap: 6,
-    backgroundColor: theme.bgElevated,
+    alignItems: "center",
+    backgroundColor: theme.bgSecondary,
     borderRadius: theme.radiusFull,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
     borderWidth: 1,
     borderColor: theme.glassBorder,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    maxWidth: "94%",
+    shadowColor: "#000",
+    shadowOpacity: 0.3,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 10,
   },
-  pickerWrap: { alignItems: "center", gap: 8 },
+  emojiBtn: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 20,
+  },
+  emojiText: { fontSize: 24 },
+  barIconBtn: {
+    width: 38,
+    height: 38,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 19,
+  },
+  barDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: theme.glassBorder,
+    marginHorizontal: 4,
+  },
+  allOverlay: { flex: 1, justifyContent: "flex-end" },
+  allScrim: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.6)",
+  },
+  allSheet: {
+    backgroundColor: theme.bgElevated,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 24,
+    maxHeight: "60%",
+  },
+  allHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 6,
+    paddingBottom: 10,
+  },
+  allTitle: { fontSize: 16, fontWeight: "700", color: theme.text },
+  allGrid: { gap: 2 },
+  gridEmoji: {
+    flex: 1,
+    aspectRatio: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    maxWidth: `${100 / 8}%`,
+  },
+  gridEmojiText: { fontSize: 28 },
   replyBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -833,8 +1109,6 @@ const styles = StyleSheet.create({
   },
   replyBarName: { fontSize: 12, fontWeight: "700", color: theme.primaryLight },
   replyBarText: { fontSize: 12, color: theme.textSecondary },
-  pickerEmoji: { padding: 6 },
-  pickerEmojiText: { fontSize: 26 },
   forwardRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -925,4 +1199,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   sendBtnDisabled: { opacity: 0.4 },
+  recordingBar: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: theme.inputBg,
+    borderWidth: 1,
+    borderColor: theme.inputBorder,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  recDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: theme.danger },
+  recText: { color: theme.text, fontSize: 14 },
 });

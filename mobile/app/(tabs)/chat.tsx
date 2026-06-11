@@ -1,18 +1,61 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
-import { MessagesSquare, PenSquare } from "lucide-react-native";
+import {
+  BellDot,
+  MessageSquare,
+  MessagesSquare,
+  MoreVertical,
+  Phone,
+  PhoneIncoming,
+  PhoneMissed,
+  PhoneOutgoing,
+  Pin,
+  Search,
+  Star,
+  Trash2,
+  Users,
+  Video,
+  X,
+} from "lucide-react-native";
 import { theme } from "../../src/theme";
-import { getConversations, type Conversation } from "../../src/features";
+import {
+  deleteConversation,
+  favouriteConversation,
+  getAllCallHistory,
+  getConversations,
+  pinConversation,
+  searchChatUsers,
+  startConversation,
+  type CallLogEntry,
+  type Conversation,
+} from "../../src/features";
+import { useAuth } from "../../src/auth/AuthContext";
 import { socket } from "../../src/realtime/socket";
+import {
+  useKeyboardInset,
+  scrollFocusedIntoView,
+} from "../../src/hooks/useKeyboardInset";
+
+type Tab = "msgs" | "meetings" | "calls" | "unread";
+
+type SearchUser = {
+  id: number;
+  username: string;
+  full_name: string;
+  avatar?: string | null;
+};
 
 function initials(name?: string | null) {
   if (!name) return "?";
@@ -29,14 +72,44 @@ function timeAgo(iso?: string | null) {
   if (mins < 60) return `${mins}m`;
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h`;
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return new Date(iso).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function callDuration(secs?: number): string | null {
+  if (!secs) return null;
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return m === 0 ? `${s}s` : `${m}m${s > 0 ? ` ${s}s` : ""}`;
+}
+
+function convName(c: Conversation) {
+  return c.is_group
+    ? c.group_name || "Group"
+    : c.other_full_name || c.other_username || "User";
 }
 
 export default function ChatScreen() {
   const router = useRouter();
+  const { user } = useAuth();
+  const kbInset = useKeyboardInset();
   const [items, setItems] = useState<Conversation[]>([]);
+  const [calls, setCalls] = useState<CallLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [tab, setTab] = useState<Tab>("msgs");
+
+  // Search (people) — mirrors web ≥2-char threshold.
+  const [showSearch, setShowSearch] = useState(false);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SearchUser[]>([]);
+  const [searching, setSearching] = useState(false);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Per-conversation action menu.
+  const [menuConv, setMenuConv] = useState<Conversation | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -50,11 +123,23 @@ export default function ChatScreen() {
     }
   }, []);
 
+  const loadCalls = useCallback(async () => {
+    try {
+      const { data } = await getAllCallHistory();
+      setCalls(data || []);
+    } catch {
+      setCalls([]);
+    }
+  }, []);
+
   useEffect(() => {
     load();
   }, [load]);
 
-  // Refresh list on focus and when a new message arrives over the socket.
+  useEffect(() => {
+    if (tab === "calls") loadCalls();
+  }, [tab, loadCalls]);
+
   useFocusEffect(
     useCallback(() => {
       load();
@@ -65,10 +150,143 @@ export default function ChatScreen() {
     }, [load]),
   );
 
+  // Debounced people search.
+  useEffect(() => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    const q = query.trim();
+    if (q.length < 2) {
+      setResults([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    searchTimer.current = setTimeout(() => {
+      searchChatUsers(q)
+        .then((r) => setResults(r.data || []))
+        .catch(() => setResults([]))
+        .finally(() => setSearching(false));
+    }, 300);
+    return () => {
+      if (searchTimer.current) clearTimeout(searchTimer.current);
+    };
+  }, [query]);
+
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     load();
-  }, [load]);
+    if (tab === "calls") loadCalls();
+  }, [load, loadCalls, tab]);
+
+  function openConv(c: Conversation) {
+    router.push({
+      pathname: "/chat/[id]",
+      params: { id: String(c.id), name: convName(c) },
+    });
+  }
+
+  async function startWithUser(u: SearchUser) {
+    try {
+      const { data } = await startConversation(u.id);
+      setShowSearch(false);
+      setQuery("");
+      router.push({
+        pathname: "/chat/[id]",
+        params: { id: String(data.id), name: u.full_name || u.username },
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function doPin(c: Conversation) {
+    setMenuConv(null);
+    pinConversation(c.id).then(load).catch(() => {});
+  }
+
+  function doFav(c: Conversation) {
+    setMenuConv(null);
+    favouriteConversation(c.id).then(load).catch(() => {});
+  }
+
+  function doDelete(c: Conversation) {
+    setMenuConv(null);
+    deleteConversation(c.id)
+      .then(() => setItems((prev) => prev.filter((x) => x.id !== c.id)))
+      .catch(() => {});
+  }
+
+  // Derived lists (mirror web ChatSidebar grouping).
+  const regular = items.filter((c) => !c.is_meeting_chat);
+  const meetingConvs = items.filter((c) => c.is_meeting_chat);
+  const unreadConvs = items.filter((c) => (c.unread_count || 0) > 0);
+  const pinned = regular.filter((c) => c.is_pinned);
+  const favourites = regular.filter((c) => c.is_favourite && !c.is_pinned);
+  const others = regular.filter((c) => !c.is_pinned && !c.is_favourite);
+
+  const totalUnread = items.reduce((s, c) => s + (c.unread_count || 0), 0);
+
+  function renderConv(item: Conversation) {
+    const name = convName(item);
+    const preview = item.last_file_url
+      ? "📎 Attachment"
+      : item.last_message || "No messages yet";
+    return (
+      <Pressable
+        key={item.id}
+        style={styles.row}
+        onPress={() => openConv(item)}
+        android_ripple={{ color: theme.surfaceHover }}
+      >
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{initials(name)}</Text>
+        </View>
+        <View style={styles.body}>
+          <View style={styles.rowTop}>
+            <View style={styles.nameWrap}>
+              {item.is_pinned ? (
+                <Pin size={12} color={theme.textMuted} />
+              ) : null}
+              {item.is_favourite ? (
+                <Star size={12} color={theme.warning} />
+              ) : null}
+              <Text style={styles.name} numberOfLines={1}>
+                {name}
+              </Text>
+            </View>
+            <Text style={styles.time}>{timeAgo(item.last_message_at)}</Text>
+          </View>
+          <View style={styles.rowBottom}>
+            <Text style={styles.preview} numberOfLines={1}>
+              {preview}
+            </Text>
+            {item.unread_count > 0 ? (
+              <View style={styles.unread}>
+                <Text style={styles.unreadText}>
+                  {item.unread_count > 99 ? "99+" : item.unread_count}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+        <Pressable
+          style={styles.rowMore}
+          hitSlop={8}
+          onPress={() => setMenuConv(item)}
+        >
+          <MoreVertical size={18} color={theme.textMuted} />
+        </Pressable>
+      </Pressable>
+    );
+  }
+
+  function renderSection(title: string, icon: React.ReactNode) {
+    return (
+      <View style={styles.section}>
+        {icon}
+        <Text style={styles.sectionText}>{title}</Text>
+      </View>
+    );
+  }
 
   if (loading) {
     return (
@@ -80,79 +298,402 @@ export default function ChatScreen() {
 
   return (
     <View style={styles.screen}>
-      <FlatList
-        data={items}
-        keyExtractor={(c) => String(c.id)}
-        contentContainerStyle={styles.list}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={theme.primary}
-          />
-        }
-        ListHeaderComponent={<Text style={styles.heading}>Chat</Text>}
-        renderItem={({ item }) => {
-          const name = item.is_group
-            ? item.group_name || "Group"
-            : item.other_full_name || item.other_username || "User";
-          const preview = item.last_file_url
-            ? "📎 Attachment"
-            : item.last_message || "No messages yet";
-          return (
+      {/* Header with search toggle */}
+      <View style={styles.header}>
+        {showSearch ? (
+          <View style={styles.searchBar}>
+            <Search size={16} color={theme.textMuted} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search people…"
+              placeholderTextColor={theme.textMuted}
+              value={query}
+              onChangeText={setQuery}
+              onFocus={scrollFocusedIntoView}
+              autoFocus
+              autoCapitalize="none"
+            />
             <Pressable
-              style={styles.row}
-              onPress={() =>
-                router.push({
-                  pathname: "/chat/[id]",
-                  params: { id: String(item.id), name },
-                })
-              }
-              android_ripple={{ color: theme.surfaceHover }}
+              onPress={() => {
+                setShowSearch(false);
+                setQuery("");
+              }}
+              hitSlop={8}
             >
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{initials(name)}</Text>
-              </View>
-              <View style={styles.body}>
-                <View style={styles.rowTop}>
-                  <Text style={styles.name} numberOfLines={1}>
-                    {name}
-                  </Text>
-                  <Text style={styles.time}>{timeAgo(item.last_message_at)}</Text>
-                </View>
-                <View style={styles.rowBottom}>
-                  <Text style={styles.preview} numberOfLines={1}>
-                    {preview}
-                  </Text>
-                  {item.unread_count > 0 ? (
-                    <View style={styles.unread}>
-                      <Text style={styles.unreadText}>
-                        {item.unread_count > 99 ? "99+" : item.unread_count}
-                      </Text>
-                    </View>
-                  ) : null}
-                </View>
-              </View>
+              <X size={18} color={theme.textSecondary} />
             </Pressable>
-          );
-        }}
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <MessagesSquare size={40} color={theme.textMuted} />
-            <Text style={styles.emptyText}>No conversations yet</Text>
           </View>
-        }
-      />
-      <Pressable style={styles.fab} onPress={() => router.push("/chat/new")}>
-        <PenSquare size={22} color="#fff" />
-      </Pressable>
+        ) : (
+          <>
+            <Text style={styles.heading}>Chat</Text>
+            <View style={styles.headerBtns}>
+              <Pressable
+                style={styles.headerIcon}
+                onPress={() => setShowSearch(true)}
+              >
+                <Search size={20} color={theme.textSecondary} />
+              </Pressable>
+              <Pressable
+                style={styles.headerIcon}
+                onPress={() => router.push("/chat/new")}
+              >
+                <Users size={20} color={theme.textSecondary} />
+              </Pressable>
+            </View>
+          </>
+        )}
+      </View>
+
+      {/* Tabs */}
+      {!showSearch ? (
+        <View style={styles.tabs}>
+          <TabButton
+            active={tab === "msgs"}
+            label="Messages"
+            icon={<MessageSquare size={14} color={tab === "msgs" ? "#fff" : theme.textSecondary} />}
+            badge={totalUnread}
+            onPress={() => setTab("msgs")}
+          />
+          <TabButton
+            active={tab === "meetings"}
+            label="Meetings"
+            icon={<Video size={14} color={tab === "meetings" ? "#fff" : theme.textSecondary} />}
+            badge={meetingConvs.reduce((s, c) => s + (c.unread_count || 0), 0)}
+            onPress={() => setTab("meetings")}
+          />
+          <TabButton
+            active={tab === "calls"}
+            label="Calls"
+            icon={<Phone size={14} color={tab === "calls" ? "#fff" : theme.textSecondary} />}
+            onPress={() => setTab("calls")}
+          />
+          <TabButton
+            active={tab === "unread"}
+            label="Unread"
+            icon={<BellDot size={14} color={tab === "unread" ? "#fff" : theme.textSecondary} />}
+            badge={unreadConvs.length}
+            onPress={() => setTab("unread")}
+          />
+        </View>
+      ) : null}
+
+      {/* Search results */}
+      {showSearch ? (
+        <ScrollView
+          contentContainerStyle={[
+            styles.list,
+            { paddingBottom: 32 + kbInset },
+          ]}
+          keyboardShouldPersistTaps="handled"
+        >
+          {query.trim().length < 2 ? (
+            <Text style={styles.hint}>Type at least 2 characters to search.</Text>
+          ) : searching ? (
+            <Text style={styles.hint}>Searching…</Text>
+          ) : results.length === 0 ? (
+            <Text style={styles.hint}>No users found</Text>
+          ) : (
+            results.map((u) => (
+              <Pressable
+                key={u.id}
+                style={styles.row}
+                onPress={() => startWithUser(u)}
+                android_ripple={{ color: theme.surfaceHover }}
+              >
+                <View style={styles.avatar}>
+                  <Text style={styles.avatarText}>{initials(u.full_name)}</Text>
+                </View>
+                <View style={styles.body}>
+                  <Text style={styles.name} numberOfLines={1}>
+                    {u.full_name}
+                    {u.id === user?.id ? " (You)" : ""}
+                  </Text>
+                  <Text style={styles.preview} numberOfLines={1}>
+                    @{u.username}
+                  </Text>
+                </View>
+              </Pressable>
+            ))
+          )}
+        </ScrollView>
+      ) : tab === "calls" ? (
+        <FlatList
+          data={calls}
+          keyExtractor={(c) => String(c.id)}
+          contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={theme.primary}
+            />
+          }
+          renderItem={({ item }) => {
+            const outgoing = item.caller_id === user?.id;
+            const missed = item.status === "missed" && !outgoing;
+            const display = item.is_group
+              ? item.group_name || "Group"
+              : outgoing
+                ? item.other_name || "Unknown"
+                : item.caller_name || "Unknown";
+            return (
+              <View style={styles.row}>
+                <View style={styles.avatar}>
+                  <Text style={styles.avatarText}>{initials(display)}</Text>
+                </View>
+                <View style={styles.body}>
+                  <Text style={styles.name} numberOfLines={1}>
+                    {display}
+                  </Text>
+                  <View style={styles.callMeta}>
+                    {missed ? (
+                      <PhoneMissed size={13} color={theme.danger} />
+                    ) : outgoing ? (
+                      <PhoneOutgoing size={13} color={theme.success} />
+                    ) : (
+                      <PhoneIncoming size={13} color={theme.primary} />
+                    )}
+                    <Text
+                      style={[
+                        styles.callMetaText,
+                        missed && { color: theme.danger },
+                      ]}
+                    >
+                      {missed ? "Missed" : outgoing ? "Outgoing" : "Incoming"}
+                      {item.call_type === "video" ? " video" : ""}
+                      {item.duration
+                        ? ` · ${callDuration(item.duration)}`
+                        : ""}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.callRight}>
+                  <Text style={styles.time}>{timeAgo(item.created_at)}</Text>
+                  {item.call_type === "video" ? (
+                    <Video size={13} color={theme.textMuted} />
+                  ) : (
+                    <Phone size={13} color={theme.textMuted} />
+                  )}
+                </View>
+              </View>
+            );
+          }}
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <Phone size={40} color={theme.textMuted} />
+              <Text style={styles.emptyText}>No calls yet</Text>
+            </View>
+          }
+        />
+      ) : (
+        <ScrollView
+          contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={theme.primary}
+            />
+          }
+        >
+          {tab === "msgs" ? (
+            regular.length === 0 ? (
+              <View style={styles.empty}>
+                <MessagesSquare size={40} color={theme.textMuted} />
+                <Text style={styles.emptyText}>No conversations yet</Text>
+              </View>
+            ) : (
+              <>
+                {pinned.length > 0 ? (
+                  <>
+                    {renderSection("Pinned", <Pin size={13} color={theme.textMuted} />)}
+                    {pinned.map(renderConv)}
+                  </>
+                ) : null}
+                {favourites.length > 0 ? (
+                  <>
+                    {renderSection("Favourites", <Star size={13} color={theme.warning} />)}
+                    {favourites.map(renderConv)}
+                  </>
+                ) : null}
+                {(pinned.length > 0 || favourites.length > 0) &&
+                others.length > 0
+                  ? renderSection(
+                      "All Messages",
+                      <MessageSquare size={13} color={theme.textMuted} />,
+                    )
+                  : null}
+                {others.map(renderConv)}
+              </>
+            )
+          ) : tab === "meetings" ? (
+            meetingConvs.length === 0 ? (
+              <View style={styles.empty}>
+                <Video size={40} color={theme.textMuted} />
+                <Text style={styles.emptyText}>No meeting chats yet</Text>
+              </View>
+            ) : (
+              meetingConvs.map(renderConv)
+            )
+          ) : unreadConvs.length === 0 ? (
+            <View style={styles.empty}>
+              <BellDot size={40} color={theme.textMuted} />
+              <Text style={styles.emptyText}>You&apos;re all caught up!</Text>
+            </View>
+          ) : (
+            unreadConvs.map(renderConv)
+          )}
+        </ScrollView>
+      )}
+
+      {!showSearch ? (
+        <Pressable style={styles.fab} onPress={() => router.push("/chat/new")}>
+          <MessagesSquare size={22} color="#fff" />
+        </Pressable>
+      ) : null}
+
+      {/* Per-conversation action menu */}
+      <Modal
+        visible={!!menuConv}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMenuConv(null)}
+      >
+        <Pressable style={styles.menuOverlay} onPress={() => setMenuConv(null)}>
+          <View style={styles.menuSheet}>
+            <Pressable
+              style={styles.menuRow}
+              onPress={() => menuConv && doPin(menuConv)}
+            >
+              <Pin size={18} color={theme.text} />
+              <Text style={styles.menuText}>
+                {menuConv?.is_pinned ? "Unpin" : "Pin"}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={styles.menuRow}
+              onPress={() => menuConv && doFav(menuConv)}
+            >
+              <Star size={18} color={theme.text} />
+              <Text style={styles.menuText}>
+                {menuConv?.is_favourite ? "Unfavourite" : "Favourite"}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={styles.menuRow}
+              onPress={() => menuConv && doDelete(menuConv)}
+            >
+              <Trash2 size={18} color={theme.danger} />
+              <Text style={[styles.menuText, { color: theme.danger }]}>
+                Delete
+              </Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
     </View>
+  );
+}
+
+function TabButton({
+  active,
+  label,
+  icon,
+  badge,
+  onPress,
+}: {
+  active: boolean;
+  label: string;
+  icon: React.ReactNode;
+  badge?: number;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      style={[styles.tabBtn, active && styles.tabBtnActive]}
+      onPress={onPress}
+    >
+      {icon}
+      <Text style={[styles.tabText, active && styles.tabTextActive]}>
+        {label}
+      </Text>
+      {badge && badge > 0 ? (
+        <View style={styles.tabBadge}>
+          <Text style={styles.tabBadgeText}>{badge > 99 ? "99+" : badge}</Text>
+        </View>
+      ) : null}
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { alignItems: "center", justifyContent: "center" },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+    minHeight: 52,
+  },
+  heading: {
+    fontSize: 24,
+    fontWeight: "800",
+    color: theme.text,
+    letterSpacing: -0.5,
+  },
+  headerBtns: { flexDirection: "row", gap: 6 },
+  headerIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  searchBar: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: theme.inputBg,
+    borderWidth: 1,
+    borderColor: theme.inputBorder,
+    borderRadius: theme.radiusFull,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  searchInput: { flex: 1, color: theme.text, fontSize: 15, paddingVertical: 0 },
+  tabs: {
+    flexDirection: "row",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingBottom: 8,
+  },
+  tabBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingVertical: 8,
+    borderRadius: theme.radiusFull,
+    backgroundColor: theme.surface,
+  },
+  tabBtnActive: { backgroundColor: theme.primary },
+  tabText: { fontSize: 12, color: theme.textSecondary, fontWeight: "600" },
+  tabTextActive: { color: "#fff" },
+  tabBadge: {
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: theme.danger,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+  },
+  tabBadgeText: { color: "#fff", fontSize: 9, fontWeight: "700" },
   fab: {
     position: "absolute",
     right: 20,
@@ -165,13 +706,20 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     elevation: 4,
   },
-  list: { padding: 16, gap: 6, paddingBottom: 32 },
-  heading: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: theme.text,
-    letterSpacing: -0.5,
-    marginBottom: 10,
+  list: { paddingHorizontal: 16, paddingBottom: 90, gap: 2 },
+  section: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingTop: 14,
+    paddingBottom: 4,
+  },
+  sectionText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: theme.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
   },
   row: {
     flexDirection: "row",
@@ -190,10 +738,20 @@ const styles = StyleSheet.create({
   },
   avatarText: { color: "#fff", fontSize: 16, fontWeight: "700" },
   body: { flex: 1, gap: 3 },
-  rowTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  rowTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  nameWrap: { flex: 1, flexDirection: "row", alignItems: "center", gap: 4 },
   name: { flex: 1, fontSize: 15, fontWeight: "600", color: theme.text },
   time: { fontSize: 11, color: theme.textMuted },
-  rowBottom: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
+  rowBottom: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 8,
+  },
   preview: { flex: 1, fontSize: 13, color: theme.textSecondary },
   unread: {
     minWidth: 20,
@@ -205,6 +763,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
   },
   unreadText: { color: "#fff", fontSize: 11, fontWeight: "700" },
+  rowMore: { padding: 6 },
+  callMeta: { flexDirection: "row", alignItems: "center", gap: 5 },
+  callMetaText: { fontSize: 13, color: theme.textSecondary },
+  callRight: { alignItems: "flex-end", gap: 4 },
   empty: { alignItems: "center", gap: 10, paddingTop: 80 },
   emptyText: { color: theme.textMuted, fontSize: 14 },
+  hint: { color: theme.textMuted, fontSize: 13, paddingVertical: 16 },
+  menuOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  menuSheet: {
+    backgroundColor: theme.bgElevated,
+    borderRadius: theme.radius,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    paddingVertical: 6,
+    minWidth: 200,
+  },
+  menuRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+  },
+  menuText: { fontSize: 15, color: theme.text, fontWeight: "500" },
 });

@@ -29,11 +29,38 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       monochromeImage: "./assets/android-icon-monochrome.png",
     },
     predictiveBackGestureEnabled: false,
+    // Permissions for voice notes (RECORD_AUDIO) and audio/video calls
+    // (CAMERA, MODIFY_AUDIO_SETTINGS, network state for WebRTC).
+    permissions: [
+      "android.permission.RECORD_AUDIO",
+      "android.permission.CAMERA",
+      "android.permission.MODIFY_AUDIO_SETTINGS",
+      "android.permission.ACCESS_NETWORK_STATE",
+    ],
   },
   web: {
     favicon: "./assets/favicon.png",
   },
-  plugins: ["expo-router", "expo-secure-store"],
+  plugins: [
+    "expo-router",
+    "expo-secure-store",
+    [
+      "expo-audio",
+      {
+        microphonePermission:
+          "Allow WorkPulse to access your microphone to record voice messages and make calls.",
+      },
+    ],
+    [
+      "@config-plugins/react-native-webrtc",
+      {
+        cameraPermission:
+          "Allow WorkPulse to access your camera for video calls.",
+        microphonePermission:
+          "Allow WorkPulse to access your microphone for calls.",
+      },
+    ],
+  ],
   extra: {
     API_BASE_URL,
     WS_BASE_URL,

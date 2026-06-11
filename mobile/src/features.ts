@@ -266,6 +266,36 @@ export type Conversation = {
   unread_count: number;
   member_count?: number | null;
   is_self_chat?: boolean;
+  is_pinned?: boolean;
+  is_favourite?: boolean;
+  is_meeting_chat?: boolean;
+  meeting_code?: string | null;
+};
+
+export type CallLogEntry = {
+  id: number;
+  conversation_id: number;
+  caller_id: number;
+  caller_name?: string | null;
+  caller_avatar?: string | null;
+  other_name?: string | null;
+  other_avatar?: string | null;
+  is_group?: boolean;
+  group_name?: string | null;
+  call_type: "audio" | "video" | string;
+  status: "answered" | "missed" | "rejected" | "ended" | string;
+  duration?: number;
+  created_at: string;
+};
+
+export type IceConfig = {
+  iceServers: Array<{
+    urls: string | string[];
+    username?: string;
+    credential?: string;
+  }>;
+  mode?: string;
+  expiresAt?: number;
 };
 
 export type ChatReaction = { emoji: string; userId: number; fullName: string };
@@ -372,6 +402,32 @@ export function starMessage(messageId: number) {
 
 export function forwardMessage(messageId: number, conversationIds: number[]) {
   return api.post(`/chat/messages/${messageId}/forward`, { conversationIds });
+}
+
+export function pinConversation(convId: number) {
+  return api.post<{ pinned: boolean }>(`/chat/conversations/${convId}/pin`);
+}
+
+export function favouriteConversation(convId: number) {
+  return api.post<{ favourite: boolean }>(
+    `/chat/conversations/${convId}/favourite`,
+  );
+}
+
+export function deleteConversation(convId: number) {
+  return api.delete(`/chat/conversations/${convId}`);
+}
+
+export function getAllCallHistory() {
+  return api.get<CallLogEntry[]>("/chat/calls");
+}
+
+export function getConversationCalls(convId: number) {
+  return api.get<CallLogEntry[]>(`/chat/conversations/${convId}/calls`);
+}
+
+export function getIceConfig() {
+  return api.get<IceConfig>("/chat/ice-config");
 }
 
 /* ───────────────────────── Notes ───────────────────────── */
