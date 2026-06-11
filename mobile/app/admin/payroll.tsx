@@ -16,6 +16,7 @@ import { Stack } from "expo-router";
 import { DollarSign, Lock, Plus, Trash2, X } from "lucide-react-native";
 import { theme } from "../../src/theme";
 import { useKeyboardInset } from "../../src/hooks/useKeyboardInset";
+import DatePicker from "../../src/components/DatePicker";
 import {
   createPayPeriod,
   deletePayPeriod,
@@ -188,23 +189,19 @@ export default function PayrollScreen() {
               placeholder="e.g. June 2026"
               placeholderTextColor={theme.textMuted}
             />
-            <Text style={styles.fieldLabel}>Start date (YYYY-MM-DD)</Text>
-            <TextInput
-              style={styles.input}
+            <Text style={styles.fieldLabel}>Start date</Text>
+            <DatePicker
               value={startDate}
-              onChangeText={setStartDate}
-              placeholder="2026-06-01"
-              placeholderTextColor={theme.textMuted}
-              autoCapitalize="none"
+              onChange={(v) => {
+                setStartDate(v);
+                if (endDate && v > endDate) setEndDate(v);
+              }}
             />
-            <Text style={styles.fieldLabel}>End date (YYYY-MM-DD)</Text>
-            <TextInput
-              style={styles.input}
+            <Text style={styles.fieldLabel}>End date</Text>
+            <DatePicker
               value={endDate}
-              onChangeText={setEndDate}
-              placeholder="2026-06-30"
-              placeholderTextColor={theme.textMuted}
-              autoCapitalize="none"
+              onChange={setEndDate}
+              minDate={startDate || undefined}
             />
             <Pressable style={styles.saveBtn} onPress={save} disabled={busy}>
               <Text style={styles.saveBtnText}>

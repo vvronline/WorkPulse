@@ -13,6 +13,7 @@ import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { theme } from "../../src/theme";
 import { TASK_PRIORITY } from "../../src/constants";
 import { Dropdown, MultiDropdown } from "../../src/components/Dropdown";
+import DatePicker from "../../src/components/DatePicker";
 import {
   addBacklogTask,
   createTask,
@@ -238,14 +239,7 @@ export default function NewTaskScreen() {
             </View>
             <View style={styles.half}>
               <Text style={styles.label}>Due Date</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor={theme.textMuted}
-                value={dueDate}
-                onChangeText={setDueDate}
-                autoCapitalize="none"
-              />
+              <DatePicker value={dueDate} onChange={setDueDate} />
             </View>
           </View>
         </>

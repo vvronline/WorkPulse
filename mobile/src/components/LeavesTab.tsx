@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -11,12 +12,18 @@ import {
   View,
 } from "react-native";
 import { theme } from "../theme";
+import { useAuth } from "../auth/AuthContext";
+import DatePicker from "./DatePicker";
+import MonthPicker from "./MonthPicker";
 import {
   addLeavesBatch,
+  getAllLeaveBalances,
   getLeaveBalance,
   getLeavePolicies,
   getLeaves,
+  updateLeaveBalance,
   withdrawLeave,
+  type AllBalanceRow,
   type Leave,
   type LeaveBalance,
   type LeavePolicy,
@@ -69,19 +76,34 @@ function isPublicHoliday(l: Leave | null | undefined): boolean {
 
 /* ───────────────────────── LeavesTab ───────────────────────── */
 
-const SUB_TABS = [
+type SubTab = "request" | "balances" | "policies" | "allBalances";
+
+const BASE_TABS: { id: SubTab; label: string; hr?: boolean }[] = [
   { id: "request", label: "My Leaves" },
   { id: "balances", label: "My Balances" },
-] as const;
-type SubTab = (typeof SUB_TABS)[number]["id"];
+  { id: "policies", label: "Policies", hr: true },
+  { id: "allBalances", label: "All Balances", hr: true },
+];
 
 export default function LeavesTab() {
+  const { user } = useAuth();
+  const isHR = ["hr_admin", "super_admin", "platform_admin"].includes(
+    user?.role || "",
+  );
+  const tabs = useMemo(
+    () => BASE_TABS.filter((t) => !t.hr || isHR),
+    [isHR],
+  );
   const [subTab, setSubTab] = useState<SubTab>("request");
 
   return (
     <View style={{ flex: 1 }}>
-      <View style={styles.subTabRow}>
-        {SUB_TABS.map((t) => (
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.subTabRow}
+      >
+        {tabs.map((t) => (
           <Pressable
             key={t.id}
             style={[styles.subTab, subTab === t.id && styles.subTabActive]}
@@ -97,8 +119,16 @@ export default function LeavesTab() {
             </Text>
           </Pressable>
         ))}
-      </View>
-      {subTab === "request" ? <RequestTab /> : <BalancesTab />}
+      </ScrollView>
+      {subTab === "request" ? (
+        <RequestTab />
+      ) : subTab === "balances" ? (
+        <BalancesTab />
+      ) : subTab === "policies" ? (
+        <PoliciesTab />
+      ) : (
+        <AllBalancesTab />
+      )}
     </View>
   );
 }
@@ -207,13 +237,7 @@ function RequestTab() {
 
       <View style={styles.monthFilterRow}>
         <Text style={styles.sectionTitle}>Leave History</Text>
-        <TextInput
-          style={styles.monthInput}
-          value={filterMonth}
-          onChangeText={setFilterMonth}
-          placeholder="YYYY-MM"
-          placeholderTextColor={theme.textMuted}
-        />
+        <MonthPicker value={filterMonth} onChange={setFilterMonth} />
       </View>
 
       <LeaveHistory
@@ -351,35 +375,27 @@ function LeaveRequestForm({
       {!isRange ? (
         <>
           <Text style={styles.label}>Date</Text>
-          <TextInput
-            style={styles.input}
-            value={date}
-            onChangeText={setDate}
-            placeholder="YYYY-MM-DD"
-            placeholderTextColor={theme.textMuted}
-          />
+          <DatePicker value={date} onChange={setDate} />
         </>
       ) : (
         <>
           <View style={styles.timeRow}>
             <View style={{ flex: 1 }}>
               <Text style={styles.label}>From</Text>
-              <TextInput
-                style={styles.input}
+              <DatePicker
                 value={dateFrom}
-                onChangeText={setDateFrom}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor={theme.textMuted}
+                onChange={(v) => {
+                  setDateFrom(v);
+                  if (dateTo && v > dateTo) setDateTo(v);
+                }}
               />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.label}>To</Text>
-              <TextInput
-                style={styles.input}
+              <DatePicker
                 value={dateTo}
-                onChangeText={setDateTo}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor={theme.textMuted}
+                onChange={setDateTo}
+                minDate={dateFrom || undefined}
               />
             </View>
           </View>
@@ -781,6 +797,285 @@ function BalancesTab() {
   );
 }
 
+/* ───────────────────────── Policies tab (HR) ───────────────────────── */
+
+function PoliciesTab() {
+  const [policies, setPolicies] = useState<LeavePolicy[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await getLeavePolicies();
+      setPolicies(data || []);
+    } catch {
+      setPolicies([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return (
+    <ScrollView contentContainerStyle={styles.body}>
+      <Text style={styles.sectionTitle}>Leave Policies</Text>
+      <Text style={styles.emptyHint}>
+        These are the leave types configured for your organization. Manage
+        detailed policy settings and holidays from the web dashboard.
+      </Text>
+
+      {loading ? (
+        <ActivityIndicator color={theme.primary} style={{ marginTop: 24 }} />
+      ) : policies.length === 0 ? (
+        <Text style={styles.emptyDetail}>No leave policies configured yet.</Text>
+      ) : (
+        <View style={{ gap: 10, marginTop: 6 }}>
+          {policies.map((p) => {
+            const type = getLeaveType(p.leave_type);
+            const Icon = type.Icon;
+            const color = p.color || type.color;
+            return (
+              <View key={p.id} style={styles.policyItem}>
+                <View
+                  style={[
+                    styles.balanceIcon,
+                    { backgroundColor: type.bg },
+                  ]}
+                >
+                  <Icon size={18} color={color} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.policyName}>
+                    {p.name || type.label}
+                  </Text>
+                  <Text style={styles.policyMeta}>
+                    {p.annual_quota != null
+                      ? `${p.annual_quota} days/year`
+                      : "Quota not set"}
+                    {p.half_day_allowed ? " · Half-day" : ""}
+                    {p.quarter_day_allowed ? " · Quarter-day" : ""}
+                  </Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
+/* ───────────────────────── All balances tab (HR) ───────────────────────── */
+
+function AllBalancesTab() {
+  const [rows, setRows] = useState<AllBalanceRow[]>([]);
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [editItem, setEditItem] = useState<AllBalanceRow | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await getAllLeaveBalances("all");
+      setRows(Array.isArray(data) ? data : []);
+    } catch {
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const filtered = useMemo(
+    () =>
+      rows.filter(
+        (b) =>
+          !search ||
+          b.full_name?.toLowerCase().includes(search.toLowerCase()),
+      ),
+    [rows, search],
+  );
+
+  async function saveEdit() {
+    if (!editItem) return;
+    setSaving(true);
+    try {
+      await updateLeaveBalance(editItem.user_id as any, {
+        policy_id: editItem.policy_id,
+        year: editItem.year,
+        total_days: editItem.total_days,
+        used: editItem.used,
+        carried_forward: editItem.carried_forward,
+      });
+      setEditItem(null);
+      load();
+    } catch (e: any) {
+      Alert.alert(
+        "Error",
+        e?.response?.data?.error || "Failed to update balance",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <ScrollView contentContainerStyle={styles.body}>
+      <Text style={styles.sectionTitle}>All Employee Balances</Text>
+      <TextInput
+        style={styles.input}
+        value={search}
+        onChangeText={setSearch}
+        placeholder="Search by employee name…"
+        placeholderTextColor={theme.textMuted}
+      />
+
+      {loading ? (
+        <ActivityIndicator color={theme.primary} style={{ marginTop: 24 }} />
+      ) : filtered.length === 0 ? (
+        <Text style={styles.emptyDetail}>No balances found.</Text>
+      ) : (
+        <View style={{ gap: 10, marginTop: 6 }}>
+          {filtered.map((b, i) => {
+            const type = getLeaveType(b.leave_type || "other");
+            const totalDays = Number(b.total_days ?? b.quota ?? 0) || 0;
+            const carried = Number(b.carried_forward ?? 0) || 0;
+            const used = Number(b.used ?? 0) || 0;
+            const total = totalDays + carried;
+            const balance =
+              b.balance != null ? Number(b.balance) : total - used;
+            const pct =
+              total > 0 ? Math.min(Math.round((used / total) * 100), 100) : 0;
+            const barColor =
+              pct >= 80 ? "#ef4444" : pct >= 50 ? "#f59e0b" : type.color;
+            return (
+              <View key={`${b.user_id}-${b.leave_type}-${i}`} style={styles.detailCard}>
+                <View style={styles.allBalTop}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.policyName}>{b.full_name}</Text>
+                    <Text style={styles.policyMeta}>
+                      {type.label} · Year {b.year}
+                    </Text>
+                  </View>
+                  <Pressable
+                    style={styles.editBalBtn}
+                    onPress={() => setEditItem({ ...b })}
+                  >
+                    <Text style={styles.editBalText}>Edit</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.detailNums}>
+                  <View style={styles.detailNum}>
+                    <Text style={[styles.detailBig, { color: type.color }]}>
+                      {balance}
+                    </Text>
+                    <Text style={styles.detailSmall}>balance</Text>
+                  </View>
+                  <View style={styles.detailNumDivider} />
+                  <View style={styles.detailNum}>
+                    <Text style={styles.detailBig}>{used}</Text>
+                    <Text style={styles.detailSmall}>used</Text>
+                  </View>
+                  <View style={styles.detailNumDivider} />
+                  <View style={styles.detailNum}>
+                    <Text style={styles.detailBig}>{totalDays}</Text>
+                    <Text style={styles.detailSmall}>total</Text>
+                  </View>
+                </View>
+                <View style={styles.progressTrack}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      { width: `${pct}%`, backgroundColor: barColor },
+                    ]}
+                  />
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      )}
+
+      {/* Edit modal */}
+      <Modal
+        visible={!!editItem}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEditItem(null)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => setEditItem(null)}>
+          <Pressable style={styles.modalBox} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.modalTitle}>
+              Edit Balance — {editItem?.full_name}
+            </Text>
+
+            <Text style={styles.label}>Total Days</Text>
+            <TextInput
+              style={styles.input}
+              keyboardType="number-pad"
+              value={String(editItem?.total_days ?? "")}
+              onChangeText={(v) =>
+                setEditItem((p) =>
+                  p ? { ...p, total_days: Number(v) || 0 } : p,
+                )
+              }
+            />
+
+            <Text style={styles.label}>Used</Text>
+            <TextInput
+              style={styles.input}
+              keyboardType="number-pad"
+              value={String(editItem?.used ?? "")}
+              onChangeText={(v) =>
+                setEditItem((p) => (p ? { ...p, used: Number(v) || 0 } : p))
+              }
+            />
+
+            <Text style={styles.label}>Carried Forward</Text>
+            <TextInput
+              style={styles.input}
+              keyboardType="number-pad"
+              value={String(editItem?.carried_forward ?? "")}
+              onChangeText={(v) =>
+                setEditItem((p) =>
+                  p ? { ...p, carried_forward: Number(v) || 0 } : p,
+                )
+              }
+            />
+
+            <View style={styles.modalFooter}>
+              <Pressable
+                style={styles.modalCancel}
+                onPress={() => setEditItem(null)}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalSave, saving && styles.submitDisabled]}
+                onPress={saveEdit}
+                disabled={saving}
+              >
+                {saving ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.modalSaveText}>Save Changes</Text>
+                )}
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </ScrollView>
+  );
+}
+
 /* ───────────────────────── Styles ───────────────────────── */
 
 const styles = StyleSheet.create({
@@ -1069,4 +1364,74 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   detailNumDivider: { width: 1, height: 32, backgroundColor: theme.border },
+
+  // policies / all balances (HR)
+  policyItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: theme.glass,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radius,
+    padding: 12,
+  },
+  policyName: { fontSize: 14, fontWeight: "700", color: theme.text },
+  policyMeta: { fontSize: 12, color: theme.textSecondary, marginTop: 2 },
+  allBalTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  editBalBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: theme.radiusSm,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    backgroundColor: theme.glass,
+  },
+  editBalText: { color: theme.primary, fontSize: 12, fontWeight: "700" },
+
+  // modal
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  modalBox: {
+    width: "100%",
+    maxWidth: 360,
+    backgroundColor: theme.bgElevated,
+    borderRadius: theme.radiusLg,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    padding: 18,
+  },
+  modalTitle: { fontSize: 16, fontWeight: "800", color: theme.text },
+  modalFooter: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+    marginTop: 18,
+  },
+  modalCancel: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: theme.radiusSm,
+    backgroundColor: theme.glass,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+  },
+  modalCancelText: { color: theme.text, fontSize: 13, fontWeight: "600" },
+  modalSave: {
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: theme.radiusSm,
+    backgroundColor: theme.primary,
+  },
+  modalSaveText: { color: "#fff", fontSize: 13, fontWeight: "700" },
 });

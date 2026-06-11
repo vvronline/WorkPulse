@@ -204,6 +204,55 @@ export function getLeavePolicies() {
   return api.get<LeavePolicy[]>("/leave-policy/policies");
 }
 
+/** Public holidays for a year (used to colour the attendance calendar). */
+export type Holiday = {
+  id: number;
+  name?: string | null;
+  date: string;
+};
+
+export function getHolidays(year?: number) {
+  return api.get<Holiday[]>("/leave-policy/holidays", {
+    params: year ? { year: String(year) } : undefined,
+  });
+}
+
+/**
+ * HR-only: all employees' leave balances. Pass year "all" (string) to retrieve
+ * every employee row across the org (mirrors the web AllBalances view).
+ */
+export type AllBalanceRow = {
+  user_id?: number | string;
+  policy_id?: number | string;
+  full_name?: string;
+  leave_type?: string;
+  total_days?: number;
+  used?: number;
+  balance?: number;
+  carried_forward?: number;
+  quota?: number;
+  year?: number | string;
+};
+
+export function getAllLeaveBalances(year: number | "all" = "all") {
+  return api.get<AllBalanceRow[]>("/leave-policy/balances", {
+    params: { year: String(year) },
+  });
+}
+
+export function updateLeaveBalance(
+  userId: number | string,
+  data: {
+    policy_id?: number | string;
+    year?: number | string;
+    total_days?: number;
+    used?: number;
+    carried_forward?: number;
+  },
+) {
+  return api.put(`/leave-policy/balances/${userId}`, data);
+}
+
 // Withdraw a pending or approved leave. Pending leaves are cancelled outright;
 // approved leaves create a withdrawal-approval request for the manager.
 export function withdrawLeave(id: number | string) {
@@ -975,12 +1024,83 @@ export function getTrackerAnalytics(days = 7) {
 export function addManualEntry(data: {
   date: string;
   clock_in: string;
-  clock_out: string;
+  clock_out?: string;
   breaks?: { start: string; end: string }[];
   timezoneOffset?: number;
   work_mode?: "office" | "remote" | "hybrid";
 }) {
   return api.post("/tracker/manual-entry", data);
+}
+
+/** Atomic update of all entries for a date (delete + re-insert in one tx). */
+export function updateManualEntry(
+  date: string,
+  data: {
+    clock_in: string;
+    clock_out?: string;
+    breaks?: { start: string; end: string }[];
+    timezoneOffset?: number;
+    work_mode?: "office" | "remote" | "hybrid";
+  },
+) {
+  return api.put(`/tracker/manual-entry/${date}`, data);
+}
+
+/** Raw tracker entries for a single day (used to detect existing entries). */
+export type TrackerEntry = {
+  id: number;
+  entry_type: string;
+  timestamp: string;
+  is_manual?: boolean;
+  work_mode?: string | null;
+};
+
+export function getEntries(date: string) {
+  return api.get<TrackerEntry[]>(`/tracker/entries/${date}`);
+}
+
+/** Pending manual-entry approval requests raised by the current user. */
+export type ManualEntryRequest = {
+  request_id: number;
+  date?: string;
+  approval_status: "pending" | "approved" | "rejected" | string;
+  reject_reason?: string | null;
+  created_at?: string;
+  clock_in?: string;
+  clock_out?: string;
+  [k: string]: unknown;
+};
+
+export function getManualEntryRequests() {
+  return api.get<ManualEntryRequest[]>("/tracker/manual-entries");
+}
+
+/** Overtime requests raised by the current user. */
+export type OvertimeRequest = {
+  id: number;
+  date: string;
+  hours: number;
+  reason?: string | null;
+  status: "pending" | "approved" | "rejected" | string;
+  reject_reason?: string | null;
+  created_at?: string;
+};
+
+export function getOvertimeRequests() {
+  return api.get<OvertimeRequest[]>("/tracker/overtime-requests");
+}
+
+export function submitOvertimeRequest(data: {
+  date: string;
+  hours: number;
+  reason: string;
+}) {
+  return api.post("/tracker/overtime-request", data);
+}
+
+/** Dashboard widgets (analytics extras shown on web). */
+export function getTrackerWidgets() {
+  return api.get<Record<string, unknown>>("/tracker/widgets");
 }
 
 /* ───────────────────────── Manager / My Team ───────────────────────── */

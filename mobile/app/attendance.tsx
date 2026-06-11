@@ -13,21 +13,44 @@ import {
 import { Stack, useLocalSearchParams } from "expo-router";
 import {
   BarChart3,
+  Building2,
   CalendarDays,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
   FileEdit,
+  House,
   Palmtree,
+  Plus,
+  Timer,
+  X,
 } from "lucide-react-native";
 import { theme } from "../src/theme";
 import { formatTime } from "../src/utils/time";
 import LeavesTab from "../src/components/LeavesTab";
+import DatePicker from "../src/components/DatePicker";
+import TimePicker from "../src/components/TimePicker";
 import {
   addManualEntry,
+  getCurrentOrg,
+  getEntries,
+  getHolidays,
+  getLeaves,
+  getManualEntryRequests,
+  getOvertimeRequests,
   getTrackerAnalytics,
   getTrackerHistory,
+  getTrackerStatus,
+  submitOvertimeRequest,
+  updateManualEntry,
   type AnalyticsPoint,
+  type Holiday,
   type HistoryEntry,
+  type Leave,
+  type ManualEntryRequest,
+  type OrgInfo,
+  type OvertimeRequest,
+  type TrackerEntry,
 } from "../src/features";
 
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
@@ -50,6 +73,24 @@ function buildMonthGrid(cursor: Date): Date[] {
     days.push(d);
   }
   return days;
+}
+
+/** Parse "1,2,3,4,5" work_days into a Set of JS DOW values (0=Sun..6=Sat). */
+function workDaysToJsDowSet(value: unknown): Set<number> {
+  const raw = value && typeof value === "string" ? value : "1,2,3,4,5";
+  const nums = raw
+    .split(",")
+    .map((s) => parseInt(s.trim(), 10))
+    .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6);
+  return new Set(nums.length > 0 ? nums : [1, 2, 3, 4, 5]);
+}
+
+function toYMD(v: unknown): string {
+  if (!v) return "";
+  if (typeof v === "string") return v.slice(0, 10);
+  const d = new Date(v as any);
+  if (isNaN(d.getTime())) return "";
+  return ymd(d);
 }
 
 type Tab = "overview" | "leaves" | "manual" | "analytics";
@@ -128,28 +169,70 @@ function TabBtn({
 }
 
 /* ───────────────────────── Overview (calendar + history) ───────────────────────── */
+
+type DayKind =
+  | "present"
+  | "leave"
+  | "leave-pending"
+  | "holiday"
+  | "weekend"
+  | "absent"
+  | "in_progress"
+  | "future"
+  | "none";
+
 function OverviewTab() {
   const [cursor, setCursor] = useState(new Date());
   const [selected, setSelected] = useState(ymd(new Date()));
   const [entries, setEntries] = useState<Record<string, HistoryEntry>>({});
+  const [leaves, setLeaves] = useState<Leave[]>([]);
+  const [holidays, setHolidays] = useState<Holiday[]>([]);
+  const [org, setOrg] = useState<OrgInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const monthDays = useMemo(() => buildMonthGrid(cursor), [cursor]);
   const todayKey = ymd(new Date());
+  const today = useMemo(() => new Date(todayKey + "T00:00:00"), [todayKey]);
+
+  const workDayJsDowSet = useMemo(
+    () => workDaysToJsDowSet(org?.work_days),
+    [org],
+  );
+
+  const minHoursPresent = useMemo(() => {
+    if (org?.work_hours_per_day) {
+      const v = Number(org.work_hours_per_day) / 2;
+      if (!isNaN(v) && v > 0) return v;
+    }
+    return 4;
+  }, [org]);
 
   const load = useCallback(async () => {
-    const grid = buildMonthGrid(new Date(cursor.getFullYear(), cursor.getMonth(), 1));
+    const grid = buildMonthGrid(
+      new Date(cursor.getFullYear(), cursor.getMonth(), 1),
+    );
     const from = ymd(grid[0]);
     const to = ymd(grid[41]);
     try {
-      const { data } = await getTrackerHistory(from, to);
-      const map: Record<string, HistoryEntry> = {};
-      (data || []).forEach((e) => {
-        const k = e.date.slice(0, 10);
-        map[k] = e;
-      });
-      setEntries(map);
+      const [histRes, leavesRes, holRes, orgRes] = await Promise.allSettled([
+        getTrackerHistory(from, to),
+        getLeaves(from, to),
+        getHolidays(cursor.getFullYear()),
+        getCurrentOrg(),
+      ]);
+      if (histRes.status === "fulfilled") {
+        const map: Record<string, HistoryEntry> = {};
+        (histRes.value.data || []).forEach((e) => {
+          map[e.date.slice(0, 10)] = e;
+        });
+        setEntries(map);
+      }
+      setLeaves(
+        leavesRes.status === "fulfilled" ? leavesRes.value.data || [] : [],
+      );
+      setHolidays(holRes.status === "fulfilled" ? holRes.value.data || [] : []);
+      setOrg(orgRes.status === "fulfilled" ? orgRes.value.data || null : null);
     } catch {
       /* ignore */
     } finally {
@@ -162,7 +245,78 @@ function OverviewTab() {
     load();
   }, [load]);
 
+  const leaveMap = useMemo(() => {
+    const m = new Map<string, Leave>();
+    leaves.forEach((l) => {
+      const k = toYMD(l.date);
+      if (k) m.set(k, l);
+    });
+    return m;
+  }, [leaves]);
+
+  const holidayMap = useMemo(() => {
+    const m = new Map<string, Holiday>();
+    holidays.forEach((h) => {
+      const k = toYMD(h.date);
+      if (k) m.set(k, h);
+    });
+    return m;
+  }, [holidays]);
+
+  const minMinutes = minHoursPresent * 60;
+
+  const classify = useCallback(
+    (d: Date): DayKind => {
+      const key = ymd(d);
+      const isFuture = d > today;
+      const isToday = key === todayKey;
+      const isWeekend = !workDayJsDowSet.has(d.getDay());
+      const leave = leaveMap.get(key);
+      const isHoliday = holidayMap.has(key);
+      const entry = entries[key];
+      const isPresent = (entry?.floorMinutes ?? 0) >= minMinutes;
+
+      if (isPresent) return "present";
+      if (leave) return leave.status === "approved" ? "leave" : "leave-pending";
+      if (isHoliday || isWeekend) return isWeekend ? "weekend" : "holiday";
+      if (isToday) return "in_progress";
+      if (isFuture) return "future";
+      return "absent";
+    },
+    [
+      today,
+      todayKey,
+      workDayJsDowSet,
+      leaveMap,
+      holidayMap,
+      entries,
+      minMinutes,
+    ],
+  );
+
+  const stats = useMemo(() => {
+    let present = 0,
+      absent = 0,
+      leaveCount = 0,
+      holidayCount = 0;
+    const year = cursor.getFullYear();
+    const month = cursor.getMonth();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dt = new Date(year, month, d);
+      if (dt > today) continue;
+      const kind = classify(dt);
+      if (kind === "present") present++;
+      else if (kind === "leave") leaveCount++;
+      else if (kind === "holiday" || kind === "weekend") holidayCount++;
+      else if (kind === "absent") absent++;
+    }
+    return { present, absent, leave: leaveCount, holiday: holidayCount };
+  }, [cursor, classify, today]);
+
   const sel = entries[selected];
+  const selLeave = leaveMap.get(selected);
+  const selHoliday = holidayMap.get(selected);
 
   return (
     <ScrollView
@@ -214,6 +368,15 @@ function OverviewTab() {
         </View>
       </View>
 
+      {/* Legend */}
+      <View style={styles.legend}>
+        <LegendItem color={theme.success} label={`Present (≥${minHoursPresent}h)`} />
+        <LegendItem color={theme.danger} label="Absent" />
+        <LegendItem color="#0ea5e9" label="Leave" />
+        <LegendItem color={theme.warning} label="Pending" />
+        <LegendItem color={theme.textMuted} label="Holiday/Weekend" />
+      </View>
+
       <View style={styles.weekRow}>
         {WEEKDAYS.map((w, i) => (
           <Text key={i} style={styles.weekday}>
@@ -227,8 +390,8 @@ function OverviewTab() {
           const inMonth = d.getMonth() === cursor.getMonth();
           const isToday = key === todayKey;
           const isSelected = key === selected;
-          const entry = entries[key];
-          const worked = entry?.floorMinutes ?? 0;
+          const kind = classify(d);
+          const dotColor = KIND_DOT[kind];
           return (
             <Pressable
               key={key}
@@ -251,20 +414,8 @@ function OverviewTab() {
                 >
                   {d.getDate()}
                 </Text>
-                {worked > 0 ? (
-                  <View
-                    style={[
-                      styles.workDot,
-                      {
-                        backgroundColor:
-                          worked >= 420
-                            ? theme.success
-                            : worked >= 240
-                              ? theme.warning
-                              : theme.danger,
-                      },
-                    ]}
-                  />
+                {dotColor ? (
+                  <View style={[styles.workDot, { backgroundColor: dotColor }]} />
                 ) : (
                   <View style={styles.workDotSpacer} />
                 )}
@@ -274,9 +425,21 @@ function OverviewTab() {
         })}
       </View>
 
+      {/* Monthly stats */}
+      <View style={styles.statsRow}>
+        <StatCard label="Present" value={String(stats.present)} color={theme.success} />
+        <StatCard label="Absent" value={String(stats.absent)} color={theme.danger} />
+        <StatCard label="Leave" value={String(stats.leave)} color="#0ea5e9" />
+        <StatCard
+          label="Holiday"
+          value={String(stats.holiday)}
+          color={theme.textMuted}
+        />
+      </View>
+
       <View style={styles.detailHeader}>
         <Text style={styles.detailTitle}>
-          {new Date(selected).toLocaleDateString("en-US", {
+          {new Date(selected + "T00:00:00").toLocaleDateString("en-US", {
             weekday: "long",
             month: "long",
             day: "numeric",
@@ -307,6 +470,22 @@ function OverviewTab() {
             </>
           ) : null}
         </View>
+      ) : selLeave ? (
+        <View style={styles.detailCard}>
+          <DetailRow label="Status" value={`${selLeave.leave_type} leave`} />
+          <View style={styles.divider} />
+          <DetailRow label="Approval" value={selLeave.status} />
+          {selLeave.reason ? (
+            <>
+              <View style={styles.divider} />
+              <DetailRow label="Reason" value={selLeave.reason} />
+            </>
+          ) : null}
+        </View>
+      ) : selHoliday ? (
+        <View style={styles.detailCard}>
+          <DetailRow label="Holiday" value={selHoliday.name || "Public holiday"} />
+        </View>
       ) : (
         <Text style={styles.emptyDetail}>No attendance recorded for this day.</Text>
       )}
@@ -314,10 +493,41 @@ function OverviewTab() {
   );
 }
 
+const KIND_DOT: Record<DayKind, string | null> = {
+  present: theme.success,
+  leave: "#0ea5e9",
+  "leave-pending": theme.warning,
+  holiday: theme.textMuted,
+  weekend: null,
+  absent: theme.danger,
+  in_progress: null,
+  future: null,
+  none: null,
+};
+
+function LegendItem({ color, label }: { color: string; label: string }) {
+  return (
+    <View style={styles.legendItem}>
+      <View style={[styles.legendDot, { backgroundColor: color }]} />
+      <Text style={styles.legendText}>{label}</Text>
+    </View>
+  );
+}
+
 function fmtTime(iso: string) {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "—";
   return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function tsToLocalHHMM(ts?: string | null): string {
+  if (!ts) return "09:00";
+  const normalized = ts.includes("T") ? ts : ts.replace(" ", "T") + "Z";
+  const d = new Date(normalized);
+  if (isNaN(d.getTime())) return "09:00";
+  return `${String(d.getHours()).padStart(2, "0")}:${String(
+    d.getMinutes(),
+  ).padStart(2, "0")}`;
 }
 
 function DetailRow({ label, value }: { label: string; value: string }) {
@@ -330,44 +540,146 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 }
 
 /* ───────────────────────── Manual entry ───────────────────────── */
-const WORK_MODES: ("office" | "remote" | "hybrid")[] = ["office", "remote", "hybrid"];
+
+type BreakItem = { start: string; end: string };
+
+const ENTRY_LABELS: Record<string, string> = {
+  clock_in: "Logged In",
+  break_start: "Break Started",
+  break_end: "Break Ended",
+  clock_out: "Logged Out",
+};
 
 function ManualTab() {
   const [date, setDate] = useState(ymd(new Date()));
   const [clockIn, setClockIn] = useState("09:00");
   const [clockOut, setClockOut] = useState("18:00");
-  const [breakStart, setBreakStart] = useState("13:00");
-  const [breakEnd, setBreakEnd] = useState("13:30");
-  const [workMode, setWorkMode] = useState<"office" | "remote" | "hybrid">("office");
+  const [skipClockOut, setSkipClockOut] = useState(false);
+  const [breaks, setBreaks] = useState<BreakItem[]>([{ start: "13:00", end: "13:30" }]);
+  const [workMode, setWorkMode] = useState<"office" | "remote">("office");
   const [busy, setBusy] = useState(false);
+
+  const [checking, setChecking] = useState(false);
+  const [existingEntries, setExistingEntries] = useState<TrackerEntry[] | null>(
+    null,
+  );
+  const [leaveOnDate, setLeaveOnDate] = useState<Leave | null>(null);
+  const [currentlyClocked, setCurrentlyClocked] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+
+  const [pendingRequests, setPendingRequests] = useState<ManualEntryRequest[]>([]);
+
+  const todayKey = ymd(new Date());
+
+  const loadPending = useCallback(async () => {
+    try {
+      const r = await getManualEntryRequests();
+      setPendingRequests(Array.isArray(r.data) ? r.data : []);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    loadPending();
+  }, [loadPending]);
+
+  const checkDate = useCallback(
+    async (dateVal: string) => {
+      setExistingEntries(null);
+      setLeaveOnDate(null);
+      setCurrentlyClocked(false);
+      setIsEditMode(false);
+      if (!dateVal) return;
+      setChecking(true);
+      try {
+        const [entriesRes, leavesRes] = await Promise.all([
+          getEntries(dateVal),
+          getLeaves(dateVal, dateVal),
+        ]);
+        if (entriesRes.data.length > 0) setExistingEntries(entriesRes.data);
+        if (leavesRes.data.length > 0) setLeaveOnDate(leavesRes.data[0]);
+        if (dateVal === todayKey) {
+          const statusRes = await getTrackerStatus();
+          if (statusRes.data.state !== "logged_out") setCurrentlyClocked(true);
+        }
+      } catch {
+        /* ignore */
+      } finally {
+        setChecking(false);
+      }
+    },
+    [todayKey],
+  );
+
+  useEffect(() => {
+    checkDate(date);
+  }, [date, checkDate]);
+
+  const handleEditExisting = () => {
+    if (!existingEntries) return;
+    const ci = existingEntries.find((e) => e.entry_type === "clock_in");
+    const co = existingEntries.find((e) => e.entry_type === "clock_out");
+    const bs = existingEntries.filter((e) => e.entry_type === "break_start");
+    const be = existingEntries.filter((e) => e.entry_type === "break_end");
+    setClockIn(ci ? tsToLocalHHMM(ci.timestamp) : "09:00");
+    setClockOut(co ? tsToLocalHHMM(co.timestamp) : "");
+    setSkipClockOut(!co);
+    setBreaks(
+      bs.length > 0
+        ? bs.map((b, i) => ({
+            start: tsToLocalHHMM(b.timestamp),
+            end: be[i] ? tsToLocalHHMM(be[i].timestamp) : "",
+          }))
+        : [{ start: "", end: "" }],
+    );
+    setWorkMode((ci?.work_mode as any) === "remote" ? "remote" : "office");
+    setIsEditMode(true);
+  };
+
+  const addBreak = () => setBreaks((b) => [...b, { start: "", end: "" }]);
+  const removeBreak = (i: number) =>
+    setBreaks((b) => b.filter((_, idx) => idx !== i));
+  const updateBreak = (i: number, field: keyof BreakItem, value: string) =>
+    setBreaks((b) => b.map((item, idx) => (idx === i ? { ...item, [field]: value } : item)));
 
   async function submit() {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      Alert.alert("Invalid date", "Use the format YYYY-MM-DD.");
+      Alert.alert("Invalid date", "Please pick a date.");
       return;
     }
-    if (!/^\d{2}:\d{2}$/.test(clockIn) || !/^\d{2}:\d{2}$/.test(clockOut)) {
-      Alert.alert("Invalid time", "Use the format HH:mm.");
+    if (!/^\d{2}:\d{2}$/.test(clockIn)) {
+      Alert.alert("Invalid time", "Please set a login time.");
+      return;
+    }
+    if (!skipClockOut && !/^\d{2}:\d{2}$/.test(clockOut)) {
+      Alert.alert("Invalid time", 'Set a logout time or check "Still working".');
       return;
     }
     setBusy(true);
     try {
-      const breaks =
-        /^\d{2}:\d{2}$/.test(breakStart) && /^\d{2}:\d{2}$/.test(breakEnd)
-          ? [{ start: breakStart, end: breakEnd }]
-          : [];
-      await addManualEntry({
-        date,
+      const validBreaks = breaks.filter(
+        (b) => /^\d{2}:\d{2}$/.test(b.start) && /^\d{2}:\d{2}$/.test(b.end),
+      );
+      const payload = {
         clock_in: clockIn,
-        clock_out: clockOut,
-        breaks,
+        clock_out: skipClockOut ? undefined : clockOut,
+        breaks: validBreaks.length > 0 ? validBreaks : undefined,
         timezoneOffset: new Date().getTimezoneOffset(),
         work_mode: workMode,
-      });
+      };
+      if (isEditMode) {
+        await updateManualEntry(date, payload);
+      } else {
+        await addManualEntry({ date, ...payload });
+      }
       Alert.alert(
         "Submitted",
-        "Your manual entry has been submitted. It may require approval.",
+        `${isEditMode ? "Entry updated" : "Manual entry submitted"} for ${date}. It may require approval.`,
       );
+      setIsEditMode(false);
+      loadPending();
+      checkDate(date);
     } catch (e: any) {
       Alert.alert(
         "Error",
@@ -378,84 +690,334 @@ function ManualTab() {
     }
   }
 
+  const showForm =
+    !leaveOnDate && !currentlyClocked && (!existingEntries || isEditMode);
+
   return (
-    <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+    <ScrollView
+      contentContainerStyle={styles.body}
+      keyboardShouldPersistTaps="handled"
+    >
       <Text style={styles.hint}>
-        Submit a missed attendance entry. If you report to a manager it will be
-        sent for approval.
+        Add or edit time entries for days you forgot to use the tracker. If you
+        report to a manager, entries are sent for approval.
       </Text>
 
+      {/* Date picker */}
+      {!isEditMode ? (
+        <>
+          <Text style={styles.label}>Date</Text>
+          <DatePicker value={date} onChange={setDate} maxDate={todayKey} />
+        </>
+      ) : (
+        <View style={styles.editBanner}>
+          <Text style={styles.editBannerText}>
+            Editing entry for <Text style={{ fontWeight: "800" }}>{date}</Text>
+          </Text>
+          <Pressable onPress={() => setIsEditMode(false)} hitSlop={8}>
+            <X size={16} color={theme.textSecondary} />
+          </Pressable>
+        </View>
+      )}
+
+      {checking ? (
+        <Text style={styles.infoText}>Checking for existing entries…</Text>
+      ) : null}
+
+      {/* Leave warning */}
+      {leaveOnDate ? (
+        <View style={[styles.warnCard, styles.warnLeave]}>
+          <Text style={styles.warnTitle}>Leave recorded on this date</Text>
+          <Text style={styles.warnBody}>
+            You have a {leaveOnDate.leave_type} leave on {date}. Remove the leave
+            from the Leaves tab first to add a manual entry.
+          </Text>
+        </View>
+      ) : null}
+
+      {/* Clocked-in warning */}
+      {currentlyClocked ? (
+        <View style={[styles.warnCard, styles.warnClocked]}>
+          <Text style={styles.warnTitle}>You're currently clocked in</Text>
+          <Text style={styles.warnBody}>
+            Manual entry for today is only allowed after you've clocked out.
+            Logout from the dashboard first.
+          </Text>
+        </View>
+      ) : null}
+
+      {/* Existing entries panel */}
+      {existingEntries && !isEditMode && !currentlyClocked && !leaveOnDate ? (
+        <View style={[styles.warnCard, styles.warnExisting]}>
+          <Text style={styles.warnTitle}>Entries already exist for this date</Text>
+          <View style={{ gap: 6, marginTop: 8 }}>
+            {existingEntries.map((e, i) => (
+              <View key={i} style={styles.existingRow}>
+                <Text style={styles.existingLabel}>
+                  {ENTRY_LABELS[e.entry_type] || e.entry_type}
+                </Text>
+                <Text style={styles.existingTime}>
+                  {tsToLocalHHMM(e.timestamp)}
+                </Text>
+              </View>
+            ))}
+          </View>
+          <Pressable style={styles.editExistingBtn} onPress={handleEditExisting}>
+            <FileEdit size={14} color="#fff" />
+            <Text style={styles.editExistingText}>Edit These Entries</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {/* Form */}
+      {showForm ? (
+        <>
+          <Text style={styles.label}>Work Mode</Text>
+          <View style={styles.modeRow}>
+            <Pressable
+              style={[styles.modeChip, workMode === "office" && styles.modeChipActive]}
+              onPress={() => setWorkMode("office")}
+            >
+              <Building2
+                size={14}
+                color={workMode === "office" ? "#fff" : theme.textSecondary}
+              />
+              <Text
+                style={[styles.modeText, workMode === "office" && styles.modeTextActive]}
+              >
+                Office
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.modeChip, workMode === "remote" && styles.modeChipActive]}
+              onPress={() => setWorkMode("remote")}
+            >
+              <House
+                size={14}
+                color={workMode === "remote" ? "#fff" : theme.textSecondary}
+              />
+              <Text
+                style={[styles.modeText, workMode === "remote" && styles.modeTextActive]}
+              >
+                Remote
+              </Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.timeRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.label}>Login Time</Text>
+              <TimePicker value={clockIn} onChange={setClockIn} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.label}>Logout Time</Text>
+              <TimePicker
+                value={clockOut}
+                onChange={setClockOut}
+                disabled={skipClockOut}
+              />
+            </View>
+          </View>
+
+          <Pressable
+            style={styles.checkRow}
+            onPress={() => {
+              setSkipClockOut((v) => {
+                if (!v) setClockOut("");
+                return !v;
+              });
+            }}
+          >
+            <View style={[styles.checkbox, skipClockOut && styles.checkboxOn]}>
+              {skipClockOut ? <Text style={styles.checkMark}>✓</Text> : null}
+            </View>
+            <Text style={styles.checkLabel}>Still working (skip logout)</Text>
+          </Pressable>
+
+          {/* Breaks */}
+          <View style={styles.breaksHeader}>
+            <Text style={styles.label}>Breaks</Text>
+            <Pressable style={styles.addBreakBtn} onPress={addBreak}>
+              <Plus size={13} color={theme.primary} />
+              <Text style={styles.addBreakText}>Add Break</Text>
+            </Pressable>
+          </View>
+          {breaks.map((brk, i) => (
+            <View key={i} style={styles.breakRow}>
+              <View style={{ flex: 1 }}>
+                <TimePicker
+                  value={brk.start}
+                  onChange={(v) => updateBreak(i, "start", v)}
+                  placeholder="Start"
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <TimePicker
+                  value={brk.end}
+                  onChange={(v) => updateBreak(i, "end", v)}
+                  placeholder="End"
+                />
+              </View>
+              <Pressable
+                style={styles.removeBreakBtn}
+                onPress={() => removeBreak(i)}
+                hitSlop={6}
+              >
+                <X size={16} color={theme.danger} />
+              </Pressable>
+            </View>
+          ))}
+
+          <Pressable
+            style={[styles.submit, busy && styles.submitDisabled]}
+            onPress={submit}
+            disabled={busy}
+          >
+            {busy ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.submitText}>
+                {isEditMode ? "Update Entry" : "Save Manual Entry"}
+              </Text>
+            )}
+          </Pressable>
+        </>
+      ) : null}
+
+      {/* Pending manual-entry requests */}
+      <View style={styles.requestsSection}>
+        <View style={styles.sectionTitleRow}>
+          <ClipboardList size={16} color={theme.text} />
+          <Text style={styles.sectionTitle}>Your Manual-Entry Requests</Text>
+        </View>
+        {pendingRequests.length === 0 ? (
+          <Text style={styles.emptyDetail}>No pending manual-entry requests.</Text>
+        ) : (
+          <View style={{ gap: 8 }}>
+            {pendingRequests.map((r) => {
+              const st =
+                STATUS_BADGE[r.approval_status] ?? STATUS_BADGE.pending;
+              return (
+                <View key={r.request_id} style={styles.requestItem}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.requestDate}>{r.date || "—"}</Text>
+                    <Text style={styles.requestMeta}>
+                      {r.clock_in || ""}
+                      {r.clock_out ? ` → ${r.clock_out}` : ""}
+                    </Text>
+                    {r.reject_reason ? (
+                      <Text style={styles.requestReason}>
+                        Reason: {r.reject_reason}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <View style={[styles.statusBadge, { backgroundColor: st.bg }]}>
+                    <Text style={[styles.statusText, { color: st.color }]}>
+                      {st.label}
+                    </Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
+      </View>
+
+      {/* Overtime */}
+      <OvertimeSection />
+    </ScrollView>
+  );
+}
+
+const STATUS_BADGE: Record<string, { label: string; color: string; bg: string }> = {
+  pending: { label: "Pending", color: "#f59e0b", bg: "rgba(245,158,11,0.12)" },
+  approved: { label: "Approved", color: "#10b981", bg: "rgba(16,185,129,0.12)" },
+  rejected: { label: "Rejected", color: "#ef4444", bg: "rgba(239,68,68,0.12)" },
+};
+
+/* ───────────────────────── Overtime ───────────────────────── */
+
+function OvertimeSection() {
+  const [otDate, setOtDate] = useState(ymd(new Date()));
+  const [otHours, setOtHours] = useState("");
+  const [otReason, setOtReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [requests, setRequests] = useState<OvertimeRequest[]>([]);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await getOvertimeRequests();
+      setRequests(Array.isArray(r.data) ? r.data : []);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function submit() {
+    const hours = parseFloat(otHours);
+    if (!otDate || !otHours || isNaN(hours) || hours <= 0) {
+      Alert.alert("Invalid", "Enter a valid date and number of hours.");
+      return;
+    }
+    if (!otReason.trim()) {
+      Alert.alert("Reason required", "Please provide a reason for overtime.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await submitOvertimeRequest({
+        date: otDate,
+        hours,
+        reason: otReason.trim(),
+      });
+      Alert.alert("Submitted", "Your overtime request has been submitted.");
+      setOtHours("");
+      setOtReason("");
+      load();
+    } catch (e: any) {
+      Alert.alert(
+        "Error",
+        e?.response?.data?.error || "Failed to submit overtime request",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <View style={styles.requestsSection}>
+      <View style={styles.sectionTitleRow}>
+        <Timer size={16} color={theme.text} />
+        <Text style={styles.sectionTitle}>Overtime Request</Text>
+      </View>
+
       <Text style={styles.label}>Date</Text>
+      <DatePicker value={otDate} onChange={setOtDate} maxDate={ymd(new Date())} />
+
+      <Text style={styles.label}>Extra Hours</Text>
       <TextInput
         style={styles.input}
-        value={date}
-        onChangeText={setDate}
-        placeholder="YYYY-MM-DD"
+        value={otHours}
+        onChangeText={setOtHours}
+        placeholder="e.g. 2"
         placeholderTextColor={theme.textMuted}
+        keyboardType="decimal-pad"
       />
 
-      <View style={styles.timeRow}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.label}>Clock In</Text>
-          <TextInput
-            style={styles.input}
-            value={clockIn}
-            onChangeText={setClockIn}
-            placeholder="HH:mm"
-            placeholderTextColor={theme.textMuted}
-          />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.label}>Clock Out</Text>
-          <TextInput
-            style={styles.input}
-            value={clockOut}
-            onChangeText={setClockOut}
-            placeholder="HH:mm"
-            placeholderTextColor={theme.textMuted}
-          />
-        </View>
-      </View>
-
-      <View style={styles.timeRow}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.label}>Break Start</Text>
-          <TextInput
-            style={styles.input}
-            value={breakStart}
-            onChangeText={setBreakStart}
-            placeholder="HH:mm"
-            placeholderTextColor={theme.textMuted}
-          />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.label}>Break End</Text>
-          <TextInput
-            style={styles.input}
-            value={breakEnd}
-            onChangeText={setBreakEnd}
-            placeholder="HH:mm"
-            placeholderTextColor={theme.textMuted}
-          />
-        </View>
-      </View>
-
-      <Text style={styles.label}>Work Mode</Text>
-      <View style={styles.modeRow}>
-        {WORK_MODES.map((m) => (
-          <Pressable
-            key={m}
-            style={[styles.modeChip, workMode === m && styles.modeChipActive]}
-            onPress={() => setWorkMode(m)}
-          >
-            <Text
-              style={[styles.modeText, workMode === m && styles.modeTextActive]}
-            >
-              {m[0].toUpperCase() + m.slice(1)}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
+      <Text style={styles.label}>Reason</Text>
+      <TextInput
+        style={[styles.input, styles.textarea]}
+        value={otReason}
+        onChangeText={setOtReason}
+        placeholder="Why do you need overtime?"
+        placeholderTextColor={theme.textMuted}
+        multiline
+        numberOfLines={3}
+      />
 
       <Pressable
         style={[styles.submit, busy && styles.submitDisabled]}
@@ -465,36 +1027,100 @@ function ManualTab() {
         {busy ? (
           <ActivityIndicator color="#fff" />
         ) : (
-          <Text style={styles.submitText}>Submit Entry</Text>
+          <Text style={styles.submitText}>Submit Overtime Request</Text>
         )}
       </Pressable>
-    </ScrollView>
+
+      {requests.length > 0 ? (
+        <View style={{ gap: 8, marginTop: 14 }}>
+          {requests.map((r) => {
+            const st = STATUS_BADGE[r.status] ?? STATUS_BADGE.pending;
+            return (
+              <View key={r.id} style={styles.requestItem}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.requestDate}>{r.date}</Text>
+                  <Text style={styles.requestMeta}>{r.hours}h overtime</Text>
+                  {r.reason ? (
+                    <Text style={styles.requestReason}>"{r.reason}"</Text>
+                  ) : null}
+                  {r.reject_reason ? (
+                    <Text style={styles.requestReason}>
+                      Reason: {r.reject_reason}
+                    </Text>
+                  ) : null}
+                </View>
+                <View style={[styles.statusBadge, { backgroundColor: st.bg }]}>
+                  <Text style={[styles.statusText, { color: st.color }]}>
+                    {st.label}
+                  </Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
+    </View>
   );
 }
 
 /* ───────────────────────── Analytics ───────────────────────── */
-const RANGES: { value: number; label: string }[] = [
+const RANGES: { value: number | "custom"; label: string }[] = [
   { value: 7, label: "7d" },
   { value: 14, label: "14d" },
   { value: 30, label: "30d" },
+  { value: "custom", label: "Custom" },
 ];
 
+function localDateNDaysAgo(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return ymd(d);
+}
+
 function AnalyticsTab() {
-  const [days, setDays] = useState(7);
+  const [range, setRange] = useState<number | "custom">(7);
+  const [customFrom, setCustomFrom] = useState(localDateNDaysAgo(7));
+  const [customTo, setCustomTo] = useState(ymd(new Date()));
   const [data, setData] = useState<AnalyticsPoint[]>([]);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const isCustom = range === "custom";
+  const fromDate = isCustom ? customFrom : localDateNDaysAgo(range as number);
+  const toDate = isCustom ? customTo : ymd(new Date());
+
   const load = useCallback(async () => {
+    if (isCustom && (!customFrom || !customTo)) return;
     setLoading(true);
     try {
-      const res = await getTrackerAnalytics(days);
-      setData(res.data || []);
+      const [aRes, hRes] = await Promise.allSettled([
+        isCustom
+          ? getTrackerHistory(fromDate, toDate)
+          : getTrackerAnalytics(range as number),
+        getTrackerHistory(fromDate, toDate),
+      ]);
+      if (aRes.status === "fulfilled") {
+        // history endpoint returns HistoryEntry[]; analytics returns AnalyticsPoint[]
+        const arr = (aRes.value.data || []) as any[];
+        setData(
+          arr.map((d) => ({
+            date: d.date.slice(0, 10),
+            floorMinutes: d.floorMinutes || 0,
+            breakMinutes: d.breakMinutes || 0,
+            workMode: d.work_mode || d.workMode,
+          })),
+        );
+      } else {
+        setData([]);
+      }
+      setHistory(hRes.status === "fulfilled" ? hRes.value.data || [] : []);
     } catch {
       setData([]);
+      setHistory([]);
     } finally {
       setLoading(false);
     }
-  }, [days]);
+  }, [range, isCustom, customFrom, customTo, fromDate, toDate]);
 
   useEffect(() => {
     load();
@@ -505,21 +1131,24 @@ function AnalyticsTab() {
   const workedDays = data.filter((d) => (d.floorMinutes || 0) > 0).length;
   const avg = workedDays > 0 ? totalWorked / workedDays : 0;
   const maxVal = Math.max(1, ...data.map((d) => d.floorMinutes || 0));
+  const officeDays = history.filter(
+    (d) => (d.floorMinutes || 0) > 0 && d.work_mode !== "remote",
+  ).length;
+  const remoteDays = history.filter(
+    (d) => (d.floorMinutes || 0) > 0 && d.work_mode === "remote",
+  ).length;
 
   return (
     <ScrollView contentContainerStyle={styles.body}>
       <View style={styles.rangeRow}>
         {RANGES.map((r) => (
           <Pressable
-            key={r.value}
-            style={[styles.rangeChip, days === r.value && styles.rangeChipActive]}
-            onPress={() => setDays(r.value)}
+            key={String(r.value)}
+            style={[styles.rangeChip, range === r.value && styles.rangeChipActive]}
+            onPress={() => setRange(r.value)}
           >
             <Text
-              style={[
-                styles.rangeText,
-                days === r.value && styles.rangeTextActive,
-              ]}
+              style={[styles.rangeText, range === r.value && styles.rangeTextActive]}
             >
               {r.label}
             </Text>
@@ -527,10 +1156,43 @@ function AnalyticsTab() {
         ))}
       </View>
 
+      {isCustom ? (
+        <View style={styles.customRange}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.label}>From</Text>
+            <DatePicker
+              value={customFrom}
+              onChange={setCustomFrom}
+              maxDate={customTo || ymd(new Date())}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.label}>To</Text>
+            <DatePicker
+              value={customTo}
+              onChange={setCustomTo}
+              minDate={customFrom}
+              maxDate={ymd(new Date())}
+            />
+          </View>
+        </View>
+      ) : null}
+
       <View style={styles.statsRow}>
         <StatCard label="Total" value={formatTime(totalWorked)} color={theme.primary} />
         <StatCard label="Avg/Day" value={formatTime(avg)} color={theme.success} />
         <StatCard label="Break" value={formatTime(totalBreak)} color={theme.warning} />
+      </View>
+
+      {/* Work mode breakdown */}
+      <View style={styles.statsRow}>
+        <StatCard label="Office Days" value={String(officeDays)} color="#0ea5e9" />
+        <StatCard label="Remote Days" value={String(remoteDays)} color="#a855f7" />
+        <StatCard
+          label="Worked Days"
+          value={String(workedDays)}
+          color={theme.success}
+        />
       </View>
 
       {loading ? (
@@ -538,28 +1200,65 @@ function AnalyticsTab() {
       ) : data.length === 0 ? (
         <Text style={styles.emptyDetail}>No data for this period.</Text>
       ) : (
-        <View style={styles.chartCard}>
-          {data.map((d) => {
-            const pct = ((d.floorMinutes || 0) / maxVal) * 100;
-            const dt = new Date(d.date);
-            return (
-              <View key={d.date} style={styles.chartRow}>
-                <Text style={styles.chartDate}>
-                  {dt.toLocaleDateString("en-US", {
-                    weekday: "short",
-                    day: "numeric",
-                  })}
-                </Text>
-                <View style={styles.chartBarTrack}>
-                  <View style={[styles.chartBarFill, { width: `${pct}%` }]} />
+        <>
+          <View style={styles.chartCard}>
+            {data.map((d) => {
+              const pct = ((d.floorMinutes || 0) / maxVal) * 100;
+              const dt = new Date(d.date + "T00:00:00");
+              return (
+                <View key={d.date} style={styles.chartRow}>
+                  <Text style={styles.chartDate}>
+                    {dt.toLocaleDateString("en-US", {
+                      weekday: "short",
+                      day: "numeric",
+                    })}
+                  </Text>
+                  <View style={styles.chartBarTrack}>
+                    <View style={[styles.chartBarFill, { width: `${pct}%` }]} />
+                  </View>
+                  <Text style={styles.chartValue}>
+                    {formatTime(d.floorMinutes || 0)}
+                  </Text>
                 </View>
-                <Text style={styles.chartValue}>
-                  {formatTime(d.floorMinutes || 0)}
-                </Text>
-              </View>
-            );
-          })}
-        </View>
+              );
+            })}
+          </View>
+
+          {/* History table */}
+          <View style={styles.sectionTitleRow}>
+            <ClipboardList size={16} color={theme.text} />
+            <Text style={styles.sectionTitle}>History</Text>
+          </View>
+          <View style={styles.tableCard}>
+            <View style={[styles.tableRow, styles.tableHead]}>
+              <Text style={[styles.th, { flex: 1.4 }]}>Date</Text>
+              <Text style={styles.th}>In</Text>
+              <Text style={styles.th}>Out</Text>
+              <Text style={[styles.th, { textAlign: "right" }]}>Worked</Text>
+            </View>
+            {[...history]
+              .sort((a, b) => (a.date < b.date ? 1 : -1))
+              .map((h) => (
+                <View key={h.date} style={styles.tableRow}>
+                  <Text style={[styles.td, { flex: 1.4 }]}>
+                    {new Date(h.date.slice(0, 10) + "T00:00:00").toLocaleDateString(
+                      "en-US",
+                      { month: "short", day: "numeric" },
+                    )}
+                  </Text>
+                  <Text style={styles.td}>
+                    {h.clock_in ? fmtTime(h.clock_in) : "—"}
+                  </Text>
+                  <Text style={styles.td}>
+                    {h.clock_out ? fmtTime(h.clock_out) : "—"}
+                  </Text>
+                  <Text style={[styles.td, { textAlign: "right" }]}>
+                    {formatTime(h.floorMinutes || 0)}
+                  </Text>
+                </View>
+              ))}
+          </View>
+        </>
       )}
     </ScrollView>
   );
@@ -642,6 +1341,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   todayText: { color: theme.textSecondary, fontSize: 13, fontWeight: "600" },
+  legend: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+    marginBottom: 10,
+  },
+  legendItem: { flexDirection: "row", alignItems: "center", gap: 5 },
+  legendDot: { width: 8, height: 8, borderRadius: 4 },
+  legendText: { fontSize: 11, color: theme.textSecondary },
   weekRow: { flexDirection: "row", marginBottom: 4 },
   weekday: {
     flex: 1,
@@ -693,6 +1401,9 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     fontSize: 14,
     textTransform: "capitalize",
+    flexShrink: 1,
+    textAlign: "right",
+    marginLeft: 12,
   },
   emptyDetail: {
     color: theme.textMuted,
@@ -702,6 +1413,7 @@ const styles = StyleSheet.create({
   },
   // manual
   hint: { color: theme.textMuted, fontSize: 13, marginBottom: 6 },
+  infoText: { color: theme.textSecondary, fontSize: 13, marginTop: 6 },
   label: {
     fontSize: 11,
     fontWeight: "600",
@@ -721,11 +1433,15 @@ const styles = StyleSheet.create({
     color: theme.text,
     fontSize: 15,
   },
+  textarea: { minHeight: 70, textAlignVertical: "top" },
   timeRow: { flexDirection: "row", gap: 12 },
   modeRow: { flexDirection: "row", gap: 8 },
   modeChip: {
     flex: 1,
+    flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
     paddingVertical: 10,
     borderRadius: theme.radiusSm,
     backgroundColor: theme.glass,
@@ -735,6 +1451,104 @@ const styles = StyleSheet.create({
   modeChipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
   modeText: { fontSize: 13, color: theme.textSecondary, fontWeight: "600" },
   modeTextActive: { color: "#fff" },
+  checkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 12,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: theme.inputBorder,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checkboxOn: { backgroundColor: theme.primary, borderColor: theme.primary },
+  checkMark: { color: "#fff", fontSize: 13, fontWeight: "700" },
+  checkLabel: { color: theme.textSecondary, fontSize: 14 },
+  breaksHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  addBreakBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: theme.radiusSm,
+    backgroundColor: theme.primaryGlow,
+  },
+  addBreakText: { color: theme.primary, fontSize: 12, fontWeight: "600" },
+  breakRow: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    marginTop: 6,
+  },
+  removeBreakBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    backgroundColor: theme.glass,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  editBanner: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: theme.primaryGlow,
+    borderRadius: theme.radiusSm,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginTop: 8,
+  },
+  editBannerText: { color: theme.text, fontSize: 14 },
+  warnCard: {
+    borderRadius: theme.radius,
+    borderWidth: 1,
+    padding: 14,
+    marginTop: 10,
+  },
+  warnLeave: {
+    backgroundColor: "rgba(245,158,11,0.08)",
+    borderColor: "rgba(245,158,11,0.3)",
+  },
+  warnClocked: {
+    backgroundColor: "rgba(14,165,233,0.08)",
+    borderColor: "rgba(14,165,233,0.3)",
+  },
+  warnExisting: {
+    backgroundColor: theme.glass,
+    borderColor: theme.glassBorder,
+  },
+  warnTitle: { color: theme.text, fontSize: 14, fontWeight: "700" },
+  warnBody: { color: theme.textSecondary, fontSize: 13, marginTop: 4 },
+  existingRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 4,
+  },
+  existingLabel: { color: theme.textSecondary, fontSize: 13 },
+  existingTime: { color: theme.text, fontSize: 13, fontWeight: "600" },
+  editExistingBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: theme.primary,
+    borderRadius: theme.radiusSm,
+    paddingVertical: 11,
+    marginTop: 12,
+  },
+  editExistingText: { color: "#fff", fontSize: 14, fontWeight: "600" },
   submit: {
     backgroundColor: theme.primary,
     borderRadius: theme.radiusSm,
@@ -744,8 +1558,42 @@ const styles = StyleSheet.create({
   },
   submitDisabled: { opacity: 0.5 },
   submitText: { color: "#fff", fontSize: 15, fontWeight: "600" },
+  requestsSection: {
+    marginTop: 22,
+    paddingTop: 18,
+    borderTopWidth: 1,
+    borderTopColor: theme.border,
+    gap: 4,
+  },
+  sectionTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+    marginTop: 6,
+  },
+  sectionTitle: { fontSize: 15, fontWeight: "700", color: theme.text },
+  requestItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: theme.glass,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radius,
+    padding: 12,
+  },
+  requestDate: { color: theme.text, fontSize: 14, fontWeight: "600" },
+  requestMeta: { color: theme.textSecondary, fontSize: 12, marginTop: 2 },
+  requestReason: { color: theme.textMuted, fontSize: 12, marginTop: 2 },
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: theme.radiusFull,
+  },
+  statusText: { fontSize: 11, fontWeight: "700" },
   // analytics
-  rangeRow: { flexDirection: "row", gap: 8, marginBottom: 6 },
+  rangeRow: { flexDirection: "row", gap: 8, marginBottom: 6, flexWrap: "wrap" },
   rangeChip: {
     paddingHorizontal: 16,
     paddingVertical: 8,
@@ -757,6 +1605,7 @@ const styles = StyleSheet.create({
   rangeChipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
   rangeText: { fontSize: 13, color: theme.textSecondary, fontWeight: "600" },
   rangeTextActive: { color: "#fff" },
+  customRange: { flexDirection: "row", gap: 12, marginBottom: 6 },
   statsRow: { flexDirection: "row", gap: 10, marginVertical: 8 },
   statCard: {
     flex: 1,
@@ -800,4 +1649,28 @@ const styles = StyleSheet.create({
     textAlign: "right",
     fontWeight: "600",
   },
+  tableCard: {
+    backgroundColor: theme.glass,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radiusLg,
+    overflow: "hidden",
+  },
+  tableRow: {
+    flexDirection: "row",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.border,
+  },
+  tableHead: { backgroundColor: theme.surface },
+  th: {
+    flex: 1,
+    fontSize: 11,
+    fontWeight: "700",
+    color: theme.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  td: { flex: 1, fontSize: 13, color: theme.text },
 });

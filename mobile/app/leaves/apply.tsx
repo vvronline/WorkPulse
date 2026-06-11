@@ -13,6 +13,7 @@ import { useRouter } from "expo-router";
 import { theme } from "../../src/theme";
 import { LEAVE_TYPES } from "../../src/constants";
 import { applyLeave } from "../../src/features";
+import DatePicker from "../../src/components/DatePicker";
 
 const TYPES = Object.entries(LEAVE_TYPES).map(([value, meta]) => ({
   value,
@@ -108,14 +109,7 @@ export default function ApplyLeaveScreen() {
 
       {/* Date */}
       <Text style={styles.label}>Date</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="YYYY-MM-DD"
-        placeholderTextColor={theme.textMuted}
-        value={date}
-        onChangeText={setDate}
-        autoCapitalize="none"
-      />
+      <DatePicker value={date} onChange={setDate} />
 
       {/* Reason */}
       <Text style={styles.label}>Reason (optional)</Text>
