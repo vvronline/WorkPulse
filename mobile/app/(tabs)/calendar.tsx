@@ -28,13 +28,16 @@ import {
   createMeeting,
   deleteCalendarEvent,
   getCalendarEvents,
+  getMeeting,
   searchChatUsers,
   updateCalendarEvent,
   type CalendarEvent,
   type MeetingConflict,
+  type MeetingParticipant,
 } from "../../src/features";
 import { SERVER_ORIGIN } from "../../src/config";
 import { Linking } from "react-native";
+import { socket } from "../../src/realtime/socket";
 
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 
@@ -100,6 +103,22 @@ export default function CalendarScreen() {
 
   useEffect(() => {
     load(cursor);
+  }, [cursor, load]);
+
+  // Real-time refresh: refetch when a calendar/meeting change is broadcast
+  // (new event, edit, or meeting cancel — including from another device).
+  // Mirrors the web Calendar's useWebSocket subscription.
+  useEffect(() => {
+    const off = socket.subscribe((msg) => {
+      if (
+        msg.type === "calendar_refresh" ||
+        msg.type === "meeting_updated" ||
+        msg.type === "meeting_cancelled"
+      ) {
+        load(cursor);
+      }
+    });
+    return off;
   }, [cursor, load]);
 
   // Map day -> events for quick lookup.
@@ -254,9 +273,14 @@ export default function CalendarScreen() {
                       style={[styles.colorBar, { backgroundColor: item.color || theme.primary }]}
                     />
                     <View style={styles.eventBody}>
-                      <Text style={styles.eventTitle} numberOfLines={1}>
-                        {item.title}
-                      </Text>
+                      <View style={styles.eventTitleRow}>
+                        {item.meeting_code ? (
+                          <Video size={13} color={theme.primary} />
+                        ) : null}
+                        <Text style={styles.eventTitle} numberOfLines={1}>
+                          {item.title}
+                        </Text>
+                      </View>
                       <View style={styles.eventMeta}>
                         <Clock size={12} color={theme.textMuted} />
                         <Text style={styles.eventTime}>{fmtEventTime(item)}</Text>
@@ -357,7 +381,10 @@ function MonthView({
                   {dayEvents.slice(0, 3).map((ev, i) => (
                     <View
                       key={i}
-                      style={[styles.dayDot, { backgroundColor: ev.color || theme.primary }]}
+                      style={[
+                        styles.dayDot,
+                        { backgroundColor: ev.meeting_code ? theme.primary : ev.color || theme.primary },
+                      ]}
                     />
                   ))}
                 </View>
@@ -474,17 +501,21 @@ function HourlyGrid({
         <View style={styles.hourRow}>
           <Text style={styles.hourLabel}>All day</Text>
           <View style={styles.hourCell}>
-            {allDay.map((ev) => (
-              <Pressable
-                key={ev.id}
-                style={[styles.hourEvent, { backgroundColor: (ev.color || theme.primary) + "33", borderColor: ev.color || theme.primary }]}
-                onPress={() => onEvent(ev)}
-              >
-                <Text style={styles.hourEventText} numberOfLines={1}>
-                  {ev.title}
-                </Text>
-              </Pressable>
-            ))}
+            {allDay.map((ev) => {
+              const evColor = ev.meeting_code ? theme.primary : ev.color || theme.primary;
+              return (
+                <Pressable
+                  key={ev.id}
+                  style={[styles.hourEvent, { backgroundColor: evColor + "33", borderColor: evColor }]}
+                  onPress={() => onEvent(ev)}
+                >
+                  {ev.meeting_code ? <Video size={11} color={theme.primary} /> : null}
+                  <Text style={styles.hourEventText} numberOfLines={1}>
+                    {ev.title}
+                  </Text>
+                </Pressable>
+              );
+            })}
           </View>
         </View>
       ) : null}
@@ -492,17 +523,21 @@ function HourlyGrid({
         <View key={h} style={styles.hourRow}>
           <Text style={styles.hourLabel}>{label(h)}</Text>
           <View style={styles.hourCell}>
-            {(byHour[h] || []).map((ev) => (
-              <Pressable
-                key={ev.id}
-                style={[styles.hourEvent, { backgroundColor: (ev.color || theme.primary) + "33", borderColor: ev.color || theme.primary }]}
-                onPress={() => onEvent(ev)}
-              >
-                <Text style={styles.hourEventText} numberOfLines={1}>
-                  {ev.title}
-                </Text>
-              </Pressable>
-            ))}
+            {(byHour[h] || []).map((ev) => {
+              const evColor = ev.meeting_code ? theme.primary : ev.color || theme.primary;
+              return (
+                <Pressable
+                  key={ev.id}
+                  style={[styles.hourEvent, { backgroundColor: evColor + "33", borderColor: evColor }]}
+                  onPress={() => onEvent(ev)}
+                >
+                  {ev.meeting_code ? <Video size={11} color={theme.primary} /> : null}
+                  <Text style={styles.hourEventText} numberOfLines={1}>
+                    {ev.title}
+                  </Text>
+                </Pressable>
+              );
+            })}
           </View>
         </View>
       ))}
@@ -551,25 +586,48 @@ function EventModal({
   const [deleting, setDeleting] = useState(false);
   // Meeting scheduling state (create-mode only, mirrors the web EventFormModal).
   const [addMeeting, setAddMeeting] = useState(false);
-  const [participants, setParticipants] = useState<Invitee[]>([]);
+  // Separate required / optional participant lists (matches the web modal).
+  const [requiredParticipants, setRequiredParticipants] = useState<Invitee[]>([]);
+  const [optionalParticipants, setOptionalParticipants] = useState<Invitee[]>([]);
+  const [pickerTarget, setPickerTarget] = useState<"required" | "optional">("required");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Invitee[]>([]);
   const [searching, setSearching] = useState(false);
   const [muteOnJoin, setMuteOnJoin] = useState(false);
   const [allowScreenShare, setAllowScreenShare] = useState(true);
   const [conflicts, setConflicts] = useState<MeetingConflict[]>([]);
+  // Participant roster for an existing meeting-linked event (edit mode).
+  const [meetingParticipants, setMeetingParticipants] = useState<MeetingParticipant[]>([]);
+
+  const allParticipants = useMemo(
+    () => [...requiredParticipants, ...optionalParticipants],
+    [requiredParticipants, optionalParticipants],
+  );
+
+  // The current user can only edit/cancel a meeting-linked event when they are
+  // the organizer. Plain (non-meeting) events are always editable. Mirrors the
+  // web `isOrganizer` gate that makes the modal read-only for invitees.
+  const isOrganizer =
+    !editing?.meeting_code ||
+    editing?.meeting_created_by == null ||
+    editing?.meeting_created_by === user?.id;
+  const readOnly = !!editing?.meeting_code && !isOrganizer;
+  const hasMeeting = !!editing?.meeting_code;
 
   // Hydrate fields from the editing event (or defaults) when opened.
   useEffect(() => {
     if (!visible) return;
     // Reset meeting state each time the modal opens.
     setAddMeeting(false);
-    setParticipants([]);
+    setRequiredParticipants([]);
+    setOptionalParticipants([]);
+    setPickerTarget("required");
     setQuery("");
     setResults([]);
     setMuteOnJoin(false);
     setAllowScreenShare(true);
     setConflicts([]);
+    setMeetingParticipants([]);
     if (editing) {
       setTitle(editing.title);
       setDescription(editing.description || "");
@@ -605,7 +663,7 @@ function EventModal({
       setSearching(true);
       try {
         const r = await searchChatUsers(q);
-        const chosen = new Set(participants.map((p) => p.id));
+        const chosen = new Set(allParticipants.map((p) => p.id));
         setResults(
           (r.data || [])
             .filter((u) => !chosen.has(u.id) && u.id !== user?.id)
@@ -622,7 +680,27 @@ function EventModal({
       }
     }, 300);
     return () => clearTimeout(t);
-  }, [query, addMeeting, participants, user?.id]);
+  }, [query, addMeeting, allParticipants, user?.id]);
+
+  // Load the participant roster for an existing meeting-linked event so the
+  // banner can show Required/Optional badges + the organizer tag (mirrors web).
+  useEffect(() => {
+    if (!visible || !editing?.meeting_code) {
+      setMeetingParticipants([]);
+      return;
+    }
+    let cancelled = false;
+    getMeeting(editing.meeting_code)
+      .then((r) => {
+        if (!cancelled) setMeetingParticipants(r.data?.participants || []);
+      })
+      .catch(() => {
+        if (!cancelled) setMeetingParticipants([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, editing?.meeting_code]);
 
   const day = editing ? ymd(new Date(editing.start_time)) : selectedDay;
   const startISO = allDay
@@ -634,14 +712,14 @@ function EventModal({
 
   // Debounced conflict check whenever participants/time change.
   useEffect(() => {
-    if (!addMeeting || participants.length === 0) {
+    if (!addMeeting || allParticipants.length === 0) {
       setConflicts([]);
       return;
     }
     const t = setTimeout(async () => {
       try {
         const r = await checkMeetingConflicts({
-          user_ids: participants.map((p) => p.id),
+          user_ids: allParticipants.map((p) => p.id),
           start_time: startISO,
           end_time: endISO,
         });
@@ -651,7 +729,7 @@ function EventModal({
       }
     }, 500);
     return () => clearTimeout(t);
-  }, [addMeeting, participants, startISO, endISO]);
+  }, [addMeeting, allParticipants, startISO, endISO]);
 
   const hour12 = (h: number) => {
     const ampm = h < 12 ? "AM" : "PM";
@@ -659,14 +737,20 @@ function EventModal({
     return `${hh}:00 ${ampm}`;
   };
 
+  // Add a person to the currently-targeted (required/optional) list.
   function addParticipant(u: Invitee) {
-    setParticipants((prev) => [...prev, u]);
+    if (pickerTarget === "optional") {
+      setOptionalParticipants((prev) => [...prev, u]);
+    } else {
+      setRequiredParticipants((prev) => [...prev, u]);
+    }
     setQuery("");
     setResults([]);
   }
 
   function removeParticipant(id: number) {
-    setParticipants((prev) => prev.filter((p) => p.id !== id));
+    setRequiredParticipants((prev) => prev.filter((p) => p.id !== id));
+    setOptionalParticipants((prev) => prev.filter((p) => p.id !== id));
   }
 
   async function submit() {
@@ -690,8 +774,8 @@ function EventModal({
         const mtg = await createMeeting({
           title: title.trim(),
           description: description.trim() || undefined,
-          required_participant_ids: participants.map((p) => p.id),
-          optional_participant_ids: [],
+          required_participant_ids: requiredParticipants.map((p) => p.id),
+          optional_participant_ids: optionalParticipants.map((p) => p.id),
           settings: { muteOnJoin, allowScreenShare },
           start_time,
           end_time,
@@ -755,34 +839,47 @@ function EventModal({
         >
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>
-              {editing ? "Edit Event" : "New Event"}
+              {!editing ? "New Event" : readOnly ? "Event Details" : "Edit Event"}
             </Text>
             <Pressable onPress={onClose} hitSlop={8}>
               <X size={22} color={theme.textSecondary} />
             </Pressable>
           </View>
 
+          {/* Invitees can only view a meeting-linked event. */}
+          {readOnly ? (
+            <Text style={styles.readOnlyNote}>
+              Only the meeting organizer can edit or cancel this event.
+            </Text>
+          ) : null}
+
           <Text style={styles.label}>Title</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, readOnly && styles.inputDisabled]}
             placeholder="Event title"
             placeholderTextColor={theme.textMuted}
             value={title}
             onChangeText={setTitle}
+            editable={!readOnly}
           />
 
           <Text style={styles.label}>Description (optional)</Text>
           <TextInput
-            style={[styles.input, styles.textarea]}
+            style={[styles.input, styles.textarea, readOnly && styles.inputDisabled]}
             placeholder="Details"
             placeholderTextColor={theme.textMuted}
             value={description}
             onChangeText={setDescription}
             multiline
+            editable={!readOnly}
           />
 
           {/* All-day toggle */}
-          <Pressable style={styles.toggleRow} onPress={() => setAllDay((v) => !v)}>
+          <Pressable
+            style={styles.toggleRow}
+            onPress={() => !readOnly && setAllDay((v) => !v)}
+            disabled={readOnly}
+          >
             <Text style={styles.toggleLabel}>All day</Text>
             <View style={[styles.toggle, allDay && styles.toggleOn]}>
               <View style={[styles.knob, allDay && styles.knobOn]} />
@@ -841,7 +938,8 @@ function EventModal({
                   { backgroundColor: c },
                   color === c && styles.swatchActive,
                 ]}
-                onPress={() => setColor(c)}
+                onPress={() => !readOnly && setColor(c)}
+                disabled={readOnly}
               />
             ))}
           </View>
@@ -867,6 +965,52 @@ function EventModal({
                 <Video size={15} color="#fff" />
                 <Text style={styles.joinBtnText}>Join Meeting</Text>
               </Pressable>
+
+              {/* Participant roster (Required / Optional + organizer tag) */}
+              {meetingParticipants.length > 0 ? (
+                <View style={styles.rosterWrap}>
+                  <View style={styles.rosterGroup}>
+                    <Text style={styles.rosterGroupLabel}>Required</Text>
+                    <View style={styles.rosterChips}>
+                      {meetingParticipants
+                        .filter(
+                          (p) =>
+                            p.role === "organizer" ||
+                            p.participant_type === "required",
+                        )
+                        .map((p) => (
+                          <View key={String(p.user_id)} style={styles.rosterBadge}>
+                            <Text style={styles.rosterBadgeText}>
+                              {String(p.full_name || p.username || "User")}
+                              {p.role === "organizer" ? " (organizer)" : ""}
+                            </Text>
+                          </View>
+                        ))}
+                    </View>
+                  </View>
+                  {meetingParticipants.some(
+                    (p) => p.participant_type === "optional",
+                  ) ? (
+                    <View style={styles.rosterGroup}>
+                      <Text style={styles.rosterGroupLabel}>Optional</Text>
+                      <View style={styles.rosterChips}>
+                        {meetingParticipants
+                          .filter((p) => p.participant_type === "optional")
+                          .map((p) => (
+                            <View
+                              key={String(p.user_id)}
+                              style={[styles.rosterBadge, styles.rosterBadgeOptional]}
+                            >
+                              <Text style={styles.rosterBadgeText}>
+                                {String(p.full_name || p.username || "User")}
+                              </Text>
+                            </View>
+                          ))}
+                      </View>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
             </View>
           ) : null}
 
@@ -893,10 +1037,11 @@ function EventModal({
 
               {addMeeting ? (
                 <View style={styles.meetingOptions}>
-                  <Text style={styles.label}>Participants</Text>
-                  {participants.length > 0 ? (
+                  {/* Required participants */}
+                  <Text style={styles.label}>Required participants</Text>
+                  {requiredParticipants.length > 0 ? (
                     <View style={styles.chipWrap}>
-                      {participants.map((p) => {
+                      {requiredParticipants.map((p) => {
                         const hasConflict = conflicts.some(
                           (c) => c.userId === p.id,
                         );
@@ -925,9 +1070,80 @@ function EventModal({
                       })}
                     </View>
                   ) : null}
+
+                  {/* Optional participants */}
+                  <Text style={styles.label}>Optional participants</Text>
+                  {optionalParticipants.length > 0 ? (
+                    <View style={styles.chipWrap}>
+                      {optionalParticipants.map((p) => {
+                        const hasConflict = conflicts.some(
+                          (c) => c.userId === p.id,
+                        );
+                        return (
+                          <View
+                            key={p.id}
+                            style={[
+                              styles.chip,
+                              styles.chipOptional,
+                              hasConflict && styles.chipConflict,
+                            ]}
+                          >
+                            {hasConflict ? (
+                              <AlertTriangle size={11} color={theme.danger} />
+                            ) : null}
+                            <Text style={styles.chipText} numberOfLines={1}>
+                              {p.full_name}
+                            </Text>
+                            <Pressable
+                              onPress={() => removeParticipant(p.id)}
+                              hitSlop={6}
+                            >
+                              <X size={12} color={theme.textSecondary} />
+                            </Pressable>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ) : null}
+
+                  {/* Required/Optional target switch for the search box */}
+                  <View style={styles.pickerTargetRow}>
+                    <Pressable
+                      style={[
+                        styles.pickerTargetBtn,
+                        pickerTarget === "required" && styles.pickerTargetBtnActive,
+                      ]}
+                      onPress={() => setPickerTarget("required")}
+                    >
+                      <Text
+                        style={[
+                          styles.pickerTargetText,
+                          pickerTarget === "required" && styles.pickerTargetTextActive,
+                        ]}
+                      >
+                        Required
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={[
+                        styles.pickerTargetBtn,
+                        pickerTarget === "optional" && styles.pickerTargetBtnActive,
+                      ]}
+                      onPress={() => setPickerTarget("optional")}
+                    >
+                      <Text
+                        style={[
+                          styles.pickerTargetText,
+                          pickerTarget === "optional" && styles.pickerTargetTextActive,
+                        ]}
+                      >
+                        Optional
+                      </Text>
+                    </Pressable>
+                  </View>
                   <TextInput
                     style={styles.input}
-                    placeholder="Search people to invite…"
+                    placeholder={`Search people to invite (${pickerTarget})…`}
                     placeholderTextColor={theme.textMuted}
                     value={query}
                     onChangeText={setQuery}
@@ -1001,21 +1217,25 @@ function EventModal({
             </>
           ) : null}
 
-          <Pressable
-            style={[styles.submit, (!title.trim() || busy) && styles.submitDisabled]}
-            onPress={submit}
-            disabled={!title.trim() || busy}
-          >
-            {busy ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.submitText}>
-                {editing ? "Save Changes" : "Create Event"}
-              </Text>
-            )}
-          </Pressable>
+          {/* Invitees can't save — only the organizer sees the Save button. */}
+          {!readOnly ? (
+            <Pressable
+              style={[styles.submit, (!title.trim() || busy) && styles.submitDisabled]}
+              onPress={submit}
+              disabled={!title.trim() || busy}
+            >
+              {busy ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.submitText}>
+                  {editing ? "Save Changes" : "Create Event"}
+                </Text>
+              )}
+            </Pressable>
+          ) : null}
 
-          {editing ? (
+          {/* Delete/Cancel is organizer-only. Meeting events read "Cancel Event". */}
+          {editing && !readOnly ? (
             <Pressable
               style={styles.deleteBtn}
               onPress={confirmDelete}
@@ -1023,7 +1243,13 @@ function EventModal({
             >
               <Trash2 size={16} color={theme.danger} />
               <Text style={styles.deleteText}>
-                {deleting ? "Deleting..." : "Delete Event"}
+                {deleting
+                  ? hasMeeting
+                    ? "Cancelling..."
+                    : "Deleting..."
+                  : hasMeeting
+                    ? "Cancel Event"
+                    : "Delete Event"}
               </Text>
             </Pressable>
           ) : null}
@@ -1102,6 +1328,9 @@ const styles = StyleSheet.create({
     borderLeftColor: theme.border,
   },
   hourEvent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
     borderRadius: 6,
     borderLeftWidth: 3,
     paddingHorizontal: 8,
@@ -1172,7 +1401,8 @@ const styles = StyleSheet.create({
   },
   colorBar: { width: 4 },
   eventBody: { flex: 1, padding: 14, gap: 4 },
-  eventTitle: { fontSize: 15, fontWeight: "600", color: theme.text },
+  eventTitleRow: { flexDirection: "row", alignItems: "center", gap: 5 },
+  eventTitle: { fontSize: 15, fontWeight: "600", color: theme.text, flexShrink: 1 },
   eventMeta: { flexDirection: "row", alignItems: "center", gap: 5 },
   eventTime: { fontSize: 12, color: theme.textSecondary },
   eventDesc: { fontSize: 12, color: theme.textMuted },
@@ -1205,6 +1435,13 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   modalTitle: { fontSize: 18, fontWeight: "700", color: theme.text },
+  readOnlyNote: {
+    fontSize: 12,
+    color: theme.textMuted,
+    fontStyle: "italic",
+    marginBottom: 4,
+  },
+  inputDisabled: { opacity: 0.6 },
   label: {
     fontSize: 11,
     fontWeight: "600",
@@ -1334,7 +1571,47 @@ const styles = StyleSheet.create({
     maxWidth: "100%",
   },
   chipConflict: { borderColor: theme.danger },
+  chipOptional: { borderStyle: "dashed" },
   chipText: { fontSize: 13, color: theme.text, maxWidth: 140 },
+  // Required/Optional target switch for the participant search box.
+  pickerTargetRow: {
+    flexDirection: "row",
+    gap: 6,
+    marginTop: 4,
+  },
+  pickerTargetBtn: {
+    flex: 1,
+    paddingVertical: 7,
+    borderRadius: theme.radiusSm,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    backgroundColor: theme.glass,
+    alignItems: "center",
+  },
+  pickerTargetBtnActive: { backgroundColor: theme.primary, borderColor: theme.primary },
+  pickerTargetText: { fontSize: 12, fontWeight: "600", color: theme.textSecondary },
+  pickerTargetTextActive: { color: "#fff" },
+  // Existing-meeting participant roster (banner).
+  rosterWrap: { gap: 8, marginTop: 4 },
+  rosterGroup: { gap: 4 },
+  rosterGroupLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: theme.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  rosterChips: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  rosterBadge: {
+    backgroundColor: theme.surface,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radiusFull,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  rosterBadgeOptional: { borderStyle: "dashed" },
+  rosterBadgeText: { fontSize: 12, color: theme.text },
   resultsList: {
     backgroundColor: theme.surface,
     borderWidth: 1,

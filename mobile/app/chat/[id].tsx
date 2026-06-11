@@ -49,6 +49,7 @@ import {
   editMessage,
   forwardMessage,
   getConversations,
+  getChatPresence,
   getMessages,
   markConversationRead,
   pinMessage,
@@ -60,6 +61,7 @@ import {
 } from "../../src/features";
 import { Forward } from "lucide-react-native";
 import { socket } from "../../src/realtime/socket";
+import ChatAvatar from "../../src/components/ChatAvatar";
 import {
   useKeyboardInset,
   scrollFocusedIntoView,
@@ -158,6 +160,9 @@ export default function ChatThread() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
+  // Peer (1:1) identity + live status for the header avatar badge.
+  const [peerUserId, setPeerUserId] = useState<number | null>(null);
+  const [peerStatus, setPeerStatus] = useState<string | null>(null);
   // Voice recording (expo-audio).
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder);
@@ -180,6 +185,39 @@ export default function ChatThread() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Resolve the 1:1 peer's userId + initial status for the header badge.
+  useEffect(() => {
+    let active = true;
+    getConversations()
+      .then(({ data }) => {
+        if (!active) return;
+        const conv = (data || []).find((c) => c.id === convId);
+        if (conv && !conv.is_group && conv.other_user_id) {
+          const uid = conv.other_user_id;
+          setPeerUserId(uid);
+          getChatPresence([uid])
+            .then((r) => {
+              if (active) setPeerStatus(r.data?.[uid]?.userStatus ?? null);
+            })
+            .catch(() => {});
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [convId]);
+
+  // Keep the peer's header status live via the unified `user_status` event.
+  useEffect(() => {
+    const off = socket.subscribe((msg) => {
+      if (msg.type !== "user_status") return;
+      if (!peerUserId || msg.data?.userId !== peerUserId) return;
+      setPeerStatus(msg.data.effective);
+    });
+    return off;
+  }, [peerUserId]);
 
   // Live incoming messages for this conversation.
   useEffect(() => {
@@ -504,6 +542,19 @@ export default function ChatThread() {
       <Stack.Screen
         options={{
           title: name || "Chat",
+          headerTitle: () => (
+            <View style={styles.headerTitleWrap}>
+              <ChatAvatar
+                name={name}
+                size={32}
+                userStatus={peerUserId ? peerStatus : undefined}
+                ringColor={theme.bg}
+              />
+              <Text style={styles.headerTitleText} numberOfLines={1}>
+                {name || "Chat"}
+              </Text>
+            </View>
+          ),
           headerRight: () => (
             <View style={styles.headerActions}>
               <Pressable onPress={() => startCall("voice")} hitSlop={8}>
@@ -1001,6 +1052,13 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   headerActions: { flexDirection: "row", gap: 18, alignItems: "center" },
+  headerTitleWrap: { flexDirection: "row", alignItems: "center", gap: 10 },
+  headerTitleText: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: theme.text,
+    maxWidth: 180,
+  },
   list: { padding: 12, gap: 8, paddingBottom: 16 },
   bubbleRow: { flexDirection: "row", alignItems: "center", gap: 4 },
   rowMine: { justifyContent: "flex-end" },

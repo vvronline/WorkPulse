@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { useAuth } from "../../src/auth/AuthContext";
+import { socket } from "../../src/realtime/socket";
 import { theme } from "../../src/theme";
 import WorkTimerCard from "../../src/components/WorkTimerCard";
 import TodayEventsCard from "../../src/components/TodayEventsCard";
@@ -106,6 +107,21 @@ export default function Dashboard() {
       load();
     }, [load]),
   );
+
+  // Real-time refresh: refetch events when a calendar/meeting change is
+  // broadcast (mirrors the web Dashboard's useWebSocket subscription).
+  useEffect(() => {
+    const off = socket.subscribe((msg) => {
+      if (
+        msg.type === "calendar_refresh" ||
+        msg.type === "meeting_updated" ||
+        msg.type === "meeting_cancelled"
+      ) {
+        load();
+      }
+    });
+    return off;
+  }, [load]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);

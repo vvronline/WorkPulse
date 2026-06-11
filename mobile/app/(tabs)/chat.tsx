@@ -34,6 +34,7 @@ import {
   deleteConversation,
   favouriteConversation,
   getAllCallHistory,
+  getChatPresence,
   getConversations,
   pinConversation,
   searchChatUsers,
@@ -43,6 +44,7 @@ import {
 } from "../../src/features";
 import { useAuth } from "../../src/auth/AuthContext";
 import { socket } from "../../src/realtime/socket";
+import ChatAvatar from "../../src/components/ChatAvatar";
 import {
   useKeyboardInset,
   scrollFocusedIntoView,
@@ -111,17 +113,47 @@ export default function ChatScreen() {
   // Per-conversation action menu.
   const [menuConv, setMenuConv] = useState<Conversation | null>(null);
 
+  // Live presence map for 1:1 conversation peers (userId → effective status).
+  // Mirrors the web `userStatusMap` so chat avatars show a status badge.
+  const [userStatusMap, setUserStatusMap] = useState<Record<number, string>>(
+    {},
+  );
+
+  const loadPresence = useCallback(async (convs: Conversation[]) => {
+    const ids = Array.from(
+      new Set(
+        convs
+          .filter((c) => !c.is_group && c.other_user_id)
+          .map((c) => c.other_user_id as number),
+      ),
+    );
+    if (ids.length === 0) return;
+    try {
+      const { data } = await getChatPresence(ids);
+      setUserStatusMap((prev) => {
+        const nextMap = { ...prev };
+        for (const [id, entry] of Object.entries(data || {})) {
+          nextMap[Number(id)] = entry.userStatus;
+        }
+        return nextMap;
+      });
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const load = useCallback(async () => {
     try {
       const { data } = await getConversations();
       setItems(data || []);
+      loadPresence(data || []);
     } catch {
       /* ignore */
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [loadPresence]);
 
   const loadCalls = useCallback(async () => {
     try {
@@ -145,6 +177,13 @@ export default function ChatScreen() {
       load();
       const off = socket.subscribe((msg) => {
         if (msg.type === "chat_message") load();
+        // Keep peer status badges live (mirrors web userStatusMap upkeep).
+        if (msg.type === "user_status" && msg.data?.userId) {
+          setUserStatusMap((prev) => ({
+            ...prev,
+            [msg.data.userId]: msg.data.effective,
+          }));
+        }
       });
       return off;
     }, [load]),
@@ -237,9 +276,16 @@ export default function ChatScreen() {
         onPress={() => openConv(item)}
         android_ripple={{ color: theme.surfaceHover }}
       >
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{initials(name)}</Text>
-        </View>
+        <ChatAvatar
+          name={name}
+          avatar={item.is_group ? null : item.other_avatar}
+          size={48}
+          userStatus={
+            !item.is_group && item.other_user_id
+              ? userStatusMap[item.other_user_id]
+              : undefined
+          }
+        />
         <View style={styles.body}>
           <View style={styles.rowTop}>
             <View style={styles.nameWrap}>
@@ -400,9 +446,12 @@ export default function ChatScreen() {
                 onPress={() => startWithUser(u)}
                 android_ripple={{ color: theme.surfaceHover }}
               >
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>{initials(u.full_name)}</Text>
-                </View>
+                <ChatAvatar
+                  name={u.full_name}
+                  avatar={u.avatar}
+                  size={48}
+                  userStatus={userStatusMap[u.id]}
+                />
                 <View style={styles.body}>
                   <Text style={styles.name} numberOfLines={1}>
                     {u.full_name}

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Image,
   Modal,
   Pressable,
@@ -12,8 +11,10 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
+import { useDialog } from "../src/hooks/useDialog";
+import { socket } from "../src/realtime/socket";
 import {
   Bell,
   Building2,
@@ -119,6 +120,7 @@ function StatusDot({ meta, size = 14 }: { meta: StatusMetaEntry; size?: number }
 export default function Profile() {
   const { user, logout, refreshUser } = useAuth();
   const router = useRouter();
+  const { alert, confirm, dialog } = useDialog();
   const [editOpen, setEditOpen] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
   const [soundsOpen, setSoundsOpen] = useState(false);
@@ -148,6 +150,27 @@ export default function Profile() {
       .catch(() => {});
   }, [loadStatus]);
 
+  // Keep status live: subscribe to the unified `user_status` WS event so the
+  // displayed state reflects server-side changes (mirrors web StatusContext).
+  useEffect(() => {
+    const off = socket.subscribe((msg) => {
+      if (msg.type !== "user_status") return;
+      const d = msg.data;
+      if (!d || d.userId !== user?.id) return;
+      setStatus((prev) => ({ ...(prev as StatusPayload), ...d }));
+    });
+    return off;
+  }, [user?.id]);
+
+  // Re-fetch authoritative status whenever the screen regains focus (covers
+  // the case where the WS reconnected while the app was backgrounded).
+  useFocusEffect(
+    useCallback(() => {
+      socket.connect();
+      loadStatus();
+    }, [loadStatus]),
+  );
+
   const onLogout = async () => {
     await logout();
     router.replace("/login");
@@ -156,7 +179,7 @@ export default function Profile() {
   async function pickAvatar() {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
-      Alert.alert("Permission needed", "Allow photo access to set an avatar.");
+      alert("Permission needed", "Allow photo access to set an avatar.");
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -171,28 +194,27 @@ export default function Profile() {
       await uploadAvatar(result.assets[0].uri);
       await refreshUser();
     } catch (e: any) {
-      Alert.alert("Error", e?.response?.data?.error || "Failed to upload avatar");
+      alert("Error", e?.response?.data?.error || "Failed to upload avatar");
     } finally {
       setUploading(false);
     }
   }
 
   function confirmRemoveAvatar() {
-    Alert.alert("Remove Photo", "Are you sure you want to remove your profile photo?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Remove",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            await apiRemoveAvatar();
-            await refreshUser();
-          } catch (e: any) {
-            Alert.alert("Error", e?.response?.data?.error || "Failed to remove photo");
-          }
-        },
+    confirm({
+      title: "Remove Photo",
+      message: "Are you sure you want to remove your profile photo?",
+      confirmText: "Remove",
+      isDanger: true,
+      onConfirm: async () => {
+        try {
+          await apiRemoveAvatar();
+          await refreshUser();
+        } catch (e: any) {
+          alert("Error", e?.response?.data?.error || "Failed to remove photo");
+        }
       },
-    ]);
+    });
   }
 
   async function pickStatus(key: ManualStatus) {
@@ -211,8 +233,12 @@ export default function Profile() {
         messageExpiresAt: status?.statusMessageExpiresAt ?? null,
       });
       setStatus(data);
+      // Re-fetch the authoritative effective state. The PUT response can
+      // resolve to "offline" if the WS presence session isn't open yet;
+      // re-reading shortly after reflects the real state.
+      loadStatus();
     } catch (e: any) {
-      Alert.alert("Error", e?.response?.data?.error || "Failed to set status");
+      alert("Error", e?.response?.data?.error || "Failed to set status");
     }
   }
 
@@ -222,8 +248,9 @@ export default function Profile() {
     try {
       const { data } = await setPresencePreference(next);
       setStatus(data);
+      loadStatus();
     } catch (e: any) {
-      Alert.alert("Error", e?.response?.data?.error || "Failed to update preference");
+      alert("Error", e?.response?.data?.error || "Failed to update preference");
     }
   }
 
@@ -378,6 +405,8 @@ export default function Profile() {
         visible={soundsOpen}
         onClose={() => setSoundsOpen(false)}
       />
+
+      {dialog}
     </ScrollView>
   );
 }
@@ -447,6 +476,7 @@ function EditProfileModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { alert, dialog } = useDialog();
   const [name, setName] = useState(initialName);
   const [username, setUsername] = useState(initialUsername);
   const [email, setEmail] = useState(initialEmail);
@@ -469,7 +499,7 @@ function EditProfileModal({
       }
       onSaved();
     } catch (e: any) {
-      Alert.alert("Error", e?.response?.data?.error || "Failed to update profile");
+      alert("Error", e?.response?.data?.error || "Failed to update profile");
     } finally {
       setBusy(false);
     }
@@ -511,6 +541,7 @@ function EditProfileModal({
       >
         {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitText}>Save</Text>}
       </Pressable>
+      {dialog}
     </ModalShell>
   );
 }
@@ -526,13 +557,14 @@ function ChangePasswordModal({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const { alert, dialog } = useDialog();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function save() {
     if (next.length < 8) {
-      Alert.alert("Weak password", "New password must be at least 8 characters.");
+      alert("Weak password", "New password must be at least 8 characters.");
       return;
     }
     setBusy(true);
@@ -540,13 +572,12 @@ function ChangePasswordModal({
       await changePassword({ current_password: current, new_password: next });
       setCurrent("");
       setNext("");
-      Alert.alert(
-        "Password changed",
-        "Please sign in again with your new password.",
-        [{ text: "OK", onPress: onChanged }],
-      );
+      // Sign the user out after a successful change (mirrors web). The themed
+      // alert here is informational; logout happens immediately after.
+      alert("Password changed", "Please sign in again with your new password.");
+      onChanged();
     } catch (e: any) {
-      Alert.alert("Error", e?.response?.data?.error || "Failed to change password");
+      alert("Error", e?.response?.data?.error || "Failed to change password");
     } finally {
       setBusy(false);
     }
@@ -579,6 +610,7 @@ function ChangePasswordModal({
       >
         {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitText}>Update</Text>}
       </Pressable>
+      {dialog}
     </ModalShell>
   );
 }

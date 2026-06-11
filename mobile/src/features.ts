@@ -352,6 +352,19 @@ export function toggleReaction(messageId: number, emoji: string) {
   return api.post(`/chat/messages/${messageId}/reactions`, { emoji });
 }
 
+/**
+ * Bulk presence + resolved effective status for a set of users. Mirrors the
+ * web `getPresence` (GET /api/chat/presence?userIds=1,2,3). Response shape:
+ *   { [userId]: { presence: 'online'|'offline', userStatus: '<effective>' } }
+ */
+export type PresenceEntry = { presence: string; userStatus: string };
+
+export function getChatPresence(userIds: number[]) {
+  return api.get<Record<string, PresenceEntry>>("/chat/presence", {
+    params: { userIds: userIds.join(",") },
+  });
+}
+
 /* ─── Chat: groups, files, message actions (mirror client/src/api.ts) ─── */
 
 export function createGroupConversation(name: string, userIds: number[]) {
@@ -543,6 +556,35 @@ export function createMeeting(data: {
     "/meetings",
     data,
   );
+}
+
+export type MeetingParticipant = {
+  user_id: number;
+  full_name?: string | null;
+  username?: string | null;
+  avatar?: string | null;
+  role?: "organizer" | "participant" | string;
+  participant_type?: "required" | "optional" | string | null;
+  status?: string | null;
+};
+
+export type MeetingDetail = {
+  id: number;
+  meeting_code: string;
+  title: string;
+  description?: string | null;
+  created_by?: number | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  participants?: MeetingParticipant[];
+  [k: string]: unknown;
+};
+
+// Fetch a single meeting by its shareable code (mirrors the web `getMeeting`).
+// The response includes a `participants` array with role/participant_type so the
+// calendar can render Required/Optional badges and the organizer tag.
+export function getMeeting(code: string) {
+  return api.get<MeetingDetail>(`/meetings/${code}`);
 }
 
 export type MeetingConflict = {
