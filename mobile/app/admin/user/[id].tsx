@@ -31,12 +31,15 @@ import {
 } from "../../../src/constants/roles";
 import {
   adminResetPassword,
+  cancelRoleChange,
   deleteAdminUser,
   getAdminUser,
+  getRoleChangeRequests,
   toggleUserActive,
   updateUserAssignment,
   updateUserRole,
   type AdminUser,
+  type RoleChangeRequest,
 } from "../../../src/admin";
 import {
   getOrgDepartments,
@@ -65,12 +68,23 @@ export default function AdminUserDetail() {
 
   // Editable assignment + role state
   const [role, setRole] = useState<string>("");
+  const [roleReason, setRoleReason] = useState("");
   const [deptId, setDeptId] = useState<string | number | null>(null);
   const [teamId, setTeamId] = useState<string | number | null>(null);
   const [managerId, setManagerId] = useState<string | number | null>(null);
 
+  // Pending role-change request for this user (if any).
+  const [pendingRequest, setPendingRequest] = useState<RoleChangeRequest | null>(
+    null,
+  );
+
   const [pwOpen, setPwOpen] = useState(false);
   const [newPw, setNewPw] = useState("");
+
+  // super_admin / platform_admin apply role changes immediately; everyone
+  // else (e.g. hr_admin) submits a role-change request that needs approval.
+  const isDirectRoleEditor =
+    me?.role === "super_admin" || me?.role === "platform_admin";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -78,6 +92,7 @@ export default function AdminUserDetail() {
       const { data } = await getAdminUser(id);
       setU(data);
       setRole(data.role);
+      setRoleReason("");
       setDeptId(data.department_id ?? null);
       setTeamId(data.team_id ?? null);
       setManagerId(data.manager_id ?? null);
@@ -85,6 +100,17 @@ export default function AdminUserDetail() {
       Alert.alert("Error", "Failed to load user");
     } finally {
       setLoading(false);
+    }
+    // Look up any pending role-change request targeting this user.
+    try {
+      const { data: reqs } = await getRoleChangeRequests({ status: "pending" });
+      const match =
+        (reqs || []).find(
+          (r) => String(r.target_user_id) === String(id),
+        ) || null;
+      setPendingRequest(match);
+    } catch {
+      setPendingRequest(null);
     }
     const [dRes, tRes, mRes] = await Promise.allSettled([
       getOrgDepartments(),
@@ -143,12 +169,36 @@ export default function AdminUserDetail() {
     if (!u || role === u.role) return;
     setBusy(true);
     try {
-      const { data } = await updateUserRole(u.id, role);
-      Alert.alert("Role", data.message || "Role updated");
+      const { data } = await updateUserRole(u.id, role, roleReason || undefined);
+      Alert.alert(
+        "Role",
+        data.message ||
+          (isDirectRoleEditor
+            ? "Role updated"
+            : "Role change request submitted"),
+      );
+      setRoleReason("");
       await load();
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Failed to update role");
       setRole(u.role);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelPendingRole() {
+    if (!pendingRequest) return;
+    setBusy(true);
+    try {
+      await cancelRoleChange(pendingRequest.id);
+      Alert.alert("Cancelled", "Role change request cancelled");
+      await load();
+    } catch (e: any) {
+      Alert.alert(
+        "Error",
+        e?.response?.data?.error || "Failed to cancel request",
+      );
     } finally {
       setBusy(false);
     }
@@ -288,6 +338,37 @@ export default function AdminUserDetail() {
         </Text>
       ) : (
         <>
+          {/* Pending role request banner */}
+          {pendingRequest ? (
+            <View style={styles.pendingBanner}>
+              <Text style={styles.pendingText}>
+                Pending role change:{" "}
+                <Text style={styles.pendingStrong}>
+                  {roleLabel(
+                    pendingRequest.from_role ||
+                      pendingRequest.current_role ||
+                      "",
+                  )}
+                </Text>{" "}
+                →{" "}
+                <Text style={styles.pendingStrong}>
+                  {roleLabel(
+                    pendingRequest.to_role ||
+                      pendingRequest.requested_role ||
+                      "",
+                  )}
+                </Text>
+              </Text>
+              <Pressable
+                style={styles.cancelReqBtn}
+                onPress={cancelPendingRole}
+                disabled={busy}
+              >
+                <Text style={styles.cancelReqText}>Cancel request</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
           {/* Role */}
           <View style={styles.section}>
             <View style={styles.sectionTitleRow}>
@@ -300,14 +381,34 @@ export default function AdminUserDetail() {
               options={roleOptions}
               onChange={(v) => setRole(String(v))}
             />
+            {/* hr_admin (non-direct editors) must supply a reason shown to
+                approvers when requesting a role change. */}
+            {role !== u.role && !isDirectRoleEditor ? (
+              <>
+                <Text style={styles.fieldLabel}>
+                  Reason (shown to approvers)
+                </Text>
+                <TextInput
+                  style={styles.input}
+                  value={roleReason}
+                  onChangeText={setRoleReason}
+                  placeholder="Why this change?"
+                  placeholderTextColor={theme.textMuted}
+                />
+              </>
+            ) : null}
             {role !== u.role ? (
               <Pressable
                 style={styles.saveBtn}
                 onPress={saveRole}
-                disabled={busy}
+                disabled={busy || !!pendingRequest}
               >
                 <Text style={styles.saveBtnText}>
-                  {busy ? "Saving…" : "Update role"}
+                  {busy
+                    ? "Saving…"
+                    : isDirectRoleEditor
+                      ? "Update role"
+                      : "Submit role request"}
                 </Text>
               </Pressable>
             ) : null}
@@ -571,4 +672,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
   dangerBtnText: { fontSize: 14, fontWeight: "600" },
+  pendingBanner: {
+    backgroundColor: theme.warning + "1F",
+    borderWidth: 1,
+    borderColor: theme.warning + "44",
+    borderRadius: theme.radiusLg,
+    padding: 14,
+    gap: 10,
+  },
+  pendingText: { color: theme.text, fontSize: 13 },
+  pendingStrong: { fontWeight: "700", color: theme.text },
+  cancelReqBtn: {
+    alignSelf: "flex-start",
+    backgroundColor: theme.surface,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radiusSm,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+  },
+  cancelReqText: { color: theme.textSecondary, fontSize: 13, fontWeight: "600" },
 });

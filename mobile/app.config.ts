@@ -36,6 +36,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "android.permission.CAMERA",
       "android.permission.MODIFY_AUDIO_SETTINGS",
       "android.permission.ACCESS_NETWORK_STATE",
+      "android.permission.ACCESS_FINE_LOCATION",
+      "android.permission.ACCESS_COARSE_LOCATION",
     ],
   },
   web: {
@@ -58,6 +60,22 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
           "Allow WorkPulse to access your camera for video calls.",
         microphonePermission:
           "Allow WorkPulse to access your microphone for calls.",
+      },
+    ],
+    [
+      "expo-camera",
+      {
+        cameraPermission:
+          "Allow WorkPulse to access your camera for face enrollment and attendance verification.",
+      },
+    ],
+    [
+      "expo-location",
+      {
+        locationAlwaysAndWhenInUsePermission:
+          "Allow WorkPulse to use your location to verify office attendance at clock-in.",
+        locationWhenInUsePermission:
+          "Allow WorkPulse to use your location to verify office attendance at clock-in.",
       },
     ],
   ],

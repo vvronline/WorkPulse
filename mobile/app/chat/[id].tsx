@@ -66,18 +66,14 @@ import {
   scrollFocusedIntoView,
 } from "../../src/hooks/useKeyboardInset";
 
-// Quick-reaction row — matches the web ReactionPicker exactly.
+// Quick-reaction row — matches the web MessageToolbar QUICK_EMOJIS exactly.
 const EMOJIS = [
   "\u{1F44D}", // 👍
   "\u2764\uFE0F", // ❤️
   "\u{1F602}", // 😂
   "\u{1F62E}", // 😮
-  "\u{1F622}", // 😢
   "\u{1F525}", // 🔥
-  "\u{1F44F}", // 👏
   "\u{1F389}", // 🎉
-  "\u{1F44E}", // 👎
-  "\u{1F4AF}", // 💯
 ];
 
 // Full emoji set for the "All Emoji" browser (grouped, common reactions).
@@ -732,14 +728,14 @@ export default function ChatThread() {
               style={styles.barIconBtn}
               onPress={() => setShowAllEmoji(true)}
             >
-              <Smile size={22} color={theme.textSecondary} />
+              <Smile size={18} color={theme.textSecondary} />
             </Pressable>
             <View style={styles.barDivider} />
             <Pressable
               style={styles.barIconBtn}
               onPress={() => reactTarget && startReply(reactTarget)}
             >
-              <CornerUpLeft size={20} color={theme.textSecondary} />
+              <CornerUpLeft size={17} color={theme.textSecondary} />
             </Pressable>
             <Pressable
               style={styles.barIconBtn}
@@ -749,7 +745,7 @@ export default function ChatThread() {
                 if (t) setActionTarget(t);
               }}
             >
-              <MoreHorizontal size={20} color={theme.textSecondary} />
+              <MoreHorizontal size={17} color={theme.textSecondary} />
             </Pressable>
           </Pressable>
         </Pressable>
@@ -1032,9 +1028,9 @@ const styles = StyleSheet.create({
     borderRadius: theme.radiusFull,
     borderWidth: 1,
     borderColor: theme.glassBorder,
-    paddingHorizontal: 6,
-    paddingVertical: 4,
-    maxWidth: "94%",
+    paddingHorizontal: 4,
+    paddingVertical: 3,
+    maxWidth: "96%",
     shadowColor: "#000",
     shadowOpacity: 0.3,
     shadowRadius: 24,
@@ -1042,25 +1038,25 @@ const styles = StyleSheet.create({
     elevation: 10,
   },
   emojiBtn: {
-    width: 40,
-    height: 40,
+    width: 32,
+    height: 32,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 20,
+    borderRadius: 16,
   },
-  emojiText: { fontSize: 24 },
+  emojiText: { fontSize: 20 },
   barIconBtn: {
-    width: 38,
-    height: 38,
+    width: 30,
+    height: 30,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 19,
+    borderRadius: 15,
   },
   barDivider: {
     width: 1,
-    height: 24,
+    height: 20,
     backgroundColor: theme.glassBorder,
-    marginHorizontal: 4,
+    marginHorizontal: 2,
   },
   allOverlay: { flex: 1, justifyContent: "flex-end" },
   allScrim: {

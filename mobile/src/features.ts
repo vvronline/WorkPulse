@@ -977,6 +977,15 @@ export type OrgInfo = {
   memberCount?: number;
   deptCount?: number;
   teamCount?: number;
+  // Attendance verification (face + geofence/wifi). When
+  // `attendance_verification_enabled` is true, clock-in requires a face
+  // descriptor and (for office/hybrid) a location or office Wi-Fi BSSID.
+  attendance_verification_enabled?: boolean;
+  office_latitude?: number | string | null;
+  office_longitude?: number | string | null;
+  office_radius_m?: number | null;
+  office_wifi_verification_enabled?: boolean;
+  office_wifi_bssids?: unknown[] | null;
 };
 
 export function getCurrentOrg() {

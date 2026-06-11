@@ -2,18 +2,19 @@ import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { Stack } from "expo-router";
 import { ScanFace, ShieldCheck, Trash2 } from "lucide-react-native";
 import { theme } from "../../src/theme";
-import { SERVER_ORIGIN } from "../../src/config";
+import FaceCaptureWebView from "../../src/components/FaceCaptureWebView";
 import {
   clearFaceEnrollment,
+  enrollFace,
   getFaceStatus,
   type FaceStatus,
 } from "../../src/features";
@@ -22,6 +23,7 @@ export default function FaceEnrollment() {
   const [status, setStatus] = useState<FaceStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [capturing, setCapturing] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -39,6 +41,23 @@ export default function FaceEnrollment() {
     load();
   }, []);
 
+  async function handleCapture(descriptor: number[]) {
+    setBusy(true);
+    try {
+      await enrollFace(descriptor);
+      Alert.alert("Enrolled", "Your face has been enrolled successfully.");
+      setCapturing(false);
+      await load();
+    } catch (e: any) {
+      Alert.alert(
+        "Error",
+        e?.response?.data?.error || "Failed to enroll face. Try again.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function confirmClear() {
     Alert.alert(
       "Clear Face Enrollment",
@@ -54,7 +73,10 @@ export default function FaceEnrollment() {
               await clearFaceEnrollment();
               await load();
             } catch (e: any) {
-              Alert.alert("Error", e?.response?.data?.error || "Failed to clear enrollment");
+              Alert.alert(
+                "Error",
+                e?.response?.data?.error || "Failed to clear enrollment",
+              );
             } finally {
               setBusy(false);
             }
@@ -64,15 +86,10 @@ export default function FaceEnrollment() {
     );
   }
 
-  function openWebEnroll() {
-    Linking.openURL(`${SERVER_ORIGIN}/profile/face`).catch(() => {
-      Alert.alert("Error", "Could not open the web enrollment page.");
-    });
-  }
-
   if (loading) {
     return (
       <View style={[styles.screen, styles.center]}>
+        <Stack.Screen options={{ title: "Face Enrollment" }} />
         <ActivityIndicator color={theme.primary} />
       </View>
     );
@@ -82,6 +99,8 @@ export default function FaceEnrollment() {
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
+      <Stack.Screen options={{ title: "Face Enrollment" }} />
+
       <View style={styles.heroIcon}>
         <ScanFace size={40} color={theme.primary} />
       </View>
@@ -106,42 +125,67 @@ export default function FaceEnrollment() {
                 Enrolled on {new Date(status.enrolled_at).toLocaleDateString()}
               </Text>
             ) : (
-              <Text style={styles.statusSub}>
-                No face descriptor stored yet.
-              </Text>
+              <Text style={styles.statusSub}>No face descriptor stored yet.</Text>
             )}
           </View>
         </View>
       </View>
 
-      <Text style={styles.note}>
-        Face capture uses your device camera and on-device processing available
-        on the web app. Open the web enrollment page to capture or update your
-        face descriptor.
-      </Text>
+      {capturing ? (
+        <>
+          <Text style={styles.note}>
+            Center your face in the frame, ensure good lighting, then capture.
+            Your photo never leaves the device — only a numeric face signature
+            is sent.
+          </Text>
+          <FaceCaptureWebView
+            captureLabel={enrolled ? "Re-enroll Face" : "Enroll Face"}
+            capturingLabel="Enrolling…"
+            onCapture={handleCapture}
+            disabled={busy}
+          />
+          <Pressable
+            style={styles.secondaryBtn}
+            onPress={() => setCapturing(false)}
+            disabled={busy}
+          >
+            <Text style={styles.secondaryBtnText}>Cancel</Text>
+          </Pressable>
+        </>
+      ) : (
+        <>
+          <Text style={styles.note}>
+            Face capture uses your device camera with on-device processing. Tap
+            below to {enrolled ? "re-enroll" : "enroll"} your face.
+          </Text>
+          <Pressable
+            style={styles.primaryBtn}
+            onPress={() => setCapturing(true)}
+          >
+            <ScanFace size={16} color="#fff" />
+            <Text style={styles.primaryBtnText}>
+              {enrolled ? "Re-enroll Face" : "Enroll Face"}
+            </Text>
+          </Pressable>
 
-      <Pressable style={styles.primaryBtn} onPress={openWebEnroll}>
-        <Text style={styles.primaryBtnText}>
-          {enrolled ? "Re-enroll on Web" : "Enroll on Web"}
-        </Text>
-      </Pressable>
-
-      {enrolled ? (
-        <Pressable
-          style={[styles.dangerBtn, busy && styles.disabled]}
-          onPress={confirmClear}
-          disabled={busy}
-        >
-          {busy ? (
-            <ActivityIndicator color={theme.danger} />
-          ) : (
-            <>
-              <Trash2 size={16} color={theme.danger} />
-              <Text style={styles.dangerBtnText}>Clear Enrollment</Text>
-            </>
-          )}
-        </Pressable>
-      ) : null}
+          {enrolled ? (
+            <Pressable
+              style={[styles.dangerBtn, busy && styles.disabled]}
+              onPress={confirmClear}
+              disabled={busy}
+            >
+              {busy ? (
+                <ActivityIndicator color={theme.danger} />
+              ) : (
+                <>
+                  <Trash2 size={16} color={theme.danger} />
+                  <Text style={styles.dangerBtnText}>Clear Enrollment</Text>
+                </>
+              )}
+            </Pressable>
+          ) : null}
+        </>
+      )}
     </ScrollView>
   );
 }
@@ -187,13 +231,28 @@ const styles = StyleSheet.create({
   },
   primaryBtn: {
     width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
     backgroundColor: theme.primary,
     borderRadius: theme.radiusSm,
     paddingVertical: 14,
-    alignItems: "center",
     marginTop: 8,
   },
   primaryBtnText: { color: "#fff", fontSize: 15, fontWeight: "600" },
+  secondaryBtn: {
+    width: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.surface,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radiusSm,
+    paddingVertical: 14,
+    marginTop: 8,
+  },
+  secondaryBtnText: { color: theme.textSecondary, fontSize: 15, fontWeight: "600" },
   dangerBtn: {
     width: "100%",
     flexDirection: "row",

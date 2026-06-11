@@ -198,10 +198,18 @@ export default function Profile() {
   async function pickStatus(key: ManualStatus) {
     setStatusOpen(false);
     try {
+      // Clearing "appear offline" first so the new status is visible.
       if (status?.presencePreference === "invisible") {
-        await setPresencePreference("auto");
+        const { data: pref } = await setPresencePreference("auto");
+        setStatus(pref);
       }
-      const { data } = await setMyStatus({ status: key });
+      // Preserve any existing status message + expiry — the server resets
+      // these to null when they're omitted from the PUT body.
+      const { data } = await setMyStatus({
+        status: key,
+        message: status?.statusMessage ?? null,
+        messageExpiresAt: status?.statusMessageExpiresAt ?? null,
+      });
       setStatus(data);
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Failed to set status");

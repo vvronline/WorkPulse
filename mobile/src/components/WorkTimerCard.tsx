@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { useRouter } from "expo-router";
 import Svg, { Circle } from "react-native-svg";
 import {
   Building2,
@@ -20,6 +21,8 @@ import {
   type TrackerStatus,
   type WorkState,
 } from "../tracker";
+import { getCurrentOrg, getFaceStatus } from "../features";
+import ClockInVerifyModal from "./ClockInVerifyModal";
 
 const RADIUS = 42;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
@@ -31,10 +34,15 @@ function stateColor(state: WorkState) {
 }
 
 export default function WorkTimerCard() {
+  const router = useRouter();
   const [status, setStatus] = useState<TrackerStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [action, setAction] = useState<string | null>(null);
   const [workMode, setWorkMode] = useState<"office" | "remote">("office");
+
+  // Attendance verification gate (face + geofence/wifi).
+  const [verifyEnabled, setVerifyEnabled] = useState(false);
+  const [verifyModalOpen, setVerifyModalOpen] = useState(false);
 
   // Live-ticking seconds seeded from the server snapshot.
   const [floorSec, setFloorSec] = useState(0);
@@ -56,7 +64,47 @@ export default function WorkTimerCard() {
 
   useEffect(() => {
     refresh();
+    // Detect whether this org enforces face + location verification at clock-in.
+    getCurrentOrg()
+      .then((r) => setVerifyEnabled(!!r.data?.attendance_verification_enabled))
+      .catch(() => setVerifyEnabled(false));
   }, [refresh]);
+
+  // Decide between the one-tap clock-in (verification off) and the
+  // verify-modal flow (verification on). For the modal flow we first check the
+  // user has enrolled a face — if not, route them to enrollment.
+  const handleLogin = useCallback(async () => {
+    if (!verifyEnabled) {
+      run("clockIn", () => clockIn(workMode));
+      return;
+    }
+    setAction("clockIn");
+    try {
+      const { data: face } = await getFaceStatus();
+      if (!face?.enrolled) {
+        setAction(null);
+        Alert.alert(
+          "Face enrollment required",
+          "Please enroll your face before clocking in. Open Face Enrollment now?",
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Enroll",
+              onPress: () => router.push("/profile/face"),
+            },
+          ],
+        );
+        return;
+      }
+      setAction(null);
+      setVerifyModalOpen(true);
+    } catch {
+      setAction(null);
+      // If the face-status check fails, still open the modal — the server
+      // will return a clear error if enrollment is missing.
+      setVerifyModalOpen(true);
+    }
+  }, [verifyEnabled, workMode, router]);
 
   // Tick every second while active.
   const stateRef = useRef<WorkState>("logged_out");
@@ -245,7 +293,7 @@ export default function WorkTimerCard() {
                 </View>
                 <Pressable
                   style={[styles.btn, styles.btnSuccess]}
-                  onPress={() => run("clockIn", () => clockIn(workMode))}
+                  onPress={handleLogin}
                   disabled={!!action}
                 >
                   <Play size={14} color="#fff" />
@@ -304,6 +352,17 @@ export default function WorkTimerCard() {
           </View>
         </View>
       </View>
+
+      {/* Face + location verification flow (verification-enabled orgs). */}
+      <ClockInVerifyModal
+        visible={verifyModalOpen}
+        workMode={workMode}
+        onClose={() => setVerifyModalOpen(false)}
+        onSuccess={() => {
+          setVerifyModalOpen(false);
+          refresh();
+        }}
+      />
     </View>
   );
 }
