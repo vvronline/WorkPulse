@@ -3,9 +3,7 @@ import {
   ActivityIndicator,
   FlatList,
   Image,
-  KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -473,11 +471,7 @@ export default function ChatThread() {
           <ActivityIndicator size="large" color={theme.primary} />
         </View>
       ) : (
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          keyboardVerticalOffset={90}
-        >
+        <View style={{ flex: 1 }}>
           <FlatList
             ref={listRef}
             data={messages}
@@ -701,7 +695,7 @@ export default function ChatThread() {
               </>
             )}
           </View>
-        </KeyboardAvoidingView>
+        </View>
       )}
 
       {/* Emoji reaction bar — STRICTLY matches the web screenshot: one single

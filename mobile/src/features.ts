@@ -365,18 +365,28 @@ export function uploadChatFile(convId: number, uri: string, fileName?: string) {
   const name = fileName || uri.split("/").pop() || "file";
   const match = /\.(\w+)$/.exec(name);
   const ext = (match?.[1] || "").toLowerCase();
-  const mime =
-    ext === "png"
-      ? "image/png"
-      : ext === "jpg" || ext === "jpeg"
-        ? "image/jpeg"
-        : ext === "webp"
-          ? "image/webp"
-          : ext === "gif"
-            ? "image/gif"
-            : ext === "pdf"
-              ? "application/pdf"
-              : "application/octet-stream";
+  // Map common extensions to the MIME types the server's chat upload
+  // fileFilter allows. Audio (voice notes) MUST be included — otherwise an
+  // .m4a recording would fall back to application/octet-stream, which the
+  // server rejects and the voice message silently fails to send.
+  const MIME_BY_EXT: Record<string, string> = {
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    webp: "image/webp",
+    gif: "image/gif",
+    bmp: "image/bmp",
+    pdf: "application/pdf",
+    // Audio (voice messages)
+    m4a: "audio/mp4",
+    mp4: "audio/mp4",
+    mp3: "audio/mpeg",
+    aac: "audio/mp4",
+    ogg: "audio/ogg",
+    wav: "audio/wav",
+    webm: "audio/webm",
+  };
+  const mime = MIME_BY_EXT[ext] || "application/octet-stream";
   const form = new FormData();
   form.append("file", { uri, name, type: mime } as any);
   return api.post<ChatMessage>(`/chat/conversations/${convId}/files`, form, {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Platform } from "react-native";
+import { Keyboard, Platform } from "react-native";
 
 /**
  * Returns the number of pixels at the bottom of the screen currently covered
@@ -11,12 +11,18 @@ import { Platform } from "react-native";
  * measure how much the layout viewport has shrunk and return that as an inset
  * the caller can apply (e.g. `paddingBottom` / `translateY`).
  *
- * On **native** we return 0 and rely on `KeyboardAvoidingView`, which works
- * correctly there.
+ * On **native** we listen to the `Keyboard` events directly and return the
+ * keyboard's height. This is required under Expo's edge-to-edge mode on
+ * Android, where the window does NOT resize on keyboard show and
+ * `KeyboardAvoidingView` (with `behavior=undefined`) is effectively a no-op,
+ * leaving bottom-anchored composers hidden behind the keyboard. Callers can
+ * apply the returned value as `paddingBottom` / `marginBottom` to lift the
+ * composer above the keyboard.
  */
 export function useKeyboardInset(): number {
   const [inset, setInset] = useState(0);
 
+  // ── Web: measure via visualViewport ──────────────────────────────────────
   useEffect(() => {
     if (Platform.OS !== "web") return;
     if (typeof window === "undefined") return;
@@ -40,6 +46,30 @@ export function useKeyboardInset(): number {
     return () => {
       vv.removeEventListener("resize", update);
       vv.removeEventListener("scroll", update);
+    };
+  }, []);
+
+  // ── Native (iOS/Android): measure via Keyboard events ─────────────────────
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+
+    // iOS reports the height ahead of the animation via `keyboardWillChangeFrame`;
+    // Android only fires the `did*` events.
+    const showEvt =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const onShow = (e: { endCoordinates?: { height?: number } }) => {
+      setInset(e?.endCoordinates?.height ?? 0);
+    };
+    const onHide = () => setInset(0);
+
+    const showSub = Keyboard.addListener(showEvt, onShow);
+    const hideSub = Keyboard.addListener(hideEvt, onHide);
+    return () => {
+      showSub.remove();
+      hideSub.remove();
     };
   }, []);
 
