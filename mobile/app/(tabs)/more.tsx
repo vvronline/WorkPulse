@@ -3,7 +3,6 @@ import { useRouter } from "expo-router";
 import {
   Building2,
   CalendarCheck,
-  CalendarDays,
   ChevronRight,
   FileText,
   Server,
@@ -40,16 +39,11 @@ export default function MoreScreen() {
 
   const items: Item[] = [
     {
-      label: "Leaves",
-      icon: CalendarDays,
-      onPress: () => router.push("/attendance?tab=leaves"),
-    },
-    { label: "Notes", icon: FileText, onPress: () => router.push("/notes") },
-    {
       label: "Attendance",
       icon: CalendarCheck,
       onPress: () => router.push("/attendance"),
     },
+    { label: "Notes", icon: FileText, onPress: () => router.push("/notes") },
   ];
 
   if (user?.org_id && user?.role !== "platform_admin") {

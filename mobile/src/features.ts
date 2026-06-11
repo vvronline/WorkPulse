@@ -480,6 +480,7 @@ export type CalendarEvent = {
   color?: string | null;
   task_title?: string | null;
   meeting_code?: string | null;
+  meeting_created_by?: number | null;
 };
 
 export function getCalendarEvents(from: string, to: string) {
@@ -493,6 +494,10 @@ export function createCalendarEvent(data: {
   end_time: string;
   all_day?: boolean;
   color?: string;
+  // Optional linkage to an online meeting (mirrors the web calendar). When
+  // present, the server fans the event out to every meeting participant.
+  meeting_id?: number | null;
+  task_id?: number | string | null;
 }) {
   return api.post<CalendarEvent>("/calendar", data);
 }
@@ -513,6 +518,50 @@ export function updateCalendarEvent(
   },
 ) {
   return api.put<CalendarEvent>(`/calendar/${id}`, data);
+}
+
+/* ───────────────────────── Meetings ───────────────────────── */
+
+export type MeetingSettings = {
+  muteOnJoin: boolean;
+  allowScreenShare: boolean;
+};
+
+// Create an online meeting (mirrors the web `createMeeting`). Returns the new
+// meeting row including its `id` (link it to a calendar event via `meeting_id`)
+// and its shareable `meeting_code`.
+export function createMeeting(data: {
+  title: string;
+  description?: string;
+  required_participant_ids?: number[];
+  optional_participant_ids?: number[];
+  settings?: MeetingSettings;
+  start_time: string;
+  end_time: string;
+}) {
+  return api.post<{ id: number; meeting_code: string; [k: string]: unknown }>(
+    "/meetings",
+    data,
+  );
+}
+
+export type MeetingConflict = {
+  userId: number;
+  name: string;
+  events: { id: number; title: string; start_time: string; end_time: string }[];
+};
+
+// Check whether any invitees already have a calendar event overlapping the
+// proposed slot (mirrors the web `checkMeetingConflicts`).
+export function checkMeetingConflicts(data: {
+  user_ids: number[];
+  start_time: string;
+  end_time: string;
+}) {
+  return api.post<{ conflicts: MeetingConflict[] }>(
+    "/meetings/check-conflicts",
+    data,
+  );
 }
 
 /* ───────────── Leave apply / Task create ───────────── */

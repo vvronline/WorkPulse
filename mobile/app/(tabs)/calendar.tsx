@@ -10,15 +10,31 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { ChevronLeft, ChevronRight, Clock, Plus, Trash2, X } from "lucide-react-native";
-import { theme } from "../../src/theme";
 import {
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Plus,
+  Trash2,
+  Video,
+  X,
+} from "lucide-react-native";
+import { theme } from "../../src/theme";
+import { useAuth, userHasFeature } from "../../src/auth/AuthContext";
+import {
+  checkMeetingConflicts,
   createCalendarEvent,
+  createMeeting,
   deleteCalendarEvent,
   getCalendarEvents,
+  searchChatUsers,
   updateCalendarEvent,
   type CalendarEvent,
+  type MeetingConflict,
 } from "../../src/features";
+import { SERVER_ORIGIN } from "../../src/config";
+import { Linking } from "react-native";
 
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 
@@ -508,6 +524,8 @@ function toISOLocal(day: string, hour: number, minute: number) {
   return new Date(y, m - 1, d, hour, minute, 0, 0).toISOString();
 }
 
+type Invitee = { id: number; full_name: string; username?: string };
+
 function EventModal({
   visible,
   selectedDay,
@@ -521,6 +539,8 @@ function EventModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { user } = useAuth();
+  const meetingsEnabled = userHasFeature(user, "meetings");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [allDay, setAllDay] = useState(false);
@@ -529,10 +549,27 @@ function EventModal({
   const [color, setColor] = useState(EVENT_COLORS[0]);
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Meeting scheduling state (create-mode only, mirrors the web EventFormModal).
+  const [addMeeting, setAddMeeting] = useState(false);
+  const [participants, setParticipants] = useState<Invitee[]>([]);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<Invitee[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [muteOnJoin, setMuteOnJoin] = useState(false);
+  const [allowScreenShare, setAllowScreenShare] = useState(true);
+  const [conflicts, setConflicts] = useState<MeetingConflict[]>([]);
 
   // Hydrate fields from the editing event (or defaults) when opened.
   useEffect(() => {
     if (!visible) return;
+    // Reset meeting state each time the modal opens.
+    setAddMeeting(false);
+    setParticipants([]);
+    setQuery("");
+    setResults([]);
+    setMuteOnJoin(false);
+    setAllowScreenShare(true);
+    setConflicts([]);
     if (editing) {
       setTitle(editing.title);
       setDescription(editing.description || "");
@@ -556,22 +593,87 @@ function EventModal({
     }
   }, [visible, editing, selectedDay]);
 
+  // Debounced people search for the participant picker.
+  useEffect(() => {
+    if (!addMeeting) return;
+    const q = query.trim();
+    if (q.length < 2) {
+      setResults([]);
+      return;
+    }
+    const t = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const r = await searchChatUsers(q);
+        const chosen = new Set(participants.map((p) => p.id));
+        setResults(
+          (r.data || [])
+            .filter((u) => !chosen.has(u.id) && u.id !== user?.id)
+            .map((u) => ({
+              id: u.id,
+              full_name: u.full_name || u.username,
+              username: u.username,
+            })),
+        );
+      } catch {
+        setResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [query, addMeeting, participants, user?.id]);
+
+  const day = editing ? ymd(new Date(editing.start_time)) : selectedDay;
+  const startISO = allDay
+    ? toISOLocal(day, 0, 0)
+    : toISOLocal(day, startHour, 0);
+  const endISO = allDay
+    ? toISOLocal(day, 23, 59)
+    : toISOLocal(day, Math.min(23, startHour + durationHrs), 0);
+
+  // Debounced conflict check whenever participants/time change.
+  useEffect(() => {
+    if (!addMeeting || participants.length === 0) {
+      setConflicts([]);
+      return;
+    }
+    const t = setTimeout(async () => {
+      try {
+        const r = await checkMeetingConflicts({
+          user_ids: participants.map((p) => p.id),
+          start_time: startISO,
+          end_time: endISO,
+        });
+        setConflicts(r.data?.conflicts || []);
+      } catch {
+        setConflicts([]);
+      }
+    }, 500);
+    return () => clearTimeout(t);
+  }, [addMeeting, participants, startISO, endISO]);
+
   const hour12 = (h: number) => {
     const ampm = h < 12 ? "AM" : "PM";
     const hh = h === 0 ? 12 : h > 12 ? h - 12 : h;
     return `${hh}:00 ${ampm}`;
   };
 
+  function addParticipant(u: Invitee) {
+    setParticipants((prev) => [...prev, u]);
+    setQuery("");
+    setResults([]);
+  }
+
+  function removeParticipant(id: number) {
+    setParticipants((prev) => prev.filter((p) => p.id !== id));
+  }
+
   async function submit() {
     if (!title.trim()) return;
     setBusy(true);
-    const day = editing ? ymd(new Date(editing.start_time)) : selectedDay;
-    const start_time = allDay
-      ? toISOLocal(day, 0, 0)
-      : toISOLocal(day, startHour, 0);
-    const end_time = allDay
-      ? toISOLocal(day, 23, 59)
-      : toISOLocal(day, Math.min(23, startHour + durationHrs), 0);
+    const start_time = startISO;
+    const end_time = endISO;
     try {
       if (editing) {
         await updateCalendarEvent(editing.id, {
@@ -581,6 +683,27 @@ function EventModal({
           end_time,
           all_day: allDay,
           color,
+        });
+      } else if (addMeeting && meetingsEnabled) {
+        // Create the meeting first, then link it to the calendar event so the
+        // server fans the event out to every invited participant.
+        const mtg = await createMeeting({
+          title: title.trim(),
+          description: description.trim() || undefined,
+          required_participant_ids: participants.map((p) => p.id),
+          optional_participant_ids: [],
+          settings: { muteOnJoin, allowScreenShare },
+          start_time,
+          end_time,
+        });
+        await createCalendarEvent({
+          title: title.trim(),
+          description: description.trim() || undefined,
+          start_time,
+          end_time,
+          all_day: false,
+          color,
+          meeting_id: mtg.data.id,
         });
       } else {
         await createCalendarEvent({
@@ -722,6 +845,161 @@ function EventModal({
               />
             ))}
           </View>
+
+          {/* Online meeting banner for an existing meeting-linked event */}
+          {editing && editing.meeting_code ? (
+            <View style={styles.meetingBanner}>
+              <View style={styles.meetingBannerHead}>
+                <Video size={16} color={theme.primary} />
+                <Text style={styles.meetingBannerTitle}>Online meeting</Text>
+              </View>
+              <Text style={styles.meetingCodeText} selectable>
+                {SERVER_ORIGIN}/meeting/{editing.meeting_code}
+              </Text>
+              <Pressable
+                style={styles.joinBtn}
+                onPress={() =>
+                  Linking.openURL(
+                    `${SERVER_ORIGIN}/meeting/${editing.meeting_code}`,
+                  )
+                }
+              >
+                <Video size={15} color="#fff" />
+                <Text style={styles.joinBtnText}>Join Meeting</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {/* Add-online-meeting toggle + participant picker (create mode only) */}
+          {!editing && meetingsEnabled ? (
+            <>
+              <Pressable
+                style={styles.toggleRow}
+                onPress={() => {
+                  const next = !addMeeting;
+                  setAddMeeting(next);
+                  // Meetings need a specific time slot — turn off all-day.
+                  if (next && allDay) setAllDay(false);
+                }}
+              >
+                <View style={styles.meetingToggleLabel}>
+                  <Video size={16} color={theme.primary} />
+                  <Text style={styles.toggleLabel}>Add online meeting</Text>
+                </View>
+                <View style={[styles.toggle, addMeeting && styles.toggleOn]}>
+                  <View style={[styles.knob, addMeeting && styles.knobOn]} />
+                </View>
+              </Pressable>
+
+              {addMeeting ? (
+                <View style={styles.meetingOptions}>
+                  <Text style={styles.label}>Participants</Text>
+                  {participants.length > 0 ? (
+                    <View style={styles.chipWrap}>
+                      {participants.map((p) => {
+                        const hasConflict = conflicts.some(
+                          (c) => c.userId === p.id,
+                        );
+                        return (
+                          <View
+                            key={p.id}
+                            style={[
+                              styles.chip,
+                              hasConflict && styles.chipConflict,
+                            ]}
+                          >
+                            {hasConflict ? (
+                              <AlertTriangle size={11} color={theme.danger} />
+                            ) : null}
+                            <Text style={styles.chipText} numberOfLines={1}>
+                              {p.full_name}
+                            </Text>
+                            <Pressable
+                              onPress={() => removeParticipant(p.id)}
+                              hitSlop={6}
+                            >
+                              <X size={12} color={theme.textSecondary} />
+                            </Pressable>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ) : null}
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Search people to invite…"
+                    placeholderTextColor={theme.textMuted}
+                    value={query}
+                    onChangeText={setQuery}
+                    autoCapitalize="none"
+                  />
+                  {searching ? (
+                    <ActivityIndicator
+                      color={theme.primary}
+                      size="small"
+                      style={{ marginTop: 6 }}
+                    />
+                  ) : null}
+                  {results.length > 0 ? (
+                    <View style={styles.resultsList}>
+                      {results.map((u) => (
+                        <Pressable
+                          key={u.id}
+                          style={styles.resultRow}
+                          onPress={() => addParticipant(u)}
+                        >
+                          <Text style={styles.resultName}>{u.full_name}</Text>
+                          {u.username ? (
+                            <Text style={styles.resultUser}>@{u.username}</Text>
+                          ) : null}
+                        </Pressable>
+                      ))}
+                    </View>
+                  ) : null}
+
+                  {conflicts.length > 0 ? (
+                    <View style={styles.conflictBox}>
+                      <AlertTriangle size={14} color={theme.danger} />
+                      <View style={{ flex: 1 }}>
+                        {conflicts.map((c) => (
+                          <Text key={c.userId} style={styles.conflictText}>
+                            <Text style={styles.conflictName}>{c.name}</Text> has
+                            a conflict: “{c.events[0]?.title}”
+                          </Text>
+                        ))}
+                      </View>
+                    </View>
+                  ) : null}
+
+                  <Pressable
+                    style={styles.settingRow}
+                    onPress={() => setMuteOnJoin((v) => !v)}
+                  >
+                    <View style={[styles.checkbox, muteOnJoin && styles.checkboxOn]}>
+                      {muteOnJoin ? <Text style={styles.checkMark}>✓</Text> : null}
+                    </View>
+                    <Text style={styles.settingText}>Mute participants on join</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.settingRow}
+                    onPress={() => setAllowScreenShare((v) => !v)}
+                  >
+                    <View
+                      style={[
+                        styles.checkbox,
+                        allowScreenShare && styles.checkboxOn,
+                      ]}
+                    >
+                      {allowScreenShare ? (
+                        <Text style={styles.checkMark}>✓</Text>
+                      ) : null}
+                    </View>
+                    <Text style={styles.settingText}>Allow screen sharing</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+            </>
+          ) : null}
 
           <Pressable
             style={[styles.submit, (!title.trim() || busy) && styles.submitDisabled]}
@@ -1016,4 +1294,92 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   deleteText: { color: theme.danger, fontSize: 14, fontWeight: "600" },
+  // Meeting banner (edit mode, existing meeting event)
+  meetingBanner: {
+    backgroundColor: theme.glass,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radiusSm,
+    padding: 12,
+    marginTop: 12,
+    gap: 8,
+  },
+  meetingBannerHead: { flexDirection: "row", alignItems: "center", gap: 6 },
+  meetingBannerTitle: { fontSize: 14, fontWeight: "700", color: theme.text },
+  meetingCodeText: { fontSize: 12, color: theme.textSecondary },
+  joinBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: theme.primary,
+    borderRadius: theme.radiusSm,
+    paddingVertical: 10,
+  },
+  joinBtnText: { color: "#fff", fontSize: 14, fontWeight: "600" },
+  // Add-online-meeting toggle + participant picker (create mode)
+  meetingToggleLabel: { flexDirection: "row", alignItems: "center", gap: 8 },
+  meetingOptions: { gap: 6, marginTop: 4 },
+  chipWrap: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 4 },
+  chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: theme.surface,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radiusFull,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    maxWidth: "100%",
+  },
+  chipConflict: { borderColor: theme.danger },
+  chipText: { fontSize: 13, color: theme.text, maxWidth: 140 },
+  resultsList: {
+    backgroundColor: theme.surface,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radiusSm,
+    marginTop: 4,
+    overflow: "hidden",
+  },
+  resultRow: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.border,
+  },
+  resultName: { fontSize: 14, color: theme.text, fontWeight: "500" },
+  resultUser: { fontSize: 12, color: theme.textMuted },
+  conflictBox: {
+    flexDirection: "row",
+    gap: 8,
+    backgroundColor: "rgba(224,62,62,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(224,62,62,0.35)",
+    borderRadius: theme.radiusSm,
+    padding: 10,
+    marginTop: 6,
+  },
+  conflictText: { fontSize: 12, color: theme.textSecondary, lineHeight: 17 },
+  conflictName: { fontWeight: "700", color: theme.text },
+  settingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 8,
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: theme.inputBorder,
+    backgroundColor: theme.inputBg,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checkboxOn: { backgroundColor: theme.primary, borderColor: theme.primary },
+  checkMark: { color: "#fff", fontSize: 13, fontWeight: "700" },
+  settingText: { fontSize: 14, color: theme.text },
 });
