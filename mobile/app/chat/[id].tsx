@@ -9,6 +9,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -129,12 +130,27 @@ export default function ChatThread() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const kbInset = useKeyboardInset();
+  const { width: winWidth, height: winHeight } = useWindowDimensions();
   const { user } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState("");
   const [peerTyping, setPeerTyping] = useState(false);
   const [reactTarget, setReactTarget] = useState<ChatMessage | null>(null);
+  // Window-space rect of the long-pressed bubble so the reaction bar can be
+  // positioned right next to it (matching the web behavior), instead of being
+  // fixed in the middle of the screen.
+  const [reactAnchor, setReactAnchor] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    mine: boolean;
+  } | null>(null);
+  const [barSize, setBarSize] = useState<{ width: number; height: number }>({
+    width: 300,
+    height: 44,
+  });
   const [actionTarget, setActionTarget] = useState<ChatMessage | null>(null);
   const [forwardTarget, setForwardTarget] = useState<ChatMessage | null>(null);
   const [showAllEmoji, setShowAllEmoji] = useState(false);
@@ -449,6 +465,40 @@ export default function ChatThread() {
     });
   }
 
+  // Position the reaction bar right next to the long-pressed bubble (mirrors
+  // the web MessageBubble behavior). Falls back to centered if no anchor.
+  function computeBarPosition() {
+    if (!reactAnchor) {
+      return {
+        position: "absolute" as const,
+        top: winHeight / 2 - barSize.height / 2,
+        left: winWidth / 2 - barSize.width / 2,
+      };
+    }
+    const margin = 8;
+    const gap = 6;
+    const barW = barSize.width || 300;
+    const barH = barSize.height || 44;
+
+    // Horizontal: align with the bubble edge, clamped to the screen.
+    let left = reactAnchor.mine
+      ? reactAnchor.x + reactAnchor.width - barW
+      : reactAnchor.x;
+    left = Math.max(margin, Math.min(left, winWidth - barW - margin));
+
+    // Vertical: prefer above the bubble; if it doesn't fit, place below.
+    let top = reactAnchor.y - barH - gap;
+    if (top < insets.top + margin) {
+      top = reactAnchor.y + reactAnchor.height + gap;
+    }
+    top = Math.max(
+      insets.top + margin,
+      Math.min(top, winHeight - barH - margin),
+    );
+
+    return { position: "absolute" as const, top, left };
+  }
+
   return (
     <View style={styles.screen}>
       <Stack.Screen
@@ -499,7 +549,28 @@ export default function ChatThread() {
                 >
                   <View style={styles.bubbleCol}>
                     <Pressable
-                      onLongPress={() => !deleted && setReactTarget(item)}
+                      onLongPress={(e) => {
+                        if (deleted) return;
+                        const node = e.currentTarget as unknown as {
+                          measureInWindow?: (
+                            cb: (
+                              x: number,
+                              y: number,
+                              width: number,
+                              height: number,
+                            ) => void,
+                          ) => void;
+                        };
+                        if (node?.measureInWindow) {
+                          node.measureInWindow((x, y, width, height) => {
+                            setReactAnchor({ x, y, width, height, mine });
+                            setReactTarget(item);
+                          });
+                        } else {
+                          setReactAnchor(null);
+                          setReactTarget(item);
+                        }
+                      }}
                       delayLongPress={250}
                       style={[
                         styles.bubble,
@@ -592,7 +663,27 @@ export default function ChatThread() {
                         ))}
                         <Pressable
                           style={styles.addReactionBtn}
-                          onPress={() => setReactTarget(item)}
+                          onPress={(e) => {
+                            const node = e.currentTarget as unknown as {
+                              measureInWindow?: (
+                                cb: (
+                                  x: number,
+                                  y: number,
+                                  width: number,
+                                  height: number,
+                                ) => void,
+                              ) => void;
+                            };
+                            if (node?.measureInWindow) {
+                              node.measureInWindow((x, y, width, height) => {
+                                setReactAnchor({ x, y, width, height, mine });
+                                setReactTarget(item);
+                              });
+                            } else {
+                              setReactAnchor(null);
+                              setReactTarget(item);
+                            }
+                          }}
                         >
                           <Plus size={13} color={theme.textMuted} />
                         </Pressable>
@@ -705,10 +796,31 @@ export default function ChatThread() {
         visible={!!reactTarget}
         transparent
         animationType="fade"
-        onRequestClose={() => setReactTarget(null)}
+        onRequestClose={() => {
+          setReactTarget(null);
+          setReactAnchor(null);
+        }}
       >
-        <Pressable style={styles.pickerOverlay} onPress={() => setReactTarget(null)}>
-          <Pressable style={styles.pickerBar} onPress={() => {}}>
+        <Pressable
+          style={styles.pickerOverlay}
+          onPress={() => {
+            setReactTarget(null);
+            setReactAnchor(null);
+          }}
+        >
+          <Pressable
+            style={[styles.pickerBar, computeBarPosition()]}
+            onPress={() => {}}
+            onLayout={(e) => {
+              const { width, height } = e.nativeEvent.layout;
+              if (
+                Math.abs(width - barSize.width) > 1 ||
+                Math.abs(height - barSize.height) > 1
+              ) {
+                setBarSize({ width, height });
+              }
+            }}
+          >
             {EMOJIS.map((e) => (
               <Pressable
                 key={e}
