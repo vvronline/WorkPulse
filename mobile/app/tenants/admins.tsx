@@ -16,6 +16,7 @@ import { Stack } from "expo-router";
 import { Ban, CheckCircle2, KeyRound, Plus, Shield, X } from "lucide-react-native";
 import { theme } from "../../src/theme";
 import { useKeyboardInset } from "../../src/hooks/useKeyboardInset";
+import { PromptModal } from "../../src/components/PromptModal";
 import {
   createPlatformUser,
   deactivatePlatformUser,
@@ -36,16 +37,15 @@ export default function PlatformAdminsScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
+  // Cross-platform reset-password modal (Alert.prompt is iOS-only).
+  const [pwTarget, setPwTarget] = useState<PlatformUser | null>(null);
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwError, setPwError] = useState<string | null>(null);
+
   const load = useCallback(() => {
     setLoading(true);
     getPlatformUsers()
-      .then((r) => {
-        const d = r.data as unknown;
-        const arr = Array.isArray(d)
-          ? d
-          : ((d as any)?.data ?? (d as any)?.users ?? []);
-        setAdmins(arr);
-      })
+      .then((r) => setAdmins(Array.isArray(r.data) ? r.data : []))
       .catch(() => setAdmins([]))
       .finally(() => setLoading(false));
   }, []);
@@ -96,33 +96,24 @@ export default function PlatformAdminsScreen() {
     ]);
   }
 
-  function resetPassword(a: PlatformUser) {
-    Alert.prompt?.(
-      "Reset password",
-      `New password for ${a.full_name}`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Reset",
-          onPress: (pw?: string) => {
-            if (!pw || pw.length < 8) {
-              Alert.alert("Invalid", "Password must be at least 8 characters");
-              return;
-            }
-            resetPlatformUserPassword(a.id, pw)
-              .then(() => Alert.alert("Done", "Password reset"))
-              .catch((e: any) =>
-                Alert.alert("Error", e?.response?.data?.error || "Failed"),
-              );
-          },
-        },
-      ],
-      "secure-text",
-    ) ??
-      Alert.alert(
-        "Reset password",
-        "Password reset requires text input — please use the web console for this action on Android.",
-      );
+  async function submitResetPassword(values: Record<string, string>) {
+    if (!pwTarget) return;
+    const pw = values.password || "";
+    if (pw.length < 8) {
+      setPwError("Password must be at least 8 characters");
+      return;
+    }
+    setPwBusy(true);
+    setPwError(null);
+    try {
+      await resetPlatformUserPassword(pwTarget.id, pw);
+      setPwTarget(null);
+      Alert.alert("Done", "Password reset");
+    } catch (e: any) {
+      setPwError(e?.response?.data?.error || "Failed to reset password");
+    } finally {
+      setPwBusy(false);
+    }
   }
 
   return (
@@ -165,7 +156,10 @@ export default function PlatformAdminsScreen() {
               </View>
               <Pressable
                 style={styles.iconBtn}
-                onPress={() => resetPassword(item)}
+                onPress={() => {
+                  setPwError(null);
+                  setPwTarget(item);
+                }}
                 hitSlop={6}
               >
                 <KeyRound size={16} color={theme.textSecondary} />
@@ -190,6 +184,29 @@ export default function PlatformAdminsScreen() {
       <Pressable style={styles.fab} onPress={() => setModalOpen(true)}>
         <Plus size={24} color="#fff" />
       </Pressable>
+
+      <PromptModal
+        visible={!!pwTarget}
+        title="Reset password"
+        message={pwTarget ? `New password for ${pwTarget.full_name}` : undefined}
+        fields={[
+          {
+            key: "password",
+            label: "New password",
+            placeholder: "Min 8 characters",
+            secure: true,
+            required: true,
+          },
+        ]}
+        confirmLabel="Reset"
+        busy={pwBusy}
+        error={pwError}
+        onCancel={() => {
+          setPwTarget(null);
+          setPwError(null);
+        }}
+        onSubmit={submitResetPassword}
+      />
 
       <Modal
         visible={modalOpen}

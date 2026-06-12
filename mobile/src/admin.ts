@@ -332,23 +332,51 @@ export function deactivateInviteCode(id: number | string) {
 
 /* ───────────────────────── Platform Access (impersonation) ───────────────────────── */
 
+// Mirrors server/routes/platformAccess.ts `publicRow()`.
 export type IncomingAccessRequest = {
   id: number;
-  inspector_name?: string;
-  inspector_username?: string;
+  tenant_id?: number;
+  requested_by?: number;
+  requested_by_name?: string | null;
+  requested_by_email?: string | null;
+  requested_at: string;
   reason?: string | null;
+  scope?: "read" | "write" | string | null;
+  duration_minutes?: number | null;
   status: string;
-  created_at: string;
-  expires_at?: string | null;
-  scope?: string | null;
+  raw_status?: string;
+  approved_by?: number | null;
+  approved_by_name?: string | null;
+  approved_at?: string | null;
+  denied_reason?: string | null;
+  code_expires_at?: string | null;
+  consumed_at?: string | null;
+  session_ends_at?: string | null;
+  revoked_at?: string | null;
+  revoked_by_name?: string | null;
+  revoked_reason?: string | null;
+  cancelled_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
 };
 
-export function listIncomingAccessRequests(params?: { status?: string }) {
-  return api.get<IncomingAccessRequest[]>("/platform-access", { params });
+export function listIncomingAccessRequests(params?: {
+  status?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  return api.get<{
+    requests: IncomingAccessRequest[];
+    active_session?: IncomingAccessRequest | null;
+  }>("/platform-access", { params });
 }
 
 export function approveAccessRequest(id: number | string) {
-  return api.post<{ message: string }>(`/platform-access/${id}/approve`);
+  return api.post<{
+    message: string;
+    approval_code: string;
+    code_expires_at?: string;
+  }>(`/platform-access/${id}/approve`);
 }
 
 export function denyAccessRequest(id: number | string, reason?: string) {
@@ -365,29 +393,47 @@ export function revokeAccessSession(id: number | string, reason?: string) {
 
 /* ════════════════════════ PLATFORM CONSOLE (Tenants) ════════════════════════ */
 
+// Mirrors the `tenants` table rows returned by server/routes/tenants.ts.
 export type Tenant = {
   id: number;
-  name: string;
+  org_name: string;
   slug?: string | null;
   custom_domain?: string | null;
   status?: "active" | "suspended" | "deleted" | string;
   plan?: string | null;
   user_count?: number;
+  max_users?: number | null;
+  max_storage_mb?: number | null;
+  db_name?: string | null;
+  is_default?: boolean;
+  features?: Record<string, boolean> | null;
+  effective_features?: Record<string, boolean>;
   created_at?: string;
   suspended_at?: string | null;
   suspended_reason?: string | null;
 };
 
+// Mirrors GET /admin/tenants/overview.
 export type TenantOverview = {
-  total?: number;
-  active?: number;
-  suspended?: number;
-  totalUsers?: number;
-  [k: string]: unknown;
+  total_tenants?: number;
+  total_users?: number;
+  by_status?: Record<string, number>;
+  by_plan?: Record<string, number>;
+  trend_30d?: { day: string; count: string | number }[];
+  recent?: {
+    id: number;
+    org_name: string;
+    slug: string;
+    status: string;
+    created_at: string;
+  }[];
+  pool_stats?: Record<string, number>;
 };
 
 export function getTenants(params?: Record<string, string | number>) {
-  return api.get<{ tenants: Tenant[] }>("/admin/tenants", { params });
+  return api.get<{ total: number; tenants: Tenant[] }>("/admin/tenants", {
+    params,
+  });
 }
 
 export function getTenantOverview() {
@@ -398,12 +444,13 @@ export function getTenant(id: number | string) {
   return api.get<Tenant>(`/admin/tenants/${id}`);
 }
 
+// Mirrors GET /admin/tenants/:id/stats.
 export type TenantStats = {
-  users?: number;
-  activeUsers?: number;
-  tasks?: number;
-  storage?: number;
-  [k: string]: unknown;
+  user_count?: number;
+  task_count?: number;
+  message_count?: number;
+  db_size_bytes?: number;
+  last_activity?: string | null;
 };
 
 export function getTenantStats(id: number | string) {
@@ -411,13 +458,13 @@ export function getTenantStats(id: number | string) {
 }
 
 export function createTenant(data: {
-  name: string;
-  admin_email?: string;
-  admin_username?: string;
-  admin_password?: string;
+  org_name: string;
+  slug: string;
   plan?: string;
+  max_users?: number | null;
+  max_storage_mb?: number | null;
 }) {
-  return api.post<{ id: number; message: string }>("/admin/tenants", data);
+  return api.post<{ tenant: Tenant }>("/admin/tenants", data);
 }
 
 export function suspendTenant(
@@ -459,10 +506,23 @@ export function getTenantUsers(
   id: number | string,
   params?: Record<string, string | number>,
 ) {
-  return api.get<{ data?: TenantUser[]; users?: TenantUser[] }>(
+  return api.get<{ total?: number; users?: TenantUser[] }>(
     `/admin/tenants/${id}/users`,
     { params },
   );
+}
+
+export function updateTenantDomain(id: number | string, custom_domain: string) {
+  return api.put<{ tenant: Tenant }>(`/admin/tenants/${id}/domain`, {
+    custom_domain,
+  });
+}
+
+export function updateTenantLimits(
+  id: number | string,
+  data: { max_users?: number | null; max_storage_mb?: number | null },
+) {
+  return api.put<{ tenant: Tenant }>(`/admin/tenants/${id}/limits`, data);
 }
 
 export function updateTenantPlan(
@@ -484,17 +544,23 @@ export function updateTenantFeatures(id: number | string, features: unknown) {
 
 /* ───────────────────────── Platform: Plans ───────────────────────── */
 
-export type Plan = {
-  key: string;
-  name: string;
-  price?: number | null;
-  max_users?: number | null;
-  features?: Record<string, boolean> | string[];
-  [k: string]: unknown;
+// Mirrors GET /admin/tenants/plan-catalog — plans is an OBJECT keyed by plan
+// key (e.g. { standard: {...}, pro: {...} }), not an array.
+export type PlanDef = {
+  label: string;
+  description?: string;
+  features: Record<string, boolean>;
+  limits: { max_users?: number | null; max_storage_mb?: number | null };
+};
+
+export type PlanCatalog = {
+  plans: Record<string, PlanDef>;
+  feature_labels: Record<string, string>;
+  feature_keys?: string[];
 };
 
 export function getPlanCatalog() {
-  return api.get<{ plans: Plan[] } | Plan[]>("/admin/tenants/plan-catalog");
+  return api.get<PlanCatalog>("/admin/tenants/plan-catalog");
 }
 
 export function updatePlanCatalog(plans: unknown) {
@@ -513,9 +579,8 @@ export type PlatformUser = {
 };
 
 export function getPlatformUsers() {
-  return api.get<{ data?: PlatformUser[]; users?: PlatformUser[] } | PlatformUser[]>(
-    "/admin/tenants/platform-users",
-  );
+  // Server returns a bare array of platform_users rows.
+  return api.get<PlatformUser[]>("/admin/tenants/platform-users");
 }
 
 export function createPlatformUser(data: {
@@ -556,8 +621,23 @@ export function updatePlatformConfig(data: Record<string, unknown>) {
   return api.put("/admin/tenants/platform-config", data);
 }
 
+// Mirrors GET /admin/tenants/alerts → { alerts: [...] }.
+export type TenantAlert = {
+  tenant_id: number;
+  tenant_name: string;
+  slug: string;
+  alert_type:
+    | "users_approaching_limit"
+    | "storage_approaching_limit"
+    | "no_active_super_admin"
+    | string;
+  current_value: number;
+  limit_value: number;
+  percentage: number;
+};
+
 export function getTenantAlerts() {
-  return api.get<unknown[]>("/admin/tenants/alerts");
+  return api.get<{ alerts: TenantAlert[] }>("/admin/tenants/alerts");
 }
 
 export function getPlatformAuditLogs(params?: Record<string, string | number>) {

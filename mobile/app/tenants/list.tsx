@@ -12,6 +12,7 @@ import {
 import { Stack, useRouter } from "expo-router";
 import { Building2, Pause, Play, Search, Trash2, X } from "lucide-react-native";
 import { theme } from "../../src/theme";
+import { PromptModal } from "../../src/components/PromptModal";
 import {
   deleteTenant,
   getTenants,
@@ -32,6 +33,11 @@ function statusColor(status?: string): string {
   return theme.success;
 }
 
+type ConfirmAction = {
+  action: "suspend" | "delete";
+  tenant: Tenant;
+};
+
 export default function TenantListScreen() {
   const router = useRouter();
   const [tenants, setTenants] = useState<Tenant[]>([]);
@@ -40,6 +46,13 @@ export default function TenantListScreen() {
   const [debounced, setDebounced] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Password-confirm modal state for destructive lifecycle actions —
+  // mirrors the web TenantDetail confirm flow (server requires the acting
+  // platform admin's password for suspend/delete).
+  const [confirm, setConfirm] = useState<ConfirmAction | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
 
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current);
@@ -64,42 +77,6 @@ export default function TenantListScreen() {
     load();
   }, [load]);
 
-  function suspend(t: Tenant) {
-    Alert.prompt?.(
-      "Suspend tenant",
-      `Reason for suspending ${t.name}?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Suspend",
-          style: "destructive",
-          onPress: (reason?: string) => {
-            suspendTenant(t.id, reason)
-              .then(() => load())
-              .catch((e: any) =>
-                Alert.alert("Error", e?.response?.data?.error || "Failed"),
-              );
-          },
-        },
-      ],
-      "plain-text",
-    ) ??
-      // Android fallback (Alert.prompt is iOS-only)
-      Alert.alert("Suspend tenant", `Suspend ${t.name}?`, [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Suspend",
-          style: "destructive",
-          onPress: () =>
-            suspendTenant(t.id)
-              .then(() => load())
-              .catch((e: any) =>
-                Alert.alert("Error", e?.response?.data?.error || "Failed"),
-              ),
-        },
-      ]);
-  }
-
   function reactivate(t: Tenant) {
     reactivateTenant(t.id)
       .then(() => load())
@@ -108,24 +85,27 @@ export default function TenantListScreen() {
       );
   }
 
-  function confirmDelete(t: Tenant) {
-    Alert.alert(
-      "Delete tenant",
-      `Delete ${t.name}? This is a destructive operation.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: () =>
-            deleteTenant(t.id)
-              .then(() => load())
-              .catch((e: any) =>
-                Alert.alert("Error", e?.response?.data?.error || "Failed"),
-              ),
-        },
-      ],
-    );
+  async function submitConfirm(values: Record<string, string>) {
+    if (!confirm) return;
+    setConfirmBusy(true);
+    setConfirmError(null);
+    try {
+      if (confirm.action === "suspend") {
+        await suspendTenant(
+          confirm.tenant.id,
+          values.reason?.trim() || "Suspended by platform admin",
+          values.password,
+        );
+      } else {
+        await deleteTenant(confirm.tenant.id, false, values.password);
+      }
+      setConfirm(null);
+      load();
+    } catch (e: any) {
+      setConfirmError(e?.response?.data?.error || "Action failed");
+    } finally {
+      setConfirmBusy(false);
+    }
   }
 
   return (
@@ -188,10 +168,11 @@ export default function TenantListScreen() {
               </View>
               <View style={styles.body}>
                 <Text style={styles.name} numberOfLines={1}>
-                  {item.name}
+                  {item.org_name}
                 </Text>
                 <Text style={styles.meta} numberOfLines={1}>
                   {[
+                    item.slug,
                     item.plan,
                     item.user_count != null ? `${item.user_count} users` : null,
                     item.custom_domain,
@@ -216,30 +197,38 @@ export default function TenantListScreen() {
                     {item.status || "active"}
                   </Text>
                 </View>
-                {item.status === "suspended" ? (
-                  <Pressable
-                    onPress={() => reactivate(item)}
-                    hitSlop={6}
-                    style={styles.iconBtn}
-                  >
-                    <Play size={15} color={theme.success} />
-                  </Pressable>
-                ) : item.status !== "deleted" ? (
-                  <Pressable
-                    onPress={() => suspend(item)}
-                    hitSlop={6}
-                    style={styles.iconBtn}
-                  >
-                    <Pause size={15} color={theme.warning} />
-                  </Pressable>
-                ) : null}
-                <Pressable
-                  onPress={() => confirmDelete(item)}
-                  hitSlop={6}
-                  style={styles.iconBtn}
-                >
-                  <Trash2 size={15} color={theme.danger} />
-                </Pressable>
+                <View style={styles.actionBtns}>
+                  {item.status === "suspended" ? (
+                    <Pressable
+                      onPress={() => reactivate(item)}
+                      hitSlop={6}
+                      style={styles.iconBtn}
+                    >
+                      <Play size={15} color={theme.success} />
+                    </Pressable>
+                  ) : item.status !== "deleted" && !item.is_default ? (
+                    <Pressable
+                      onPress={() =>
+                        setConfirm({ action: "suspend", tenant: item })
+                      }
+                      hitSlop={6}
+                      style={styles.iconBtn}
+                    >
+                      <Pause size={15} color={theme.warning} />
+                    </Pressable>
+                  ) : null}
+                  {!item.is_default && item.status !== "deleted" ? (
+                    <Pressable
+                      onPress={() =>
+                        setConfirm({ action: "delete", tenant: item })
+                      }
+                      hitSlop={6}
+                      style={styles.iconBtn}
+                    >
+                      <Trash2 size={15} color={theme.danger} />
+                    </Pressable>
+                  ) : null}
+                </View>
               </View>
             </Pressable>
           )}
@@ -248,6 +237,55 @@ export default function TenantListScreen() {
           }
         />
       )}
+
+      <PromptModal
+        visible={!!confirm}
+        title={
+          confirm?.action === "suspend" ? "Suspend tenant" : "Delete tenant"
+        }
+        message={
+          confirm
+            ? confirm.action === "suspend"
+              ? `This will suspend "${confirm.tenant.org_name}" and block all its users from signing in. Re-enter your password to confirm.`
+              : `This will mark "${confirm.tenant.org_name}" as deleted. This action is recorded in the audit log. Re-enter your password to confirm.`
+            : undefined
+        }
+        fields={
+          confirm?.action === "suspend"
+            ? [
+                {
+                  key: "reason",
+                  label: "Reason (optional)",
+                  placeholder: "Reason for suspension",
+                },
+                {
+                  key: "password",
+                  label: "Your password",
+                  placeholder: "Enter your password",
+                  secure: true,
+                  required: true,
+                },
+              ]
+            : [
+                {
+                  key: "password",
+                  label: "Your password",
+                  placeholder: "Enter your password",
+                  secure: true,
+                  required: true,
+                },
+              ]
+        }
+        confirmLabel={confirm?.action === "suspend" ? "Suspend" : "Delete"}
+        destructive
+        busy={confirmBusy}
+        error={confirmError}
+        onCancel={() => {
+          setConfirm(null);
+          setConfirmError(null);
+        }}
+        onSubmit={submitConfirm}
+      />
     </View>
   );
 }
@@ -308,13 +346,14 @@ const styles = StyleSheet.create({
   name: { fontSize: 15, fontWeight: "600", color: theme.text },
   meta: { fontSize: 12, color: theme.textSecondary },
   actions: { alignItems: "flex-end", gap: 6 },
+  actionBtns: { flexDirection: "row", gap: 4 },
   statusPill: {
     borderRadius: theme.radiusFull,
     paddingHorizontal: 10,
     paddingVertical: 3,
   },
   statusText: { fontSize: 11, fontWeight: "600", textTransform: "capitalize" },
-  iconBtn: { padding: 2 },
+  iconBtn: { padding: 4 },
   empty: {
     color: theme.textMuted,
     fontSize: 13,

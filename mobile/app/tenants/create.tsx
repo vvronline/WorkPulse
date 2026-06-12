@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -17,7 +17,19 @@ import {
   useKeyboardInset,
   scrollFocusedIntoView,
 } from "../../src/hooks/useKeyboardInset";
-import { createTenant } from "../../src/admin";
+import { Dropdown, type DropdownOption } from "../../src/components/Dropdown";
+import { createTenant, getPlanCatalog } from "../../src/admin";
+
+// Mirrors server-side slug validation in routes/tenants.ts.
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$/;
+
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 50);
+}
 
 export default function CreateTenantScreen() {
   const router = useRouter();
@@ -25,30 +37,56 @@ export default function CreateTenantScreen() {
   const [busy, setBusy] = useState(false);
 
   const [name, setName] = useState("");
-  const [adminUsername, setAdminUsername] = useState("");
-  const [adminEmail, setAdminEmail] = useState("");
-  const [adminPassword, setAdminPassword] = useState("");
-  const [plan, setPlan] = useState("");
+  const [slug, setSlug] = useState("");
+  const [slugTouched, setSlugTouched] = useState(false);
+  const [plan, setPlan] = useState("standard");
+  const [planOptions, setPlanOptions] = useState<DropdownOption[]>([]);
+
+  useEffect(() => {
+    getPlanCatalog()
+      .then((r) =>
+        setPlanOptions(
+          Object.entries(r.data.plans || {}).map(([key, p]) => ({
+            value: key,
+            label: p.label || key,
+          })),
+        ),
+      )
+      .catch(() => setPlanOptions([]));
+  }, []);
+
+  // Auto-derive the slug from the name until the user edits it manually.
+  function onNameChange(v: string) {
+    setName(v);
+    if (!slugTouched) setSlug(slugify(v));
+  }
+
+  const slugError =
+    slug && !SLUG_RE.test(slug)
+      ? "3-50 chars, lowercase letters/numbers/dashes, no leading/trailing dash"
+      : null;
 
   async function submit() {
     if (!name.trim()) {
-      Alert.alert("Required", "Tenant name is required");
+      Alert.alert("Required", "Organization name is required");
+      return;
+    }
+    if (!slug.trim() || slugError) {
+      Alert.alert("Invalid slug", slugError || "Slug is required");
       return;
     }
     setBusy(true);
     try {
       const { data } = await createTenant({
-        name: name.trim(),
-        admin_username: adminUsername.trim() || undefined,
-        admin_email: adminEmail.trim() || undefined,
-        admin_password: adminPassword.trim() || undefined,
-        plan: plan.trim() || undefined,
+        org_name: name.trim(),
+        slug: slug.trim(),
+        plan: plan || undefined,
       });
-      Alert.alert("Tenant created", data.message || "Tenant provisioned", [
+      const created = data.tenant;
+      Alert.alert("Tenant created", `"${created.org_name}" provisioned.`, [
         {
           text: "Open",
-          onPress: () =>
-            router.replace(`/tenants/${data.id}` as never),
+          onPress: () => router.replace(`/tenants/${created.id}` as never),
         },
         { text: "Done", onPress: () => router.back() },
       ]);
@@ -73,68 +111,53 @@ export default function CreateTenantScreen() {
           <Text style={styles.heading}>Provision a new tenant</Text>
         </View>
         <Text style={styles.note}>
-          A dedicated database is created and the schema initialised.
+          A dedicated database is created and the schema initialised. Your
+          platform admin account is auto-seeded into the new tenant.
         </Text>
 
-        <Text style={styles.fieldLabel}>Tenant name *</Text>
+        <Text style={styles.fieldLabel}>Organization name *</Text>
         <TextInput
           style={styles.input}
           value={name}
-          onChangeText={setName}
+          onChangeText={onNameChange}
           onFocus={scrollFocusedIntoView}
           placeholder="Acme Inc"
           placeholderTextColor={theme.textMuted}
         />
 
-        <Text style={styles.fieldLabel}>Admin username</Text>
+        <Text style={styles.fieldLabel}>Slug *</Text>
         <TextInput
-          style={styles.input}
-          value={adminUsername}
-          onChangeText={setAdminUsername}
-          placeholder="admin"
+          style={[styles.input, slugError ? styles.inputError : null]}
+          value={slug}
+          onChangeText={(v) => {
+            setSlugTouched(true);
+            setSlug(v.toLowerCase());
+          }}
+          placeholder="acme-inc"
           placeholderTextColor={theme.textMuted}
           onFocus={scrollFocusedIntoView}
           autoCapitalize="none"
           autoCorrect={false}
         />
+        {slugError ? <Text style={styles.fieldError}>{slugError}</Text> : null}
 
-        <Text style={styles.fieldLabel}>Admin email</Text>
-        <TextInput
-          style={styles.input}
-          value={adminEmail}
-          onChangeText={setAdminEmail}
-          placeholder="admin@acme.com"
-          placeholderTextColor={theme.textMuted}
-          onFocus={scrollFocusedIntoView}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="email-address"
-        />
+        {planOptions.length > 0 ? (
+          <>
+            <Text style={styles.fieldLabel}>Plan</Text>
+            <Dropdown
+              label="Plan"
+              value={plan}
+              options={planOptions}
+              onChange={(v) => setPlan(String(v))}
+            />
+          </>
+        ) : null}
 
-        <Text style={styles.fieldLabel}>Admin password</Text>
-        <TextInput
-          style={styles.input}
-          value={adminPassword}
-          onChangeText={setAdminPassword}
-          placeholder="Initial password"
-          placeholderTextColor={theme.textMuted}
-          onFocus={scrollFocusedIntoView}
-          secureTextEntry
-          autoCapitalize="none"
-        />
-
-        <Text style={styles.fieldLabel}>Plan (optional)</Text>
-        <TextInput
-          style={styles.input}
-          value={plan}
-          onChangeText={setPlan}
-          placeholder="standard"
-          placeholderTextColor={theme.textMuted}
-          onFocus={scrollFocusedIntoView}
-          autoCapitalize="none"
-        />
-
-        <Pressable style={styles.submitBtn} onPress={submit} disabled={busy}>
+        <Pressable
+          style={[styles.submitBtn, busy && styles.submitBtnDisabled]}
+          onPress={submit}
+          disabled={busy}
+        >
           <Text style={styles.submitBtnText}>
             {busy ? "Provisioning…" : "Create tenant"}
           </Text>
@@ -166,6 +189,8 @@ const styles = StyleSheet.create({
     color: theme.text,
     fontSize: 15,
   },
+  inputError: { borderColor: theme.danger },
+  fieldError: { fontSize: 12, color: theme.danger },
   submitBtn: {
     backgroundColor: theme.primary,
     borderRadius: theme.radiusSm,
@@ -173,5 +198,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 18,
   },
+  submitBtnDisabled: { opacity: 0.6 },
   submitBtnText: { color: "#fff", fontSize: 15, fontWeight: "600" },
 });

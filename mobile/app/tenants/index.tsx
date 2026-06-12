@@ -99,13 +99,13 @@ export default function PlatformConsole() {
       {/* Quick overview stats */}
       {overview ? (
         <View style={styles.statsRow}>
-          <Stat value={overview.total ?? 0} label="Tenants" />
+          <Stat value={overview.total_tenants ?? 0} label="Tenants" />
           <View style={styles.statDivider} />
-          <Stat value={overview.active ?? 0} label="Active" />
+          <Stat value={overview.by_status?.active ?? 0} label="Active" />
           <View style={styles.statDivider} />
-          <Stat value={overview.suspended ?? 0} label="Suspended" />
+          <Stat value={overview.by_status?.suspended ?? 0} label="Suspended" />
           <View style={styles.statDivider} />
-          <Stat value={overview.totalUsers ?? 0} label="Users" />
+          <Stat value={overview.total_users ?? 0} label="Users" />
         </View>
       ) : null}
 
