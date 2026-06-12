@@ -220,17 +220,21 @@ export default function Profile() {
   async function pickStatus(key: ManualStatus) {
     setStatusOpen(false);
     try {
-      // Clearing "appear offline" first so the new status is visible.
+      // Clearing "appear offline" first so the new status is visible
+      // (mirrors the web StatusPicker: setInvisible(false) then
+      // setManualStatus(key)).
       if (status?.presencePreference === "invisible") {
         const { data: pref } = await setPresencePreference("auto");
         setStatus(pref);
       }
-      // Preserve any existing status message + expiry — the server resets
-      // these to null when they're omitted from the PUT body.
+      // Mirror the web exactly: setManualStatus(key) sends message + expiry as
+      // null. Re-sending the previous `statusMessageExpiresAt` (a server-side
+      // Date string) can fail the server's ISO-date validation → 400
+      // "Invalid messageExpiresAt", which surfaced as "Failed to set status".
       const { data } = await setMyStatus({
         status: key,
-        message: status?.statusMessage ?? null,
-        messageExpiresAt: status?.statusMessageExpiresAt ?? null,
+        message: null,
+        messageExpiresAt: null,
       });
       setStatus(data);
       // Re-fetch the authoritative effective state. The PUT response can

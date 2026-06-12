@@ -3,11 +3,13 @@ import { Pressable, StyleSheet, Text, View, Image } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Bell } from "lucide-react-native";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { theme } from "../theme";
 import { useAuth } from "../auth/AuthContext";
-import { getNotifications } from "../features";
+import { getNotifications, getMyStatus } from "../features";
 import { uploadUrl } from "../config";
+import { socket } from "../realtime/socket";
+import StatusDot from "./StatusDot";
 
 function initials(name?: string) {
   if (!name) return "?";
@@ -26,6 +28,9 @@ export default function TopBar() {
   const router = useRouter();
   const { user } = useAuth();
   const [unread, setUnread] = useState(0);
+  // Current user's resolved effective presence, shown as a dot on the avatar
+  // (mirrors the web Navbar avatar status badge).
+  const [myStatus, setMyStatus] = useState<string | null>(null);
 
   // Refresh unread badge whenever a tab regains focus.
   useFocusEffect(
@@ -36,18 +41,37 @@ export default function TopBar() {
           if (active) setUnread(r.data.unread || 0);
         })
         .catch(() => {});
+      getMyStatus()
+        .then((r) => {
+          if (active) setMyStatus(r.data?.effective ?? null);
+        })
+        .catch(() => {});
       return () => {
         active = false;
       };
     }, []),
   );
 
+  // Keep the avatar status dot live via the unified `user_status` WS event.
+  useEffect(() => {
+    const off = socket.subscribe((msg) => {
+      if (msg.type !== "user_status") return;
+      if (!user?.id || msg.data?.userId !== user.id) return;
+      setMyStatus(msg.data.effective);
+    });
+    return off;
+  }, [user?.id]);
+
   return (
     <View style={[styles.bar, { paddingTop: insets.top, height: 56 + insets.top }]}>
       {/* Left: logo + title */}
       <View style={styles.left}>
         <View style={styles.logo}>
-          <Text style={styles.logoEmoji}>💼</Text>
+          <Image
+            source={require("../../assets/icon.png")}
+            style={styles.logoImg}
+            resizeMode="cover"
+          />
         </View>
         <Text style={styles.title}>WorkPulse</Text>
       </View>
@@ -68,14 +92,21 @@ export default function TopBar() {
         </Pressable>
 
         <Pressable onPress={() => router.push("/profile")} hitSlop={6}>
-          <View style={styles.avatar}>
-            {uploadUrl(user?.avatar) ? (
-              <Image source={{ uri: uploadUrl(user?.avatar)! }} style={styles.avatarImg} />
-            ) : (
-              <Text style={styles.avatarText}>
-                {initials(user?.full_name || user?.username)}
-              </Text>
-            )}
+          <View style={styles.avatarWrap}>
+            <View style={styles.avatar}>
+              {uploadUrl(user?.avatar) ? (
+                <Image source={{ uri: uploadUrl(user?.avatar)! }} style={styles.avatarImg} />
+              ) : (
+                <Text style={styles.avatarText}>
+                  {initials(user?.full_name || user?.username)}
+                </Text>
+              )}
+            </View>
+            {myStatus ? (
+              <View style={styles.avatarStatus}>
+                <StatusDot status={myStatus} size={12} borderColor={theme.bgSecondary} />
+              </View>
+            ) : null}
           </View>
         </Pressable>
       </View>
@@ -98,13 +129,14 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 9,
+    overflow: "hidden",
     backgroundColor: "rgba(255,255,255,0.08)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.12)",
     alignItems: "center",
     justifyContent: "center",
   },
-  logoEmoji: { fontSize: 16 },
+  logoImg: { width: 32, height: 32, borderRadius: 9 },
   title: { fontSize: 17, fontWeight: "700", color: theme.text, letterSpacing: -0.3 },
   right: { flexDirection: "row", alignItems: "center", gap: 12 },
   iconBtn: {
@@ -132,6 +164,7 @@ const styles = StyleSheet.create({
     borderColor: theme.bgSecondary,
   },
   badgeText: { color: "#fff", fontSize: 9, fontWeight: "700" },
+  avatarWrap: { width: 34, height: 34 },
   avatar: {
     width: 34,
     height: 34,
@@ -141,6 +174,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     overflow: "hidden",
   },
+  avatarStatus: { position: "absolute", bottom: -1, right: -1 },
   avatarImg: { width: 34, height: 34, borderRadius: 17 },
   avatarText: { color: "#fff", fontSize: 12, fontWeight: "700" },
 });

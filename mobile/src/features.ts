@@ -73,15 +73,15 @@ export type TaskComment = {
 
 export function addTaskComment(id: number, content: string) {
   // The server's POST /tasks/:id/comments route runs through a multer
-  // `single('file')` middleware (comments can carry an attachment). Sending a
-  // multipart/form-data body with the `content` field is the contract the web
-  // client uses and is the most reliable way to pass the multipart-aware
-  // handler — a plain JSON body can be dropped by the upload middleware.
-  const form = new FormData();
-  form.append("content", content);
-  return api.post<TaskComment>(`/tasks/${id}/comments`, form, {
-    headers: { "Content-Type": "multipart/form-data" },
-  });
+  // `single('file')` middleware, but multer only consumes multipart bodies and
+  // transparently passes JSON bodies through to the handler (which reads
+  // `req.body.content`). On React Native, manually setting the
+  // `Content-Type: multipart/form-data` header WITHOUT the auto-generated
+  // boundary makes multer unable to parse the body → `content` arrives empty
+  // and the request fails with "Comment cannot be empty". For a text-only
+  // comment we therefore send a plain JSON body, exactly like the web client
+  // does when no file is attached (client/src/api.ts addTaskComment).
+  return api.post<TaskComment>(`/tasks/${id}/comments`, { content });
 }
 
 export type BacklogSummary = {

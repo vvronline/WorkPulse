@@ -633,21 +633,39 @@ export default function ChatThread() {
   }
 
   function openForward(message: ChatMessage) {
+    // Close the action sheet first, then open the forward picker on the next
+    // tick. Presenting a second RN <Modal> while another is still dismissing
+    // makes the new modal silently fail to appear — this deferral is the
+    // reliable workaround and is why "forward" looked broken before.
     setActionTarget(null);
     setReactTarget(null);
-    setForwardTarget(message);
+    // Preload conversations so the picker isn't empty when it animates in.
     getConversations()
       .then((r) => setConversations(r.data || []))
       .catch(() => setConversations([]));
+    setTimeout(() => setForwardTarget(message), 250);
   }
 
   function doForward(targetConvId: number) {
     if (!forwardTarget) return;
     const msg = forwardTarget;
+    // Close the picker first, then report the result on the next tick so the
+    // dialog modal doesn't collide with the dismissing forward modal.
     setForwardTarget(null);
     forwardMessage(msg.id, [targetConvId])
-      .then(() => alert("Forwarded", "Message forwarded."))
-      .catch(() => alert("Error", "Could not forward message."));
+      .then(() => {
+        setTimeout(() => alert("Forwarded", "Message forwarded."), 250);
+      })
+      .catch((e: any) => {
+        setTimeout(
+          () =>
+            alert(
+              "Error",
+              e?.response?.data?.error || "Could not forward message.",
+            ),
+          250,
+        );
+      });
   }
 
   async function react(message: ChatMessage, emoji: string) {

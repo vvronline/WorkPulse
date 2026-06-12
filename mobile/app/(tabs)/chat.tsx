@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Modal,
   Pressable,
@@ -232,19 +233,34 @@ export default function ChatScreen() {
   async function startWithUser(u: SearchUser) {
     try {
       const { data } = await startConversation(u.id);
+      const convId = (data as { id?: number })?.id;
+      if (!convId) {
+        Alert.alert("Error", "Could not open this conversation.");
+        return;
+      }
+      // Close the search UI first, then navigate on the next tick. Navigating
+      // while the search ScrollView (keyboardShouldPersistTaps) is still
+      // mounted could drop the press / race the route push, which is why
+      // tapping a search result sometimes did nothing.
       setShowSearch(false);
       setQuery("");
-      router.push({
-        pathname: "/chat/[id]",
-        params: {
-          id: String(data.id),
-          name: u.full_name || u.username,
-          avatar: u.avatar || "",
-          peerId: String(u.id),
-        },
-      });
-    } catch {
-      /* ignore */
+      setResults([]);
+      setTimeout(() => {
+        router.push({
+          pathname: "/chat/[id]",
+          params: {
+            id: String(convId),
+            name: u.full_name || u.username,
+            avatar: u.avatar || "",
+            peerId: String(u.id),
+          },
+        });
+      }, 0);
+    } catch (e: any) {
+      Alert.alert(
+        "Error",
+        e?.response?.data?.error || "Could not open this conversation.",
+      );
     }
   }
 

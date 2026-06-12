@@ -17,6 +17,7 @@ import {
   Video as VideoIcon,
   VideoOff,
   SwitchCamera,
+  Signal,
 } from "lucide-react-native";
 import { theme } from "../../src/theme";
 import { socket } from "../../src/realtime/socket";
@@ -93,6 +94,15 @@ export default function CallScreen() {
   // last frame. Track onmute/onended are unreliable on Android, so the
   // explicit `video-state` signal is the source of truth (mirrors web).
   const [remoteVideoOff, setRemoteVideoOff] = useState(false);
+  // Peer mute indicator (driven by the explicit `audio-state` signal, mirrors
+  // web's peerMuted + remoteMuteBadge).
+  const [peerMuted, setPeerMuted] = useState(false);
+  // Call duration (seconds) shown once connected, like the web overlay.
+  const [duration, setDuration] = useState(0);
+  // Connection quality derived from getStats() — good | fair | poor | unknown.
+  // Mirrors the web CallOverlay NetworkStats badge.
+  const [connectionQuality, setConnectionQuality] =
+    useState<"good" | "fair" | "poor" | "unknown">("unknown");
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -154,10 +164,29 @@ export default function CallScreen() {
 
   const getMedia = useCallback(async (): Promise<MediaStream | null> => {
     try {
-      const stream = await mediaDevices.getUserMedia({
-        audio: true,
-        video: callType === "video" ? { facingMode: "user" } : false,
-      });
+      // Mirror the web CallOverlay constraints: enable the audio DSP chain
+      // (echo cancellation / noise suppression / auto-gain) and cap the video
+      // at 1280×720 @30fps. A bounded, sane resolution negotiates faster and
+      // is far more stable on mobile networks than letting the camera pick a
+      // huge default that the uplink can't sustain (the cause of "very bad"
+      // quality / unstable calls when ringing desktop/web).
+      const constraints: any = {
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video:
+          callType === "video"
+            ? {
+                facingMode: "user",
+                width: { ideal: 1280, max: 1280 },
+                height: { ideal: 720, max: 720 },
+                frameRate: { ideal: 30, max: 30 },
+              }
+            : false,
+      };
+      const stream = await mediaDevices.getUserMedia(constraints);
       localStreamRef.current = stream as MediaStream;
       setLocalStream(stream as MediaStream);
       return stream as MediaStream;
@@ -166,14 +195,45 @@ export default function CallScreen() {
     }
   }, [callType]);
 
+  // Cap the outbound video bitrate so a congested mobile uplink degrades
+  // gracefully (smooth lower-res) instead of freezing/stalling — the same
+  // adaptive-encoding idea the VideoSDK client applies under the hood.
+  const applySenderEncodingLimits = useCallback((pc: RTCPeerConnection) => {
+    try {
+      const senders =
+        typeof (pc as any).getSenders === "function"
+          ? (pc as any).getSenders()
+          : [];
+      for (const sender of senders) {
+        if (sender?.track?.kind !== "video") continue;
+        const params = sender.getParameters?.();
+        if (!params) continue;
+        if (!params.encodings || params.encodings.length === 0) {
+          params.encodings = [{}];
+        }
+        params.encodings[0].maxBitrate = 1_000_000; // ~1 Mbps cap
+        params.encodings[0].maxFramerate = 30;
+        sender.setParameters?.(params).catch?.(() => {});
+      }
+    } catch {
+      /* setParameters not critical — ignore */
+    }
+  }, []);
+
   // Briefly wait for the real ICE config (TURN creds) so the connection is
   // established over a relay when needed instead of racing with the fallback
   // STUN-only servers. Fast-exits the moment the config has loaded.
-  const waitForIceConfig = useCallback(async (timeoutMs = 2000) => {
+  //
+  // Kept SHORT (≤800ms): the fallback list already contains working TURN
+  // relays, so we must not stall the offer/answer for seconds waiting on the
+  // ICE-config fetch — that was a major contributor to the 10–20s connect
+  // time when calling desktop/web. If the real config arrives later it's still
+  // used by any subsequent ICE restart / relay rebuild.
+  const waitForIceConfig = useCallback(async (timeoutMs = 800) => {
     if (iceConfigLoadedRef.current) return;
     const start = Date.now();
     while (!iceConfigLoadedRef.current && Date.now() - start < timeoutMs) {
-      await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, 50));
     }
   }, []);
 
@@ -529,6 +589,7 @@ export default function CallScreen() {
             if (!stream) return endAndLeave(false);
             await waitForIceConfig();
             const pc = createPC(stream, d.userId, true);
+            applySenderEncodingLimits(pc);
             const offer = await pc.createOffer({});
             await pc.setLocalDescription(offer);
             socket.send("call_signal", {
@@ -585,6 +646,7 @@ export default function CallScreen() {
               // sendrecv media. Otherwise the peer never receives our audio/
               // video and the connection appears to "not connect".
               await attachLocalTracks(stream);
+              applySenderEncodingLimits(pc);
               await flushIce();
               const answer = await pc.createAnswer();
               await pc.setLocalDescription(answer);
@@ -625,7 +687,10 @@ export default function CallScreen() {
               // or the avatar + black screen.
               setRemoteVideoOff(!!signal.videoOff);
             } else if (signal.type === "audio-state") {
-              /* remote mute indicator not surfaced in mobile UI yet */
+              // Peer toggled their mic — surface a mute badge (mirrors web's
+              // peerMuted + remoteMuteBadge). The explicit signal is reliable
+              // where track.onmute is not on react-native-webrtc.
+              setPeerMuted(!!signal.muted);
             }
           })();
           break;
@@ -651,11 +716,66 @@ export default function CallScreen() {
     getMedia,
     createPC,
     attachLocalTracks,
+    applySenderEncodingLimits,
     flushIce,
     endAndLeave,
     waitForIceConfig,
     videoOff,
   ]);
+
+  // ── Call duration timer (mirrors web CallOverlay) ──────────────────────────
+  useEffect(() => {
+    if (status !== "connected") return;
+    setDuration(0);
+    const t = setInterval(() => setDuration((d) => d + 1), 1000);
+    return () => clearInterval(t);
+  }, [status]);
+
+  // ── Connection-quality monitor via getStats() (mirrors web NetworkStats) ───
+  useEffect(() => {
+    if (status !== "connected") {
+      setConnectionQuality("unknown");
+      return;
+    }
+    const interval = setInterval(async () => {
+      const pc = pcRef.current;
+      if (!pc || typeof (pc as any).getStats !== "function") return;
+      try {
+        const stats = await pc.getStats();
+        let rtt: number | null = null;
+        let packetsLost = 0;
+        let packetsReceived = 0;
+        stats.forEach((report: any) => {
+          if (
+            report.type === "candidate-pair" &&
+            (report.state === "succeeded" || report.nominated)
+          ) {
+            if (typeof report.currentRoundTripTime === "number") {
+              rtt = report.currentRoundTripTime;
+            }
+          }
+          if (report.type === "inbound-rtp" && report.kind === "audio") {
+            packetsLost = report.packetsLost || 0;
+            packetsReceived = report.packetsReceived || 0;
+          }
+        });
+        const lossRate =
+          packetsReceived > 0
+            ? packetsLost / (packetsLost + packetsReceived)
+            : 0;
+        if (rtt !== null && rtt < 0.15 && lossRate < 0.02) {
+          setConnectionQuality("good");
+        } else if (rtt !== null && rtt < 0.4 && lossRate < 0.05) {
+          setConnectionQuality("fair");
+        } else if (rtt !== null) {
+          setConnectionQuality("poor");
+        }
+      } catch {
+        /* stats unavailable this tick */
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [status]);
 
   // Incoming: accept handler.
   async function acceptIncoming() {
@@ -740,6 +860,29 @@ export default function CallScreen() {
   // Otherwise we fall through to the avatar + name on a black screen.
   const showRemoteVideo = showVideo && remoteStream && !remoteVideoOff;
 
+  const fmtDuration = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m}:${String(s).padStart(2, "0")}`;
+  };
+
+  const qualityColor =
+    connectionQuality === "good"
+      ? "#22c55e"
+      : connectionQuality === "fair"
+        ? "#f59e0b"
+        : connectionQuality === "poor"
+          ? "#ef4444"
+          : "rgba(255,255,255,0.5)";
+  const qualityLabel =
+    connectionQuality === "good"
+      ? "Good"
+      : connectionQuality === "fair"
+        ? "Fair"
+        : connectionQuality === "poor"
+          ? "Poor"
+          : "…";
+
   return (
     <View style={styles.screen}>
       <Stack.Screen options={{ headerShown: false }} />
@@ -774,10 +917,31 @@ export default function CallScreen() {
         />
       ) : null}
 
+      {/* Top status bar — connection quality + peer-mute, once connected
+          (mirrors the web CallOverlay top bar). */}
+      {status === "connected" ? (
+        <View style={styles.topBar}>
+          <View style={styles.qualityBadge}>
+            <Signal size={13} color={qualityColor} />
+            <Text style={[styles.qualityLabel, { color: qualityColor }]}>
+              {qualityLabel}
+            </Text>
+          </View>
+          {peerMuted ? (
+            <View style={styles.muteBadge}>
+              <MicOff size={13} color="#fff" />
+              <Text style={styles.muteBadgeText}>Muted</Text>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+
       {/* Header info */}
       <View style={styles.info}>
         <Text style={styles.peerName}>{peerName}</Text>
-        <Text style={styles.status}>{statusLabel}</Text>
+        <Text style={styles.status}>
+          {status === "connected" ? fmtDuration(duration) : statusLabel}
+        </Text>
       </View>
 
       {/* Controls */}
@@ -888,6 +1052,37 @@ const styles = StyleSheet.create({
   },
   peerName: { color: "#fff", fontSize: 24, fontWeight: "700" },
   status: { color: "rgba(255,255,255,0.7)", fontSize: 15 },
+  topBar: {
+    position: "absolute",
+    top: 44,
+    left: 16,
+    right: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    zIndex: 6,
+    elevation: 9,
+  },
+  qualityBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  qualityLabel: { fontSize: 12, fontWeight: "700" },
+  muteBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "rgba(239,68,68,0.85)",
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  muteBadgeText: { color: "#fff", fontSize: 12, fontWeight: "700" },
   controls: {
     position: "absolute",
     bottom: 48,
