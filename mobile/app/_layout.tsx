@@ -5,6 +5,7 @@ import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider } from "../src/auth/AuthContext";
+import ImpersonationBanner from "../src/components/ImpersonationBanner";
 import IncomingCallListener from "../src/realtime/IncomingCallListener";
 import { theme } from "../src/theme";
 
@@ -22,6 +23,7 @@ export default function RootLayout() {
         <SafeAreaProvider>
           <StatusBar style="light" />
           <IncomingCallListener />
+          <ImpersonationBanner />
           <Stack
             screenOptions={{
               headerShown: false,

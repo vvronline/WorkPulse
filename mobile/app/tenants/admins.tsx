@@ -13,8 +13,17 @@ import {
   View,
 } from "react-native";
 import { Stack } from "expo-router";
-import { Ban, CheckCircle2, KeyRound, Plus, Shield, X } from "lucide-react-native";
+import {
+  Ban,
+  CheckCircle2,
+  KeyRound,
+  Plus,
+  Shield,
+  UserCheck,
+  X,
+} from "lucide-react-native";
 import { theme } from "../../src/theme";
+import { useAuth } from "../../src/auth/AuthContext";
 import { useKeyboardInset } from "../../src/hooks/useKeyboardInset";
 import { PromptModal } from "../../src/components/PromptModal";
 import {
@@ -27,6 +36,7 @@ import {
 
 export default function PlatformAdminsScreen() {
   const kbInset = useKeyboardInset();
+  const { user } = useAuth();
   const [admins, setAdmins] = useState<PlatformUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -80,12 +90,15 @@ export default function PlatformAdminsScreen() {
     }
   }
 
-  function deactivate(a: PlatformUser) {
-    Alert.alert("Deactivate admin", `Deactivate ${a.full_name}?`, [
+  // Server endpoint TOGGLES is_active — handles both deactivate and
+  // reactivate (mirrors web handleToggleActive).
+  function toggleActive(a: PlatformUser) {
+    const verb = a.is_active ? "Deactivate" : "Reactivate";
+    Alert.alert(`${verb} admin`, `${verb} ${a.full_name}?`, [
       { text: "Cancel", style: "cancel" },
       {
-        text: "Deactivate",
-        style: "destructive",
+        text: verb,
+        style: a.is_active ? "destructive" : "default",
         onPress: () =>
           deactivatePlatformUser(a.id)
             .then(() => load())
@@ -144,6 +157,9 @@ export default function PlatformAdminsScreen() {
                   <Text style={styles.name} numberOfLines={1}>
                     {item.full_name}
                   </Text>
+                  {item.id === user?.id ? (
+                    <Text style={styles.youTag}>(you)</Text>
+                  ) : null}
                   {item.is_active ? (
                     <CheckCircle2 size={13} color={theme.success} />
                   ) : (
@@ -164,13 +180,17 @@ export default function PlatformAdminsScreen() {
               >
                 <KeyRound size={16} color={theme.textSecondary} />
               </Pressable>
-              {item.is_active ? (
+              {item.id !== user?.id ? (
                 <Pressable
                   style={styles.iconBtn}
-                  onPress={() => deactivate(item)}
+                  onPress={() => toggleActive(item)}
                   hitSlop={6}
                 >
-                  <Ban size={16} color={theme.danger} />
+                  {item.is_active ? (
+                    <Ban size={16} color={theme.danger} />
+                  ) : (
+                    <UserCheck size={16} color={theme.success} />
+                  )}
                 </Pressable>
               ) : null}
             </View>
@@ -304,6 +324,7 @@ const styles = StyleSheet.create({
   body: { flex: 1, gap: 2 },
   nameRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   name: { fontSize: 15, fontWeight: "600", color: theme.text },
+  youTag: { fontSize: 11, color: theme.primaryLight, fontWeight: "600" },
   meta: { fontSize: 12, color: theme.textSecondary },
   iconBtn: { padding: 6 },
   empty: {

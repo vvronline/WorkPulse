@@ -1543,6 +1543,10 @@ router.post("/:id/impersonate", async (req: Request, res: Response) => {
         res.json({
             tenant: { id: tid, org_name: tenant.org_name, slug: tenant.slug },
             user: platUser,
+            // Bearer-token clients (mobile) can't read the HttpOnly cookie —
+            // return the impersonation JWT in the body too. They store their
+            // original platform token locally and swap back on exit.
+            token: impersonationToken,
             session: {
                 request_id: request?.id || null,
                 break_glass: isBreakGlass,

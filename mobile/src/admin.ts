@@ -193,6 +193,19 @@ export function getAdminOrganizations() {
   );
 }
 
+export function updateAdminOrganization(
+  id: number | string,
+  data: {
+    name?: string;
+    timezone?: string;
+    work_hours_per_day?: number;
+    work_days?: string;
+    fiscal_year_start?: number | string;
+  },
+) {
+  return api.put(`/admin/organizations/${id}`, data);
+}
+
 /* ─────────────────── Admin: Departments / Teams CRUD ─────────────────── */
 
 export type Department = {
@@ -542,6 +555,159 @@ export function updateTenantFeatures(id: number | string, features: unknown) {
   });
 }
 
+export function createTenantUser(
+  id: number | string,
+  data: {
+    username: string;
+    full_name: string;
+    email: string;
+    password: string;
+    role?: string;
+  },
+) {
+  return api.post<{ user: TenantUser }>(`/admin/tenants/${id}/users`, data);
+}
+
+export function seedTenant(id: number | string) {
+  return api.post<{
+    message: string;
+    seeded: { departments: number; leave_policies: number };
+  }>(`/admin/tenants/${id}/seed`);
+}
+
+/* ─────────────── Platform: Access Requests (inspector side) ─────────────── */
+
+// Mirrors server publicAccessRequest() in routes/tenants.ts.
+export type TenantAccessRequest = {
+  id: number;
+  tenant_id: number;
+  tenant_org_name?: string | null;
+  tenant_slug?: string | null;
+  requested_by?: number;
+  requested_by_name?: string | null;
+  requested_at?: string;
+  reason?: string | null;
+  scope?: "read" | "write" | string;
+  duration_minutes?: number;
+  status: string;
+  raw_status?: string;
+  approved_by_name?: string | null;
+  approved_at?: string | null;
+  denied_reason?: string | null;
+  code_expires_at?: string | null;
+  consumed_at?: string | null;
+  session_ends_at?: string | null;
+  cancelled_at?: string | null;
+};
+
+export function createTenantAccessRequest(
+  tenantId: number | string,
+  data: { reason: string; scope?: string; duration_minutes?: number },
+) {
+  return api.post<{ request: TenantAccessRequest }>(
+    `/admin/tenants/${tenantId}/access-requests`,
+    data,
+  );
+}
+
+export function listTenantAccessRequests(tenantId: number | string) {
+  return api.get<{ requests: TenantAccessRequest[] }>(
+    `/admin/tenants/${tenantId}/access-requests`,
+  );
+}
+
+export function cancelTenantAccessRequest(id: number | string) {
+  return api.delete<{ message: string }>(
+    `/admin/tenants/access-requests/${id}`,
+  );
+}
+
+// Start an impersonation session. Server returns the impersonation JWT in
+// the body (Bearer clients can't read the HttpOnly cookie).
+export function impersonateTenant(
+  id: number | string,
+  body: { approval_code?: string; password: string; break_glass?: boolean },
+) {
+  return api.post<{
+    tenant: { id: number; org_name: string; slug?: string };
+    user: { id: number; username: string };
+    token?: string;
+    session: {
+      request_id?: number | null;
+      break_glass?: boolean;
+      scope?: string;
+      ends_at?: string;
+      duration_minutes?: number;
+    };
+  }>(`/admin/tenants/${id}/impersonate`, body);
+}
+
+export function exitImpersonateTenant(id: number | string) {
+  return api.post<{ message: string }>(
+    `/admin/tenants/${id}/exit-impersonate`,
+  );
+}
+
+/* ─────────────── Platform: Impersonation Policy ─────────────── */
+
+export type ImpersonationPolicy = {
+  requiresConsent?: boolean;
+  breakGlassAllowed?: boolean;
+  maxSessionMinutes?: number;
+  codeTtlMinutes?: number;
+  [k: string]: unknown;
+};
+
+export function getImpersonationPolicy() {
+  return api.get<ImpersonationPolicy>("/admin/tenants/impersonation-policy");
+}
+
+export function updateImpersonationPolicy(data: {
+  requires_consent?: boolean;
+  break_glass_allowed?: boolean;
+  max_session_minutes?: number;
+  code_ttl_minutes?: number;
+}) {
+  return api.put<ImpersonationPolicy>(
+    "/admin/tenants/impersonation-policy",
+    data,
+  );
+}
+
+/* ─────────────── Platform: Global Announcements ─────────────── */
+
+export type PlatformAnnouncement = {
+  id: number;
+  message: string;
+  type: string;
+  is_active: boolean;
+  created_at: string;
+  expires_at?: string | null;
+};
+
+export function getAdminAnnouncements() {
+  return api.get<PlatformAnnouncement[]>("/admin/announcements");
+}
+
+export function createAnnouncement(data: {
+  message: string;
+  type: string;
+  duration?: string | number | null;
+}) {
+  return api.post("/admin/announcements", data);
+}
+
+export function updateAnnouncement(
+  id: number | string,
+  data: { is_active?: boolean },
+) {
+  return api.put(`/admin/announcements/${id}`, data);
+}
+
+export function deleteAnnouncement(id: number | string) {
+  return api.delete(`/admin/announcements/${id}`);
+}
+
 /* ───────────────────────── Platform: Plans ───────────────────────── */
 
 // Mirrors GET /admin/tenants/plan-catalog — plans is an OBJECT keyed by plan
@@ -564,7 +730,11 @@ export function getPlanCatalog() {
 }
 
 export function updatePlanCatalog(plans: unknown) {
-  return api.put("/admin/tenants/plan-catalog", { plans });
+  return api.put<PlanCatalog>("/admin/tenants/plan-catalog", { plans });
+}
+
+export function resetPlanCatalog() {
+  return api.post<PlanCatalog>("/admin/tenants/plan-catalog/reset");
 }
 
 /* ───────────────────────── Platform: Admins ───────────────────────── */

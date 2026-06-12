@@ -16,15 +16,18 @@ import { PromptModal } from "../../src/components/PromptModal";
 import {
   deleteTenant,
   getTenants,
+  getTenantOverview,
   reactivateTenant,
   suspendTenant,
   type Tenant,
+  type TenantOverview,
 } from "../../src/admin";
 
 const STATUS_FILTERS = [
   { key: "", label: "All" },
   { key: "active", label: "Active" },
   { key: "suspended", label: "Suspended" },
+  { key: "deleted", label: "Deleted" },
 ];
 
 function statusColor(status?: string): string {
@@ -41,6 +44,7 @@ type ConfirmAction = {
 export default function TenantListScreen() {
   const router = useRouter();
   const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [overview, setOverview] = useState<TenantOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -67,9 +71,13 @@ export default function TenantListScreen() {
     const params: Record<string, string> = {};
     if (debounced) params.search = debounced;
     if (statusFilter) params.status = statusFilter;
-    getTenants(params)
-      .then((r) => setTenants(r.data.tenants || []))
-      .catch(() => setTenants([]))
+    Promise.allSettled([getTenants(params), getTenantOverview()])
+      .then(([tRes, oRes]) => {
+        setTenants(
+          tRes.status === "fulfilled" ? tRes.value.data.tenants || [] : [],
+        );
+        if (oRes.status === "fulfilled") setOverview(oRes.value.data);
+      })
       .finally(() => setLoading(false));
   }, [debounced, statusFilter]);
 
@@ -128,6 +136,34 @@ export default function TenantListScreen() {
           </Pressable>
         ) : null}
       </View>
+
+      {overview ? (
+        <View style={styles.statsRow}>
+          <View style={styles.stat}>
+            <Text style={styles.statValue}>{overview.total_tenants ?? 0}</Text>
+            <Text style={styles.statLabel}>Tenants</Text>
+          </View>
+          <View style={styles.statDivider} />
+          <View style={styles.stat}>
+            <Text style={styles.statValue}>{overview.total_users ?? 0}</Text>
+            <Text style={styles.statLabel}>Users</Text>
+          </View>
+          <View style={styles.statDivider} />
+          <View style={styles.stat}>
+            <Text style={[styles.statValue, { color: theme.success }]}>
+              {overview.by_status?.active ?? 0}
+            </Text>
+            <Text style={styles.statLabel}>Active</Text>
+          </View>
+          <View style={styles.statDivider} />
+          <View style={styles.stat}>
+            <Text style={[styles.statValue, { color: theme.warning }]}>
+              {overview.by_status?.suspended ?? 0}
+            </Text>
+            <Text style={styles.statLabel}>Suspended</Text>
+          </View>
+        </View>
+      ) : null}
 
       <View style={styles.filterRow}>
         {STATUS_FILTERS.map((f) => (
@@ -306,6 +342,26 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   searchInput: { flex: 1, color: theme.text, fontSize: 15, paddingVertical: 11 },
+  statsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: theme.glass,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radius,
+    padding: 12,
+    marginHorizontal: 16,
+    marginBottom: 8,
+  },
+  stat: { flex: 1, alignItems: "center", gap: 2 },
+  statValue: { fontSize: 17, fontWeight: "800", color: theme.primary },
+  statLabel: {
+    fontSize: 9,
+    color: theme.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  statDivider: { width: 1, height: 24, backgroundColor: theme.border },
   filterRow: {
     flexDirection: "row",
     gap: 8,

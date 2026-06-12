@@ -13,7 +13,9 @@ import {
   AlertTriangle,
   Building2,
   CheckCircle2,
+  Database,
   Pause,
+  TrendingUp,
   Users,
 } from "lucide-react-native";
 import { theme } from "../../src/theme";
@@ -172,6 +174,41 @@ export default function PlatformDashboardScreen() {
         ))
       )}
 
+      {/* 30-day new-tenant trend */}
+      {(overview?.trend_30d?.length ?? 0) > 0 ? (
+        <>
+          <View style={styles.sectionHeaderRow}>
+            <TrendingUp size={15} color={theme.textSecondary} />
+            <Text style={styles.sectionTitle}>New tenants (last 30 days)</Text>
+          </View>
+          <View style={styles.trendCard}>
+            <View style={styles.trendBars}>
+              {overview!.trend_30d!.map((d, i) => {
+                const max = Math.max(
+                  ...overview!.trend_30d!.map((x) => parseInt(String(x.count), 10)),
+                  1,
+                );
+                const h = Math.max(
+                  (parseInt(String(d.count), 10) / max) * 48,
+                  3,
+                );
+                return (
+                  <View key={i} style={[styles.trendBar, { height: h }]} />
+                );
+              })}
+            </View>
+            <Text style={styles.trendTotal}>
+              Total:{" "}
+              {overview!.trend_30d!.reduce(
+                (sum, d) => sum + parseInt(String(d.count), 10),
+                0,
+              )}{" "}
+              new tenants
+            </Text>
+          </View>
+        </>
+      ) : null}
+
       {/* Recently created tenants */}
       {recent.length > 0 ? (
         <>
@@ -215,6 +252,36 @@ export default function PlatformDashboardScreen() {
               </View>
             </Pressable>
           ))}
+        </>
+      ) : null}
+
+      {/* Connection pool stats */}
+      {overview?.pool_stats ? (
+        <>
+          <View style={styles.sectionHeaderRow}>
+            <Database size={15} color={theme.textSecondary} />
+            <Text style={styles.sectionTitle}>Connection pool</Text>
+          </View>
+          <View style={styles.planRow}>
+            <View style={styles.planTile}>
+              <Text style={styles.planCount}>
+                {overview.pool_stats.active ?? 0}
+              </Text>
+              <Text style={styles.planName}>Active pools</Text>
+            </View>
+            <View style={styles.planTile}>
+              <Text style={styles.planCount}>
+                {overview.pool_stats.max ?? 10}
+              </Text>
+              <Text style={styles.planName}>Max pools</Text>
+            </View>
+            <View style={styles.planTile}>
+              <Text style={styles.planCount}>
+                {overview.pool_stats.evictions ?? 0}
+              </Text>
+              <Text style={styles.planName}>Evictions</Text>
+            </View>
+          </View>
         </>
       ) : null}
     </ScrollView>
@@ -317,4 +384,25 @@ const styles = StyleSheet.create({
   recentName: { fontSize: 14, fontWeight: "600", color: theme.text },
   recentMeta: { fontSize: 12, color: theme.textMuted },
   empty: { color: theme.textMuted, fontSize: 13, paddingVertical: 8 },
+  trendCard: {
+    backgroundColor: theme.glass,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radius,
+    padding: 14,
+    gap: 8,
+  },
+  trendBars: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 3,
+    height: 56,
+  },
+  trendBar: {
+    flex: 1,
+    backgroundColor: theme.primary,
+    borderRadius: 3,
+    opacity: 0.8,
+  },
+  trendTotal: { fontSize: 11, color: theme.textMuted },
 });
