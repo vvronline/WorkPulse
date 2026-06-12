@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  Alert,
+  PermissionsAndroid,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import {
   mediaDevices,
@@ -135,6 +143,21 @@ export default function CallScreen() {
       ) => RTCPeerConnection)
     | null
   >(null);
+  // ── Signal serialization queue (mirrors the web client's buffered, ordered
+  // signal handling). Every incoming WS signal used to spawn an UNORDERED
+  // async IIFE: while the offer handler was awaiting getUserMedia/ICE-config,
+  // a concurrently-arriving answer or renegotiation offer would race against
+  // a half-built peer connection — setRemoteDescription threw in the wrong
+  // state, the rejection was unhandled, and the call silently hung on
+  // "Connecting…" forever. Chaining every signal task on one promise makes
+  // processing strictly sequential, so that interleaving is impossible.
+  const signalChainRef = useRef<Promise<void>>(Promise.resolve());
+  const runSerialized = useCallback((task: () => Promise<void>) => {
+    signalChainRef.current = signalChainRef.current.then(task).catch((err) => {
+      console.warn("[call] signaling task failed:", err?.message || err);
+    });
+    return signalChainRef.current;
+  }, []);
 
   const endAndLeave = useCallback(
     (sendEnd: boolean) => {
@@ -162,38 +185,111 @@ export default function CallScreen() {
     [conversationId, router],
   );
 
-  const getMedia = useCallback(async (): Promise<MediaStream | null> => {
+  // Native runtime-permission pre-flight (Android). react-native-webrtc's
+  // getUserMedia does NOT reliably trigger the Android permission dialog on
+  // every device/OS version — when the permission is simply "not granted yet"
+  // it can fail immediately, which made outgoing/incoming calls silently
+  // never connect. Mirrors the videosdk-rtc-react-native example, which
+  // explicitly requests CAMERA + RECORD_AUDIO before touching WebRTC.
+  const ensurePermissions = useCallback(async (): Promise<boolean> => {
+    if (Platform.OS !== "android") return true;
     try {
-      // Mirror the web CallOverlay constraints: enable the audio DSP chain
-      // (echo cancellation / noise suppression / auto-gain) and cap the video
-      // at 1280×720 @30fps. A bounded, sane resolution negotiates faster and
-      // is far more stable on mobile networks than letting the camera pick a
-      // huge default that the uplink can't sustain (the cause of "very bad"
-      // quality / unstable calls when ringing desktop/web).
-      const constraints: any = {
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-        video:
-          callType === "video"
-            ? {
-                facingMode: "user",
-                width: { ideal: 1280, max: 1280 },
-                height: { ideal: 720, max: 720 },
-                frameRate: { ideal: 30, max: 30 },
-              }
-            : false,
-      };
-      const stream = await mediaDevices.getUserMedia(constraints);
-      localStreamRef.current = stream as MediaStream;
-      setLocalStream(stream as MediaStream);
-      return stream as MediaStream;
+      const perms = [PermissionsAndroid.PERMISSIONS.RECORD_AUDIO];
+      if (callType === "video") {
+        perms.push(PermissionsAndroid.PERMISSIONS.CAMERA);
+      }
+      const result = await PermissionsAndroid.requestMultiple(perms);
+      return perms.every(
+        (p) =>
+          (result as Record<string, string>)[p] ===
+          PermissionsAndroid.RESULTS.GRANTED,
+      );
     } catch {
-      return null;
+      // If the native module errs, fall through and let getUserMedia try.
+      return true;
     }
   }, [callType]);
+
+  const getMedia = useCallback(
+    async (silent = false): Promise<MediaStream | null> => {
+      // Reuse an existing stream (e.g. from the ringing pre-warm) so two
+      // concurrent acquisitions never race for the camera.
+      if (localStreamRef.current) return localStreamRef.current;
+
+      const permitted = await ensurePermissions();
+      if (!permitted) {
+        if (!silent) {
+          Alert.alert(
+            "Permission required",
+            callType === "video"
+              ? "Camera and microphone access are required for video calls. Enable them in Settings and try again."
+              : "Microphone access is required for calls. Enable it in Settings and try again.",
+          );
+        }
+        return null;
+      }
+
+      // Progressively-relaxed constraint profiles (mirrors the web
+      // buildMediaConstraintProfiles): the ideal profile first, then plain
+      // defaults, then audio-only as a last resort for video calls. On many
+      // low-end Android cameras the exact 1280×720@30 profile is rejected
+      // outright — previously that single failure aborted the whole call.
+      const audio: any = {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      };
+      const profiles: any[] =
+        callType === "video"
+          ? [
+              {
+                audio,
+                video: {
+                  facingMode: "user",
+                  width: { ideal: 1280, max: 1280 },
+                  height: { ideal: 720, max: 720 },
+                  frameRate: { ideal: 30, max: 30 },
+                },
+              },
+              {
+                audio,
+                video: {
+                  facingMode: "user",
+                  width: { ideal: 640 },
+                  height: { ideal: 480 },
+                  frameRate: { ideal: 24, max: 30 },
+                },
+              },
+              { audio, video: true },
+              { audio, video: false },
+            ]
+          : [
+              { audio, video: false },
+              { audio: true, video: false },
+            ];
+
+      for (const constraints of profiles) {
+        try {
+          const stream = await mediaDevices.getUserMedia(constraints);
+          localStreamRef.current = stream as MediaStream;
+          setLocalStream(stream as MediaStream);
+          return stream as MediaStream;
+        } catch {
+          /* try the next, more relaxed profile */
+        }
+      }
+      if (!silent) {
+        Alert.alert(
+          "Cannot start call",
+          callType === "video"
+            ? "Could not access the camera/microphone. Make sure no other app is using them and permissions are granted."
+            : "Could not access the microphone. Make sure no other app is using it and the permission is granted.",
+        );
+      }
+      return null;
+    },
+    [callType, ensurePermissions],
+  );
 
   // Bitrate ramp-up (ported from the web useWebRTC applyBitrateRampUp):
   // start LOW (~300 kbps) so the connection establishes fast on a mobile
@@ -259,12 +355,11 @@ export default function CallScreen() {
   // established over a relay when needed instead of racing with the fallback
   // STUN-only servers. Fast-exits the moment the config has loaded.
   //
-  // Kept SHORT (≤800ms): the fallback list already contains working TURN
-  // relays, so we must not stall the offer/answer for seconds waiting on the
-  // ICE-config fetch — that was a major contributor to the 10–20s connect
-  // time when calling desktop/web. If the real config arrives later it's still
-  // used by any subsequent ICE restart / relay rebuild.
-  const waitForIceConfig = useCallback(async (timeoutMs = 800) => {
+  // Matches the web client's 2000ms wait: giving the real TURN credentials a
+  // fair chance to arrive avoids negotiating with the STUN-only fallback on
+  // networks that require a relay (where the call then never connects).
+  // Fast-exits the moment the config has loaded.
+  const waitForIceConfig = useCallback(async (timeoutMs = 2000) => {
     if (iceConfigLoadedRef.current) return;
     const start = Date.now();
     while (!iceConfigLoadedRef.current && Date.now() - start < timeoutMs) {
@@ -597,17 +692,39 @@ export default function CallScreen() {
       });
   }, []);
 
-  // Outgoing: acquire media + send call_initiate immediately.
+  // Outgoing: acquire media + send call_initiate.
+  // IMPORTANT: socket.send() silently returns false when the WS isn't open
+  // (e.g. right after the app returns to the foreground and the socket is
+  // still reconnecting). Previously the initiate frame was dropped and the
+  // call never started with zero feedback — a major "call not connecting at
+  // all" cause on mobile. We now retry for up to 5s and surface an error.
   useEffect(() => {
     if (mode !== "outgoing") return;
+    let cancelled = false;
     (async () => {
       const stream = await getMedia();
+      if (cancelled) return;
       if (!stream) {
         endAndLeave(false);
         return;
       }
-      socket.send("call_initiate", { conversationId, callType });
+      const deadline = Date.now() + 5000;
+      let sent = socket.send("call_initiate", { conversationId, callType });
+      while (!sent && !cancelled && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 250));
+        sent = socket.send("call_initiate", { conversationId, callType });
+      }
+      if (!sent && !cancelled) {
+        Alert.alert(
+          "Connection error",
+          "Could not reach the server to start the call. Check your connection and try again.",
+        );
+        endAndLeave(false);
+      }
     })();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-line react-hooks/exhaustive-deps
   }, [mode, conversationId, callType, getMedia, endAndLeave]);
 
@@ -620,7 +737,10 @@ export default function CallScreen() {
     let cancelled = false;
     (async () => {
       if (localStreamRef.current) return;
-      const stream = await getMedia();
+      // silent: don't pop permission/availability alerts while still ringing
+      // — the user may simply reject the call. acceptIncoming() retries
+      // loudly if this pre-warm failed.
+      const stream = await getMedia(true);
       // If the user already rejected / left while we were acquiring, release.
       if (cancelled && stream) {
         try {
@@ -646,24 +766,36 @@ export default function CallScreen() {
           callIdRef.current = d.callId;
           break;
         case "call_accepted": {
-          // Caller side: peer accepted → create offer to them.
+          // Caller side: peer accepted → create offer to them. Runs on the
+          // serialized signal queue so an early-arriving answer/ICE candidate
+          // can never interleave with offer creation (the cause of silent
+          // "wrong state" failures that left the call stuck on Connecting…).
           if (mode !== "outgoing") return;
           peerIdRef.current = d.userId;
           setStatus("connecting");
-          (async () => {
-            const stream = localStreamRef.current || (await getMedia());
-            if (!stream) return endAndLeave(false);
-            await waitForIceConfig();
-            const pc = createPC(stream, d.userId, true);
-            applySenderEncodingLimits(pc);
-            const offer = await pc.createOffer({});
-            await pc.setLocalDescription(offer);
-            socket.send("call_signal", {
-              conversationId,
-              targetUserId: d.userId,
-              signal: { type: "offer", sdp: offer.sdp },
-            });
-          })();
+          runSerialized(async () => {
+            try {
+              const stream = localStreamRef.current || (await getMedia());
+              if (!stream) return endAndLeave(false);
+              await waitForIceConfig();
+              const pc = createPC(stream, d.userId, true);
+              applySenderEncodingLimits(pc);
+              const offer = await pc.createOffer({});
+              await pc.setLocalDescription(offer);
+              socket.send("call_signal", {
+                conversationId,
+                targetUserId: d.userId,
+                signal: { type: "offer", sdp: offer.sdp },
+              });
+            } catch (err: any) {
+              // Fatal negotiation error — end cleanly instead of hanging.
+              console.warn(
+                "[call] offer creation failed:",
+                err?.message || err,
+              );
+              endAndLeave(false);
+            }
+          });
           break;
         }
         case "call_signal": {
@@ -671,69 +803,100 @@ export default function CallScreen() {
           const signal = d.signal;
           const from = d.fromUserId;
           if (from != null) peerIdRef.current = from;
-          (async () => {
+          // Serialized: signals are processed strictly in arrival order so an
+          // ICE candidate / answer can never race a half-finished offer
+          // handler (which awaits getUserMedia + ICE config for seconds).
+          runSerialized(async () => {
             let pc = pcRef.current;
             if (signal.type === "offer") {
-              // If a fresh offer arrives while our PC is dead (the peer escalated
-              // to a relay-only rebuild), tear ours down and rebuild in relay
-              // mode too so both sides negotiate over TURN.
-              if (pc) {
-                const cs = (pc as any).connectionState;
-                const ics = (pc as any).iceConnectionState;
-                if (
-                  cs === "failed" ||
-                  cs === "closed" ||
-                  ics === "failed" ||
-                  ics === "closed"
-                ) {
-                  relayOnlyRef.current = true;
-                  iceRestartAttemptedRef.current = false;
-                  try {
-                    pc.close();
-                  } catch {
-                    /* ignore */
+              try {
+                // If a fresh offer arrives while our PC is dead (the peer escalated
+                // to a relay-only rebuild), tear ours down and rebuild in relay
+                // mode too so both sides negotiate over TURN.
+                if (pc) {
+                  const cs = (pc as any).connectionState;
+                  const ics = (pc as any).iceConnectionState;
+                  if (
+                    cs === "failed" ||
+                    cs === "closed" ||
+                    ics === "failed" ||
+                    ics === "closed"
+                  ) {
+                    relayOnlyRef.current = true;
+                    iceRestartAttemptedRef.current = false;
+                    try {
+                      pc.close();
+                    } catch {
+                      /* ignore */
+                    }
+                    pcRef.current = null;
+                    pc = null;
+                    pendingIce.current = [];
                   }
-                  pcRef.current = null;
-                  pc = null;
-                  pendingIce.current = [];
                 }
+                // Callee side: build PC WITHOUT tracks, set remote, THEN attach
+                // local tracks so they bind to the offer's transceivers.
+                const stream = localStreamRef.current || (await getMedia());
+                if (!stream) return endAndLeave(false);
+                await waitForIceConfig();
+                pc = pcRef.current || createPC(stream, from, false);
+                await pc.setRemoteDescription(
+                  new RTCSessionDescription(signal),
+                );
+                // Must await: tracks have to be bound to the offer's
+                // transceivers BEFORE createAnswer so the answer SDP advertises
+                // sendrecv media. Otherwise the peer never receives our audio/
+                // video and the connection appears to "not connect".
+                await attachLocalTracks(stream);
+                applySenderEncodingLimits(pc);
+                await flushIce();
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                socket.send("call_signal", {
+                  conversationId,
+                  targetUserId: from,
+                  signal: { type: "answer", sdp: answer.sdp },
+                });
+                // Tell the peer our current camera state immediately so they
+                // render avatar vs. video correctly from the start.
+                socket.send("call_signal", {
+                  conversationId,
+                  targetUserId: from,
+                  signal: { type: "video-state", videoOff },
+                });
+              } catch (err: any) {
+                // A fatal error while answering (bad SDP / wrong state) used
+                // to be an unhandled rejection that left the call hanging on
+                // "Connecting…" forever. End cleanly instead.
+                console.warn(
+                  "[call] offer handling failed:",
+                  err?.message || err,
+                );
+                endAndLeave(false);
               }
-              // Callee side: build PC WITHOUT tracks, set remote, THEN attach
-              // local tracks so they bind to the offer's transceivers.
-              const stream = localStreamRef.current || (await getMedia());
-              if (!stream) return endAndLeave(false);
-              await waitForIceConfig();
-              pc = pcRef.current || createPC(stream, from, false);
-              await pc.setRemoteDescription(
-                new RTCSessionDescription(signal),
-              );
-              // Must await: tracks have to be bound to the offer's
-              // transceivers BEFORE createAnswer so the answer SDP advertises
-              // sendrecv media. Otherwise the peer never receives our audio/
-              // video and the connection appears to "not connect".
-              await attachLocalTracks(stream);
-              applySenderEncodingLimits(pc);
-              await flushIce();
-              const answer = await pc.createAnswer();
-              await pc.setLocalDescription(answer);
-              socket.send("call_signal", {
-                conversationId,
-                targetUserId: from,
-                signal: { type: "answer", sdp: answer.sdp },
-              });
-              // Tell the peer our current camera state immediately so they
-              // render avatar vs. video correctly from the start.
-              socket.send("call_signal", {
-                conversationId,
-                targetUserId: from,
-                signal: { type: "video-state", videoOff },
-              });
             } else if (signal.type === "answer") {
               if (!pc) return;
-              await pc.setRemoteDescription(
-                new RTCSessionDescription(signal),
-              );
-              await flushIce();
+              // Ignore stray answers when we are not expecting one — avoids
+              // "Failed to set remote answer sdp: Called in wrong state"
+              // killing the negotiation (mirrors the web client's guard).
+              if ((pc as any).signalingState !== "have-local-offer") {
+                console.warn(
+                  "[call] ignoring answer in state:",
+                  (pc as any).signalingState,
+                );
+                return;
+              }
+              try {
+                await pc.setRemoteDescription(
+                  new RTCSessionDescription(signal),
+                );
+                await flushIce();
+              } catch (err: any) {
+                console.warn(
+                  "[call] answer handling failed:",
+                  err?.message || err,
+                );
+              }
             } else if (signal.type === "ice-candidate") {
               if (signal.candidate == null) return;
               if (pc && (pc as any).remoteDescription) {
@@ -758,7 +921,7 @@ export default function CallScreen() {
               // where track.onmute is not on react-native-webrtc.
               setPeerMuted(!!signal.muted);
             }
-          })();
+          });
           break;
         }
         case "call_ended":
@@ -797,6 +960,7 @@ export default function CallScreen() {
     endAndLeave,
     waitForIceConfig,
     videoOff,
+    runSerialized,
   ]);
 
   // ── Call duration timer (mirrors web CallOverlay) ──────────────────────────

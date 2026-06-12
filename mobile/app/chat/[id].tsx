@@ -973,13 +973,13 @@ export default function ChatThread() {
 
   async function react(message: ChatMessage, emoji: string) {
     setReactTarget(null);
-    try {
-      await toggleReaction(message.id, emoji);
-    } catch {
-      /* ignore */
-    }
-    // Optimistically reflect locally; server fan-out keeps others in sync.
-    setMessages((prev) =>
+    // Optimistic toggle FIRST (mirrors web handleReact): the chip appears /
+    // disappears instantly. Doing the API call before the state update caused
+    // two bugs: (a) the reaction only showed after the network round-trip and
+    // (b) a remove raced the server's WS "removed" fan-out — the WS handler
+    // removed the chip, then the late local toggle re-ADDED it, making
+    // "remove reaction" appear broken.
+    const applyToggle = (prev: ChatMessage[]) =>
       prev.map((m) => {
         if (m.id !== message.id) return m;
         const existing = m.reactions || [];
@@ -996,8 +996,14 @@ export default function ChatThread() {
             { emoji, userId: user?.id ?? 0, fullName: user?.full_name ?? "" },
           ],
         };
-      }),
-    );
+      });
+    setMessages(applyToggle);
+    try {
+      await toggleReaction(message.id, emoji);
+    } catch {
+      // API failed — revert the optimistic toggle so UI matches the server.
+      setMessages(applyToggle);
+    }
   }
 
   function pickEmoji(emoji: string) {
