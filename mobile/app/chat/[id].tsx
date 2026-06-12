@@ -651,6 +651,11 @@ export default function ChatThread() {
   async function stopRecordingAndSend() {
     try {
       await recorder.stop();
+      // Restore the playback audio session — leaving allowsRecording=true
+      // routes/silences subsequent voice-note playback on iOS.
+      setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(
+        () => {},
+      );
       const uri = recorder.uri;
       if (!uri) return;
       setUploading(true);
@@ -673,6 +678,10 @@ export default function ChatThread() {
     } catch {
       /* ignore */
     }
+    // Same audio-session restore as stopRecordingAndSend.
+    setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(
+      () => {},
+    );
   }
 
   async function attachFile() {
