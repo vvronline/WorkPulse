@@ -242,6 +242,19 @@ export default function Profile() {
       // re-reading shortly after reflects the real state.
       loadStatus();
     } catch (e: any) {
+      // The server can fail AFTER persisting the manual status (the write
+      // succeeds but a post-write side effect throws → 500). That false
+      // negative surfaced as "Failed to set status" even though the picker
+      // change DID apply. Verify against the server before alarming.
+      try {
+        const { data: fresh } = await getMyStatus();
+        if (fresh?.manualStatus === key) {
+          setStatus(fresh);
+          return;
+        }
+      } catch {
+        /* verification failed — fall through to the error alert */
+      }
       alert("Error", e?.response?.data?.error || "Failed to set status");
     }
   }

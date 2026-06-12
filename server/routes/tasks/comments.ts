@@ -138,7 +138,16 @@ router.post('/:id/comments', auth, loadUserContext, handleUpload, async (req: Re
              VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
             [req.params.id, req.userId, content || null, fileUrl, fileName, fileType, fileSize]
         );
-        await logHistory(req.params.id, req.userId, 'comment_added', null, null, null, null, req.db);
+
+        // History logging is best-effort: the comment row is already
+        // committed at this point, so a failure here must NOT surface as
+        // "Failed to add comment" to the client (the comment IS added —
+        // this exact bug shipped to mobile users).
+        try {
+            await logHistory(req.params.id, req.userId, 'comment_added', null, null, null, null, req.db);
+        } catch (histErr) {
+            req.log.error({ err: histErr }, 'Comment history log failed (non-fatal):');
+        }
 
         const comment = (await req.db!.query(`
             SELECT tc.*, u.username, u.full_name, u.avatar
@@ -146,6 +155,12 @@ router.post('/:id/comments', auth, loadUserContext, handleUpload, async (req: Re
             JOIN users u ON u.id = tc.user_id
             WHERE tc.id = $1
         `, [result.rows[0].id])).rows[0];
+
+        // Respond NOW — the comment is committed. Mention notifications are a
+        // slow, multi-query side effect; running them before res.json() both
+        // delays the response and (if they throw outside their own guard)
+        // would falsely report failure for a saved comment.
+        res.json(comment);
 
         try {
             const mentionRegex = /data-user-id="(\d+)"/g;
@@ -189,11 +204,13 @@ router.post('/:id/comments', auth, loadUserContext, handleUpload, async (req: Re
         } catch (mentionErr) {
             req.log.error({ err: mentionErr }, 'Mention notification error:');
         }
-
-        res.json(comment);
     } catch (err) {
         req.log.error({ err: err }, 'Error adding comment:');
-        res.status(500).json({ error: 'Failed to add comment' });
+        // The response may have already been sent (errors thrown in the
+        // post-response side-effects above) — never double-respond.
+        if (!res.headersSent) {
+            res.status(500).json({ error: 'Failed to add comment' });
+        }
     }
 });
 

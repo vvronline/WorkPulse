@@ -407,8 +407,14 @@ export function searchChatUsers(q: string) {
   >("/chat/search", { params: { q } });
 }
 
+// The server responds with { conversationId } (NOT { id }) for both the
+// "already exists" and "newly created" paths — see server/routes/chat.ts
+// POST /conversations. Reading `data.id` here was why tapping a person in
+// chat search showed "Could not open this conversation".
 export function startConversation(userId: number) {
-  return api.post<{ id: number }>("/chat/conversations", { userId });
+  return api.post<{ conversationId: number }>("/chat/conversations", {
+    userId,
+  });
 }
 
 export function toggleReaction(messageId: number, emoji: string) {
@@ -431,7 +437,8 @@ export function getChatPresence(userIds: number[]) {
 /* ─── Chat: groups, files, message actions (mirror client/src/api.ts) ─── */
 
 export function createGroupConversation(name: string, userIds: number[]) {
-  return api.post<{ id: number }>("/chat/conversations/group", {
+  // Server responds { conversationId } — same contract as startConversation.
+  return api.post<{ conversationId: number }>("/chat/conversations/group", {
     name,
     userIds,
   });

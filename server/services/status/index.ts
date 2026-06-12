@@ -152,7 +152,17 @@ async function setManualStatus(ctx: StatusCtx, { status, message = null, message
     if (!userId) throw new TypeError("setManualStatus: ctx.actorUserId required");
     const previous = await peekEffective(ctx, userId);
     await repo.setManualStatus(ctx.db, userId, { status, message, messageExpiresAt });
-    return applyChange(ctx, { userId, source: "user", previousEffective: previous?.effective });
+    // The user's choice is committed at this point. applyChange is a
+    // side-effect chain (audit row → cache → WS broadcast) — if any of it
+    // throws, the route would 500 "Failed to update status" even though the
+    // status WAS saved (this exact bug surfaced as "Failed to set status"
+    // on mobile). Degrade gracefully: fall back to a fresh resolve.
+    try {
+        return await applyChange(ctx, { userId, source: "user", previousEffective: previous?.effective });
+    } catch (err) {
+        ctx.logger?.warn?.({ err: (err as Error)?.message, userId }, "setManualStatus: applyChange failed (status saved) — falling back to fresh resolve");
+        return resolveAndCache(ctx, userId);
+    }
 }
 
 async function setPresencePreference(ctx: StatusCtx, preference: string): Promise<StatusPayload | null> {
@@ -161,7 +171,14 @@ async function setPresencePreference(ctx: StatusCtx, preference: string): Promis
     if (!userId) throw new TypeError("setPresencePreference: ctx.actorUserId required");
     const previous = await peekEffective(ctx, userId);
     await repo.setPresencePreference(ctx.db, userId, preference);
-    return applyChange(ctx, { userId, source: "user", previousEffective: previous?.effective });
+    // Same rationale as setManualStatus: the preference write is committed —
+    // side-effect failures must not surface as a request error.
+    try {
+        return await applyChange(ctx, { userId, source: "user", previousEffective: previous?.effective });
+    } catch (err) {
+        ctx.logger?.warn?.({ err: (err as Error)?.message, userId }, "setPresencePreference: applyChange failed (preference saved) — falling back to fresh resolve");
+        return resolveAndCache(ctx, userId);
+    }
 }
 
 async function recordActivityPing(ctx: StatusCtx): Promise<null> {

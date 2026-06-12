@@ -192,6 +192,25 @@ export default function TaskDetail() {
       setComments((prev) => [...prev, data]);
       setCommentText("");
     } catch (e: any) {
+      // The server may fail AFTER committing the comment (e.g. a post-insert
+      // side effect throws) — historically this surfaced as "Failed to add
+      // comment" even though the comment WAS added. Verify against the
+      // server before alarming the user.
+      try {
+        const { data: fresh } = await getTaskDetail(taskId);
+        const freshComments = fresh.comments || [];
+        const saved = freshComments.some(
+          (c) => c.content === content && c.user_id != null,
+        );
+        if (saved) {
+          setTask(fresh);
+          setComments(freshComments);
+          setCommentText("");
+          return;
+        }
+      } catch {
+        /* verification failed — fall through to the error alert */
+      }
       Alert.alert("Error", e?.response?.data?.error || "Failed to post comment");
     } finally {
       setPosting(false);

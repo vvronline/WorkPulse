@@ -5,6 +5,7 @@ import {
   Image,
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -213,7 +214,13 @@ export default function ChatThread() {
     height: 44,
   });
   const [actionTarget, setActionTarget] = useState<ChatMessage | null>(null);
-  const [forwardTarget, setForwardTarget] = useState<ChatMessage | null>(null);
+  // When true, the action-sheet modal shows the "Forward to…" conversation
+  // picker INSTEAD of the action rows. Forward used to live in a separate
+  // <Modal> opened via setTimeout after dismissing the action sheet — on
+  // Android presenting a modal while another is dismissing silently fails,
+  // which is why Forward appeared broken. A single modal with switching
+  // content has no such race.
+  const [forwardMode, setForwardMode] = useState(false);
   const [showAllEmoji, setShowAllEmoji] = useState(false);
   // Whether the emoji grid inserts into the composer ("compose") or reacts to
   // the selected message ("react").
@@ -632,29 +639,32 @@ export default function ChatThread() {
     setReplyTo(message);
   }
 
-  function openForward(message: ChatMessage) {
-    // Close the action sheet first, then open the forward picker on the next
-    // tick. Presenting a second RN <Modal> while another is still dismissing
-    // makes the new modal silently fail to appear — this deferral is the
-    // reliable workaround and is why "forward" looked broken before.
-    setActionTarget(null);
+  function openForward() {
+    // Switch the already-open action-sheet modal into "forward" mode. We do
+    // NOT dismiss this modal and present another — that cross-modal race on
+    // Android is what made Forward silently fail before.
     setReactTarget(null);
-    // Preload conversations so the picker isn't empty when it animates in.
+    // Preload conversations so the picker isn't empty when it appears.
     getConversations()
       .then((r) => setConversations(r.data || []))
       .catch(() => setConversations([]));
-    setTimeout(() => setForwardTarget(message), 250);
+    setForwardMode(true);
+  }
+
+  function closeActionSheet() {
+    setActionTarget(null);
+    setForwardMode(false);
   }
 
   function doForward(targetConvId: number) {
-    if (!forwardTarget) return;
-    const msg = forwardTarget;
-    // Close the picker first, then report the result on the next tick so the
-    // dialog modal doesn't collide with the dismissing forward modal.
-    setForwardTarget(null);
+    const msg = actionTarget;
+    if (!msg) return;
+    closeActionSheet();
     forwardMessage(msg.id, [targetConvId])
       .then(() => {
-        setTimeout(() => alert("Forwarded", "Message forwarded."), 250);
+        // Small defer so the result dialog never collides with the
+        // dismissing modal.
+        setTimeout(() => alert("Forwarded", "Message forwarded."), 300);
       })
       .catch((e: any) => {
         setTimeout(
@@ -663,7 +673,7 @@ export default function ChatThread() {
               "Error",
               e?.response?.data?.error || "Could not forward message.",
             ),
-          250,
+          300,
         );
       });
   }
@@ -1244,23 +1254,54 @@ export default function ChatThread() {
         </View>
       </Modal>
 
-      {/* Own-message action sheet (edit / pin / star / react / delete) */}
+      {/* Message action sheet (forward / save / pin / edit / delete). The
+          same modal switches to the "Forward to…" picker via forwardMode —
+          a single modal avoids the Android dismiss/present race that broke
+          Forward when it was a separate modal. */}
       <Modal
         visible={!!actionTarget}
         transparent
         animationType="fade"
-        onRequestClose={() => setActionTarget(null)}
+        onRequestClose={closeActionSheet}
       >
         <Pressable
           style={styles.pickerOverlay}
-          onPress={() => setActionTarget(null)}
+          onPress={closeActionSheet}
         >
+          {forwardMode ? (
+            <View style={styles.forwardSheet}>
+              <Text style={styles.forwardTitle}>Forward to…</Text>
+              <ScrollView style={{ maxHeight: 360 }}>
+                {conversations.filter((c) => c.id !== convId).length === 0 ? (
+                  <Text style={styles.forwardEmpty}>No conversations</Text>
+                ) : (
+                  conversations
+                    .filter((c) => c.id !== convId)
+                    .map((c) => (
+                      <Pressable
+                        key={c.id}
+                        style={styles.forwardConv}
+                        onPress={() => doForward(c.id)}
+                      >
+                        <Text style={styles.forwardConvName} numberOfLines={1}>
+                          {c.is_group
+                            ? c.group_name || `Group #${c.id}`
+                            : c.other_full_name ||
+                              c.other_username ||
+                              `Conversation #${c.id}`}
+                        </Text>
+                      </Pressable>
+                    ))
+                )}
+              </ScrollView>
+            </View>
+          ) : (
           <View style={styles.actionSheet}>
             {actionTarget ? (
               <>
                 <Pressable
                   style={styles.actionRow}
-                  onPress={() => actionTarget && openForward(actionTarget)}
+                  onPress={openForward}
                 >
                   <Forward size={18} color={theme.text} />
                   <Text style={styles.actionText}>Forward</Text>
@@ -1308,42 +1349,7 @@ export default function ChatThread() {
               </>
             ) : null}
           </View>
-        </Pressable>
-      </Modal>
-
-      {/* Forward picker — choose a conversation to forward to */}
-      <Modal
-        visible={!!forwardTarget}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setForwardTarget(null)}
-      >
-        <Pressable
-          style={styles.pickerOverlay}
-          onPress={() => setForwardTarget(null)}
-        >
-          <View style={styles.forwardSheet}>
-            <Text style={styles.forwardTitle}>Forward to…</Text>
-            {conversations.length === 0 ? (
-              <Text style={styles.forwardEmpty}>No conversations</Text>
-            ) : (
-              conversations.map((c) => (
-                <Pressable
-                  key={c.id}
-                  style={styles.forwardConv}
-                  onPress={() => doForward(c.id)}
-                >
-                  <Text style={styles.forwardConvName} numberOfLines={1}>
-                    {c.is_group
-                      ? c.group_name || `Group #${c.id}`
-                      : c.other_full_name ||
-                        c.other_username ||
-                        `Conversation #${c.id}`}
-                  </Text>
-                </Pressable>
-              ))
-            )}
-          </View>
+          )}
         </Pressable>
       </Modal>
 

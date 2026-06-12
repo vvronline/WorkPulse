@@ -233,7 +233,12 @@ export default function ChatScreen() {
   async function startWithUser(u: SearchUser) {
     try {
       const { data } = await startConversation(u.id);
-      const convId = (data as { id?: number })?.id;
+      // The server returns { conversationId }. Accept the legacy { id } shape
+      // too, defensively — reading only `id` here was the bug that made every
+      // search-result tap fail with "Could not open this conversation".
+      const convId =
+        (data as { conversationId?: number; id?: number })?.conversationId ??
+        (data as { conversationId?: number; id?: number })?.id;
       if (!convId) {
         Alert.alert("Error", "Could not open this conversation.");
         return;

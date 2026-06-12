@@ -72,9 +72,17 @@ export default function NewChatScreen() {
     setStarting(user.id);
     try {
       const { data } = await startConversation(user.id);
+      // Server returns { conversationId } (accept legacy { id } defensively).
+      const convId =
+        (data as { conversationId?: number; id?: number })?.conversationId ??
+        (data as { conversationId?: number; id?: number })?.id;
+      if (!convId) {
+        setStarting(null);
+        return;
+      }
       router.replace({
         pathname: "/chat/[id]",
-        params: { id: String(data.id), name: user.full_name || user.username },
+        params: { id: String(convId), name: user.full_name || user.username },
       });
     } catch {
       setStarting(null);
@@ -97,9 +105,17 @@ export default function NewChatScreen() {
         groupName.trim(),
         selected.map((u) => u.id),
       );
+      // Server returns { conversationId } (accept legacy { id } defensively).
+      const convId =
+        (data as { conversationId?: number; id?: number })?.conversationId ??
+        (data as { conversationId?: number; id?: number })?.id;
+      if (!convId) {
+        setCreating(false);
+        return;
+      }
       router.replace({
         pathname: "/chat/[id]",
-        params: { id: String(data.id), name: groupName.trim() },
+        params: { id: String(convId), name: groupName.trim() },
       });
     } catch {
       setCreating(false);

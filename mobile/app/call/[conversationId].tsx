@@ -195,10 +195,13 @@ export default function CallScreen() {
     }
   }, [callType]);
 
-  // Cap the outbound video bitrate so a congested mobile uplink degrades
-  // gracefully (smooth lower-res) instead of freezing/stalling — the same
-  // adaptive-encoding idea the VideoSDK client applies under the hood.
-  const applySenderEncodingLimits = useCallback((pc: RTCPeerConnection) => {
+  // Bitrate ramp-up (ported from the web useWebRTC applyBitrateRampUp):
+  // start LOW (~300 kbps) so the connection establishes fast on a mobile
+  // uplink, then ramp to the target (~800 kbps) over 3s once connected.
+  // A static high cap caused stalls/freezes at connect time on congested
+  // networks — part of why calls to desktop/web felt slow and unstable.
+  const bitrateRampTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const setVideoBitrate = useCallback((pc: RTCPeerConnection, bitrate: number) => {
     try {
       const senders =
         typeof (pc as any).getSenders === "function"
@@ -211,14 +214,46 @@ export default function CallScreen() {
         if (!params.encodings || params.encodings.length === 0) {
           params.encodings = [{}];
         }
-        params.encodings[0].maxBitrate = 1_000_000; // ~1 Mbps cap
+        params.encodings[0].maxBitrate = bitrate;
         params.encodings[0].maxFramerate = 30;
+        (params as any).degradationPreference = "maintain-framerate";
         sender.setParameters?.(params).catch?.(() => {});
       }
     } catch {
       /* setParameters not critical — ignore */
     }
   }, []);
+
+  const applySenderEncodingLimits = useCallback(
+    (pc: RTCPeerConnection) => {
+      // Initial conservative cap for fast, stable connect.
+      setVideoBitrate(pc, 300_000);
+    },
+    [setVideoBitrate],
+  );
+
+  const applyBitrateRampUp = useCallback(
+    (pc: RTCPeerConnection) => {
+      const INITIAL = 300_000;
+      const TARGET = 800_000;
+      const STEPS = 3;
+      const STEP_MS = 1000;
+      bitrateRampTimersRef.current.forEach((t) => clearTimeout(t));
+      bitrateRampTimersRef.current = [];
+      setVideoBitrate(pc, INITIAL);
+      for (let step = 1; step <= STEPS; step++) {
+        const timer = setTimeout(() => {
+          if ((pc as any).connectionState !== "connected") return;
+          const bitrate = Math.round(
+            INITIAL + ((TARGET - INITIAL) * step) / STEPS,
+          );
+          setVideoBitrate(pc, bitrate);
+        }, STEP_MS * step);
+        bitrateRampTimersRef.current.push(timer);
+      }
+    },
+    [setVideoBitrate],
+  );
 
   // Briefly wait for the real ICE config (TURN creds) so the connection is
   // established over a relay when needed instead of racing with the fallback
@@ -431,6 +466,9 @@ export default function CallScreen() {
             disconnectTimerRef.current = null;
           }
           setStatus("connected");
+          // Ramp the video bitrate up now that the link is established
+          // (mirrors web applyBitrateRampUp).
+          applyBitrateRampUp(pc);
         } else if (st === "disconnected") {
           // Grace period: a temporary network hiccup is common on mobile.
           // Wait before tearing the call down so it can self-heal.
@@ -540,6 +578,8 @@ export default function CallScreen() {
         clearTimeout(disconnectTimerRef.current);
         disconnectTimerRef.current = null;
       }
+      bitrateRampTimersRef.current.forEach((t) => clearTimeout(t));
+      bitrateRampTimersRef.current = [];
     };
   }, []);
 
@@ -570,6 +610,32 @@ export default function CallScreen() {
     })();
     // eslint-disable-line react-hooks/exhaustive-deps
   }, [mode, conversationId, callType, getMedia, endAndLeave]);
+
+  // Incoming: PRE-WARM camera/mic while the phone is still ringing (mirrors
+  // the web client's pre-warm path). Acquiring media only after the user taps
+  // Accept added 2–5s before the offer/answer could even start — one of the
+  // main reasons mobile→desktop calls took 10–20s to connect.
+  useEffect(() => {
+    if (mode !== "incoming") return;
+    let cancelled = false;
+    (async () => {
+      if (localStreamRef.current) return;
+      const stream = await getMedia();
+      // If the user already rejected / left while we were acquiring, release.
+      if (cancelled && stream) {
+        try {
+          stream.getTracks().forEach((t) => t.stop());
+        } catch {
+          /* ignore */
+        }
+        localStreamRef.current = null;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   // Signaling listener.
   useEffect(() => {
@@ -777,15 +843,20 @@ export default function CallScreen() {
     return () => clearInterval(interval);
   }, [status]);
 
-  // Incoming: accept handler.
+  // Incoming: accept handler. Send call_accept IMMEDIATELY (don't serialize
+  // behind getUserMedia) — the caller starts building its offer right away
+  // while we finish acquiring media in parallel. Combined with the ringing
+  // pre-warm above this shaves seconds off the connect time.
   async function acceptIncoming() {
     setStatus("connecting");
-    const stream = await getMedia();
-    if (!stream) return endAndLeave(false);
     socket.send("call_accept", {
       callId: callIdRef.current,
       conversationId,
     });
+    if (!localStreamRef.current) {
+      const stream = await getMedia();
+      if (!stream) return endAndLeave(false);
+    }
     // The caller will now send us an offer (handled in call_signal).
   }
 
@@ -894,8 +965,14 @@ export default function CallScreen() {
           style={styles.remoteVideo}
           objectFit="cover"
           // Never mirror the remote feed — only a front-camera self-view should
-          // be mirrored. Without this the desktop peer renders left-right flipped.
+          // be mirrored. Without this the peer's video renders like a mirror
+          // image (left-right flipped) on the phone.
           mirror={false}
+          // Android renders each RTCView on a SurfaceView; without explicit
+          // zOrder the surfaces stack unpredictably and the small local
+          // preview can be painted UNDER this full-screen view (the
+          // "self preview not showing" bug). Remote = base layer.
+          zOrder={0}
         />
       ) : (
         <View style={styles.avatarWrap}>
@@ -913,7 +990,12 @@ export default function CallScreen() {
           streamURL={(localStream as any).toURL()}
           style={styles.localVideo}
           objectFit="cover"
+          // Mirror ONLY the self-view (front camera) — natural "mirror"
+          // behaviour users expect, matching the web client.
           mirror
+          // Must be a HIGHER media-overlay layer than the remote view, or
+          // Android intermittently hides the self preview entirely.
+          zOrder={1}
         />
       ) : null}
 
