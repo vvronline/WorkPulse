@@ -25,8 +25,22 @@ import { getIceConfig } from "../../src/features";
 const FALLBACK_ICE = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
+  { urls: "stun:stun2.l.google.com:19302" },
+  // Multiple TURN transports so the call can still relay when mobile UDP is
+  // blocked. The TCP/TLS (443?transport=tcp) entry is the lifeline on
+  // restrictive mobile carriers / corporate Wi-Fi where UDP/STUN never works.
+  {
+    urls: "turn:openrelay.metered.ca:80",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
   {
     urls: "turn:openrelay.metered.ca:443",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+  {
+    urls: "turn:openrelay.metered.ca:443?transport=tcp",
     username: "openrelayproject",
     credential: "openrelayproject",
   },
@@ -93,6 +107,24 @@ export default function CallScreen() {
   const iceConfigLoadedRef = useRef(false);
   const pendingIce = useRef<any[]>([]);
   const startedAt = useRef<number>(0);
+  // Recovery state — mirrors the proven web client. relayOnly forces TURN-only
+  // after a UDP/STUN ICE failure; the timers/flags coordinate ICE-restart and
+  // a connection-timeout safety net so calls recover instead of dropping.
+  const relayOnlyRef = useRef(false);
+  const iceRestartAttemptedRef = useRef(false);
+  const negotiationDoneRef = useRef(false);
+  const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const createPCRef = useRef<
+    | ((
+        stream: MediaStream | null,
+        targetUserId: number,
+        addTracksNow?: boolean,
+      ) => RTCPeerConnection)
+    | null
+  >(null);
 
   const endAndLeave = useCallback(
     (sendEnd: boolean) => {
@@ -213,14 +245,22 @@ export default function CallScreen() {
 
   const createPC = useCallback(
     (stream: MediaStream | null, targetUserId: number, addTracksNow = true) => {
-      const pc = new RTCPeerConnection({
+      // When relayOnlyRef is set (after a UDP/STUN ICE failure) we force
+      // TURN-only so even networks that block UDP entirely can complete the
+      // call by relaying every byte over TCP/TLS. This is the key recovery
+      // path for restrictive mobile carriers / corporate Wi-Fi.
+      const pcConfig: any = {
         iceServers: iceServersRef.current,
         // Pre-gather candidates + fewer ports → faster, firewall-friendlier
         // connection setup (matches web config).
         iceCandidatePoolSize: 10,
         bundlePolicy: "max-bundle",
         rtcpMuxPolicy: "require",
-      } as any);
+      };
+      if (relayOnlyRef.current) {
+        pcConfig.iceTransportPolicy = "relay";
+      }
+      const pc = new RTCPeerConnection(pcConfig);
       pcRef.current = pc;
 
       // For the OFFERER tracks must exist before createOffer. For the ANSWERER
@@ -230,6 +270,18 @@ export default function CallScreen() {
       if (stream && addTracksNow) {
         stream.getTracks().forEach((track) => pc.addTrack(track, stream));
       }
+
+      // Safety net: if we never reach "connected" within 30s, the negotiation
+      // stalled (lost candidate, blocked TURN). Tear down so the user isn't
+      // stuck on an endless "Connecting…" screen.
+      if (connectionTimeoutRef.current) {
+        clearTimeout(connectionTimeoutRef.current);
+      }
+      connectionTimeoutRef.current = setTimeout(() => {
+        if ((pc as any).connectionState !== "connected") {
+          endAndLeave(false);
+        }
+      }, 30000);
 
       (pc as any).onicecandidate = (e: any) => {
         if (e.candidate) {
@@ -267,12 +319,129 @@ export default function CallScreen() {
         if (e.track?.kind === "video") setRemoteVideoOff(false);
       };
 
+      // Fast proactive ICE restart on a brief mobile/VPN network blip — try to
+      // re-establish before connectionState escalates to "failed".
+      (pc as any).oniceconnectionstatechange = () => {
+        const ice = (pc as any).iceConnectionState;
+        if (
+          ice === "disconnected" &&
+          negotiationDoneRef.current &&
+          !iceRestartAttemptedRef.current
+        ) {
+          setTimeout(() => {
+            const cur = (pc as any).iceConnectionState;
+            if (
+              (cur === "disconnected" || cur === "failed") &&
+              pcRef.current === pc
+            ) {
+              iceRestartAttemptedRef.current = true;
+              (async () => {
+                try {
+                  const offer = await pc.createOffer({ iceRestart: true });
+                  await pc.setLocalDescription(offer);
+                  socket.send("call_signal", {
+                    conversationId,
+                    targetUserId,
+                    signal: {
+                      type: "offer",
+                      sdp: (pc as any).localDescription?.sdp,
+                    },
+                  });
+                } catch {
+                  /* ignore — connectionState handler will escalate */
+                }
+              })();
+            }
+          }, 2000);
+        }
+      };
+
       (pc as any).onconnectionstatechange = () => {
         const st = (pc as any).connectionState;
         if (st === "connected") {
           startedAt.current = Date.now();
+          negotiationDoneRef.current = true;
+          iceRestartAttemptedRef.current = false;
+          if (connectionTimeoutRef.current) {
+            clearTimeout(connectionTimeoutRef.current);
+            connectionTimeoutRef.current = null;
+          }
+          if (disconnectTimerRef.current) {
+            clearTimeout(disconnectTimerRef.current);
+            disconnectTimerRef.current = null;
+          }
           setStatus("connected");
-        } else if (st === "failed" || st === "closed") {
+        } else if (st === "disconnected") {
+          // Grace period: a temporary network hiccup is common on mobile.
+          // Wait before tearing the call down so it can self-heal.
+          if (disconnectTimerRef.current) {
+            clearTimeout(disconnectTimerRef.current);
+          }
+          disconnectTimerRef.current = setTimeout(() => {
+            if (
+              pcRef.current === pc &&
+              (pc as any).connectionState !== "connected"
+            ) {
+              endAndLeave(false);
+            }
+          }, 8000);
+        } else if (st === "failed") {
+          if (disconnectTimerRef.current) {
+            clearTimeout(disconnectTimerRef.current);
+            disconnectTimerRef.current = null;
+          }
+          // Recovery ladder: ICE restart → relay-only rebuild → give up.
+          if (!iceRestartAttemptedRef.current && negotiationDoneRef.current) {
+            iceRestartAttemptedRef.current = true;
+            (async () => {
+              try {
+                const offer = await pc.createOffer({ iceRestart: true });
+                await pc.setLocalDescription(offer);
+                socket.send("call_signal", {
+                  conversationId,
+                  targetUserId,
+                  signal: {
+                    type: "offer",
+                    sdp: (pc as any).localDescription?.sdp,
+                  },
+                });
+              } catch {
+                endAndLeave(false);
+              }
+            })();
+          } else if (!relayOnlyRef.current) {
+            // ICE restart didn't help — escalate to TURN-only and rebuild.
+            relayOnlyRef.current = true;
+            iceRestartAttemptedRef.current = false;
+            setStatus("connecting");
+            const localStr = localStreamRef.current;
+            try {
+              pc.close();
+            } catch {
+              /* ignore */
+            }
+            pcRef.current = null;
+            pendingIce.current = [];
+            (async () => {
+              try {
+                const builder = createPCRef.current;
+                if (!builder || !localStr) return endAndLeave(false);
+                const newPc = builder(localStr, targetUserId, true);
+                const offer = await newPc.createOffer({});
+                await newPc.setLocalDescription(offer);
+                socket.send("call_signal", {
+                  conversationId,
+                  targetUserId,
+                  signal: { type: "offer", sdp: offer.sdp },
+                });
+              } catch {
+                endAndLeave(false);
+              }
+            })();
+          } else {
+            endAndLeave(false);
+          }
+        } else if (st === "closed") {
           endAndLeave(false);
         }
       };
@@ -281,6 +450,10 @@ export default function CallScreen() {
     },
     [conversationId, endAndLeave],
   );
+
+  // Keep a stable ref to createPC so the relay-only rebuild path inside the
+  // connection-state handler can recreate the PC without a stale closure.
+  createPCRef.current = createPC;
 
   const flushIce = useCallback(async () => {
     const pc = pcRef.current;
@@ -293,6 +466,21 @@ export default function CallScreen() {
         /* ignore */
       }
     }
+  }, []);
+
+  // Clear all recovery timers when the screen unmounts so a late-firing
+  // timeout can't tear down a fresh call or call endAndLeave after navigation.
+  useEffect(() => {
+    return () => {
+      if (connectionTimeoutRef.current) {
+        clearTimeout(connectionTimeoutRef.current);
+        connectionTimeoutRef.current = null;
+      }
+      if (disconnectTimerRef.current) {
+        clearTimeout(disconnectTimerRef.current);
+        disconnectTimerRef.current = null;
+      }
+    };
   }, []);
 
   // Load ICE config up front.
@@ -359,6 +547,30 @@ export default function CallScreen() {
           (async () => {
             let pc = pcRef.current;
             if (signal.type === "offer") {
+              // If a fresh offer arrives while our PC is dead (the peer escalated
+              // to a relay-only rebuild), tear ours down and rebuild in relay
+              // mode too so both sides negotiate over TURN.
+              if (pc) {
+                const cs = (pc as any).connectionState;
+                const ics = (pc as any).iceConnectionState;
+                if (
+                  cs === "failed" ||
+                  cs === "closed" ||
+                  ics === "failed" ||
+                  ics === "closed"
+                ) {
+                  relayOnlyRef.current = true;
+                  iceRestartAttemptedRef.current = false;
+                  try {
+                    pc.close();
+                  } catch {
+                    /* ignore */
+                  }
+                  pcRef.current = null;
+                  pc = null;
+                  pendingIce.current = [];
+                }
+              }
               // Callee side: build PC WITHOUT tracks, set remote, THEN attach
               // local tracks so they bind to the offer's transceivers.
               const stream = localStreamRef.current || (await getMedia());
@@ -538,6 +750,9 @@ export default function CallScreen() {
           streamURL={(remoteStream as any).toURL()}
           style={styles.remoteVideo}
           objectFit="cover"
+          // Never mirror the remote feed — only a front-camera self-view should
+          // be mirrored. Without this the desktop peer renders left-right flipped.
+          mirror={false}
         />
       ) : (
         <View style={styles.avatarWrap}>
@@ -636,7 +851,14 @@ const styles = StyleSheet.create({
     height: 160,
     borderRadius: 12,
     backgroundColor: "#000",
+    overflow: "hidden",
+    // zIndex alone does NOT lift a view above a sibling on Android — elevation
+    // is required, otherwise the full-screen remote video paints over the
+    // self-preview once the call connects and the local tile "disappears".
     zIndex: 5,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.25)",
   },
   avatarWrap: {
     position: "absolute",
