@@ -773,6 +773,16 @@ export default function CallScreen() {
             setTimeout(() => endAndLeave(false), 800);
           }
           break;
+        case "call_handled_elsewhere":
+          // The user answered this call on another device (web/desktop).
+          // Without this the incoming-call screen kept ringing forever.
+          if (
+            Number(d.conversationId) === conversationId ||
+            (d.callId != null && d.callId === callIdRef.current)
+          ) {
+            endAndLeave(false);
+          }
+          break;
       }
     });
     return off;

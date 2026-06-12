@@ -401,6 +401,12 @@ export function markConversationRead(convId: number) {
   return api.post(`/chat/conversations/${convId}/read`);
 }
 
+// Acknowledge delivery of a received message so the sender sees the
+// "✓✓ delivered" tick (mirrors web client/src/api.ts ackDelivered).
+export function ackDelivered(messageId: number) {
+  return api.post(`/chat/messages/${messageId}/delivered`);
+}
+
 export function searchChatUsers(q: string) {
   return api.get<
     Array<{ id: number; username: string; full_name: string; avatar?: string | null }>
@@ -444,14 +450,20 @@ export function createGroupConversation(name: string, userIds: number[]) {
   });
 }
 
-export function uploadChatFile(convId: number, uri: string, fileName?: string) {
+export function uploadChatFile(
+  convId: number,
+  uri: string,
+  fileName?: string,
+  mimeType?: string,
+) {
   const name = fileName || uri.split("/").pop() || "file";
   const match = /\.(\w+)$/.exec(name);
   const ext = (match?.[1] || "").toLowerCase();
   // Map common extensions to the MIME types the server's chat upload
-  // fileFilter allows. Audio (voice notes) MUST be included — otherwise an
-  // .m4a recording would fall back to application/octet-stream, which the
-  // server rejects and the voice message silently fails to send.
+  // fileFilter allows (see server/routes/chat.ts ALLOWED_TYPES). Audio
+  // (voice notes) MUST be included — otherwise an .m4a recording would fall
+  // back to application/octet-stream, which the server rejects and the voice
+  // message silently fails to send.
   const MIME_BY_EXT: Record<string, string> = {
     png: "image/png",
     jpg: "image/jpeg",
@@ -462,14 +474,25 @@ export function uploadChatFile(convId: number, uri: string, fileName?: string) {
     pdf: "application/pdf",
     // Audio (voice messages)
     m4a: "audio/mp4",
-    mp4: "audio/mp4",
     mp3: "audio/mpeg",
     aac: "audio/mp4",
     ogg: "audio/ogg",
     wav: "audio/wav",
     webm: "audio/webm",
+    // Video
+    mp4: "video/mp4",
+    mov: "video/quicktime",
+    // Documents (mirror the server's allow-list)
+    doc: "application/msword",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xls: "application/vnd.ms-excel",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    txt: "text/plain",
+    csv: "text/csv",
+    zip: "application/zip",
   };
-  const mime = MIME_BY_EXT[ext] || "application/octet-stream";
+  const mime = mimeType || MIME_BY_EXT[ext] || "application/octet-stream";
   const form = new FormData();
   form.append("file", { uri, name, type: mime } as any);
   return api.post<ChatMessage>(`/chat/conversations/${convId}/files`, form, {
@@ -524,6 +547,72 @@ export function getReadStatus(convId: number) {
 
 export function starMessage(messageId: number) {
   return api.post(`/chat/messages/${messageId}/star`);
+}
+
+/* ─── Chat: search / shared files / saved messages / clear chat ───
+ * Mirrors the web ChatHeader 3-dot menu (client/src/api.ts). */
+
+export type MessageSearchResult = {
+  id: number;
+  conversation_id: number;
+  sender_id: number;
+  content?: string | null;
+  created_at: string;
+  file_url?: string | null;
+  file_name?: string | null;
+  sender_name?: string | null;
+  sender_avatar?: string | null;
+  group_name?: string | null;
+  is_group?: boolean;
+};
+
+export function searchMessages(q: string, convId?: number) {
+  return api.get<MessageSearchResult[]>("/chat/search-messages", {
+    params: { q, ...(convId ? { convId: String(convId) } : {}) },
+  });
+}
+
+export type SharedFile = {
+  id: number;
+  file_url: string;
+  file_name?: string | null;
+  file_type?: string | null;
+  file_size?: number | null;
+  created_at: string;
+  sender_id: number;
+  sender_name?: string | null;
+  sender_avatar?: string | null;
+};
+
+export function getSharedFiles(convId: number) {
+  return api.get<SharedFile[]>(`/chat/conversations/${convId}/files`);
+}
+
+export type StarredMessage = {
+  id: number;
+  conversation_id: number;
+  sender_id: number;
+  content?: string | null;
+  created_at: string;
+  file_url?: string | null;
+  file_name?: string | null;
+  file_type?: string | null;
+  file_size?: number | null;
+  sender_name?: string | null;
+  sender_avatar?: string | null;
+  starred_at?: string | null;
+  group_name?: string | null;
+  is_group?: boolean;
+};
+
+export function getStarredMessages() {
+  return api.get<StarredMessage[]>("/chat/starred");
+}
+
+// Removes every message in the conversation for everyone (server fans out a
+// `chat_cleared` WS event to all participants).
+export function clearChat(convId: number) {
+  return api.delete(`/chat/conversations/${convId}/messages`);
 }
 
 export function forwardMessage(messageId: number, conversationIds: number[]) {

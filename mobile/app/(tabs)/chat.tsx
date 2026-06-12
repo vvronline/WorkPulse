@@ -230,6 +230,38 @@ export default function ChatScreen() {
     });
   }
 
+  // Call back from a history entry (mirrors the web Calls tab, where rows are
+  // actionable). Group calls aren't supported by the 1:1 native call screen,
+  // so for group entries we open the conversation's chat instead.
+  function callBack(entry: CallLogEntry) {
+    const outgoing = entry.caller_id === user?.id;
+    const display = entry.is_group
+      ? entry.group_name || "Group"
+      : outgoing
+        ? entry.other_name || "Unknown"
+        : entry.caller_name || "Unknown";
+    if (entry.is_group) {
+      router.push({
+        pathname: "/chat/[id]",
+        params: {
+          id: String(entry.conversation_id),
+          name: display,
+          isGroup: "1",
+        },
+      });
+      return;
+    }
+    router.push({
+      pathname: "/call/[conversationId]",
+      params: {
+        conversationId: String(entry.conversation_id),
+        mode: "outgoing",
+        callType: entry.call_type === "video" ? "video" : "voice",
+        peerName: display,
+      },
+    });
+  }
+
   async function startWithUser(u: SearchUser) {
     try {
       const { data } = await startConversation(u.id);
@@ -518,7 +550,11 @@ export default function ChatScreen() {
                 ? item.other_name || "Unknown"
                 : item.caller_name || "Unknown";
             return (
-              <View style={styles.row}>
+              <Pressable
+                style={styles.row}
+                onPress={() => callBack(item)}
+                android_ripple={{ color: theme.surfaceHover }}
+              >
                 <View style={styles.avatar}>
                   <Text style={styles.avatarText}>{initials(display)}</Text>
                 </View>
@@ -556,7 +592,7 @@ export default function ChatScreen() {
                     <Phone size={13} color={theme.textMuted} />
                   )}
                 </View>
-              </View>
+              </Pressable>
             );
           }}
           ListEmptyComponent={

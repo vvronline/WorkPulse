@@ -15,6 +15,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker";
 import * as Linking from "expo-linking";
 import {
   AudioModule,
@@ -26,13 +27,16 @@ import {
 import {
   CornerUpLeft,
   FileText,
+  FolderOpen,
   Image as ImageIcon,
   Mic,
   MoreHorizontal,
+  MoreVertical,
   Pencil,
   Phone,
   Pin,
   Plus,
+  Search,
   Send,
   Smile,
   Star,
@@ -46,6 +50,8 @@ import VoicePlayer from "../../src/components/VoicePlayer";
 import { useAuth } from "../../src/auth/AuthContext";
 import { useDialog } from "../../src/hooks/useDialog";
 import {
+  ackDelivered,
+  clearChat,
   deleteMessage,
   editMessage,
   forwardMessage,
@@ -54,14 +60,20 @@ import {
   getMessages,
   getPinnedMessages,
   getReadStatus,
+  getSharedFiles,
+  getStarredMessages,
   markConversationRead,
   pinMessage,
+  searchMessages,
   starMessage,
   toggleReaction,
   uploadChatFile,
   type ChatMessage,
   type Conversation,
+  type MessageSearchResult,
   type PinnedMessage,
+  type SharedFile,
+  type StarredMessage,
 } from "../../src/features";
 import { Forward } from "lucide-react-native";
 import { socket } from "../../src/realtime/socket";
@@ -130,6 +142,31 @@ function fmtTime(iso: string) {
   });
 }
 
+function fmtDateTime(iso: string) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return `${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${fmtTime(iso)}`;
+}
+
+// Human label for the peer's effective status shown under the chat name in
+// the header (mirrors the web ChatHeader STATUS_LABEL; "available" reads as
+// "Online" like the web's online fallback).
+const STATUS_LABEL: Record<string, string> = {
+  available: "Online",
+  busy: "Busy",
+  dnd: "Do Not Disturb",
+  brb: "Be Right Back",
+  away: "Away",
+  offline: "Offline",
+  in_call: "In a Call",
+  in_meeting: "In a Meeting",
+};
+
+// Header 3-dot menu sheet contents. A single modal switches between the menu
+// and each panel — presenting separate modals back-to-back races on Android
+// (see the forwardMode comment below for the same pattern).
+type HeaderSheet = null | "menu" | "search" | "pinned" | "files" | "saved";
+
 /**
  * WhatsApp-style delivery indicator for the current user's own messages.
  * Mirrors the web `DeliveryStatus` component:
@@ -188,14 +225,22 @@ export default function ChatThread() {
   const { id, name } = params;
   const headerAvatar = params.avatar || null;
   const convId = Number(id);
+  // Group conversations get NO 1:1 call buttons — the native call screen is
+  // strictly peer-to-peer (single remote stream), so initiating a "group call"
+  // from here would produce a broken half-connected call. Mirrors the web,
+  // where group calls go through the meeting flow instead.
+  const [isGroupConv, setIsGroupConv] = useState(params.isGroup === "1");
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const kbInset = useKeyboardInset();
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const { user } = useAuth();
-  const { alert, dialog } = useDialog();
+  const { alert, confirm, dialog } = useDialog();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
+  // Cursor pagination for older history (mirrors web loadMore).
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [text, setText] = useState("");
   const [peerTyping, setPeerTyping] = useState(false);
   const [reactTarget, setReactTarget] = useState<ChatMessage | null>(null);
@@ -243,6 +288,16 @@ export default function ChatThread() {
   // Locally-tracked starred message ids (server list doesn't return per-message
   // starred state, so we reflect it optimistically after the action).
   const [starredIds, setStarredIds] = useState<Set<number>>(new Set());
+  // Header 3-dot menu + its panels (search / pinned / shared files / saved).
+  const [headerSheet, setHeaderSheet] = useState<HeaderSheet>(null);
+  const [sheetSearchQ, setSheetSearchQ] = useState("");
+  const [sheetSearchResults, setSheetSearchResults] = useState<
+    MessageSearchResult[]
+  >([]);
+  const [sheetLoading, setSheetLoading] = useState(false);
+  const [sharedFiles, setSharedFiles] = useState<SharedFile[]>([]);
+  const [savedMsgs, setSavedMsgs] = useState<StarredMessage[]>([]);
+  const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Voice recording (expo-audio).
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder);
@@ -253,6 +308,10 @@ export default function ChatThread() {
   const bubbleRefs = useRef<Map<number, View>>(new Map());
   const typingSentAt = useRef(0);
   const typingClear = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True while older messages are being prepended, so the auto
+  // scroll-to-end on content-size change doesn't yank the list to the
+  // bottom and defeat pagination.
+  const prependingRef = useRef(false);
 
   const scrollToEnd = useCallback((animated = false) => {
     requestAnimationFrame(() => {
@@ -270,6 +329,7 @@ export default function ChatThread() {
     try {
       const { data } = await getMessages(convId);
       setMessages(data || []);
+      setHasMore((data || []).length >= 50);
       markConversationRead(convId).catch(() => {});
       // Seed read receipts so own messages show the correct tick immediately.
       getReadStatus(convId)
@@ -297,6 +357,37 @@ export default function ChatThread() {
     loadPinned();
   }, [load, loadPinned]);
 
+  // Load an older page of messages using the oldest real message id as a
+  // cursor (mirrors the web loadMore). Triggered by the "load earlier"
+  // header button / top-reach.
+  const loadOlder = useCallback(async () => {
+    if (loadingOlder || !hasMore) return;
+    // Oldest REAL (server-assigned) id — skip optimistic negative ids.
+    const oldest = messages.find((m) => m.id > 0);
+    if (!oldest) return;
+    setLoadingOlder(true);
+    prependingRef.current = true;
+    try {
+      const { data } = await getMessages(convId, oldest.id);
+      const older = data || [];
+      setHasMore(older.length >= 50);
+      if (older.length > 0) {
+        setMessages((prev) => {
+          const have = new Set(prev.map((m) => m.id));
+          return [...older.filter((m) => !have.has(m.id)), ...prev];
+        });
+      }
+    } catch {
+      /* ignore */
+    } finally {
+      setLoadingOlder(false);
+      // Give the list a beat to settle before re-enabling stick-to-end.
+      setTimeout(() => {
+        prependingRef.current = false;
+      }, 350);
+    }
+  }, [convId, hasMore, loadingOlder, messages]);
+
   // Resolve the 1:1 peer's userId + initial status, participant count and a
   // fallback avatar for the header badge.
   useEffect(() => {
@@ -307,6 +398,7 @@ export default function ChatThread() {
         const conv = (data || []).find((c) => c.id === convId);
         if (!conv) return;
         if (conv.member_count) setParticipantCount(conv.member_count);
+        setIsGroupConv(!!conv.is_group);
         if (!conv.is_group && conv.other_user_id) {
           const uid = conv.other_user_id;
           setPeerUserId(uid);
@@ -368,6 +460,80 @@ export default function ChatThread() {
         loadPinned();
         return;
       }
+      // Peer reactions — add/remove live (mirrors web chat_reaction handler).
+      if (msg.type === "chat_reaction") {
+        if (Number(d.conversationId) !== convId) return;
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== d.messageId) return m;
+            let reactions = [...(m.reactions || [])];
+            if (d.action === "added") {
+              // Idempotent: don't duplicate an optimistically-added reaction.
+              if (
+                !reactions.some(
+                  (r) => r.userId === d.userId && r.emoji === d.emoji,
+                )
+              ) {
+                reactions.push({
+                  userId: d.userId,
+                  fullName: d.fullName,
+                  emoji: d.emoji,
+                });
+              }
+            } else {
+              reactions = reactions.filter(
+                (r) => !(r.userId === d.userId && r.emoji === d.emoji),
+              );
+            }
+            return { ...m, reactions };
+          }),
+        );
+        return;
+      }
+      // Peer edits — update content live (mirrors web chat_edit handler).
+      if (msg.type === "chat_edit") {
+        if (Number(d.conversationId) !== convId) return;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === d.messageId
+              ? { ...m, content: d.content, edited_at: d.editedAt }
+              : m,
+          ),
+        );
+        return;
+      }
+      // Peer deletions — mark deleted live (mirrors web chat_delete handler).
+      if (msg.type === "chat_delete") {
+        if (Number(d.conversationId) !== convId) return;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === d.messageId
+              ? { ...m, deleted_at: new Date().toISOString() }
+              : m,
+          ),
+        );
+        return;
+      }
+      // Conversation cleared by a peer — empty the list (mirrors web).
+      if (msg.type === "chat_cleared") {
+        if (Number(d.conversationId) !== convId) return;
+        setMessages([]);
+        setPinnedMsgs([]);
+        setHasMore(false);
+        return;
+      }
+      // Conversation deleted, or current user removed from the group —
+      // leave the screen (the web equivalent clears activeConv).
+      if (msg.type === "chat_conv_deleted") {
+        if (Number(d.conversationId) !== convId) return;
+        router.back();
+        return;
+      }
+      if (msg.type === "chat_group_removed") {
+        if (Number(d.conversationId) !== convId) return;
+        if (d.userId === user?.id) router.back();
+        return;
+      }
       if (msg.type !== "chat_message") return;
       if (Number(d.conversationId) !== convId) return;
       setPeerTyping(false);
@@ -415,10 +581,15 @@ export default function ChatThread() {
         ];
       });
       markConversationRead(convId).catch(() => {});
+      // Acknowledge delivery so the sender sees "✓✓ delivered" (mirrors the
+      // web ackDelivered call in the chat_message WS handler).
+      if (d.senderId !== user?.id && d.id) {
+        ackDelivered(d.id).catch(() => {});
+      }
       scrollToEnd(true);
     });
     return off;
-  }, [convId, user?.id, loadPinned, scrollToEnd]);
+  }, [convId, user?.id, loadPinned, scrollToEnd, router]);
 
   const send = useCallback(() => {
     const content = text.trim();
@@ -532,6 +703,39 @@ export default function ChatThread() {
     }
   }
 
+  // Document attachment — the old single "Photo / File" option only opened
+  // the IMAGE library despite its label, so PDFs/docs could never be sent
+  // from mobile (the web supports them). Uses expo-document-picker.
+  async function attachDocument() {
+    setPlusOpen(false);
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      if (result.canceled || !result.assets?.[0]?.uri) return;
+      const asset = result.assets[0];
+      setUploading(true);
+      const { data } = await uploadChatFile(
+        convId,
+        asset.uri,
+        asset.name || undefined,
+        asset.mimeType || undefined,
+      );
+      setMessages((prev) =>
+        prev.some((m) => m.id === data.id) ? prev : [...prev, data],
+      );
+      scrollToEnd(true);
+    } catch (e: any) {
+      alert(
+        "Upload failed",
+        e?.response?.data?.error || "Could not send this file.",
+      );
+    } finally {
+      setUploading(false);
+    }
+  }
+
   function startEdit(message: ChatMessage) {
     setActionTarget(null);
     setEditingId(message.id);
@@ -631,6 +835,95 @@ export default function ChatThread() {
     } catch {
       /* ignore */
     }
+  }
+
+  // ── Header 3-dot menu (mirrors the web ChatHeader overflow menu) ──
+
+  function openHeaderPanel(panel: HeaderSheet) {
+    if (panel === "search") {
+      setSheetSearchQ("");
+      setSheetSearchResults([]);
+    } else if (panel === "pinned") {
+      loadPinned();
+    } else if (panel === "files") {
+      setSheetLoading(true);
+      getSharedFiles(convId)
+        .then((r) => setSharedFiles(r.data || []))
+        .catch(() => setSharedFiles([]))
+        .finally(() => setSheetLoading(false));
+    } else if (panel === "saved") {
+      setSheetLoading(true);
+      getStarredMessages()
+        .then((r) => setSavedMsgs(r.data || []))
+        .catch(() => setSavedMsgs([]))
+        .finally(() => setSheetLoading(false));
+    }
+    setHeaderSheet(panel);
+  }
+
+  function onSheetSearchChange(v: string) {
+    setSheetSearchQ(v);
+    if (searchDebounce.current) clearTimeout(searchDebounce.current);
+    const q = v.trim();
+    if (q.length < 2) {
+      setSheetSearchResults([]);
+      return;
+    }
+    searchDebounce.current = setTimeout(() => {
+      setSheetLoading(true);
+      searchMessages(q, convId)
+        .then((r) => setSheetSearchResults(r.data || []))
+        .catch(() => setSheetSearchResults([]))
+        .finally(() => setSheetLoading(false));
+    }, 300);
+  }
+
+  // Close the sheet first, then jump — scrollToIndex while a modal is
+  // dismissing gets swallowed on Android.
+  function jumpFromSheet(messageId: number) {
+    setHeaderSheet(null);
+    setTimeout(() => jumpToMessage(messageId), 350);
+  }
+
+  function doClearChat() {
+    setHeaderSheet(null);
+    // Defer so the confirm dialog never collides with the dismissing modal.
+    setTimeout(() => {
+      confirm({
+        title: "Clear chat",
+        message:
+          "Delete all messages in this conversation for everyone? This cannot be undone.",
+        confirmText: "Clear",
+        isDanger: true,
+        onConfirm: () => {
+          clearChat(convId)
+            .then(() => {
+              setMessages([]);
+              setPinnedMsgs([]);
+              setHasMore(false);
+            })
+            .catch((e: any) =>
+              alert(
+                "Error",
+                e?.response?.data?.error || "Could not clear chat.",
+              ),
+            );
+        },
+      });
+    }, 300);
+  }
+
+  function unstarFromSheet(messageId: number) {
+    starMessage(messageId)
+      .then(() => {
+        setSavedMsgs((prev) => prev.filter((m) => m.id !== messageId));
+        setStarredIds((prev) => {
+          const next = new Set(prev);
+          next.delete(messageId);
+          return next;
+        });
+      })
+      .catch(() => {});
   }
 
   function startReply(message: ChatMessage) {
@@ -791,6 +1084,16 @@ export default function ChatThread() {
 
   const latestPin = pinnedMsgs[0];
 
+  // Status line under the chat name (mirrors the web ChatHeader meta line):
+  // member count for groups, live effective status for 1:1 chats.
+  const headerSubtitle = isGroupConv
+    ? participantCount
+      ? `${participantCount} members`
+      : ""
+    : peerStatus
+      ? STATUS_LABEL[peerStatus] || peerStatus
+      : "";
+
   return (
     <View style={styles.screen}>
       <Stack.Screen
@@ -805,18 +1108,36 @@ export default function ChatThread() {
                 userStatus={peerUserId ? peerStatus : undefined}
                 ringColor={theme.bg}
               />
-              <Text style={styles.headerTitleText} numberOfLines={1}>
-                {name || "Chat"}
-              </Text>
+              <View style={{ flexShrink: 1 }}>
+                <Text style={styles.headerTitleText} numberOfLines={1}>
+                  {name || "Chat"}
+                </Text>
+                {headerSubtitle ? (
+                  <Text style={styles.headerSubtitle} numberOfLines={1}>
+                    {headerSubtitle}
+                  </Text>
+                ) : null}
+              </View>
             </View>
           ),
+          // 1:1 calls only — the native call screen can't handle group calls
+          // yet, so hide the call buttons in group conversations. The 3-dot
+          // overflow menu (search / pinned / files / saved / clear chat) is
+          // available everywhere, mirroring the web ChatHeader.
           headerRight: () => (
             <View style={styles.headerActions}>
-              <Pressable onPress={() => startCall("voice")} hitSlop={8}>
-                <Phone size={20} color={theme.primary} />
-              </Pressable>
-              <Pressable onPress={() => startCall("video")} hitSlop={8}>
-                <VideoIcon size={20} color={theme.primary} />
+              {!isGroupConv ? (
+                <>
+                  <Pressable onPress={() => startCall("voice")} hitSlop={8}>
+                    <Phone size={20} color={theme.primary} />
+                  </Pressable>
+                  <Pressable onPress={() => startCall("video")} hitSlop={8}>
+                    <VideoIcon size={20} color={theme.primary} />
+                  </Pressable>
+                </>
+              ) : null}
+              <Pressable onPress={() => openHeaderPanel("menu")} hitSlop={8}>
+                <MoreVertical size={20} color={theme.text} />
               </Pressable>
             </View>
           ),
@@ -861,10 +1182,34 @@ export default function ChatThread() {
             data={messages}
             keyExtractor={(m) => String(m.id)}
             contentContainerStyle={styles.list}
-            onContentSizeChange={() => scrollToEnd(false)}
+            onContentSizeChange={() => {
+              // Don't yank to the bottom while older history is being
+              // prepended above the viewport.
+              if (!prependingRef.current) scrollToEnd(false);
+            }}
             onScrollToIndexFailed={() => {
               setTimeout(() => scrollToEnd(false), 200);
             }}
+            // Keep the visible messages anchored when older pages are
+            // prepended (supported on RN ≥0.72 for both platforms).
+            maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+            ListHeaderComponent={
+              hasMore ? (
+                <Pressable
+                  style={styles.loadOlderBtn}
+                  onPress={loadOlder}
+                  disabled={loadingOlder}
+                >
+                  {loadingOlder ? (
+                    <ActivityIndicator size="small" color={theme.primary} />
+                  ) : (
+                    <Text style={styles.loadOlderText}>
+                      Load earlier messages
+                    </Text>
+                  )}
+                </Pressable>
+              ) : null
+            }
             renderItem={({ item }) => {
               const mine = item.sender_id === user?.id;
               const deleted = !!item.deleted_at;
@@ -1117,7 +1462,11 @@ export default function ChatThread() {
           <View style={styles.plusSheet}>
             <Pressable style={styles.plusRow} onPress={attachFile}>
               <ImageIcon size={20} color={theme.text} />
-              <Text style={styles.plusText}>Photo / File</Text>
+              <Text style={styles.plusText}>Photo</Text>
+            </Pressable>
+            <Pressable style={styles.plusRow} onPress={attachDocument}>
+              <FileText size={20} color={theme.text} />
+              <Text style={styles.plusText}>File / Document</Text>
             </Pressable>
             <Pressable
               style={styles.plusRow}
@@ -1353,6 +1702,239 @@ export default function ChatThread() {
         </Pressable>
       </Modal>
 
+      {/* Header 3-dot menu — one modal whose content switches between the
+          menu rows and each panel (search / pinned / files / saved). */}
+      <Modal
+        visible={!!headerSheet}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setHeaderSheet(null)}
+      >
+        <View style={styles.allOverlay}>
+          <Pressable
+            style={styles.allScrim}
+            onPress={() => setHeaderSheet(null)}
+          />
+          <View style={styles.hmSheet}>
+            <View style={styles.allHeader}>
+              <Text style={styles.allTitle}>
+                {headerSheet === "search"
+                  ? "Search messages"
+                  : headerSheet === "pinned"
+                    ? "Pinned messages"
+                    : headerSheet === "files"
+                      ? "Shared files"
+                      : headerSheet === "saved"
+                        ? "Saved messages"
+                        : name || "Chat"}
+              </Text>
+              <Pressable onPress={() => setHeaderSheet(null)} hitSlop={8}>
+                <XIcon size={22} color={theme.textSecondary} />
+              </Pressable>
+            </View>
+
+            {headerSheet === "menu" ? (
+              <>
+                <Pressable
+                  style={styles.plusRow}
+                  onPress={() => openHeaderPanel("search")}
+                >
+                  <Search size={20} color={theme.text} />
+                  <Text style={styles.plusText}>Search messages</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.plusRow}
+                  onPress={() => openHeaderPanel("pinned")}
+                >
+                  <Pin size={20} color={theme.text} />
+                  <Text style={styles.plusText}>Pinned messages</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.plusRow}
+                  onPress={() => openHeaderPanel("files")}
+                >
+                  <FolderOpen size={20} color={theme.text} />
+                  <Text style={styles.plusText}>Shared files</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.plusRow}
+                  onPress={() => openHeaderPanel("saved")}
+                >
+                  <Star size={20} color={theme.text} />
+                  <Text style={styles.plusText}>Saved messages</Text>
+                </Pressable>
+                <View style={styles.hmDivider} />
+                <Pressable style={styles.plusRow} onPress={doClearChat}>
+                  <Trash2 size={20} color={theme.danger} />
+                  <Text style={[styles.plusText, { color: theme.danger }]}>
+                    Clear chat
+                  </Text>
+                </Pressable>
+              </>
+            ) : headerSheet === "search" ? (
+              <>
+                <TextInput
+                  style={styles.hmSearchInput}
+                  placeholder="Search in this chat…"
+                  placeholderTextColor={theme.textMuted}
+                  value={sheetSearchQ}
+                  onChangeText={onSheetSearchChange}
+                  autoFocus
+                />
+                {sheetLoading ? (
+                  <ActivityIndicator
+                    style={styles.hmLoading}
+                    color={theme.primary}
+                  />
+                ) : (
+                  <ScrollView style={styles.hmList}>
+                    {sheetSearchResults.length === 0 ? (
+                      <Text style={styles.hmEmpty}>
+                        {sheetSearchQ.trim().length < 2
+                          ? "Type at least 2 characters to search"
+                          : "No messages found"}
+                      </Text>
+                    ) : (
+                      sheetSearchResults.map((r) => (
+                        <Pressable
+                          key={r.id}
+                          style={styles.hmItem}
+                          onPress={() => jumpFromSheet(r.id)}
+                        >
+                          <Text style={styles.hmItemName} numberOfLines={1}>
+                            {r.sender_name || "Unknown"} ·{" "}
+                            {fmtDateTime(r.created_at)}
+                          </Text>
+                          <Text style={styles.hmItemText} numberOfLines={2}>
+                            {r.content ||
+                              (r.file_name
+                                ? `📎 ${r.file_name}`
+                                : "Attachment")}
+                          </Text>
+                        </Pressable>
+                      ))
+                    )}
+                  </ScrollView>
+                )}
+              </>
+            ) : headerSheet === "pinned" ? (
+              <ScrollView style={styles.hmList}>
+                {pinnedMsgs.length === 0 ? (
+                  <Text style={styles.hmEmpty}>No pinned messages</Text>
+                ) : (
+                  pinnedMsgs.map((p) => (
+                    <View key={p.id} style={styles.hmItemRow}>
+                      <Pressable
+                        style={{ flex: 1 }}
+                        onPress={() => jumpFromSheet(p.id)}
+                      >
+                        <Text style={styles.hmItemName} numberOfLines={1}>
+                          {p.sender_name || "Unknown"} ·{" "}
+                          {fmtDateTime(p.created_at)}
+                        </Text>
+                        <Text style={styles.hmItemText} numberOfLines={2}>
+                          {p.content ||
+                            (p.file_name ? `📎 ${p.file_name}` : "Attachment")}
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        hitSlop={8}
+                        onPress={() => unpinFromBanner(p.id)}
+                      >
+                        <XIcon size={16} color={theme.textSecondary} />
+                      </Pressable>
+                    </View>
+                  ))
+                )}
+              </ScrollView>
+            ) : headerSheet === "files" ? (
+              sheetLoading ? (
+                <ActivityIndicator
+                  style={styles.hmLoading}
+                  color={theme.primary}
+                />
+              ) : (
+                <ScrollView style={styles.hmList}>
+                  {sharedFiles.length === 0 ? (
+                    <Text style={styles.hmEmpty}>No shared files</Text>
+                  ) : (
+                    sharedFiles.map((f) => (
+                      <Pressable
+                        key={f.id}
+                        style={styles.hmItemRow}
+                        onPress={() => {
+                          const u = uploadUrl(f.file_url);
+                          if (u) Linking.openURL(u);
+                        }}
+                      >
+                        <FileText size={20} color={theme.primary} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.hmItemTitle} numberOfLines={1}>
+                            {f.file_name || "File"}
+                          </Text>
+                          <Text style={styles.hmItemText} numberOfLines={1}>
+                            {f.sender_name || "Unknown"} ·{" "}
+                            {fmtDateTime(f.created_at)}
+                            {f.file_size ? ` · ${fmtSize(f.file_size)}` : ""}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    ))
+                  )}
+                </ScrollView>
+              )
+            ) : headerSheet === "saved" ? (
+              sheetLoading ? (
+                <ActivityIndicator
+                  style={styles.hmLoading}
+                  color={theme.primary}
+                />
+              ) : (
+                <ScrollView style={styles.hmList}>
+                  {savedMsgs.length === 0 ? (
+                    <Text style={styles.hmEmpty}>No saved messages</Text>
+                  ) : (
+                    savedMsgs.map((m) => (
+                      <View key={m.id} style={styles.hmItemRow}>
+                        <Pressable
+                          style={{ flex: 1 }}
+                          onPress={() => {
+                            // Jump only works for messages in THIS chat —
+                            // /chat/starred is global across conversations.
+                            if (m.conversation_id === convId)
+                              jumpFromSheet(m.id);
+                          }}
+                        >
+                          <Text style={styles.hmItemName} numberOfLines={1}>
+                            {m.sender_name || "Unknown"} ·{" "}
+                            {fmtDateTime(m.created_at)}
+                            {m.conversation_id !== convId && m.group_name
+                              ? ` · ${m.group_name}`
+                              : ""}
+                          </Text>
+                          <Text style={styles.hmItemText} numberOfLines={2}>
+                            {m.content ||
+                              (m.file_name
+                                ? `📎 ${m.file_name}`
+                                : "Attachment")}
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          hitSlop={8}
+                          onPress={() => unstarFromSheet(m.id)}
+                        >
+                          <Star size={16} color={theme.warning} />
+                        </Pressable>
+                      </View>
+                    ))
+                  )}
+                </ScrollView>
+              )
+            ) : null}
+          </View>
+        </View>
+      </Modal>
+
       {dialog}
     </View>
   );
@@ -1367,6 +1949,11 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "700",
     color: theme.text,
+    maxWidth: 180,
+  },
+  headerSubtitle: {
+    fontSize: 11,
+    color: theme.textSecondary,
     maxWidth: 180,
   },
   pinBanner: {
@@ -1386,6 +1973,17 @@ const styles = StyleSheet.create({
   },
   pinBannerText: { fontSize: 13, color: theme.textSecondary },
   list: { padding: 12, gap: 8, paddingBottom: 16 },
+  loadOlderBtn: {
+    alignSelf: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginBottom: 4,
+    borderRadius: theme.radiusFull,
+    backgroundColor: theme.surface,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+  },
+  loadOlderText: { fontSize: 12, color: theme.primaryLight, fontWeight: "600" },
   bubbleRow: { flexDirection: "row", alignItems: "center", gap: 4 },
   rowMine: { justifyContent: "flex-end" },
   rowTheirs: { justifyContent: "flex-start" },
@@ -1722,4 +2320,59 @@ const styles = StyleSheet.create({
   },
   recDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: theme.danger },
   recText: { color: theme.text, fontSize: 14 },
+  // Header 3-dot menu sheet + panels.
+  hmSheet: {
+    backgroundColor: theme.bgElevated,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 28,
+    maxHeight: "75%",
+  },
+  hmDivider: {
+    height: 1,
+    backgroundColor: theme.border,
+    marginVertical: 6,
+    marginHorizontal: 16,
+  },
+  hmSearchInput: {
+    backgroundColor: theme.inputBg,
+    borderWidth: 1,
+    borderColor: theme.inputBorder,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    color: theme.text,
+    fontSize: 15,
+    marginHorizontal: 6,
+    marginBottom: 8,
+  },
+  hmList: { maxHeight: 420 },
+  hmEmpty: {
+    fontSize: 13,
+    color: theme.textMuted,
+    textAlign: "center",
+    paddingVertical: 28,
+  },
+  hmLoading: { paddingVertical: 28 },
+  hmItem: {
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    gap: 2,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.border,
+  },
+  hmItemRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.border,
+  },
+  hmItemName: { fontSize: 11, fontWeight: "700", color: theme.primaryLight },
+  hmItemTitle: { fontSize: 14, color: theme.text, fontWeight: "500" },
+  hmItemText: { fontSize: 13, color: theme.textSecondary },
 });
