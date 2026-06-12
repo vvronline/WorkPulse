@@ -1,3 +1,4 @@
+import { Pin, X } from "lucide-react";
 import { ChatAvatar, MessageBubble, PinnedMessages, SharedFilesPanel, StarredMessages } from "../../components/chat";
 import SystemMessage from "../../components/chat/SystemMessage";
 import MeetingCard from "../../components/chat/MeetingCard";
@@ -70,6 +71,17 @@ export default function ChatMessages({
     onCloseStarred,
     onJumpToStarred,
 }: ChatMessagesProps) {
+    // Pinned messages currently loaded in the thread, newest pin first. Drives
+    // the banner shown at the very top of the chat window so pinned messages
+    // are actually surfaced "at the top of the chat" (not only in the side panel).
+    const pinnedInView = messages
+        .filter((m) => m.pinned_at && !m.deleted_at)
+        .sort(
+            (a, b) =>
+                new Date(b.pinned_at).getTime() - new Date(a.pinned_at).getTime(),
+        );
+    const latestPin = pinnedInView[0];
+
     return (
         <div className={s.chatBody}>
             <div
@@ -79,6 +91,36 @@ export default function ChatMessages({
                 onDragLeave={onDragLeave}
                 onDrop={onDrop}
             >
+                {latestPin && (
+                    <div className={s.pinnedBanner}>
+                        <button
+                            type="button"
+                            className={s.pinnedBannerMain}
+                            onClick={() => onJumpTo?.(latestPin.id)}
+                            title="Jump to pinned message"
+                        >
+                            <Pin size={14} className={s.pinnedBannerIcon} />
+                            <span className={s.pinnedBannerLabel}>
+                                Pinned
+                                {pinnedInView.length > 1 ? ` · ${pinnedInView.length}` : ""}
+                            </span>
+                            <span className={s.pinnedBannerText}>
+                                {latestPin.content ||
+                                    (latestPin.file_name
+                                        ? `📎 ${latestPin.file_name}`
+                                        : "🎤 Voice message")}
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            className={s.pinnedBannerUnpin}
+                            onClick={() => onUnpin?.(latestPin.id)}
+                            title="Unpin"
+                        >
+                            <X size={14} />
+                        </button>
+                    </div>
+                )}
                 {dragOver && <div className={s.dropOverlay}>Drop file to send</div>}
                 {hasMore && (
                     <button className={s.loadMore} onClick={onLoadMore}>

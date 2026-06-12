@@ -363,6 +363,11 @@ export type ChatMessage = {
   deleted_at?: string | null;
   edited_at?: string | null;
   reactions?: ChatReaction[];
+  // Delivery / read receipts.
+  delivered_to?: (number | string)[];
+  // Pin state (server toggles pinned_at; list endpoint returns it).
+  pinned_at?: string | null;
+  pinned_by?: number | null;
   // Reply-to (server stores reply_to_id; list endpoint returns the quoted
   // snippet fields when a message is a reply).
   reply_to_id?: number | null;
@@ -465,7 +470,40 @@ export function deleteMessage(messageId: number) {
 }
 
 export function pinMessage(messageId: number) {
-  return api.post(`/chat/messages/${messageId}/pin`);
+  return api.post<{ ok: boolean; pinned: boolean }>(
+    `/chat/messages/${messageId}/pin`,
+  );
+}
+
+export type PinnedMessage = {
+  id: number;
+  sender_id: number;
+  content?: string | null;
+  created_at: string;
+  pinned_at?: string | null;
+  pinned_by?: number | null;
+  file_url?: string | null;
+  file_name?: string | null;
+  file_type?: string | null;
+  sender_name?: string | null;
+  sender_avatar?: string | null;
+  pinned_by_name?: string | null;
+};
+
+export function getPinnedMessages(convId: number) {
+  return api.get<PinnedMessage[]>(`/chat/conversations/${convId}/pinned`);
+}
+
+export type ReadStatusRow = {
+  user_id: number;
+  last_read_at: string;
+  full_name?: string | null;
+};
+
+export function getReadStatus(convId: number) {
+  return api.get<ReadStatusRow[]>(
+    `/chat/conversations/${convId}/read-status`,
+  );
 }
 
 export function starMessage(messageId: number) {

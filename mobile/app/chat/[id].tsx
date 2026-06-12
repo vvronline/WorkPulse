@@ -5,7 +5,6 @@ import {
   Image,
   Modal,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -26,9 +25,9 @@ import {
 import {
   CornerUpLeft,
   FileText,
+  Image as ImageIcon,
   Mic,
   MoreHorizontal,
-  Paperclip,
   Pencil,
   Phone,
   Pin,
@@ -44,6 +43,7 @@ import { theme } from "../../src/theme";
 import { uploadUrl } from "../../src/config";
 import VoicePlayer from "../../src/components/VoicePlayer";
 import { useAuth } from "../../src/auth/AuthContext";
+import { useDialog } from "../../src/hooks/useDialog";
 import {
   deleteMessage,
   editMessage,
@@ -51,6 +51,8 @@ import {
   getConversations,
   getChatPresence,
   getMessages,
+  getPinnedMessages,
+  getReadStatus,
   markConversationRead,
   pinMessage,
   starMessage,
@@ -58,6 +60,7 @@ import {
   uploadChatFile,
   type ChatMessage,
   type Conversation,
+  type PinnedMessage,
 } from "../../src/features";
 import { Forward } from "lucide-react-native";
 import { socket } from "../../src/realtime/socket";
@@ -126,14 +129,70 @@ function fmtTime(iso: string) {
   });
 }
 
+/**
+ * WhatsApp-style delivery indicator for the current user's own messages.
+ * Mirrors the web `DeliveryStatus` component:
+ *   ○  pending (optimistic, not yet acked by server)
+ *   ✓  sent
+ *   ✓✓ delivered (grey)
+ *   ✓✓ read (blue)
+ */
+function MsgTicks({
+  mine,
+  msg,
+  participantCount,
+  readReceipts,
+  userId,
+}: {
+  mine: boolean;
+  msg: ChatMessage;
+  participantCount: number;
+  readReceipts: Record<number, string>;
+  userId?: number;
+}) {
+  if (!mine) return null;
+  if (msg._pending || msg.id < 0) {
+    return <Text style={styles.tickSent}>○</Text>;
+  }
+  const others = (participantCount || 2) - 1;
+  if (others <= 0) return null;
+
+  const delivered = msg.delivered_to || [];
+  const msgTime = new Date(msg.created_at).getTime();
+  const otherReaders = Object.entries(readReceipts).filter(
+    ([uid, readAt]) =>
+      Number(uid) !== userId && new Date(readAt).getTime() >= msgTime,
+  );
+
+  if (
+    otherReaders.length >= others ||
+    (otherReaders.length > 0 && delivered.length >= others)
+  ) {
+    return <Text style={styles.tickRead}>✓✓</Text>;
+  }
+  if (delivered.length >= others || delivered.length > 0) {
+    return <Text style={styles.tickDelivered}>✓✓</Text>;
+  }
+  return <Text style={styles.tickSent}>✓</Text>;
+}
+
 export default function ChatThread() {
-  const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
+  const params = useLocalSearchParams<{
+    id: string;
+    name?: string;
+    avatar?: string;
+    peerId?: string;
+    isGroup?: string;
+  }>();
+  const { id, name } = params;
+  const headerAvatar = params.avatar || null;
   const convId = Number(id);
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const kbInset = useKeyboardInset();
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const { user } = useAuth();
+  const { alert, dialog } = useDialog();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState("");
@@ -156,44 +215,92 @@ export default function ChatThread() {
   const [actionTarget, setActionTarget] = useState<ChatMessage | null>(null);
   const [forwardTarget, setForwardTarget] = useState<ChatMessage | null>(null);
   const [showAllEmoji, setShowAllEmoji] = useState(false);
+  // Whether the emoji grid inserts into the composer ("compose") or reacts to
+  // the selected message ("react").
+  const [emojiMode, setEmojiMode] = useState<"react" | "compose">("react");
+  const [plusOpen, setPlusOpen] = useState(false);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
   // Peer (1:1) identity + live status for the header avatar badge.
-  const [peerUserId, setPeerUserId] = useState<number | null>(null);
+  const [peerUserId, setPeerUserId] = useState<number | null>(
+    params.peerId ? Number(params.peerId) : null,
+  );
   const [peerStatus, setPeerStatus] = useState<string | null>(null);
+  // Delivery / read receipts (userId → ISO last_read_at) + participant count.
+  const [readReceipts, setReadReceipts] = useState<Record<number, string>>({});
+  const [participantCount, setParticipantCount] = useState(2);
+  // Pinned messages (banner at the top of the chat).
+  const [pinnedMsgs, setPinnedMsgs] = useState<PinnedMessage[]>([]);
+  // Locally-tracked starred message ids (server list doesn't return per-message
+  // starred state, so we reflect it optimistically after the action).
+  const [starredIds, setStarredIds] = useState<Set<number>>(new Set());
   // Voice recording (expo-audio).
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder);
   const listRef = useRef<FlatList<ChatMessage>>(null);
+  // Bubble host-node refs so we can reliably measure each bubble's window rect
+  // for the reaction-bar anchor (Pressable forwards its ref to the host View,
+  // which exposes measureInWindow — currentTarget often does not).
+  const bubbleRefs = useRef<Map<number, View>>(new Map());
   const typingSentAt = useRef(0);
   const typingClear = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const scrollToEnd = useCallback((animated = false) => {
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToEnd({ animated });
+    });
+  }, []);
+
+  const loadPinned = useCallback(() => {
+    getPinnedMessages(convId)
+      .then((r) => setPinnedMsgs(r.data || []))
+      .catch(() => {});
+  }, [convId]);
 
   const load = useCallback(async () => {
     try {
       const { data } = await getMessages(convId);
       setMessages(data || []);
       markConversationRead(convId).catch(() => {});
+      // Seed read receipts so own messages show the correct tick immediately.
+      getReadStatus(convId)
+        .then((r) => {
+          const map: Record<number, string> = {};
+          for (const row of r.data || []) {
+            if (row.user_id != null && row.last_read_at) {
+              map[row.user_id] = row.last_read_at;
+            }
+          }
+          setReadReceipts(map);
+        })
+        .catch(() => {});
+      // Jump to the newest message once the list has content.
+      setTimeout(() => scrollToEnd(false), 80);
     } catch {
       /* ignore */
     } finally {
       setLoading(false);
     }
-  }, [convId]);
+  }, [convId, scrollToEnd]);
 
   useEffect(() => {
     load();
-  }, [load]);
+    loadPinned();
+  }, [load, loadPinned]);
 
-  // Resolve the 1:1 peer's userId + initial status for the header badge.
+  // Resolve the 1:1 peer's userId + initial status, participant count and a
+  // fallback avatar for the header badge.
   useEffect(() => {
     let active = true;
     getConversations()
       .then(({ data }) => {
         if (!active) return;
         const conv = (data || []).find((c) => c.id === convId);
-        if (conv && !conv.is_group && conv.other_user_id) {
+        if (!conv) return;
+        if (conv.member_count) setParticipantCount(conv.member_count);
+        if (!conv.is_group && conv.other_user_id) {
           const uid = conv.other_user_id;
           setPeerUserId(uid);
           getChatPresence([uid])
@@ -219,19 +326,42 @@ export default function ChatThread() {
     return off;
   }, [peerUserId]);
 
-  // Live incoming messages for this conversation.
+  // Live incoming messages / typing / read receipts / pins for this conversation.
   useEffect(() => {
     const off = socket.subscribe((msg) => {
+      const d = msg.data || {};
       if (msg.type === "chat_typing") {
-        if (Number(msg.data?.conversationId) !== convId) return;
-        if (msg.data?.userId === user?.id) return;
+        if (Number(d.conversationId) !== convId) return;
+        if (d.userId === user?.id) return;
         setPeerTyping(true);
         if (typingClear.current) clearTimeout(typingClear.current);
         typingClear.current = setTimeout(() => setPeerTyping(false), 3500);
         return;
       }
+      if (msg.type === "chat_read_receipt") {
+        if (Number(d.conversationId) !== convId) return;
+        if (d.userId && d.readAt) {
+          setReadReceipts((prev) => ({ ...prev, [d.userId]: d.readAt }));
+        }
+        return;
+      }
+      if (msg.type === "chat_pin") {
+        if (Number(d.conversationId) !== convId) return;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === d.messageId
+              ? {
+                  ...m,
+                  pinned_at: d.pinned ? new Date().toISOString() : null,
+                  pinned_by: d.pinned ? d.pinnedBy : null,
+                }
+              : m,
+          ),
+        );
+        loadPinned();
+        return;
+      }
       if (msg.type !== "chat_message") return;
-      const d = msg.data;
       if (Number(d.conversationId) !== convId) return;
       setPeerTyping(false);
       setMessages((prev) => {
@@ -278,9 +408,10 @@ export default function ChatThread() {
         ];
       });
       markConversationRead(convId).catch(() => {});
+      scrollToEnd(true);
     });
     return off;
-  }, [convId]);
+  }, [convId, user?.id, loadPinned, scrollToEnd]);
 
   const send = useCallback(() => {
     const content = text.trim();
@@ -311,7 +442,8 @@ export default function ChatThread() {
     });
     setText("");
     setReplyTo(null);
-  }, [text, user, convId, replyTo]);
+    scrollToEnd(true);
+  }, [text, user, convId, replyTo, scrollToEnd]);
 
   const onChangeText = useCallback(
     (v: string) => {
@@ -349,6 +481,7 @@ export default function ChatThread() {
       setMessages((prev) =>
         prev.some((m) => m.id === data.id) ? prev : [...prev, data],
       );
+      scrollToEnd(true);
     } catch {
       /* ignore */
     } finally {
@@ -365,6 +498,7 @@ export default function ChatThread() {
   }
 
   async function attachFile() {
+    setPlusOpen(false);
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) return;
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -383,6 +517,7 @@ export default function ChatThread() {
       setMessages((prev) =>
         prev.some((m) => m.id === data.id) ? prev : [...prev, data],
       );
+      scrollToEnd(true);
     } catch {
       /* ignore */
     } finally {
@@ -425,17 +560,70 @@ export default function ChatThread() {
           ),
         ),
       )
-      .catch(() => {});
+      .catch(() => alert("Error", "Could not delete message."));
   }
 
   function doPin(message: ChatMessage) {
     setActionTarget(null);
-    pinMessage(message.id).catch(() => {});
+    pinMessage(message.id)
+      .then(({ data }) => {
+        const pinned = !!(data as { pinned?: boolean })?.pinned;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === message.id
+              ? { ...m, pinned_at: pinned ? new Date().toISOString() : null }
+              : m,
+          ),
+        );
+        loadPinned();
+        alert(
+          pinned ? "Pinned" : "Unpinned",
+          pinned ? "Message pinned to this chat." : "Message unpinned.",
+        );
+      })
+      .catch(() => alert("Error", "Could not pin message."));
   }
 
   function doStar(message: ChatMessage) {
     setActionTarget(null);
-    starMessage(message.id).catch(() => {});
+    starMessage(message.id)
+      .then(({ data }) => {
+        const starred = !!(data as { starred?: boolean })?.starred;
+        setStarredIds((prev) => {
+          const next = new Set(prev);
+          if (starred) next.add(message.id);
+          else next.delete(message.id);
+          return next;
+        });
+        alert(
+          starred ? "Saved" : "Removed",
+          starred ? "Message added to saved." : "Removed from saved.",
+        );
+      })
+      .catch(() => alert("Error", "Could not save message."));
+  }
+
+  function unpinFromBanner(messageId: number) {
+    pinMessage(messageId)
+      .then(() => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === messageId ? { ...m, pinned_at: null } : m,
+          ),
+        );
+        loadPinned();
+      })
+      .catch(() => {});
+  }
+
+  function jumpToMessage(messageId: number) {
+    const idx = messages.findIndex((m) => m.id === messageId);
+    if (idx < 0) return;
+    try {
+      listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.3 });
+    } catch {
+      /* ignore */
+    }
   }
 
   function startReply(message: ChatMessage) {
@@ -458,8 +646,8 @@ export default function ChatThread() {
     const msg = forwardTarget;
     setForwardTarget(null);
     forwardMessage(msg.id, [targetConvId])
-      .then(() => {})
-      .catch(() => {});
+      .then(() => alert("Forwarded", "Message forwarded."))
+      .catch(() => alert("Error", "Could not forward message."));
   }
 
   async function react(message: ChatMessage, emoji: string) {
@@ -491,6 +679,15 @@ export default function ChatThread() {
     );
   }
 
+  function pickEmoji(emoji: string) {
+    if (emojiMode === "compose") {
+      setText((t) => t + emoji);
+    } else if (reactTarget) {
+      react(reactTarget, emoji);
+    }
+    setShowAllEmoji(false);
+  }
+
   function startCall(type: "voice" | "video") {
     router.push({
       pathname: "/call/[conversationId]",
@@ -501,6 +698,26 @@ export default function ChatThread() {
         peerName: name || "Call",
       },
     });
+  }
+
+  // Anchor the reaction bar to the long-pressed bubble (mirrors the web
+  // MessageBubble). Measures the bubble's host node directly for reliability.
+  function openReactionBar(item: ChatMessage, mine: boolean) {
+    const node = bubbleRefs.current.get(item.id);
+    const measure = (node as unknown as {
+      measureInWindow?: (
+        cb: (x: number, y: number, width: number, height: number) => void,
+      ) => void;
+    } | null)?.measureInWindow;
+    if (measure) {
+      measure((x, y, width, height) => {
+        setReactAnchor({ x, y, width, height, mine });
+        setReactTarget(item);
+      });
+    } else {
+      setReactAnchor(null);
+      setReactTarget(item);
+    }
   }
 
   // Position the reaction bar right next to the long-pressed bubble (mirrors
@@ -537,6 +754,8 @@ export default function ChatThread() {
     return { position: "absolute" as const, top, left };
   }
 
+  const latestPin = pinnedMsgs[0];
+
   return (
     <View style={styles.screen}>
       <Stack.Screen
@@ -546,6 +765,7 @@ export default function ChatThread() {
             <View style={styles.headerTitleWrap}>
               <ChatAvatar
                 name={name}
+                avatar={headerAvatar}
                 size={32}
                 userStatus={peerUserId ? peerStatus : undefined}
                 ringColor={theme.bg}
@@ -573,17 +793,48 @@ export default function ChatThread() {
         </View>
       ) : (
         <View style={{ flex: 1 }}>
+          {/* Pinned-messages banner at the top of the chat. */}
+          {latestPin ? (
+            <Pressable
+              style={styles.pinBanner}
+              onPress={() => jumpToMessage(latestPin.id)}
+            >
+              <Pin size={15} color={theme.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.pinBannerLabel} numberOfLines={1}>
+                  Pinned{pinnedMsgs.length > 1 ? ` · ${pinnedMsgs.length}` : ""}
+                  {latestPin.sender_name ? ` · ${latestPin.sender_name}` : ""}
+                </Text>
+                <Text style={styles.pinBannerText} numberOfLines={1}>
+                  {latestPin.content ||
+                    (latestPin.file_name
+                      ? `📎 ${latestPin.file_name}`
+                      : "🎤 Voice message")}
+                </Text>
+              </View>
+              <Pressable
+                hitSlop={8}
+                onPress={() => unpinFromBanner(latestPin.id)}
+              >
+                <XIcon size={16} color={theme.textSecondary} />
+              </Pressable>
+            </Pressable>
+          ) : null}
+
           <FlatList
             ref={listRef}
             data={messages}
             keyExtractor={(m) => String(m.id)}
             contentContainerStyle={styles.list}
-            onContentSizeChange={() =>
-              listRef.current?.scrollToEnd({ animated: false })
-            }
+            onContentSizeChange={() => scrollToEnd(false)}
+            onScrollToIndexFailed={() => {
+              setTimeout(() => scrollToEnd(false), 200);
+            }}
             renderItem={({ item }) => {
               const mine = item.sender_id === user?.id;
               const deleted = !!item.deleted_at;
+              const starred = starredIds.has(item.id);
+              const pinned = !!item.pinned_at;
               // Aggregate reactions by emoji.
               const groups: Record<
                 string,
@@ -600,27 +851,13 @@ export default function ChatThread() {
                 >
                   <View style={styles.bubbleCol}>
                     <Pressable
-                      onLongPress={(e) => {
+                      ref={(node) => {
+                        if (node) bubbleRefs.current.set(item.id, node as unknown as View);
+                        else bubbleRefs.current.delete(item.id);
+                      }}
+                      onLongPress={() => {
                         if (deleted) return;
-                        const node = e.currentTarget as unknown as {
-                          measureInWindow?: (
-                            cb: (
-                              x: number,
-                              y: number,
-                              width: number,
-                              height: number,
-                            ) => void,
-                          ) => void;
-                        };
-                        if (node?.measureInWindow) {
-                          node.measureInWindow((x, y, width, height) => {
-                            setReactAnchor({ x, y, width, height, mine });
-                            setReactTarget(item);
-                          });
-                        } else {
-                          setReactAnchor(null);
-                          setReactTarget(item);
-                        }
+                        openReactionBar(item, mine);
                       }}
                       delayLongPress={250}
                       style={[
@@ -683,10 +920,23 @@ export default function ChatThread() {
                         </Text>
                       ) : null}
                       <View style={styles.metaLine}>
+                        {pinned ? (
+                          <Pin size={10} color={theme.textMuted} />
+                        ) : null}
+                        {starred ? (
+                          <Star size={10} color={theme.warning} />
+                        ) : null}
                         {item.edited_at && !deleted ? (
                           <Text style={styles.edited}>edited</Text>
                         ) : null}
                         <Text style={styles.time}>{fmtTime(item.created_at)}</Text>
+                        <MsgTicks
+                          mine={mine}
+                          msg={item}
+                          participantCount={participantCount}
+                          readReceipts={readReceipts}
+                          userId={user?.id}
+                        />
                       </View>
                     </Pressable>
 
@@ -714,27 +964,7 @@ export default function ChatThread() {
                         ))}
                         <Pressable
                           style={styles.addReactionBtn}
-                          onPress={(e) => {
-                            const node = e.currentTarget as unknown as {
-                              measureInWindow?: (
-                                cb: (
-                                  x: number,
-                                  y: number,
-                                  width: number,
-                                  height: number,
-                                ) => void,
-                              ) => void;
-                            };
-                            if (node?.measureInWindow) {
-                              node.measureInWindow((x, y, width, height) => {
-                                setReactAnchor({ x, y, width, height, mine });
-                                setReactTarget(item);
-                              });
-                            } else {
-                              setReactAnchor(null);
-                              setReactTarget(item);
-                            }
-                          }}
+                          onPress={() => openReactionBar(item, mine)}
                         >
                           <Plus size={13} color={theme.textMuted} />
                         </Pressable>
@@ -797,7 +1027,7 @@ export default function ChatThread() {
               <>
                 <Pressable
                   style={styles.attachBtn}
-                  onPress={attachFile}
+                  onPress={() => setPlusOpen(true)}
                   disabled={uploading || editingId != null}
                 >
                   {uploading ? (
@@ -806,7 +1036,7 @@ export default function ChatThread() {
                       color={theme.textSecondary}
                     />
                   ) : (
-                    <Paperclip size={20} color={theme.textSecondary} />
+                    <Plus size={22} color={theme.textSecondary} />
                   )}
                 </Pressable>
                 <TextInput
@@ -839,6 +1069,45 @@ export default function ChatThread() {
           </View>
         </View>
       )}
+
+      {/* "+" composer menu — Photo/File, Voice message, Emoji (mirrors the web
+          ChatInputBar plus menu). */}
+      <Modal
+        visible={plusOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPlusOpen(false)}
+      >
+        <Pressable style={styles.plusOverlay} onPress={() => setPlusOpen(false)}>
+          <View style={styles.plusSheet}>
+            <Pressable style={styles.plusRow} onPress={attachFile}>
+              <ImageIcon size={20} color={theme.text} />
+              <Text style={styles.plusText}>Photo / File</Text>
+            </Pressable>
+            <Pressable
+              style={styles.plusRow}
+              onPress={() => {
+                setPlusOpen(false);
+                startRecording();
+              }}
+            >
+              <Mic size={20} color={theme.text} />
+              <Text style={styles.plusText}>Voice message</Text>
+            </Pressable>
+            <Pressable
+              style={styles.plusRow}
+              onPress={() => {
+                setPlusOpen(false);
+                setEmojiMode("compose");
+                setShowAllEmoji(true);
+              }}
+            >
+              <Smile size={20} color={theme.text} />
+              <Text style={styles.plusText}>Emoji</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
 
       {/* Emoji reaction bar — STRICTLY matches the web screenshot: one single
           horizontal pill row → quick emojis · smiley(all emoji) · divider ·
@@ -883,7 +1152,10 @@ export default function ChatThread() {
             ))}
             <Pressable
               style={styles.barIconBtn}
-              onPress={() => setShowAllEmoji(true)}
+              onPress={() => {
+                setEmojiMode("react");
+                setShowAllEmoji(true);
+              }}
             >
               <Smile size={18} color={theme.textSecondary} />
             </Pressable>
@@ -908,7 +1180,7 @@ export default function ChatThread() {
         </Pressable>
       </Modal>
 
-      {/* Full emoji grid (opened from "All Emoji"). */}
+      {/* Full emoji grid (opened from "All Emoji" or the composer "+"). */}
       <Modal
         visible={showAllEmoji}
         transparent
@@ -922,7 +1194,9 @@ export default function ChatThread() {
           />
           <View style={styles.allSheet}>
             <View style={styles.allHeader}>
-              <Text style={styles.allTitle}>Pick a reaction</Text>
+              <Text style={styles.allTitle}>
+                {emojiMode === "compose" ? "Insert emoji" : "Pick a reaction"}
+              </Text>
               <Pressable onPress={() => setShowAllEmoji(false)} hitSlop={8}>
                 <XIcon size={22} color={theme.textSecondary} />
               </Pressable>
@@ -935,10 +1209,7 @@ export default function ChatThread() {
               renderItem={({ item: e }) => (
                 <Pressable
                   style={styles.gridEmoji}
-                  onPress={() => {
-                    if (reactTarget) react(reactTarget, e);
-                    setShowAllEmoji(false);
-                  }}
+                  onPress={() => pickEmoji(e)}
                 >
                   <Text style={styles.gridEmojiText}>{e}</Text>
                 </Pressable>
@@ -974,7 +1245,20 @@ export default function ChatThread() {
                   onPress={() => actionTarget && doStar(actionTarget)}
                 >
                   <Star size={18} color={theme.text} />
-                  <Text style={styles.actionText}>Star</Text>
+                  <Text style={styles.actionText}>
+                    {actionTarget && starredIds.has(actionTarget.id)
+                      ? "Unsave"
+                      : "Save"}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={styles.actionRow}
+                  onPress={() => actionTarget && doPin(actionTarget)}
+                >
+                  <Pin size={18} color={theme.text} />
+                  <Text style={styles.actionText}>
+                    {actionTarget?.pinned_at ? "Unpin" : "Pin"}
+                  </Text>
                 </Pressable>
                 {actionTarget.sender_id === user?.id ? (
                   <>
@@ -984,13 +1268,6 @@ export default function ChatThread() {
                     >
                       <Pencil size={18} color={theme.text} />
                       <Text style={styles.actionText}>Edit</Text>
-                    </Pressable>
-                    <Pressable
-                      style={styles.actionRow}
-                      onPress={() => actionTarget && doPin(actionTarget)}
-                    >
-                      <Pin size={18} color={theme.text} />
-                      <Text style={styles.actionText}>Pin</Text>
                     </Pressable>
                     <Pressable
                       style={styles.actionRow}
@@ -1044,6 +1321,8 @@ export default function ChatThread() {
           </View>
         </Pressable>
       </Modal>
+
+      {dialog}
     </View>
   );
 }
@@ -1059,6 +1338,22 @@ const styles = StyleSheet.create({
     color: theme.text,
     maxWidth: 180,
   },
+  pinBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: theme.bgSecondary,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.border,
+  },
+  pinBannerLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: theme.primaryLight,
+  },
+  pinBannerText: { fontSize: 13, color: theme.textSecondary },
   list: { padding: 12, gap: 8, paddingBottom: 16 },
   bubbleRow: { flexDirection: "row", alignItems: "center", gap: 4 },
   rowMine: { justifyContent: "flex-end" },
@@ -1098,6 +1393,9 @@ const styles = StyleSheet.create({
   },
   edited: { fontSize: 10, color: theme.textMuted, fontStyle: "italic" },
   time: { fontSize: 10, color: theme.textMuted },
+  tickSent: { fontSize: 11, color: theme.textMuted },
+  tickDelivered: { fontSize: 11, color: theme.textMuted },
+  tickRead: { fontSize: 11, color: theme.primary, fontWeight: "700" },
   replyQuote: {
     borderLeftWidth: 3,
     borderLeftColor: theme.primary,
@@ -1269,6 +1567,26 @@ const styles = StyleSheet.create({
   },
   replyBarName: { fontSize: 12, fontWeight: "700", color: theme.primaryLight },
   replyBarText: { fontSize: 12, color: theme.textSecondary },
+  plusOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "flex-end",
+  },
+  plusSheet: {
+    backgroundColor: theme.bgElevated,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    paddingVertical: 8,
+    paddingBottom: 28,
+  },
+  plusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    paddingHorizontal: 22,
+    paddingVertical: 14,
+  },
+  plusText: { fontSize: 16, color: theme.text, fontWeight: "500" },
   forwardRow: {
     flexDirection: "row",
     alignItems: "center",

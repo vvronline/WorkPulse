@@ -7,7 +7,7 @@ import {
   RTCSessionDescription,
   RTCIceCandidate,
   RTCView,
-  type MediaStream,
+  MediaStream,
 } from "react-native-webrtc";
 import {
   Mic,
@@ -44,7 +44,7 @@ type CallStatus =
  * flow & WebRTC signaling protocol exactly:
  *   caller: call_initiate → call_started(callId) → call_accepted(peer) → offer
  *   callee: call_incoming → call_accept → wait for offer → answer
- *   both:   call_signal {offer|answer|ice-candidate} ; call_end / call_ended
+ *   both:   call_signal {offer|answer|ice-candidate|video-state} ; call_end / call_ended
  *
  * Route params:
  *   conversationId  (required)
@@ -70,16 +70,19 @@ export default function CallScreen() {
   const callType = params.callType === "video" ? "video" : "voice";
   const peerName = params.peerName || "Call";
 
-  const [status, setStatus] = useState<CallStatus>(
-    mode === "incoming" ? "ringing" : "ringing",
-  );
+  const [status, setStatus] = useState<CallStatus>("ringing");
   const [muted, setMuted] = useState(false);
   const [videoOff, setVideoOff] = useState(callType !== "video");
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  // Peer's camera state — when true we render the avatar instead of a frozen
+  // last frame. Track onmute/onended are unreliable on Android, so the
+  // explicit `video-state` signal is the source of truth (mirrors web).
+  const [remoteVideoOff, setRemoteVideoOff] = useState(false);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
   const callIdRef = useRef<number | null>(
     params.callId ? Number(params.callId) : null,
   );
@@ -87,6 +90,7 @@ export default function CallScreen() {
     params.peerId ? Number(params.peerId) : null,
   );
   const iceServersRef = useRef<any[]>(FALLBACK_ICE);
+  const iceConfigLoadedRef = useRef(false);
   const pendingIce = useRef<any[]>([]);
   const startedAt = useRef<number>(0);
 
@@ -110,6 +114,7 @@ export default function CallScreen() {
       }
       pcRef.current = null;
       localStreamRef.current = null;
+      remoteStreamRef.current = null;
       router.back();
     },
     [conversationId, router],
@@ -129,12 +134,53 @@ export default function CallScreen() {
     }
   }, [callType]);
 
+  // Briefly wait for the real ICE config (TURN creds) so the connection is
+  // established over a relay when needed instead of racing with the fallback
+  // STUN-only servers. Fast-exits the moment the config has loaded.
+  const waitForIceConfig = useCallback(async (timeoutMs = 2000) => {
+    if (iceConfigLoadedRef.current) return;
+    const start = Date.now();
+    while (!iceConfigLoadedRef.current && Date.now() - start < timeoutMs) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }, []);
+
+  // Attach local tracks AFTER setRemoteDescription on the answerer so they bind
+  // to the transceivers the offer created (mirrors web's attachLocalTracks).
+  const attachLocalTracks = useCallback((stream: MediaStream | null) => {
+    const pc = pcRef.current;
+    if (!pc || !stream) return;
+    const senders = pc.getSenders();
+    stream.getTracks().forEach((track) => {
+      const already = senders.some((s) => s.track && s.track.id === track.id);
+      if (already) return;
+      try {
+        pc.addTrack(track, stream);
+      } catch {
+        /* ignore */
+      }
+    });
+  }, []);
+
   const createPC = useCallback(
-    (stream: MediaStream, targetUserId: number) => {
-      const pc = new RTCPeerConnection({ iceServers: iceServersRef.current });
+    (stream: MediaStream | null, targetUserId: number, addTracksNow = true) => {
+      const pc = new RTCPeerConnection({
+        iceServers: iceServersRef.current,
+        // Pre-gather candidates + fewer ports → faster, firewall-friendlier
+        // connection setup (matches web config).
+        iceCandidatePoolSize: 10,
+        bundlePolicy: "max-bundle",
+        rtcpMuxPolicy: "require",
+      } as any);
       pcRef.current = pc;
 
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+      // For the OFFERER tracks must exist before createOffer. For the ANSWERER
+      // tracks are attached AFTER setRemoteDescription so they bind to the
+      // offer's transceivers instead of creating extra unmatched m-lines
+      // (which breaks media negotiation — the remote video never renders).
+      if (stream && addTracksNow) {
+        stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+      }
 
       (pc as any).onicecandidate = (e: any) => {
         if (e.candidate) {
@@ -147,9 +193,29 @@ export default function CallScreen() {
       };
 
       (pc as any).ontrack = (e: any) => {
+        // Defensively build the remote stream: react-native-webrtc may fire
+        // ontrack once per kind (audio, then video) and `e.streams` can be
+        // empty. Add each track to the SAME stream so we never drop one.
+        let stream: MediaStream | null = remoteStreamRef.current;
         if (e.streams && e.streams[0]) {
-          setRemoteStream(e.streams[0]);
+          stream = e.streams[0];
+        } else if (!stream) {
+          stream = new MediaStream();
         }
+        if (
+          e.track &&
+          stream &&
+          !stream.getTracks().some((t) => t.id === e.track.id)
+        ) {
+          try {
+            stream.addTrack(e.track);
+          } catch {
+            /* ignore */
+          }
+        }
+        remoteStreamRef.current = stream;
+        setRemoteStream(stream);
+        if (e.track?.kind === "video") setRemoteVideoOff(false);
       };
 
       (pc as any).onconnectionstatechange = () => {
@@ -184,9 +250,14 @@ export default function CallScreen() {
   useEffect(() => {
     getIceConfig()
       .then((r) => {
-        if (r.data?.iceServers?.length) iceServersRef.current = r.data.iceServers;
+        if (r.data?.iceServers?.length) {
+          iceServersRef.current = r.data.iceServers;
+        }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        iceConfigLoadedRef.current = true;
+      });
   }, []);
 
   // Outgoing: acquire media + send call_initiate immediately.
@@ -219,7 +290,8 @@ export default function CallScreen() {
           (async () => {
             const stream = localStreamRef.current || (await getMedia());
             if (!stream) return endAndLeave(false);
-            const pc = createPC(stream, d.userId);
+            await waitForIceConfig();
+            const pc = createPC(stream, d.userId, true);
             const offer = await pc.createOffer({});
             await pc.setLocalDescription(offer);
             socket.send("call_signal", {
@@ -234,16 +306,20 @@ export default function CallScreen() {
           if (Number(d.conversationId) !== conversationId) return;
           const signal = d.signal;
           const from = d.fromUserId;
+          if (from != null) peerIdRef.current = from;
           (async () => {
             let pc = pcRef.current;
             if (signal.type === "offer") {
-              // Callee side: build PC, set remote, answer.
+              // Callee side: build PC WITHOUT tracks, set remote, THEN attach
+              // local tracks so they bind to the offer's transceivers.
               const stream = localStreamRef.current || (await getMedia());
               if (!stream) return endAndLeave(false);
-              pc = pcRef.current || createPC(stream, from);
+              await waitForIceConfig();
+              pc = pcRef.current || createPC(stream, from, false);
               await pc.setRemoteDescription(
                 new RTCSessionDescription(signal),
               );
+              attachLocalTracks(stream);
               await flushIce();
               const answer = await pc.createAnswer();
               await pc.setLocalDescription(answer);
@@ -251,6 +327,13 @@ export default function CallScreen() {
                 conversationId,
                 targetUserId: from,
                 signal: { type: "answer", sdp: answer.sdp },
+              });
+              // Tell the peer our current camera state immediately so they
+              // render avatar vs. video correctly from the start.
+              socket.send("call_signal", {
+                conversationId,
+                targetUserId: from,
+                signal: { type: "video-state", videoOff },
               });
             } else if (signal.type === "answer") {
               if (!pc) return;
@@ -271,6 +354,13 @@ export default function CallScreen() {
               } else {
                 pendingIce.current.push(signal.candidate);
               }
+            } else if (signal.type === "video-state") {
+              // Peer toggled their camera. This explicit signal — not the
+              // unreliable track.onmute — drives whether we show their video
+              // or the avatar + black screen.
+              setRemoteVideoOff(!!signal.videoOff);
+            } else if (signal.type === "audio-state") {
+              /* remote mute indicator not surfaced in mobile UI yet */
             }
           })();
           break;
@@ -295,8 +385,11 @@ export default function CallScreen() {
     conversationId,
     getMedia,
     createPC,
+    attachLocalTracks,
     flushIce,
     endAndLeave,
+    waitForIceConfig,
+    videoOff,
   ]);
 
   // Incoming: accept handler.
@@ -327,6 +420,14 @@ export default function CallScreen() {
       t.enabled = !next;
     });
     setMuted(next);
+    const target = peerIdRef.current;
+    if (target) {
+      socket.send("call_signal", {
+        conversationId,
+        targetUserId: target,
+        signal: { type: "audio-state", muted: next },
+      });
+    }
   }
 
   function toggleVideo() {
@@ -337,6 +438,15 @@ export default function CallScreen() {
       t.enabled = !next;
     });
     setVideoOff(next);
+    // Inform the peer so they render avatar/black instead of a frozen frame.
+    const target = peerIdRef.current;
+    if (target) {
+      socket.send("call_signal", {
+        conversationId,
+        targetUserId: target,
+        signal: { type: "video-state", videoOff: next },
+      });
+    }
   }
 
   function switchCamera() {
@@ -361,13 +471,16 @@ export default function CallScreen() {
             : "Call ended";
 
   const showVideo = callType === "video";
+  // Only paint the remote video when the peer actually has their camera on.
+  // Otherwise we fall through to the avatar + name on a black screen.
+  const showRemoteVideo = showVideo && remoteStream && !remoteVideoOff;
 
   return (
     <View style={styles.screen}>
       <Stack.Screen options={{ headerShown: false }} />
 
       {/* Remote video / avatar */}
-      {showVideo && remoteStream ? (
+      {showRemoteVideo ? (
         <RTCView
           streamURL={(remoteStream as any).toURL()}
           style={styles.remoteVideo}

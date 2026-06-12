@@ -16,6 +16,67 @@
     gap: 0;
     position: relative;
 }
+/* ─── Pinned banner (top of chat window) ─── */
+.pinnedBanner {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    margin-bottom: 6px;
+    background: var(--bg-secondary, rgba(20, 20, 24, 0.95));
+    border-bottom: 1px solid var(--glass-border);
+    backdrop-filter: blur(8px);
+}
+.pinnedBannerMain {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    color: var(--text-secondary);
+    padding: 0;
+}
+.pinnedBannerIcon {
+    color: var(--primary);
+    flex-shrink: 0;
+}
+.pinnedBannerLabel {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--primary);
+    flex-shrink: 0;
+}
+.pinnedBannerText {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.pinnedBannerUnpin {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+.pinnedBannerUnpin:hover {
+    background: var(--surface-hover, rgba(255, 255, 255, 0.08));
+    color: var(--text);
+}
 .loadMore {
     align-self: center;
     background: transparent;

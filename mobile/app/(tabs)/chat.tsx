@@ -219,7 +219,13 @@ export default function ChatScreen() {
   function openConv(c: Conversation) {
     router.push({
       pathname: "/chat/[id]",
-      params: { id: String(c.id), name: convName(c) },
+      params: {
+        id: String(c.id),
+        name: convName(c),
+        avatar: c.is_group ? "" : c.other_avatar || "",
+        peerId: !c.is_group && c.other_user_id ? String(c.other_user_id) : "",
+        isGroup: c.is_group ? "1" : "",
+      },
     });
   }
 
@@ -230,7 +236,12 @@ export default function ChatScreen() {
       setQuery("");
       router.push({
         pathname: "/chat/[id]",
-        params: { id: String(data.id), name: u.full_name || u.username },
+        params: {
+          id: String(data.id),
+          name: u.full_name || u.username,
+          avatar: u.avatar || "",
+          peerId: String(u.id),
+        },
       });
     } catch {
       /* ignore */
