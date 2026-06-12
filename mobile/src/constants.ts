@@ -1,3 +1,5 @@
+export type TaskStatusKey = "pending" | "in_progress" | "in_review" | "done";
+
 /** Mirrors client/src/constants/leaves.ts metadata. */
 export const LEAVE_TYPES: Record<
   string,
@@ -53,3 +55,21 @@ export const TASK_PRIORITY: Record<string, { label: string; color: string }> = {
   medium: { label: "Medium", color: "#cb912f" },
   low: { label: "Low", color: "#4daa57" },
 };
+
+/**
+ * Kanban / sprint columns — mirrors client/src/pages/tasks/constants.ts COLUMNS.
+ * The `icon` glyphs (○ ◐ ◑ ●) are the same progress-circle characters the web
+ * uses for the sprint progress status counts (To Do / In Progress / In Review /
+ * Done).
+ */
+export const TASK_COLUMNS: {
+  id: TaskStatusKey;
+  label: string;
+  icon: string;
+  color: string;
+}[] = [
+  { id: "pending", label: "To Do", icon: "○", color: "#94a3b8" },
+  { id: "in_progress", label: "In Progress", icon: "◐", color: "#cb912f" },
+  { id: "in_review", label: "In Review", icon: "◑", color: "#2383e2" },
+  { id: "done", label: "Done", icon: "●", color: "#4daa57" },
+];

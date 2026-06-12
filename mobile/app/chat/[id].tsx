@@ -703,17 +703,24 @@ export default function ChatThread() {
   // Anchor the reaction bar to the long-pressed bubble (mirrors the web
   // MessageBubble). Measures the bubble's host node directly for reliability.
   function openReactionBar(item: ChatMessage, mine: boolean) {
-    const node = bubbleRefs.current.get(item.id);
-    const measure = (node as unknown as {
+    const node = bubbleRefs.current.get(item.id) as unknown as {
       measureInWindow?: (
         cb: (x: number, y: number, width: number, height: number) => void,
       ) => void;
-    } | null)?.measureInWindow;
-    if (measure) {
-      measure((x, y, width, height) => {
-        setReactAnchor({ x, y, width, height, mine });
+    } | null;
+    // IMPORTANT: call measureInWindow ON the node (not via a detached
+    // reference). It is a method bound to the native view instance — invoking
+    // it without its receiver loses `this` and crashes the app natively.
+    if (node && typeof node.measureInWindow === "function") {
+      try {
+        node.measureInWindow((x, y, width, height) => {
+          setReactAnchor({ x, y, width, height, mine });
+          setReactTarget(item);
+        });
+      } catch {
+        setReactAnchor(null);
         setReactTarget(item);
-      });
+      }
     } else {
       setReactAnchor(null);
       setReactTarget(item);

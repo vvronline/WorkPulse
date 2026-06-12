@@ -72,7 +72,16 @@ export type TaskComment = {
 };
 
 export function addTaskComment(id: number, content: string) {
-  return api.post<TaskComment>(`/tasks/${id}/comments`, { content });
+  // The server's POST /tasks/:id/comments route runs through a multer
+  // `single('file')` middleware (comments can carry an attachment). Sending a
+  // multipart/form-data body with the `content` field is the contract the web
+  // client uses and is the most reliable way to pass the multipart-aware
+  // handler — a plain JSON body can be dropped by the upload middleware.
+  const form = new FormData();
+  form.append("content", content);
+  return api.post<TaskComment>(`/tasks/${id}/comments`, form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
 }
 
 export type BacklogSummary = {
@@ -906,6 +915,102 @@ export function completeSprint(
     totalTasks: number;
     rolledOver: number;
   }>(`/sprints/${sprintId}/complete`, rolloverTo ? { rolloverTo } : {});
+}
+
+/* ───────────────────────── Sprint Insights (Phase 3) ───────────────────────── */
+
+// All sprints visible to the requester, grouped by status on the server. The
+// response is `{ sprints: Sprint[] }` (mirrors the web `getSprints`).
+export function getSprints() {
+  return api.get<{ sprints: Sprint[] }>("/sprints");
+}
+
+export type SprintCycleTime = {
+  cycle: { avg: number | null; median: number | null; p90: number | null; n: number };
+  lead: { avg: number | null; median: number | null; p90: number | null; n: number };
+  tasks: Array<{
+    id: number;
+    title: string;
+    type_name?: string | null;
+    type_color?: string | null;
+    story_points?: number | string | null;
+    cycle_days?: number | null;
+    lead_days?: number | null;
+    completed_at: string;
+  }>;
+};
+
+export function getSprintCycleTime(sprintId: number) {
+  return api.get<SprintCycleTime>(`/sprints/${sprintId}/cycle-time`);
+}
+
+export type SprintCumulativeFlow = {
+  series: Array<{ date: string; [category: string]: number | string }>;
+};
+
+export function getSprintCumulativeFlow(sprintId: number) {
+  return api.get<SprintCumulativeFlow>(`/sprints/${sprintId}/cumulative-flow`);
+}
+
+export type SprintRetrospective = {
+  id?: number;
+  went_well?: string | null;
+  to_improve?: string | null;
+  summary?: string | null;
+  team_mood?: number | null;
+  action_items?: Array<{
+    id: number | string;
+    text: string;
+    done?: boolean;
+    owner?: number | null;
+    due_date?: string | null;
+  }>;
+};
+
+export function getSprintRetrospective(sprintId: number) {
+  return api.get<{ retrospective: SprintRetrospective | null }>(
+    `/sprints/${sprintId}/retrospective`,
+  );
+}
+
+export function updateSprintRetrospective(
+  sprintId: number,
+  data: {
+    went_well?: string | null;
+    to_improve?: string | null;
+    summary?: string | null;
+    team_mood?: number | null;
+    action_items?: unknown[];
+  },
+) {
+  return api.put<{ retrospective: SprintRetrospective }>(
+    `/sprints/${sprintId}/retrospective`,
+    data,
+  );
+}
+
+/**
+ * Move a backlog ticket into (or out of, when sprintId is null) a sprint.
+ * Mirrors the web `assignTaskToSprint` — PATCH /tasks/:id/assign-sprint.
+ */
+export function assignTaskToSprint(
+  taskId: number,
+  sprintId: number | null,
+) {
+  return api.patch<Task>(`/tasks/${taskId}/assign-sprint`, {
+    sprint_id: sprintId,
+  });
+}
+
+/**
+ * Update a task's assignee / due date when importing it into a sprint.
+ * Mirrors the web `updateTask` PUT /tasks/:id with a partial body.
+ */
+export function updateTaskAssignment(
+  taskId: number,
+  data: { assigned_to?: number | null; due_date?: string | null },
+) {
+  return api.put<Task>(`/tasks/${taskId}`, data);
 }
 
 /* ───────────────────────── Service Desk ───────────────────────── */

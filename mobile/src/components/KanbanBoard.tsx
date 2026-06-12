@@ -6,11 +6,14 @@ import {
   View,
   type View as RNView,
 } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { useRouter } from "expo-router";
 import {
   CalendarDays,
+  Check,
   ChevronDown,
   ChevronUp,
+  Copy,
   MessageSquare,
 } from "lucide-react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -204,6 +207,12 @@ export default function KanbanBoard({
                         params: { id: String(t.id) },
                       })
                     }
+                    onComment={() =>
+                      router.push({
+                        pathname: "/tasks/[id]",
+                        params: { id: String(t.id), focus: "comments" },
+                      })
+                    }
                     onArrow={(dir) => moveArrow(t, dir)}
                     onDragBegin={() => measureColumns()}
                     onDragMove={(absY) => setDropTarget(columnAtY(absY))}
@@ -245,6 +254,7 @@ function DraggableCard({
   isFirst,
   isLast,
   onOpen,
+  onComment,
   onArrow,
   onDragBegin,
   onDragMove,
@@ -256,12 +266,27 @@ function DraggableCard({
   isFirst: boolean;
   isLast: boolean;
   onOpen: () => void;
+  onComment: () => void;
   onArrow: (dir: -1 | 1) => void;
   onDragBegin: () => void;
   onDragMove: (absY: number) => void;
   onDrop: (absY: number) => void;
 }) {
   const pr = TASK_PRIORITY[task.priority];
+  // Issue key chip — falls back to "#id" when the ticket has no project key
+  // (mirrors the web TaskCard). Tap to copy to the clipboard.
+  const issueKey = task.issue_key || `#${task.id}`;
+  const [copied, setCopied] = useState(false);
+
+  async function copyKey() {
+    try {
+      await Clipboard.setStringAsync(issueKey);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  }
   const wit = task.work_item_type_id != null
     ? typeMap[String(task.work_item_type_id)]
     : undefined;
@@ -312,11 +337,34 @@ function DraggableCard({
   return (
     <GestureDetector gesture={composed}>
       <Animated.View style={[styles.card, animStyle]}>
+        {/* Top row: issue-key copy chip (left) + actions (right) */}
+        <View style={styles.cardTopRow}>
+          <Pressable
+            style={styles.keyChip}
+            onPress={copyKey}
+            hitSlop={6}
+          >
+            {copied ? (
+              <Check size={11} color={theme.success} />
+            ) : (
+              <Copy size={11} color={theme.primaryLight} />
+            )}
+            <Text style={styles.keyChipText}>{issueKey}</Text>
+          </Pressable>
+          <Pressable
+            style={styles.commentBtn}
+            onPress={onComment}
+            hitSlop={6}
+          >
+            <MessageSquare size={13} color={theme.textSecondary} />
+            {task.comment_count && task.comment_count > 0 ? (
+              <Text style={styles.commentBtnText}>{task.comment_count}</Text>
+            ) : null}
+          </Pressable>
+        </View>
+
         {/* Header badges row */}
         <View style={styles.badgeRow}>
-          {task.issue_key ? (
-            <Text style={styles.cardKey}>{task.issue_key}</Text>
-          ) : null}
           {wit ? (
             <View
               style={[
@@ -389,12 +437,6 @@ function DraggableCard({
             <View style={styles.metaChip}>
               <CalendarDays size={11} color={theme.textMuted} />
               <Text style={styles.metaText}>{due}</Text>
-            </View>
-          ) : null}
-          {task.comment_count && task.comment_count > 0 ? (
-            <View style={styles.metaChip}>
-              <MessageSquare size={11} color={theme.textMuted} />
-              <Text style={styles.metaText}>{task.comment_count}</Text>
             </View>
           ) : null}
         </View>
@@ -482,8 +524,32 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 7,
   },
+  cardTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  keyChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: theme.surface,
+    borderRadius: theme.radiusSm,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  keyChipText: { fontSize: 11, fontWeight: "700", color: theme.primaryLight },
+  commentBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: theme.surface,
+    borderRadius: theme.radiusSm,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  commentBtnText: { fontSize: 11, fontWeight: "600", color: theme.textSecondary },
   badgeRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 },
-  cardKey: { fontSize: 11, fontWeight: "700", color: theme.primaryLight },
   witBadge: {
     flexDirection: "row",
     alignItems: "center",

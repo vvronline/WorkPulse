@@ -126,6 +126,17 @@ export default function RootLayout() {
               }}
             />
             <Stack.Screen
+              name="sprints/insights"
+              options={{
+                headerShown: true,
+                title: "Sprint Insights",
+                headerStyle: { backgroundColor: theme.bgSecondary },
+                headerTitleStyle: { color: theme.text },
+                headerTintColor: theme.primary,
+                headerShadowVisible: false,
+              }}
+            />
+            <Stack.Screen
               name="notes"
               options={{
                 headerShown: true,

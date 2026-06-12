@@ -59,7 +59,7 @@ function timeAgo(iso: string) {
 }
 
 export default function TaskDetail() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, focus } = useLocalSearchParams<{ id: string; focus?: string }>();
   const taskId = Number(id);
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -97,6 +97,12 @@ export default function TaskDetail() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // When deep-linked from a Kanban card's "Add comment" button, default the
+  // detail view to the Comments tab.
+  useEffect(() => {
+    if (focus === "comments") setDetailTab("comments");
+  }, [focus]);
 
   useEffect(() => {
     if (detailTab !== "history") return;

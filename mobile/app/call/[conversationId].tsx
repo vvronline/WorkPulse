@@ -147,19 +147,68 @@ export default function CallScreen() {
 
   // Attach local tracks AFTER setRemoteDescription on the answerer so they bind
   // to the transceivers the offer created (mirrors web's attachLocalTracks).
-  const attachLocalTracks = useCallback((stream: MediaStream | null) => {
+  //
+  // CRITICAL: on react-native-webrtc, calling addTrack() after
+  // setRemoteDescription(offer) frequently creates a NEW, unmatched m-line
+  // instead of reusing the recvonly transceiver the offer created. That makes
+  // the answer SDP no longer line up with the offer → ICE never settles, the
+  // call connects slowly, stalls, or drops. We instead find the offer's
+  // matching transceiver by kind and replaceTrack onto it (upgrading the
+  // direction to sendrecv), only falling back to addTrack when there is no
+  // matching transceiver — exactly what the proven web client does.
+  const attachLocalTracks = useCallback(async (stream: MediaStream | null) => {
     const pc = pcRef.current;
     if (!pc || !stream) return;
-    const senders = pc.getSenders();
-    stream.getTracks().forEach((track) => {
-      const already = senders.some((s) => s.track && s.track.id === track.id);
-      if (already) return;
-      try {
-        pc.addTrack(track, stream);
-      } catch {
-        /* ignore */
+    const transceivers =
+      typeof (pc as any).getTransceivers === "function"
+        ? (pc as any).getTransceivers()
+        : [];
+    const used = new Set<any>();
+
+    for (const track of stream.getTracks()) {
+      // Skip if this exact track is already on some sender.
+      const alreadyAttached = transceivers.some(
+        (t: any) => t.sender?.track && t.sender.track.id === track.id,
+      );
+      if (alreadyAttached) continue;
+
+      // Find an unused transceiver of MATCHING kind created by the remote
+      // offer (its receiver track kind reflects what was offered).
+      const matchingTr = transceivers.find((t: any) => {
+        if (used.has(t)) return false;
+        if (t.sender?.track) return false; // already in use
+        const trKind = t.receiver?.track?.kind;
+        return trKind === track.kind;
+      });
+
+      if (matchingTr) {
+        used.add(matchingTr);
+        try {
+          await matchingTr.sender.replaceTrack(track);
+          // Upgrade direction so we actually SEND media on this m-line.
+          try {
+            matchingTr.direction = "sendrecv";
+          } catch {
+            /* not always settable */
+          }
+        } catch {
+          // replaceTrack failed — fall back to addTrack.
+          try {
+            pc.addTrack(track, stream);
+          } catch {
+            /* ignore */
+          }
+        }
+      } else {
+        // No matching transceiver from the offer — addTrack (creates a new
+        // m-line + triggers renegotiation if needed).
+        try {
+          pc.addTrack(track, stream);
+        } catch {
+          /* ignore */
+        }
       }
-    });
+    }
   }, []);
 
   const createPC = useCallback(
@@ -319,7 +368,11 @@ export default function CallScreen() {
               await pc.setRemoteDescription(
                 new RTCSessionDescription(signal),
               );
-              attachLocalTracks(stream);
+              // Must await: tracks have to be bound to the offer's
+              // transceivers BEFORE createAnswer so the answer SDP advertises
+              // sendrecv media. Otherwise the peer never receives our audio/
+              // video and the connection appears to "not connect".
+              await attachLocalTracks(stream);
               await flushIce();
               const answer = await pc.createAnswer();
               await pc.setLocalDescription(answer);
