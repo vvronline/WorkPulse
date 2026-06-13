@@ -78,6 +78,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
           "Allow WorkPulse to use your location to verify office attendance at clock-in.",
       },
     ],
+    "expo-sharing",
   ],
   extra: {
     API_BASE_URL,

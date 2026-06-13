@@ -78,16 +78,55 @@ export default function PayrollScreen() {
       Alert.alert("Required", "Label, start and end dates are required");
       return;
     }
+    if (endDate < startDate) {
+      Alert.alert("Invalid", "End date must be on or after start date");
+      return;
+    }
     setBusy(true);
+    const payload = {
+      label: label.trim(),
+      start_date: startDate,
+      end_date: endDate,
+    };
     try {
-      await createPayPeriod({
-        label: label.trim(),
-        start_date: startDate,
-        end_date: endDate,
-      });
+      await createPayPeriod(payload);
       setModalOpen(false);
       load();
     } catch (e: any) {
+      // Cold-start tenant DB writes can exceed the client timeout (or drop the
+      // response) even though the row committed server-side — surfacing a false
+      // "failed to create". Before alarming the user, re-fetch and check whether
+      // the period actually persisted; only warn if it genuinely didn't.
+      const status = e?.response?.status;
+      // A 409 (duplicate) is a real, deterministic error — surface it as-is.
+      if (status === 409) {
+        Alert.alert(
+          "Error",
+          e?.response?.data?.error ||
+            "A pay period with these dates already exists",
+        );
+        setBusy(false);
+        return;
+      }
+      try {
+        const r = await getPayPeriods();
+        const list = r.data || [];
+        const created = list.find(
+          (p) =>
+            p.label === payload.label &&
+            String(p.start_date).slice(0, 10) === payload.start_date &&
+            String(p.end_date).slice(0, 10) === payload.end_date,
+        );
+        if (created) {
+          // It actually saved — treat as success.
+          setItems(list);
+          setModalOpen(false);
+          setBusy(false);
+          return;
+        }
+      } catch {
+        /* fall through to the error alert below */
+      }
       Alert.alert("Error", e?.response?.data?.error || "Failed to create");
     } finally {
       setBusy(false);

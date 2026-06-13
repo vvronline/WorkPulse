@@ -1238,6 +1238,117 @@ export function getCompensationTemplates() {
   return api.get<CompensationTemplate[]>("/compensation/templates");
 }
 
+export function createCompensationTemplate(data: {
+  name: string;
+  description?: string;
+  components: unknown;
+  is_default?: boolean;
+}) {
+  return api.post<CompensationTemplate>("/compensation/templates", data);
+}
+
+export function updateCompensationTemplate(
+  id: number | string,
+  data: {
+    name?: string;
+    description?: string;
+    components?: unknown;
+    is_default?: boolean;
+  },
+) {
+  return api.put<CompensationTemplate>(`/compensation/templates/${id}`, data);
+}
+
+export function deleteCompensationTemplate(id: number | string) {
+  return api.delete<{ message: string }>(`/compensation/templates/${id}`);
+}
+
+/* Org members (used to pick an employee when assigning compensation). */
+export type OrgMember = {
+  id: number;
+  full_name?: string;
+  name?: string;
+  username?: string;
+  email?: string | null;
+  is_active?: boolean;
+  department_name?: string | null;
+};
+
+export function getOrgMembers(params?: Record<string, string | number>) {
+  return api.get<{ data: OrgMember[]; total?: number }>("/org/members", {
+    params,
+  });
+}
+
+/* Assign / update an employee's compensation (full payroll payload). */
+export function assignCompensation(
+  userId: number | string,
+  data: {
+    template_id?: number | string | null;
+    effective_from: string;
+    base_salary: number | string;
+    ctc_annual?: number | string;
+    components?: unknown;
+    currency?: string;
+    payment_frequency?: string;
+    notes?: string;
+  },
+) {
+  return api.post(`/compensation/employees/${userId}`, data);
+}
+
+/* CTC breakdown config (basic/HRA/conveyance/PF percentages). */
+export type CtcConfig = {
+  org_id?: number;
+  basic_pct: number;
+  hra_pct: number;
+  conveyance_pct: number;
+  pf_pct: number;
+  pf_max: number;
+  pt_fixed: number;
+  [k: string]: unknown;
+};
+
+export function getCtcConfig() {
+  return api.get<CtcConfig>("/compensation/ctc-config");
+}
+
+export function saveCtcConfig(data: Partial<CtcConfig>) {
+  return api.put<CtcConfig>("/compensation/ctc-config", data);
+}
+
+/* Bank verifications (HR approves/rejects employee bank details). */
+export type BankVerification = {
+  id: number;
+  user_id: number;
+  full_name?: string;
+  email?: string | null;
+  department_name?: string | null;
+  account_holder_name?: string;
+  account_number?: string;
+  ifsc_code?: string;
+  bank_name?: string | null;
+  is_verified?: boolean;
+  verified_at?: string | null;
+  [k: string]: unknown;
+};
+
+export function getBankVerifications() {
+  return api.get<BankVerification[]>("/compensation/bank-verifications");
+}
+
+export function approveBankDetails(userId: number | string) {
+  return api.post<{ message: string }>(
+    `/compensation/bank-details/${userId}/approve`,
+  );
+}
+
+export function rejectBankDetails(userId: number | string) {
+  return api.post<{ message: string }>(
+    `/compensation/bank-details/${userId}/reject`,
+  );
+}
+
 export type EmployeeCompensation = {
   user_id: number;
   full_name?: string;
@@ -1312,6 +1423,50 @@ export function bulkPublishSlips(data: { pay_period_id: number }) {
     "/compensation/salary-slips/bulk-publish",
     data,
   );
+}
+
+/* ───────────────────────── Admin: Payroll Disbursement ───────────────────────── */
+
+export type Disbursement = {
+  id: number;
+  salary_slip_id: number;
+  user_id: number;
+  full_name?: string;
+  slip_month?: string;
+  amount?: number | string;
+  status: "queued" | "processing" | "processed" | "failed" | string;
+  utr?: string | null;
+  failure_reason?: string | null;
+  created_at?: string;
+  [k: string]: unknown;
+};
+
+export function getDisbursements(params?: Record<string, string | number>) {
+  return api.get<Disbursement[]>("/compensation/disbursements", { params });
+}
+
+export function disburseSalaries(data: { pay_period_id: number }) {
+  return api.post<{
+    message: string;
+    disbursed?: number;
+    failed?: number;
+    total?: number;
+  }>("/compensation/disburse", data);
+}
+
+export function retryDisbursement(id: number | string) {
+  return api.post<{ message: string; payout_id?: string }>(
+    `/compensation/disburse/retry/${id}`,
+  );
+}
+
+/**
+ * Salary slip PDF URL (relative to API base). The mobile screen downloads it
+ * with the auth header via expo-file-system since the PDF is returned as a
+ * binary stream, not JSON.
+ */
+export function salarySlipPdfPath(id: number | string) {
+  return `/compensation/salary-slips/${id}/pdf`;
 }
 
 /* ───────────────────────── Admin: Payment Config ───────────────────────── */

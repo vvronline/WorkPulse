@@ -9,37 +9,62 @@ import {
   View,
 } from "react-native";
 import { Stack } from "expo-router";
-import { Play, Receipt, Send } from "lucide-react-native";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
+import {
+  CheckCircle2,
+  Clock,
+  Download,
+  Play,
+  Receipt,
+  RefreshCw,
+  Send,
+  XCircle,
+} from "lucide-react-native";
 import { theme } from "../../src/theme";
 import { Dropdown, type DropdownOption } from "../../src/components/Dropdown";
 import {
   bulkPublishSlips,
+  disburseSalaries,
+  getDisbursements,
   getPayPeriods,
   getSalarySlips,
   publishSalarySlip,
+  retryDisbursement,
   runPayroll,
+  salarySlipPdfPath,
+  type Disbursement,
   type SalarySlip,
 } from "../../src/admin";
+import { API_BASE_URL } from "../../src/config";
+import { getToken } from "../../src/auth/tokenStore";
 
 const STATUS_COLORS: Record<string, string> = {
   draft: "#f59e0b",
   published: "#10b981",
+  processed: "#10b981",
+  processing: "#3b82f6",
+  failed: "#ef4444",
+  reversed: "#ef4444",
+  queued: "#6b7280",
 };
 
 function fmtMoney(v?: number | string | null): string {
   if (v == null || v === "") return "—";
   const n = Number(v);
   if (!Number.isFinite(n)) return String(v);
-  return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return "₹" + n.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
 
 export default function SalarySlipsScreen() {
   const [periods, setPeriods] = useState<DropdownOption[]>([]);
   const [periodId, setPeriodId] = useState<string | number | null>(null);
   const [slips, setSlips] = useState<SalarySlip[]>([]);
+  const [disbursements, setDisbursements] = useState<Disbursement[]>([]);
   const [loading, setLoading] = useState(true);
   const [slipsLoading, setSlipsLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [downloadingId, setDownloadingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -47,8 +72,12 @@ export default function SalarySlipsScreen() {
     getPayPeriods()
       .then((r) => {
         const arr = Array.isArray(r.data) ? r.data : [];
-        setPeriods(arr.map((p) => ({ value: p.id, label: p.label })));
-        if (arr[0]) setPeriodId(arr[0].id);
+        // Payroll can only run against a LOCKED period — the server returns a
+        // 400 otherwise, which surfaced as a confusing failure. Only show
+        // locked periods so generation always has a valid target.
+        const locked = arr.filter((p) => p.is_locked || (p as any).locked_by);
+        setPeriods(locked.map((p) => ({ value: p.id, label: p.label })));
+        if (locked[0]) setPeriodId(locked[0].id);
       })
       .catch((e: any) =>
         setError(e?.response?.data?.error || "Failed to load pay periods"),
@@ -59,15 +88,30 @@ export default function SalarySlipsScreen() {
   const loadSlips = useCallback(() => {
     if (!periodId) {
       setSlips([]);
+      setDisbursements([]);
       return;
     }
     setSlipsLoading(true);
     setError(null);
-    getSalarySlips({ pay_period_id: String(periodId) })
-      .then((r) => setSlips(Array.isArray(r.data) ? r.data : []))
-      .catch((e: any) => {
-        setSlips([]);
-        setError(e?.response?.data?.error || "Failed to load slips");
+    Promise.allSettled([
+      getSalarySlips({ pay_period_id: String(periodId) }),
+      getDisbursements({ pay_period_id: String(periodId) }),
+    ])
+      .then(([slipR, disbR]) => {
+        if (slipR.status === "fulfilled")
+          setSlips(Array.isArray(slipR.value.data) ? slipR.value.data : []);
+        else {
+          setSlips([]);
+          setError(
+            (slipR.reason as any)?.response?.data?.error ||
+              "Failed to load slips",
+          );
+        }
+        if (disbR.status === "fulfilled")
+          setDisbursements(
+            Array.isArray(disbR.value.data) ? disbR.value.data : [],
+          );
+        else setDisbursements([]);
       })
       .finally(() => setSlipsLoading(false));
   }, [periodId]);
@@ -86,6 +130,20 @@ export default function SalarySlipsScreen() {
       setMessage(r.data?.message || "Payroll generated");
       loadSlips();
     } catch (e: any) {
+      // A slow cold-start write may time out client-side even though slips were
+      // generated. Re-fetch and, if slips now exist, treat it as success.
+      try {
+        const r = await getSalarySlips({ pay_period_id: String(periodId) });
+        const list = Array.isArray(r.data) ? r.data : [];
+        if (list.length > 0) {
+          setSlips(list);
+          setMessage("Payroll generated");
+          setBusy(false);
+          return;
+        }
+      } catch {
+        /* fall through */
+      }
       setError(e?.response?.data?.error || "Payroll run failed");
     } finally {
       setBusy(false);
@@ -103,6 +161,8 @@ export default function SalarySlipsScreen() {
           text: "Publish",
           onPress: async () => {
             setBusy(true);
+            setError(null);
+            setMessage(null);
             try {
               const r = await bulkPublishSlips({
                 pay_period_id: Number(periodId),
@@ -110,9 +170,22 @@ export default function SalarySlipsScreen() {
               setMessage(r.data?.message || "Slips published");
               loadSlips();
             } catch (e: any) {
-              setError(
-                e?.response?.data?.error || "Bulk publish failed",
-              );
+              // Verify-after-write: if no drafts remain, the publish succeeded.
+              try {
+                const r = await getSalarySlips({
+                  pay_period_id: String(periodId),
+                });
+                const list = Array.isArray(r.data) ? r.data : [];
+                if (!list.some((s) => s.status === "draft")) {
+                  setSlips(list);
+                  setMessage("Slips published");
+                  setBusy(false);
+                  return;
+                }
+              } catch {
+                /* fall through */
+              }
+              setError(e?.response?.data?.error || "Bulk publish failed");
             } finally {
               setBusy(false);
             }
@@ -122,15 +195,103 @@ export default function SalarySlipsScreen() {
     );
   }
 
-  function publishOne(slip: SalarySlip) {
-    publishSalarySlip(slip.id)
+  async function publishOne(slip: SalarySlip) {
+    setError(null);
+    try {
+      await publishSalarySlip(slip.id);
+      loadSlips();
+    } catch (e: any) {
+      // Verify-after-write: re-fetch and check if this slip is now published.
+      try {
+        const r = await getSalarySlips({ pay_period_id: String(periodId) });
+        const list = Array.isArray(r.data) ? r.data : [];
+        const updated = list.find((s) => s.id === slip.id);
+        if (updated && updated.status !== "draft") {
+          setSlips(list);
+          return;
+        }
+      } catch {
+        /* fall through */
+      }
+      Alert.alert("Error", e?.response?.data?.error || "Failed to publish");
+    }
+  }
+
+  function disburseAll() {
+    if (!periodId) return;
+    Alert.alert(
+      "Disburse salaries",
+      "Initiate bank transfer for all published slips in this period?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Disburse",
+          onPress: async () => {
+            setBusy(true);
+            setError(null);
+            setMessage(null);
+            try {
+              const r = await disburseSalaries({
+                pay_period_id: Number(periodId),
+              });
+              const d = r.data;
+              setMessage(
+                `${d?.message || "Disbursement initiated"} (${d?.disbursed ?? 0} sent, ${d?.failed ?? 0} failed)`,
+              );
+              loadSlips();
+            } catch (e: any) {
+              setError(e?.response?.data?.error || "Disbursement failed");
+            } finally {
+              setBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  }
+
+  function retry(d: Disbursement) {
+    retryDisbursement(d.id)
       .then(() => loadSlips())
       .catch((e: any) =>
-        Alert.alert("Error", e?.response?.data?.error || "Failed to publish"),
+        Alert.alert("Error", e?.response?.data?.error || "Retry failed"),
       );
   }
 
+  async function downloadPdf(slip: SalarySlip) {
+    setDownloadingId(slip.id);
+    try {
+      const token = await getToken();
+      const safeName = (slip.full_name || slip.username || `slip_${slip.id}`)
+        .replace(/\s+/g, "_")
+        .replace(/[^\w.-]/g, "");
+      const target = `${FileSystem.cacheDirectory}salary_slip_${safeName}.pdf`;
+      const res = await FileSystem.downloadAsync(
+        `${API_BASE_URL}${salarySlipPdfPath(slip.id)}`,
+        target,
+        { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
+      );
+      if (res.status !== 200) {
+        throw new Error(`Server returned ${res.status}`);
+      }
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(res.uri, {
+          mimeType: "application/pdf",
+          dialogTitle: "Salary slip",
+          UTI: "com.adobe.pdf",
+        });
+      } else {
+        Alert.alert("Downloaded", `Saved to ${res.uri}`);
+      }
+    } catch (e: any) {
+      Alert.alert("Error", e?.message || "Failed to download PDF");
+    } finally {
+      setDownloadingId(null);
+    }
+  }
+
   const draftCount = slips.filter((s) => s.status === "draft").length;
+  const publishedCount = slips.filter((s) => s.status === "published").length;
 
   if (loading) {
     return (
@@ -146,15 +307,26 @@ export default function SalarySlipsScreen() {
       <Stack.Screen options={{ title: "Salary Slips" }} />
 
       <View style={styles.toolbar}>
-        <Dropdown
-          label="Pay period"
-          value={periodId}
-          options={periods}
-          onChange={setPeriodId}
-        />
+        {periods.length === 0 ? (
+          <Text style={styles.hint}>
+            No locked pay periods. Lock a period in Payroll Periods before
+            generating salary slips.
+          </Text>
+        ) : (
+          <Dropdown
+            label="Pay period (locked)"
+            value={periodId}
+            options={periods}
+            onChange={(v) => {
+              setPeriodId(v);
+              setMessage(null);
+              setError(null);
+            }}
+          />
+        )}
         <View style={styles.actionsRow}>
           <Pressable
-            style={[styles.actionBtn, busy && styles.disabled]}
+            style={[styles.actionBtn, (busy || !periodId) && styles.disabled]}
             onPress={generate}
             disabled={busy || !periodId}
           >
@@ -169,9 +341,21 @@ export default function SalarySlipsScreen() {
               onPress={publishAll}
               disabled={busy}
             >
-              <Send size={14} color={theme.primary} />
+              <CheckCircle2 size={14} color={theme.primary} />
               <Text style={styles.actionTextGhost}>
                 Publish all ({draftCount})
+              </Text>
+            </Pressable>
+          ) : null}
+          {publishedCount > 0 ? (
+            <Pressable
+              style={[styles.actionBtn, busy && styles.disabled]}
+              onPress={disburseAll}
+              disabled={busy}
+            >
+              <Send size={14} color="#fff" />
+              <Text style={styles.actionText}>
+                Disburse ({publishedCount})
               </Text>
             </Pressable>
           ) : null}
@@ -189,54 +373,112 @@ export default function SalarySlipsScreen() {
           data={slips}
           keyExtractor={(s) => String(s.id)}
           contentContainerStyle={styles.list}
-          renderItem={({ item }) => (
-            <View style={styles.card}>
-              <View style={styles.iconWrap}>
-                <Receipt size={18} color={theme.primary} />
+          renderItem={({ item }) => {
+            const disb = disbursements.find(
+              (d) => d.salary_slip_id === item.id,
+            );
+            return (
+              <View style={styles.card}>
+                <View style={styles.iconWrap}>
+                  <Receipt size={18} color={theme.primary} />
+                </View>
+                <View style={styles.body}>
+                  <Text style={styles.name} numberOfLines={1}>
+                    {item.full_name || item.username || `User #${item.user_id}`}
+                  </Text>
+                  <Text style={styles.meta}>
+                    Net {fmtMoney(item.net_pay)} · Gross{" "}
+                    {fmtMoney(item.gross_earnings)} · Ded{" "}
+                    {fmtMoney(item.total_deductions)}
+                  </Text>
+                  <View style={styles.badgeRow}>
+                    <View
+                      style={[
+                        styles.statusPill,
+                        {
+                          backgroundColor:
+                            (STATUS_COLORS[item.status] || theme.textMuted) +
+                            "22",
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.statusText,
+                          {
+                            color:
+                              STATUS_COLORS[item.status] || theme.textMuted,
+                          },
+                        ]}
+                      >
+                        {item.status}
+                      </Text>
+                    </View>
+                    {disb ? (
+                      <View style={styles.payRow}>
+                        {disb.status === "processed" ? (
+                          <CheckCircle2 size={12} color={STATUS_COLORS.processed} />
+                        ) : disb.status === "processing" ? (
+                          <Clock size={12} color={STATUS_COLORS.processing} />
+                        ) : disb.status === "failed" ? (
+                          <XCircle size={12} color={STATUS_COLORS.failed} />
+                        ) : null}
+                        <Text
+                          style={[
+                            styles.payText,
+                            {
+                              color:
+                                STATUS_COLORS[disb.status] || theme.textMuted,
+                            },
+                          ]}
+                        >
+                          {disb.status}
+                          {disb.utr ? ` · UTR ${disb.utr}` : ""}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                </View>
+                <View style={styles.actionsCol}>
+                  {item.status === "draft" ? (
+                    <Pressable
+                      style={styles.iconBtn}
+                      onPress={() => publishOne(item)}
+                      hitSlop={6}
+                    >
+                      <CheckCircle2 size={16} color={theme.primary} />
+                    </Pressable>
+                  ) : null}
+                  <Pressable
+                    style={styles.iconBtn}
+                    onPress={() => downloadPdf(item)}
+                    hitSlop={6}
+                    disabled={downloadingId === item.id}
+                  >
+                    {downloadingId === item.id ? (
+                      <ActivityIndicator size="small" color={theme.primary} />
+                    ) : (
+                      <Download size={16} color={theme.textSecondary} />
+                    )}
+                  </Pressable>
+                  {disb?.status === "failed" ? (
+                    <Pressable
+                      style={styles.iconBtn}
+                      onPress={() => retry(disb)}
+                      hitSlop={6}
+                    >
+                      <RefreshCw size={16} color={theme.warning} />
+                    </Pressable>
+                  ) : null}
+                </View>
               </View>
-              <View style={styles.body}>
-                <Text style={styles.name} numberOfLines={1}>
-                  {item.full_name || item.username || `User #${item.user_id}`}
-                </Text>
-                <Text style={styles.meta}>
-                  Net {fmtMoney(item.net_pay)} · Gross{" "}
-                  {fmtMoney(item.gross_earnings)}
-                </Text>
-              </View>
-              <View
-                style={[
-                  styles.statusPill,
-                  {
-                    backgroundColor:
-                      (STATUS_COLORS[item.status] || theme.textMuted) + "22",
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.statusText,
-                    { color: STATUS_COLORS[item.status] || theme.textMuted },
-                  ]}
-                >
-                  {item.status}
-                </Text>
-              </View>
-              {item.status === "draft" ? (
-                <Pressable
-                  style={styles.publishBtn}
-                  onPress={() => publishOne(item)}
-                  hitSlop={6}
-                >
-                  <Send size={15} color={theme.primary} />
-                </Pressable>
-              ) : null}
-            </View>
-          )}
+            );
+          }}
           ListEmptyComponent={
             <Text style={styles.empty}>
               {periodId
                 ? "No slips for this period. Run payroll to generate them."
-                : "Select a pay period."}
+                : "Select a locked pay period."}
             </Text>
           }
         />
@@ -249,6 +491,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { alignItems: "center", justifyContent: "center", flex: 1 },
   toolbar: { padding: 16, gap: 10 },
+  hint: { fontSize: 13, color: theme.textSecondary, lineHeight: 18 },
   actionsRow: { flexDirection: "row", gap: 10, flexWrap: "wrap" },
   actionBtn: {
     flexDirection: "row",
@@ -293,16 +536,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  body: { flex: 1, gap: 2 },
+  body: { flex: 1, gap: 4 },
   name: { fontSize: 14, fontWeight: "600", color: theme.text },
   meta: { fontSize: 12, color: theme.textSecondary },
+  badgeRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
   statusPill: {
     borderRadius: theme.radiusFull,
     paddingHorizontal: 8,
     paddingVertical: 3,
   },
   statusText: { fontSize: 10, fontWeight: "700", textTransform: "uppercase" },
-  publishBtn: { padding: 6 },
+  payRow: { flexDirection: "row", alignItems: "center", gap: 3 },
+  payText: { fontSize: 10, fontWeight: "600" },
+  actionsCol: { flexDirection: "row", alignItems: "center", gap: 2 },
+  iconBtn: { padding: 6 },
   empty: {
     color: theme.textMuted,
     fontSize: 13,

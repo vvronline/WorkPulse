@@ -45,27 +45,39 @@ import {
 } from "../../src/admin";
 
 const ESTIMATION_TYPES = [
-  { value: "fibonacci", label: "Fibonacci (1, 2, 3, 5, 8…)" },
+  { value: "fibonacci", label: "Fibonacci (0.5, 1, 2, 3, 5, 8…)" },
   { value: "linear", label: "Linear (1–10)" },
   { value: "tshirt", label: "T-shirt (XS, S, M, L, XL)" },
   { value: "hours", label: "Hours" },
   { value: "none", label: "No estimation" },
+  { value: "custom", label: "Custom" },
 ];
 
+const ESTIMATION_PRESETS: Record<string, (number | string)[]> = {
+  fibonacci: [0.5, 1, 2, 3, 5, 8, 13, 21, 34],
+  linear: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+  tshirt: ["XS", "S", "M", "L", "XL", "XXL"],
+  hours: [1, 2, 4, 8, 16, 24, 40],
+  none: [],
+  custom: [],
+};
+
 const STATE_CATEGORIES = [
-  { value: "open", label: "Open" },
-  { value: "in_progress", label: "In progress" },
-  { value: "in_review", label: "In review" },
+  { value: "open", label: "Open / To Do" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "in_review", label: "In Review" },
   { value: "done", label: "Done" },
 ];
 
+// Mirrors the web GeneralTab feature list (incl. retrospectives).
 const FEATURE_FLAGS: Array<{ key: keyof AgileSettings; label: string }> = [
   { key: "enable_story_points", label: "Story points" },
-  { key: "enable_epics", label: "Epics" },
-  { key: "enable_dependencies", label: "Dependencies" },
+  { key: "enable_epics", label: "Epics & parent links" },
+  { key: "enable_dependencies", label: "Dependencies / blocked-by" },
   { key: "enable_acceptance_criteria", label: "Acceptance criteria" },
-  { key: "enable_wip_limits", label: "WIP limits" },
-  { key: "enable_blockers", label: "Blockers" },
+  { key: "enable_blockers", label: "Blocker badges" },
+  { key: "enable_wip_limits", label: "WIP limits per column" },
+  { key: "enable_retrospectives", label: "Sprint retrospectives" },
   { key: "require_estimate_for_sprint", label: "Require estimate for sprint" },
 ];
 
@@ -79,6 +91,27 @@ const COLOR_PRESETS = [
   "#6b7280",
 ];
 
+function valuesToString(v: AgileSettings["estimation_values"]): string {
+  if (Array.isArray(v)) return v.join(", ");
+  if (typeof v === "string") {
+    try {
+      const parsed = JSON.parse(v);
+      if (Array.isArray(parsed)) return parsed.join(", ");
+    } catch {
+      return v;
+    }
+  }
+  return "";
+}
+
+function stringToValues(s: string): (number | string)[] {
+  return s
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean)
+    .map((v) => (isNaN(Number(v)) ? v : Number(v)));
+}
+
 export default function AgileConfigScreen() {
   const kbInset = useKeyboardInset();
   const [loading, setLoading] = useState(true);
@@ -89,23 +122,46 @@ export default function AgileConfigScreen() {
   const [states, setStates] = useState<AgileWorkflowState[]>([]);
   const [busy, setBusy] = useState(false);
 
+  // Local editable copies for the General section (saved with a button, like web).
+  const [estType, setEstType] = useState("fibonacci");
+  const [estValues, setEstValues] = useState("");
+  const [estUnit, setEstUnit] = useState("");
+  const [dod, setDod] = useState("");
+  const [generalDirty, setGeneralDirty] = useState(false);
+
   // Work item type modal state
   const [typeModal, setTypeModal] = useState(false);
   const [editingType, setEditingType] = useState<AgileWorkItemType | null>(null);
   const [typeName, setTypeName] = useState("");
+  const [typeIcon, setTypeIcon] = useState("");
   const [typeColor, setTypeColor] = useState(COLOR_PRESETS[0]);
   const [typeIsEpic, setTypeIsEpic] = useState(false);
   const [typeIsDefault, setTypeIsDefault] = useState(false);
+  const [typeIsActive, setTypeIsActive] = useState(true);
 
   // Workflow state modal state
   const [stateModal, setStateModal] = useState(false);
-  const [editingState, setEditingState] =
-    useState<AgileWorkflowState | null>(null);
+  const [editingState, setEditingState] = useState<AgileWorkflowState | null>(
+    null,
+  );
   const [stateName, setStateName] = useState("");
   const [stateCategory, setStateCategory] = useState<string | number | null>(
     "open",
   );
   const [stateColor, setStateColor] = useState(COLOR_PRESETS[6]);
+  const [stateWip, setStateWip] = useState("");
+  const [stateInitial, setStateInitial] = useState(false);
+  const [stateTerminal, setStateTerminal] = useState(false);
+  const [stateActive, setStateActive] = useState(true);
+
+  const syncGeneral = useCallback((s: AgileSettings | null) => {
+    if (!s) return;
+    setEstType(s.estimation_type ?? "fibonacci");
+    setEstValues(valuesToString(s.estimation_values));
+    setEstUnit(s.estimation_unit_label ?? "");
+    setDod(s.default_dod ?? "");
+    setGeneralDirty(false);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -116,8 +172,10 @@ export default function AgileConfigScreen() {
       getWorkflowStates(),
       getAgilePermissions(),
     ]);
-    if (setR.status === "fulfilled") setSettings(setR.value.data);
-    else {
+    if (setR.status === "fulfilled") {
+      setSettings(setR.value.data);
+      syncGeneral(setR.value.data);
+    } else {
       const e = setR.reason as any;
       setError(e?.response?.data?.error || "Failed to load Agile settings");
     }
@@ -127,25 +185,101 @@ export default function AgileConfigScreen() {
       setStates(Array.isArray(staR.value.data) ? staR.value.data : []);
     if (permR.status === "fulfilled") setCanEdit(!!permR.value.data?.canEdit);
     setLoading(false);
-  }, []);
+  }, [syncGeneral]);
 
   useEffect(() => {
     load();
   }, [load]);
 
+  /* ── Feature toggles (instant save with verify-after-write) ── */
+
   async function patchSettings(patch: Partial<AgileSettings>) {
     if (!canEdit) return;
+    const prev = settings;
     setBusy(true);
     // Optimistic update for snappy toggles.
     setSettings((s) => (s ? { ...s, ...patch } : s));
     try {
       const r = await updateAgileSettings(patch);
-      setSettings(r.data);
+      if (r.data) {
+        setSettings(r.data);
+        syncGeneral(r.data);
+      }
     } catch (e: any) {
+      // Verify-after-write: re-fetch and confirm whether the patch actually
+      // applied before showing a (potentially false) failure popup.
+      try {
+        const r = await getAgileSettings();
+        const fresh = r.data;
+        const applied =
+          fresh &&
+          Object.entries(patch).every(
+            ([k, v]) => (fresh as any)[k] === v,
+          );
+        if (applied) {
+          setSettings(fresh);
+          syncGeneral(fresh);
+          setBusy(false);
+          return;
+        }
+      } catch {
+        /* fall through */
+      }
+      // Roll back the optimistic change and report.
+      setSettings(prev);
       Alert.alert("Error", e?.response?.data?.error || "Failed to save");
-      load();
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function saveGeneral() {
+    if (!canEdit) return;
+    setBusy(true);
+    const patch: Partial<AgileSettings> = {
+      estimation_type: estType,
+      estimation_values:
+        estType === "none"
+          ? []
+          : estType !== "custom"
+            ? ESTIMATION_PRESETS[estType] ?? stringToValues(estValues)
+            : stringToValues(estValues),
+      estimation_unit_label: estUnit,
+      default_dod: dod,
+    };
+    try {
+      const r = await updateAgileSettings(patch);
+      if (r.data) {
+        setSettings(r.data);
+        syncGeneral(r.data);
+      }
+      setGeneralDirty(false);
+      Alert.alert("Saved", "Agile settings updated");
+    } catch (e: any) {
+      try {
+        const r = await getAgileSettings();
+        const fresh = r.data;
+        if (fresh && fresh.estimation_type === patch.estimation_type) {
+          setSettings(fresh);
+          syncGeneral(fresh);
+          setGeneralDirty(false);
+          setBusy(false);
+          return;
+        }
+      } catch {
+        /* fall through */
+      }
+      Alert.alert("Error", e?.response?.data?.error || "Failed to save");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function changeEstType(v: string) {
+    setEstType(v);
+    setGeneralDirty(true);
+    if (v !== "custom" && ESTIMATION_PRESETS[v] !== undefined) {
+      setEstValues(ESTIMATION_PRESETS[v].join(", "));
     }
   }
 
@@ -154,18 +288,22 @@ export default function AgileConfigScreen() {
   function openCreateType() {
     setEditingType(null);
     setTypeName("");
+    setTypeIcon("");
     setTypeColor(COLOR_PRESETS[0]);
     setTypeIsEpic(false);
     setTypeIsDefault(false);
+    setTypeIsActive(true);
     setTypeModal(true);
   }
 
   function openEditType(t: AgileWorkItemType) {
     setEditingType(t);
     setTypeName(t.name);
+    setTypeIcon(t.icon || "");
     setTypeColor(t.color || COLOR_PRESETS[0]);
     setTypeIsEpic(!!t.is_epic);
     setTypeIsDefault(!!t.is_default);
+    setTypeIsActive(t.is_active !== false);
     setTypeModal(true);
   }
 
@@ -179,13 +317,16 @@ export default function AgileConfigScreen() {
       if (editingType) {
         await updateWorkItemType(editingType.id, {
           name: typeName.trim(),
+          icon: typeIcon.trim() || null,
           color: typeColor,
           is_epic: typeIsEpic,
           is_default: typeIsDefault,
+          is_active: typeIsActive,
         });
       } else {
         await createWorkItemType({
           name: typeName.trim(),
+          icon: typeIcon.trim() || undefined,
           color: typeColor,
           is_epic: typeIsEpic,
           is_default: typeIsDefault,
@@ -201,22 +342,26 @@ export default function AgileConfigScreen() {
   }
 
   function confirmDeleteType(t: AgileWorkItemType) {
-    Alert.alert("Delete type", `Delete "${t.name}"?`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: () =>
-          deleteWorkItemType(t.id)
-            .then(() => load())
-            .catch((e: any) =>
-              Alert.alert(
-                "Error",
-                e?.response?.data?.error || "Failed to delete",
+    Alert.alert(
+      "Delete type",
+      `Delete "${t.name}"? This will fail if any tasks still use it.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () =>
+            deleteWorkItemType(t.id)
+              .then(() => load())
+              .catch((e: any) =>
+                Alert.alert(
+                  "Error",
+                  e?.response?.data?.error || "Failed to delete",
+                ),
               ),
-            ),
-      },
-    ]);
+        },
+      ],
+    );
   }
 
   /* ── Workflow states ── */
@@ -226,6 +371,10 @@ export default function AgileConfigScreen() {
     setStateName("");
     setStateCategory("open");
     setStateColor(COLOR_PRESETS[6]);
+    setStateWip("");
+    setStateInitial(false);
+    setStateTerminal(false);
+    setStateActive(true);
     setStateModal(true);
   }
 
@@ -234,6 +383,10 @@ export default function AgileConfigScreen() {
     setStateName(s.name);
     setStateCategory(s.category);
     setStateColor(s.color || COLOR_PRESETS[6]);
+    setStateWip(s.wip_limit != null ? String(s.wip_limit) : "");
+    setStateInitial(!!s.is_initial);
+    setStateTerminal(!!s.is_terminal);
+    setStateActive(s.is_active !== false);
     setStateModal(true);
   }
 
@@ -242,6 +395,7 @@ export default function AgileConfigScreen() {
       Alert.alert("Required", "Name is required");
       return;
     }
+    const wip = stateWip.trim() === "" ? null : parseInt(stateWip, 10);
     setBusy(true);
     try {
       if (editingState) {
@@ -249,12 +403,19 @@ export default function AgileConfigScreen() {
           name: stateName.trim(),
           category: String(stateCategory || "open"),
           color: stateColor,
+          wip_limit: wip,
+          is_initial: stateInitial,
+          is_terminal: stateTerminal,
+          is_active: stateActive,
         });
       } else {
         await createWorkflowState({
           name: stateName.trim(),
           category: String(stateCategory || "open"),
           color: stateColor,
+          wip_limit: wip,
+          is_initial: stateInitial,
+          is_terminal: stateTerminal,
         });
       }
       setStateModal(false);
@@ -267,22 +428,26 @@ export default function AgileConfigScreen() {
   }
 
   function confirmDeleteState(s: AgileWorkflowState) {
-    Alert.alert("Delete state", `Delete "${s.name}"?`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: () =>
-          deleteWorkflowState(s.id)
-            .then(() => load())
-            .catch((e: any) =>
-              Alert.alert(
-                "Error",
-                e?.response?.data?.error || "Failed to delete",
+    Alert.alert(
+      "Delete state",
+      `Delete "${s.name}"? This will fail if any tasks are still in it.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () =>
+            deleteWorkflowState(s.id)
+              .then(() => load())
+              .catch((e: any) =>
+                Alert.alert(
+                  "Error",
+                  e?.response?.data?.error || "Failed to delete",
+                ),
               ),
-            ),
-      },
-    ]);
+        },
+      ],
+    );
   }
 
   if (loading) {
@@ -303,6 +468,17 @@ export default function AgileConfigScreen() {
     );
   }
 
+  // Group states by category for coverage warnings (mirrors web).
+  const grouped: Record<string, AgileWorkflowState[]> = {
+    open: [],
+    in_progress: [],
+    in_review: [],
+    done: [],
+  };
+  for (const s of states) {
+    if (grouped[s.category]) grouped[s.category].push(s);
+  }
+
   return (
     <ScrollView
       style={styles.screen}
@@ -313,7 +489,7 @@ export default function AgileConfigScreen() {
       {!canEdit ? (
         <View style={styles.banner}>
           <Text style={styles.bannerText}>
-            Read-only — only Agile editors (super admins or granted users) can
+            Read-only — only Agile editors (super admins or granted roles) can
             change this configuration.
           </Text>
         </View>
@@ -325,14 +501,67 @@ export default function AgileConfigScreen() {
           <SlidersHorizontal size={15} color={theme.textSecondary} />
           <Text style={styles.sectionTitle}>Estimation</Text>
         </View>
+        <Text style={styles.fieldLabel}>Scale type</Text>
         <Dropdown
           label="Estimation type"
-          value={settings?.estimation_type ?? "fibonacci"}
+          value={estType}
           options={ESTIMATION_TYPES}
           onChange={(v) => {
-            if (v) patchSettings({ estimation_type: String(v) });
+            if (v) changeEstType(String(v));
           }}
         />
+        <Text style={styles.fieldLabel}>Scale values (comma-separated)</Text>
+        <TextInput
+          style={[styles.input, estType === "none" && styles.inputDisabled]}
+          value={estValues}
+          onChangeText={(v) => {
+            setEstValues(v);
+            setGeneralDirty(true);
+          }}
+          editable={canEdit && estType !== "none"}
+          placeholder="0.5, 1, 2, 3, 5, 8"
+          placeholderTextColor={theme.textMuted}
+          autoCapitalize="none"
+        />
+        <Text style={styles.fieldLabel}>Unit label</Text>
+        <TextInput
+          style={styles.input}
+          value={estUnit}
+          onChangeText={(v) => {
+            setEstUnit(v);
+            setGeneralDirty(true);
+          }}
+          editable={canEdit}
+          placeholder="SP"
+          placeholderTextColor={theme.textMuted}
+        />
+        <Text style={[styles.fieldLabel, { marginTop: 10 }]}>
+          Definition of Done (default)
+        </Text>
+        <TextInput
+          style={[styles.input, styles.textArea]}
+          value={dod}
+          onChangeText={(v) => {
+            setDod(v);
+            setGeneralDirty(true);
+          }}
+          editable={canEdit}
+          multiline
+          numberOfLines={5}
+          placeholder={"- Code reviewed\n- Tests pass\n- Docs updated"}
+          placeholderTextColor={theme.textMuted}
+        />
+        {canEdit ? (
+          <Pressable
+            style={[styles.saveBtn, !generalDirty && styles.disabled]}
+            onPress={saveGeneral}
+            disabled={busy || !generalDirty}
+          >
+            <Text style={styles.saveBtnText}>
+              {busy ? "Saving…" : "Save settings"}
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
 
       {/* Feature toggles */}
@@ -383,9 +612,10 @@ export default function AgileConfigScreen() {
                   {t.is_default ? "  ·  default" : ""}
                   {t.is_epic ? "  ·  epic" : ""}
                 </Text>
-                {!t.is_active ? (
-                  <Text style={styles.itemMeta}>inactive</Text>
-                ) : null}
+                <Text style={styles.itemMeta}>
+                  {t.icon ? `icon: ${t.icon}` : "no icon"}
+                  {t.is_active === false ? " · inactive" : ""}
+                </Text>
               </View>
               {canEdit ? (
                 <>
@@ -424,44 +654,62 @@ export default function AgileConfigScreen() {
             </Pressable>
           ) : null}
         </View>
-        {states.length === 0 ? (
-          <Text style={styles.empty}>No workflow states.</Text>
-        ) : (
-          states.map((s) => (
-            <View key={s.id} style={styles.itemRow}>
-              <View
-                style={[styles.colorDot, { backgroundColor: s.color || "#888" }]}
-              />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.itemName}>{s.name}</Text>
-                <Text style={styles.itemMeta}>
-                  {s.category.replace(/_/g, " ")}
-                  {s.is_initial ? " · initial" : ""}
-                  {s.is_terminal ? " · terminal" : ""}
-                  {s.wip_limit ? ` · WIP ${s.wip_limit}` : ""}
+        <Text style={styles.hint}>
+          Keep at least one active state in each category: Open, In Progress, In
+          Review, Done.
+        </Text>
+        {STATE_CATEGORIES.map((cat) => {
+          const list = grouped[String(cat.value)] || [];
+          return (
+            <View key={String(cat.value)} style={styles.categoryGroup}>
+              <Text style={styles.categoryTitle}>{cat.label}</Text>
+              {list.length === 0 ? (
+                <Text style={styles.warn}>
+                  ⚠ No state in this category — add one to keep reporting
+                  accurate.
                 </Text>
-              </View>
-              {canEdit ? (
-                <>
-                  <Pressable
-                    style={styles.iconBtn}
-                    onPress={() => openEditState(s)}
-                    hitSlop={6}
-                  >
-                    <Pencil size={15} color={theme.textSecondary} />
-                  </Pressable>
-                  <Pressable
-                    style={styles.iconBtn}
-                    onPress={() => confirmDeleteState(s)}
-                    hitSlop={6}
-                  >
-                    <Trash2 size={15} color={theme.danger} />
-                  </Pressable>
-                </>
-              ) : null}
+              ) : (
+                list.map((s) => (
+                  <View key={s.id} style={styles.itemRow}>
+                    <View
+                      style={[
+                        styles.colorDot,
+                        { backgroundColor: s.color || "#888" },
+                      ]}
+                    />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.itemName}>{s.name}</Text>
+                      <Text style={styles.itemMeta}>
+                        {s.is_initial ? "initial · " : ""}
+                        {s.is_terminal ? "terminal · " : ""}
+                        {s.wip_limit ? `WIP ${s.wip_limit} · ` : ""}
+                        {s.is_active === false ? "inactive" : "active"}
+                      </Text>
+                    </View>
+                    {canEdit ? (
+                      <>
+                        <Pressable
+                          style={styles.iconBtn}
+                          onPress={() => openEditState(s)}
+                          hitSlop={6}
+                        >
+                          <Pencil size={15} color={theme.textSecondary} />
+                        </Pressable>
+                        <Pressable
+                          style={styles.iconBtn}
+                          onPress={() => confirmDeleteState(s)}
+                          hitSlop={6}
+                        >
+                          <Trash2 size={15} color={theme.danger} />
+                        </Pressable>
+                      </>
+                    ) : null}
+                  </View>
+                ))
+              )}
             </View>
-          ))
-        )}
+          );
+        })}
       </View>
 
       {/* ── Work item type modal ── */}
@@ -488,46 +736,68 @@ export default function AgileConfigScreen() {
                 <X size={22} color={theme.textSecondary} />
               </Pressable>
             </View>
-            <Text style={styles.fieldLabel}>Name</Text>
-            <TextInput
-              style={styles.input}
-              value={typeName}
-              onChangeText={setTypeName}
-              placeholder="e.g. Story"
-              placeholderTextColor={theme.textMuted}
-            />
-            <Text style={styles.fieldLabel}>Color</Text>
-            <View style={styles.swatchRow}>
-              {COLOR_PRESETS.map((c) => (
-                <Pressable
-                  key={c}
-                  style={[
-                    styles.swatch,
-                    { backgroundColor: c },
-                    typeColor === c && styles.swatchActive,
-                  ]}
-                  onPress={() => setTypeColor(c)}
+            <ScrollView style={{ maxHeight: 460 }}>
+              <Text style={styles.fieldLabel}>Name</Text>
+              <TextInput
+                style={styles.input}
+                value={typeName}
+                onChangeText={setTypeName}
+                placeholder="e.g. Story"
+                placeholderTextColor={theme.textMuted}
+              />
+              <Text style={styles.fieldLabel}>Icon name (optional)</Text>
+              <TextInput
+                style={styles.input}
+                value={typeIcon}
+                onChangeText={setTypeIcon}
+                placeholder="e.g. bookmark"
+                placeholderTextColor={theme.textMuted}
+                autoCapitalize="none"
+              />
+              <Text style={styles.fieldLabel}>Color</Text>
+              <View style={styles.swatchRow}>
+                {COLOR_PRESETS.map((c) => (
+                  <Pressable
+                    key={c}
+                    style={[
+                      styles.swatch,
+                      { backgroundColor: c },
+                      typeColor === c && styles.swatchActive,
+                    ]}
+                    onPress={() => setTypeColor(c)}
+                  />
+                ))}
+              </View>
+              <View style={styles.toggleRow}>
+                <Text style={styles.toggleLabel}>Epic type</Text>
+                <Switch
+                  value={typeIsEpic}
+                  onValueChange={setTypeIsEpic}
+                  trackColor={{ true: theme.primary, false: theme.surface }}
+                  thumbColor="#fff"
                 />
-              ))}
-            </View>
-            <View style={styles.toggleRow}>
-              <Text style={styles.toggleLabel}>Epic type</Text>
-              <Switch
-                value={typeIsEpic}
-                onValueChange={setTypeIsEpic}
-                trackColor={{ true: theme.primary, false: theme.surface }}
-                thumbColor="#fff"
-              />
-            </View>
-            <View style={styles.toggleRow}>
-              <Text style={styles.toggleLabel}>Default type</Text>
-              <Switch
-                value={typeIsDefault}
-                onValueChange={setTypeIsDefault}
-                trackColor={{ true: theme.primary, false: theme.surface }}
-                thumbColor="#fff"
-              />
-            </View>
+              </View>
+              <View style={styles.toggleRow}>
+                <Text style={styles.toggleLabel}>Default type</Text>
+                <Switch
+                  value={typeIsDefault}
+                  onValueChange={setTypeIsDefault}
+                  trackColor={{ true: theme.primary, false: theme.surface }}
+                  thumbColor="#fff"
+                />
+              </View>
+              {editingType ? (
+                <View style={styles.toggleRow}>
+                  <Text style={styles.toggleLabel}>Active</Text>
+                  <Switch
+                    value={typeIsActive}
+                    onValueChange={setTypeIsActive}
+                    trackColor={{ true: theme.primary, false: theme.surface }}
+                    thumbColor="#fff"
+                  />
+                </View>
+              ) : null}
+            </ScrollView>
             <Pressable style={styles.saveBtn} onPress={saveType} disabled={busy}>
               <Text style={styles.saveBtnText}>
                 {busy ? "Saving…" : editingType ? "Save changes" : "Create"}
@@ -561,35 +831,75 @@ export default function AgileConfigScreen() {
                 <X size={22} color={theme.textSecondary} />
               </Pressable>
             </View>
-            <Text style={styles.fieldLabel}>Name</Text>
-            <TextInput
-              style={styles.input}
-              value={stateName}
-              onChangeText={setStateName}
-              placeholder="e.g. QA Review"
-              placeholderTextColor={theme.textMuted}
-            />
-            <Text style={styles.fieldLabel}>Category</Text>
-            <Dropdown
-              label="Category"
-              value={stateCategory}
-              options={STATE_CATEGORIES}
-              onChange={setStateCategory}
-            />
-            <Text style={styles.fieldLabel}>Color</Text>
-            <View style={styles.swatchRow}>
-              {COLOR_PRESETS.map((c) => (
-                <Pressable
-                  key={c}
-                  style={[
-                    styles.swatch,
-                    { backgroundColor: c },
-                    stateColor === c && styles.swatchActive,
-                  ]}
-                  onPress={() => setStateColor(c)}
+            <ScrollView style={{ maxHeight: 460 }}>
+              <Text style={styles.fieldLabel}>Name</Text>
+              <TextInput
+                style={styles.input}
+                value={stateName}
+                onChangeText={setStateName}
+                placeholder="e.g. QA Review"
+                placeholderTextColor={theme.textMuted}
+              />
+              <Text style={styles.fieldLabel}>Category</Text>
+              <Dropdown
+                label="Category"
+                value={stateCategory}
+                options={STATE_CATEGORIES}
+                onChange={setStateCategory}
+              />
+              <Text style={styles.fieldLabel}>WIP limit (optional)</Text>
+              <TextInput
+                style={styles.input}
+                value={stateWip}
+                onChangeText={setStateWip}
+                placeholder="No limit"
+                placeholderTextColor={theme.textMuted}
+                keyboardType="numeric"
+              />
+              <Text style={styles.fieldLabel}>Color</Text>
+              <View style={styles.swatchRow}>
+                {COLOR_PRESETS.map((c) => (
+                  <Pressable
+                    key={c}
+                    style={[
+                      styles.swatch,
+                      { backgroundColor: c },
+                      stateColor === c && styles.swatchActive,
+                    ]}
+                    onPress={() => setStateColor(c)}
+                  />
+                ))}
+              </View>
+              <View style={styles.toggleRow}>
+                <Text style={styles.toggleLabel}>Initial (new tickets)</Text>
+                <Switch
+                  value={stateInitial}
+                  onValueChange={setStateInitial}
+                  trackColor={{ true: theme.primary, false: theme.surface }}
+                  thumbColor="#fff"
                 />
-              ))}
-            </View>
+              </View>
+              <View style={styles.toggleRow}>
+                <Text style={styles.toggleLabel}>Terminal (counts as done)</Text>
+                <Switch
+                  value={stateTerminal}
+                  onValueChange={setStateTerminal}
+                  trackColor={{ true: theme.primary, false: theme.surface }}
+                  thumbColor="#fff"
+                />
+              </View>
+              {editingState ? (
+                <View style={styles.toggleRow}>
+                  <Text style={styles.toggleLabel}>Active (shown on board)</Text>
+                  <Switch
+                    value={stateActive}
+                    onValueChange={setStateActive}
+                    trackColor={{ true: theme.primary, false: theme.surface }}
+                    thumbColor="#fff"
+                  />
+                </View>
+              ) : null}
+            </ScrollView>
             <Pressable
               style={styles.saveBtn}
               onPress={saveState}
@@ -633,6 +943,24 @@ const styles = StyleSheet.create({
   },
   sectionTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   sectionTitle: { fontSize: 15, fontWeight: "700", color: theme.text },
+  fieldLabel: {
+    fontSize: 12,
+    color: theme.textSecondary,
+    fontWeight: "500",
+    marginTop: 4,
+  },
+  input: {
+    backgroundColor: theme.inputBg,
+    borderWidth: 1,
+    borderColor: theme.inputBorder,
+    borderRadius: theme.radiusSm,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: theme.text,
+    fontSize: 15,
+  },
+  inputDisabled: { opacity: 0.5 },
+  textArea: { minHeight: 100, textAlignVertical: "top" },
   addBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -649,7 +977,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingVertical: 4,
   },
-  toggleLabel: { fontSize: 14, color: theme.text },
+  toggleLabel: { fontSize: 14, color: theme.text, flex: 1 },
   itemRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -668,6 +996,15 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingVertical: 12,
   },
+  hint: { fontSize: 12, color: theme.textSecondary, lineHeight: 17 },
+  categoryGroup: { gap: 2, marginTop: 6 },
+  categoryTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: theme.textSecondary,
+    marginTop: 4,
+  },
+  warn: { fontSize: 12, color: theme.warning, paddingVertical: 6 },
   swatchRow: { flexDirection: "row", gap: 10, flexWrap: "wrap" },
   swatch: {
     width: 32,
@@ -677,6 +1014,7 @@ const styles = StyleSheet.create({
     borderColor: "transparent",
   },
   swatchActive: { borderColor: theme.text },
+  disabled: { opacity: 0.5 },
   modalOverlay: { flex: 1, justifyContent: "flex-end" },
   modalScrim: {
     position: "absolute",
@@ -700,17 +1038,6 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   sheetTitle: { fontSize: 18, fontWeight: "700", color: theme.text },
-  fieldLabel: { fontSize: 12, color: theme.textSecondary, fontWeight: "500" },
-  input: {
-    backgroundColor: theme.inputBg,
-    borderWidth: 1,
-    borderColor: theme.inputBorder,
-    borderRadius: theme.radiusSm,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: theme.text,
-    fontSize: 15,
-  },
   saveBtn: {
     backgroundColor: theme.primary,
     borderRadius: theme.radiusSm,

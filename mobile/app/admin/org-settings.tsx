@@ -19,6 +19,7 @@ import { Stack } from "expo-router";
 import { WebView } from "react-native-webview";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
+import NetInfo from "@react-native-community/netinfo";
 import {
   Building2,
   Lock,
@@ -261,6 +262,7 @@ export default function OrgSettingsScreen() {
   const [wifiErr, setWifiErr] = useState<string | null>(null);
   const [editingBssid, setEditingBssid] = useState<string | null>(null);
   const [editingLabel, setEditingLabel] = useState("");
+  const [wifiScanning, setWifiScanning] = useState(false);
 
   // Branding
   const [accent, setAccent] = useState("#2383e2");
@@ -512,6 +514,71 @@ export default function OrgSettingsScreen() {
       ),
     );
     setEditingBssid(null);
+  }
+
+  /**
+   * Auto-detect the BSSID of the Wi-Fi the device is currently connected to and
+   * add it to the office allow-list (mirrors the web desktop's "Add this
+   * network's Wi-Fi"). Reading the BSSID requires location permission on
+   * Android (and Location Services to be ON); iOS additionally needs the
+   * NEHotspotConfiguration / location-when-in-use entitlement which is only
+   * present in a dev/EAS build. On Expo Go / web the BSSID is unavailable, so
+   * we surface a clear message and the admin can still use manual entry.
+   */
+  async function addCurrentWifi() {
+    setWifiErr(null);
+    setWifiScanning(true);
+    try {
+      // BSSID is only exposed once location permission is granted.
+      const perm = await Location.requestForegroundPermissionsAsync();
+      if (perm.status !== "granted") {
+        setWifiErr(
+          "Location permission is required to read the current Wi-Fi BSSID.",
+        );
+        return;
+      }
+      const state = await NetInfo.fetch("wifi");
+      const details = (state?.details ?? {}) as {
+        bssid?: string | null;
+        ssid?: string | null;
+      };
+      const rawBssid = details?.bssid;
+      if (state?.type !== "wifi" || !rawBssid || rawBssid === "02:00:00:00:00:00") {
+        setWifiErr(
+          state?.type !== "wifi"
+            ? "You're not connected to Wi-Fi. Connect to the office network first."
+            : "Could not read the Wi-Fi BSSID. Make sure Location Services is on and you're on a dev build (BSSID is unavailable in Expo Go).",
+        );
+        return;
+      }
+      const mac = rawBssid.toUpperCase();
+      if (wifiBssids.some((b) => (b.bssid || "").toUpperCase() === mac)) {
+        setWifiErr("This access point is already registered.");
+        return;
+      }
+      const ssid = details?.ssid && details.ssid !== "<unknown ssid>"
+        ? details.ssid
+        : null;
+      const defaultLabel = (
+        ssid ? `${ssid} (${mac.slice(-5)})` : `Office AP (${mac.slice(-5)})`
+      ).slice(0, 100);
+      setWifiBssids((prev) => [
+        ...prev,
+        {
+          bssid: mac,
+          label: defaultLabel,
+          ssid,
+          added_at: new Date().toISOString(),
+        },
+      ]);
+      // Open the inline label editor so the admin can rename immediately.
+      setEditingBssid(mac);
+      setEditingLabel(defaultLabel);
+    } catch (e: any) {
+      setWifiErr(e?.message || "Failed to read the current Wi-Fi network.");
+    } finally {
+      setWifiScanning(false);
+    }
   }
 
   /* ── Branding ── */
@@ -1151,17 +1218,30 @@ export default function OrgSettingsScreen() {
                 </View>
               </View>
             ) : (
-              <Pressable
-                style={styles.addBtn}
-                onPress={() => {
-                  setManualOpen(true);
-                  setWifiErr(null);
-                }}
-              >
-                <Plus size={14} color={theme.primary} />
-                <Text style={styles.addBtnText}>Enter BSSID manually</Text>
-              </Pressable>
+              <View style={styles.wifiActionRow}>
+                <Pressable
+                  style={[styles.smallBtn, { flex: 1 }]}
+                  onPress={addCurrentWifi}
+                  disabled={wifiScanning}
+                >
+                  <Text style={styles.smallBtnText}>
+                    {wifiScanning ? "Reading…" : "Add this network's Wi-Fi"}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.smallBtn, { flex: 1 }]}
+                  onPress={() => {
+                    setManualOpen(true);
+                    setWifiErr(null);
+                  }}
+                >
+                  <Text style={styles.smallBtnText}>Enter BSSID manually</Text>
+                </Pressable>
+              </View>
             )}
+            {!manualOpen && wifiErr ? (
+              <Text style={styles.wifiErr}>{wifiErr}</Text>
+            ) : null}
           </View>
 
           <Pressable
@@ -1799,6 +1879,7 @@ const styles = StyleSheet.create({
   wifiTitle: { fontSize: 14, fontWeight: "700", color: theme.text },
   wifiManualForm: { gap: 8, marginTop: 4 },
   wifiManualActions: { flexDirection: "row", gap: 12 },
+  wifiActionRow: { flexDirection: "row", gap: 12, marginTop: 4 },
   wifiErr: { fontSize: 12, color: theme.danger },
   // System role cards
   systemRoleRow: {
