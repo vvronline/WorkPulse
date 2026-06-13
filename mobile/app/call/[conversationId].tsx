@@ -534,8 +534,12 @@ export default function CallScreen() {
             ) {
               iceRestartAttemptedRef.current = true;
               (async () => {
-                try {
-                  const offer = await pc.createOffer({ iceRestart: true });
+              try {
+                  const offer = await pc.createOffer({
+                    iceRestart: true,
+                    offerToReceiveAudio: true,
+                    offerToReceiveVideo: callType === "video",
+                  });
                   await pc.setLocalDescription(offer);
                   socket.send("call_signal", {
                     conversationId,
@@ -596,7 +600,11 @@ export default function CallScreen() {
             iceRestartAttemptedRef.current = true;
             (async () => {
               try {
-                const offer = await pc.createOffer({ iceRestart: true });
+                const offer = await pc.createOffer({
+                  iceRestart: true,
+                  offerToReceiveAudio: true,
+                  offerToReceiveVideo: callType === "video",
+                });
                 await pc.setLocalDescription(offer);
                 socket.send("call_signal", {
                   conversationId,
@@ -628,7 +636,10 @@ export default function CallScreen() {
                 const builder = createPCRef.current;
                 if (!builder || !localStr) return endAndLeave(false);
                 const newPc = builder(localStr, targetUserId, true);
-                const offer = await newPc.createOffer({});
+                const offer = await newPc.createOffer({
+                  offerToReceiveAudio: true,
+                  offerToReceiveVideo: callType === "video",
+                });
                 await newPc.setLocalDescription(offer);
                 socket.send("call_signal", {
                   conversationId,
@@ -788,12 +799,30 @@ export default function CallScreen() {
               await waitForIceConfig();
               const pc = createPC(stream, d.userId, true);
               applySenderEncodingLimits(pc);
-              const offer = await pc.createOffer({});
+              // CRITICAL: react-native-webrtc can emit sendonly m-lines when
+              // createOffer is called with an empty options object (the offerer
+              // has tracks but never asks to RECEIVE). The web/desktop answerer
+              // then has nothing to answer recv on, ICE never nominates a pair,
+              // and the call hangs on "Connecting…" forever — the exact
+              // mobile→desktop "never connects" bug. Explicitly request
+              // bidirectional media so the SDP advertises sendrecv.
+              const offer = await pc.createOffer({
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: callType === "video",
+              });
               await pc.setLocalDescription(offer);
               socket.send("call_signal", {
                 conversationId,
                 targetUserId: d.userId,
                 signal: { type: "offer", sdp: offer.sdp },
+              });
+              // Tell the peer our current camera state immediately so they
+              // render avatar vs. video correctly from the start (mirrors the
+              // answerer path, which already sends this).
+              socket.send("call_signal", {
+                conversationId,
+                targetUserId: d.userId,
+                signal: { type: "video-state", videoOff },
               });
             } catch (err: any) {
               // Fatal negotiation error — end cleanly instead of hanging.
