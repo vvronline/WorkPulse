@@ -11,10 +11,13 @@ import { Stack, useRouter } from "expo-router";
 import {
   Building,
   ChevronRight,
+  CreditCard,
   DollarSign,
   Folder,
   GitBranch,
+  GitMerge,
   Home,
+  Receipt,
   RefreshCw,
   ScrollText,
   Settings as SettingsIcon,
@@ -22,6 +25,8 @@ import {
   UserPlus,
   Users,
   UsersRound,
+  Wallet,
+  Workflow,
   type LucideIcon,
 } from "lucide-react-native";
 import { useAuth, userHasFeature } from "../../src/auth/AuthContext";
@@ -40,8 +45,7 @@ type Section = {
 };
 
 // Mirrors client/src/pages/admin/index.tsx SECTIONS. `route` points to the
-// mobile screen for each section. Sections whose mobile screen isn't built
-// yet are omitted rather than shown as dead links.
+// mobile screen for each section.
 const SECTIONS: Section[] = [
   { key: "home", label: "Home", icon: Home, group: "Overview", route: "/admin/home" },
 
@@ -52,11 +56,16 @@ const SECTIONS: Section[] = [
   { key: "departments", label: "Departments", icon: Building, group: "Structure", route: "/admin/departments", requires: "orgId" },
   { key: "teams", label: "Teams", icon: UsersRound, group: "Structure", route: "/admin/teams", requires: "orgId" },
   { key: "org-chart", label: "Org Chart", icon: GitBranch, group: "Structure", route: "/admin/org-chart", requires: "orgId" },
+  { key: "agile", label: "Agile Config", icon: Workflow, group: "Structure", route: "/admin/agile", requires: "orgId", feature: "agile" },
   { key: "projects", label: "Projects", icon: Folder, group: "Structure", route: "/admin/projects", requires: "orgId", feature: "agile" },
 
+  { key: "integrations", label: "Integrations", icon: GitMerge, group: "Settings", route: "/admin/integrations", requires: "orgId" },
   { key: "org-settings", label: "Org Settings", icon: SettingsIcon, group: "Settings", route: "/admin/org-settings", requires: "orgId" },
 
   { key: "payroll", label: "Payroll Periods", icon: DollarSign, group: "Operations", route: "/admin/payroll", feature: "payroll" },
+  { key: "compensation", label: "Compensation", icon: Wallet, group: "Operations", route: "/admin/compensation", requires: "orgId", feature: "payroll" },
+  { key: "salary-slips", label: "Salary Slips", icon: Receipt, group: "Operations", route: "/admin/salary-slips", requires: "orgId", feature: "payroll" },
+  { key: "payment-config", label: "Payment Settings", icon: CreditCard, group: "Operations", route: "/admin/payment-settings", requires: "orgId", feature: "payroll" },
 
   { key: "audit", label: "Audit Logs", icon: ScrollText, group: "Compliance", route: "/admin/audit" },
   { key: "platform-access", label: "Platform Access", icon: Shield, group: "Compliance", route: "/admin/platform-access", requires: "approver" },

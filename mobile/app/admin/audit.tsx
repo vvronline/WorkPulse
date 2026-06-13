@@ -56,9 +56,11 @@ export default function AuditLogsScreen() {
   const [page, setPage] = useState(0);
   const [range, setRange] = useState("all");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
+    setError(null);
     const params: Record<string, string | number> = {
       limit: PAGE_SIZE,
       offset: page * PAGE_SIZE,
@@ -71,7 +73,10 @@ export default function AuditLogsScreen() {
         setLogs(r.data.logs || []);
         setTotal(r.data.total || 0);
       })
-      .catch(() => setLogs([]))
+      .catch((e: any) => {
+        setLogs([]);
+        setError(e?.response?.data?.error || "Failed to load audit logs");
+      })
       .finally(() => setLoading(false));
   }, [page, range]);
 
@@ -139,7 +144,7 @@ export default function AuditLogsScreen() {
             </View>
           )}
           ListEmptyComponent={
-            <Text style={styles.empty}>No audit entries.</Text>
+            <Text style={styles.empty}>{error ?? "No audit entries."}</Text>
           }
           ListFooterComponent={
             totalPages > 1 ? (

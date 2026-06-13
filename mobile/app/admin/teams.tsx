@@ -32,6 +32,7 @@ export default function TeamsScreen() {
   const [departments, setDepartments] = useState<DropdownOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Team | null>(null);
@@ -41,12 +42,22 @@ export default function TeamsScreen() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
     const [tRes, dRes] = await Promise.allSettled([getTeams(), getDepartments()]);
-    if (tRes.status === "fulfilled") setItems(tRes.value.data || []);
+    if (tRes.status === "fulfilled") {
+      setItems(Array.isArray(tRes.value.data) ? tRes.value.data : []);
+    } else {
+      setItems([]);
+      const e = tRes.reason as any;
+      setError(e?.response?.data?.error || "Failed to load teams");
+    }
     if (dRes.status === "fulfilled")
       setDepartments([
         { value: null, label: "— No department —" },
-        ...(dRes.value.data || []).map((d) => ({ value: d.id, label: d.name })),
+        ...(Array.isArray(dRes.value.data) ? dRes.value.data : []).map((d) => ({
+          value: d.id,
+          label: d.name,
+        })),
       ]);
     setLoading(false);
   }, []);
@@ -154,7 +165,9 @@ export default function TeamsScreen() {
               </Pressable>
             </View>
           )}
-          ListEmptyComponent={<Text style={styles.empty}>No teams yet.</Text>}
+          ListEmptyComponent={
+            <Text style={styles.empty}>{error ?? "No teams yet."}</Text>
+          }
         />
       )}
 

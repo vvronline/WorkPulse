@@ -29,6 +29,7 @@ export default function DepartmentsScreen() {
   const [items, setItems] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Department | null>(null);
@@ -37,9 +38,13 @@ export default function DepartmentsScreen() {
 
   const load = useCallback(() => {
     setLoading(true);
+    setError(null);
     getDepartments()
-      .then((r) => setItems(r.data || []))
-      .catch(() => setItems([]))
+      .then((r) => setItems(Array.isArray(r.data) ? r.data : []))
+      .catch((e: any) => {
+        setItems([]);
+        setError(e?.response?.data?.error || "Failed to load departments");
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -152,7 +157,7 @@ export default function DepartmentsScreen() {
             </View>
           )}
           ListEmptyComponent={
-            <Text style={styles.empty}>No departments yet.</Text>
+            <Text style={styles.empty}>{error ?? "No departments yet."}</Text>
           }
         />
       )}

@@ -884,14 +884,445 @@ export function deleteProject(id: number | string) {
 export type OrgChartNode = {
   id: number;
   full_name: string;
+  email?: string | null;
   role?: string;
   avatar?: string | null;
   manager_id?: number | null;
+  manager_name?: string | null;
+  department_id?: number | null;
   department_name?: string | null;
+  team_id?: number | null;
   team_name?: string | null;
   title?: string | null;
 };
 
+export type OrgChartDepartment = {
+  id: number;
+  name: string;
+  head_id?: number | null;
+  head_name?: string | null;
+  head_avatar?: string | null;
+};
+
+export type OrgChartTeam = {
+  id: number;
+  name: string;
+  department_id?: number | null;
+  lead_id?: number | null;
+  lead_name?: string | null;
+  lead_avatar?: string | null;
+};
+
+export type OrgChartResponse = {
+  departments: OrgChartDepartment[];
+  teams: OrgChartTeam[];
+  members: OrgChartNode[];
+};
+
+// Server GET /org/chart returns { departments, teams, members } (see
+// server/routes/organization.ts). The old typing assumed a bare array /
+// { nodes } shape, which made the mobile Org Chart screen permanently empty.
 export function getOrgChart() {
-  return api.get<OrgChartNode[] | { nodes: OrgChartNode[] }>("/org/chart");
+  return api.get<OrgChartResponse>("/org/chart");
+}
+
+/* ───────────────────────── Admin: Custom Roles ───────────────────────── */
+
+export type OrgRole = {
+  role_key: string;
+  label: string;
+  description?: string | null;
+  color?: string | null;
+  permission_level: number;
+  is_system?: boolean;
+  sort_order?: number;
+  customised?: boolean;
+  user_count?: number;
+};
+
+export function getOrgRoles() {
+  return api.get<{ defaults: OrgRole[]; roles: OrgRole[] }>("/org/roles");
+}
+
+export function createOrgRole(data: {
+  role_key: string;
+  label: string;
+  description?: string;
+  color?: string;
+  permission_level: number;
+}) {
+  return api.post<{ defaults: OrgRole[]; roles: OrgRole[] }>(
+    "/org/roles",
+    data,
+  );
+}
+
+export function updateOrgRole(
+  roleKey: string,
+  data: {
+    label?: string;
+    description?: string | null;
+    color?: string;
+    permission_level?: number;
+    sort_order?: number;
+  },
+) {
+  return api.patch<{ defaults: OrgRole[]; roles: OrgRole[] }>(
+    `/org/roles/${roleKey}`,
+    data,
+  );
+}
+
+export function deleteOrgRole(roleKey: string) {
+  return api.delete<{ defaults: OrgRole[]; roles: OrgRole[] }>(
+    `/org/roles/${roleKey}`,
+  );
+}
+
+/* ───────────────────────── Admin: Branding (logo + email templates) ───────────────────────── */
+
+export function uploadBrandingLogo(uri: string) {
+  const name = uri.split("/").pop() || "logo.png";
+  const match = /\.(\w+)$/.exec(name);
+  const ext = (match?.[1] || "png").toLowerCase();
+  const type =
+    ext === "jpg" || ext === "jpeg"
+      ? "image/jpeg"
+      : ext === "webp"
+        ? "image/webp"
+        : ext === "svg"
+          ? "image/svg+xml"
+          : "image/png";
+  const form = new FormData();
+  // React Native FormData file shape.
+  form.append("logo", { uri, name, type } as any);
+  return api.post<{ logo_url: string }>("/branding/logo", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+}
+
+export function deleteBrandingLogo() {
+  return api.delete("/branding/logo");
+}
+
+export type EmailTemplate = {
+  template_key: string;
+  subject: string;
+  body_html: string;
+  enabled: boolean;
+  is_overridden?: boolean;
+  builtin_subject?: string;
+  builtin_body_html?: string;
+};
+
+export function getEmailTemplates() {
+  return api.get<{ templates: EmailTemplate[] }>("/branding/email-templates");
+}
+
+export function updateEmailTemplate(
+  key: string,
+  data: { subject?: string; body_html?: string; enabled?: boolean },
+) {
+  return api.put(`/branding/email-templates/${key}`, data);
+}
+
+export function revertEmailTemplate(key: string) {
+  return api.delete(`/branding/email-templates/${key}`);
+}
+
+/* ───────────────────────── Admin: Agile Config ───────────────────────── */
+
+export type AgileSettings = {
+  org_id?: number;
+  estimation_type?: string;
+  estimation_values?: Array<number | string> | string;
+  estimation_unit_label?: string;
+  priority_scheme?: Array<{ key: string; label: string; color: string }> | string;
+  enable_story_points?: boolean;
+  enable_epics?: boolean;
+  enable_dependencies?: boolean;
+  enable_acceptance_criteria?: boolean;
+  enable_wip_limits?: boolean;
+  enable_blockers?: boolean;
+  enable_retrospectives?: boolean;
+  require_estimate_for_sprint?: boolean;
+  default_dod?: string | null;
+  [k: string]: unknown;
+};
+
+export type AgileWorkItemType = {
+  id: number;
+  key: string;
+  name: string;
+  icon?: string | null;
+  color?: string | null;
+  description?: string | null;
+  is_default?: boolean;
+  is_epic?: boolean;
+  is_active?: boolean;
+  sort_order?: number;
+};
+
+export type AgileWorkflowState = {
+  id: number;
+  key: string;
+  name: string;
+  category: "open" | "in_progress" | "in_review" | "done" | string;
+  color?: string | null;
+  icon?: string | null;
+  wip_limit?: number | null;
+  is_initial?: boolean;
+  is_terminal?: boolean;
+  is_active?: boolean;
+  sort_order?: number;
+};
+
+export function getAgileSettings() {
+  return api.get<AgileSettings>("/agile/settings");
+}
+
+export function updateAgileSettings(data: Partial<AgileSettings>) {
+  return api.put<AgileSettings>("/agile/settings", data);
+}
+
+export function getWorkItemTypes() {
+  return api.get<AgileWorkItemType[]>("/agile/work-item-types");
+}
+
+export function createWorkItemType(data: {
+  name: string;
+  icon?: string;
+  color?: string;
+  description?: string;
+  is_epic?: boolean;
+  is_default?: boolean;
+}) {
+  return api.post<AgileWorkItemType>("/agile/work-item-types", data);
+}
+
+export function updateWorkItemType(
+  id: number | string,
+  data: Partial<{
+    name: string;
+    icon: string | null;
+    color: string;
+    description: string | null;
+    is_epic: boolean;
+    is_default: boolean;
+    is_active: boolean;
+    sort_order: number;
+  }>,
+) {
+  return api.put<AgileWorkItemType>(`/agile/work-item-types/${id}`, data);
+}
+
+export function deleteWorkItemType(id: number | string) {
+  return api.delete(`/agile/work-item-types/${id}`);
+}
+
+export function getWorkflowStates() {
+  return api.get<AgileWorkflowState[]>("/agile/workflow-states");
+}
+
+export function createWorkflowState(data: {
+  name: string;
+  category: string;
+  color?: string;
+  icon?: string;
+  wip_limit?: number | null;
+  is_initial?: boolean;
+  is_terminal?: boolean;
+}) {
+  return api.post<AgileWorkflowState>("/agile/workflow-states", data);
+}
+
+export function updateWorkflowState(
+  id: number | string,
+  data: Partial<{
+    name: string;
+    category: string;
+    color: string;
+    icon: string | null;
+    wip_limit: number | null;
+    is_initial: boolean;
+    is_terminal: boolean;
+    is_active: boolean;
+    sort_order: number;
+  }>,
+) {
+  return api.put<AgileWorkflowState>(`/agile/workflow-states/${id}`, data);
+}
+
+export function deleteWorkflowState(id: number | string) {
+  return api.delete(`/agile/workflow-states/${id}`);
+}
+
+export function getAgilePermissions() {
+  return api.get<{
+    canEdit: boolean;
+    isSuperAdmin?: boolean;
+    requestStatus?: string | null;
+  }>("/agile/permissions/me");
+}
+
+/* ───────────────────────── Admin: Integrations ───────────────────────── */
+
+export type Integration = {
+  id: number;
+  provider: string;
+  status?: string;
+  config?: Record<string, unknown> | null;
+  created_at?: string;
+  [k: string]: unknown;
+};
+
+export function getIntegrations() {
+  return api.get<Integration[] | { integrations: Integration[] }>(
+    "/integrations",
+  );
+}
+
+export type GithubStatus = {
+  connected: boolean;
+  account?: string | null;
+  repos?: Array<{ full_name: string; connected?: boolean }>;
+  [k: string]: unknown;
+};
+
+export function getGithubStatus() {
+  return api.get<GithubStatus>("/integrations/github/status");
+}
+
+export function deleteIntegration(id: number | string) {
+  return api.delete(`/integrations/${id}`);
+}
+
+export function disconnectGithub() {
+  return api.post("/integrations/github/disconnect");
+}
+
+/* ───────────────────────── Admin: Compensation ───────────────────────── */
+
+export type CompensationTemplate = {
+  id: number;
+  name: string;
+  description?: string | null;
+  components?: Array<{ key?: string; name?: string; type?: string; value?: number }> | string;
+  is_default?: boolean;
+  created_at?: string;
+};
+
+export function getCompensationTemplates() {
+  return api.get<CompensationTemplate[]>("/compensation/templates");
+}
+
+export type EmployeeCompensation = {
+  user_id: number;
+  full_name?: string;
+  username?: string;
+  email?: string | null;
+  avatar?: string | null;
+  department_name?: string | null;
+  annual_ctc?: number | string | null;
+  monthly_gross?: number | string | null;
+  template_id?: number | null;
+  template_name?: string | null;
+  effective_from?: string | null;
+  has_compensation?: boolean;
+  id?: number;
+  [k: string]: unknown;
+};
+
+export function getEmployeeCompensations() {
+  return api.get<EmployeeCompensation[]>("/compensation/employees");
+}
+
+export function getEmployeeCompensation(userId: number | string) {
+  return api.get<EmployeeCompensation[]>(`/compensation/employees/${userId}`);
+}
+
+export function setEmployeeCompensation(
+  userId: number | string,
+  data: {
+    template_id?: number | null;
+    annual_ctc?: number;
+    effective_from?: string;
+    components?: unknown;
+  },
+) {
+  return api.post(`/compensation/employees/${userId}`, data);
+}
+
+/* ───────────────────────── Admin: Salary Slips ───────────────────────── */
+
+export type SalarySlip = {
+  id: number;
+  user_id: number;
+  full_name?: string;
+  username?: string;
+  pay_period_id: number;
+  period_label?: string;
+  gross_earnings?: number | string;
+  total_deductions?: number | string;
+  net_pay?: number | string;
+  status: "draft" | "published" | string;
+  created_at?: string;
+  [k: string]: unknown;
+};
+
+export function getSalarySlips(params?: Record<string, string | number>) {
+  return api.get<SalarySlip[]>("/compensation/salary-slips", { params });
+}
+
+export function runPayroll(data: { pay_period_id: number }) {
+  return api.post<{ message: string; [k: string]: unknown }>(
+    "/compensation/payroll-run",
+    data,
+  );
+}
+
+export function publishSalarySlip(id: number | string) {
+  return api.put(`/compensation/salary-slips/${id}/publish`);
+}
+
+export function bulkPublishSlips(data: { pay_period_id: number }) {
+  return api.post<{ message: string }>(
+    "/compensation/salary-slips/bulk-publish",
+    data,
+  );
+}
+
+/* ───────────────────────── Admin: Payment Config ───────────────────────── */
+
+export type PaymentConfig = {
+  id?: number;
+  api_key_id?: string | null;
+  api_key_secret?: string | null;
+  account_number?: string | null;
+  webhook_secret?: string | null;
+  default_transfer_mode?: string | null;
+  is_active?: boolean;
+  configured?: boolean;
+  [k: string]: unknown;
+};
+
+export function getPaymentConfig() {
+  return api.get<PaymentConfig>("/compensation/payment-config");
+}
+
+export function savePaymentConfig(data: {
+  api_key_id?: string;
+  api_key_secret?: string;
+  account_number?: string;
+  webhook_secret?: string;
+  default_transfer_mode?: string;
+  is_active?: boolean;
+}) {
+  return api.put<{ message: string }>("/compensation/payment-config", data);
+}
+
+export function testPaymentConfig() {
+  return api.post<{ message?: string; balance?: unknown; [k: string]: unknown }>(
+    "/compensation/payment-config/test",
+  );
 }

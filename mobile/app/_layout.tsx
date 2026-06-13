@@ -337,6 +337,56 @@ export default function RootLayout() {
               }}
             />
             <Stack.Screen
+              name="admin/agile"
+              options={{
+                headerShown: true,
+                headerStyle: { backgroundColor: theme.bgSecondary },
+                headerTitleStyle: { color: theme.text },
+                headerTintColor: theme.primary,
+                headerShadowVisible: false,
+              }}
+            />
+            <Stack.Screen
+              name="admin/integrations"
+              options={{
+                headerShown: true,
+                headerStyle: { backgroundColor: theme.bgSecondary },
+                headerTitleStyle: { color: theme.text },
+                headerTintColor: theme.primary,
+                headerShadowVisible: false,
+              }}
+            />
+            <Stack.Screen
+              name="admin/compensation"
+              options={{
+                headerShown: true,
+                headerStyle: { backgroundColor: theme.bgSecondary },
+                headerTitleStyle: { color: theme.text },
+                headerTintColor: theme.primary,
+                headerShadowVisible: false,
+              }}
+            />
+            <Stack.Screen
+              name="admin/salary-slips"
+              options={{
+                headerShown: true,
+                headerStyle: { backgroundColor: theme.bgSecondary },
+                headerTitleStyle: { color: theme.text },
+                headerTintColor: theme.primary,
+                headerShadowVisible: false,
+              }}
+            />
+            <Stack.Screen
+              name="admin/payment-settings"
+              options={{
+                headerShown: true,
+                headerStyle: { backgroundColor: theme.bgSecondary },
+                headerTitleStyle: { color: theme.text },
+                headerTintColor: theme.primary,
+                headerShadowVisible: false,
+              }}
+            />
+            <Stack.Screen
               name="tenants/index"
               options={{
                 headerShown: true,

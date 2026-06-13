@@ -23,15 +23,29 @@ export default function OrgChartScreen() {
   const [nodes, setNodes] = useState<OrgChartNode[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [error, setError] = useState<string | null>(null);
+
   const load = useCallback(() => {
     setLoading(true);
+    setError(null);
     getOrgChart()
       .then((r) => {
+        // Server returns { departments, teams, members } — see
+        // server/routes/organization.ts GET /org/chart. Older builds expected
+        // a bare array which made this screen permanently empty.
         const d = r.data as unknown;
-        const arr = Array.isArray(d) ? d : ((d as any)?.nodes ?? []);
+        const arr = Array.isArray(d)
+          ? (d as OrgChartNode[])
+          : ((d as { members?: OrgChartNode[]; nodes?: OrgChartNode[] })
+              ?.members ??
+            (d as { nodes?: OrgChartNode[] })?.nodes ??
+            []);
         setNodes(arr);
       })
-      .catch(() => setNodes([]))
+      .catch((e: any) => {
+        setNodes([]);
+        setError(e?.response?.data?.error || "Failed to load org chart");
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -104,7 +118,7 @@ export default function OrgChartScreen() {
         contentContainerStyle={styles.list}
         renderItem={({ item }) => renderPerson(item, 0)}
         ListEmptyComponent={
-          <Text style={styles.empty}>No org chart data.</Text>
+          <Text style={styles.empty}>{error ?? "No org chart data."}</Text>
         }
       />
     </View>
