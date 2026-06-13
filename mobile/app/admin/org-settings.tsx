@@ -16,10 +16,12 @@ import {
   View,
 } from "react-native";
 import { Stack } from "expo-router";
+import { WebView } from "react-native-webview";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import {
   Building2,
+  Lock,
   MapPin,
   Mail,
   Palette,
@@ -29,6 +31,7 @@ import {
   Trash2,
   UserCog,
   UserPlus,
+  Wifi,
   X,
 } from "lucide-react-native";
 import { theme } from "../../src/theme";
@@ -107,6 +110,91 @@ const ROLE_COLORS = [
   "#ef4444",
 ];
 
+// Top-level system roles — not editable here, shown read-only for context
+// (mirrors the web OrgRoleLabels system-role cards).
+const SYSTEM_ROLES = [
+  {
+    role_key: "super_admin",
+    label: "Super Admin",
+    color: "#ef4444",
+    level: "L5 · Org admin",
+    note: "Org-wide admin with access to all settings and billing. Always present in every organisation.",
+  },
+  {
+    role_key: "platform_admin",
+    label: "Platform Admin",
+    color: "#0f172a",
+    level: "L6 · Platform",
+    note: "Cross-organisation system operator. Not assignable from inside an organisation.",
+  },
+];
+
+// Wi-Fi access point entry stored in organizations.office_wifi_bssids.
+interface WifiAp {
+  bssid: string;
+  label?: string | null;
+  ssid?: string | null;
+  added_at?: string;
+  [k: string]: unknown;
+}
+
+/**
+ * Build the Leaflet map HTML for the WebView. Tapping the map posts the
+ * picked coordinates back to RN via window.ReactNativeWebView.postMessage.
+ */
+function buildMapHtml(
+  lat: number | null,
+  lng: number | null,
+  radius: number,
+): string {
+  const hasLoc = lat != null && lng != null && Number.isFinite(lat) && Number.isFinite(lng);
+  const centreLat = hasLoc ? lat : 19.076;
+  const centreLng = hasLoc ? lng : 72.8777;
+  const zoom = hasLoc ? 16 : 12;
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  html, body, #map { height: 100%; margin: 0; padding: 0; background: #191919; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<script>
+  var map = L.map('map').setView([${centreLat}, ${centreLng}], ${zoom});
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap'
+  }).addTo(map);
+  var icon = L.icon({
+    iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+    iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+    shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+    iconSize: [25, 41], iconAnchor: [12, 41]
+  });
+  var marker = null, circle = null;
+  function place(lat, lng) {
+    if (marker) { marker.setLatLng([lat, lng]); } else { marker = L.marker([lat, lng], { icon: icon }).addTo(map); }
+    if (circle) { circle.setLatLng([lat, lng]); } else {
+      circle = L.circle([lat, lng], { radius: ${radius || 150}, color: '#2383e2', fillColor: '#2383e2', fillOpacity: 0.12 }).addTo(map);
+    }
+  }
+  ${hasLoc ? `place(${centreLat}, ${centreLng});` : ""}
+  map.on('click', function (e) {
+    place(e.latlng.lat, e.latlng.lng);
+    if (window.ReactNativeWebView) {
+      window.ReactNativeWebView.postMessage(JSON.stringify({ lat: e.latlng.lat, lng: e.latlng.lng }));
+    }
+  });
+  setTimeout(function () { map.invalidateSize(); }, 300);
+</script>
+</body>
+</html>`;
+}
+
 // jsDow matches JavaScript's Date#getDay() (0=Sunday … 6=Saturday) — the same
 // convention the server stores in organizations.work_days.
 const WEEK_DAYS = [
@@ -163,6 +251,16 @@ export default function OrgSettingsScreen() {
   const [officeRadius, setOfficeRadius] = useState("");
   const [officeAddress, setOfficeAddress] = useState("");
   const [locating, setLocating] = useState(false);
+
+  // Office Wi-Fi allow-list (Wi-Fi-first attendance).
+  const [wifiVerifyOn, setWifiVerifyOn] = useState(false);
+  const [wifiBssids, setWifiBssids] = useState<WifiAp[]>([]);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualBssid, setManualBssid] = useState("");
+  const [manualLabel, setManualLabel] = useState("");
+  const [wifiErr, setWifiErr] = useState<string | null>(null);
+  const [editingBssid, setEditingBssid] = useState<string | null>(null);
+  const [editingLabel, setEditingLabel] = useState("");
 
   // Branding
   const [accent, setAccent] = useState("#2383e2");
@@ -221,6 +319,12 @@ export default function OrgSettingsScreen() {
         o.office_radius_m != null ? String(o.office_radius_m) : "",
       );
       setOfficeAddress(o.office_address ?? "");
+      setWifiVerifyOn(!!o.office_wifi_verification_enabled);
+      setWifiBssids(
+        Array.isArray(o.office_wifi_bssids)
+          ? (o.office_wifi_bssids as WifiAp[])
+          : [],
+      );
     }
     if (brandR.status === "fulfilled" && brandR.value.data) {
       if (brandR.value.data.accent_color)
@@ -341,6 +445,12 @@ export default function OrgSettingsScreen() {
         office_radius_m: officeRadius ? Number(officeRadius) : undefined,
         office_address:
           officeAddress.trim() === "" ? null : officeAddress.trim(),
+        office_wifi_verification_enabled: wifiVerifyOn,
+        office_wifi_bssids: wifiBssids.map((b) => ({
+          bssid: b.bssid,
+          label: b.label ?? null,
+          ssid: b.ssid ?? null,
+        })),
       });
       Alert.alert("Saved", "Attendance verification updated");
       load();
@@ -349,6 +459,59 @@ export default function OrgSettingsScreen() {
     } finally {
       setBusy(false);
     }
+  }
+
+  /* ── Office Wi-Fi allow-list ── */
+
+  function submitManualBssid() {
+    setWifiErr(null);
+    const cleaned = manualBssid.replace(/[^0-9a-fA-F]/g, "").toUpperCase();
+    if (cleaned.length !== 12) {
+      setWifiErr("Invalid MAC. Expected 12 hex digits (e.g. AA:BB:CC:DD:EE:FF).");
+      return;
+    }
+    const mac = cleaned.match(/.{2}/g)!.join(":");
+    if (wifiBssids.some((b) => (b.bssid || "").toUpperCase() === mac)) {
+      setWifiErr("This access point is already registered.");
+      return;
+    }
+    const label = (manualLabel.trim() || `Office AP (${mac.slice(-5)})`).slice(
+      0,
+      100,
+    );
+    setWifiBssids((prev) => [
+      ...prev,
+      { bssid: mac, label, added_at: new Date().toISOString() },
+    ]);
+    setManualBssid("");
+    setManualLabel("");
+    setManualOpen(false);
+  }
+
+  function removeBssid(mac: string) {
+    setWifiBssids((prev) =>
+      prev.filter((b) => (b.bssid || "").toUpperCase() !== mac.toUpperCase()),
+    );
+    if (editingBssid && editingBssid.toUpperCase() === mac.toUpperCase()) {
+      setEditingBssid(null);
+    }
+  }
+
+  function startEditLabel(ap: WifiAp) {
+    setEditingBssid(ap.bssid);
+    setEditingLabel(ap.label || "");
+  }
+
+  function commitEditLabel() {
+    const trimmed = (editingLabel || "").trim().slice(0, 100);
+    setWifiBssids((prev) =>
+      prev.map((b) =>
+        (b.bssid || "").toUpperCase() === (editingBssid || "").toUpperCase()
+          ? { ...b, label: trimmed || b.label || "Office AP" }
+          : b,
+      ),
+    );
+    setEditingBssid(null);
   }
 
   /* ── Branding ── */
@@ -602,6 +765,7 @@ export default function OrgSettingsScreen() {
   }
 
   const logoAbs = uploadUrl(logoUrl);
+  const accentValid = /^#[0-9a-fA-F]{6}$/.test(accent);
 
   return (
     <ScrollView
@@ -763,15 +927,17 @@ export default function OrgSettingsScreen() {
               />
             </View>
           </View>
-          <Pressable
-            style={styles.smallBtn}
-            onPress={useMyLocation}
-            disabled={locating}
-          >
-            <Text style={styles.smallBtnText}>
-              {locating ? "Locating…" : "Use my current location"}
-            </Text>
-          </Pressable>
+          <View style={styles.locBtnRow}>
+            <Pressable
+              style={[styles.smallBtn, { flex: 1 }]}
+              onPress={useMyLocation}
+              disabled={locating}
+            >
+              <Text style={styles.smallBtnText}>
+                {locating ? "Locating…" : "Use my current location"}
+              </Text>
+            </Pressable>
+          </View>
           <Text style={styles.fieldLabel}>Geofence radius (metres)</Text>
           <TextInput
             style={styles.input}
@@ -783,7 +949,55 @@ export default function OrgSettingsScreen() {
             keyboardType="numeric"
           />
 
-          {/* Location preview — static (no native map module installed). */}
+          {/* Interactive map — tap to set the office location. */}
+          <View style={styles.mapHintRow}>
+            <MapPin size={13} color={theme.textMuted} />
+            <Text style={styles.hint}>Tap the map to set the office location</Text>
+          </View>
+          {(() => {
+            const lat = Number(officeLat);
+            const lng = Number(officeLng);
+            const valid =
+              officeLat.trim() !== "" &&
+              officeLng.trim() !== "" &&
+              Number.isFinite(lat) &&
+              Number.isFinite(lng);
+            const html = buildMapHtml(
+              valid ? lat : null,
+              valid ? lng : null,
+              Number(officeRadius) || 150,
+            );
+            return (
+              <View style={styles.mapWebWrap}>
+                <WebView
+                  // Re-mount when coords change so the marker/circle reflect the
+                  // latest values (e.g. after "Use my current location").
+                  key={`${valid ? lat.toFixed(5) : "x"}-${valid ? lng.toFixed(5) : "y"}`}
+                  originWhitelist={["*"]}
+                  source={{ html }}
+                  style={styles.mapWeb}
+                  scrollEnabled={false}
+                  onMessage={(e) => {
+                    try {
+                      const d = JSON.parse(e.nativeEvent.data);
+                      if (
+                        d &&
+                        Number.isFinite(d.lat) &&
+                        Number.isFinite(d.lng)
+                      ) {
+                        setOfficeLat(Number(d.lat).toFixed(6));
+                        setOfficeLng(Number(d.lng).toFixed(6));
+                      }
+                    } catch {
+                      /* ignore malformed messages */
+                    }
+                  }}
+                />
+              </View>
+            );
+          })()}
+
+          {/* Coordinate summary + external map link. */}
           {(() => {
             const lat = Number(officeLat);
             const lng = Number(officeLng);
@@ -818,6 +1032,137 @@ export default function OrgSettingsScreen() {
               </View>
             );
           })()}
+
+          {/* Office Wi-Fi allow-list (recommended). */}
+          <View style={styles.wifiSection}>
+            <View style={styles.wifiHeaderRow}>
+              <View style={styles.sectionTitleRow}>
+                <Wifi size={15} color={theme.textSecondary} />
+                <Text style={styles.wifiTitle}>Office Wi-Fi (recommended)</Text>
+              </View>
+            </View>
+            <View style={styles.toggleRow}>
+              <Text style={styles.toggleLabel}>
+                Trust office Wi-Fi for clock-in
+              </Text>
+              <Switch
+                value={wifiVerifyOn}
+                onValueChange={setWifiVerifyOn}
+                trackColor={{ true: theme.primary, false: theme.surface }}
+                thumbColor="#fff"
+              />
+            </View>
+            <Text style={styles.hint}>
+              When an employee is connected to one of these access points, they're
+              treated as at the office regardless of GPS accuracy. The geofence
+              above acts as a fallback.
+            </Text>
+
+            {wifiBssids.length === 0 ? (
+              <Text style={styles.hint}>
+                No office access points registered yet. Add the office router's
+                BSSID (MAC) below.
+              </Text>
+            ) : (
+              wifiBssids.map((ap) => {
+                const isEditing =
+                  editingBssid &&
+                  editingBssid.toUpperCase() === (ap.bssid || "").toUpperCase();
+                return (
+                  <View key={ap.bssid} style={styles.itemRow}>
+                    <Wifi size={15} color={theme.textSecondary} />
+                    <View style={{ flex: 1 }}>
+                      {isEditing ? (
+                        <TextInput
+                          style={styles.input}
+                          value={editingLabel}
+                          onChangeText={setEditingLabel}
+                          onBlur={commitEditLabel}
+                          onSubmitEditing={commitEditLabel}
+                          maxLength={100}
+                          autoFocus
+                          placeholder="Label"
+                          placeholderTextColor={theme.textMuted}
+                        />
+                      ) : (
+                        <Pressable onPress={() => startEditLabel(ap)}>
+                          <Text style={styles.itemName}>
+                            {ap.label || "Office AP"}
+                          </Text>
+                        </Pressable>
+                      )}
+                      <Text style={styles.itemMeta}>
+                        {ap.bssid}
+                        {ap.ssid ? ` · SSID: ${ap.ssid}` : ""}
+                      </Text>
+                    </View>
+                    <Pressable
+                      style={styles.iconBtn}
+                      onPress={() => removeBssid(ap.bssid)}
+                      hitSlop={6}
+                    >
+                      <Trash2 size={15} color={theme.danger} />
+                    </Pressable>
+                  </View>
+                );
+              })
+            )}
+
+            {manualOpen ? (
+              <View style={styles.wifiManualForm}>
+                <TextInput
+                  style={styles.input}
+                  value={manualBssid}
+                  onChangeText={setManualBssid}
+                  onFocus={scrollFocusedIntoView}
+                  placeholder="BSSID (AA:BB:CC:DD:EE:FF)"
+                  placeholderTextColor={theme.textMuted}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                />
+                <TextInput
+                  style={styles.input}
+                  value={manualLabel}
+                  onChangeText={setManualLabel}
+                  onFocus={scrollFocusedIntoView}
+                  placeholder="Label (e.g. Floor 5 AP)"
+                  placeholderTextColor={theme.textMuted}
+                  maxLength={100}
+                />
+                {wifiErr ? <Text style={styles.wifiErr}>{wifiErr}</Text> : null}
+                <View style={styles.wifiManualActions}>
+                  <Pressable
+                    style={[styles.smallBtn, { flex: 1 }]}
+                    onPress={submitManualBssid}
+                  >
+                    <Text style={styles.smallBtnText}>Add</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.smallBtn, { flex: 1 }]}
+                    onPress={() => {
+                      setManualOpen(false);
+                      setManualBssid("");
+                      setManualLabel("");
+                      setWifiErr(null);
+                    }}
+                  >
+                    <Text style={styles.smallBtnText}>Cancel</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <Pressable
+                style={styles.addBtn}
+                onPress={() => {
+                  setManualOpen(true);
+                  setWifiErr(null);
+                }}
+              >
+                <Plus size={14} color={theme.primary} />
+                <Text style={styles.addBtnText}>Enter BSSID manually</Text>
+              </Pressable>
+            )}
+          </View>
 
           <Pressable
             style={styles.saveBtn}
@@ -937,6 +1282,26 @@ export default function OrgSettingsScreen() {
             </View>
           ))
         )}
+
+        {/* System roles — read-only context (mirrors web). */}
+        {SYSTEM_ROLES.map((sr) => (
+          <View key={sr.role_key} style={styles.systemRoleRow}>
+            <View
+              style={[styles.colorDot, { backgroundColor: sr.color }]}
+            />
+            <View style={{ flex: 1 }}>
+              <View style={styles.systemRoleHeader}>
+                <Text style={styles.itemName}>{sr.role_key}</Text>
+                <View style={styles.systemBadge}>
+                  <Lock size={10} color={theme.textMuted} />
+                  <Text style={styles.systemBadgeText}>system</Text>
+                </View>
+                <Text style={styles.levelBadge}>{sr.level}</Text>
+              </View>
+              <Text style={styles.itemMeta}>{sr.note}</Text>
+            </View>
+          </View>
+        ))}
       </View>
 
       {/* ── Branding ── */}
@@ -954,10 +1319,10 @@ export default function OrgSettingsScreen() {
               <Text style={styles.hint}>No logo</Text>
             </View>
           )}
-          <View style={{ gap: 8 }}>
+          <View style={{ gap: 8, flex: 1 }}>
             <Pressable style={styles.smallBtn} onPress={pickLogo}>
               <Text style={styles.smallBtnText}>
-                {logoAbs ? "Change logo" : "Upload logo"}
+                {logoAbs ? "Replace" : "Choose logo"}
               </Text>
             </Pressable>
             {logoAbs ? (
@@ -965,6 +1330,9 @@ export default function OrgSettingsScreen() {
                 <Text style={styles.smallBtnDangerText}>Remove</Text>
               </Pressable>
             ) : null}
+            <Text style={styles.hint}>
+              PNG, JPG, SVG, GIF or WebP — max 2 MB. Recommended height 40 px.
+            </Text>
           </View>
         </View>
         <Text style={styles.fieldLabel}>Accent color</Text>
@@ -977,14 +1345,64 @@ export default function OrgSettingsScreen() {
                 { backgroundColor: c },
                 accent.toLowerCase() === c.toLowerCase() && styles.swatchActive,
               ]}
-              onPress={() => saveAccent(c)}
+              onPress={() => setAccent(c)}
             />
           ))}
         </View>
-        <Text style={styles.hint}>Current: {accent}</Text>
+        <View style={styles.hexRow}>
+          <View
+            style={[styles.hexSwatch, { backgroundColor: accentValid ? accent : theme.surface }]}
+          />
+          <TextInput
+            style={[styles.input, { flex: 1 }]}
+            value={accent}
+            onChangeText={(v) => {
+              if (/^#?[0-9a-fA-F]{0,6}$/.test(v)) {
+                setAccent(v.startsWith("#") ? v : `#${v}`);
+              }
+            }}
+            onFocus={scrollFocusedIntoView}
+            maxLength={7}
+            autoCapitalize="none"
+            autoCorrect={false}
+            placeholder="#2383e2"
+            placeholderTextColor={theme.textMuted}
+          />
+        </View>
+        <Text style={styles.hint}>
+          The accent color is applied to buttons, links, badges, and outgoing
+          email templates.
+        </Text>
+
+        {/* Live preview */}
+        <Text style={styles.previewLabel}>Live preview</Text>
+        <View style={styles.previewCard}>
+          {logoAbs ? (
+            <Image source={{ uri: logoAbs }} style={styles.previewLogo} />
+          ) : null}
+          <Text style={styles.previewHeading}>Sample heading</Text>
+          <Text style={styles.previewText}>
+            This is how content will look with your accent color. The button
+            below uses the same hue.
+          </Text>
+          <View
+            style={[
+              styles.previewBtn,
+              { backgroundColor: accentValid ? accent : theme.primary },
+            ]}
+          >
+            <Text style={styles.previewBtnText}>Primary action</Text>
+          </View>
+        </View>
+
         <Pressable
-          style={styles.saveBtn}
+          style={[styles.saveBtn, !accentValid && { opacity: 0.5 }]}
+          disabled={!accentValid}
           onPress={async () => {
+            if (!accentValid) {
+              Alert.alert("Invalid color", "Accent must be a 6-digit hex (e.g. #2383e2)");
+              return;
+            }
             try {
               await updateBrandingAccent(accent);
               Alert.alert("Saved", "Branding updated");
@@ -1352,4 +1770,106 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: theme.text,
   },
+  // Attendance: location + map
+  locBtnRow: { flexDirection: "row", gap: 12 },
+  mapHintRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 4,
+  },
+  mapWebWrap: {
+    height: 240,
+    borderRadius: theme.radiusSm,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    overflow: "hidden",
+    backgroundColor: theme.surface,
+  },
+  mapWeb: { flex: 1, backgroundColor: theme.surface },
+  // Office Wi-Fi allow-list
+  wifiSection: {
+    marginTop: 8,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.border,
+    gap: 8,
+  },
+  wifiHeaderRow: { flexDirection: "row", alignItems: "center" },
+  wifiTitle: { fontSize: 14, fontWeight: "700", color: theme.text },
+  wifiManualForm: { gap: 8, marginTop: 4 },
+  wifiManualActions: { flexDirection: "row", gap: 12 },
+  wifiErr: { fontSize: 12, color: theme.danger },
+  // System role cards
+  systemRoleRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    marginTop: 8,
+    borderRadius: theme.radiusSm,
+    backgroundColor: theme.surface,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+  },
+  systemRoleHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  systemBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: theme.radiusFull,
+    backgroundColor: theme.surfaceHover,
+  },
+  systemBadgeText: { fontSize: 10, color: theme.textMuted, fontWeight: "600" },
+  levelBadge: {
+    fontSize: 10,
+    color: theme.textSecondary,
+    fontWeight: "600",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: theme.radiusFull,
+    backgroundColor: theme.surfaceHover,
+  },
+  // Branding: hex input + live preview
+  hexRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  hexSwatch: {
+    width: 40,
+    height: 40,
+    borderRadius: theme.radiusSm,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+  },
+  previewLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: theme.textSecondary,
+    marginTop: 4,
+  },
+  previewCard: {
+    backgroundColor: theme.surface,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radiusSm,
+    padding: 16,
+    gap: 8,
+  },
+  previewLogo: { height: 40, width: 120, resizeMode: "contain" },
+  previewHeading: { fontSize: 16, fontWeight: "700", color: theme.text },
+  previewText: { fontSize: 13, color: theme.textSecondary },
+  previewBtn: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: theme.radiusSm,
+    marginTop: 4,
+  },
+  previewBtnText: { color: "#fff", fontSize: 13, fontWeight: "600" },
 });

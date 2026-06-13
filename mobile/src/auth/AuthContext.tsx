@@ -112,8 +112,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error("Login did not return a token");
     }
     await setToken(res.data.token);
+    // Seed state from the login payload so the UI is responsive immediately.
     setUser(res.data.user);
     socket.connect();
+    // The /auth/login response does NOT include plan/feature flags
+    // (tenant_features / tenant_plan). Only /profile attaches them. Re-fetch
+    // the full profile so feature-gated admin sections (payroll, compensation,
+    // salary slips, payment settings) resolve correctly — mirrors the web
+    // client's saveAuth() flow.
+    try {
+      const profile = await api.get<User>("/profile");
+      if (profile.data) setUser(profile.data);
+    } catch {
+      // Non-fatal — keep the login payload; session-restore will hydrate later.
+    }
   }, []);
 
   const refreshUser = useCallback(async () => {

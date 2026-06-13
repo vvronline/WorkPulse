@@ -13,7 +13,11 @@ export function setUnauthorizedHandler(fn: (() => void) | null): void {
 
 export const api: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 20000,
+  // Tenant DB pools spin up lazily on Railway, so the first write after an idle
+  // period can take well over 20s. A too-aggressive timeout aborted the client
+  // while the server still committed the row, surfacing false "failed to
+  // create" warnings. 60s tolerates cold-start writes without hanging forever.
+  timeout: 60000,
 });
 
 api.interceptors.request.use(async (config) => {

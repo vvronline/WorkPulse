@@ -99,7 +99,17 @@ export default function DepartmentsScreen() {
       setModalOpen(false);
       load();
     } catch (e: any) {
-      Alert.alert("Error", e?.response?.data?.error || "Failed to save");
+      // A network/timeout error (no HTTP response) does NOT mean the write
+      // failed — the server may have committed the row while the client gave
+      // up waiting. Don't surface a false failure: close the modal and reload
+      // so the list reflects the actual server state. Only show an alert for a
+      // real server-returned rejection (4xx/5xx with an error body).
+      if (e?.response) {
+        Alert.alert("Error", e.response.data?.error || "Failed to save");
+      } else {
+        setModalOpen(false);
+        load();
+      }
     } finally {
       setBusy(false);
     }
