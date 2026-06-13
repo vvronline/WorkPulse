@@ -287,7 +287,21 @@ export function updateOrgSettings(data: {
   timezone?: string;
   work_hours_per_day?: number;
   work_days?: string;
-  fiscal_year_start?: string;
+  fiscal_year_start?: string | number;
+  min_hours_present?: number | null;
+  office_start_time?: string | null;
+  // Attendance verification (face + geofence/wifi).
+  attendance_verification_enabled?: boolean;
+  office_latitude?: number | null;
+  office_longitude?: number | null;
+  office_radius_m?: number;
+  office_address?: string | null;
+  office_wifi_verification_enabled?: boolean;
+  office_wifi_bssids?: Array<{
+    bssid: string;
+    label?: string | null;
+    ssid?: string | null;
+  }>;
 }) {
   return api.put("/org/settings", data);
 }

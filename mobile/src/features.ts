@@ -1433,6 +1433,10 @@ export type OrgInfo = {
   work_days?: string | null;
   timezone?: string | null;
   fiscal_year_start?: string | null;
+  // Attendance / presence policy.
+  min_hours_present?: number | string | null;
+  office_start_time?: string | null;
+  office_address?: string | null;
   // Aggregate counts (hr_admin+ only — omitted for lower roles).
   memberCount?: number;
   deptCount?: number;

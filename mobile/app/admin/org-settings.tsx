@@ -16,8 +16,10 @@ import {
 } from "react-native";
 import { Stack } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
+import * as Location from "expo-location";
 import {
   Building2,
+  MapPin,
   Mail,
   Palette,
   Pencil,
@@ -104,6 +106,33 @@ const ROLE_COLORS = [
   "#ef4444",
 ];
 
+// jsDow matches JavaScript's Date#getDay() (0=Sunday … 6=Saturday) — the same
+// convention the server stores in organizations.work_days.
+const WEEK_DAYS = [
+  { jsDow: 1, short: "Mon" },
+  { jsDow: 2, short: "Tue" },
+  { jsDow: 3, short: "Wed" },
+  { jsDow: 4, short: "Thu" },
+  { jsDow: 5, short: "Fri" },
+  { jsDow: 6, short: "Sat" },
+  { jsDow: 0, short: "Sun" },
+];
+
+function parseWorkDays(value?: string | null): Set<number> {
+  const raw = value && typeof value === "string" ? value : "1,2,3,4,5";
+  const nums = raw
+    .split(",")
+    .map((s) => parseInt(s.trim(), 10))
+    .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6);
+  return new Set(nums.length > 0 ? nums : [1, 2, 3, 4, 5]);
+}
+
+function workDaysToCsv(set: Set<number>): string {
+  return Array.from(set)
+    .sort((a, b) => a - b)
+    .join(",");
+}
+
 export default function OrgSettingsScreen() {
   const kbInset = useKeyboardInset();
   const { user } = useAuth();
@@ -113,11 +142,26 @@ export default function OrgSettingsScreen() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
+  const canEditAttendance = isSuper || user?.role === "hr_admin";
+
   // General
   const [name, setName] = useState("");
   const [timezone, setTimezone] = useState("");
   const [workHours, setWorkHours] = useState("");
   const [officeStart, setOfficeStart] = useState("");
+  const [workDays, setWorkDays] = useState<Set<number>>(
+    parseWorkDays("1,2,3,4,5"),
+  );
+  const [fiscalStart, setFiscalStart] = useState("");
+  const [minHours, setMinHours] = useState("");
+
+  // Attendance verification
+  const [attEnabled, setAttEnabled] = useState(false);
+  const [officeLat, setOfficeLat] = useState("");
+  const [officeLng, setOfficeLng] = useState("");
+  const [officeRadius, setOfficeRadius] = useState("");
+  const [officeAddress, setOfficeAddress] = useState("");
+  const [locating, setLocating] = useState(false);
 
   // Branding
   const [accent, setAccent] = useState("#2383e2");
@@ -159,7 +203,23 @@ export default function OrgSettingsScreen() {
       setName(o.name ?? "");
       setTimezone(o.timezone ?? "");
       setWorkHours(o.work_hours_per_day ? String(o.work_hours_per_day) : "");
-      setOfficeStart((o as any).office_start_time ?? "");
+      setOfficeStart(o.office_start_time ?? "");
+      setWorkDays(parseWorkDays(o.work_days));
+      setFiscalStart(
+        o.fiscal_year_start != null ? String(o.fiscal_year_start) : "",
+      );
+      setMinHours(
+        o.min_hours_present != null ? String(o.min_hours_present) : "",
+      );
+      setAttEnabled(!!o.attendance_verification_enabled);
+      setOfficeLat(o.office_latitude != null ? String(o.office_latitude) : "");
+      setOfficeLng(
+        o.office_longitude != null ? String(o.office_longitude) : "",
+      );
+      setOfficeRadius(
+        o.office_radius_m != null ? String(o.office_radius_m) : "",
+      );
+      setOfficeAddress(o.office_address ?? "");
     }
     if (brandR.status === "fulfilled" && brandR.value.data) {
       if (brandR.value.data.accent_color)
@@ -185,15 +245,103 @@ export default function OrgSettingsScreen() {
 
   /* ── General ── */
 
+  function toggleWorkDay(jsDow: number) {
+    setWorkDays((prev) => {
+      const next = new Set(prev);
+      if (next.has(jsDow)) {
+        if (next.size === 1) {
+          Alert.alert("Required", "Pick at least one working day");
+          return prev;
+        }
+        next.delete(jsDow);
+      } else {
+        next.add(jsDow);
+      }
+      return next;
+    });
+  }
+
   async function saveGeneral() {
+    if (fiscalStart) {
+      const fm = Number(fiscalStart);
+      if (!Number.isInteger(fm) || fm < 1 || fm > 12) {
+        Alert.alert("Invalid", "Fiscal year start must be a month (1-12)");
+        return;
+      }
+    }
     setBusy(true);
     try {
       await updateOrgSettings({
         name: name.trim() || undefined,
         timezone: timezone.trim() || undefined,
         work_hours_per_day: workHours ? Number(workHours) : undefined,
+        work_days: workDaysToCsv(workDays),
+        fiscal_year_start: fiscalStart ? Number(fiscalStart) : undefined,
+        min_hours_present: minHours === "" ? null : Number(minHours),
+        office_start_time: officeStart.trim() === "" ? null : officeStart.trim(),
       });
       Alert.alert("Saved", "Organization settings updated");
+      load();
+    } catch (e: any) {
+      Alert.alert("Error", e?.response?.data?.error || "Failed to save");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /* ── Attendance verification ── */
+
+  async function useMyLocation() {
+    setLocating(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Permission needed",
+          "Location permission is required to set the office coordinates.",
+        );
+        return;
+      }
+      const pos = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+      setOfficeLat(pos.coords.latitude.toFixed(6));
+      setOfficeLng(pos.coords.longitude.toFixed(6));
+    } catch (e: any) {
+      Alert.alert("Error", e?.message || "Failed to read current location");
+    } finally {
+      setLocating(false);
+    }
+  }
+
+  async function saveAttendance() {
+    if (attEnabled) {
+      const lat = Number(officeLat);
+      const lng = Number(officeLng);
+      if (
+        officeLat.trim() === "" ||
+        officeLng.trim() === "" ||
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lng)
+      ) {
+        Alert.alert(
+          "Office location required",
+          "Set the office latitude and longitude before enabling verification.",
+        );
+        return;
+      }
+    }
+    setBusy(true);
+    try {
+      await updateOrgSettings({
+        attendance_verification_enabled: attEnabled,
+        office_latitude: officeLat.trim() === "" ? null : Number(officeLat),
+        office_longitude: officeLng.trim() === "" ? null : Number(officeLng),
+        office_radius_m: officeRadius ? Number(officeRadius) : undefined,
+        office_address:
+          officeAddress.trim() === "" ? null : officeAddress.trim(),
+      });
+      Alert.alert("Saved", "Attendance verification updated");
       load();
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Failed to save");
@@ -496,15 +644,154 @@ export default function OrgSettingsScreen() {
           placeholderTextColor={theme.textMuted}
           keyboardType="numeric"
         />
-        {officeStart ? (
-          <Text style={styles.hint}>Office start time: {officeStart}</Text>
-        ) : null}
+        <Text style={styles.fieldLabel}>Working days</Text>
+        <View style={styles.dayRow}>
+          {WEEK_DAYS.map((d) => {
+            const on = workDays.has(d.jsDow);
+            return (
+              <Pressable
+                key={d.jsDow}
+                style={[styles.dayChip, on && styles.dayChipActive]}
+                onPress={() => toggleWorkDay(d.jsDow)}
+              >
+                <Text
+                  style={[styles.dayChipText, on && styles.dayChipTextActive]}
+                >
+                  {d.short}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <Text style={styles.hint}>
+          Unselected days are treated as weekend holidays.
+        </Text>
+        <Text style={styles.fieldLabel}>Fiscal year start month (1-12)</Text>
+        <TextInput
+          style={styles.input}
+          value={fiscalStart}
+          onChangeText={setFiscalStart}
+          onFocus={scrollFocusedIntoView}
+          placeholder="e.g. 4 for April"
+          placeholderTextColor={theme.textMuted}
+          keyboardType="numeric"
+        />
+        <Text style={styles.fieldLabel}>
+          Minimum hours to be marked present (optional)
+        </Text>
+        <TextInput
+          style={styles.input}
+          value={minHours}
+          onChangeText={setMinHours}
+          onFocus={scrollFocusedIntoView}
+          placeholder={
+            workHours ? `Default: ${Number(workHours) / 2}h` : "Default: half day"
+          }
+          placeholderTextColor={theme.textMuted}
+          keyboardType="numeric"
+        />
+        <Text style={styles.fieldLabel}>Office start time (HH:MM, optional)</Text>
+        <TextInput
+          style={styles.input}
+          value={officeStart}
+          onChangeText={setOfficeStart}
+          onFocus={scrollFocusedIntoView}
+          placeholder="09:00"
+          placeholderTextColor={theme.textMuted}
+          autoCapitalize="none"
+        />
         <Pressable style={styles.saveBtn} onPress={saveGeneral} disabled={busy}>
           <Text style={styles.saveBtnText}>
             {busy ? "Saving…" : "Save organization"}
           </Text>
         </Pressable>
       </View>
+
+      {/* ── Attendance Verification ── */}
+      {canEditAttendance ? (
+        <View style={styles.section}>
+          <View style={styles.sectionTitleRow}>
+            <MapPin size={15} color={theme.textSecondary} />
+            <Text style={styles.sectionTitle}>Attendance Verification</Text>
+          </View>
+          <Text style={styles.hint}>
+            When enabled, employees must pass a face match and (for office mode)
+            be within the geofence to clock in.
+          </Text>
+          <View style={styles.toggleRow}>
+            <Text style={styles.toggleLabel}>Require face + location check</Text>
+            <Switch
+              value={attEnabled}
+              onValueChange={setAttEnabled}
+              trackColor={{ true: theme.primary, false: theme.surface }}
+              thumbColor="#fff"
+            />
+          </View>
+          <Text style={styles.fieldLabel}>Office address (optional)</Text>
+          <TextInput
+            style={styles.input}
+            value={officeAddress}
+            onChangeText={setOfficeAddress}
+            onFocus={scrollFocusedIntoView}
+            placeholder="123 Main St, City"
+            placeholderTextColor={theme.textMuted}
+          />
+          <View style={styles.latLngRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.fieldLabel}>Latitude</Text>
+              <TextInput
+                style={styles.input}
+                value={officeLat}
+                onChangeText={setOfficeLat}
+                onFocus={scrollFocusedIntoView}
+                placeholder="12.971599"
+                placeholderTextColor={theme.textMuted}
+                keyboardType="numbers-and-punctuation"
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.fieldLabel}>Longitude</Text>
+              <TextInput
+                style={styles.input}
+                value={officeLng}
+                onChangeText={setOfficeLng}
+                onFocus={scrollFocusedIntoView}
+                placeholder="77.594566"
+                placeholderTextColor={theme.textMuted}
+                keyboardType="numbers-and-punctuation"
+              />
+            </View>
+          </View>
+          <Pressable
+            style={styles.smallBtn}
+            onPress={useMyLocation}
+            disabled={locating}
+          >
+            <Text style={styles.smallBtnText}>
+              {locating ? "Locating…" : "Use my current location"}
+            </Text>
+          </Pressable>
+          <Text style={styles.fieldLabel}>Geofence radius (metres)</Text>
+          <TextInput
+            style={styles.input}
+            value={officeRadius}
+            onChangeText={setOfficeRadius}
+            onFocus={scrollFocusedIntoView}
+            placeholder="100"
+            placeholderTextColor={theme.textMuted}
+            keyboardType="numeric"
+          />
+          <Pressable
+            style={styles.saveBtn}
+            onPress={saveAttendance}
+            disabled={busy}
+          >
+            <Text style={styles.saveBtnText}>
+              {busy ? "Saving…" : "Save attendance settings"}
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {/* ── Registration ── */}
       {isSuper ? (
@@ -884,6 +1171,26 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   inputTall: { minHeight: 120, textAlignVertical: "top" },
+  dayRow: { flexDirection: "row", gap: 6, flexWrap: "wrap" },
+  dayChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: theme.radiusSm,
+    backgroundColor: theme.surface,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+  },
+  dayChipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
+  dayChipText: { fontSize: 12, color: theme.textSecondary, fontWeight: "600" },
+  dayChipTextActive: { color: "#fff" },
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 4,
+  },
+  toggleLabel: { fontSize: 14, color: theme.text, flex: 1, marginRight: 12 },
+  latLngRow: { flexDirection: "row", gap: 12 },
   saveBtn: {
     backgroundColor: theme.primary,
     borderRadius: theme.radiusSm,
