@@ -1,3 +1,4 @@
+
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -17,7 +18,7 @@ import {
 import { theme } from "../theme";
 import FaceCaptureWebView from "./FaceCaptureWebView";
 import { getOfficeSignals, type Position } from "../utils/officeSignals";
-import { clockIn, type ClockInPayload } from "../tracker";
+import { clockIn, getTrackerStatus, type ClockInPayload } from "../tracker";
 
 type WorkMode = "office" | "remote" | "hybrid";
 
@@ -99,8 +100,30 @@ export default function ClockInVerifyModal({
       await clockIn(payload);
       onSuccess();
     } catch (e: any) {
-      const msg =
-        e?.response?.data?.error || "Clock-in failed. Please try again.";
+      // Distinguish a genuine server-side rejection (face mismatch,
+      // geofence, etc.) from a lost-response transport error. The server
+      // writes the clock-in row inside a transaction and only THEN returns
+      // its JSON; if the request reaches the server but the response is lost
+      // — a dropped/slow connection or the axios timeout firing — axios
+      // rejects with NO `response`. Showing the generic "Clock-in failed"
+      // in that case is wrong: the user is already clocked in.
+      const serverError: string | undefined = e?.response?.data?.error;
+      if (!e?.response) {
+        try {
+          const { data } = await getTrackerStatus();
+          if (data?.state === "on_floor" || data?.state === "on_break") {
+            // The clock-in actually succeeded server-side.
+            onSuccess();
+            return;
+          }
+        } catch {
+          /* status re-check failed too — fall through to the error below */
+        }
+      }
+      // A structured server error is a real failure — surface its exact
+      // message (so face-mismatch / geofence reasons are diagnosable)
+      // instead of always showing the generic fallback.
+      const msg = serverError || "Clock-in failed. Please try again.";
       setSubmitErr(msg);
       setStep("face");
     }

@@ -39,9 +39,18 @@ type Props = {
 };
 
 // face-api fork that ships a self-contained, version-matched model set.
-const FACEAPI_CDN =
-  "https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js";
-const MODEL_URL = "https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model";
+//
+// The version is PINNED (and must match client/package.json's
+// "@vladmandic/face-api" version) so the 128-float descriptor produced here
+// is computed with the exact same model weights as the web client. An
+// unpinned CDN path can serve a newer model release whose embeddings are not
+// comparable with descriptors enrolled on the web — pushing the Euclidean
+// distance past the server's match threshold and causing a false
+// "Face didn't match" at clock-in. jsDelivr also guarantees the manifest +
+// shard binaries come from the same release when the version is pinned.
+const FACEAPI_VERSION = "1.7.15";
+const FACEAPI_CDN = `https://cdn.jsdelivr.net/npm/@vladmandic/face-api@${FACEAPI_VERSION}/dist/face-api.js`;
+const MODEL_URL = `https://cdn.jsdelivr.net/npm/@vladmandic/face-api@${FACEAPI_VERSION}/model`;
 
 function buildHtml(captureLabel: string, capturingLabel: string): string {
   return `<!DOCTYPE html>

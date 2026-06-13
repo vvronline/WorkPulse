@@ -140,8 +140,26 @@ export async function getCurrentPosition(opts: PositionOptions = {}): Promise<Po
         }
     }
 
-    // ── Electron path: race all providers in parallel ────────────────
-    console.log("[Geolocation] Electron path: running browser + native + IP in parallel...");
+    // ── Electron path: native-first, mirroring the mobile app ────────
+    //
+    // On mobile, `expo-location` reads the device's native OS location
+    // service (GPS + Wi-Fi triangulation) and returns an accurate fix
+    // without any Google API key. The desktop equivalent is the native
+    // Windows Location API exposed via `getNativeLocation()` (see
+    // desktop/main.ts → ipcMain.handle('get-native-location'), which uses
+    // System.Device.Location.GeoCoordinateWatcher).
+    //
+    // We therefore treat the providers as a PRIORITY LIST, not a
+    // best-accuracy race:
+    //   1. Native OS location  — the true mobile-equivalent; accurate and
+    //      keyless when Windows Location Services is ON.
+    //   2. Browser geolocation — Chromium's network path; only useful when
+    //      a GOOGLE_API_KEY is configured, otherwise coarse.
+    //   3. IP geolocation      — country/city level ONLY. Deliberately NOT
+    //      treated as a geofence-usable fix, because a ~5 km (or worse) IP
+    //      guess that "succeeds" produces the misleading "Location verified
+    //      (±3579 m)" → "you are 253 km from the office" contradiction.
+    console.log("[Geolocation] Electron path: native-first provider chain...");
 
     const browserP: Promise<ProviderResult> = getBrowserPosition(opts).then(
         (pos) => ({ ok: true, pos }),
@@ -156,10 +174,8 @@ export async function getCurrentPosition(opts: PositionOptions = {}): Promise<Po
         )
         : Promise.resolve<ProviderResult>({ ok: false, err: { code: "UNSUPPORTED", message: "getNativeLocation unavailable" } });
 
-    // IP is intentionally NOT awaited here — it's only consulted at the
-    // very end if everything else came back unusable. Starting it now
-    // means it's ready by the time we need it without delaying the fast
-    // path. We swallow its errors entirely.
+    // IP is started in parallel but only ever used as a last-resort,
+    // non-geofence signal (see below). We swallow its errors entirely.
     const ipP: Promise<ProviderResult> = (electronAPI!.getIpLocation() as Promise<ElectronLocationResult>).then(
         (res): ProviderResult => res && res.ok && Number.isFinite(res.latitude) && Number.isFinite(res.longitude)
             ? { ok: true, pos: { latitude: res.latitude!, longitude: res.longitude!, accuracy: res.accuracy ?? 5000, source: "ip" } }
@@ -167,70 +183,77 @@ export async function getCurrentPosition(opts: PositionOptions = {}): Promise<Po
         (err: GeolocationError): ProviderResult => ({ ok: false, err }),
     );
 
-    // Wait for both browser and native to settle (they can both take up
-    // to ~15 s for a cold fix). We don't short-circuit on the first
-    // "good enough" result because the slower provider is often more
-    // accurate (native Windows beats Chromium when Location Services
-    // is on; the reverse is true when it isn't).
-    const [browserRes, nativeRes, ipRes] = await Promise.all([browserP, nativeP, ipP]);
+    // Wait for native + browser to settle (both can take up to ~15 s for a
+    // cold fix). IP is awaited too but only consulted at the very end.
+    const [nativeRes, browserRes, ipRes] = await Promise.all([nativeP, browserP, ipP]);
 
     console.log("[Geolocation] Provider results:", {
-        browser: browserRes.ok ? { ...browserRes.pos } : { err: browserRes.err },
         native: nativeRes.ok ? { ...nativeRes.pos } : { err: nativeRes.err },
+        browser: browserRes.ok ? { ...browserRes.pos } : { err: browserRes.err },
         ip: ipRes.ok ? { ...ipRes.pos } : { err: ipRes.err },
     });
 
-    // Respect explicit permission denial — don't second-guess the user.
-    if (browserRes.ok === false && browserRes.err && browserRes.err.code === "PERMISSION_DENIED") {
-        // Permission was denied in the browser layer. We still allow the
-        // native Windows path (it's not browser-permission-gated) but if
-        // that also failed, surface the original PERMISSION_DENIED so
-        // the UI explains how to re-enable it.
-        if (!nativeRes.ok) {
-            throw browserRes.err;
-        }
-    }
-
-    // Collect every usable fix and pick the most accurate.
-    const fixes: Position[] = [
-        browserRes.ok ? browserRes.pos : null,
+    // ── Priority 1 & 2: real location providers (native, then browser) ──
+    // Collect only the "real" fixes (native + browser). IP is intentionally
+    // excluded here — it can never prove on-site presence for a tight
+    // geofence and including it is what caused the false "Location verified"
+    // followed by a geofence rejection.
+    const realFixes: Position[] = [
         nativeRes.ok ? nativeRes.pos : null,
-        ipRes.ok ? ipRes.pos : null,
+        browserRes.ok ? browserRes.pos : null,
     ].filter((p): p is Position => p !== null);
 
-    if (fixes.length === 0) {
-        const err: GeolocationError = (!browserRes.ok && browserRes.err)
-            || (!nativeRes.ok && nativeRes.err)
-            || (!ipRes.ok && ipRes.err)
-            || { code: "POSITION_UNAVAILABLE", message: "All location providers failed" };
-        console.error("[Geolocation] All providers failed:", err);
-        throw err;
-    }
+    if (realFixes.length > 0) {
+        // Among real providers, pick the most accurate.
+        realFixes.sort((a, b) => (a.accuracy ?? Infinity) - (b.accuracy ?? Infinity));
+        const best = realFixes[0];
+        console.log("[Geolocation] Selected best real fix:", best, "(out of", realFixes.length, "candidates)");
 
-    // Sort by accuracy ascending (smallest accuracy = best fix).
-    fixes.sort((a, b) => (a.accuracy ?? Infinity) - (b.accuracy ?? Infinity));
-    const best = fixes[0];
-
-    console.log("[Geolocation] Selected best fix:", best, "(out of", fixes.length, "candidates)");
-
-    if (best.accuracy > UNUSABLE_ACCURACY_M) {
-        console.warn(`[Geolocation] Best fix is ${best.accuracy} m — > UNUSABLE_ACCURACY_M (${UNUSABLE_ACCURACY_M}) — rejecting`);
+        if (best.accuracy <= UNUSABLE_ACCURACY_M) {
+            if (best.accuracy > ACCEPTABLE_ACCURACY_M) {
+                console.warn(`[Geolocation] Best fix is ${best.accuracy} m — > ACCEPTABLE_ACCURACY_M (${ACCEPTABLE_ACCURACY_M}). Server may still reject.`);
+            }
+            return best;
+        }
+        console.warn(`[Geolocation] Best real fix is ${best.accuracy} m — > UNUSABLE_ACCURACY_M (${UNUSABLE_ACCURACY_M}) — rejecting`);
         throw {
             code: "POSITION_UNAVAILABLE",
-            message: `Location is too coarse to use (±${Math.round(best.accuracy)} m). Enable Windows Location Services for a more accurate fix.`,
+            message: `Location is too coarse to use (±${Math.round(best.accuracy)} m). Turn on Windows Location Services (Settings → Privacy & Security → Location) for an accurate fix, or connect to the office Wi-Fi.`,
             accuracy: best.accuracy,
             source: best.source,
         } as GeolocationError;
     }
 
-    if (best.accuracy > ACCEPTABLE_ACCURACY_M) {
-        // Still usable, but warn the caller so the UI can hint at how
-        // to improve it. We don't reject here — the server will decide
-        // whether the geofence radius is wide enough.
-        console.warn(`[Geolocation] Best fix is ${best.accuracy} m — > ACCEPTABLE_ACCURACY_M (${ACCEPTABLE_ACCURACY_M}). Server may still reject.`);
+    // ── Both real providers failed ──
+    // Respect explicit permission denial first so the UI can explain how to
+    // re-enable it. The native path isn't browser-permission-gated, so we
+    // only surface PERMISSION_DENIED when native also failed (which it has
+    // if we reached here).
+    if (browserRes.ok === false && browserRes.err && browserRes.err.code === "PERMISSION_DENIED") {
+        throw browserRes.err;
     }
 
-    return best;
+    // No usable real fix. We do NOT silently fall back to the IP guess for
+    // the geofence — that's the bug we're fixing. Instead surface a clear,
+    // actionable error pointing at Windows Location Services (the desktop
+    // analog of granting location permission on a phone). The IP fix, if
+    // any, is attached as context so the message can mention how coarse it
+    // was, but it is never returned as a usable Position.
+    const ipAccuracy = ipRes.ok ? ipRes.pos.accuracy : undefined;
+    const nativeErr = !nativeRes.ok ? nativeRes.err : null;
+    console.error("[Geolocation] No usable real fix.", {
+        native: nativeErr,
+        ipAccuracy,
+    });
+    throw {
+        code: "POSITION_UNAVAILABLE",
+        message:
+            "Couldn't get an accurate location. Turn on Windows Location Services " +
+            "(Settings → Privacy & Security → Location) and allow desktop apps to " +
+            "access your location, or connect to the office Wi-Fi to clock in.",
+        accuracy: ipAccuracy,
+        source: ipRes.ok ? "ip" : nativeErr?.source,
+    } as GeolocationError;
 }
 
 function getBrowserPosition(opts: PositionOptions = {}): Promise<Position> {

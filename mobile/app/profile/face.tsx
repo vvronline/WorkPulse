@@ -49,9 +49,37 @@ export default function FaceEnrollment() {
       setCapturing(false);
       await load();
     } catch (e: any) {
+      // The server writes the face descriptor BEFORE it returns its JSON
+      // response (see server/routes/profile.ts POST /face-enroll). If the
+      // request itself reaches the server but the *response* is lost — a
+      // dropped/slow connection or a client-side timeout — axios rejects even
+      // though the row was committed. Blindly showing "Failed to enroll" here
+      // is wrong: the user IS enrolled. A 4xx with a server-supplied error
+      // (e.g. an invalid descriptor → 400) is a genuine failure, but anything
+      // without a structured server error may be a false negative, so we
+      // re-check the authoritative enrollment status before deciding.
+      const serverError: string | undefined = e?.response?.data?.error;
+      const hadResponse = !!e?.response;
+      if (!hadResponse) {
+        try {
+          const { data } = await getFaceStatus();
+          if (data?.enrolled) {
+            // The descriptor was actually saved — surface success.
+            setStatus(data);
+            Alert.alert(
+              "Enrolled",
+              "Your face has been enrolled successfully.",
+            );
+            setCapturing(false);
+            return;
+          }
+        } catch {
+          /* status re-check failed too — fall through to the error below */
+        }
+      }
       Alert.alert(
         "Error",
-        e?.response?.data?.error || "Failed to enroll face. Try again.",
+        serverError || "Failed to enroll face. Try again.",
       );
     } finally {
       setBusy(false);
