@@ -205,12 +205,31 @@ export type LeavePolicy = {
   name?: string | null;
   color?: string | null;
   annual_quota?: number | string;
+  accrual_type?: string | null;
+  carry_forward_limit?: number | string | null;
   half_day_allowed?: boolean;
   quarter_day_allowed?: boolean;
 };
 
 export function getLeavePolicies() {
   return api.get<LeavePolicy[]>("/leave-policy/policies");
+}
+
+export function saveLeavePolicy(data: {
+  leave_type?: string;
+  name?: string;
+  color?: string;
+  annual_quota?: number;
+  accrual_type?: string;
+  carry_forward_limit?: number;
+  half_day_allowed?: boolean | number;
+  quarter_day_allowed?: boolean | number;
+}) {
+  return api.post("/leave-policy/policies", data);
+}
+
+export function deleteLeavePolicy(id: number | string) {
+  return api.delete(`/leave-policy/policies/${id}`);
 }
 
 /** Public holidays for a year (used to colour the attendance calendar). */

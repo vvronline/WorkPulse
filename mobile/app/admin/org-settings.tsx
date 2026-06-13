@@ -4,6 +4,7 @@ import {
   Alert,
   Image,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -781,6 +782,43 @@ export default function OrgSettingsScreen() {
             placeholderTextColor={theme.textMuted}
             keyboardType="numeric"
           />
+
+          {/* Location preview — static (no native map module installed). */}
+          {(() => {
+            const lat = Number(officeLat);
+            const lng = Number(officeLng);
+            const valid =
+              officeLat.trim() !== "" &&
+              officeLng.trim() !== "" &&
+              Number.isFinite(lat) &&
+              Number.isFinite(lng);
+            if (!valid) return null;
+            return (
+              <View style={styles.mapPreview}>
+                <View style={styles.mapPreviewRow}>
+                  <MapPin size={16} color={theme.primary} />
+                  <Text style={styles.mapPreviewCoord}>
+                    {lat.toFixed(6)}, {lng.toFixed(6)}
+                  </Text>
+                </View>
+                <Text style={styles.mapPreviewMeta}>
+                  Geofence radius:{" "}
+                  {officeRadius ? `${officeRadius} m` : "not set"}
+                </Text>
+                <Pressable
+                  style={styles.smallBtn}
+                  onPress={() =>
+                    Linking.openURL(
+                      `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`,
+                    )
+                  }
+                >
+                  <Text style={styles.smallBtnText}>View on map</Text>
+                </Pressable>
+              </View>
+            );
+          })()}
+
           <Pressable
             style={styles.saveBtn}
             onPress={saveAttendance}
@@ -944,6 +982,22 @@ export default function OrgSettingsScreen() {
           ))}
         </View>
         <Text style={styles.hint}>Current: {accent}</Text>
+        <Pressable
+          style={styles.saveBtn}
+          onPress={async () => {
+            try {
+              await updateBrandingAccent(accent);
+              Alert.alert("Saved", "Branding updated");
+            } catch (e: any) {
+              Alert.alert(
+                "Error",
+                e?.response?.data?.error || "Failed to save branding",
+              );
+            }
+          }}
+        >
+          <Text style={styles.saveBtnText}>Save branding</Text>
+        </Pressable>
       </View>
 
       {/* ── Email templates ── */}
@@ -1209,6 +1263,18 @@ const styles = StyleSheet.create({
   },
   swatchActive: { borderColor: theme.text },
   hint: { fontSize: 12, color: theme.textMuted },
+  mapPreview: {
+    backgroundColor: theme.surface,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radiusSm,
+    padding: 12,
+    gap: 8,
+    marginTop: 4,
+  },
+  mapPreviewRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  mapPreviewCoord: { fontSize: 14, fontWeight: "600", color: theme.text },
+  mapPreviewMeta: { fontSize: 12, color: theme.textMuted },
   itemRow: {
     flexDirection: "row",
     alignItems: "center",

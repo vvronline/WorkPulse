@@ -16,6 +16,7 @@ import { Stack } from "expo-router";
 import { Pencil, Plus, Trash2, UsersRound, X } from "lucide-react-native";
 import { theme } from "../../src/theme";
 import { useKeyboardInset } from "../../src/hooks/useKeyboardInset";
+import { useAuth } from "../../src/auth/AuthContext";
 import { Dropdown, type DropdownOption } from "../../src/components/Dropdown";
 import {
   createTeam,
@@ -28,6 +29,11 @@ import {
 
 export default function TeamsScreen() {
   const kbInset = useKeyboardInset();
+  const { user } = useAuth();
+  // Platform admins are not scoped to a single org server-side, so the
+  // teams/departments endpoints require an explicit org_id (read + write).
+  const isPlatformAdmin = user?.role === "platform_admin";
+  const orgId = (user as any)?.org_id as number | undefined;
   const [items, setItems] = useState<Team[]>([]);
   const [departments, setDepartments] = useState<DropdownOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,7 +49,12 @@ export default function TeamsScreen() {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const [tRes, dRes] = await Promise.allSettled([getTeams(), getDepartments()]);
+    const params =
+      isPlatformAdmin && orgId != null ? { org_id: orgId } : undefined;
+    const [tRes, dRes] = await Promise.allSettled([
+      getTeams(params),
+      getDepartments(params),
+    ]);
     if (tRes.status === "fulfilled") {
       setItems(Array.isArray(tRes.value.data) ? tRes.value.data : []);
     } else {
@@ -60,7 +71,7 @@ export default function TeamsScreen() {
         })),
       ]);
     setLoading(false);
-  }, []);
+  }, [isPlatformAdmin, orgId]);
 
   useEffect(() => {
     load();
@@ -93,6 +104,7 @@ export default function TeamsScreen() {
         name: name.trim(),
         description: description.trim() || undefined,
         department_id: deptId ? Number(deptId) : null,
+        ...(isPlatformAdmin && orgId != null ? { org_id: orgId } : {}),
       };
       if (editing) await updateTeam(editing.id, payload);
       else await createTeam(payload);

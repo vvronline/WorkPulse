@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -1099,6 +1099,24 @@ export default function ChatThread() {
 
   const latestPin = pinnedMsgs[0];
 
+  // FlatList re-render key. With `maintainVisibleContentPosition` enabled,
+  // RN's VirtualizedList skips re-rendering already-mounted rows unless
+  // `extraData` changes. Optimistic reaction add/remove mutates a message's
+  // `reactions` in place (same array length/order), so without this the chip
+  // only appeared after an unrelated re-render or the WS echo — making
+  // react/unreact feel laggy. Deriving a signature from reactions + starred
+  // ids forces the toggled row to re-render instantly (matches the web).
+  const listSignature = useMemo(() => {
+    let sig = "";
+    for (const m of messages) {
+      sig += `${m.id}:${(m.reactions || [])
+        .map((r) => `${r.userId}${r.emoji}`)
+        .join(",")}:${m.pinned_at ? 1 : 0}:${m.deleted_at ? 1 : 0};`;
+    }
+    sig += `|starred:${Array.from(starredIds).join(",")}`;
+    return sig;
+  }, [messages, starredIds]);
+
   // Status line under the chat name (mirrors the web ChatHeader meta line):
   // member count for groups, live effective status for 1:1 chats.
   const headerSubtitle = isGroupConv
@@ -1195,6 +1213,7 @@ export default function ChatThread() {
           <FlatList
             ref={listRef}
             data={messages}
+            extraData={listSignature}
             keyExtractor={(m) => String(m.id)}
             contentContainerStyle={styles.list}
             onContentSizeChange={() => {

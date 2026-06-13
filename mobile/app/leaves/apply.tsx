@@ -12,7 +12,7 @@ import {
 import { useRouter } from "expo-router";
 import { theme } from "../../src/theme";
 import { LEAVE_TYPES } from "../../src/constants";
-import { applyLeave } from "../../src/features";
+import { applyLeave, getLeaves } from "../../src/features";
 import DatePicker from "../../src/components/DatePicker";
 
 const TYPES = Object.entries(LEAVE_TYPES).map(([value, meta]) => ({
@@ -56,6 +56,20 @@ export default function ApplyLeaveScreen() {
         { text: "OK", onPress: () => router.back() },
       ]);
     } catch (e: any) {
+      // Defense-in-depth: a transient/timeout error may occur after the
+      // leave was actually inserted on the server. Re-fetch leaves for the
+      // submitted date and, if one now exists, treat it as success.
+      try {
+        const { data } = await getLeaves(date, date);
+        if (Array.isArray(data) && data.length > 0) {
+          Alert.alert("Submitted", "Your leave request has been submitted.", [
+            { text: "OK", onPress: () => router.back() },
+          ]);
+          return;
+        }
+      } catch {
+        // ignore reconciliation failure and fall through to error alert
+      }
       Alert.alert("Error", e?.response?.data?.error || "Failed to submit leave");
     } finally {
       setBusy(false);

@@ -7,20 +7,25 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { Pencil, Plus, Trash2, X } from "lucide-react-native";
 import { theme } from "../theme";
 import { useAuth } from "../auth/AuthContext";
 import DatePicker from "./DatePicker";
 import MonthPicker from "./MonthPicker";
+import { Dropdown } from "./Dropdown";
 import {
   addLeavesBatch,
+  deleteLeavePolicy,
   getAllLeaveBalances,
   getLeaveBalance,
   getLeavePolicies,
   getLeaves,
+  saveLeavePolicy,
   updateLeaveBalance,
   withdrawLeave,
   type AllBalanceRow,
@@ -98,11 +103,7 @@ export default function LeavesTab() {
 
   return (
     <View style={{ flex: 1 }}>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.subTabRow}
-      >
+      <View style={styles.subTabRow}>
         {tabs.map((t) => (
           <Pressable
             key={t.id}
@@ -114,12 +115,13 @@ export default function LeavesTab() {
                 styles.subTabText,
                 subTab === t.id && styles.subTabTextActive,
               ]}
+              numberOfLines={1}
             >
               {t.label}
             </Text>
           </Pressable>
         ))}
-      </ScrollView>
+      </View>
       {subTab === "request" ? (
         <RequestTab />
       ) : subTab === "balances" ? (
@@ -339,6 +341,23 @@ function LeaveRequestForm({
       }
       onSuccess();
     } catch (err: any) {
+      // Defense-in-depth: a transient/timeout error may occur after the
+      // leave(s) were actually inserted on the server. Re-fetch the
+      // submitted date range and, if they now exist, treat it as success.
+      try {
+        const from = isRange ? dateFrom : date;
+        const to = isRange ? dateTo : date;
+        const { data } = await getLeaves(from, to);
+        if (Array.isArray(data) && data.length > 0) {
+          Alert.alert("Submitted", "Your leave request has been submitted.");
+          setReason("");
+          setDuration("full");
+          onSuccess();
+          return;
+        }
+      } catch {
+        // ignore reconciliation failure and fall through to error alert
+      }
       Alert.alert(
         "Error",
         err?.response?.data?.error || "Failed to submit leave",
@@ -799,9 +818,65 @@ function BalancesTab() {
 
 /* ───────────────────────── Policies tab (HR) ───────────────────────── */
 
+/** Slugify a free-form leave-type name into a stable, URL-safe identifier. */
+function slugify(s: string): string {
+  return String(s || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40);
+}
+
+const POLICY_COLORS = [
+  "#6366f1",
+  "#3b82f6",
+  "#06b6d4",
+  "#10b981",
+  "#f59e0b",
+  "#ef4444",
+  "#ec4899",
+  "#8b5cf6",
+];
+
+const ACCRUAL_OPTIONS = [
+  { value: "annual", label: "Annual — granted at year start" },
+  { value: "monthly", label: "Monthly — accrues each month" },
+  { value: "quarterly", label: "Quarterly — accrues each quarter" },
+];
+
+type PolicyDraft = {
+  id?: number;
+  leave_type: string;
+  name: string;
+  color: string;
+  annual_quota: number;
+  accrual_type: string;
+  carry_forward_limit: number;
+  half_day_allowed: boolean;
+  quarter_day_allowed: boolean;
+};
+
+const POLICY_DEFAULTS: PolicyDraft = {
+  leave_type: "",
+  name: "",
+  color: "#6366f1",
+  annual_quota: 12,
+  accrual_type: "annual",
+  carry_forward_limit: 0,
+  half_day_allowed: true,
+  quarter_day_allowed: false,
+};
+
 function PoliciesTab() {
+  const { user } = useAuth();
+  const isHR = ["hr_admin", "super_admin", "platform_admin"].includes(
+    user?.role || "",
+  );
   const [policies, setPolicies] = useState<LeavePolicy[]>([]);
   const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState<PolicyDraft | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -819,12 +894,104 @@ function PoliciesTab() {
     load();
   }, [load]);
 
+  const openCreate = () => setEditing({ ...POLICY_DEFAULTS });
+
+  const openEdit = (p: LeavePolicy) =>
+    setEditing({
+      id: p.id,
+      leave_type: p.leave_type,
+      name: p.name || p.leave_type,
+      color: p.color || "#6366f1",
+      annual_quota: Number(p.annual_quota ?? 12) || 0,
+      accrual_type: p.accrual_type || "annual",
+      carry_forward_limit: Number(p.carry_forward_limit ?? 0) || 0,
+      half_day_allowed: !!p.half_day_allowed,
+      quarter_day_allowed: !!p.quarter_day_allowed,
+    });
+
+  const confirmDelete = (p: LeavePolicy) => {
+    Alert.alert(
+      "Delete Policy",
+      `Delete the "${p.name || p.leave_type}" leave policy? Existing balances and requests linked to it may be affected.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await deleteLeavePolicy(p.id);
+              load();
+            } catch (e: any) {
+              Alert.alert(
+                "Error",
+                e?.response?.data?.error || "Failed to delete policy",
+              );
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  async function savePolicy() {
+    if (!editing) return;
+    const label = editing.name.trim();
+    if (!label) {
+      Alert.alert("Required", "Please enter a leave type name.");
+      return;
+    }
+    const isExisting = !!editing.id;
+    const payload: any = {
+      name: label,
+      color: editing.color,
+      annual_quota: editing.annual_quota,
+      accrual_type: editing.accrual_type,
+      carry_forward_limit: editing.carry_forward_limit,
+      half_day_allowed: editing.half_day_allowed ? 1 : 0,
+      quarter_day_allowed: editing.quarter_day_allowed ? 1 : 0,
+    };
+    if (isExisting) {
+      payload.leave_type = editing.leave_type;
+    } else {
+      const slug = slugify(label);
+      if (!slug) {
+        Alert.alert("Invalid name", "Enter a valid leave type name.");
+        return;
+      }
+      payload.leave_type = slug;
+    }
+    setSaving(true);
+    try {
+      await saveLeavePolicy(payload);
+      setEditing(null);
+      load();
+    } catch (e: any) {
+      Alert.alert(
+        "Error",
+        e?.response?.data?.error || "Failed to save policy",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const isExisting = !!editing?.id;
+
   return (
     <ScrollView contentContainerStyle={styles.body}>
-      <Text style={styles.sectionTitle}>Leave Policies</Text>
+      <View style={styles.policyHeader}>
+        <Text style={styles.sectionTitle}>Leave Policies</Text>
+        {isHR ? (
+          <Pressable style={styles.addPolicyBtn} onPress={openCreate}>
+            <Plus size={16} color="#fff" />
+            <Text style={styles.addPolicyText}>Add Policy</Text>
+          </Pressable>
+        ) : null}
+      </View>
       <Text style={styles.emptyHint}>
-        These are the leave types configured for your organization. Manage
-        detailed policy settings and holidays from the web dashboard.
+        Leave types configured for your organization. Tap Add Policy to create a
+        new type, or edit/delete existing ones.
       </Text>
 
       {loading ? (
@@ -837,6 +1004,7 @@ function PoliciesTab() {
             const type = getLeaveType(p.leave_type);
             const Icon = type.Icon;
             const color = p.color || type.color;
+            const canDelete = p.leave_type !== "holiday";
             return (
               <View key={p.id} style={styles.policyItem}>
                 <View
@@ -859,11 +1027,174 @@ function PoliciesTab() {
                     {p.quarter_day_allowed ? " · Quarter-day" : ""}
                   </Text>
                 </View>
+                {isHR ? (
+                  <View style={styles.policyActions}>
+                    <Pressable
+                      style={styles.policyActionBtn}
+                      onPress={() => openEdit(p)}
+                      hitSlop={6}
+                    >
+                      <Pencil size={16} color={theme.textSecondary} />
+                    </Pressable>
+                    {canDelete ? (
+                      <Pressable
+                        style={styles.policyActionBtn}
+                        onPress={() => confirmDelete(p)}
+                        hitSlop={6}
+                      >
+                        <Trash2 size={16} color={theme.danger} />
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ) : null}
               </View>
             );
           })}
         </View>
       )}
+
+      {/* Create / edit modal */}
+      <Modal
+        visible={!!editing}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEditing(null)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => setEditing(null)}>
+          <Pressable style={styles.modalBox} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.policyModalHeader}>
+              <Text style={styles.modalTitle}>
+                {isExisting ? "Edit Policy" : "New Leave Policy"}
+              </Text>
+              <Pressable onPress={() => setEditing(null)} hitSlop={8}>
+                <X size={20} color={theme.textSecondary} />
+              </Pressable>
+            </View>
+
+            <ScrollView style={{ maxHeight: 460 }} keyboardShouldPersistTaps="handled">
+              <Text style={styles.label}>Leave Type Name</Text>
+              <TextInput
+                style={[styles.input, isExisting && styles.inputDisabled]}
+                value={editing?.name}
+                onChangeText={(v) =>
+                  setEditing((p) => (p ? { ...p, name: v } : p))
+                }
+                placeholder="e.g. Sick, Casual, Comp Off…"
+                placeholderTextColor={theme.textMuted}
+                maxLength={40}
+                editable={!isExisting}
+              />
+              {isExisting ? (
+                <Text style={styles.emptyHint}>
+                  The leave-type identifier is locked once created. Delete and
+                  re-create the policy to rename it.
+                </Text>
+              ) : null}
+
+              <Text style={styles.label}>Color</Text>
+              <View style={styles.swatchRow}>
+                {POLICY_COLORS.map((c) => {
+                  const active = (editing?.color || "").toLowerCase() === c;
+                  return (
+                    <Pressable
+                      key={c}
+                      style={[
+                        styles.swatch,
+                        { backgroundColor: c },
+                        active && styles.swatchActive,
+                      ]}
+                      onPress={() =>
+                        setEditing((p) => (p ? { ...p, color: c } : p))
+                      }
+                    />
+                  );
+                })}
+              </View>
+
+              <Text style={styles.label}>Days Allowed / Year</Text>
+              <TextInput
+                style={styles.input}
+                keyboardType="number-pad"
+                value={String(editing?.annual_quota ?? "")}
+                onChangeText={(v) =>
+                  setEditing((p) =>
+                    p ? { ...p, annual_quota: Number(v) || 0 } : p,
+                  )
+                }
+              />
+
+              <Text style={styles.label}>Carry-Forward Limit</Text>
+              <TextInput
+                style={styles.input}
+                keyboardType="number-pad"
+                value={String(editing?.carry_forward_limit ?? "")}
+                onChangeText={(v) =>
+                  setEditing((p) =>
+                    p ? { ...p, carry_forward_limit: Number(v) || 0 } : p,
+                  )
+                }
+              />
+
+              <Text style={styles.label}>Accrual Type</Text>
+              <Dropdown
+                label="Accrual Type"
+                value={editing?.accrual_type ?? "annual"}
+                options={ACCRUAL_OPTIONS}
+                onChange={(v) =>
+                  setEditing((p) =>
+                    p ? { ...p, accrual_type: String(v) } : p,
+                  )
+                }
+              />
+
+              <View style={styles.toggleRow}>
+                <Text style={styles.toggleLabel}>Allow Half-day requests</Text>
+                <Switch
+                  value={!!editing?.half_day_allowed}
+                  onValueChange={(v) =>
+                    setEditing((p) => (p ? { ...p, half_day_allowed: v } : p))
+                  }
+                  trackColor={{ true: theme.primary }}
+                />
+              </View>
+              <View style={styles.toggleRow}>
+                <Text style={styles.toggleLabel}>Allow Quarter-day requests</Text>
+                <Switch
+                  value={!!editing?.quarter_day_allowed}
+                  onValueChange={(v) =>
+                    setEditing((p) =>
+                      p ? { ...p, quarter_day_allowed: v } : p,
+                    )
+                  }
+                  trackColor={{ true: theme.primary }}
+                />
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalFooter}>
+              <Pressable
+                style={styles.modalCancel}
+                onPress={() => setEditing(null)}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalSave, saving && styles.submitDisabled]}
+                onPress={savePolicy}
+                disabled={saving}
+              >
+                {saving ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.modalSaveText}>
+                    {isExisting ? "Save Changes" : "Create Policy"}
+                  </Text>
+                )}
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </ScrollView>
   );
 }
@@ -1089,8 +1420,10 @@ const styles = StyleSheet.create({
   subTab: {
     flex: 1,
     paddingVertical: 9,
+    paddingHorizontal: 6,
     borderRadius: theme.radiusSm,
     alignItems: "center",
+    justifyContent: "center",
     backgroundColor: theme.glass,
     borderWidth: 1,
     borderColor: theme.glassBorder,
@@ -1378,6 +1711,57 @@ const styles = StyleSheet.create({
   },
   policyName: { fontSize: 14, fontWeight: "700", color: theme.text },
   policyMeta: { fontSize: 12, color: theme.textSecondary, marginTop: 2 },
+  policyHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  addPolicyBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: theme.radiusSm,
+    backgroundColor: theme.primary,
+  },
+  addPolicyText: { color: "#fff", fontSize: 13, fontWeight: "700" },
+  policyActions: { flexDirection: "row", alignItems: "center", gap: 4 },
+  policyActionBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: theme.radiusSm,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    backgroundColor: theme.glass,
+  },
+  policyModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  inputDisabled: { opacity: 0.6 },
+  swatchRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  swatch: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: "transparent",
+  },
+  swatchActive: { borderColor: theme.text },
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 8,
+    marginTop: 8,
+  },
+  toggleLabel: { fontSize: 14, color: theme.text, flex: 1 },
   allBalTop: {
     flexDirection: "row",
     alignItems: "center",

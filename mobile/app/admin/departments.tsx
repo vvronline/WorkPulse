@@ -16,6 +16,7 @@ import { Stack } from "expo-router";
 import { Building, Pencil, Plus, Trash2, X } from "lucide-react-native";
 import { theme } from "../../src/theme";
 import { useKeyboardInset } from "../../src/hooks/useKeyboardInset";
+import { useAuth } from "../../src/auth/AuthContext";
 import {
   createDepartment,
   deleteDepartment,
@@ -26,6 +27,11 @@ import {
 
 export default function DepartmentsScreen() {
   const kbInset = useKeyboardInset();
+  const { user } = useAuth();
+  // Platform admins are not scoped to a single org server-side, so the
+  // departments endpoints require an explicit org_id (read + write).
+  const isPlatformAdmin = user?.role === "platform_admin";
+  const orgId = (user as any)?.org_id as number | undefined;
   const [items, setItems] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -39,14 +45,16 @@ export default function DepartmentsScreen() {
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
-    getDepartments()
+    const params =
+      isPlatformAdmin && orgId != null ? { org_id: orgId } : undefined;
+    getDepartments(params)
       .then((r) => setItems(Array.isArray(r.data) ? r.data : []))
       .catch((e: any) => {
         setItems([]);
         setError(e?.response?.data?.error || "Failed to load departments");
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [isPlatformAdmin, orgId]);
 
   useEffect(() => {
     load();
@@ -73,15 +81,19 @@ export default function DepartmentsScreen() {
     }
     setBusy(true);
     try {
+      const orgField =
+        isPlatformAdmin && orgId != null ? { org_id: orgId } : {};
       if (editing) {
         await updateDepartment(editing.id, {
           name: name.trim(),
           description: description.trim() || undefined,
+          ...orgField,
         });
       } else {
         await createDepartment({
           name: name.trim(),
           description: description.trim() || undefined,
+          ...orgField,
         });
       }
       setModalOpen(false);

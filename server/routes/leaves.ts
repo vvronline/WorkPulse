@@ -460,6 +460,15 @@ router.post("/", async (req: Request, res: Response) => {
             req.log.error({ err: notifErr }, "Manager notification error (leave request)");
         }
     } catch (err: any) {
+        // The success response is sent BEFORE the manager-notification block
+        // runs. If anything in that post-response path throws, we must NOT try
+        // to send a second response — doing so triggers ERR_HTTP_HEADERS_SENT
+        // and (on the client) surfaces as a spurious "Failed to submit leave"
+        // even though the leave was already committed. Guard on headersSent.
+        if (res.headersSent) {
+            req.log.error({ err }, "POST /leaves post-response error (leave already saved)");
+            return;
+        }
         if (err.isValidation) {
             return res.status(400).json({ error: err.message });
         }

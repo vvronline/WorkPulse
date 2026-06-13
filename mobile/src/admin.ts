@@ -236,13 +236,19 @@ export function createDepartment(data: {
   name: string;
   description?: string;
   head_id?: number | null;
+  org_id?: number | null;
 }) {
   return api.post<Department>("/org/departments", data);
 }
 
 export function updateDepartment(
   id: number | string,
-  data: { name?: string; description?: string; head_id?: number | null },
+  data: {
+    name?: string;
+    description?: string;
+    head_id?: number | null;
+    org_id?: number | null;
+  },
 ) {
   return api.put<Department>(`/org/departments/${id}`, data);
 }
@@ -260,6 +266,7 @@ export function createTeam(data: {
   description?: string;
   department_id?: number | null;
   lead_id?: number | null;
+  org_id?: number | null;
 }) {
   return api.post<Team>("/org/teams", data);
 }
@@ -271,6 +278,7 @@ export function updateTeam(
     description?: string;
     department_id?: number | null;
     lead_id?: number | null;
+    org_id?: number | null;
   },
 ) {
   return api.put<Team>(`/org/teams/${id}`, data);
