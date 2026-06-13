@@ -131,6 +131,14 @@ export default function CallScreen() {
   const relayOnlyRef = useRef(false);
   const iceRestartAttemptedRef = useRef(false);
   const negotiationDoneRef = useRef(false);
+  // True once THIS session has accepted the incoming call (or is the caller).
+  // The server echoes `call_handled_elsewhere` back to the accepter's own user
+  // so their OTHER ringing devices dismiss the PiP. On web that echo is handled
+  // only by the global incoming-call PiP (CallContext) and ignored by the
+  // active CallOverlay. On mobile this single screen serves BOTH roles, so
+  // without this guard the accepting device tore down the very call it just
+  // accepted (looked like a crash: media acquired, screen vanishes, no PC).
+  const acceptedRef = useRef(mode === "outgoing");
   const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -937,8 +945,18 @@ export default function CallScreen() {
           }
           break;
         case "call_handled_elsewhere":
-          // The user answered this call on another device (web/desktop).
-          // Without this the incoming-call screen kept ringing forever.
+          // The user answered/rejected this call on ANOTHER device (web/
+          // desktop), so dismiss this still-ringing incoming screen.
+          //
+          // CRITICAL: the server also echoes this event back to the very
+          // session that accepted/rejected (so a multi-device user's OTHER
+          // devices stop ringing). If THIS session is the one that accepted
+          // (acceptedRef = true), we must NOT tear the call down — otherwise
+          // the device that just accepted immediately ends the call it is
+          // trying to join (the "call crashes right after accept" bug). The
+          // web client avoids this by handling the echo only in the global
+          // incoming-call PiP (CallContext), not the active CallOverlay.
+          if (acceptedRef.current) break;
           if (
             Number(d.conversationId) === conversationId ||
             (d.callId != null && d.callId === callIdRef.current)
@@ -1022,6 +1040,10 @@ export default function CallScreen() {
   // while we finish acquiring media in parallel. Combined with the ringing
   // pre-warm above this shaves seconds off the connect time.
   async function acceptIncoming() {
+    // Mark THIS session as the accepter so the `call_handled_elsewhere` echo
+    // the server sends back to our own user (to dismiss our OTHER devices'
+    // ring UI) does not tear down the call we are about to join.
+    acceptedRef.current = true;
     setStatus("connecting");
     socket.send("call_accept", {
       callId: callIdRef.current,
