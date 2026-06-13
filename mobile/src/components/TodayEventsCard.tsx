@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { CalendarDays, Video } from "lucide-react-native";
-import { theme } from "../theme";
+import type { Theme } from "../theme";
+import { useTheme } from "../theme/ThemeProvider";
 import type { CalendarEvent } from "../features";
 
 function fmtTime(iso?: string) {
@@ -53,6 +54,8 @@ export default function TodayEventsCard({
   events: CalendarEvent[];
   tomorrowEvents: CalendarEvent[];
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const accent = theme.primary;
 
@@ -239,7 +242,8 @@ export default function TodayEventsCard({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   card: {
     backgroundColor: theme.glass,
     borderWidth: 1,

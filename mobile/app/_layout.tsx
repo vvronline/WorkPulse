@@ -7,7 +7,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider } from "../src/auth/AuthContext";
 import ImpersonationBanner from "../src/components/ImpersonationBanner";
 import IncomingCallListener from "../src/realtime/IncomingCallListener";
-import { theme } from "../src/theme";
+import { ThemeProvider, useTheme } from "../src/theme/ThemeProvider";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -15,472 +15,142 @@ const queryClient = new QueryClient({
   },
 });
 
+/**
+ * Themed navigation stack. Lives inside ThemeProvider so header colours track
+ * the tenant's accent reactively.
+ */
+function ThemedStack() {
+  const theme = useTheme();
+  const headerScreen = {
+    headerShown: true as const,
+    headerStyle: { backgroundColor: theme.bgSecondary },
+    headerTitleStyle: { color: theme.text },
+    headerTintColor: theme.primary,
+    headerShadowVisible: false,
+  };
+  return (
+    <Stack
+      screenOptions={{
+        headerShown: false,
+        contentStyle: { backgroundColor: theme.bg },
+      }}
+    >
+      <Stack.Screen name="index" />
+      <Stack.Screen name="login" />
+      <Stack.Screen name="(tabs)" />
+      <Stack.Screen
+        name="notifications"
+        options={{ ...headerScreen, title: "Notifications" }}
+      />
+      <Stack.Screen
+        name="profile"
+        options={{ ...headerScreen, title: "Profile" }}
+      />
+      <Stack.Screen
+        name="profile/face"
+        options={{ ...headerScreen, title: "Face Enrollment" }}
+      />
+      <Stack.Screen name="chat/[id]" options={headerScreen} />
+      <Stack.Screen
+        name="chat/new"
+        options={{ ...headerScreen, title: "New Chat" }}
+      />
+      <Stack.Screen
+        name="call/[conversationId]"
+        options={{
+          headerShown: false,
+          animation: "fade",
+          presentation: "fullScreenModal",
+        }}
+      />
+      <Stack.Screen
+        name="leaves/apply"
+        options={{ ...headerScreen, title: "Apply for Leave" }}
+      />
+      <Stack.Screen
+        name="tasks/new"
+        options={{ ...headerScreen, title: "New Task" }}
+      />
+      <Stack.Screen name="tasks/[id]" options={headerScreen} />
+      <Stack.Screen
+        name="sprints/insights"
+        options={{ ...headerScreen, title: "Sprint Insights" }}
+      />
+      <Stack.Screen
+        name="notes"
+        options={{ ...headerScreen, title: "Notes" }}
+      />
+      <Stack.Screen
+        name="attendance"
+        options={{ ...headerScreen, title: "Attendance" }}
+      />
+      <Stack.Screen
+        name="team"
+        options={{ ...headerScreen, title: "My Team" }}
+      />
+      <Stack.Screen
+        name="organization"
+        options={{ ...headerScreen, title: "Organization" }}
+      />
+      <Stack.Screen
+        name="meeting/[code]"
+        options={{ ...headerScreen, title: "Meeting" }}
+      />
+      {/* Admin panel + Platform Console (headers driven by each screen's
+          inline <Stack.Screen options>). */}
+      <Stack.Screen
+        name="admin/index"
+        options={{ ...headerScreen, title: "Admin Panel" }}
+      />
+      <Stack.Screen name="admin/home" options={headerScreen} />
+      <Stack.Screen name="admin/users" options={headerScreen} />
+      <Stack.Screen name="admin/user/[id]" options={headerScreen} />
+      <Stack.Screen name="admin/role-requests" options={headerScreen} />
+      <Stack.Screen name="admin/departments" options={headerScreen} />
+      <Stack.Screen name="admin/teams" options={headerScreen} />
+      <Stack.Screen name="admin/org-settings" options={headerScreen} />
+      <Stack.Screen name="admin/add-people" options={headerScreen} />
+      <Stack.Screen name="admin/platform-access" options={headerScreen} />
+      <Stack.Screen name="admin/audit" options={headerScreen} />
+      <Stack.Screen name="admin/org-chart" options={headerScreen} />
+      <Stack.Screen name="admin/projects" options={headerScreen} />
+      <Stack.Screen name="admin/payroll" options={headerScreen} />
+      <Stack.Screen name="admin/agile" options={headerScreen} />
+      <Stack.Screen name="admin/integrations" options={headerScreen} />
+      <Stack.Screen name="admin/compensation" options={headerScreen} />
+      <Stack.Screen name="admin/salary-slips" options={headerScreen} />
+      <Stack.Screen name="admin/payment-settings" options={headerScreen} />
+      <Stack.Screen
+        name="tenants/index"
+        options={{ ...headerScreen, title: "Platform Console" }}
+      />
+      <Stack.Screen name="tenants/dashboard" options={headerScreen} />
+      <Stack.Screen name="tenants/list" options={headerScreen} />
+      <Stack.Screen name="tenants/[id]" options={headerScreen} />
+      <Stack.Screen name="tenants/create" options={headerScreen} />
+      <Stack.Screen name="tenants/plans" options={headerScreen} />
+      <Stack.Screen name="tenants/admins" options={headerScreen} />
+      <Stack.Screen name="tenants/settings" options={headerScreen} />
+      <Stack.Screen name="tenants/audit" options={headerScreen} />
+    </Stack>
+  );
+}
+
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <SafeAreaProvider>
-          <StatusBar style="light" />
-          <IncomingCallListener />
-          <ImpersonationBanner />
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: theme.bg },
-            }}
-          >
-            <Stack.Screen name="index" />
-            <Stack.Screen name="login" />
-            <Stack.Screen name="(tabs)" />
-            <Stack.Screen
-              name="notifications"
-              options={{
-                headerShown: true,
-                title: "Notifications",
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="profile"
-              options={{
-                headerShown: true,
-                title: "Profile",
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="profile/face"
-              options={{
-                headerShown: true,
-                title: "Face Enrollment",
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="chat/[id]"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="chat/new"
-              options={{
-                headerShown: true,
-                title: "New Chat",
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="call/[conversationId]"
-              options={{
-                headerShown: false,
-                animation: "fade",
-                presentation: "fullScreenModal",
-              }}
-            />
-            <Stack.Screen
-              name="leaves/apply"
-              options={{
-                headerShown: true,
-                title: "Apply for Leave",
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="tasks/new"
-              options={{
-                headerShown: true,
-                title: "New Task",
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="tasks/[id]"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="sprints/insights"
-              options={{
-                headerShown: true,
-                title: "Sprint Insights",
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="notes"
-              options={{
-                headerShown: true,
-                title: "Notes",
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="attendance"
-              options={{
-                headerShown: true,
-                title: "Attendance",
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="team"
-              options={{
-                headerShown: true,
-                title: "My Team",
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="organization"
-              options={{
-                headerShown: true,
-                title: "Organization",
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="meeting/[code]"
-              options={{
-                headerShown: true,
-                title: "Meeting",
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            {/* Admin panel + Platform Console (headers driven by each screen's
-                inline <Stack.Screen options>). */}
-            <Stack.Screen
-              name="admin/index"
-              options={{
-                headerShown: true,
-                title: "Admin Panel",
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="admin/home"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="admin/users"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="admin/user/[id]"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="admin/role-requests"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="admin/departments"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="admin/teams"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="admin/org-settings"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="admin/add-people"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="admin/platform-access"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="admin/audit"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="admin/org-chart"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="admin/projects"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="admin/payroll"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="admin/agile"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="admin/integrations"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="admin/compensation"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="admin/salary-slips"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="admin/payment-settings"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="tenants/index"
-              options={{
-                headerShown: true,
-                title: "Platform Console",
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="tenants/dashboard"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="tenants/list"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="tenants/[id]"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="tenants/create"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="tenants/plans"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="tenants/admins"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="tenants/settings"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-            <Stack.Screen
-              name="tenants/audit"
-              options={{
-                headerShown: true,
-                headerStyle: { backgroundColor: theme.bgSecondary },
-                headerTitleStyle: { color: theme.text },
-                headerTintColor: theme.primary,
-                headerShadowVisible: false,
-              }}
-            />
-          </Stack>
-        </SafeAreaProvider>
-      </AuthProvider>
-    </QueryClientProvider>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <ThemeProvider>
+            <SafeAreaProvider>
+              <StatusBar style="light" />
+              <IncomingCallListener />
+              <ImpersonationBanner />
+              <ThemedStack />
+            </SafeAreaProvider>
+          </ThemeProvider>
+        </AuthProvider>
+      </QueryClientProvider>
     </GestureHandlerRootView>
   );
 }

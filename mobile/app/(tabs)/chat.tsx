@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -30,7 +30,8 @@ import {
   Video,
   X,
 } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import {
   deleteConversation,
   favouriteConversation,
@@ -95,6 +96,8 @@ function convName(c: Conversation) {
 }
 
 export default function ChatScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const { user } = useAuth();
   const kbInset = useKeyboardInset();
@@ -725,6 +728,8 @@ function TabButton({
   badge?: number;
   onPress: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <Pressable
       style={[styles.tabBtn, active && styles.tabBtnActive]}
@@ -743,7 +748,8 @@ function TabButton({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { alignItems: "center", justifyContent: "center" },
   header: {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -11,7 +11,8 @@ import {
 } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import { Ban, CheckCircle2, Search, X } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { uploadUrl } from "../../src/config";
 import { roleLabel } from "../../src/constants/roles";
 import { getAdminUsers, type AdminUser } from "../../src/admin";
@@ -30,6 +31,8 @@ const FILTERS = [
 ];
 
 export default function AdminUsersScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -171,7 +174,8 @@ export default function AdminUsersScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   searchBar: {

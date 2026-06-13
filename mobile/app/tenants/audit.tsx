@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -9,7 +9,8 @@ import {
   View,
 } from "react-native";
 import { Stack } from "expo-router";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import {
   getPlatformAuditLogs,
   getTenants,
@@ -51,7 +52,7 @@ function fmtTime(iso: string): string {
   });
 }
 
-function actionColor(action: string): string {
+function actionColor(theme: Theme, action: string): string {
   if (/delete|reject|deactivate|suspend/.test(action)) return theme.danger;
   if (/create|approve|reactivate|seeded/.test(action)) return theme.success;
   if (/update|role|reset|domain|features|limits/.test(action)) return theme.warning;
@@ -79,6 +80,8 @@ function parseDetails(d: unknown): Record<string, unknown> | null {
 }
 
 export default function PlatformAuditScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [logs, setLogs] = useState<ExtendedLog[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
@@ -231,7 +234,7 @@ export default function PlatformAuditScreen() {
                   <View
                     style={[
                       styles.actionDot,
-                      { backgroundColor: actionColor(item.action) },
+                      { backgroundColor: actionColor(theme, item.action) },
                     ]}
                   />
                   <Text style={styles.action}>
@@ -352,6 +355,8 @@ export default function PlatformAuditScreen() {
 }
 
 function SessionStat({ label, value }: { label: string; value: string }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <View style={styles.sessionStat}>
       <Text style={styles.sessionStatValue}>{value}</Text>
@@ -360,7 +365,8 @@ function SessionStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   filters: { paddingTop: 10, gap: 6 },

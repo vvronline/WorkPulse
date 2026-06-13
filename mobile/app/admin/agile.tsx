@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -16,32 +16,47 @@ import {
 import { Stack } from "expo-router";
 import {
   CircleDot,
+  ListChecks,
   Pencil,
   Plus,
   Shapes,
   SlidersHorizontal,
+  Tag,
   Trash2,
   Workflow,
   X,
 } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { useKeyboardInset } from "../../src/hooks/useKeyboardInset";
 import { Dropdown } from "../../src/components/Dropdown";
+import { ColorPicker } from "../../src/components/ColorPicker";
 import {
+  createCustomField,
+  createTaskLabel,
   createWorkItemType,
   createWorkflowState,
+  deleteCustomField,
+  deleteTaskLabel,
   deleteWorkItemType,
   deleteWorkflowState,
   getAgilePermissions,
   getAgileSettings,
+  getCustomFieldsAll,
+  getTaskLabelsManage,
   getWorkItemTypes,
   getWorkflowStates,
   updateAgileSettings,
+  updateCustomField,
+  updateTaskLabel,
   updateWorkItemType,
   updateWorkflowState,
   type AgileSettings,
   type AgileWorkItemType,
   type AgileWorkflowState,
+  type CustomFieldDef,
+  type CustomFieldOption,
+  type TaskLabelManage,
 } from "../../src/admin";
 
 const ESTIMATION_TYPES = [
@@ -91,6 +106,31 @@ const COLOR_PRESETS = [
   "#6b7280",
 ];
 
+// Label colour presets (mirrors web TaskLabelsTab PRESET_COLORS).
+const LABEL_PRESETS = [
+  "#0ea5e9",
+  "#ef4444",
+  "#f59e0b",
+  "#10b981",
+  "#3b82f6",
+  "#8b5cf6",
+  "#ec4899",
+  "#14b8a6",
+  "#f97316",
+  "#64748b",
+];
+
+// Custom field types (mirrors web CustomFieldsTab FIELD_TYPES).
+const FIELD_TYPES = [
+  { value: "text", label: "Single-line text" },
+  { value: "number", label: "Number" },
+  { value: "date", label: "Date" },
+  { value: "select", label: "Select (single)" },
+  { value: "multiselect", label: "Select (multiple)" },
+  { value: "checkbox", label: "Checkbox" },
+  { value: "url", label: "URL" },
+];
+
 function valuesToString(v: AgileSettings["estimation_values"]): string {
   if (Array.isArray(v)) return v.join(", ");
   if (typeof v === "string") {
@@ -113,6 +153,8 @@ function stringToValues(s: string): (number | string)[] {
 }
 
 export default function AgileConfigScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const kbInset = useKeyboardInset();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -154,6 +196,28 @@ export default function AgileConfigScreen() {
   const [stateTerminal, setStateTerminal] = useState(false);
   const [stateActive, setStateActive] = useState(true);
 
+  // Labels
+  const [labels, setLabels] = useState<TaskLabelManage[]>([]);
+  const [labelModal, setLabelModal] = useState(false);
+  const [editingLabel, setEditingLabel] = useState<TaskLabelManage | null>(null);
+  const [labelName, setLabelName] = useState("");
+  const [labelColor, setLabelColor] = useState(LABEL_PRESETS[0]);
+
+  // Custom fields
+  const [fields, setFields] = useState<CustomFieldDef[]>([]);
+  const [fieldModal, setFieldModal] = useState(false);
+  const [editingField, setEditingField] = useState<CustomFieldDef | null>(null);
+  const [fieldLabel, setFieldLabel] = useState("");
+  const [fieldType, setFieldType] = useState<string>("text");
+  const [fieldDesc, setFieldDesc] = useState("");
+  const [fieldRequired, setFieldRequired] = useState(false);
+  const [fieldShowOnCard, setFieldShowOnCard] = useState(false);
+  const [fieldActive, setFieldActive] = useState(true);
+  const [fieldOptions, setFieldOptions] = useState<CustomFieldOption[]>([
+    { value: "", label: "" },
+  ]);
+  const [fieldAppliesTo, setFieldAppliesTo] = useState<(number | string)[]>([]);
+
   const syncGeneral = useCallback((s: AgileSettings | null) => {
     if (!s) return;
     setEstType(s.estimation_type ?? "fibonacci");
@@ -166,11 +230,13 @@ export default function AgileConfigScreen() {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const [setR, typR, staR, permR] = await Promise.allSettled([
+    const [setR, typR, staR, permR, labR, fldR] = await Promise.allSettled([
       getAgileSettings(),
       getWorkItemTypes(),
       getWorkflowStates(),
       getAgilePermissions(),
+      getTaskLabelsManage(),
+      getCustomFieldsAll(),
     ]);
     if (setR.status === "fulfilled") {
       setSettings(setR.value.data);
@@ -184,6 +250,10 @@ export default function AgileConfigScreen() {
     if (staR.status === "fulfilled")
       setStates(Array.isArray(staR.value.data) ? staR.value.data : []);
     if (permR.status === "fulfilled") setCanEdit(!!permR.value.data?.canEdit);
+    if (labR.status === "fulfilled")
+      setLabels(Array.isArray(labR.value.data) ? labR.value.data : []);
+    if (fldR.status === "fulfilled")
+      setFields(Array.isArray(fldR.value.data) ? fldR.value.data : []);
     setLoading(false);
   }, [syncGeneral]);
 
@@ -438,6 +508,195 @@ export default function AgileConfigScreen() {
           style: "destructive",
           onPress: () =>
             deleteWorkflowState(s.id)
+              .then(() => load())
+              .catch((e: any) =>
+                Alert.alert(
+                  "Error",
+                  e?.response?.data?.error || "Failed to delete",
+                ),
+              ),
+        },
+      ],
+    );
+  }
+
+  /* ── Labels ── */
+
+  function openCreateLabel() {
+    setEditingLabel(null);
+    setLabelName("");
+    setLabelColor(LABEL_PRESETS[0]);
+    setLabelModal(true);
+  }
+
+  function openEditLabel(l: TaskLabelManage) {
+    setEditingLabel(l);
+    setLabelName(l.name);
+    setLabelColor(l.color || LABEL_PRESETS[0]);
+    setLabelModal(true);
+  }
+
+  async function saveLabel() {
+    if (!labelName.trim()) {
+      Alert.alert("Required", "Label name is required");
+      return;
+    }
+    setBusy(true);
+    try {
+      if (editingLabel) {
+        await updateTaskLabel(editingLabel.id, {
+          name: labelName.trim(),
+          color: labelColor,
+        });
+      } else {
+        await createTaskLabel({ name: labelName.trim(), color: labelColor });
+      }
+      setLabelModal(false);
+      load();
+    } catch (e: any) {
+      Alert.alert("Error", e?.response?.data?.error || "Failed to save label");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function confirmDeleteLabel(l: TaskLabelManage) {
+    Alert.alert(
+      "Delete label",
+      `Delete "${l.name}"? It will be removed from all tasks. This cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () =>
+            deleteTaskLabel(l.id)
+              .then(() => load())
+              .catch((e: any) =>
+                Alert.alert(
+                  "Error",
+                  e?.response?.data?.error || "Failed to delete",
+                ),
+              ),
+        },
+      ],
+    );
+  }
+
+  /* ── Custom fields ── */
+
+  const isSelectType =
+    fieldType === "select" || fieldType === "multiselect";
+
+  function openCreateField() {
+    setEditingField(null);
+    setFieldLabel("");
+    setFieldType("text");
+    setFieldDesc("");
+    setFieldRequired(false);
+    setFieldShowOnCard(false);
+    setFieldActive(true);
+    setFieldOptions([{ value: "", label: "" }]);
+    setFieldAppliesTo([]);
+    setFieldModal(true);
+  }
+
+  function openEditField(f: CustomFieldDef) {
+    setEditingField(f);
+    setFieldLabel(f.label || "");
+    setFieldType(f.field_type || "text");
+    setFieldDesc(f.description || "");
+    setFieldRequired(!!f.is_required);
+    setFieldShowOnCard(!!f.show_on_card);
+    setFieldActive(f.is_active !== false);
+    setFieldOptions(
+      Array.isArray(f.options) && f.options.length > 0
+        ? f.options.map((o) => ({
+            value: o.value || "",
+            label: o.label || "",
+          }))
+        : [{ value: "", label: "" }],
+    );
+    setFieldAppliesTo(
+      Array.isArray(f.applies_to_types) ? f.applies_to_types : [],
+    );
+    setFieldModal(true);
+  }
+
+  function setOption(idx: number, key: keyof CustomFieldOption, val: string) {
+    setFieldOptions((prev) =>
+      prev.map((o, i) => (i === idx ? { ...o, [key]: val } : o)),
+    );
+  }
+
+  function addOption() {
+    setFieldOptions((prev) => [...prev, { value: "", label: "" }]);
+  }
+
+  function removeOption(idx: number) {
+    setFieldOptions((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  function toggleAppliesTo(id: number | string) {
+    setFieldAppliesTo((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }
+
+  async function saveField() {
+    if (!fieldLabel.trim()) {
+      Alert.alert("Required", "Label is required");
+      return;
+    }
+    const payload: any = {
+      label: fieldLabel.trim(),
+      field_type: fieldType,
+      description: fieldDesc.trim() || null,
+      is_required: fieldRequired,
+      show_on_card: fieldShowOnCard,
+      is_active: fieldActive,
+      applies_to_types: fieldAppliesTo,
+    };
+    if (isSelectType) {
+      const cleaned = fieldOptions
+        .map((o) => ({
+          value: String(o.value || o.label || "").trim(),
+          label: String(o.label || o.value || "").trim(),
+        }))
+        .filter((o) => o.value);
+      if (cleaned.length === 0) {
+        Alert.alert("Required", "Select fields need at least one option");
+        return;
+      }
+      payload.options = cleaned;
+    }
+    setBusy(true);
+    try {
+      if (editingField) {
+        await updateCustomField(editingField.id, payload);
+      } else {
+        await createCustomField(payload);
+      }
+      setFieldModal(false);
+      load();
+    } catch (e: any) {
+      Alert.alert("Error", e?.response?.data?.error || "Failed to save field");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function confirmDeleteField(f: CustomFieldDef) {
+    Alert.alert(
+      "Delete custom field",
+      `Delete "${f.label}"? Existing values on tasks will be lost.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () =>
+            deleteCustomField(f.id)
               .then(() => load())
               .catch((e: any) =>
                 Alert.alert(
@@ -712,6 +971,127 @@ export default function AgileConfigScreen() {
         })}
       </View>
 
+      {/* Labels */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeaderRow}>
+          <View style={styles.sectionTitleRow}>
+            <Tag size={15} color={theme.textSecondary} />
+            <Text style={styles.sectionTitle}>Labels</Text>
+          </View>
+          {canEdit ? (
+            <Pressable style={styles.addBtn} onPress={openCreateLabel}>
+              <Plus size={14} color={theme.primary} />
+              <Text style={styles.addBtnText}>Add</Text>
+            </Pressable>
+          ) : null}
+        </View>
+        <Text style={styles.hint}>
+          Free-form tags for cross-cutting filtering (e.g. frontend, tech-debt).
+          A ticket can carry many labels.
+        </Text>
+        {labels.length === 0 ? (
+          <Text style={styles.empty}>No labels yet.</Text>
+        ) : (
+          labels.map((l) => (
+            <View key={l.id} style={styles.itemRow}>
+              <View
+                style={[styles.colorDot, { backgroundColor: l.color || "#888" }]}
+              />
+              <View style={{ flex: 1 }}>
+                <View
+                  style={[
+                    styles.labelBadge,
+                    { backgroundColor: l.color || "#888" },
+                  ]}
+                >
+                  <Text style={styles.labelBadgeText}>{l.name}</Text>
+                </View>
+                <Text style={styles.itemMeta}>
+                  {l.created_by_username
+                    ? `by ${l.created_by_username}`
+                    : "—"}
+                </Text>
+              </View>
+              {canEdit ? (
+                <>
+                  <Pressable
+                    style={styles.iconBtn}
+                    onPress={() => openEditLabel(l)}
+                    hitSlop={6}
+                  >
+                    <Pencil size={15} color={theme.textSecondary} />
+                  </Pressable>
+                  <Pressable
+                    style={styles.iconBtn}
+                    onPress={() => confirmDeleteLabel(l)}
+                    hitSlop={6}
+                  >
+                    <Trash2 size={15} color={theme.danger} />
+                  </Pressable>
+                </>
+              ) : null}
+            </View>
+          ))
+        )}
+      </View>
+
+      {/* Custom fields */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeaderRow}>
+          <View style={styles.sectionTitleRow}>
+            <ListChecks size={15} color={theme.textSecondary} />
+            <Text style={styles.sectionTitle}>Custom fields</Text>
+          </View>
+          {canEdit ? (
+            <Pressable style={styles.addBtn} onPress={openCreateField}>
+              <Plus size={14} color={theme.primary} />
+              <Text style={styles.addBtnText}>Add</Text>
+            </Pressable>
+          ) : null}
+        </View>
+        <Text style={styles.hint}>
+          Tenant-specific fields shown on every task — text, number, date,
+          select, checkbox, or URL.
+        </Text>
+        {fields.length === 0 ? (
+          <Text style={styles.empty}>No custom fields yet.</Text>
+        ) : (
+          fields.map((f) => (
+            <View key={f.id} style={styles.itemRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.itemName}>
+                  {f.label}
+                  {f.is_required ? "  ·  required" : ""}
+                </Text>
+                <Text style={styles.itemMeta}>
+                  {f.field_type}
+                  {f.show_on_card ? " · on card" : ""}
+                  {f.is_active === false ? " · inactive" : ""}
+                </Text>
+              </View>
+              {canEdit ? (
+                <>
+                  <Pressable
+                    style={styles.iconBtn}
+                    onPress={() => openEditField(f)}
+                    hitSlop={6}
+                  >
+                    <Pencil size={15} color={theme.textSecondary} />
+                  </Pressable>
+                  <Pressable
+                    style={styles.iconBtn}
+                    onPress={() => confirmDeleteField(f)}
+                    hitSlop={6}
+                  >
+                    <Trash2 size={15} color={theme.danger} />
+                  </Pressable>
+                </>
+              ) : null}
+            </View>
+          ))
+        )}
+      </View>
+
       {/* ── Work item type modal ── */}
       <Modal
         visible={typeModal}
@@ -755,19 +1135,11 @@ export default function AgileConfigScreen() {
                 autoCapitalize="none"
               />
               <Text style={styles.fieldLabel}>Color</Text>
-              <View style={styles.swatchRow}>
-                {COLOR_PRESETS.map((c) => (
-                  <Pressable
-                    key={c}
-                    style={[
-                      styles.swatch,
-                      { backgroundColor: c },
-                      typeColor === c && styles.swatchActive,
-                    ]}
-                    onPress={() => setTypeColor(c)}
-                  />
-                ))}
-              </View>
+              <ColorPicker
+                value={typeColor}
+                onChange={setTypeColor}
+                presets={COLOR_PRESETS}
+              />
               <View style={styles.toggleRow}>
                 <Text style={styles.toggleLabel}>Epic type</Text>
                 <Switch
@@ -857,19 +1229,11 @@ export default function AgileConfigScreen() {
                 keyboardType="numeric"
               />
               <Text style={styles.fieldLabel}>Color</Text>
-              <View style={styles.swatchRow}>
-                {COLOR_PRESETS.map((c) => (
-                  <Pressable
-                    key={c}
-                    style={[
-                      styles.swatch,
-                      { backgroundColor: c },
-                      stateColor === c && styles.swatchActive,
-                    ]}
-                    onPress={() => setStateColor(c)}
-                  />
-                ))}
-              </View>
+              <ColorPicker
+                value={stateColor}
+                onChange={setStateColor}
+                presets={COLOR_PRESETS}
+              />
               <View style={styles.toggleRow}>
                 <Text style={styles.toggleLabel}>Initial (new tickets)</Text>
                 <Switch
@@ -912,11 +1276,240 @@ export default function AgileConfigScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* ── Label modal ── */}
+      <Modal
+        visible={labelModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setLabelModal(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <Pressable
+            style={styles.modalScrim}
+            onPress={() => setLabelModal(false)}
+          />
+          <View style={[styles.sheet, { marginBottom: kbInset }]}>
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>
+                {editingLabel ? "Edit label" : "New label"}
+              </Text>
+              <Pressable onPress={() => setLabelModal(false)} hitSlop={8}>
+                <X size={22} color={theme.textSecondary} />
+              </Pressable>
+            </View>
+            <ScrollView style={{ maxHeight: 460 }}>
+              <Text style={styles.fieldLabel}>Label name</Text>
+              <TextInput
+                style={styles.input}
+                value={labelName}
+                onChangeText={setLabelName}
+                placeholder="e.g. Bug, Feature, Urgent"
+                placeholderTextColor={theme.textMuted}
+                maxLength={30}
+              />
+              <Text style={styles.fieldLabel}>Color</Text>
+              <ColorPicker
+                value={labelColor}
+                onChange={setLabelColor}
+                presets={LABEL_PRESETS}
+              />
+              <View style={styles.previewRow}>
+                <View
+                  style={[styles.labelBadge, { backgroundColor: labelColor }]}
+                >
+                  <Text style={styles.labelBadgeText}>
+                    {labelName.trim() || "Preview"}
+                  </Text>
+                </View>
+              </View>
+            </ScrollView>
+            <Pressable
+              style={styles.saveBtn}
+              onPress={saveLabel}
+              disabled={busy}
+            >
+              <Text style={styles.saveBtnText}>
+                {busy ? "Saving…" : editingLabel ? "Save changes" : "Create"}
+              </Text>
+            </Pressable>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ── Custom field modal ── */}
+      <Modal
+        visible={fieldModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setFieldModal(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <Pressable
+            style={styles.modalScrim}
+            onPress={() => setFieldModal(false)}
+          />
+          <View style={[styles.sheet, { marginBottom: kbInset }]}>
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>
+                {editingField ? "Edit custom field" : "New custom field"}
+              </Text>
+              <Pressable onPress={() => setFieldModal(false)} hitSlop={8}>
+                <X size={22} color={theme.textSecondary} />
+              </Pressable>
+            </View>
+            <ScrollView style={{ maxHeight: 480 }}>
+              <Text style={styles.fieldLabel}>Label</Text>
+              <TextInput
+                style={styles.input}
+                value={fieldLabel}
+                onChangeText={setFieldLabel}
+                placeholder="e.g. Component"
+                placeholderTextColor={theme.textMuted}
+              />
+              <Text style={styles.fieldLabel}>Type</Text>
+              <Dropdown
+                label="Field type"
+                value={fieldType}
+                options={FIELD_TYPES}
+                onChange={(v) => {
+                  if (v) setFieldType(String(v));
+                }}
+              />
+              <Text style={styles.fieldLabel}>Description (optional)</Text>
+              <TextInput
+                style={styles.input}
+                value={fieldDesc}
+                onChangeText={setFieldDesc}
+                placeholder="Helper text shown beneath the field"
+                placeholderTextColor={theme.textMuted}
+              />
+
+              {isSelectType ? (
+                <>
+                  <Text style={styles.fieldLabel}>Options</Text>
+                  {fieldOptions.map((o, i) => (
+                    <View key={i} style={styles.optionRow}>
+                      <TextInput
+                        style={[styles.input, { flex: 1 }]}
+                        value={o.label}
+                        onChangeText={(v) => setOption(i, "label", v)}
+                        placeholder="Display label"
+                        placeholderTextColor={theme.textMuted}
+                      />
+                      <Pressable
+                        style={styles.optionRemove}
+                        onPress={() => removeOption(i)}
+                        disabled={fieldOptions.length === 1}
+                        hitSlop={6}
+                      >
+                        <X
+                          size={16}
+                          color={
+                            fieldOptions.length === 1
+                              ? theme.textMuted
+                              : theme.danger
+                          }
+                        />
+                      </Pressable>
+                    </View>
+                  ))}
+                  <Pressable style={styles.addOptionBtn} onPress={addOption}>
+                    <Plus size={14} color={theme.primary} />
+                    <Text style={styles.addBtnText}>Add option</Text>
+                  </Pressable>
+                </>
+              ) : null}
+
+              {types.length > 0 ? (
+                <>
+                  <Text style={styles.fieldLabel}>
+                    Applies to work item types
+                  </Text>
+                  <Text style={styles.hint}>
+                    Leave all unchecked to apply to every type.
+                  </Text>
+                  {types.map((t) => {
+                    const on = fieldAppliesTo.includes(t.id);
+                    return (
+                      <Pressable
+                        key={t.id}
+                        style={styles.checkRow}
+                        onPress={() => toggleAppliesTo(t.id)}
+                      >
+                        <View
+                          style={[
+                            styles.checkbox,
+                            on && styles.checkboxOn,
+                          ]}
+                        >
+                          {on ? (
+                            <Text style={styles.checkMark}>✓</Text>
+                          ) : null}
+                        </View>
+                        <Text style={styles.checkLabel}>{t.name}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </>
+              ) : null}
+
+              <View style={styles.toggleRow}>
+                <Text style={styles.toggleLabel}>Required</Text>
+                <Switch
+                  value={fieldRequired}
+                  onValueChange={setFieldRequired}
+                  trackColor={{ true: theme.primary, false: theme.surface }}
+                  thumbColor="#fff"
+                />
+              </View>
+              <View style={styles.toggleRow}>
+                <Text style={styles.toggleLabel}>Show on task card</Text>
+                <Switch
+                  value={fieldShowOnCard}
+                  onValueChange={setFieldShowOnCard}
+                  trackColor={{ true: theme.primary, false: theme.surface }}
+                  thumbColor="#fff"
+                />
+              </View>
+              <View style={styles.toggleRow}>
+                <Text style={styles.toggleLabel}>Active</Text>
+                <Switch
+                  value={fieldActive}
+                  onValueChange={setFieldActive}
+                  trackColor={{ true: theme.primary, false: theme.surface }}
+                  thumbColor="#fff"
+                />
+              </View>
+            </ScrollView>
+            <Pressable
+              style={styles.saveBtn}
+              onPress={saveField}
+              disabled={busy}
+            >
+              <Text style={styles.saveBtnText}>
+                {busy
+                  ? "Saving…"
+                  : editingField
+                    ? "Save changes"
+                    : "Create field"}
+              </Text>
+            </Pressable>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { alignItems: "center", justifyContent: "center" },
   container: { padding: 16, gap: 16 },
@@ -1015,6 +1608,50 @@ const styles = StyleSheet.create({
   },
   swatchActive: { borderColor: theme.text },
   disabled: { opacity: 0.5 },
+  labelBadge: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: theme.radiusFull,
+  },
+  labelBadgeText: { color: "#fff", fontSize: 12, fontWeight: "700" },
+  previewRow: { marginTop: 12, flexDirection: "row" },
+  optionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 6,
+  },
+  optionRemove: { padding: 8 },
+  addOptionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: theme.radiusSm,
+    backgroundColor: theme.primaryGlow,
+    marginTop: 8,
+  },
+  checkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 6,
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: theme.radiusSm,
+    borderWidth: 1,
+    borderColor: theme.inputBorder,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checkboxOn: { backgroundColor: theme.primary, borderColor: theme.primary },
+  checkMark: { color: "#fff", fontSize: 13, fontWeight: "700" },
+  checkLabel: { fontSize: 14, color: theme.text, flex: 1 },
   modalOverlay: { flex: 1, justifyContent: "flex-end" },
   modalScrim: {
     position: "absolute",

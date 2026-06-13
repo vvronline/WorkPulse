@@ -8,7 +8,8 @@ import {
   View,
 } from "react-native";
 import { Clock } from "lucide-react-native";
-import { theme } from "../theme";
+import type { Theme } from "../theme";
+import { useTheme } from "../theme/ThemeProvider";
 
 const ROW_HEIGHT = 44;
 
@@ -51,6 +52,8 @@ export default function TimePicker({
   placeholder = "Select time",
   disabled,
 }: TimePickerProps) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [open, setOpen] = useState(false);
   const parsed = useMemo(() => clampHHMM(value), [value]);
   const [hour, setHour] = useState(parsed?.h ?? 9);
@@ -189,7 +192,8 @@ export default function TimePicker({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   field: {
     flexDirection: "row",
     alignItems: "center",

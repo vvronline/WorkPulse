@@ -20,6 +20,8 @@ export type User = {
   role: string;
   org_id?: number | null;
   tenant_id?: number | null;
+  team_id?: number | null;
+  team_name?: string | null;
   has_reports?: boolean;
   must_change_password?: boolean;
   // Plan / feature gating (mirrors the web profile payload).

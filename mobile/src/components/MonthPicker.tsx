@@ -7,7 +7,8 @@ import {
   View,
 } from "react-native";
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from "lucide-react-native";
-import { theme } from "../theme";
+import type { Theme } from "../theme";
+import { useTheme } from "../theme/ThemeProvider";
 
 const MONTHS_SHORT = [
   "Jan",
@@ -61,6 +62,8 @@ export default function MonthPicker({
   onChange,
   disabled,
 }: MonthPickerProps) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [open, setOpen] = useState(false);
   const parsed = useMemo(() => parseYM(value), [value]);
   const [year, setYear] = useState(parsed?.y ?? new Date().getFullYear());
@@ -148,7 +151,8 @@ export default function MonthPicker({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   field: {
     flexDirection: "row",
     alignItems: "center",

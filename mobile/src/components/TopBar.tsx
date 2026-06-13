@@ -1,10 +1,11 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { Pressable, StyleSheet, Text, View, Image } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Bell } from "lucide-react-native";
 import { useEffect, useState } from "react";
-import { theme } from "../theme";
+import type { Theme } from "../theme";
+import { useTheme } from "../theme/ThemeProvider";
 import { useAuth } from "../auth/AuthContext";
 import { getNotifications, getMyStatus } from "../features";
 import { uploadUrl } from "../config";
@@ -26,6 +27,8 @@ function initials(name?: string) {
 export default function TopBar() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { user } = useAuth();
   const [unread, setUnread] = useState(0);
   // Current user's resolved effective presence, shown as a dot on the avatar
@@ -114,7 +117,8 @@ export default function TopBar() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   bar: {
     flexDirection: "row",
     alignItems: "center",

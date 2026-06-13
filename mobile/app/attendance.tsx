@@ -25,7 +25,8 @@ import {
   Timer,
   X,
 } from "lucide-react-native";
-import { theme } from "../src/theme";
+import type { Theme } from "../src/theme";
+import { useTheme } from "../src/theme/ThemeProvider";
 import { formatTime } from "../src/utils/time";
 import LeavesTab from "../src/components/LeavesTab";
 import DatePicker from "../src/components/DatePicker";
@@ -98,6 +99,8 @@ type Tab = "overview" | "leaves" | "manual" | "analytics";
 const VALID_TABS: Tab[] = ["overview", "leaves", "manual", "analytics"];
 
 export default function AttendanceScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const params = useLocalSearchParams<{ tab?: string }>();
   const initialTab: Tab = VALID_TABS.includes(params.tab as Tab)
     ? (params.tab as Tab)
@@ -157,6 +160,8 @@ function TabBtn({
   active: boolean;
   onPress: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <Pressable
       style={[styles.tabBtn, active && styles.tabBtnActive]}
@@ -182,6 +187,9 @@ type DayKind =
   | "none";
 
 function OverviewTab() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
+  const KIND_DOT = useMemo(() => makeKindDot(theme), [theme]);
   const [cursor, setCursor] = useState(new Date());
   const [selected, setSelected] = useState(ymd(new Date()));
   const [entries, setEntries] = useState<Record<string, HistoryEntry>>({});
@@ -493,7 +501,7 @@ function OverviewTab() {
   );
 }
 
-const KIND_DOT: Record<DayKind, string | null> = {
+const makeKindDot = (theme: Theme): Record<DayKind, string | null> => ({
   present: theme.success,
   leave: "#0ea5e9",
   "leave-pending": theme.warning,
@@ -503,9 +511,11 @@ const KIND_DOT: Record<DayKind, string | null> = {
   in_progress: null,
   future: null,
   none: null,
-};
+});
 
 function LegendItem({ color, label }: { color: string; label: string }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <View style={styles.legendItem}>
       <View style={[styles.legendDot, { backgroundColor: color }]} />
@@ -531,6 +541,8 @@ function tsToLocalHHMM(ts?: string | null): string {
 }
 
 function DetailRow({ label, value }: { label: string; value: string }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
@@ -551,6 +563,8 @@ const ENTRY_LABELS: Record<string, string> = {
 };
 
 function ManualTab() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [date, setDate] = useState(ymd(new Date()));
   const [clockIn, setClockIn] = useState("09:00");
   const [clockOut, setClockOut] = useState("18:00");
@@ -938,6 +952,8 @@ const STATUS_BADGE: Record<string, { label: string; color: string; bg: string }>
 /* ───────────────────────── Overtime ───────────────────────── */
 
 function OvertimeSection() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [otDate, setOtDate] = useState(ymd(new Date()));
   const [otHours, setOtHours] = useState("");
   const [otReason, setOtReason] = useState("");
@@ -1078,6 +1094,8 @@ function localDateNDaysAgo(n: number): string {
 }
 
 function AnalyticsTab() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [range, setRange] = useState<number | "custom">(7);
   const [customFrom, setCustomFrom] = useState(localDateNDaysAgo(7));
   const [customTo, setCustomTo] = useState(ymd(new Date()));
@@ -1273,6 +1291,8 @@ function StatCard({
   value: string;
   color: string;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <View style={styles.statCard}>
       <Text style={[styles.statValue, { color }]}>{value}</Text>
@@ -1281,7 +1301,8 @@ function StatCard({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   body: { padding: 16, paddingBottom: 40, gap: 6 },
   tabRow: {

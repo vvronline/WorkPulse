@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -18,7 +18,8 @@ import {
   Shield,
   X,
 } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { PromptModal } from "../../src/components/PromptModal";
 import {
   approveAccessRequest,
@@ -38,7 +39,7 @@ function fmt(iso?: string | null): string {
   });
 }
 
-function statusPalette(status: string): string {
+function statusPalette(theme: Theme, status: string): string {
   switch (status) {
     case "pending":
       return theme.warning;
@@ -61,6 +62,8 @@ type RevealedCode = {
 };
 
 export default function PlatformAccessScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [requests, setRequests] = useState<IncomingAccessRequest[]>([]);
   const [activeSession, setActiveSession] =
     useState<IncomingAccessRequest | null>(null);
@@ -284,13 +287,13 @@ export default function PlatformAccessScreen() {
               <View
                 style={[
                   styles.statusPill,
-                  { backgroundColor: statusPalette(item.status) + "22" },
+                  { backgroundColor: statusPalette(theme, item.status) + "22" },
                 ]}
               >
                 <Text
                   style={[
                     styles.statusText,
-                    { color: statusPalette(item.status) },
+                    { color: statusPalette(theme, item.status) },
                   ]}
                 >
                   {item.status}
@@ -349,13 +352,13 @@ export default function PlatformAccessScreen() {
               <View
                 style={[
                   styles.statusPill,
-                  { backgroundColor: statusPalette(item.status) + "22" },
+                  { backgroundColor: statusPalette(theme, item.status) + "22" },
                 ]}
               >
                 <Text
                   style={[
                     styles.statusText,
-                    { color: statusPalette(item.status) },
+                    { color: statusPalette(theme, item.status) },
                   ]}
                 >
                   {item.status}
@@ -409,7 +412,8 @@ export default function PlatformAccessScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   container: { padding: 16, gap: 12, paddingBottom: 40 },

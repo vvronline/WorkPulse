@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -21,7 +21,8 @@ import {
   Send,
   XCircle,
 } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { Dropdown, type DropdownOption } from "../../src/components/Dropdown";
 import {
   bulkPublishSlips,
@@ -57,6 +58,8 @@ function fmtMoney(v?: number | string | null): string {
 }
 
 export default function SalarySlipsScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [periods, setPeriods] = useState<DropdownOption[]>([]);
   const [periodId, setPeriodId] = useState<string | number | null>(null);
   const [slips, setSlips] = useState<SalarySlip[]>([]);
@@ -487,7 +490,8 @@ export default function SalarySlipsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { alignItems: "center", justifyContent: "center", flex: 1 },
   toolbar: { padding: 16, gap: 10 },

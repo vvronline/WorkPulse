@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -10,7 +10,8 @@ import {
   View,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { LEAVE_TYPES } from "../../src/constants";
 import { applyLeave, getLeaves } from "../../src/features";
 import DatePicker from "../../src/components/DatePicker";
@@ -30,6 +31,8 @@ function todayISO() {
 }
 
 export default function ApplyLeaveScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const [type, setType] = useState("planned");
   const [duration, setDuration] = useState<"full" | "half" | "quarter">("full");
@@ -152,7 +155,8 @@ export default function ApplyLeaveScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   container: { padding: 16, gap: 8 },
   label: {

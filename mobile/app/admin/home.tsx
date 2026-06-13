@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -23,7 +23,8 @@ import {
   UsersRound,
 } from "lucide-react-native";
 import { useAuth } from "../../src/auth/AuthContext";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { getAdminStats, getRoleChangeRequests, type AdminStats } from "../../src/admin";
 import {
   getApprovals,
@@ -42,6 +43,8 @@ type SetupState = {
 };
 
 export default function AdminHomeScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const { user } = useAuth();
   const [stats, setStats] = useState<AdminStats | null>(null);
@@ -280,6 +283,8 @@ function StatTile({
   value: React.ReactNode;
   label: string;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <View style={styles.statTile}>
       {icon}
@@ -298,6 +303,8 @@ function QuickBtn({
   label: string;
   onPress: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <Pressable style={styles.quickBtn} onPress={onPress} android_ripple={{ color: theme.surfaceHover }}>
       {icon}
@@ -306,7 +313,8 @@ function QuickBtn({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { alignItems: "center", justifyContent: "center" },
   container: { padding: 16, gap: 14, paddingBottom: 40 },

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -10,7 +10,8 @@ import {
 } from "react-native";
 import { Stack } from "expo-router";
 import { Building2 } from "lucide-react-native";
-import { theme } from "../src/theme";
+import type { Theme } from "../src/theme";
+import { useTheme } from "../src/theme/ThemeProvider";
 import { uploadUrl } from "../src/config";
 import {
   getCurrentOrg,
@@ -26,6 +27,8 @@ function initials(name?: string) {
 }
 
 export default function OrganizationScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [org, setOrg] = useState<OrgInfo | null>(null);
   const [members, setMembers] = useState<OrgMember[]>([]);
   const [loading, setLoading] = useState(true);
@@ -153,6 +156,8 @@ export default function OrganizationScreen() {
 }
 
 function Stat({ label, value }: { label: string; value: number }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <View style={styles.stat}>
       <Text style={styles.statValue}>{value}</Text>
@@ -161,7 +166,8 @@ function Stat({ label, value }: { label: string; value: number }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.bg },
   list: { padding: 16, gap: 10, paddingBottom: 40 },

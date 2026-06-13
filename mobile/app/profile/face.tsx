@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -10,7 +10,8 @@ import {
 } from "react-native";
 import { Stack } from "expo-router";
 import { ScanFace, ShieldCheck, Trash2 } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import FaceCaptureWebView from "../../src/components/FaceCaptureWebView";
 import {
   clearFaceEnrollment,
@@ -20,6 +21,8 @@ import {
 } from "../../src/features";
 
 export default function FaceEnrollment() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [status, setStatus] = useState<FaceStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -218,7 +221,8 @@ export default function FaceEnrollment() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { alignItems: "center", justifyContent: "center" },
   container: { padding: 20, alignItems: "center", gap: 12 },

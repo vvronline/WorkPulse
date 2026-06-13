@@ -26,7 +26,8 @@ import {
   X,
 } from "lucide-react-native";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import {
   taskStatusMeta,
   TASK_COLUMNS,
@@ -82,7 +83,25 @@ const STATUS_FILTERS: { value: TaskStatus | ""; label: string }[] = [
   { value: "done", label: "Done" },
 ];
 
+// Whole days remaining until (and including) the sprint end date. Mirrors the
+// web TasksHeader daysLeft calc — compared in UTC so DST never shifts the count.
+function sprintDaysLeft(endDate?: string): number {
+  if (!endDate) return 0;
+  const today = new Date();
+  const todayUTC = Date.UTC(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate(),
+  );
+  const [y, m, d] = endDate.split("-").map((v) => Number(v));
+  if (!y || !m || !d) return 0;
+  const endUTC = Date.UTC(y, m - 1, d);
+  return Math.max(0, Math.ceil((endUTC - todayUTC) / 86400000));
+}
+
 export default function TasksScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const { user } = useAuth();
   const params = useLocalSearchParams<{ tab?: string }>();
@@ -386,30 +405,40 @@ export default function TasksScreen() {
               </Text>
             ) : (
               <>
-                {/* Sprint switcher */}
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.filterRow}
-                >
-                  {sprints.map((sp) => {
-                    const active = sp.id === activeSprintId;
-                    return (
-                      <Pressable
-                        key={sp.id}
-                        style={[styles.filterChip, active && styles.filterChipActive]}
-                        onPress={() => setActiveSprintId(sp.id)}
-                      >
-                        <Text
-                          style={[styles.filterText, active && styles.filterTextActive]}
-                        >
-                          {sp.name}
-                          {sp.status === "active" ? " ●" : ""}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
+                {/* Active sprint header — mirrors the web TasksHeader:
+                    "🏃 Team — Sprint #N" + date range • days remaining. */}
+                {activeSprint ? (
+                  <View style={styles.sprintHeader}>
+                    <Text style={styles.sprintHeaderTitle}>
+                      🏃 {activeSprint.team_name || user?.team_name || "Team"} —{" "}
+                      {activeSprint.name}
+                    </Text>
+                    <Text style={styles.sprintHeaderSub}>
+                      {activeSprint.start_date && activeSprint.end_date
+                        ? `${activeSprint.start_date} → ${activeSprint.end_date}` +
+                          (activeSprint.status === "active"
+                            ? ` • ${sprintDaysLeft(activeSprint.end_date)}d remaining`
+                            : ` • ${activeSprint.status}`)
+                        : activeSprint.status}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {/* Sprint selector dropdown with active marker (like web) */}
+                {sprints.length > 1 ? (
+                  <Dropdown
+                    label="Sprint"
+                    value={activeSprintId}
+                    placeholder="Select a sprint"
+                    onChange={(v) =>
+                      setActiveSprintId(v == null ? null : Number(v))
+                    }
+                    options={sprints.map((sp) => ({
+                      value: sp.id,
+                      label: `${sp.name}${sp.status === "active" ? " (Active)" : ""}`,
+                    }))}
+                  />
+                ) : null}
 
                 {/* Sprint toolbar: Insights + Import from Backlog */}
                 {activeSprintId ? (
@@ -899,6 +928,8 @@ function TabButton({
   icon: React.ReactNode;
   label: string;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <Pressable
       style={[styles.tabBtn, active && styles.tabBtnActive]}
@@ -910,7 +941,8 @@ function TabButton({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { alignItems: "center", justifyContent: "center" },
   fab: {
@@ -1013,6 +1045,17 @@ const styles = StyleSheet.create({
   filterChipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
   filterText: { fontSize: 13, color: theme.textSecondary, fontWeight: "500" },
   filterTextActive: { color: "#fff", fontWeight: "600" },
+  sprintHeader: {
+    backgroundColor: theme.glass,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radius,
+    padding: 14,
+    gap: 4,
+    marginBottom: 8,
+  },
+  sprintHeaderTitle: { fontSize: 16, fontWeight: "800", color: theme.text },
+  sprintHeaderSub: { fontSize: 12, color: theme.textSecondary },
   sprintToolbar: { flexDirection: "row", gap: 8, marginBottom: 8 },
   toolbarBtn: {
     flexDirection: "row",

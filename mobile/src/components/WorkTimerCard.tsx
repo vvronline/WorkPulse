@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import Svg, { Circle } from "react-native-svg";
@@ -10,7 +10,8 @@ import {
   Play,
   Timer,
 } from "lucide-react-native";
-import { theme } from "../theme";
+import type { Theme } from "../theme";
+import { useTheme } from "../theme/ThemeProvider";
 import { formatTime, formatTimeSec } from "../utils/time";
 import {
   breakEnd,
@@ -27,13 +28,15 @@ import ClockInVerifyModal from "./ClockInVerifyModal";
 const RADIUS = 42;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
-function stateColor(state: WorkState) {
+function stateColor(theme: Theme, state: WorkState) {
   if (state === "on_floor") return theme.success;
   if (state === "on_break") return theme.warning;
   return theme.textMuted;
 }
 
 export default function WorkTimerCard() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const [status, setStatus] = useState<TrackerStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -152,7 +155,7 @@ export default function WorkTimerCard() {
   const breakCount = status?.breakCount ?? 0;
   const remainingMin = Math.max(0, targetMinutes - floorMinutes);
   const pct = Math.min(100, (floorMinutes / targetMinutes) * 100);
-  const ringColor = stateColor(state);
+  const ringColor = stateColor(theme, state);
   const offset = CIRCUMFERENCE * (1 - pct / 100);
 
   return (
@@ -367,7 +370,8 @@ export default function WorkTimerCard() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   card: {
     backgroundColor: theme.glass,
     borderWidth: 1,

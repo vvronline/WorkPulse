@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   RefreshControl,
@@ -8,7 +8,8 @@ import {
   View,
 } from "react-native";
 import { Stack, useLocalSearchParams } from "expo-router";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { TASK_PRIORITY, TASK_STATUS } from "../../src/constants";
 import {
   getSprintCycleTime,
@@ -35,6 +36,8 @@ function fmtDays(v: number | null | undefined): string {
 }
 
 export default function SprintInsights() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const params = useLocalSearchParams<{ sprint_id?: string }>();
   const [sprints, setSprints] = useState<Sprint[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(
@@ -290,6 +293,8 @@ function StatCard({
   sub?: string;
   kind?: "default" | "ok" | "warning" | "danger";
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const accent =
     kind === "warning"
       ? "#f59e0b"
@@ -307,7 +312,8 @@ function StatCard({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   container: { padding: 16, gap: 12, paddingBottom: 40 },
   subtitle: { color: theme.textMuted, fontSize: 13 },

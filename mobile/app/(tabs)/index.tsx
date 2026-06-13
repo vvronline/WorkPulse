@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -11,7 +11,8 @@ import {
 import { useFocusEffect } from "expo-router";
 import { useAuth } from "../../src/auth/AuthContext";
 import { socket } from "../../src/realtime/socket";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import WorkTimerCard from "../../src/components/WorkTimerCard";
 import TodayEventsCard from "../../src/components/TodayEventsCard";
 import TasksSummaryCard from "../../src/components/TasksSummaryCard";
@@ -53,6 +54,8 @@ function dayBounds(offsetDays = 0) {
 }
 
 export default function Dashboard() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { user } = useAuth();
   const [todayEvents, setTodayEvents] = useState<CalendarEvent[]>([]);
   const [tomorrowEvents, setTomorrowEvents] = useState<CalendarEvent[]>([]);
@@ -200,7 +203,8 @@ export default function Dashboard() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   container: { padding: 16, gap: 12, paddingBottom: 32 },
   greetingBanner: {

@@ -11,7 +11,8 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react-native";
-import { theme } from "../theme";
+import type { Theme } from "../theme";
+import { useTheme } from "../theme/ThemeProvider";
 
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 const MONTHS = [
@@ -80,6 +81,8 @@ export default function DatePicker({
   placeholder = "Select date",
   disabled,
 }: DatePickerProps) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [open, setOpen] = useState(false);
   const selected = useMemo(() => parseYMD(value), [value]);
   const [cursor, setCursor] = useState<Date>(
@@ -238,7 +241,8 @@ export default function DatePicker({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   field: {
     flexDirection: "row",
     alignItems: "center",

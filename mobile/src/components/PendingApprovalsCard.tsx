@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -8,7 +8,8 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Check, ClipboardCheck, X } from "lucide-react-native";
-import { theme } from "../theme";
+import type { Theme } from "../theme";
+import { useTheme } from "../theme/ThemeProvider";
 import {
   approveRequest,
   getApprovals,
@@ -17,6 +18,8 @@ import {
 } from "../features";
 
 export default function PendingApprovalsCard() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const [items, setItems] = useState<Approval[]>([]);
   const [loading, setLoading] = useState(true);
@@ -144,7 +147,8 @@ export default function PendingApprovalsCard() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   card: {
     backgroundColor: theme.glass,
     borderWidth: 1,

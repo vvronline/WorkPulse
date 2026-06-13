@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -21,7 +21,8 @@ import {
   type LucideIcon,
 } from "lucide-react-native";
 import { useAuth } from "../../src/auth/AuthContext";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { getTenantOverview, type TenantOverview } from "../../src/admin";
 
 type Section = {
@@ -45,6 +46,8 @@ const SECTIONS: Section[] = [
 const GROUP_ORDER = ["Overview", "Tenants", "Configuration", "Access", "Compliance"];
 
 export default function PlatformConsole() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const { user } = useAuth();
   const [overview, setOverview] = useState<TenantOverview | null>(null);
@@ -138,6 +141,8 @@ export default function PlatformConsole() {
 }
 
 function Stat({ value, label }: { value: React.ReactNode; label: string }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <View style={styles.stat}>
       <Text style={styles.statValue}>{value}</Text>
@@ -146,7 +151,8 @@ function Stat({ value, label }: { value: React.ReactNode; label: string }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { alignItems: "center", justifyContent: "center", gap: 12, padding: 32 },
   denied: {

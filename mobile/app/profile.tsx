@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -34,7 +34,8 @@ import {
   X,
 } from "lucide-react-native";
 import { useAuth } from "../src/auth/AuthContext";
-import { theme } from "../src/theme";
+import type { Theme } from "../src/theme";
+import { useTheme } from "../src/theme/ThemeProvider";
 import {
   changePassword,
   getFaceStatus,
@@ -97,6 +98,8 @@ function StatusGlyphIcon({ glyph, size = 9, color = "#fff" }: { glyph: StatusGly
 }
 
 function StatusDot({ meta, size = 14 }: { meta: StatusMetaEntry; size?: number }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const isRing = meta.glyph === "ring";
   return (
     <View
@@ -118,6 +121,8 @@ function StatusDot({ meta, size = 14 }: { meta: StatusMetaEntry; size?: number }
 }
 
 export default function Profile() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { user, logout, refreshUser } = useAuth();
   const router = useRouter();
   const { alert, confirm, dialog } = useDialog();
@@ -445,6 +450,8 @@ function StatusPickerModal({
   onPick: (key: ManualStatus) => void;
   onToggleInvisible: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <ModalShell title="Set status" visible={visible} onClose={onClose}>
       {PICKABLE.map((key) => {
@@ -493,6 +500,8 @@ function EditProfileModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { alert, dialog } = useDialog();
   const [name, setName] = useState(initialName);
   const [username, setUsername] = useState(initialUsername);
@@ -574,6 +583,8 @@ function ChangePasswordModal({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { alert, dialog } = useDialog();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
@@ -644,6 +655,8 @@ function NotificationSoundsModal({
   visible: boolean;
   onClose: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [prefs, setPrefs] = useState<NotificationPrefs>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -747,6 +760,8 @@ function ModalShell({
   onClose: () => void;
   children: React.ReactNode;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
@@ -764,7 +779,8 @@ function ModalShell({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   container: { padding: 16, gap: 10, paddingBottom: 32 },
   headerCard: {

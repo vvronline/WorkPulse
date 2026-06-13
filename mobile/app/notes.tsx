@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -11,12 +11,15 @@ import {
 } from "react-native";
 import { Stack } from "expo-router";
 import { Check } from "lucide-react-native";
-import { theme } from "../src/theme";
+import type { Theme } from "../src/theme";
+import { useTheme } from "../src/theme/ThemeProvider";
 import { getNotes, saveNotes, type Notebook } from "../src/features";
 
 const PAGE_ID = "mobile-daily";
 
 export default function NotesScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -114,7 +117,8 @@ export default function NotesScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { alignItems: "center", justifyContent: "center" },
   editor: {

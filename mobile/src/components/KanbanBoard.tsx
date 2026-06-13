@@ -23,7 +23,8 @@ import Animated, {
   useSharedValue,
   withSpring,
 } from "react-native-reanimated";
-import { theme } from "../theme";
+import type { Theme } from "../theme";
+import { useTheme } from "../theme/ThemeProvider";
 import { TASK_PRIORITY, TASK_STATUS } from "../constants";
 import {
   getAgileConfig,
@@ -57,6 +58,8 @@ export default function KanbanBoard({
   tasks: Task[];
   onChanged: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const [columns, setColumns] = useState<Col[]>(DEFAULT_COLUMNS);
   const [wipLimits, setWipLimits] = useState(false);
@@ -272,6 +275,8 @@ function DraggableCard({
   onDragMove: (absY: number) => void;
   onDrop: (absY: number) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const pr = TASK_PRIORITY[task.priority];
   // Issue key chip — falls back to "#id" when the ticket has no project key
   // (mirrors the web TaskCard). Tap to copy to the clipboard.
@@ -475,7 +480,8 @@ function DraggableCard({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   board: { gap: 14, paddingHorizontal: 16, paddingBottom: 16 },
   column: {
     backgroundColor: theme.bgSecondary,

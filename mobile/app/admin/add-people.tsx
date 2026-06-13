@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -13,7 +13,8 @@ import {
 import { Stack, useRouter } from "expo-router";
 import { UserPlus } from "lucide-react-native";
 import { useAuth } from "../../src/auth/AuthContext";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { Dropdown, type DropdownOption } from "../../src/components/Dropdown";
 import { ROLES, roleLabel, canManageRole } from "../../src/constants/roles";
 import {
@@ -27,6 +28,8 @@ import {
 } from "../../src/admin";
 
 export default function AddPeopleScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const { user: me } = useAuth();
   const kbInset = useKeyboardInset();
@@ -186,7 +189,8 @@ export default function AddPeopleScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   container: { padding: 16, gap: 8, paddingBottom: 48 },
   headerRow: {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -30,7 +30,8 @@ import {
   type LucideIcon,
 } from "lucide-react-native";
 import { useAuth, userHasFeature } from "../../src/auth/AuthContext";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { getRoleChangeRequests } from "../../src/admin";
 
 type Section = {
@@ -93,6 +94,8 @@ function isAllowed(
 }
 
 export default function AdminPanel() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const { user } = useAuth();
   const [badges, setBadges] = useState<Record<string, number>>({ roleRequests: 0 });
@@ -216,7 +219,8 @@ export default function AdminPanel() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { alignItems: "center", justifyContent: "center", gap: 12, padding: 32 },
   denied: {

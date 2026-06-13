@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { ClipboardList } from "lucide-react-native";
-import { theme } from "../theme";
+import type { Theme } from "../theme";
+import { useTheme } from "../theme/ThemeProvider";
 import { TASK_PRIORITY } from "../constants";
 import type { TaskSummary } from "../features";
 
@@ -19,6 +20,8 @@ export default function TasksSummaryCard({
 }: {
   taskSummary: TaskSummary | null;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const [slideIndex, setSlideIndex] = useState(0);
   const translateY = useRef(new Animated.Value(0)).current;
@@ -118,6 +121,8 @@ export default function TasksSummaryCard({
 }
 
 function Stat({ label, value, color }: { label: string; value: number; color: string }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <View style={styles.stat}>
       <Text style={[styles.statValue, { color }]}>{value}</Text>
@@ -126,7 +131,8 @@ function Stat({ label, value, color }: { label: string; value: number; color: st
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   card: {
     backgroundColor: theme.glass,
     borderWidth: 1,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -10,7 +10,8 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { CalendarOff, Plus } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { leaveStatusMeta, leaveTypeMeta } from "../../src/constants";
 import {
   getLeaveBalance,
@@ -30,6 +31,8 @@ function fmtDate(d: string) {
 }
 
 export default function LeavesScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const [balances, setBalances] = useState<LeaveBalance[]>([]);
   const [leaves, setLeaves] = useState<Leave[]>([]);
@@ -153,7 +156,8 @@ export default function LeavesScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { alignItems: "center", justifyContent: "center" },
   container: { padding: 16, gap: 14, paddingBottom: 32 },

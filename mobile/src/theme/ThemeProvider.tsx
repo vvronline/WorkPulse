@@ -1,0 +1,115 @@
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import * as SecureStore from "expo-secure-store";
+import {
+  DEFAULT_ACCENT,
+  isValidHex,
+  makeTheme,
+  type Theme,
+} from "../theme";
+import { useAuth } from "../auth/AuthContext";
+import { getBranding } from "../admin";
+
+/**
+ * ThemeProvider — fetches the tenant's accent colour and broadcasts a reactive
+ * theme object derived from it (mirrors the web client's BrandingContext).
+ *
+ * The accent is cached in SecureStore so the themed UI shows instantly on the
+ * next launch before the network resolves. On logout we reset to the default
+ * accent.
+ */
+
+const ACCENT_CACHE_KEY = "wp_brand_accent";
+
+interface ThemeContextValue {
+  theme: Theme;
+  accent: string;
+  refreshBranding: () => Promise<void>;
+  setAccent: (hex: string) => void;
+}
+
+const ThemeContext = createContext<ThemeContextValue>({
+  theme: makeTheme(DEFAULT_ACCENT),
+  accent: DEFAULT_ACCENT,
+  refreshBranding: async () => {},
+  setAccent: () => {},
+});
+
+export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  const [accent, setAccentState] = useState<string>(DEFAULT_ACCENT);
+  const fetchedForUser = useRef<number | string | null>(null);
+
+  // Hydrate the cached accent immediately so the UI doesn't flash the default.
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const cached = await SecureStore.getItemAsync(ACCENT_CACHE_KEY);
+        if (active && cached && isValidHex(cached)) {
+          setAccentState(cached);
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const applyAccent = useCallback((hex: string) => {
+    const next = isValidHex(hex) ? hex : DEFAULT_ACCENT;
+    setAccentState(next);
+    void SecureStore.setItemAsync(ACCENT_CACHE_KEY, next).catch(() => {});
+  }, []);
+
+  const refreshBranding = useCallback(async () => {
+    try {
+      const { data } = await getBranding();
+      applyAccent(data?.accent_color || DEFAULT_ACCENT);
+    } catch {
+      /* keep current accent on failure */
+    }
+  }, [applyAccent]);
+
+  // Fetch branding when a user signs in; reset to default on logout.
+  useEffect(() => {
+    if (!user?.id) {
+      fetchedForUser.current = null;
+      applyAccent(DEFAULT_ACCENT);
+      return;
+    }
+    if (fetchedForUser.current === user.id) return;
+    fetchedForUser.current = user.id;
+    void refreshBranding();
+  }, [user?.id, refreshBranding, applyAccent]);
+
+  const theme = useMemo(() => makeTheme(accent), [accent]);
+
+  const value = useMemo<ThemeContextValue>(
+    () => ({ theme, accent, refreshBranding, setAccent: applyAccent }),
+    [theme, accent, refreshBranding, applyAccent],
+  );
+
+  return (
+    <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
+  );
+}
+
+/** Reactive theme hook — returns the live, accent-derived theme object. */
+export function useTheme(): Theme {
+  return useContext(ThemeContext).theme;
+}
+
+/** Full branding context (theme + accent + refresh/setters). */
+export function useBranding(): ThemeContextValue {
+  return useContext(ThemeContext);
+}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -14,7 +14,8 @@ import {
 } from "react-native";
 import { Stack } from "expo-router";
 import { Pencil, Plus, Trash2, UsersRound, X } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { useKeyboardInset } from "../../src/hooks/useKeyboardInset";
 import { useAuth } from "../../src/auth/AuthContext";
 import { Dropdown, type DropdownOption } from "../../src/components/Dropdown";
@@ -28,6 +29,8 @@ import {
 } from "../../src/admin";
 
 export default function TeamsScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const kbInset = useKeyboardInset();
   const { user } = useAuth();
   // Platform admins are not scoped to a single org server-side, so the
@@ -256,7 +259,8 @@ export default function TeamsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   list: { padding: 16, gap: 10, paddingBottom: 90 },

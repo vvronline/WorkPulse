@@ -44,7 +44,8 @@ import {
   Video as VideoIcon,
   X as XIcon,
 } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { uploadUrl } from "../../src/config";
 import VoicePlayer from "../../src/components/VoicePlayer";
 import { useAuth } from "../../src/auth/AuthContext";
@@ -188,6 +189,8 @@ function MsgTicks({
   readReceipts: Record<number, string>;
   userId?: number;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   if (!mine) return null;
   if (msg._pending || msg.id < 0) {
     return <Text style={styles.tickSent}>○</Text>;
@@ -215,6 +218,8 @@ function MsgTicks({
 }
 
 export default function ChatThread() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const params = useLocalSearchParams<{
     id: string;
     name?: string;
@@ -1974,7 +1979,8 @@ export default function ChatThread() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   headerActions: { flexDirection: "row", gap: 18, alignItems: "center" },

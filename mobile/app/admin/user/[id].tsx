@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -21,7 +21,8 @@ import {
   UserCog,
 } from "lucide-react-native";
 import { useAuth } from "../../../src/auth/AuthContext";
-import { theme } from "../../../src/theme";
+import type { Theme } from "../../../src/theme";
+import { useTheme } from "../../../src/theme/ThemeProvider";
 import { uploadUrl } from "../../../src/config";
 import { Dropdown, type DropdownOption } from "../../../src/components/Dropdown";
 import {
@@ -55,6 +56,8 @@ function initials(name?: string) {
 }
 
 export default function AdminUserDetail() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { user: me } = useAuth();
@@ -544,7 +547,8 @@ export default function AdminUserDetail() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { alignItems: "center", justifyContent: "center" },
   container: { padding: 16, gap: 16, paddingBottom: 48 },

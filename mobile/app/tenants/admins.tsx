@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -22,7 +22,8 @@ import {
   UserCheck,
   X,
 } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { useAuth } from "../../src/auth/AuthContext";
 import { useKeyboardInset } from "../../src/hooks/useKeyboardInset";
 import { PromptModal } from "../../src/components/PromptModal";
@@ -35,6 +36,8 @@ import {
 } from "../../src/admin";
 
 export default function PlatformAdminsScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const kbInset = useKeyboardInset();
   const { user } = useAuth();
   const [admins, setAdmins] = useState<PlatformUser[]>([]);
@@ -298,7 +301,8 @@ export default function PlatformAdminsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   list: { padding: 16, gap: 10, paddingBottom: 90 },

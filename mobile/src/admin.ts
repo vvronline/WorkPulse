@@ -1187,6 +1187,96 @@ export function getAgilePermissions() {
   }>("/agile/permissions/me");
 }
 
+/* ───────────────────────── Admin: Task Labels ───────────────────────── */
+
+export type TaskLabelManage = {
+  id: number;
+  name: string;
+  color: string;
+  created_by_username?: string | null;
+  [k: string]: unknown;
+};
+
+/** Full label list with management metadata (mirrors web getTaskLabelsManage). */
+export function getTaskLabelsManage() {
+  return api.get<TaskLabelManage[]>("/tasks/labels/manage");
+}
+
+export function createTaskLabel(data: { name: string; color: string }) {
+  return api.post<TaskLabelManage>("/tasks/labels", data);
+}
+
+export function updateTaskLabel(
+  id: number | string,
+  data: { name?: string; color?: string },
+) {
+  return api.put<TaskLabelManage>(`/tasks/labels/${id}`, data);
+}
+
+export function deleteTaskLabel(id: number | string) {
+  return api.delete(`/tasks/labels/${id}`);
+}
+
+/* ───────────────────────── Admin: Custom Fields ───────────────────────── */
+
+export type CustomFieldOption = {
+  value: string;
+  label: string;
+};
+
+export type CustomFieldDef = {
+  id: number;
+  key?: string;
+  label: string;
+  field_type:
+    | "text"
+    | "number"
+    | "date"
+    | "select"
+    | "multiselect"
+    | "checkbox"
+    | "url"
+    | string;
+  description?: string | null;
+  is_required?: boolean;
+  show_on_card?: boolean;
+  is_active?: boolean;
+  options?: CustomFieldOption[] | null;
+  applies_to_types?: (number | string)[] | null;
+  [k: string]: unknown;
+};
+
+export type CustomFieldPayload = {
+  label: string;
+  field_type: string;
+  description?: string | null;
+  is_required?: boolean;
+  show_on_card?: boolean;
+  is_active?: boolean;
+  options?: CustomFieldOption[];
+  applies_to_types?: (number | string)[];
+};
+
+/** All custom field definitions incl. inactive (admin view). */
+export function getCustomFieldsAll() {
+  return api.get<CustomFieldDef[]>("/custom-fields/all");
+}
+
+export function createCustomField(data: CustomFieldPayload) {
+  return api.post<CustomFieldDef>("/custom-fields", data);
+}
+
+export function updateCustomField(
+  id: number | string,
+  data: Partial<CustomFieldPayload>,
+) {
+  return api.put<CustomFieldDef>(`/custom-fields/${id}`, data);
+}
+
+export function deleteCustomField(id: number | string) {
+  return api.delete(`/custom-fields/${id}`);
+}
+
 /* ───────────────────────── Admin: Integrations ───────────────────────── */
 
 export type Integration = {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -12,7 +12,8 @@ import {
 } from "react-native";
 import { Stack } from "expo-router";
 import { CheckCircle2, Users, XCircle } from "lucide-react-native";
-import { theme } from "../src/theme";
+import type { Theme } from "../src/theme";
+import { useTheme } from "../src/theme/ThemeProvider";
 import { uploadUrl } from "../src/config";
 import { formatTime } from "../src/utils/time";
 import {
@@ -47,6 +48,8 @@ function initials(name?: string) {
 }
 
 export default function TeamScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [tab, setTab] = useState<Tab>("attendance");
 
   return (
@@ -83,6 +86,8 @@ export default function TeamScreen() {
 }
 
 function AttendanceTab() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -171,6 +176,8 @@ function AttendanceTab() {
 }
 
 function ApprovalsTab() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [items, setItems] = useState<Approval[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -312,7 +319,8 @@ function ApprovalsTab() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   tabRow: {

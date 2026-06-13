@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -8,7 +8,8 @@ import {
 } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { AlertTriangle } from "lucide-react-native";
-import { theme } from "../theme";
+import type { Theme } from "../theme";
+import { useTheme } from "../theme/ThemeProvider";
 
 /**
  * FaceCaptureWebView
@@ -52,7 +53,11 @@ const FACEAPI_VERSION = "1.7.15";
 const FACEAPI_CDN = `https://cdn.jsdelivr.net/npm/@vladmandic/face-api@${FACEAPI_VERSION}/dist/face-api.js`;
 const MODEL_URL = `https://cdn.jsdelivr.net/npm/@vladmandic/face-api@${FACEAPI_VERSION}/model`;
 
-function buildHtml(captureLabel: string, capturingLabel: string): string {
+function buildHtml(
+  theme: Theme,
+  captureLabel: string,
+  capturingLabel: string,
+): string {
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -215,11 +220,13 @@ export default function FaceCaptureWebView({
   onError,
   disabled,
 }: Props) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const webRef = useRef<WebView>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const html = buildHtml(captureLabel, capturingLabel);
+  const html = buildHtml(theme, captureLabel, capturingLabel);
 
   // `onPermissionRequest` is an Android-only prop not present in the shipped
   // type defs — pass it through an untyped object spread.
@@ -291,7 +298,8 @@ export default function FaceCaptureWebView({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   container: {
     width: "100%",
     height: 440,

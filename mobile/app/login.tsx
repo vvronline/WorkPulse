@@ -1,5 +1,5 @@
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -15,11 +15,14 @@ import {
 import { AxiosError } from "axios";
 import { ShieldCheck, ArrowRight, Eye, EyeOff } from "lucide-react-native";
 import { useAuth } from "../src/auth/AuthContext";
-import { theme } from "../src/theme";
+import type { Theme } from "../src/theme";
+import { useTheme } from "../src/theme/ThemeProvider";
 
 export default function LoginScreen() {
   const { login } = useAuth();
   const router = useRouter();
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -151,7 +154,8 @@ export default function LoginScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.bg },
   scroll: {
     flexGrow: 1,

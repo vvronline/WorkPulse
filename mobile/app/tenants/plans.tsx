@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -20,7 +20,8 @@ import {
   Save,
   Trash2,
 } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import {
   getPlanCatalog,
   resetPlanCatalog,
@@ -34,6 +35,8 @@ import {
  * save all, and reset to defaults.
  */
 export default function PlansScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [plans, setPlans] = useState<Record<string, PlanDef>>({});
   const [featureLabels, setFeatureLabels] = useState<Record<string, string>>({});
   const [featureKeys, setFeatureKeys] = useState<string[]>([]);
@@ -349,7 +352,8 @@ export default function PlansScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   list: { padding: 16, gap: 12, paddingBottom: 60 },

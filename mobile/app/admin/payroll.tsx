@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -14,7 +14,8 @@ import {
 } from "react-native";
 import { Stack } from "expo-router";
 import { DollarSign, Lock, Plus, Trash2, X } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { useKeyboardInset } from "../../src/hooks/useKeyboardInset";
 import DatePicker from "../../src/components/DatePicker";
 import {
@@ -43,6 +44,8 @@ function fmtDate(d?: string) {
 }
 
 export default function PayrollScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const kbInset = useKeyboardInset();
   const [items, setItems] = useState<PayPeriod[]>([]);
   const [loading, setLoading] = useState(true);
@@ -254,7 +257,8 @@ export default function PayrollScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   list: { padding: 16, gap: 10, paddingBottom: 90 },

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   KeyboardAvoidingView,
   Modal,
@@ -9,7 +9,8 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { theme } from "../theme";
+import type { Theme } from "../theme";
+import { useTheme } from "../theme/ThemeProvider";
 
 export type PromptField = {
   key: string;
@@ -51,6 +52,8 @@ export function PromptModal({
   onCancel,
   onSubmit,
 }: Props) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [values, setValues] = useState<Record<string, string>>({});
 
   // Reset values each time the modal opens.
@@ -130,7 +133,8 @@ export function PromptModal({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   overlay: { flex: 1, justifyContent: "flex-end" },
   scrim: {
     position: "absolute",

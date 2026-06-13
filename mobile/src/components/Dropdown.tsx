@@ -8,7 +8,8 @@ import {
   View,
 } from "react-native";
 import { Check, ChevronDown, X } from "lucide-react-native";
-import { theme } from "../theme";
+import type { Theme } from "../theme";
+import { useTheme } from "../theme/ThemeProvider";
 
 export type DropdownOption = {
   value: string | number | null;
@@ -35,6 +36,8 @@ export function Dropdown({
   onChange: (value: string | number | null) => void;
   placeholder?: string;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [open, setOpen] = useState(false);
   const selected = useMemo(
     () => options.find((o) => String(o.value) === String(value)),
@@ -126,6 +129,8 @@ export function MultiDropdown({
   onChange: (values: (string | number)[]) => void;
   placeholder?: string;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [open, setOpen] = useState(false);
   const selectedOpts = useMemo(
     () => options.filter((o) => values.some((v) => String(v) === String(o.value))),
@@ -211,7 +216,8 @@ export function MultiDropdown({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   field: {
     flexDirection: "row",
     alignItems: "center",

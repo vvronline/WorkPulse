@@ -19,7 +19,8 @@ import {
   Users,
   X,
 } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { uploadUrl } from "../../src/config";
 import { roleLabel } from "../../src/constants/roles";
 import {
@@ -36,6 +37,8 @@ function initials(name?: string) {
 }
 
 function MemberChip({ m }: { m: OrgChartNode }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const avatar = uploadUrl(m.avatar);
   return (
     <View style={styles.chip}>
@@ -67,6 +70,8 @@ function DeptCard({
   teams: OrgChartTeam[];
   members: OrgChartNode[];
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [open, setOpen] = useState(true);
   const deptTeams = teams.filter((t) => t.department_id === dept.id);
   const deptDirectMembers = members.filter(
@@ -160,6 +165,8 @@ function TreeRow({
   childrenMap: Map<number | string, OrgChartNode[]>;
   depth: number;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [open, setOpen] = useState(depth < 2);
   const children = childrenMap.get(member.id) || [];
   const hasChildren = children.length > 0;
@@ -223,6 +230,8 @@ function TreeRow({
 }
 
 export default function OrgChartScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [departments, setDepartments] = useState<OrgChartDepartment[]>([]);
   const [teams, setTeams] = useState<OrgChartTeam[]>([]);
   const [members, setMembers] = useState<OrgChartNode[]>([]);
@@ -470,7 +479,8 @@ export default function OrgChartScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
   list: { padding: 16, gap: 12, paddingBottom: 40 },

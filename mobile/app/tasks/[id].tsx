@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -22,22 +22,34 @@ import {
   Trash2,
   X,
 } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { taskStatusMeta, TASK_STATUS, TASK_PRIORITY } from "../../src/constants";
+import { Dropdown, MultiDropdown } from "../../src/components/Dropdown";
+import DatePicker from "../../src/components/DatePicker";
+import StoryPointPicker from "../../src/components/StoryPointPicker";
 import {
   addTaskComment,
   deleteTask,
+  getAgileConfig,
+  getAssignableUsers,
+  getAvailableSprints,
   getTaskDetail,
   getTaskHistory,
+  getTaskLabels,
   scheduleTask,
   unscheduleTask,
   updateTaskFull,
   updateTaskStatus,
+  type AssignableUser,
+  type Sprint,
   type Task,
   type TaskComment,
   type TaskHistoryEntry,
+  type TaskLabel,
   type TaskPriority,
   type TaskStatus,
+  type WorkItemType,
 } from "../../src/features";
 import {
   useKeyboardInset,
@@ -58,26 +70,54 @@ function timeAgo(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+// Format a story-point value for display: 1.00 → "1", 0.50 → "0.5",
+// "S"/"M"/"L" → unchanged.
+function formatPoints(value: number | string | null | undefined): string {
+  if (value == null || value === "") return "";
+  const num = typeof value === "number" ? value : parseFloat(value);
+  if (Number.isNaN(num)) return String(value);
+  if (Number.isInteger(num)) return String(num);
+  return num.toFixed(2).replace(/\.?0+$/, "");
+}
+
 export default function TaskDetail() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { id, focus } = useLocalSearchParams<{ id: string; focus?: string }>();
   const taskId = Number(id);
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const kbInset = useKeyboardInset();
 
-  const [task, setTask] = useState<(Task & { comments?: TaskComment[] }) | null>(null);
+  const [task, setTask] = useState<
+    (Task & { comments?: TaskComment[] }) | null
+  >(null);
   const [comments, setComments] = useState<TaskComment[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<TaskPriority>("medium");
+  // Extended edit fields (mirror the web TaskDetailModal edit mode).
+  const [assignedTo, setAssignedTo] = useState<number | null>(null);
+  const [dueDate, setDueDate] = useState("");
+  const [sprintId, setSprintId] = useState<number | null>(null);
+  const [selectedLabels, setSelectedLabels] = useState<number[]>([]);
+  const [workItemType, setWorkItemType] = useState<string | number | null>(null);
+  const [storyPoints, setStoryPoints] = useState<number | string | null>(null);
   const [saving, setSaving] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [posting, setPosting] = useState(false);
   const [detailTab, setDetailTab] = useState<"comments" | "history">("comments");
   const [history, setHistory] = useState<TaskHistoryEntry[]>([]);
   const [scheduling, setScheduling] = useState(false);
+
+  // Reference data for the edit form (loaded once on first edit).
+  const [users, setUsers] = useState<AssignableUser[]>([]);
+  const [labels, setLabels] = useState<TaskLabel[]>([]);
+  const [sprints, setSprints] = useState<Sprint[]>([]);
+  const [workItemTypes, setWorkItemTypes] = useState<WorkItemType[]>([]);
+  const [refLoaded, setRefLoaded] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -87,6 +127,12 @@ export default function TaskDetail() {
       setTitle(data.title);
       setDescription(data.description || "");
       setPriority(data.priority);
+      setAssignedTo(data.assigned_to ?? null);
+      setDueDate(data.due_date || "");
+      setSprintId(data.sprint_id ?? null);
+      setSelectedLabels((data.labels || []).map((l) => l.id));
+      setWorkItemType(data.work_item_type_id ?? null);
+      setStoryPoints(data.story_points ?? null);
     } catch {
       Alert.alert("Error", "Failed to load task");
     } finally {
@@ -97,6 +143,26 @@ export default function TaskDetail() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Load reference data (users / labels / sprints / types) up front so the
+  // read-only view can resolve sprint + work-item-type names and the edit form
+  // is ready instantly. Cheap, cached endpoints — mirrors the web TaskContext.
+  useEffect(() => {
+    if (refLoaded) return;
+    getAssignableUsers()
+      .then((r) => setUsers(r.data || []))
+      .catch(() => {});
+    getTaskLabels()
+      .then((r) => setLabels(r.data || []))
+      .catch(() => {});
+    getAvailableSprints()
+      .then((r) => setSprints(r.data || []))
+      .catch(() => {});
+    getAgileConfig()
+      .then((r) => setWorkItemTypes((r.data.workItemTypes || []).filter(Boolean)))
+      .catch(() => {});
+    setRefLoaded(true);
+  }, [refLoaded]);
 
   // When deep-linked from a Kanban card's "Add comment" button, default the
   // detail view to the Comments tab.
@@ -110,6 +176,27 @@ export default function TaskDetail() {
       .then((r) => setHistory(r.data || []))
       .catch(() => setHistory([]));
   }, [detailTab, taskId]);
+
+  // Reference data is loaded on mount; entering edit mode just flips the flag.
+  const startEdit = useCallback(() => {
+    setEditing(true);
+  }, []);
+
+  // Reset edit fields back to the loaded task and exit edit mode.
+  function cancelEdit() {
+    if (task) {
+      setTitle(task.title);
+      setDescription(task.description || "");
+      setPriority(task.priority);
+      setAssignedTo(task.assigned_to ?? null);
+      setDueDate(task.due_date || "");
+      setSprintId(task.sprint_id ?? null);
+      setSelectedLabels((task.labels || []).map((l) => l.id));
+      setWorkItemType(task.work_item_type_id ?? null);
+      setStoryPoints(task.story_points ?? null);
+    }
+    setEditing(false);
+  }
 
   async function handleSchedule() {
     // Schedule to today by default; web uses a date picker — mobile keeps it
@@ -155,6 +242,12 @@ export default function TaskDetail() {
         title: title.trim(),
         description: description.trim(),
         priority,
+        assigned_to: assignedTo,
+        due_date: /^\d{4}-\d{2}-\d{2}$/.test(dueDate) ? dueDate : null,
+        sprint_id: sprintId,
+        label_ids: selectedLabels,
+        story_points: storyPoints,
+        work_item_type_id: workItemType,
       });
       setEditing(false);
       load();
@@ -227,6 +320,18 @@ export default function TaskDetail() {
   }
 
   const st = taskStatusMeta(task.status);
+  const sprintName =
+    task.sprint_id != null
+      ? sprints.find((s) => s.id === task.sprint_id)?.name ||
+        `Sprint #${task.sprint_id}`
+      : null;
+  const typeName =
+    task.work_item_type_id != null
+      ? workItemTypes.find(
+          (t) => String(t.id || t.key) === String(task.work_item_type_id),
+        )?.name || null
+      : null;
+  const pointsDisplay = formatPoints(task.story_points);
 
   return (
     <View style={styles.screen}>
@@ -235,7 +340,10 @@ export default function TaskDetail() {
           title: task.issue_key || "Task",
           headerRight: () => (
             <View style={styles.headerActions}>
-              <Pressable onPress={() => setEditing((v) => !v)} hitSlop={8}>
+              <Pressable
+                onPress={() => (editing ? cancelEdit() : startEdit())}
+                hitSlop={8}
+              >
                 {editing ? (
                   <X size={20} color={theme.textSecondary} />
                 ) : (
@@ -294,6 +402,98 @@ export default function TaskDetail() {
                   );
                 })}
               </View>
+
+              {/* Assignee */}
+              <Text style={styles.label}>Assignee</Text>
+              <Dropdown
+                label="Assignee"
+                value={assignedTo}
+                placeholder="Unassigned"
+                onChange={(v) => setAssignedTo(v == null ? null : Number(v))}
+                options={[
+                  { value: null, label: "Unassigned" },
+                  ...users.map((u) => ({ value: u.id, label: u.full_name })),
+                ]}
+              />
+
+              {/* Labels */}
+              {labels.length > 0 ? (
+                <>
+                  <Text style={styles.label}>Labels</Text>
+                  <MultiDropdown
+                    label="Labels"
+                    values={selectedLabels}
+                    placeholder="No labels"
+                    onChange={(vals) =>
+                      setSelectedLabels(vals.map((v) => Number(v)))
+                    }
+                    options={labels.map((l) => ({
+                      value: l.id,
+                      label: l.name,
+                      color: l.color || theme.primary,
+                    }))}
+                  />
+                </>
+              ) : null}
+
+              {/* Sprint */}
+              {sprints.length > 0 ? (
+                <>
+                  <Text style={styles.label}>Sprint</Text>
+                  <Dropdown
+                    label="Sprint"
+                    value={sprintId}
+                    placeholder="Backlog (no sprint)"
+                    onChange={(v) => {
+                      const sid = v == null ? null : Number(v);
+                      setSprintId(sid);
+                      if (!sid) {
+                        setDueDate("");
+                      } else {
+                        const sp = sprints.find((s) => s.id === sid);
+                        if (sp?.end_date) setDueDate(sp.end_date);
+                      }
+                    }}
+                    options={[
+                      { value: null, label: "Backlog (no sprint)" },
+                      ...sprints.map((sp) => ({
+                        value: sp.id,
+                        label: sp.name + (sp.status === "active" ? " ●" : ""),
+                      })),
+                    ]}
+                  />
+                </>
+              ) : null}
+
+              {/* Type */}
+              {workItemTypes.length > 0 ? (
+                <>
+                  <Text style={styles.label}>Type</Text>
+                  <Dropdown
+                    label="Type"
+                    value={workItemType}
+                    placeholder="— Type —"
+                    onChange={(v) => setWorkItemType(v)}
+                    options={[
+                      { value: null, label: "— Type —" },
+                      ...workItemTypes.map((t) => ({
+                        value: t.id || t.key,
+                        label: t.name,
+                        color: t.color,
+                      })),
+                    ]}
+                  />
+                </>
+              ) : null}
+
+              {/* Story points */}
+              <Text style={styles.label}>Story Points</Text>
+              <StoryPointPicker value={storyPoints} onChange={setStoryPoints} />
+
+              {/* Due date */}
+              <Text style={styles.label}>Due Date</Text>
+              <DatePicker value={dueDate} onChange={setDueDate} />
+
               <Pressable
                 style={[styles.saveBtn, saving && styles.disabled]}
                 onPress={saveEdits}
@@ -324,12 +524,77 @@ export default function TaskDetail() {
                     {TASK_PRIORITY[task.priority]?.label} priority
                   </Text>
                 </View>
+                {pointsDisplay ? (
+                  <View style={styles.pointBadge}>
+                    <Text style={styles.pointBadgeText}>{pointsDisplay}</Text>
+                  </View>
+                ) : null}
+                {task.is_blocked ? (
+                  <View style={styles.blockerBadge}>
+                    <Text style={styles.blockerText}>⛔ Blocked</Text>
+                  </View>
+                ) : null}
               </View>
+
+              {/* Labels */}
+              {task.labels && task.labels.length > 0 ? (
+                <View style={styles.labelRow}>
+                  {task.labels.map((l) => (
+                    <View
+                      key={l.id}
+                      style={[
+                        styles.labelPill,
+                        { backgroundColor: (l.color || theme.primary) + "22" },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.labelPillText,
+                          { color: l.color || theme.primaryLight },
+                        ]}
+                      >
+                        {l.name}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+
               {task.description ? (
                 <Text style={styles.description}>{task.description}</Text>
               ) : (
                 <Text style={styles.noDesc}>No description</Text>
               )}
+
+              {/* Details grid */}
+              <View style={styles.detailGrid}>
+                {task.assignee ? (
+                  <View style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>Assigned to</Text>
+                    <Text style={styles.detailValue}>
+                      {task.assignee.full_name || task.assignee.username}
+                    </Text>
+                  </View>
+                ) : null}
+                {typeName ? (
+                  <View style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>Type</Text>
+                    <Text style={styles.detailValue}>{typeName}</Text>
+                  </View>
+                ) : null}
+                {pointsDisplay ? (
+                  <View style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>Story points</Text>
+                    <Text style={styles.detailValue}>{pointsDisplay}</Text>
+                  </View>
+                ) : null}
+                {sprintName ? (
+                  <View style={styles.detailItem}>
+                    <Text style={styles.detailLabel}>Sprint</Text>
+                    <Text style={styles.detailValue}>{sprintName}</Text>
+                  </View>
+                ) : null}
+              </View>
 
               {/* Status workflow */}
               <Text style={styles.sectionTitle}>Status</Text>
@@ -500,7 +765,8 @@ export default function TaskDetail() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { alignItems: "center", justifyContent: "center" },
   container: { padding: 16, gap: 10, paddingBottom: 24 },
@@ -512,6 +778,51 @@ const styles = StyleSheet.create({
   priorityChip: { flexDirection: "row", alignItems: "center", gap: 6 },
   dot: { width: 9, height: 9, borderRadius: 4.5 },
   priorityText: { fontSize: 13, color: theme.textSecondary },
+  pointBadge: {
+    backgroundColor: theme.primaryGlow,
+    borderRadius: theme.radiusSm,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  pointBadgeText: { fontSize: 12, fontWeight: "700", color: theme.primaryLight },
+  blockerBadge: {
+    backgroundColor: "rgba(224, 62, 62, 0.15)",
+    borderRadius: theme.radiusSm,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  blockerText: { fontSize: 12, fontWeight: "700", color: theme.danger },
+  labelRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  labelPill: {
+    borderRadius: theme.radiusSm,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+  },
+  labelPillText: { fontSize: 12, fontWeight: "600" },
+  detailGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+    marginTop: 4,
+  },
+  detailItem: {
+    minWidth: "44%",
+    backgroundColor: theme.glass,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radius,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 2,
+  },
+  detailLabel: {
+    fontSize: 10,
+    color: theme.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    fontWeight: "600",
+  },
+  detailValue: { fontSize: 14, color: theme.text, fontWeight: "600" },
   dueText: { fontSize: 14, color: theme.text },
   scheduleRow: { flexDirection: "row", gap: 8 },
   scheduleBtn: {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -11,7 +11,8 @@ import {
 } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import { Building2, Pause, Play, Search, Trash2, X } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { PromptModal } from "../../src/components/PromptModal";
 import {
   deleteTenant,
@@ -30,7 +31,7 @@ const STATUS_FILTERS = [
   { key: "deleted", label: "Deleted" },
 ];
 
-function statusColor(status?: string): string {
+function statusColor(theme: Theme, status?: string): string {
   if (status === "suspended") return theme.warning;
   if (status === "deleted") return theme.danger;
   return theme.success;
@@ -42,6 +43,8 @@ type ConfirmAction = {
 };
 
 export default function TenantListScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [overview, setOverview] = useState<TenantOverview | null>(null);
@@ -221,13 +224,13 @@ export default function TenantListScreen() {
                 <View
                   style={[
                     styles.statusPill,
-                    { backgroundColor: statusColor(item.status) + "22" },
+                    { backgroundColor: statusColor(theme, item.status) + "22" },
                   ]}
                 >
                   <Text
                     style={[
                       styles.statusText,
-                      { color: statusColor(item.status) },
+                      { color: statusColor(theme, item.status) },
                     ]}
                   >
                     {item.status || "active"}
@@ -326,7 +329,8 @@ export default function TenantListScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   searchBar: {

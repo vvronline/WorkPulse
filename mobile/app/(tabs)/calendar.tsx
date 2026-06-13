@@ -20,7 +20,8 @@ import {
   Video,
   X,
 } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { useAuth, userHasFeature } from "../../src/auth/AuthContext";
 import {
   checkMeetingConflicts,
@@ -73,6 +74,8 @@ function buildMonthGrid(cursor: Date): Date[] {
 }
 
 export default function CalendarScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [view, setView] = useState<"month" | "week" | "day">("month");
   const [cursor, setCursor] = useState(new Date());
   const [selected, setSelected] = useState(ymd(new Date()));
@@ -343,6 +346,8 @@ function MonthView({
   todayKey: string;
   onSelect: (key: string) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <>
       <View style={styles.weekRow}>
@@ -413,6 +418,8 @@ function WeekView({
   onSelect: (key: string) => void;
   onEvent: (ev: CalendarEvent) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <View style={{ gap: 10 }}>
       {/* Day selector strip */}
@@ -472,6 +479,7 @@ function DayView({
   dayEvents: CalendarEvent[];
   onEvent: (ev: CalendarEvent) => void;
 }) {
+  // eslint-disable-next-line react-hooks/rules-of-hooks
   return <HourlyGrid dayEvents={dayEvents} onEvent={onEvent} />;
 }
 
@@ -483,6 +491,8 @@ function HourlyGrid({
   dayEvents: CalendarEvent[];
   onEvent: (ev: CalendarEvent) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const byHour: Record<number, CalendarEvent[]> = {};
   for (const ev of dayEvents) {
     const h = ev.all_day ? -1 : new Date(ev.start_time).getHours();
@@ -574,6 +584,8 @@ function EventModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { user } = useAuth();
   const meetingsEnabled = userHasFeature(user, "meetings");
   const [title, setTitle] = useState("");
@@ -1259,7 +1271,8 @@ function EventModal({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   scroll: { padding: 16, paddingBottom: 100 },
   monthHeader: {

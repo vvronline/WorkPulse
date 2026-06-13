@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -18,7 +18,8 @@ import {
   TrendingUp,
   Users,
 } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import {
   getTenantAlerts,
   getTenantOverview,
@@ -39,11 +40,13 @@ function alertLabel(type: string): string {
   }
 }
 
-function alertColor(type: string): string {
+function alertColor(theme: Theme, type: string): string {
   return type === "no_active_super_admin" ? theme.danger : theme.warning;
 }
 
 export default function PlatformDashboardScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const [overview, setOverview] = useState<TenantOverview | null>(null);
   const [alerts, setAlerts] = useState<TenantAlert[]>([]);
@@ -151,11 +154,11 @@ export default function PlatformDashboardScreen() {
               <View
                 style={[
                   styles.alertPill,
-                  { backgroundColor: alertColor(a.alert_type) + "22" },
+                  { backgroundColor: alertColor(theme, a.alert_type) + "22" },
                 ]}
               >
                 <Text
-                  style={[styles.alertPillText, { color: alertColor(a.alert_type) }]}
+                  style={[styles.alertPillText, { color: alertColor(theme, a.alert_type) }]}
                 >
                   {alertLabel(a.alert_type)}
                 </Text>
@@ -297,6 +300,8 @@ function StatTile({
   value: React.ReactNode;
   label: string;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <View style={styles.statTile}>
       {icon}
@@ -306,7 +311,8 @@ function StatTile({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { alignItems: "center", justifyContent: "center" },
   container: { padding: 16, gap: 12, paddingBottom: 40 },

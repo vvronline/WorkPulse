@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -8,7 +8,8 @@ import {
   View,
 } from "react-native";
 import { Stack } from "expo-router";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { getAuditLogs, type AuditLog } from "../../src/admin";
 
 const PAGE_SIZE = 50;
@@ -43,7 +44,7 @@ function fmtTime(iso: string): string {
   });
 }
 
-function actionColor(action: string): string {
+function actionColor(theme: Theme, action: string): string {
   if (/delete|reject|deactivate/.test(action)) return theme.danger;
   if (/create|approve|reactivate/.test(action)) return theme.success;
   if (/update|role|reset/.test(action)) return theme.warning;
@@ -51,6 +52,8 @@ function actionColor(action: string): string {
 }
 
 export default function AuditLogsScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
@@ -125,7 +128,7 @@ export default function AuditLogsScreen() {
                 <View
                   style={[
                     styles.actionDot,
-                    { backgroundColor: actionColor(item.action) },
+                    { backgroundColor: actionColor(theme, item.action) },
                   ]}
                 />
                 <Text style={styles.action}>
@@ -178,7 +181,8 @@ export default function AuditLogsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   filterRow: {

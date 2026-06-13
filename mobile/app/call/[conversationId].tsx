@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   PermissionsAndroid,
@@ -27,7 +27,8 @@ import {
   SwitchCamera,
   Signal,
 } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { socket } from "../../src/realtime/socket";
 import { getIceConfig } from "../../src/features";
 
@@ -78,6 +79,8 @@ type CallStatus =
  *   peerName        display name
  */
 export default function CallScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const params = useLocalSearchParams<{
     conversationId: string;
     mode?: string;
@@ -1304,7 +1307,8 @@ export default function CallScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: "#0a0a0a" },
   remoteVideo: {
     position: "absolute",

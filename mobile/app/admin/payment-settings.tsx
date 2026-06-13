@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -12,7 +12,8 @@ import {
 } from "react-native";
 import { Stack } from "expo-router";
 import { CreditCard, FlaskConical } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import {
   useKeyboardInset,
   scrollFocusedIntoView,
@@ -32,6 +33,8 @@ const TRANSFER_MODES = [
 ];
 
 export default function PaymentSettingsScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const kbInset = useKeyboardInset();
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -224,7 +227,8 @@ export default function PaymentSettingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { alignItems: "center", justifyContent: "center" },
   container: { padding: 16, gap: 16 },

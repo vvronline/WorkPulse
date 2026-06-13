@@ -53,7 +53,18 @@ export function updateTaskStatus(id: number, status: TaskStatus) {
 
 export function updateTaskFull(
   id: number,
-  data: { title?: string; description?: string; priority?: TaskPriority },
+  data: {
+    title?: string;
+    description?: string;
+    priority?: TaskPriority;
+    assigned_to?: number | null;
+    due_date?: string | null;
+    sprint_id?: number | null;
+    label_ids?: number[];
+    story_points?: number | string | null;
+    work_item_type_id?: number | string | null;
+    project_id?: number | string | null;
+  },
 ) {
   return api.put<Task>(`/tasks/${id}`, data);
 }
@@ -105,7 +116,7 @@ export function addBacklogTask(data: {
   assigned_to?: number | null;
   due_date?: string | null;
   label_ids?: number[];
-  story_points?: number | null;
+  story_points?: number | string | null;
   sprint_id?: number | null;
   work_item_type_id?: number | string | null;
 }) {
@@ -119,7 +130,8 @@ export type Sprint = {
   end_date?: string;
   status: "planned" | "active" | "completed";
   goal?: string | null;
-  team_name?: string;
+  team_id?: number | null;
+  team_name?: string | null;
 };
 
 export function getAvailableSprints() {
@@ -156,10 +168,20 @@ export type WorkItemType = {
   sort_order?: number;
 };
 
+export type AgileSettings = {
+  estimation_type?: string;
+  estimation_values?: (number | string)[] | string | null;
+  estimation_unit_label?: string | null;
+  enable_story_points?: boolean;
+  [k: string]: unknown;
+};
+
 export type AgileConfig = {
+  settings?: AgileSettings;
   workflowStates: WorkflowState[];
   workItemTypes?: WorkItemType[];
   features?: { wipLimits?: boolean; storyPoints?: boolean; [k: string]: unknown };
+  canEdit?: boolean;
 };
 
 export function getAgileConfig() {

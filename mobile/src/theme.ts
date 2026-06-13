@@ -1,47 +1,127 @@
 /**
  * Design tokens mirrored from the web client's global.css (Notion-style dark
  * theme). Keep these in sync with client/src/global.css `:root`/`[data-theme="dark"]`.
+ *
+ * The brand (accent) colour is tenant-customisable. `makeTheme(accent)` derives
+ * the companion brand shades from the chosen accent the same way the web client
+ * does with `color-mix(...)` in BrandingContext. Non-refactored modules can keep
+ * importing the static `theme` (which equals `makeTheme(DEFAULT_ACCENT)`), while
+ * reactive screens read the live theme via `useTheme()`.
  */
-export const theme = {
-  // Brand
-  primary: "#2383e2",
-  primaryLight: "#529cca",
-  primaryDark: "#1a6dbe",
-  primaryGlow: "rgba(35, 131, 226, 0.15)",
-  onAccent: "#ffffff",
 
-  // Status
-  success: "#4daa57",
-  warning: "#cb912f",
-  danger: "#e03e3e",
+export const DEFAULT_ACCENT = "#2383e2";
 
-  // Surfaces (dark)
-  bg: "#191919",
-  bgSecondary: "#202020",
-  bgElevated: "#252525",
-  surface: "rgba(255, 255, 255, 0.04)",
-  surfaceHover: "rgba(255, 255, 255, 0.07)",
-  glass: "rgba(255, 255, 255, 0.045)",
-  glassBorder: "rgba(255, 255, 255, 0.09)",
-  cardBg: "rgba(255, 255, 255, 0.035)",
-  border: "rgba(255, 255, 255, 0.09)",
+/* ── colour helpers ── */
 
-  // Inputs
-  inputBg: "rgba(255, 255, 255, 0.065)",
-  inputBorder: "rgba(255, 255, 255, 0.1)",
-  inputBorderFocus: "rgba(35, 131, 226, 0.6)",
+function clamp(n: number): number {
+  return Math.max(0, Math.min(255, Math.round(n)));
+}
 
-  // Text
-  text: "rgba(255, 255, 255, 0.81)",
-  textSecondary: "rgba(255, 255, 255, 0.53)",
-  textMuted: "rgba(255, 255, 255, 0.38)",
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  let h = hex.replace("#", "").trim();
+  if (h.length === 3) {
+    h = h
+      .split("")
+      .map((c) => c + c)
+      .join("");
+  }
+  const int = parseInt(h, 16);
+  if (Number.isNaN(int) || h.length !== 6) {
+    return { r: 35, g: 131, b: 226 }; // fallback to default accent
+  }
+  return {
+    r: (int >> 16) & 255,
+    g: (int >> 8) & 255,
+    b: int & 255,
+  };
+}
 
-  // Radius
-  radius: 8,
-  radiusSm: 6,
-  radiusLg: 16,
-  radiusXl: 24,
-  radiusFull: 9999,
-} as const;
+function rgbToHex(r: number, g: number, b: number): string {
+  const toHex = (n: number) => clamp(n).toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
 
-export type Theme = typeof theme;
+/** Mix `hex` with white by `amount` (0..1). amount=0 → hex, 1 → white. */
+function mixWhite(hex: string, amount: number): string {
+  const { r, g, b } = hexToRgb(hex);
+  return rgbToHex(
+    r + (255 - r) * amount,
+    g + (255 - g) * amount,
+    b + (255 - b) * amount,
+  );
+}
+
+/** Mix `hex` with black by `amount` (0..1). amount=0 → hex, 1 → black. */
+function mixBlack(hex: string, amount: number): string {
+  const { r, g, b } = hexToRgb(hex);
+  return rgbToHex(r * (1 - amount), g * (1 - amount), b * (1 - amount));
+}
+
+/** rgba() string from a hex + alpha (0..1). */
+function withAlpha(hex: string, alpha: number): string {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/** Validate a 6-digit hex string. */
+export function isValidHex(value: string): boolean {
+  return /^#[0-9a-fA-F]{6}$/.test(value);
+}
+
+/**
+ * Build a full theme object from a tenant accent colour. Brand shades are
+ * derived so gradients, hovers and glows track the chosen accent.
+ */
+export function makeTheme(accent: string = DEFAULT_ACCENT) {
+  const primary = isValidHex(accent) ? accent : DEFAULT_ACCENT;
+  return {
+    // Brand (derived from accent)
+    primary,
+    primaryLight: mixWhite(primary, 0.3),
+    primaryDark: mixBlack(primary, 0.2),
+    primaryGlow: withAlpha(primary, 0.15),
+    onAccent: "#ffffff",
+
+    // Status
+    success: "#4daa57",
+    warning: "#cb912f",
+    danger: "#e03e3e",
+
+    // Surfaces (dark)
+    bg: "#191919",
+    bgSecondary: "#202020",
+    bgElevated: "#252525",
+    surface: "rgba(255, 255, 255, 0.04)",
+    surfaceHover: "rgba(255, 255, 255, 0.07)",
+    glass: "rgba(255, 255, 255, 0.045)",
+    glassBorder: "rgba(255, 255, 255, 0.09)",
+    cardBg: "rgba(255, 255, 255, 0.035)",
+    border: "rgba(255, 255, 255, 0.09)",
+
+    // Inputs
+    inputBg: "rgba(255, 255, 255, 0.065)",
+    inputBorder: "rgba(255, 255, 255, 0.1)",
+    inputBorderFocus: withAlpha(primary, 0.6),
+
+    // Text
+    text: "rgba(255, 255, 255, 0.81)",
+    textSecondary: "rgba(255, 255, 255, 0.53)",
+    textMuted: "rgba(255, 255, 255, 0.38)",
+
+    // Radius
+    radius: 8,
+    radiusSm: 6,
+    radiusLg: 16,
+    radiusXl: 24,
+    radiusFull: 9999,
+  } as const;
+}
+
+export type Theme = ReturnType<typeof makeTheme>;
+
+/**
+ * Static default theme. Modules that haven't been migrated to the reactive
+ * `useTheme()` hook import this directly — it stays valid and uses the
+ * design-system default accent.
+ */
+export const theme: Theme = makeTheme(DEFAULT_ACCENT);

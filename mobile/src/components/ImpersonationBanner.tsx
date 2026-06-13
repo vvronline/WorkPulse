@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { LogOut, Shield } from "lucide-react-native";
-import { theme } from "../theme";
+import type { Theme } from "../theme";
+import { useTheme } from "../theme/ThemeProvider";
 import { useAuth } from "../auth/AuthContext";
 import {
   clearOrigToken,
@@ -19,6 +20,8 @@ import { exitImpersonateTenant } from "../admin";
  * means the active token is an impersonation JWT.
  */
 export default function ImpersonationBanner() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user, refreshUser } = useAuth();
@@ -81,7 +84,8 @@ export default function ImpersonationBanner() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   banner: {
     flexDirection: "row",
     alignItems: "center",

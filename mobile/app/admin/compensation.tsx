@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -26,7 +26,8 @@ import {
   Wallet,
   X,
 } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { useKeyboardInset } from "../../src/hooks/useKeyboardInset";
 import { Dropdown, type DropdownOption } from "../../src/components/Dropdown";
 import {
@@ -136,6 +137,8 @@ const TABS = [
 type TabKey = (typeof TABS)[number]["key"];
 
 export default function CompensationScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const kbInset = useKeyboardInset();
   const [tab, setTab] = useState<TabKey>("templates");
   const [loading, setLoading] = useState(true);
@@ -484,6 +487,7 @@ export default function CompensationScreen() {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
+        style={styles.tabBarScroll}
         contentContainerStyle={styles.tabBar}
       >
         {TABS.map((t) => {
@@ -967,9 +971,11 @@ export default function CompensationScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { alignItems: "center", justifyContent: "center", flex: 1 },
+  tabBarScroll: { flexGrow: 0, flexShrink: 0 },
   tabBar: {
     paddingHorizontal: 12,
     paddingVertical: 10,

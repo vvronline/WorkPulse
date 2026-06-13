@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import {
@@ -11,7 +12,8 @@ import {
   type LucideIcon,
 } from "lucide-react-native";
 import { useAuth } from "../../src/auth/AuthContext";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 
 const ROLE_LEVELS: Record<string, number> = {
   employee: 1,
@@ -30,6 +32,8 @@ type Item = {
 };
 
 export default function MoreScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const { user } = useAuth();
 
@@ -92,7 +96,8 @@ export default function MoreScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   container: { padding: 16, gap: 12 },
   heading: {

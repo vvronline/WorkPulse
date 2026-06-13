@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { Stack, useLocalSearchParams } from "expo-router";
 import { Video } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { SERVER_ORIGIN } from "../../src/config";
 
 /**
@@ -12,6 +13,8 @@ import { SERVER_ORIGIN } from "../../src/config";
  * the existing web meeting room over the same backend).
  */
 export default function MeetingScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { code } = useLocalSearchParams<{ code: string }>();
   const [opening, setOpening] = useState(false);
   const url = `${SERVER_ORIGIN}/meeting/${code}`;
@@ -57,7 +60,8 @@ export default function MeetingScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg, padding: 16, justifyContent: "center" },
   card: {
     backgroundColor: theme.glass,

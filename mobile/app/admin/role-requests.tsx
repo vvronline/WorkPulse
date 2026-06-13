@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -10,7 +10,8 @@ import {
 } from "react-native";
 import { Stack } from "expo-router";
 import { ArrowRight, Check, RefreshCw, X } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { roleLabel } from "../../src/constants/roles";
 import {
   approveRoleChange,
@@ -26,6 +27,8 @@ const TABS = [
 ];
 
 export default function RoleRequestsScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [requests, setRequests] = useState<RoleChangeRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("pending");
@@ -182,7 +185,8 @@ export default function RoleRequestsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   tabRow: { flexDirection: "row", gap: 8, padding: 16, paddingBottom: 8 },

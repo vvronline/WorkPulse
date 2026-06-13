@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { Inbox, Zap } from "lucide-react-native";
-import { theme } from "../theme";
+import type { Theme } from "../theme";
+import { useTheme } from "../theme/ThemeProvider";
 import { useAuth } from "../auth/AuthContext";
 import {
   getActiveSprint,
@@ -15,6 +16,8 @@ import {
 const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
 
 export default function SprintProgressCard() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const { user } = useAuth();
   const [sprint, setSprint] = useState<Sprint | null>(null);
@@ -194,6 +197,8 @@ function Stat({
   value: string;
   highlight?: boolean;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <View style={styles.stat}>
       <Text style={[styles.statValue, highlight && { color: theme.primaryLight }]}>
@@ -204,7 +209,8 @@ function Stat({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   card: {
     backgroundColor: theme.glass,
     borderWidth: 1,

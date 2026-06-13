@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -35,12 +35,14 @@ import {
   Wifi,
   X,
 } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
 import {
   useKeyboardInset,
   scrollFocusedIntoView,
 } from "../../src/hooks/useKeyboardInset";
 import { Dropdown } from "../../src/components/Dropdown";
+import { ColorPicker } from "../../src/components/ColorPicker";
+import { useBranding, useTheme } from "../../src/theme/ThemeProvider";
 import { useAuth } from "../../src/auth/AuthContext";
 import { uploadUrl } from "../../src/config";
 import {
@@ -224,8 +226,11 @@ function workDaysToCsv(set: Set<number>): string {
 }
 
 export default function OrgSettingsScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const kbInset = useKeyboardInset();
   const { user } = useAuth();
+  const { refreshBranding } = useBranding();
   const isSuper =
     user?.role === "super_admin" || user?.role === "platform_admin";
 
@@ -1416,39 +1421,11 @@ export default function OrgSettingsScreen() {
           </View>
         </View>
         <Text style={styles.fieldLabel}>Accent color</Text>
-        <View style={styles.swatchRow}>
-          {ACCENT_PRESETS.map((c) => (
-            <Pressable
-              key={c}
-              style={[
-                styles.swatch,
-                { backgroundColor: c },
-                accent.toLowerCase() === c.toLowerCase() && styles.swatchActive,
-              ]}
-              onPress={() => setAccent(c)}
-            />
-          ))}
-        </View>
-        <View style={styles.hexRow}>
-          <View
-            style={[styles.hexSwatch, { backgroundColor: accentValid ? accent : theme.surface }]}
-          />
-          <TextInput
-            style={[styles.input, { flex: 1 }]}
-            value={accent}
-            onChangeText={(v) => {
-              if (/^#?[0-9a-fA-F]{0,6}$/.test(v)) {
-                setAccent(v.startsWith("#") ? v : `#${v}`);
-              }
-            }}
-            onFocus={scrollFocusedIntoView}
-            maxLength={7}
-            autoCapitalize="none"
-            autoCorrect={false}
-            placeholder="#2383e2"
-            placeholderTextColor={theme.textMuted}
-          />
-        </View>
+        <ColorPicker
+          value={accent}
+          onChange={setAccent}
+          presets={ACCENT_PRESETS}
+        />
         <Text style={styles.hint}>
           The accent color is applied to buttons, links, badges, and outgoing
           email templates.
@@ -1485,6 +1462,8 @@ export default function OrgSettingsScreen() {
             }
             try {
               await updateBrandingAccent(accent);
+              // Re-fetch branding so the new accent re-themes the whole app.
+              await refreshBranding();
               Alert.alert("Saved", "Branding updated");
             } catch (e: any) {
               Alert.alert(
@@ -1680,7 +1659,8 @@ export default function OrgSettingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { alignItems: "center", justifyContent: "center" },
   container: { padding: 16, gap: 16, paddingBottom: 48 },

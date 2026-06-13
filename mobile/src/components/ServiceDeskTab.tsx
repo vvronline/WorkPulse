@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -21,7 +21,8 @@ import {
   Trash2,
   X,
 } from "lucide-react-native";
-import { theme } from "../theme";
+import type { Theme } from "../theme";
+import { useTheme } from "../theme/ThemeProvider";
 import { useAuth } from "../auth/AuthContext";
 import {
   createServiceDeskTicket,
@@ -65,6 +66,8 @@ function getStatus(value: string) {
 }
 
 export default function ServiceDeskTab() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { user } = useAuth();
   const [tickets, setTickets] = useState<ServiceDeskTicket[]>([]);
   const [stats, setStats] = useState<ServiceDeskStats | null>(null);
@@ -330,6 +333,8 @@ function NewTicketModal({
   onClose: () => void;
   onCreated: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [ticketType, setTicketType] = useState("bug");
@@ -453,7 +458,8 @@ function NewTicketModal({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   wrap: { gap: 12 },
   statsBar: { gap: 8, paddingVertical: 2 },
   statChip: {

@@ -1,11 +1,12 @@
 import { Redirect } from "expo-router";
 import { ActivityIndicator, View } from "react-native";
 import { useAuth } from "../src/auth/AuthContext";
-import { theme } from "../src/theme";
+import { useTheme } from "../src/theme/ThemeProvider";
 
 /** Entry route: route to tabs when authenticated, otherwise to login. */
 export default function Index() {
   const { user, loading } = useAuth();
+  const theme = useTheme();
 
   if (loading) {
     return (

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import {
   setAudioModeAsync,
@@ -6,7 +6,8 @@ import {
   useAudioPlayerStatus,
 } from "expo-audio";
 import { Pause, Play } from "lucide-react-native";
-import { theme } from "../theme";
+import type { Theme } from "../theme";
+import { useTheme } from "../theme/ThemeProvider";
 import { getToken } from "../auth/tokenStore";
 
 function fmtSecs(ms?: number): string {
@@ -29,6 +30,8 @@ function fmtSecs(ms?: number): string {
  * play did nothing).
  */
 export default function VoicePlayer({ uri }: { uri: string }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   // Create the player empty, then load the source once the auth token is
   // available — useAudioPlayer only takes the source at creation time, and
   // reading the token is async.
@@ -132,7 +135,8 @@ export default function VoicePlayer({ uri }: { uri: string }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   wrap: {
     flexDirection: "row",
     alignItems: "center",

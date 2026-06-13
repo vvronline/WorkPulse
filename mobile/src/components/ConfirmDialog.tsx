@@ -1,6 +1,8 @@
+import { useMemo } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { X } from "lucide-react-native";
-import { theme } from "../theme";
+import type { Theme } from "../theme";
+import { useTheme } from "../theme/ThemeProvider";
 
 interface ConfirmDialogProps {
   visible: boolean;
@@ -35,6 +37,8 @@ export default function ConfirmDialog({
   isDanger = true,
   alertMode = false,
 }: ConfirmDialogProps) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <Modal
       visible={visible}
@@ -73,7 +77,8 @@ export default function ConfirmDialog({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.6)",

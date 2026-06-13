@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -28,7 +28,8 @@ import {
   Users,
   X,
 } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { roleLabel } from "../../src/constants/roles";
 import { PromptModal } from "../../src/components/PromptModal";
 import { Dropdown, type DropdownOption } from "../../src/components/Dropdown";
@@ -66,7 +67,7 @@ import {
   type TenantUser,
 } from "../../src/admin";
 
-function statusColor(status?: string): string {
+function statusColor(theme: Theme, status?: string): string {
   if (status === "suspended") return theme.warning;
   if (status === "deleted") return theme.danger;
   return theme.success;
@@ -77,6 +78,8 @@ const DOMAIN_RE = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i;
 type ConfirmAction = { action: "suspend" | "delete" };
 
 export default function TenantDetailScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { refreshUser } = useAuth() as { refreshUser?: () => Promise<void> };
@@ -338,10 +341,10 @@ export default function TenantDetailScreen() {
         <View
           style={[
             styles.statusPill,
-            { backgroundColor: statusColor(tenant.status) + "22" },
+            { backgroundColor: statusColor(theme, tenant.status) + "22" },
           ]}
         >
-          <Text style={[styles.statusText, { color: statusColor(tenant.status) }]}>
+          <Text style={[styles.statusText, { color: statusColor(theme, tenant.status) }]}>
             {tenant.status || "active"}
           </Text>
         </View>
@@ -754,6 +757,8 @@ function RequestAccessModal({
   onClose: () => void;
   onEntered: () => void;
 }) {
+  const theme = useTheme();
+  const maStyles = useMemo(() => makeMaStyles(theme), [theme]);
   const [policy, setPolicy] = useState<ImpersonationPolicy | null>(null);
   const [step, setStep] = useState<AccessStep>("reason");
   const [request, setRequest] = useState<TenantAccessRequest | null>(null);
@@ -1122,6 +1127,8 @@ function RequestAccessModal({
 }
 
 function Stat({ value, label }: { value: React.ReactNode; label: string }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <View style={styles.stat}>
       <Text style={styles.statValue}>{value}</Text>
@@ -1139,6 +1146,8 @@ function InfoCard({
   label: string;
   value: string;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <View style={styles.infoCard}>
       {icon}
@@ -1152,7 +1161,8 @@ function InfoCard({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { alignItems: "center", justifyContent: "center" },
   container: { padding: 16, gap: 16, paddingBottom: 48 },
@@ -1350,7 +1360,8 @@ const styles = StyleSheet.create({
   empty: { color: theme.textMuted, fontSize: 13, paddingVertical: 8 },
 });
 
-const maStyles = StyleSheet.create({
+const makeMaStyles = (theme: Theme) =>
+  StyleSheet.create({
   overlay: { flex: 1, justifyContent: "flex-end" },
   scrim: {
     position: "absolute",

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -10,7 +10,8 @@ import {
 } from "react-native";
 import { Stack } from "expo-router";
 import { GitBranch, GitMerge, RefreshCw, Trash2 } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import {
   deleteIntegration,
   disconnectGithub,
@@ -21,6 +22,8 @@ import {
 } from "../../src/admin";
 
 export default function IntegrationsScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [items, setItems] = useState<Integration[]>([]);
   const [github, setGithub] = useState<GithubStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -205,7 +208,8 @@ export default function IntegrationsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   center: { alignItems: "center", justifyContent: "center", flex: 1 },
   list: { padding: 16, gap: 10, paddingBottom: 40 },

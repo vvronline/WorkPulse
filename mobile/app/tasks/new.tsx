@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -10,10 +10,12 @@ import {
   View,
 } from "react-native";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import { TASK_PRIORITY } from "../../src/constants";
 import { Dropdown, MultiDropdown } from "../../src/components/Dropdown";
 import DatePicker from "../../src/components/DatePicker";
+import StoryPointPicker from "../../src/components/StoryPointPicker";
 import {
   addBacklogTask,
   createTask,
@@ -31,6 +33,8 @@ import {
 const PRIORITIES: TaskPriority[] = ["low", "medium", "high"];
 
 export default function NewTaskScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const { backlog } = useLocalSearchParams<{ backlog?: string }>();
   const isBacklog = backlog === "1";
@@ -39,7 +43,7 @@ export default function NewTaskScreen() {
   const [priority, setPriority] = useState<TaskPriority>("medium");
   const [assignedTo, setAssignedTo] = useState<number | null>(null);
   const [dueDate, setDueDate] = useState("");
-  const [storyPoints, setStoryPoints] = useState("");
+  const [storyPoints, setStoryPoints] = useState<number | string | null>(null);
   const [selectedLabels, setSelectedLabels] = useState<number[]>([]);
   const [sprintId, setSprintId] = useState<number | null>(null);
   const [workItemType, setWorkItemType] = useState<string | number | null>(null);
@@ -81,7 +85,7 @@ export default function NewTaskScreen() {
           assigned_to: assignedTo ?? undefined,
           due_date: /^\d{4}-\d{2}-\d{2}$/.test(dueDate) ? dueDate : undefined,
           label_ids: selectedLabels.length ? selectedLabels : undefined,
-          story_points: storyPoints ? Number(storyPoints) : undefined,
+          story_points: storyPoints != null && storyPoints !== "" ? storyPoints : undefined,
           sprint_id: sprintId ?? undefined,
           work_item_type_id: workItemType ?? undefined,
         });
@@ -224,24 +228,13 @@ export default function NewTaskScreen() {
             </>
           ) : null}
 
-          {/* Story points + due date */}
-          <View style={styles.row}>
-            <View style={styles.half}>
-              <Text style={styles.label}>Story Points</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. 3"
-                placeholderTextColor={theme.textMuted}
-                value={storyPoints}
-                onChangeText={setStoryPoints}
-                keyboardType="number-pad"
-              />
-            </View>
-            <View style={styles.half}>
-              <Text style={styles.label}>Due Date</Text>
-              <DatePicker value={dueDate} onChange={setDueDate} />
-            </View>
-          </View>
+          {/* Story points */}
+          <Text style={styles.label}>Story Points</Text>
+          <StoryPointPicker value={storyPoints} onChange={setStoryPoints} />
+
+          {/* Due date */}
+          <Text style={styles.label}>Due Date</Text>
+          <DatePicker value={dueDate} onChange={setDueDate} />
         </>
       ) : null}
 
@@ -262,7 +255,8 @@ export default function NewTaskScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   container: { padding: 16, gap: 8, paddingBottom: 40 },
   label: {

@@ -9,12 +9,13 @@ import {
   ClipboardList,
 } from "lucide-react-native";
 import { useAuth } from "../../src/auth/AuthContext";
-import { theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import TopBar from "../../src/components/TopBar";
 import { getConversations } from "../../src/features";
 import { socket } from "../../src/realtime/socket";
 
 export default function TabsLayout() {
+  const theme = useTheme();
   const { user, loading } = useAuth();
   // Total unread chat messages, shown as a badge on the Chat tab icon
   // (mirrors the web sidebar's chat unread count). Driven by the conversations

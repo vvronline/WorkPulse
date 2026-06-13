@@ -1,5 +1,7 @@
+import { useMemo } from "react";
 import { Image, StyleSheet, Text, View } from "react-native";
-import { theme } from "../theme";
+import type { Theme } from "../theme";
+import { useTheme } from "../theme/ThemeProvider";
 import { uploadUrl } from "../config";
 import StatusDot from "./StatusDot";
 
@@ -44,8 +46,11 @@ export default function ChatAvatar({
   size = "md",
   userStatus,
   online,
-  ringColor = theme.bg,
+  ringColor,
 }: ChatAvatarProps) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
+  const ring = ringColor ?? theme.bg;
   const dim = typeof size === "number" ? size : SIZES[size] || SIZES.md;
   const uri = uploadUrl(avatar);
   const showDot = !!userStatus || online !== undefined;
@@ -78,7 +83,7 @@ export default function ChatAvatar({
           <StatusDot
             status={effectiveStatus}
             size={dotSize}
-            borderColor={ringColor}
+            borderColor={ring}
           />
         </View>
       ) : null}
@@ -86,7 +91,8 @@ export default function ChatAvatar({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   initialsWrap: {
     backgroundColor: theme.primary,
     alignItems: "center",

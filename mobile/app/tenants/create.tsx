@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -20,7 +20,8 @@ import {
   UserPlus,
   Users,
 } from "lucide-react-native";
-import { theme } from "../../src/theme";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
 import {
   useKeyboardInset,
   scrollFocusedIntoView,
@@ -57,6 +58,8 @@ const STEPS = [
  * Basics → Plan → Limits → Super Admin → Seed Data.
  */
 export default function CreateTenantScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const kbInset = useKeyboardInset();
   const [step, setStep] = useState(0);
@@ -493,7 +496,8 @@ export default function CreateTenantScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
   container: { padding: 16, gap: 14, paddingBottom: 48 },
   stepsRow: { flexDirection: "row", gap: 6, flexWrap: "wrap" },

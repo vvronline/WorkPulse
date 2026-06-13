@@ -1,5 +1,5 @@
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -15,7 +15,8 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react-native";
-import { theme } from "../theme";
+import type { Theme } from "../theme";
+import { useTheme } from "../theme/ThemeProvider";
 import FaceCaptureWebView from "./FaceCaptureWebView";
 import { getOfficeSignals, type Position } from "../utils/officeSignals";
 import { clockIn, getTrackerStatus, type ClockInPayload } from "../tracker";
@@ -46,6 +47,8 @@ export default function ClockInVerifyModal({
   onClose,
   onSuccess,
 }: Props) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const needsLocation = workMode === "office" || workMode === "hybrid";
 
   const [step, setStep] = useState<"location" | "face" | "submitting">(
@@ -278,6 +281,8 @@ function StepPill({
   active: boolean;
   done: boolean;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <View style={styles.stepPill}>
       <View
@@ -304,7 +309,8 @@ function StepPill({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.6)",

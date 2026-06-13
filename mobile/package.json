@@ -1,6 +1,6 @@
 {
   "name": "mobile",
-  "version": "1.0.24",
+  "version": "1.0.25",
   "main": "expo-router/entry",
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^15.0.1",
@@ -32,7 +32,8 @@
     "react-native-svg": "15.15.4",
     "react-native-web": "^0.21.2",
     "react-native-webrtc": "^124.0.7",
-    "react-native-webview": "13.16.1"
+    "react-native-webview": "13.16.1",
+    "react-native-wheel-color-picker": "^1.3.1"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",

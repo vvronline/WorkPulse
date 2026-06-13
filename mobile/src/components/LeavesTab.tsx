@@ -13,7 +13,8 @@ import {
   View,
 } from "react-native";
 import { Pencil, Plus, Trash2, X } from "lucide-react-native";
-import { theme } from "../theme";
+import type { Theme } from "../theme";
+import { useTheme } from "../theme/ThemeProvider";
 import { useAuth } from "../auth/AuthContext";
 import DatePicker from "./DatePicker";
 import MonthPicker from "./MonthPicker";
@@ -91,6 +92,8 @@ const BASE_TABS: { id: SubTab; label: string; hr?: boolean }[] = [
 ];
 
 export default function LeavesTab() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { user } = useAuth();
   const isHR = ["hr_admin", "super_admin", "platform_admin"].includes(
     user?.role || "",
@@ -138,6 +141,8 @@ export default function LeavesTab() {
 /* ───────────────────────── Request tab ───────────────────────── */
 
 function RequestTab() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [policies, setPolicies] = useState<LeavePolicy[]>([]);
   const [leaves, setLeaves] = useState<Leave[]>([]);
   const [balances, setBalances] = useState<LeaveBalance[]>([]);
@@ -267,6 +272,8 @@ function LeaveRequestForm({
   policies: LeavePolicy[];
   onSuccess: () => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [isRange, setIsRange] = useState(false);
   const [date, setDate] = useState(ymd(new Date()));
   const [dateFrom, setDateFrom] = useState(ymd(new Date()));
@@ -527,6 +534,8 @@ function LeaveRequestForm({
 /* ───────────────────────── Balance cards ───────────────────────── */
 
 function LeaveBalanceCards({ balances }: { balances: LeaveBalance[] }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   if (!balances.length) return null;
   return (
     <View style={styles.balanceRow}>
@@ -585,6 +594,8 @@ function LeaveHistory({
   loading: boolean;
   onWithdraw: (leave: Leave) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const typeMeta = useMemo(() => buildLeaveTypeMeta(policies), [policies]);
   const lookupType = (val: string): LeaveTypeMeta =>
     typeMeta[val] || getLeaveType(val);
@@ -699,6 +710,8 @@ function Stat({
   label: string;
   color?: string;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <View style={styles.statItem}>
       <Text style={[styles.statNum, color ? { color } : null]}>{num}</Text>
@@ -710,6 +723,8 @@ function Stat({
 /* ───────────────────────── Balances tab ───────────────────────── */
 
 function BalancesTab() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [year, setYear] = useState(new Date().getFullYear());
   const [balances, setBalances] = useState<LeaveBalance[]>([]);
   const [loading, setLoading] = useState(true);
@@ -869,6 +884,8 @@ const POLICY_DEFAULTS: PolicyDraft = {
 };
 
 function PoliciesTab() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const { user } = useAuth();
   const isHR = ["hr_admin", "super_admin", "platform_admin"].includes(
     user?.role || "",
@@ -1202,6 +1219,8 @@ function PoliciesTab() {
 /* ───────────────────────── All balances tab (HR) ───────────────────────── */
 
 function AllBalancesTab() {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const [rows, setRows] = useState<AllBalanceRow[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -1409,7 +1428,8 @@ function AllBalancesTab() {
 
 /* ───────────────────────── Styles ───────────────────────── */
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: Theme) =>
+  StyleSheet.create({
   body: { padding: 16, paddingBottom: 40, gap: 12 },
   subTabRow: {
     flexDirection: "row",
