@@ -38,6 +38,7 @@ import {
 } from "../../src/features";
 import { SERVER_ORIGIN } from "../../src/config";
 import { Linking } from "react-native";
+import { useRouter } from "expo-router";
 import { socket } from "../../src/realtime/socket";
 
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
@@ -586,6 +587,7 @@ function EventModal({
 }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+  const router = useRouter();
   const { user } = useAuth();
   const meetingsEnabled = userHasFeature(user, "meetings");
   const [title, setTitle] = useState("");
@@ -968,11 +970,13 @@ function EventModal({
               </Text>
               <Pressable
                 style={styles.joinBtn}
-                onPress={() =>
-                  Linking.openURL(
-                    `${SERVER_ORIGIN}/meeting/${editing.meeting_code}`,
-                  )
-                }
+                onPress={() => {
+                  const code = editing.meeting_code;
+                  onClose();
+                  // Open the in-app WebRTC meeting room (reuses the
+                  // authenticated session) instead of bouncing to the browser.
+                  router.push(`/meeting/${code}` as never);
+                }}
               >
                 <Video size={15} color="#fff" />
                 <Text style={styles.joinBtnText}>Join Meeting</Text>
