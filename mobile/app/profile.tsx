@@ -28,12 +28,15 @@ import {
   Minus,
   Pencil,
   Phone,
+  RefreshCw,
   ScanFace,
   Trash2,
   Video,
   X,
 } from "lucide-react-native";
 import { useAuth } from "../src/auth/AuthContext";
+import { triggerUpdateCheck } from "../src/components/UpdateChecker";
+import { getCurrentVersion } from "../src/updater";
 import type { Theme } from "../src/theme";
 import { useTheme } from "../src/theme/ThemeProvider";
 import {
@@ -390,6 +393,11 @@ export default function Profile() {
       <Pressable style={styles.action} onPress={() => setPwOpen(true)}>
         <KeyRound size={16} color={theme.text} />
         <Text style={styles.actionText}>Change Password</Text>
+      </Pressable>
+      <Pressable style={styles.action} onPress={() => triggerUpdateCheck()}>
+        <RefreshCw size={16} color={theme.text} />
+        <Text style={styles.actionText}>Check for Updates</Text>
+        <Text style={styles.versionText}>v{getCurrentVersion()}</Text>
       </Pressable>
 
       <TouchableOpacity style={styles.logout} onPress={onLogout} activeOpacity={0.85}>
@@ -918,6 +926,7 @@ const makeStyles = (theme: Theme) =>
     paddingVertical: 3,
   },
   enrolledPillText: { color: theme.success, fontSize: 11, fontWeight: "700" },
+  versionText: { color: theme.textMuted, fontSize: 12, fontWeight: "500" },
   logout: {
     marginTop: 8,
     flexDirection: "row",

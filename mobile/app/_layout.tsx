@@ -6,6 +6,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider } from "../src/auth/AuthContext";
 import ImpersonationBanner from "../src/components/ImpersonationBanner";
+import UpdateChecker from "../src/components/UpdateChecker";
 import IncomingCallListener from "../src/realtime/IncomingCallListener";
 import { ThemeProvider, useTheme } from "../src/theme/ThemeProvider";
 
@@ -146,6 +147,7 @@ export default function RootLayout() {
               <StatusBar style="light" />
               <IncomingCallListener />
               <ImpersonationBanner />
+              <UpdateChecker />
               <ThemedStack />
             </SafeAreaProvider>
           </ThemeProvider>

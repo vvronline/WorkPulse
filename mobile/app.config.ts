@@ -1,4 +1,9 @@
 import type { ExpoConfig, ConfigContext } from "expo/config";
+// Single source of truth for the app version. The mobile release workflow
+// validates that the `mobile-vX.Y.Z` tag matches this value, and the in-app
+// updater compares against it — so it MUST reflect the real shipped version
+// (previously this was hardcoded to "1.0.0" which broke update comparisons).
+import { version as APP_VERSION } from "./package.json";
 
 // Default backend targets. Override per-build via environment variables
 // (EAS secrets / .env) without touching source.
@@ -11,7 +16,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: "WorkPulse",
   slug: "workpulse",
-  version: "1.0.0",
+  version: APP_VERSION,
   orientation: "portrait",
   icon: "./assets/icon.png",
   scheme: "workpulse",
@@ -38,6 +43,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "android.permission.ACCESS_NETWORK_STATE",
       "android.permission.ACCESS_FINE_LOCATION",
       "android.permission.ACCESS_COARSE_LOCATION",
+      // Required so the in-app updater can launch the system package installer
+      // for the downloaded APK (see src/updater.ts).
+      "android.permission.REQUEST_INSTALL_PACKAGES",
     ],
   },
   web: {
@@ -83,5 +91,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   extra: {
     API_BASE_URL,
     WS_BASE_URL,
+    APP_VERSION,
   },
 });

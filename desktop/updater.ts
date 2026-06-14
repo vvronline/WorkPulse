@@ -3,6 +3,104 @@ import { ipcMain, app, BrowserWindow, type IpcMainInvokeEvent, type IpcMainEvent
 
 autoUpdater.logger = console;
 
+const GITHUB_OWNER = "vvronline";
+const GITHUB_REPO = "WorkPulse";
+
+// Desktop release tags look like `v1.6.29`. Mobile releases live in the SAME
+// repo but use `mobile-v1.0.x` tags and DO NOT ship a `latest.yml`. The default
+// electron-updater GitHub provider picks the newest release of ANY kind, so a
+// freshly-published `mobile-v*` release makes it try to fetch latest.yml from a
+// mobile release → 404. This regex isolates desktop-only release tags.
+const DESKTOP_TAG_RE = /^v\d+\.\d+\.\d+$/;
+
+interface GitHubRelease {
+    tag_name?: string;
+    draft?: boolean;
+    prerelease?: boolean;
+}
+
+/** Compare two semver strings (a.b.c). Returns 1 if a>b, -1 if a<b, 0 if equal. */
+function compareSemver(a: string, b: string): number {
+    const pa = a.replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
+    const pb = b.replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < 3; i++) {
+        if ((pa[i] || 0) > (pb[i] || 0)) return 1;
+        if ((pa[i] || 0) < (pb[i] || 0)) return -1;
+    }
+    return 0;
+}
+
+/**
+ * Resolve the latest DESKTOP release tag (e.g. "v1.6.29") by querying the
+ * GitHub releases API and ignoring drafts, prereleases, and mobile (`mobile-v*`)
+ * releases. Returns null on any failure so callers can fall back gracefully.
+ */
+async function resolveLatestDesktopTag(): Promise<string | null> {
+    try {
+        const https = require("https");
+        const releases = await new Promise<GitHubRelease[]>((resolve, reject) => {
+            const req = https.get(
+                `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=100`,
+                {
+                    headers: {
+                        "User-Agent": "WorkPulse-Desktop",
+                        Accept: "application/vnd.github.v3+json",
+                    },
+                },
+                (res: import("http").IncomingMessage) => {
+                    let body = "";
+                    res.on("data", (c: Buffer) => (body += c));
+                    res.on("end", () => {
+                        if (res.statusCode === 200) {
+                            try {
+                                resolve(JSON.parse(body));
+                            } catch (e) {
+                                reject(e);
+                            }
+                        } else {
+                            reject(new Error(`GitHub ${res.statusCode}`));
+                        }
+                    });
+                }
+            );
+            req.on("error", reject);
+            req.setTimeout(10000, () => {
+                req.destroy();
+                reject(new Error("timeout"));
+            });
+        });
+
+        const desktopTags = releases
+            .filter((r) => !r.draft && !r.prerelease && r.tag_name && DESKTOP_TAG_RE.test(r.tag_name))
+            .map((r) => r.tag_name as string)
+            .sort((a, b) => compareSemver(b, a));
+
+        return desktopTags[0] || null;
+    } catch (err) {
+        console.error("[updater] Failed to resolve latest desktop tag:", (err as Error)?.message);
+        return null;
+    }
+}
+
+/**
+ * Point electron-updater at a SPECIFIC desktop release's asset folder so it
+ * fetches that release's latest.yml (instead of auto-picking the newest release
+ * of any kind, which may be a mobile release without a latest.yml).
+ */
+async function pointFeedAtLatestDesktopRelease(): Promise<void> {
+    const tag = await resolveLatestDesktopTag();
+    if (!tag) {
+        // Could not resolve — leave electron-updater on its configured GitHub
+        // provider. We'll still surface a clean error if the check fails.
+        return;
+    }
+    autoUpdater.setFeedURL({
+        provider: "generic",
+        url: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/${tag}`,
+    });
+    console.log(`[updater] Feed pinned to desktop release ${tag}`);
+}
+
 type ReleaseNoteEntry = string | { version?: string; note?: string | null };
 
 /**
@@ -70,6 +168,9 @@ function setupUpdater(mainWindow: BrowserWindow): void {
         if (checkInProgress) return;
         checkInProgress = true;
         try {
+            // Pin the feed to the latest DESKTOP release before checking so we
+            // never accidentally try to read latest.yml from a mobile release.
+            await pointFeedAtLatestDesktopRelease();
             await autoUpdater.checkForUpdates();
             retryCount = 0; // reset on success
         } catch (err) {
@@ -149,6 +250,9 @@ function setupUpdater(mainWindow: BrowserWindow): void {
         }
         checkInProgress = true;
         try {
+            // Pin the feed to the latest DESKTOP release before checking so we
+            // never accidentally try to read latest.yml from a mobile release.
+            await pointFeedAtLatestDesktopRelease();
             const result = await autoUpdater.checkForUpdates();
             if (!result || !result.updateInfo) return { available: false, reason: "no-info" };
             const current = app.getVersion();
