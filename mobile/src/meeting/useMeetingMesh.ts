@@ -61,13 +61,25 @@ export type MeetingParticipant = {
   videoOff: boolean;
 };
 
-export type MeetingStatus = "joining" | "connecting" | "connected" | "ended";
+export type MeetingStatus =
+  | "lobby"
+  | "joining"
+  | "connecting"
+  | "connected"
+  | "ended";
 
 interface UseMeetingMeshArgs {
   meetingId: number | string | null;
   selfId: number | string | null;
   initialMuted?: boolean;
   initialVideoOff?: boolean;
+  /**
+   * When false (default) the hook acquires local media for a live preview but
+   * does NOT send `meeting_join` until `join()` is called — this powers the
+   * pre-join lobby (camera/mic preview + device toggles). When true it joins
+   * immediately on mount (legacy auto-join behaviour).
+   */
+  autoJoin?: boolean;
 }
 
 interface PeerEntry {
@@ -80,6 +92,7 @@ export function useMeetingMesh({
   selfId,
   initialMuted = false,
   initialVideoOff = false,
+  autoJoin = false,
 }: UseMeetingMeshArgs) {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [muted, setMuted] = useState(initialMuted);
@@ -87,7 +100,12 @@ export function useMeetingMesh({
   const [participants, setParticipants] = useState<
     Map<number | string, MeetingParticipant>
   >(new Map());
-  const [status, setStatus] = useState<MeetingStatus>("joining");
+  // Start in "lobby" unless the caller opts into legacy auto-join. The lobby
+  // shows a live self-preview + mic/cam/flip controls before `join()` fires the
+  // actual `meeting_join`.
+  const [status, setStatus] = useState<MeetingStatus>(
+    autoJoin ? "joining" : "lobby",
+  );
   const [mediaError, setMediaError] = useState<string | null>(null);
 
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -96,6 +114,9 @@ export function useMeetingMesh({
   const iceServersRef = useRef<any[]>(FALLBACK_ICE);
   const iceLoadedRef = useRef(false);
   const joinedRef = useRef(false);
+  // True once the user has left the lobby and we should fire `meeting_join`.
+  const wantJoinRef = useRef(autoJoin);
+  const [wantJoin, setWantJoin] = useState(autoJoin);
   const mutedRef = useRef(initialMuted);
   const videoOffRef = useRef(initialVideoOff);
   const meetingIdRef = useRef(meetingId);
@@ -185,6 +206,68 @@ export function useMeetingMesh({
     }
   }, []);
 
+  // Attach local tracks to a peer connection AFTER setRemoteDescription on the
+  // answerer so they bind to the transceivers the offer created. Mirrors the
+  // proven 1:1 call screen's `attachLocalTracks`.
+  //
+  // CRITICAL: on react-native-webrtc, calling addTrack() after
+  // setRemoteDescription(offer) frequently creates a NEW, unmatched m-line
+  // instead of reusing the recvonly transceiver the offer created. The answer
+  // SDP then no longer lines up with the offer → ICE never settles and the
+  // meeting hangs on "Connecting…" forever (the exact mobile↔web/desktop
+  // "never connects" bug). We instead find the offer's matching transceiver by
+  // kind and replaceTrack onto it (upgrading direction to sendrecv), only
+  // falling back to addTrack when there is no matching transceiver.
+  const attachLocalTracks = useCallback(
+    async (pc: RTCPeerConnection, stream: MediaStream | null) => {
+      if (!pc || !stream) return;
+      const transceivers =
+        typeof (pc as any).getTransceivers === "function"
+          ? (pc as any).getTransceivers()
+          : [];
+      const used = new Set<any>();
+
+      for (const track of stream.getTracks()) {
+        const alreadyAttached = transceivers.some(
+          (t: any) => t.sender?.track && t.sender.track.id === track.id,
+        );
+        if (alreadyAttached) continue;
+
+        const matchingTr = transceivers.find((t: any) => {
+          if (used.has(t)) return false;
+          if (t.sender?.track) return false;
+          const trKind = t.receiver?.track?.kind;
+          return trKind === track.kind;
+        });
+
+        if (matchingTr) {
+          used.add(matchingTr);
+          try {
+            await matchingTr.sender.replaceTrack(track);
+            try {
+              matchingTr.direction = "sendrecv";
+            } catch {
+              /* not always settable */
+            }
+          } catch {
+            try {
+              pc.addTrack(track, stream);
+            } catch {
+              /* ignore */
+            }
+          }
+        } else {
+          try {
+            pc.addTrack(track, stream);
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    },
+    [],
+  );
+
   const upsertParticipant = useCallback(
     (
       userId: number | string,
@@ -238,8 +321,13 @@ export function useMeetingMesh({
       const entry: PeerEntry = { pc, remoteStream };
       peersRef.current.set(remoteUserId, entry);
 
-      // Add local tracks so the offer/answer advertises sendrecv media.
-      if (localStreamRef.current) {
+      // Only the INITIATOR (offerer) adds tracks up-front — createOffer then
+      // advertises sendrecv media. The NON-initiator (answerer) must NOT
+      // addTrack here: on react-native-webrtc adding tracks before
+      // setRemoteDescription(offer) creates unmatched m-lines and the
+      // connection never settles. The answerer attaches its tracks via
+      // attachLocalTracks() AFTER setRemoteDescription (see handleSignal).
+      if (isInitiator && localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((track) => {
           try {
             pc.addTrack(track, localStreamRef.current as MediaStream);
@@ -340,6 +428,10 @@ export function useMeetingMesh({
     ) => {
       if (signal.type === "offer") {
         await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+        // Attach our local tracks AFTER setRemoteDescription so they bind to
+        // the offer's transceivers (replaceTrack) rather than creating new
+        // unmatched m-lines — the key fix that lets mobile↔web/desktop connect.
+        await attachLocalTracks(pc, localStreamRef.current);
         await flushPendingIce(fromUserId, pc);
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
@@ -370,7 +462,7 @@ export function useMeetingMesh({
         }
       }
     },
-    [flushPendingIce],
+    [flushPendingIce, attachLocalTracks],
   );
 
   // ── WS message handling ──────────────────────────────────────────────────
@@ -491,9 +583,24 @@ export function useMeetingMesh({
       });
   }, []);
 
-  // ── Subscribe to WS + acquire media + join ───────────────────────────────
+  // ── Acquire media on mount for the lobby preview (does NOT join) ──────────
   useEffect(() => {
     if (!meetingId) return;
+    let cancelled = false;
+    (async () => {
+      await getMedia();
+      if (cancelled) return;
+      await waitForIceConfig();
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meetingId]);
+
+  // ── Subscribe to WS + join (only once the user leaves the lobby) ──────────
+  useEffect(() => {
+    if (!meetingId || !wantJoin) return;
     let cancelled = false;
     const off = socket.subscribe(handleWsMessage);
 
@@ -514,6 +621,7 @@ export function useMeetingMesh({
     };
 
     (async () => {
+      // Media + ICE were warmed up in the lobby; ensure they're ready anyway.
       await getMedia();
       if (cancelled) return;
       await waitForIceConfig();
@@ -532,7 +640,15 @@ export function useMeetingMesh({
       off();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meetingId]);
+  }, [meetingId, wantJoin]);
+
+  // ── Leave the lobby and start the actual join flow ───────────────────────
+  const join = useCallback(() => {
+    if (wantJoinRef.current) return;
+    wantJoinRef.current = true;
+    setWantJoin(true);
+    setStatus("joining");
+  }, []);
 
   // ── Leave + teardown on unmount ──────────────────────────────────────────
   const leave = useCallback(() => {
@@ -611,6 +727,7 @@ export function useMeetingMesh({
     toggleMute,
     toggleVideo,
     switchCamera,
+    join,
     leave,
   };
 }

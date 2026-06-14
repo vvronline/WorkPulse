@@ -13,10 +13,14 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import * as DocumentPicker from "expo-document-picker";
+import * as Linking from "expo-linking";
 import {
   CalendarPlus,
   CalendarX,
   Check,
+  FileText,
+  Paperclip,
   Pencil,
   Send,
   Trash2,
@@ -24,6 +28,8 @@ import {
 } from "lucide-react-native";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
+import { uploadUrl } from "../../src/config";
+import { AuthedImage } from "../../src/components/AuthedImage";
 import { taskStatusMeta, TASK_STATUS, TASK_PRIORITY } from "../../src/constants";
 import { Dropdown, MultiDropdown } from "../../src/components/Dropdown";
 import DatePicker from "../../src/components/DatePicker";
@@ -42,6 +48,7 @@ import {
   updateTaskFull,
   updateTaskStatus,
   type AssignableUser,
+  type CommentAttachment,
   type Sprint,
   type Task,
   type TaskComment,
@@ -80,6 +87,21 @@ function formatPoints(value: number | string | null | undefined): string {
   return num.toFixed(2).replace(/\.?0+$/, "");
 }
 
+// Whether a comment's attachment is an image (renders an inline thumbnail vs a
+// downloadable file card — mirrors the web CommentAttachment/FilePreview).
+function isImageAttachment(c: TaskComment): boolean {
+  if (c.file_type && c.file_type.startsWith("image/")) return true;
+  const name = (c.file_name || c.file_url || "").toLowerCase();
+  return /\.(png|jpe?g|gif|webp|heic|bmp)$/.test(name);
+}
+
+// Open a comment attachment in the device's default handler (image viewer,
+// PDF reader, browser download, etc.).
+function openAttachment(fileUrl?: string | null) {
+  const u = uploadUrl(fileUrl);
+  if (u) Linking.openURL(u);
+}
+
 export default function TaskDetail() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
@@ -107,6 +129,7 @@ export default function TaskDetail() {
   const [storyPoints, setStoryPoints] = useState<number | string | null>(null);
   const [saving, setSaving] = useState(false);
   const [commentText, setCommentText] = useState("");
+  const [attachment, setAttachment] = useState<CommentAttachment | null>(null);
   const [posting, setPosting] = useState(false);
   const [detailTab, setDetailTab] = useState<"comments" | "history">("comments");
   const [history, setHistory] = useState<TaskHistoryEntry[]>([]);
@@ -276,14 +299,37 @@ export default function TaskDetail() {
     ]);
   }
 
+  // Pick a single document to attach to the next comment (mirrors the web
+  // InlineCommentPanel paperclip → file input). Uses expo-document-picker, the
+  // same flow the chat composer uses for non-image files.
+  async function pickAttachment() {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      if (result.canceled || !result.assets?.[0]?.uri) return;
+      const asset = result.assets[0];
+      setAttachment({
+        uri: asset.uri,
+        name: asset.name || undefined,
+        mimeType: asset.mimeType || undefined,
+      });
+    } catch {
+      Alert.alert("Error", "Could not pick this file.");
+    }
+  }
+
   async function postComment() {
     const content = commentText.trim();
-    if (!content) return;
+    // A comment must carry text, a file, or both (matches the server rule).
+    if (!content && !attachment) return;
     setPosting(true);
     try {
-      const { data } = await addTaskComment(taskId, content);
+      const { data } = await addTaskComment(taskId, content, attachment);
       setComments((prev) => [...prev, data]);
       setCommentText("");
+      setAttachment(null);
     } catch (e: any) {
       // The server may fail AFTER committing the comment (e.g. a post-insert
       // side effect throws) — historically this surfaced as "Failed to add
@@ -293,12 +339,16 @@ export default function TaskDetail() {
         const { data: fresh } = await getTaskDetail(taskId);
         const freshComments = fresh.comments || [];
         const saved = freshComments.some(
-          (c) => c.content === content && c.user_id != null,
+          (c) =>
+            (content ? c.content === content : true) &&
+            (attachment ? !!c.file_url : true) &&
+            c.user_id != null,
         );
         if (saved) {
           setTask(fresh);
           setComments(freshComments);
           setCommentText("");
+          setAttachment(null);
           return;
         }
       } catch {
@@ -712,7 +762,33 @@ export default function TaskDetail() {
                       </Text>
                       <Text style={styles.commentTime}>{timeAgo(c.created_at)}</Text>
                     </View>
-                    <Text style={styles.commentText}>{c.content}</Text>
+                    {c.content ? (
+                      <Text style={styles.commentText}>{c.content}</Text>
+                    ) : null}
+                    {c.file_url ? (
+                      isImageAttachment(c) ? (
+                        <Pressable
+                          onPress={() => openAttachment(c.file_url)}
+                          style={styles.attachImageWrap}
+                        >
+                          <AuthedImage
+                            uri={uploadUrl(c.file_url) || undefined}
+                            style={styles.attachImage}
+                            resizeMode="cover"
+                          />
+                        </Pressable>
+                      ) : (
+                        <Pressable
+                          style={styles.attachFileCard}
+                          onPress={() => openAttachment(c.file_url)}
+                        >
+                          <FileText size={16} color={theme.primary} />
+                          <Text style={styles.attachFileName} numberOfLines={1}>
+                            {c.file_name || "File"}
+                          </Text>
+                        </Pressable>
+                      )
+                    ) : null}
                   </View>
                 </View>
               ))
@@ -739,26 +815,56 @@ export default function TaskDetail() {
         {/* Comment composer */}
         <View
           style={[
-            styles.composer,
+            styles.composerWrap,
             { paddingBottom: Math.max(insets.bottom, kbInset) + 8 },
           ]}
         >
-          <TextInput
-            style={styles.commentInput}
-            placeholder="Add a comment"
-            placeholderTextColor={theme.textMuted}
-            value={commentText}
-            onChangeText={setCommentText}
-            onFocus={scrollFocusedIntoView}
-            multiline
-          />
-          <Pressable
-            style={[styles.sendBtn, !commentText.trim() && styles.disabled]}
-            onPress={postComment}
-            disabled={!commentText.trim() || posting}
-          >
-            <Send size={18} color="#fff" />
-          </Pressable>
+          {/* Selected-attachment chip (shown above the input row, mirrors the
+              web InlineCommentPanel file chip). */}
+          {attachment ? (
+            <View style={styles.attachChip}>
+              <Paperclip size={13} color={theme.primary} />
+              <Text style={styles.attachChipText} numberOfLines={1}>
+                {attachment.name || "Attachment"}
+              </Text>
+              <Pressable onPress={() => setAttachment(null)} hitSlop={8}>
+                <X size={14} color={theme.textSecondary} />
+              </Pressable>
+            </View>
+          ) : null}
+          <View style={styles.composer}>
+            <Pressable
+              style={styles.attachBtn}
+              onPress={pickAttachment}
+              disabled={posting}
+              hitSlop={8}
+            >
+              <Paperclip size={20} color={theme.textSecondary} />
+            </Pressable>
+            <TextInput
+              style={styles.commentInput}
+              placeholder="Add a comment"
+              placeholderTextColor={theme.textMuted}
+              value={commentText}
+              onChangeText={setCommentText}
+              onFocus={scrollFocusedIntoView}
+              multiline
+            />
+            <Pressable
+              style={[
+                styles.sendBtn,
+                !commentText.trim() && !attachment && styles.disabled,
+              ]}
+              onPress={postComment}
+              disabled={(!commentText.trim() && !attachment) || posting}
+            >
+              {posting ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Send size={18} color="#fff" />
+              )}
+            </Pressable>
+          </View>
         </View>
       </KeyboardAvoidingView>
     </View>
@@ -949,15 +1055,60 @@ const makeStyles = (theme: Theme) =>
   commentName: { fontSize: 13, fontWeight: "600", color: theme.text },
   commentTime: { fontSize: 11, color: theme.textMuted },
   commentText: { fontSize: 14, color: theme.textSecondary, lineHeight: 19 },
+  attachImageWrap: { marginTop: 4 },
+  attachImage: {
+    width: 180,
+    height: 140,
+    borderRadius: theme.radiusSm,
+    backgroundColor: theme.surface,
+  },
+  attachFileCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 4,
+    backgroundColor: theme.surface,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radiusSm,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  attachFileName: { flex: 1, fontSize: 13, color: theme.primaryLight, fontWeight: "600" },
+  composerWrap: {
+    borderTopWidth: 1,
+    borderTopColor: theme.border,
+    backgroundColor: theme.bgSecondary,
+    paddingTop: 8,
+  },
+  attachChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    alignSelf: "flex-start",
+    marginHorizontal: 12,
+    marginBottom: 6,
+    backgroundColor: theme.surface,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radiusFull,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    maxWidth: "85%",
+  },
+  attachChipText: { fontSize: 12, color: theme.text, maxWidth: 200 },
+  attachBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   composer: {
     flexDirection: "row",
     alignItems: "flex-end",
     gap: 8,
     paddingHorizontal: 12,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: theme.border,
-    backgroundColor: theme.bgSecondary,
   },
   commentInput: {
     flex: 1,

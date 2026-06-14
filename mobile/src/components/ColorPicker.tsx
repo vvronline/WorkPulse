@@ -109,6 +109,8 @@ export function ColorPicker({
             { backgroundColor: valid ? value : theme.surface },
           ]}
           onPress={openWheel}
+          accessibilityRole="button"
+          accessibilityLabel="Open colour wheel"
         />
         <TextInput
           style={styles.hexInput}
@@ -127,9 +129,6 @@ export function ColorPicker({
           autoCorrect={false}
           maxLength={7}
         />
-        <Pressable style={styles.wheelBtn} onPress={openWheel}>
-          <Text style={styles.wheelBtnText}>Wheel</Text>
-        </Pressable>
       </View>
 
       <Modal
@@ -209,13 +208,6 @@ function makeStyles(theme: ReturnType<typeof useTheme>) {
       color: theme.text,
       fontSize: 15,
     },
-    wheelBtn: {
-      paddingHorizontal: 14,
-      paddingVertical: 10,
-      borderRadius: theme.radiusSm,
-      backgroundColor: theme.primaryGlow,
-    },
-    wheelBtnText: { color: theme.primary, fontWeight: "600", fontSize: 13 },
     modalOverlay: { flex: 1, justifyContent: "center", padding: 24 },
     modalScrim: {
       position: "absolute",

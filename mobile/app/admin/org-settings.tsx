@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Image,
   KeyboardAvoidingView,
   Linking,
   Modal,
@@ -22,6 +21,7 @@ import * as Location from "expo-location";
 import NetInfo from "@react-native-community/netinfo";
 import {
   Building2,
+  Check,
   Lock,
   MapPin,
   Mail,
@@ -42,6 +42,7 @@ import {
 } from "../../src/hooks/useKeyboardInset";
 import { Dropdown } from "../../src/components/Dropdown";
 import { ColorPicker } from "../../src/components/ColorPicker";
+import { AuthedImage } from "../../src/components/AuthedImage";
 import { useBranding, useTheme } from "../../src/theme/ThemeProvider";
 import { useAuth } from "../../src/auth/AuthContext";
 import { uploadUrl } from "../../src/config";
@@ -272,6 +273,10 @@ export default function OrgSettingsScreen() {
   // Branding
   const [accent, setAccent] = useState("#2383e2");
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [brandingMsg, setBrandingMsg] = useState<
+    { type: "success" | "error"; text: string } | null
+  >(null);
+  const [brandingSaving, setBrandingSaving] = useState(false);
 
   // Registration
   const [regMode, setRegMode] = useState("open");
@@ -588,15 +593,6 @@ export default function OrgSettingsScreen() {
 
   /* ── Branding ── */
 
-  async function saveAccent(color: string) {
-    setAccent(color);
-    try {
-      await updateBrandingAccent(color);
-    } catch (e: any) {
-      Alert.alert("Error", e?.response?.data?.error || "Failed to save accent");
-    }
-  }
-
   async function pickLogo() {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images"],
@@ -630,6 +626,38 @@ export default function OrgSettingsScreen() {
             ),
       },
     ]);
+  }
+
+  /**
+   * Persist the accent colour and re-theme the whole app. Surfaces the
+   * outcome through an inline, theme-aware banner (no blocking Alert) so a
+   * successful save never shows a stray "failed" popup. The banner colour
+   * tracks the live accent on success and the danger token on failure.
+   */
+  async function saveBranding() {
+    if (!accentValid) {
+      setBrandingMsg({
+        type: "error",
+        text: "Accent must be a 6-digit hex (e.g. #2383e2)",
+      });
+      return;
+    }
+    setBrandingSaving(true);
+    setBrandingMsg(null);
+    try {
+      await updateBrandingAccent(accent);
+      // Re-fetch branding so the new accent re-themes the whole app.
+      await refreshBranding();
+      setBrandingMsg({ type: "success", text: "Branding saved" });
+      setTimeout(() => setBrandingMsg(null), 2500);
+    } catch (e: any) {
+      setBrandingMsg({
+        type: "error",
+        text: e?.response?.data?.error || "Failed to save branding",
+      });
+    } finally {
+      setBrandingSaving(false);
+    }
   }
 
   /* ── Registration ── */
@@ -1398,7 +1426,7 @@ export default function OrgSettingsScreen() {
         <Text style={styles.fieldLabel}>Logo</Text>
         <View style={styles.logoRow}>
           {logoAbs ? (
-            <Image source={{ uri: logoAbs }} style={styles.logoPreview} />
+            <AuthedImage uri={logoAbs} style={styles.logoPreview} />
           ) : (
             <View style={[styles.logoPreview, styles.logoPlaceholder]}>
               <Text style={styles.hint}>No logo</Text>
@@ -1435,7 +1463,7 @@ export default function OrgSettingsScreen() {
         <Text style={styles.previewLabel}>Live preview</Text>
         <View style={styles.previewCard}>
           {logoAbs ? (
-            <Image source={{ uri: logoAbs }} style={styles.previewLogo} />
+            <AuthedImage uri={logoAbs} style={styles.previewLogo} />
           ) : null}
           <Text style={styles.previewHeading}>Sample heading</Text>
           <Text style={styles.previewText}>
@@ -1452,28 +1480,47 @@ export default function OrgSettingsScreen() {
           </View>
         </View>
 
+        {brandingMsg ? (
+          <View
+            style={[
+              styles.brandingBanner,
+              brandingMsg.type === "success"
+                ? styles.brandingBannerSuccess
+                : styles.brandingBannerError,
+            ]}
+          >
+            {brandingMsg.type === "success" ? (
+              <Check size={15} color={theme.primary} />
+            ) : (
+              <X size={15} color={theme.danger} />
+            )}
+            <Text
+              style={[
+                styles.brandingBannerText,
+                {
+                  color:
+                    brandingMsg.type === "success"
+                      ? theme.primary
+                      : theme.danger,
+                },
+              ]}
+            >
+              {brandingMsg.text}
+            </Text>
+          </View>
+        ) : null}
+
         <Pressable
-          style={[styles.saveBtn, !accentValid && { opacity: 0.5 }]}
-          disabled={!accentValid}
-          onPress={async () => {
-            if (!accentValid) {
-              Alert.alert("Invalid color", "Accent must be a 6-digit hex (e.g. #2383e2)");
-              return;
-            }
-            try {
-              await updateBrandingAccent(accent);
-              // Re-fetch branding so the new accent re-themes the whole app.
-              await refreshBranding();
-              Alert.alert("Saved", "Branding updated");
-            } catch (e: any) {
-              Alert.alert(
-                "Error",
-                e?.response?.data?.error || "Failed to save branding",
-              );
-            }
-          }}
+          style={[
+            styles.saveBtn,
+            (!accentValid || brandingSaving) && { opacity: 0.5 },
+          ]}
+          disabled={!accentValid || brandingSaving}
+          onPress={saveBranding}
         >
-          <Text style={styles.saveBtnText}>Save branding</Text>
+          <Text style={styles.saveBtnText}>
+            {brandingSaving ? "Saving…" : "Save branding"}
+          </Text>
         </Pressable>
       </View>
 
@@ -1933,4 +1980,24 @@ const makeStyles = (theme: Theme) =>
     marginTop: 4,
   },
   previewBtnText: { color: "#fff", fontSize: 13, fontWeight: "600" },
+  // Branding save banner — theme-aware inline status (replaces blocking Alerts)
+  brandingBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: theme.radiusSm,
+    borderWidth: 1,
+    marginTop: 4,
+  },
+  brandingBannerSuccess: {
+    backgroundColor: theme.primaryGlow,
+    borderColor: theme.primary,
+  },
+  brandingBannerError: {
+    backgroundColor: theme.surface,
+    borderColor: theme.danger,
+  },
+  brandingBannerText: { flex: 1, fontSize: 13, fontWeight: "600" },
 });

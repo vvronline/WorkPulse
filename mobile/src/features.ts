@@ -80,9 +80,62 @@ export type TaskComment = {
   username?: string;
   content: string;
   created_at: string;
+  // File attachment (mirrors the web client + chat message shape). A comment
+  // may carry text, a single file, or both.
+  file_url?: string | null;
+  file_name?: string | null;
+  file_type?: string | null;
+  file_size?: number | null;
 };
 
-export function addTaskComment(id: number, content: string) {
+// Map common extensions to the MIME types the server's task-comment upload
+// fileFilter allows (see server/routes/tasks/comments.ts ALLOWED_TYPES).
+const COMMENT_MIME_BY_EXT: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  gif: "image/gif",
+  bmp: "image/bmp",
+  pdf: "application/pdf",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  txt: "text/plain",
+  csv: "text/csv",
+  zip: "application/zip",
+};
+
+export type CommentAttachment = {
+  uri: string;
+  name?: string;
+  mimeType?: string;
+};
+
+export function addTaskComment(
+  id: number,
+  content: string,
+  file?: CommentAttachment | null,
+) {
+  // When a file is attached we must send multipart/form-data so multer's
+  // `single('file')` middleware can parse it (matches the web client + chat
+  // upload). The React Native FormData file shape is { uri, name, type }.
+  if (file?.uri) {
+    const name = file.name || file.uri.split("/").pop() || "file";
+    const match = /\.(\w+)$/.exec(name);
+    const ext = (match?.[1] || "").toLowerCase();
+    const mime =
+      file.mimeType || COMMENT_MIME_BY_EXT[ext] || "application/octet-stream";
+    const form = new FormData();
+    if (content) form.append("content", content);
+    form.append("file", { uri: file.uri, name, type: mime } as any);
+    return api.post<TaskComment>(`/tasks/${id}/comments`, form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  }
+
   // The server's POST /tasks/:id/comments route runs through a multer
   // `single('file')` middleware, but multer only consumes multipart bodies and
   // transparently passes JSON bodies through to the handler (which reads

@@ -85,6 +85,7 @@ export default function MeetingScreen() {
     toggleMute,
     toggleVideo,
     switchCamera,
+    join,
     leave,
   } = useMeetingMesh({
     meetingId,
@@ -170,6 +171,30 @@ export default function MeetingScreen() {
           </Pressable>
         </View>
       </View>
+    );
+  }
+
+  // ── Pre-join lobby ───────────────────────────────────────────────────────
+  // Mobile-appropriate equivalent of the web device-selection screen: a live
+  // self-preview plus mic / camera / flip controls. The user confirms their
+  // setup here, then "Join now" fires the actual `meeting_join`.
+  if (status === "lobby") {
+    return (
+      <LobbyScreen
+        theme={theme}
+        title={title}
+        code={code}
+        codeCopied={codeCopied}
+        copyCode={copyCode}
+        localStream={localStream}
+        muted={muted}
+        videoOff={videoOff}
+        toggleMute={toggleMute}
+        toggleVideo={toggleVideo}
+        switchCamera={switchCamera}
+        onJoin={join}
+        onCancel={() => router.back()}
+      />
     );
   }
 
@@ -288,6 +313,153 @@ export default function MeetingScreen() {
           onPress={handleLeave}
           icon={<PhoneOff size={24} color="#fff" />}
         />
+      </View>
+    </SafeAreaView>
+  );
+}
+
+function LobbyScreen({
+  theme,
+  title,
+  code,
+  codeCopied,
+  copyCode,
+  localStream,
+  muted,
+  videoOff,
+  toggleMute,
+  toggleVideo,
+  switchCamera,
+  onJoin,
+  onCancel,
+}: {
+  theme: Theme;
+  title: string;
+  code?: string;
+  codeCopied: boolean;
+  copyCode: () => void;
+  localStream: any;
+  muted: boolean;
+  videoOff: boolean;
+  toggleMute: () => void;
+  toggleVideo: () => void;
+  switchCamera: () => void;
+  onJoin: () => void;
+  onCancel: () => void;
+}) {
+  const styles = useMemo(() => makeStyles(theme), [theme]);
+  const showVideo = localStream && !videoOff;
+
+  return (
+    <SafeAreaView style={styles.screen} edges={["top", "bottom"]}>
+      <Stack.Screen options={{ headerShown: false }} />
+
+      {/* Header */}
+      <View style={styles.header}>
+        <View style={styles.headerLeft}>
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            {title}
+          </Text>
+          {code ? (
+            <Pressable style={styles.codePill} onPress={copyCode}>
+              <Text style={styles.codeText}>{code}</Text>
+              {codeCopied ? (
+                <Check size={12} color={theme.success} />
+              ) : (
+                <Copy size={12} color={theme.textMuted} />
+              )}
+            </Pressable>
+          ) : null}
+        </View>
+        <View style={styles.headerRight}>
+          <Pressable style={styles.headerBtn} onPress={onCancel}>
+            <Minimize2 size={16} color={theme.text} />
+          </Pressable>
+        </View>
+      </View>
+
+      {/* Self preview */}
+      <View style={styles.lobbyPreviewWrap}>
+        <View style={styles.lobbyPreview}>
+          {showVideo ? (
+            <RTCView
+              streamURL={(localStream as any).toURL()}
+              style={styles.lobbyVideo}
+              objectFit="cover"
+              mirror
+              zOrder={0}
+            />
+          ) : (
+            <View style={styles.lobbyAvatarWrap}>
+              {!localStream ? (
+                <>
+                  <ActivityIndicator color={theme.primary} />
+                  <Text style={styles.lobbyHint}>Starting camera…</Text>
+                </>
+              ) : (
+                <>
+                  <View style={styles.lobbyAvatar}>
+                    <VideoOff size={30} color="#fff" />
+                  </View>
+                  <Text style={styles.lobbyHint}>Camera is off</Text>
+                </>
+              )}
+            </View>
+          )}
+          {muted ? (
+            <View style={styles.lobbyMuteBadge}>
+              <MicOff size={13} color="#fff" />
+              <Text style={styles.lobbyMuteText}>Muted</Text>
+            </View>
+          ) : null}
+        </View>
+      </View>
+
+      {/* Pre-join device controls */}
+      <View style={styles.controls}>
+        <ControlButton
+          theme={theme}
+          active={muted}
+          label={muted ? "Unmute" : "Mute"}
+          onPress={toggleMute}
+          icon={
+            muted ? (
+              <MicOff size={22} color="#fff" />
+            ) : (
+              <Mic size={22} color="#fff" />
+            )
+          }
+        />
+        <ControlButton
+          theme={theme}
+          active={videoOff}
+          label={videoOff ? "Start" : "Stop"}
+          onPress={toggleVideo}
+          icon={
+            videoOff ? (
+              <VideoOff size={22} color="#fff" />
+            ) : (
+              <VideoIcon size={22} color="#fff" />
+            )
+          }
+        />
+        <ControlButton
+          theme={theme}
+          label="Flip"
+          onPress={switchCamera}
+          icon={<SwitchCamera size={22} color="#fff" />}
+        />
+      </View>
+
+      {/* Join action */}
+      <View style={styles.lobbyActions}>
+        <Pressable style={styles.lobbyJoinBtn} onPress={onJoin}>
+          <VideoIcon size={18} color="#fff" />
+          <Text style={styles.lobbyJoinText}>Join now</Text>
+        </Pressable>
+        <Pressable style={styles.linkBtn} onPress={onCancel}>
+          <Text style={styles.linkBtnText}>Cancel</Text>
+        </Pressable>
       </View>
     </SafeAreaView>
   );
@@ -599,4 +771,62 @@ const makeStyles = (theme: Theme) =>
     fallbackBtnText: { color: "#fff", fontSize: 15, fontWeight: "600" },
     linkBtn: { paddingVertical: 10, paddingHorizontal: 16 },
     linkBtnText: { color: theme.textSecondary, fontSize: 14 },
+    // ── Pre-join lobby ──
+    lobbyPreviewWrap: {
+      flex: 1,
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+    },
+    lobbyPreview: {
+      flex: 1,
+      backgroundColor: "#161616",
+      borderRadius: 18,
+      overflow: "hidden",
+      borderWidth: 1,
+      borderColor: "rgba(255,255,255,0.08)",
+    },
+    lobbyVideo: { flex: 1, backgroundColor: "#000" },
+    lobbyAvatarWrap: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 12,
+    },
+    lobbyAvatar: {
+      width: 80,
+      height: 80,
+      borderRadius: 40,
+      backgroundColor: "rgba(255,255,255,0.12)",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    lobbyHint: { color: "rgba(255,255,255,0.6)", fontSize: 14 },
+    lobbyMuteBadge: {
+      position: "absolute",
+      bottom: 12,
+      left: 12,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 5,
+      backgroundColor: "rgba(0,0,0,0.55)",
+      borderRadius: 8,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+    },
+    lobbyMuteText: { color: "#fff", fontSize: 12, fontWeight: "600" },
+    lobbyActions: {
+      alignItems: "center",
+      gap: 4,
+      paddingBottom: 18,
+    },
+    lobbyJoinBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      backgroundColor: theme.primary,
+      borderRadius: 28,
+      paddingVertical: 14,
+      paddingHorizontal: 48,
+    },
+    lobbyJoinText: { color: "#fff", fontSize: 16, fontWeight: "700" },
   });
