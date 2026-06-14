@@ -8,6 +8,7 @@ import { AuthProvider } from "../src/auth/AuthContext";
 import ImpersonationBanner from "../src/components/ImpersonationBanner";
 import UpdateChecker from "../src/components/UpdateChecker";
 import IncomingCallListener from "../src/realtime/IncomingCallListener";
+import MeetingStartedListener from "../src/realtime/MeetingStartedListener";
 import { ThemeProvider, useTheme } from "../src/theme/ThemeProvider";
 
 const queryClient = new QueryClient({
@@ -146,6 +147,7 @@ export default function RootLayout() {
             <SafeAreaProvider>
               <StatusBar style="light" />
               <IncomingCallListener />
+              <MeetingStartedListener />
               <ImpersonationBanner />
               <UpdateChecker />
               <ThemedStack />

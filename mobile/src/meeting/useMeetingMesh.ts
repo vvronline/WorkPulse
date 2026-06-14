@@ -385,9 +385,11 @@ export function useMeetingMesh({
           // The joiner gets `existingPeers` — create NON-initiator PCs (await
           // their offers). Existing members get a single `userId` (the new
           // joiner) — create an INITIATOR PC (send offer).
+          let hasPeersToConnect = false;
           if (Array.isArray(data.existingPeers)) {
             data.existingPeers.forEach((peer: any) => {
               if (!peer?.userId || peer.userId === selfId) return;
+              hasPeersToConnect = true;
               upsertParticipant(peer.userId, {
                 name: peer.fullName || peer.username || "Participant",
                 avatar: peer.avatar || null,
@@ -396,6 +398,7 @@ export function useMeetingMesh({
             });
           }
           if (data.userId && data.userId !== selfId) {
+            hasPeersToConnect = true;
             upsertParticipant(data.userId, {
               name: data.fullName || data.username || "Participant",
               avatar: data.avatar || null,
@@ -410,7 +413,19 @@ export function useMeetingMesh({
               });
             }
           }
-          setStatus((prev) => (prev === "connected" ? prev : "connecting"));
+          // Mirror the web client: when there are NO remote peers to connect to
+          // (e.g. you just STARTED the meeting and are the only participant, so
+          // the server echoes an empty `existingPeers: []`), flip straight to
+          // "connected" so the starter lands in the room instead of being stuck
+          // on "Connecting…" forever. With real peers we stay "connecting"
+          // until a peer connection reaches the connected state.
+          setStatus((prev) =>
+            hasPeersToConnect
+              ? prev === "connected"
+                ? prev
+                : "connecting"
+              : "connected",
+          );
           break;
         }
         case "meeting_signal": {

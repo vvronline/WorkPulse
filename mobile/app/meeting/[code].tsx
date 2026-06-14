@@ -9,11 +9,16 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import * as Clipboard from "expo-clipboard";
 import { RTCView } from "react-native-webrtc";
 import {
+  Check,
+  Copy,
   Mic,
   MicOff,
+  Minimize2,
   PhoneOff,
   SwitchCamera,
   Video as VideoIcon,
@@ -32,7 +37,10 @@ import {
 /**
  * In-app meeting room. Joins the SAME WebRTC mesh as the web/desktop clients
  * (server/utils/ws.ts relays the signaling) instead of bouncing the user to a
- * browser. Built on react-native-webrtc (already used by the 1:1 call screen).
+ * browser. The layout mirrors the web client's mobile meeting view
+ * (client/src/pages/MeetingRoom.tsx + MeetingRoom.css): a header with the
+ * title / copyable code / elapsed timer, an adaptive participant grid with
+ * name + mute + connecting overlays, and a bottom control bar.
  */
 export default function MeetingScreen() {
   const theme = useTheme();
@@ -45,6 +53,8 @@ export default function MeetingScreen() {
   const [title, setTitle] = useState("Meeting");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [opening, setOpening] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
 
   // Resolve the meeting by code (mirrors the web auto-join path).
   useEffect(() => {
@@ -83,6 +93,18 @@ export default function MeetingScreen() {
     initialVideoOff: false,
   });
 
+  // Elapsed timer — starts ticking once we're connected.
+  useEffect(() => {
+    if (status !== "connected") return;
+    const startedAt = Date.now();
+    setElapsed(0);
+    const t = setInterval(
+      () => setElapsed(Math.floor((Date.now() - startedAt) / 1000)),
+      1000,
+    );
+    return () => clearInterval(t);
+  }, [status]);
+
   // Leave the meeting (or bounce back) when the host ends it.
   useEffect(() => {
     if (status === "ended") {
@@ -95,6 +117,17 @@ export default function MeetingScreen() {
     leave();
     router.back();
   };
+
+  async function copyCode() {
+    if (!code) return;
+    try {
+      await Clipboard.setStringAsync(code);
+      setCodeCopied(true);
+      setTimeout(() => setCodeCopied(false), 2000);
+    } catch {
+      /* ignore */
+    }
+  }
 
   async function openInBrowser() {
     setOpening(true);
@@ -114,7 +147,7 @@ export default function MeetingScreen() {
           <View style={styles.iconWrap}>
             <VideoIcon size={32} color={theme.primary} />
           </View>
-          <Text style={styles.title}>Can't join the meeting</Text>
+          <Text style={styles.cardTitle}>Can't join the meeting</Text>
           <Text style={styles.hint}>{loadError || mediaError}</Text>
           {!loadError ? (
             <Pressable
@@ -142,71 +175,161 @@ export default function MeetingScreen() {
 
   const remoteParticipants = Array.from(participants.values());
   const connecting = status === "joining" || status === "connecting";
+  // Tile count = self + remote participants. Drives the adaptive grid columns.
+  const tileCount = remoteParticipants.length + 1;
+  const statusText =
+    status === "connected"
+      ? `${tileCount} in call`
+      : status === "connecting"
+        ? "Connecting…"
+        : "Joining…";
 
   return (
-    <View style={styles.screen}>
+    <SafeAreaView style={styles.screen} edges={["top", "bottom"]}>
       <Stack.Screen options={{ headerShown: false }} />
 
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle} numberOfLines={1}>
-          {title}
-        </Text>
-        <Text style={styles.headerStatus}>
-          {status === "connected"
-            ? `${remoteParticipants.length + 1} in call`
-            : connecting
-              ? "Connecting…"
-              : "Joining…"}
-        </Text>
+        <View style={styles.headerLeft}>
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            {title}
+          </Text>
+          <Pressable style={styles.codePill} onPress={copyCode}>
+            <Text style={styles.codeText}>{code}</Text>
+            {codeCopied ? (
+              <Check size={12} color={theme.success} />
+            ) : (
+              <Copy size={12} color={theme.textMuted} />
+            )}
+          </Pressable>
+        </View>
+        <View style={styles.headerRight}>
+          <Text style={styles.headerStatus}>
+            {status === "connected" ? formatTime(elapsed) : statusText}
+          </Text>
+          <Pressable style={styles.headerBtn} onPress={() => router.back()}>
+            <Minimize2 size={16} color={theme.text} />
+          </Pressable>
+        </View>
       </View>
 
       {/* Video grid */}
-      <ScrollView contentContainerStyle={styles.grid}>
+      <ScrollView
+        style={styles.gridScroll}
+        contentContainerStyle={styles.grid}
+      >
         {/* Self tile */}
         <VideoTile
           theme={theme}
+          tileCount={tileCount}
           name="You"
+          isLocal
           stream={localStream}
           videoOff={videoOff}
           muted={muted}
+          connected
           mirror
         />
         {remoteParticipants.map((p) => (
-          <RemoteTile key={String(p.userId)} theme={theme} participant={p} />
+          <RemoteTile
+            key={String(p.userId)}
+            theme={theme}
+            tileCount={tileCount}
+            participant={p}
+          />
         ))}
       </ScrollView>
 
       {connecting && remoteParticipants.length === 0 ? (
-        <View style={styles.waiting}>
+        <View style={styles.waiting} pointerEvents="none">
           <ActivityIndicator color={theme.primary} />
           <Text style={styles.waitingText}>Waiting for others to join…</Text>
         </View>
       ) : null}
 
-      {/* Controls */}
+      {/* Bottom control bar */}
       <View style={styles.controls}>
-        <Pressable style={styles.ctrl} onPress={toggleMute}>
-          {muted ? (
-            <MicOff size={24} color="#fff" />
-          ) : (
-            <Mic size={24} color="#fff" />
-          )}
-        </Pressable>
-        <Pressable style={styles.ctrl} onPress={toggleVideo}>
-          {videoOff ? (
-            <VideoOff size={24} color="#fff" />
-          ) : (
-            <VideoIcon size={24} color="#fff" />
-          )}
-        </Pressable>
-        <Pressable style={styles.ctrl} onPress={switchCamera}>
-          <SwitchCamera size={24} color="#fff" />
-        </Pressable>
-        <Pressable style={[styles.ctrl, styles.leave]} onPress={handleLeave}>
-          <PhoneOff size={26} color="#fff" />
-        </Pressable>
+        <ControlButton
+          theme={theme}
+          active={muted}
+          label={muted ? "Unmute" : "Mute"}
+          onPress={toggleMute}
+          icon={
+            muted ? (
+              <MicOff size={22} color="#fff" />
+            ) : (
+              <Mic size={22} color="#fff" />
+            )
+          }
+        />
+        <ControlButton
+          theme={theme}
+          active={videoOff}
+          label={videoOff ? "Start" : "Stop"}
+          onPress={toggleVideo}
+          icon={
+            videoOff ? (
+              <VideoOff size={22} color="#fff" />
+            ) : (
+              <VideoIcon size={22} color="#fff" />
+            )
+          }
+        />
+        <ControlButton
+          theme={theme}
+          label="Flip"
+          onPress={switchCamera}
+          icon={<SwitchCamera size={22} color="#fff" />}
+        />
+        <ControlButton
+          theme={theme}
+          danger
+          label="Leave"
+          onPress={handleLeave}
+          icon={<PhoneOff size={24} color="#fff" />}
+        />
       </View>
+    </SafeAreaView>
+  );
+}
+
+function formatTime(s: number): string {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
+}
+
+function ControlButton({
+  theme,
+  icon,
+  label,
+  onPress,
+  active = false,
+  danger = false,
+}: {
+  theme: Theme;
+  icon: React.ReactNode;
+  label: string;
+  onPress: () => void;
+  active?: boolean;
+  danger?: boolean;
+}) {
+  const styles = useMemo(() => makeStyles(theme), [theme]);
+  return (
+    <View style={styles.ctrlWrap}>
+      <Pressable
+        style={[
+          styles.ctrl,
+          active && styles.ctrlActive,
+          danger && styles.ctrlDanger,
+        ]}
+        onPress={onPress}
+      >
+        {icon}
+      </Pressable>
+      <Text style={styles.ctrlLabel}>{label}</Text>
     </View>
   );
 }
@@ -214,17 +337,21 @@ export default function MeetingScreen() {
 function RemoteTile({
   theme,
   participant,
+  tileCount,
 }: {
   theme: Theme;
   participant: MeetingParticipant;
+  tileCount: number;
 }) {
   return (
     <VideoTile
       theme={theme}
+      tileCount={tileCount}
       name={participant.name}
       stream={participant.stream}
       videoOff={participant.videoOff}
       muted={participant.muted}
+      connected={!!participant.stream}
     />
   );
 }
@@ -235,6 +362,9 @@ function VideoTile({
   stream,
   videoOff,
   muted,
+  tileCount,
+  isLocal = false,
+  connected = false,
   mirror = false,
 }: {
   theme: Theme;
@@ -242,16 +372,32 @@ function VideoTile({
   stream: any;
   videoOff: boolean;
   muted: boolean;
+  tileCount: number;
+  isLocal?: boolean;
+  connected?: boolean;
   mirror?: boolean;
 }) {
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  // Two columns with 12px outer + gap padding.
-  const tileWidth = (width - 36) / 2;
+
+  // Adaptive grid sizing (mirrors web's mobile breakpoints): 1 column for a
+  // 1:1 call, 2 columns otherwise. Tiles fill the available width with a
+  // square-ish aspect so they don't look stretched.
+  const gap = 10;
+  const outer = 12;
+  const cols = tileCount <= 1 ? 1 : 2;
+  const tileWidth = (width - outer * 2 - gap * (cols - 1)) / cols;
+  // For a single tile take most of the screen; for grids keep a 3:4 portrait.
+  const tileHeight =
+    tileCount <= 1
+      ? Math.min(height * 0.62, tileWidth * 1.2)
+      : tileWidth * 1.15;
   const showVideo = stream && !videoOff;
+  const displayName = isLocal ? `${name} (You)` : name;
+  const showConnecting = !isLocal && !connected;
 
   return (
-    <View style={[styles.tile, { width: tileWidth, height: tileWidth * 1.2 }]}>
+    <View style={[styles.tile, { width: tileWidth, height: tileHeight }]}>
       {showVideo ? (
         <RTCView
           streamURL={(stream as any).toURL()}
@@ -267,12 +413,18 @@ function VideoTile({
               {(name || "?")[0]?.toUpperCase()}
             </Text>
           </View>
+          {showConnecting ? (
+            <View style={styles.tileStatusRow}>
+              <ActivityIndicator size="small" color={theme.textSecondary} />
+              <Text style={styles.tileStatusText}>Connecting…</Text>
+            </View>
+          ) : null}
         </View>
       )}
       <View style={styles.tileFooter}>
         {muted ? <MicOff size={12} color="#fff" /> : null}
         <Text style={styles.tileName} numberOfLines={1}>
-          {name}
+          {displayName}
         </Text>
       </View>
     </View>
@@ -284,22 +436,50 @@ const makeStyles = (theme: Theme) =>
     screen: {
       flex: 1,
       backgroundColor: "#0a0a0a",
-      paddingTop: 44,
     },
     header: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
       paddingHorizontal: 16,
-      paddingBottom: 8,
-      gap: 2,
+      paddingVertical: 10,
+      gap: 12,
     },
-    headerTitle: { color: "#fff", fontSize: 18, fontWeight: "700" },
+    headerLeft: { flex: 1, gap: 4 },
+    headerTitle: { color: "#fff", fontSize: 17, fontWeight: "700" },
+    codePill: {
+      flexDirection: "row",
+      alignItems: "center",
+      alignSelf: "flex-start",
+      gap: 6,
+      backgroundColor: "rgba(255,255,255,0.08)",
+      borderRadius: 6,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+    },
+    codeText: {
+      color: "rgba(255,255,255,0.7)",
+      fontSize: 12,
+      fontWeight: "600",
+      letterSpacing: 0.5,
+    },
+    headerRight: { flexDirection: "row", alignItems: "center", gap: 10 },
     headerStatus: { color: "rgba(255,255,255,0.6)", fontSize: 13 },
+    headerBtn: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      backgroundColor: "rgba(255,255,255,0.08)",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    gridScroll: { flex: 1 },
     grid: {
-      flexGrow: 1,
       flexDirection: "row",
       flexWrap: "wrap",
-      gap: 12,
+      gap: 10,
       padding: 12,
-      justifyContent: "flex-start",
+      justifyContent: "center",
     },
     tile: {
       backgroundColor: "#161616",
@@ -313,6 +493,7 @@ const makeStyles = (theme: Theme) =>
       flex: 1,
       alignItems: "center",
       justifyContent: "center",
+      gap: 12,
     },
     tileAvatar: {
       width: 64,
@@ -323,6 +504,16 @@ const makeStyles = (theme: Theme) =>
       justifyContent: "center",
     },
     tileAvatarText: { color: "#fff", fontSize: 26, fontWeight: "700" },
+    tileStatusRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+    },
+    tileStatusText: {
+      color: "rgba(255,255,255,0.55)",
+      fontSize: 12,
+      fontWeight: "500",
+    },
     tileFooter: {
       position: "absolute",
       bottom: 6,
@@ -349,19 +540,24 @@ const makeStyles = (theme: Theme) =>
     controls: {
       flexDirection: "row",
       justifyContent: "center",
-      gap: 18,
-      paddingVertical: 18,
-      paddingBottom: 36,
+      alignItems: "flex-start",
+      gap: 22,
+      paddingVertical: 14,
+      paddingBottom: 20,
+      backgroundColor: "rgba(0,0,0,0.3)",
     },
+    ctrlWrap: { alignItems: "center", gap: 6 },
     ctrl: {
-      width: 58,
-      height: 58,
-      borderRadius: 29,
-      backgroundColor: "rgba(255,255,255,0.18)",
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      backgroundColor: "rgba(255,255,255,0.16)",
       alignItems: "center",
       justifyContent: "center",
     },
-    leave: { backgroundColor: theme.danger },
+    ctrlActive: { backgroundColor: "rgba(255,255,255,0.32)" },
+    ctrlDanger: { backgroundColor: theme.danger },
+    ctrlLabel: { color: "rgba(255,255,255,0.7)", fontSize: 11 },
     // ── Error / fallback card ──
     card: {
       margin: 16,
@@ -382,7 +578,7 @@ const makeStyles = (theme: Theme) =>
       justifyContent: "center",
       marginBottom: 4,
     },
-    title: { fontSize: 18, fontWeight: "800", color: theme.text },
+    cardTitle: { fontSize: 18, fontWeight: "800", color: theme.text },
     hint: {
       fontSize: 13,
       color: theme.textMuted,
