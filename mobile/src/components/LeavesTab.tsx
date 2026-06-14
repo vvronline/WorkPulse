@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Modal,
   Pressable,
   RefreshControl,
@@ -15,6 +14,7 @@ import {
 import { Pencil, Plus, Trash2, X } from "lucide-react-native";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
+import { useDialog } from "../hooks/useDialog";
 import { useAuth } from "../auth/AuthContext";
 import DatePicker from "./DatePicker";
 import MonthPicker from "./MonthPicker";
@@ -143,6 +143,7 @@ export default function LeavesTab() {
 function RequestTab() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+  const { alert, confirm, dialog } = useDialog();
   const [policies, setPolicies] = useState<LeavePolicy[]>([]);
   const [leaves, setLeaves] = useState<Leave[]>([]);
   const [balances, setBalances] = useState<LeaveBalance[]>([]);
@@ -193,34 +194,29 @@ function RequestTab() {
 
   const confirmWithdraw = (leave: Leave) => {
     const needsApproval = leave.status === "approved";
-    Alert.alert(
-      "Withdraw Leave Request",
-      `Withdraw your ${leave.leave_type} leave for ${fmtDate(leave.date)}?${
+    confirm({
+      title: "Withdraw Leave Request",
+      message: `Withdraw your ${leave.leave_type} leave for ${fmtDate(leave.date)}?${
         needsApproval ? " This requires manager approval." : ""
       }`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Withdraw",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              const res = await withdrawLeave(leave.id);
-              Alert.alert(
-                "Done",
-                (res.data as any)?.message || "Withdrawal request submitted",
-              );
-              loadData();
-            } catch (err: any) {
-              Alert.alert(
-                "Error",
-                err?.response?.data?.error || "Failed to withdraw leave",
-              );
-            }
-          },
-        },
-      ],
-    );
+      confirmText: "Withdraw",
+      isDanger: true,
+      onConfirm: async () => {
+        try {
+          const res = await withdrawLeave(leave.id);
+          alert(
+            "Done",
+            (res.data as any)?.message || "Withdrawal request submitted",
+          );
+          loadData();
+        } catch (err: any) {
+          alert(
+            "Error",
+            err?.response?.data?.error || "Failed to withdraw leave",
+          );
+        }
+      },
+    });
   };
 
   return (
@@ -253,6 +249,8 @@ function RequestTab() {
         loading={loading}
         onWithdraw={confirmWithdraw}
       />
+
+      {dialog}
     </ScrollView>
   );
 }
@@ -274,6 +272,7 @@ function LeaveRequestForm({
 }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+  const { alert, dialog } = useDialog();
   const [isRange, setIsRange] = useState(false);
   const [date, setDate] = useState(ymd(new Date()));
   const [dateFrom, setDateFrom] = useState(ymd(new Date()));
@@ -305,15 +304,15 @@ function LeaveRequestForm({
     try {
       if (isRange) {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(dateFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) {
-          Alert.alert("Invalid date", "Use the format YYYY-MM-DD.");
+          alert("Invalid date", "Use the format YYYY-MM-DD.");
           return;
         }
         if (dateTo < dateFrom) {
-          Alert.alert("Invalid range", "End date must be after start date.");
+          alert("Invalid range", "End date must be after start date.");
           return;
         }
         if (rangeDays.length === 0) {
-          Alert.alert("No valid days", "No valid days in the selected range.");
+          alert("No valid days", "No valid days in the selected range.");
           return;
         }
         const res = await addLeavesBatch({
@@ -322,7 +321,7 @@ function LeaveRequestForm({
           reason: reason.trim() || undefined,
           duration,
         });
-        Alert.alert(
+        alert(
           "Submitted",
           (res.data as any)?.message || `${rangeDays.length} leave(s) submitted`,
         );
@@ -330,7 +329,7 @@ function LeaveRequestForm({
         setDuration("full");
       } else {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-          Alert.alert("Invalid date", "Use the format YYYY-MM-DD.");
+          alert("Invalid date", "Use the format YYYY-MM-DD.");
           return;
         }
         const res = await addLeavesBatch({
@@ -339,7 +338,7 @@ function LeaveRequestForm({
           reason: reason.trim() || undefined,
           duration,
         });
-        Alert.alert(
+        alert(
           "Submitted",
           (res.data as any)?.message || "Leave request submitted",
         );
@@ -356,7 +355,7 @@ function LeaveRequestForm({
         const to = isRange ? dateTo : date;
         const { data } = await getLeaves(from, to);
         if (Array.isArray(data) && data.length > 0) {
-          Alert.alert("Submitted", "Your leave request has been submitted.");
+          alert("Submitted", "Your leave request has been submitted.");
           setReason("");
           setDuration("full");
           onSuccess();
@@ -365,7 +364,7 @@ function LeaveRequestForm({
       } catch {
         // ignore reconciliation failure and fall through to error alert
       }
-      Alert.alert(
+      alert(
         "Error",
         err?.response?.data?.error || "Failed to submit leave",
       );
@@ -376,6 +375,7 @@ function LeaveRequestForm({
 
   return (
     <View style={styles.card}>
+      {dialog}
       <Text style={styles.cardTitle}>New Leave Request</Text>
 
       {/* Single day / range toggle */}
@@ -886,6 +886,7 @@ const POLICY_DEFAULTS: PolicyDraft = {
 function PoliciesTab() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+  const { alert, confirm, dialog } = useDialog();
   const { user } = useAuth();
   const isHR = ["hr_admin", "super_admin", "platform_admin"].includes(
     user?.role || "",
@@ -927,35 +928,30 @@ function PoliciesTab() {
     });
 
   const confirmDelete = (p: LeavePolicy) => {
-    Alert.alert(
-      "Delete Policy",
-      `Delete the "${p.name || p.leave_type}" leave policy? Existing balances and requests linked to it may be affected.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await deleteLeavePolicy(p.id);
-              load();
-            } catch (e: any) {
-              Alert.alert(
-                "Error",
-                e?.response?.data?.error || "Failed to delete policy",
-              );
-            }
-          },
-        },
-      ],
-    );
+    confirm({
+      title: "Delete Policy",
+      message: `Delete the "${p.name || p.leave_type}" leave policy? Existing balances and requests linked to it may be affected.`,
+      confirmText: "Delete",
+      isDanger: true,
+      onConfirm: async () => {
+        try {
+          await deleteLeavePolicy(p.id);
+          load();
+        } catch (e: any) {
+          alert(
+            "Error",
+            e?.response?.data?.error || "Failed to delete policy",
+          );
+        }
+      },
+    });
   };
 
   async function savePolicy() {
     if (!editing) return;
     const label = editing.name.trim();
     if (!label) {
-      Alert.alert("Required", "Please enter a leave type name.");
+      alert("Required", "Please enter a leave type name.");
       return;
     }
     const isExisting = !!editing.id;
@@ -973,7 +969,7 @@ function PoliciesTab() {
     } else {
       const slug = slugify(label);
       if (!slug) {
-        Alert.alert("Invalid name", "Enter a valid leave type name.");
+        alert("Invalid name", "Enter a valid leave type name.");
         return;
       }
       payload.leave_type = slug;
@@ -984,7 +980,7 @@ function PoliciesTab() {
       setEditing(null);
       load();
     } catch (e: any) {
-      Alert.alert(
+      alert(
         "Error",
         e?.response?.data?.error || "Failed to save policy",
       );
@@ -997,6 +993,7 @@ function PoliciesTab() {
 
   return (
     <ScrollView contentContainerStyle={styles.body}>
+      {dialog}
       <View style={styles.policyHeader}>
         <Text style={styles.sectionTitle}>Leave Policies</Text>
         {isHR ? (
@@ -1221,6 +1218,7 @@ function PoliciesTab() {
 function AllBalancesTab() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+  const { alert, dialog } = useDialog();
   const [rows, setRows] = useState<AllBalanceRow[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -1267,7 +1265,7 @@ function AllBalancesTab() {
       setEditItem(null);
       load();
     } catch (e: any) {
-      Alert.alert(
+      alert(
         "Error",
         e?.response?.data?.error || "Failed to update balance",
       );
@@ -1278,6 +1276,7 @@ function AllBalancesTab() {
 
   return (
     <ScrollView contentContainerStyle={styles.body}>
+      {dialog}
       <Text style={styles.sectionTitle}>All Employee Balances</Text>
       <TextInput
         style={styles.input}

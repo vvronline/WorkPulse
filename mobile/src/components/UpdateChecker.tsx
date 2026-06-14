@@ -109,10 +109,6 @@ export default function UpdateChecker() {
     }
   }
 
-  function openReleasePage() {
-    if (info?.releaseUrl) void Linking.openURL(info.releaseUrl);
-  }
-
   if (!visible || !info) return null;
 
   const isUpToDate = !info.available;
@@ -190,14 +186,9 @@ export default function UpdateChecker() {
               </Pressable>
 
               {!downloading && (
-                <>
-                  <Pressable style={styles.secondaryBtn} onPress={openReleasePage}>
-                    <Text style={styles.secondaryBtnText}>Open release page</Text>
-                  </Pressable>
-                  <Pressable style={styles.laterBtn} onPress={() => setVisible(false)}>
-                    <Text style={styles.laterBtnText}>Later</Text>
-                  </Pressable>
-                </>
+                <Pressable style={styles.laterBtn} onPress={() => setVisible(false)}>
+                  <Text style={styles.laterBtnText}>Later</Text>
+                </Pressable>
               )}
             </>
           )}

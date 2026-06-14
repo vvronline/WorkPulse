@@ -1445,8 +1445,8 @@ export function getApprovals(params?: Record<string, string>) {
   return api.get<Approval[]>("/manager/approvals", { params });
 }
 
-export function getMyRequests() {
-  return api.get<Approval[]>("/manager/my-requests");
+export function getMyRequests(params?: Record<string, string>) {
+  return api.get<Approval[]>("/manager/my-requests", { params });
 }
 
 export function approveRequest(id: number, remarks?: string) {
@@ -1455,6 +1455,55 @@ export function approveRequest(id: number, remarks?: string) {
 
 export function rejectRequest(id: number, reason?: string) {
   return api.post(`/manager/approvals/${id}/reject`, { reject_reason: reason });
+}
+
+export function bulkApproval(ids: number[], action: string, reason?: string) {
+  return api.post("/manager/approvals/bulk", {
+    ids,
+    action,
+    reject_reason: reason,
+  });
+}
+
+/**
+ * Per-member performance row returned inside the `members` array of
+ * GET /manager/team-analytics. Field names mirror the web client exactly.
+ */
+export type TeamAnalyticsMember = {
+  id: number;
+  full_name: string;
+  email?: string;
+  avatar?: string | null;
+  role?: string;
+  department_name?: string | null;
+  team_name?: string | null;
+  hours?: number;
+  avgFloorMinutes?: number;
+  tasksDone?: number;
+  tasksTotal?: number;
+  targetMetPercent?: number;
+  punctualityPercent?: number;
+  todayStatus?: string;
+  todayHoursMin?: number;
+  trend?: { date: string; floorMinutes: number }[];
+};
+
+export type TeamAnalytics = {
+  totalMembers?: number;
+  avgHours?: number;
+  totalTasksDone?: number;
+  avgTargetMet?: number;
+  avgPunctuality?: number;
+  pendingApprovals?: number;
+  targetMinutes?: number;
+  expectedWeekdays?: number;
+  members?: TeamAnalyticsMember[];
+};
+
+export function getTeamAnalytics(days?: number, from?: string, to?: string) {
+  return api.get<TeamAnalytics>("/manager/team-analytics", {
+    params: { days, from, to },
+  });
 }
 
 /* ───────────────────────── Organization ───────────────────────── */

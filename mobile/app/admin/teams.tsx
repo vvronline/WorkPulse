@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   KeyboardAvoidingView,
   Modal,
@@ -16,6 +15,7 @@ import { Stack } from "expo-router";
 import { Pencil, Plus, Trash2, UsersRound, X } from "lucide-react-native";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
+import { useDialog } from "../../src/hooks/useDialog";
 import { useKeyboardInset } from "../../src/hooks/useKeyboardInset";
 import { useAuth } from "../../src/auth/AuthContext";
 import { Dropdown, type DropdownOption } from "../../src/components/Dropdown";
@@ -31,6 +31,7 @@ import {
 export default function TeamsScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+  const { alert, confirm, dialog } = useDialog();
   const kbInset = useKeyboardInset();
   const { user } = useAuth();
   // Platform admins are not scoped to a single org server-side, so the
@@ -98,7 +99,7 @@ export default function TeamsScreen() {
 
   async function save() {
     if (!name.trim()) {
-      Alert.alert("Required", "Team name is required");
+      alert("Required", "Team name is required");
       return;
     }
     setBusy(true);
@@ -120,7 +121,7 @@ export default function TeamsScreen() {
       // so the list reflects the actual server state. Only show an alert for a
       // real server-returned rejection (4xx/5xx with an error body).
       if (e?.response) {
-        Alert.alert("Error", e.response.data?.error || "Failed to save");
+        alert("Error", e.response.data?.error || "Failed to save");
       } else {
         setModalOpen(false);
         load();
@@ -131,21 +132,20 @@ export default function TeamsScreen() {
   }
 
   function confirmDelete(t: Team) {
-    Alert.alert("Delete team", `Delete "${t.name}"?`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            await deleteTeam(t.id);
-            load();
-          } catch (e: any) {
-            Alert.alert("Error", e?.response?.data?.error || "Failed to delete");
-          }
-        },
+    confirm({
+      title: "Delete team",
+      message: `Delete "${t.name}"?`,
+      confirmText: "Delete",
+      isDanger: true,
+      onConfirm: async () => {
+        try {
+          await deleteTeam(t.id);
+          load();
+        } catch (e: any) {
+          alert("Error", e?.response?.data?.error || "Failed to delete");
+        }
       },
-    ]);
+    });
   }
 
   return (
@@ -255,6 +255,9 @@ export default function TeamsScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* Themed confirm / alert dialog (replaces OS-native Alert). */}
+      {dialog}
     </View>
   );
 }

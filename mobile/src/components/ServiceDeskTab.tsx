@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -23,6 +22,7 @@ import {
 } from "lucide-react-native";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
+import { useDialog } from "../hooks/useDialog";
 import { useAuth } from "../auth/AuthContext";
 import {
   createServiceDeskTicket,
@@ -68,6 +68,7 @@ function getStatus(value: string) {
 export default function ServiceDeskTab() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+  const { alert, confirm, dialog } = useDialog();
   const { user } = useAuth();
   const [tickets, setTickets] = useState<ServiceDeskTicket[]>([]);
   const [stats, setStats] = useState<ServiceDeskStats | null>(null);
@@ -109,29 +110,29 @@ export default function ServiceDeskTab() {
 
   function confirmDelete(ticket: ServiceDeskTicket) {
     const isOwn = ticket.submitted_by_user_id === user?.id;
-    const msg =
-      isOwn && ticket.status === "open"
-        ? `Cancel ticket "${ticket.title}"? This also removes it from the platform team's backlog.`
-        : `Delete ticket "${ticket.title}"? This cannot be undone.`;
-    Alert.alert("Delete Ticket", msg, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          setDeletingId(ticket.id);
-          try {
-            await deleteServiceDeskTicket(ticket.id);
-            setTickets((prev) => prev.filter((t) => t.id !== ticket.id));
-            fetchStats();
-          } catch (e: any) {
-            Alert.alert("Error", e?.response?.data?.error || "Failed to delete ticket");
-          } finally {
-            setDeletingId(null);
-          }
-        },
+    const isCancel = isOwn && ticket.status === "open";
+    const msg = isCancel
+      ? `Cancel ticket "${ticket.title}"? This also removes it from the platform team's backlog.`
+      : `Delete ticket "${ticket.title}"? This cannot be undone.`;
+    confirm({
+      title: isCancel ? "Cancel Ticket" : "Delete Ticket",
+      message: msg,
+      confirmText: isCancel ? "Cancel Ticket" : "Delete",
+      cancelText: "Keep",
+      isDanger: true,
+      onConfirm: async () => {
+        setDeletingId(ticket.id);
+        try {
+          await deleteServiceDeskTicket(ticket.id);
+          setTickets((prev) => prev.filter((t) => t.id !== ticket.id));
+          fetchStats();
+        } catch (e: any) {
+          alert("Error", e?.response?.data?.error || "Failed to delete ticket");
+        } finally {
+          setDeletingId(null);
+        }
       },
-    ]);
+    });
   }
 
   return (
@@ -320,6 +321,9 @@ export default function ServiceDeskTab() {
           fetchStats();
         }}
       />
+
+      {/* Themed confirm / alert dialog (replaces OS-native Alert). */}
+      {dialog}
     </View>
   );
 }
@@ -335,6 +339,7 @@ function NewTicketModal({
 }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+  const { alert, dialog } = useDialog();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [ticketType, setTicketType] = useState("bug");
@@ -362,7 +367,7 @@ function NewTicketModal({
       });
       onCreated();
     } catch (e: any) {
-      Alert.alert("Error", e?.response?.data?.error || "Failed to submit ticket");
+      alert("Error", e?.response?.data?.error || "Failed to submit ticket");
     } finally {
       setSubmitting(false);
     }
@@ -370,6 +375,7 @@ function NewTicketModal({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      {dialog}
       <View style={styles.modalOverlay}>
         <View style={styles.modalCard}>
           <View style={styles.modalHeader}>

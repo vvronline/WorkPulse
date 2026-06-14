@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import Svg, { Circle } from "react-native-svg";
 import {
@@ -12,6 +12,7 @@ import {
 } from "lucide-react-native";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
+import { useDialog } from "../hooks/useDialog";
 import { formatTime, formatTimeSec } from "../utils/time";
 import {
   breakEnd,
@@ -38,6 +39,7 @@ export default function WorkTimerCard() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
+  const { alert, confirm, dialog } = useDialog();
   const [status, setStatus] = useState<TrackerStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [action, setAction] = useState<string | null>(null);
@@ -86,17 +88,14 @@ export default function WorkTimerCard() {
       const { data: face } = await getFaceStatus();
       if (!face?.enrolled) {
         setAction(null);
-        Alert.alert(
-          "Face enrollment required",
-          "Please enroll your face before clocking in. Open Face Enrollment now?",
-          [
-            { text: "Cancel", style: "cancel" },
-            {
-              text: "Enroll",
-              onPress: () => router.push("/profile/face"),
-            },
-          ],
-        );
+        confirm({
+          title: "Face enrollment required",
+          message:
+            "Please enroll your face before clocking in. Open Face Enrollment now?",
+          confirmText: "Enroll",
+          isDanger: false,
+          onConfirm: () => router.push("/profile/face"),
+        });
         return;
       }
       setAction(null);
@@ -107,6 +106,7 @@ export default function WorkTimerCard() {
       // will return a clear error if enrollment is missing.
       setVerifyModalOpen(true);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [verifyEnabled, workMode, router]);
 
   // Tick every second while active.
@@ -127,17 +127,21 @@ export default function WorkTimerCard() {
       await fn();
       await refresh();
     } catch (e: any) {
-      Alert.alert("Error", e?.response?.data?.error || "Action failed");
+      alert("Error", e?.response?.data?.error || "Action failed");
     } finally {
       setAction(null);
     }
   }
 
   const onLogout = useCallback(() => {
-    Alert.alert("Logout", "Are you sure you want to clock out?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Logout", style: "destructive", onPress: () => run("clockOut", clockOut) },
-    ]);
+    confirm({
+      title: "Logout",
+      message: "Are you sure you want to clock out?",
+      confirmText: "Logout",
+      isDanger: true,
+      onConfirm: () => run("clockOut", clockOut),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (loading) {
@@ -366,6 +370,9 @@ export default function WorkTimerCard() {
           refresh();
         }}
       />
+
+      {/* Themed confirm / alert dialog (replaces OS-native Alert). */}
+      {dialog}
     </View>
   );
 }
