@@ -50,7 +50,7 @@ export default function MoreScreen() {
     { label: "Notes", icon: FileText, onPress: () => router.push("/notes") },
   ];
 
-  if (user?.org_id && user?.role !== "platform_admin") {
+  if (user?.org_id) {
     items.push({
       label: "Organization",
       icon: Building2,

@@ -1817,14 +1817,119 @@ export function getOrgMembers(params?: Record<string, string>) {
   );
 }
 
-export function getOrgDepartments() {
-  return api.get<
-    { id: number; name: string; description?: string; member_count?: number }[]
-  >("/org/departments");
+export type OrgDepartment = {
+  id: number;
+  name: string;
+  description?: string | null;
+  head_id?: number | null;
+  head_name?: string | null;
+  member_count?: number;
+};
+
+export function getOrgDepartments(params?: Record<string, string>) {
+  return api.get<OrgDepartment[]>("/org/departments", { params });
 }
 
-export function getOrgTeams() {
-  return api.get<
-    { id: number; name: string; department_id?: number; member_count?: number }[]
-  >("/org/teams");
+export type OrgTeam = {
+  id: number;
+  name: string;
+  department_id?: number | null;
+  department_name?: string | null;
+  lead_id?: number | null;
+  lead_name?: string | null;
+  member_count?: number;
+  sprint_duration_weeks?: number | null;
+  sprint_start_date?: string | null;
+};
+
+export function getOrgTeams(params?: Record<string, string>) {
+  return api.get<OrgTeam[]>("/org/teams", { params });
+}
+
+/* ───────────────────────── Org Chart (self-service) ───────────────────────── */
+
+export type OrgChartMember = {
+  id: number | string;
+  full_name: string;
+  avatar?: string | null;
+  role: string;
+  email?: string | null;
+  department_id?: number | string | null;
+  department_name?: string | null;
+  team_id?: number | string | null;
+  team_name?: string | null;
+  manager_id?: number | string | null;
+  manager_name?: string | null;
+};
+
+export type OrgChartDept = {
+  id: number | string;
+  name: string;
+  head_name?: string | null;
+};
+
+export type OrgChartTeam = {
+  id: number | string;
+  name: string;
+  department_id?: number | string | null;
+  lead_name?: string | null;
+};
+
+export type OrgChart = {
+  members: OrgChartMember[];
+  departments: OrgChartDept[];
+  teams: OrgChartTeam[];
+};
+
+export function getOrgChart() {
+  return api.get<OrgChart>("/org/chart");
+}
+
+/* ───────────────────────── Salary Slips (self-service) ───────────────────────── */
+
+// Mirrors GET /compensation/my-slips (employee self-service). Returns the
+// employee's own published salary slips with disbursement status joined in.
+export type MySalarySlip = {
+  id: number;
+  slip_month: string;
+  gross_earnings: number | string;
+  total_deductions: number | string;
+  net_pay: number | string;
+  disbursement_status?: string | null;
+  utr?: string | null;
+  paid_at?: string | null;
+};
+
+export function getMySalarySlips() {
+  return api.get<MySalarySlip[]>("/compensation/my-slips");
+}
+
+/** Path (relative to API_BASE_URL) for the employee's own salary-slip PDF. */
+export function mySalarySlipPdfPath(id: number | string) {
+  return `/compensation/my-slips/${id}/pdf`;
+}
+
+// Mirrors GET /compensation/my-bank-details. The account number is masked by
+// the server; saving requires the full number.
+export type MyBankDetails = {
+  account_holder_name?: string | null;
+  account_number?: string | null;
+  ifsc_code?: string | null;
+  bank_name?: string | null;
+  account_type?: string | null;
+  is_verified?: boolean;
+};
+
+export function getMyBankDetails() {
+  return api.get<MyBankDetails | null>("/compensation/my-bank-details");
+}
+
+export function saveMyBankDetails(data: {
+  account_holder_name: string;
+  account_number: string;
+  ifsc_code: string;
+  bank_name?: string;
+  account_type?: string;
+}) {
+  return api.post<{ message: string }>("/compensation/my-bank-details", data);
 }
