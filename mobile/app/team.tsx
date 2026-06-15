@@ -10,7 +10,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import {
   Building2,
   CheckCircle2,
@@ -307,6 +307,7 @@ function AttendanceTab() {
 
 function MemberRow({ item }: { item: TeamMember }) {
   const theme = useTheme();
+  const router = useRouter();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const meta = STATUS_META[item.status] || STATUS_META.not_started;
   const avatar = uploadUrl(item.avatar);
@@ -317,7 +318,10 @@ function MemberRow({ item }: { item: TeamMember }) {
         ? formatTime(item.floorMinutes)
         : null;
   return (
-    <View style={styles.memberCard}>
+    <Pressable
+      style={({ pressed }) => [styles.memberCard, pressed && { opacity: 0.7 }]}
+      onPress={() => router.push(`/member/${item.id}`)}
+    >
       <View style={styles.avatar}>
         {avatar ? (
           <Image source={{ uri: avatar }} style={styles.avatarImg} />
@@ -360,7 +364,7 @@ function MemberRow({ item }: { item: TeamMember }) {
       <View style={[styles.badge, { backgroundColor: meta.bg }]}>
         <Text style={[styles.badgeText, { color: meta.color }]}>{meta.label}</Text>
       </View>
-    </View>
+    </Pressable>
   );
 }
 

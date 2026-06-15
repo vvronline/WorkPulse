@@ -1683,6 +1683,79 @@ export function getTeamAnalytics(days?: number, from?: string, to?: string) {
   });
 }
 
+/* ───────────── Team member detail (manager drill-down) ───────────── */
+
+// Leave balance row as returned inside the member overview. Mirrors the
+// employee's own /leaves/balance shape — the server now coerces NUMERIC
+// columns to numbers and adds total_days / remaining convenience fields so
+// the manager view shows identical numbers to the member's own login.
+export type MemberLeaveBalance = {
+  leave_type: string;
+  policy_name?: string | null;
+  color?: string | null;
+  quota: number;
+  carried_forward: number;
+  used: number;
+  total_days: number;
+  remaining: number;
+  year?: number | string;
+};
+
+export type MemberRecentLeave = {
+  id: number;
+  leave_type: string;
+  date: string;
+  duration?: string;
+  status: string;
+  reason?: string | null;
+};
+
+export type MemberOverview = {
+  user: {
+    id: number;
+    full_name: string;
+    email?: string | null;
+    avatar?: string | null;
+    role?: string;
+    department_name?: string | null;
+    team_name?: string | null;
+  };
+  todayHours: number;
+  todayBreakMin: number;
+  todayTasks: Array<{ id: number; title: string; status: string; priority: string }>;
+  pendingRequests: number;
+  monthLeaves: number;
+  recentLeaves: MemberRecentLeave[];
+  recentRequests: Approval[];
+  weeklyTrend: Array<{
+    date: string;
+    dayLabel: string;
+    floorMinutes: number;
+    breakMinutes: number;
+    workMode?: string | null;
+  }>;
+  stats30d: {
+    daysWorked: number;
+    totalFloorMinutes: number;
+    avgFloorMinutes: number;
+    avgBreakMinutes: number;
+    targetMetDays: number;
+    targetMetPercent: number;
+    punctualityPercent: number;
+  };
+  monthTaskStats: {
+    total: number;
+    done: number;
+    inProgress: number;
+    completionRate: number;
+  };
+  leaveBalances: MemberLeaveBalance[];
+};
+
+export function getMemberOverview(userId: number | string) {
+  return api.get<MemberOverview>(`/manager/member/${userId}/overview`);
+}
+
 /* ───────────────────────── Organization ───────────────────────── */
 
 // Mirrors GET /org/current. The server returns the `organizations` row

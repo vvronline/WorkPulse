@@ -89,6 +89,10 @@ function ThemedStack() {
         options={{ ...headerScreen, title: "My Team" }}
       />
       <Stack.Screen
+        name="member/[userId]"
+        options={{ ...headerScreen, title: "Member" }}
+      />
+      <Stack.Screen
         name="organization"
         options={{ ...headerScreen, title: "Organization" }}
       />

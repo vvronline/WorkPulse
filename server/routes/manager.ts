@@ -838,6 +838,15 @@ router.get("/member/:userId/overview", async (req: Request, res: Response) => {
         const tzMod = getTzModifier(req);
         const offsetMin = getOffsetMin(req);
         const monthStart = today.slice(0, 7) + "-01";
+        // Last calendar day of the current month — so "this month" planner stats
+        // include the whole month (matching the member's own monthly planner
+        // view) rather than only tasks scheduled up to today.
+        const monthEnd = (() => {
+            const y = parseInt(today.slice(0, 4), 10);
+            const m = parseInt(today.slice(5, 7), 10); // 1-12
+            const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+            return `${today.slice(0, 7)}-${String(lastDay).padStart(2, "0")}`;
+        })();
         const thirtyDaysAgo = new Date(Date.now() - offsetMin * 60000 - 30 * 86400000).toISOString().slice(0, 10);
 
         const todayEntries = (await req.db!.query(
@@ -937,21 +946,51 @@ router.get("/member/:userId/overview", async (req: Request, res: Response) => {
             `SELECT COUNT(*) as total, SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done,
                     SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress
              FROM tasks WHERE (user_id = $1 OR assigned_to = $1) AND date >= $2 AND date <= $3`,
-            [targetUserId, monthStart, today]
+            [targetUserId, monthStart, monthEnd]
         )).rows[0];
 
         const year = parseInt(today.slice(0, 4));
         let leaveBalances: any[] = [];
         try {
-            leaveBalances = (await req.db!.query(
-                `SELECT lb.leave_type, lb.quota, lb.carried_forward, lb.used,
-                        lp.annual_quota, lp.half_day_allowed, lp.quarter_day_allowed
-                 FROM leave_balances lb
-                 LEFT JOIN users u2 ON u2.id = lb.user_id
-                 LEFT JOIN leave_policies lp ON lp.org_id = u2.org_id AND lp.leave_type = lb.leave_type
-                 WHERE lb.user_id = $1 AND lb.year = $2`,
-                [targetUserId, year]
-            )).rows;
+            // Mirror the employee's own GET /leaves/balance exactly so the
+            // manager sees the SAME numbers the member sees in their own login.
+            // Resolve the target user's org, then INNER JOIN the policy so any
+            // "ghost" balance rows (from deleted policies) are hidden — and
+            // coerce the NUMERIC columns from string→number so the client can
+            // safely compute total = quota + carried_forward.
+            const targetOrgId = (await req.db!.query("SELECT org_id FROM users WHERE id = $1", [targetUserId])).rows[0]?.org_id;
+            const rawBalances = targetOrgId
+                ? (await req.db!.query(
+                    `SELECT lb.*, lp.name as policy_name, lp.color
+                     FROM leave_balances lb
+                     JOIN leave_policies lp ON lp.leave_type = lb.leave_type AND lp.org_id = $3
+                     WHERE lb.user_id = $1 AND lb.year = $2
+                     ORDER BY lb.leave_type ASC`,
+                    [targetUserId, year, targetOrgId]
+                )).rows
+                : (await req.db!.query(
+                    `SELECT lb.*
+                     FROM leave_balances lb
+                     WHERE lb.user_id = $1 AND lb.year = $2
+                     ORDER BY lb.leave_type ASC`,
+                    [targetUserId, year]
+                )).rows;
+            leaveBalances = rawBalances.map((b: any) => {
+                const quota = b.quota == null ? 0 : Number(b.quota);
+                const carried_forward = b.carried_forward == null ? 0 : Number(b.carried_forward);
+                const used = b.used == null ? 0 : Number(b.used);
+                return {
+                    ...b,
+                    quota,
+                    carried_forward,
+                    used,
+                    // total_days / remaining are convenience fields so every
+                    // client (web + mobile) renders identical numbers without
+                    // re-deriving the formula.
+                    total_days: quota + carried_forward,
+                    remaining: quota + carried_forward - used,
+                };
+            });
         } catch { /* leave_balances might not exist */ }
 
         const total = parseInt(monthTaskStats?.total || 0, 10);
