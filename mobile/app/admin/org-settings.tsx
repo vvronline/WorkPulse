@@ -651,6 +651,24 @@ export default function OrgSettingsScreen() {
       setBrandingMsg({ type: "success", text: "Branding saved" });
       setTimeout(() => setBrandingMsg(null), 2500);
     } catch (e: any) {
+      // The accent PUT is often the first write after the tenant DB pool has
+      // gone idle on Railway, so the request can time out / abort on the
+      // client while the server still commits the row — surfacing a false
+      // "failed to save" warning. Before reporting failure, re-fetch branding
+      // once and check whether the accent actually persisted; if it did, treat
+      // it as success and re-theme the app.
+      try {
+        const { data } = await getBranding();
+        const persisted = (data?.accent_color || "").toLowerCase();
+        if (persisted === accent.toLowerCase()) {
+          await refreshBranding();
+          setBrandingMsg({ type: "success", text: "Branding saved" });
+          setTimeout(() => setBrandingMsg(null), 2500);
+          return;
+        }
+      } catch {
+        /* fall through to the error banner below */
+      }
       setBrandingMsg({
         type: "error",
         text: e?.response?.data?.error || "Failed to save branding",

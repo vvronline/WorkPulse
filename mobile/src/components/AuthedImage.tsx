@@ -38,11 +38,18 @@ export function AuthedImage({ uri, style, ...rest }: AuthedImageProps) {
 
   if (!uri) return null;
 
+  // Wait for the auth token before issuing the request. Rendering the <Image>
+  // before the token resolves fires an unauthenticated GET → the server
+  // responds 401 → React Native caches that failure for the URI and keeps the
+  // preview blank even after the token later resolves. Gating on the token
+  // guarantees the first (and only) request carries the Bearer header.
+  if (!token) return null;
+
   return (
     <Image
       source={{
         uri,
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        headers: { Authorization: `Bearer ${token}` },
       }}
       style={style}
       {...rest}

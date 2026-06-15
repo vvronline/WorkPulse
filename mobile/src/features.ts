@@ -741,8 +741,57 @@ export function getIceConfig() {
 
 /* ───────────────────────── Notes ───────────────────────── */
 
-export type NotePage = { id: string; title: string; content: string };
-export type Notebook = { pages: NotePage[]; [k: string]: unknown };
+// Full NotePage shape — mirrors the web client's NotePage so notebook content
+// round-trips losslessly between web and mobile via the same /notes blob.
+export type NotePage = {
+  id: string;
+  title: string;
+  content: string;
+  createdAt?: string;
+  updatedAt?: string;
+  createdBy?: string | number | null;
+  lastEditedBy?: string | number | null;
+  pinned?: boolean;
+  tags?: string[];
+  folderId?: string | null;
+  parentPageId?: string | null;
+  archived?: boolean;
+  sortOrder?: number;
+  icon?: string;
+  coverColor?: string;
+  readOnly?: boolean;
+  properties?: Record<string, unknown>;
+  reactions?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+export type NoteFolder = {
+  id: string;
+  name: string;
+  parentId?: string | null;
+  sortOrder?: number;
+  [key: string]: unknown;
+};
+
+export type NoteTodo = {
+  id: string;
+  text: string;
+  done: boolean;
+  priority?: "low" | "medium" | "high" | null;
+  dueDate?: string | null;
+  createdAt?: string;
+  completedAt?: string | null;
+  sortOrder?: number;
+};
+
+export type Notebook = {
+  pages: NotePage[];
+  folders?: NoteFolder[];
+  todos?: NoteTodo[];
+  activePageId?: string | null;
+  sortBy?: string;
+  [k: string]: unknown;
+};
 
 export function getNotes() {
   return api.get<{ data: Notebook | null; updatedAt?: string }>("/notes");
@@ -750,6 +799,68 @@ export function getNotes() {
 
 export function saveNotes(data: Notebook) {
   return api.put("/notes", { data });
+}
+
+/* ── Tier 6 integrations (daily journal / 1-on-1 prefill, convert-to-task) ── */
+
+export type DailyPrefill = {
+  tasks?: Array<{ id: number; title: string; status: string; priority: string }>;
+  hoursWorked?: number | null;
+  meetings?: Array<{ title?: string; scheduled_start?: string }>;
+  events?: Array<{ title?: string; all_day?: boolean; start_time?: string }>;
+  date?: string;
+  [k: string]: unknown;
+};
+
+export function getDailyPrefill() {
+  return api.get<DailyPrefill>("/notes/daily-prefill");
+}
+
+export type OneOnOnePrefill = {
+  report?: { id: number; fullName?: string } | null;
+  tasks?: Array<{ status?: string; title?: string }>;
+  leaves?: Array<{ date?: string; leave_type?: string; duration?: string; status?: string }>;
+  sprint?: { name?: string; taskBreakdown?: Array<{ status: string; count: number }> } | null;
+  hoursThisWeek?: number | null;
+  [k: string]: unknown;
+};
+
+export function getOneOnOnePrefill(userId: number | string) {
+  return api.get<OneOnOnePrefill>(`/notes/oneonone-prefill/${userId}`);
+}
+
+export function convertNoteToTask(title: string, pageId: string) {
+  return api.post<{ task: { id: number; title: string } }>("/notes/convert-to-task", {
+    title,
+    pageId,
+  });
+}
+
+export type NoteDirectReport = {
+  id: number;
+  full_name: string;
+  avatar?: string | null;
+  username?: string;
+};
+
+export function getNoteDirectReports() {
+  return api.get<{ reports: NoteDirectReport[] }>("/notes/direct-reports");
+}
+
+/* ── Public share links ── */
+
+export function getNoteShare(pageId: string) {
+  return api.get<{ token: string | null; url?: string; page_title?: string }>(
+    `/notes/share/${pageId}`,
+  );
+}
+
+export function createNoteShare(pageId: string) {
+  return api.post<{ token: string; url: string }>(`/notes/share/${pageId}`);
+}
+
+export function revokeNoteShare(pageId: string) {
+  return api.delete(`/notes/share/${pageId}`);
 }
 
 /* ───────────────────────── Avatar ───────────────────────── */

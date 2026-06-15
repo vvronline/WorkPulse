@@ -78,10 +78,8 @@ function ThemedStack() {
         name="sprints/insights"
         options={{ ...headerScreen, title: "Sprint Insights" }}
       />
-      <Stack.Screen
-        name="notes"
-        options={{ ...headerScreen, title: "Notes" }}
-      />
+      {/* Notes is a route group with its own _layout (NotesProvider + headers). */}
+      <Stack.Screen name="notes" options={{ headerShown: false }} />
       <Stack.Screen
         name="attendance"
         options={{ ...headerScreen, title: "Attendance" }}
