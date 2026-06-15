@@ -10,6 +10,7 @@ import {
 } from "react";
 import { getTheme, updateTheme } from "./api";
 import { useAuth } from "./AuthContext";
+import useWebSocket, { type WebSocketMessage } from "./hooks/useWebSocket";
 
 interface ThemeContextValue {
     theme: string;
@@ -46,6 +47,19 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
             hasFetchedRef.current = false;
         }
     }, [isAuthenticated]);
+
+    // Live multi-device sync: when the theme is changed on another device or
+    // tab of the same user, the server pushes a `theme_changed` event over the
+    // WebSocket. Apply it here so every open session updates instantly.
+    const onWsMessage = useCallback((msg: WebSocketMessage) => {
+        if (msg?.type === "theme_changed") {
+            const next = (msg.data as { theme?: string } | undefined)?.theme;
+            if (next === "dark" || next === "light") {
+                setTheme(next);
+            }
+        }
+    }, []);
+    useWebSocket(isAuthenticated ? onWsMessage : null);
 
     const toggleTheme = useCallback(async () => {
         setTheme((prev) => {

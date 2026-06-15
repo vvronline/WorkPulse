@@ -12,6 +12,7 @@ import {
 } from "react";
 import { getBranding, getPublicBranding, serverURL } from "./api";
 import { useAuth } from "./AuthContext";
+import useWebSocket, { type WebSocketMessage } from "./hooks/useWebSocket";
 
 interface Branding {
     logo_url: string | null;
@@ -107,6 +108,17 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
         publicFetched.current = false; // re-fetch public branding on next logout
         refresh();
     }, [isAuthenticated, user?.id, refresh]);
+
+    // Live sync: when an admin changes the org accent / logo, the server
+    // broadcasts `branding_changed` to every connected client of the tenant.
+    // Re-fetch so the new accent + logo apply instantly across all devices
+    // (web + desktop) without a refresh or re-login.
+    const onWsMessage = useCallback((msg: WebSocketMessage) => {
+        if (msg?.type === "branding_changed") {
+            refresh();
+        }
+    }, [refresh]);
+    useWebSocket(isAuthenticated ? onWsMessage : null);
 
     // Apply accent color as a CSS custom property override ONLY when the
     // org has set a non-default value. This way, orgs that haven't

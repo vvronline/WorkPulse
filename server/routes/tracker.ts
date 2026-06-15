@@ -1218,6 +1218,11 @@ router.put("/theme", auth, async (req: Request, res: Response) => {
         const { theme } = req.body;
         if (!["dark", "light"].includes(theme)) return res.status(400).json({ error: "Invalid theme" });
         await req.db!.query("UPDATE users SET theme = $1 WHERE id = $2", [theme, req.userId]);
+        // Push the change to every other connected device/tab of this same
+        // user so the theme updates instantly everywhere (multi-device sync).
+        try {
+            sendToUser(req.tenantId, req.userId, "theme_changed", { theme });
+        } catch { /* ws not initialised (e.g. tests) — best-effort */ }
         res.json({ theme, message: "Theme updated" });
     } catch (err) {
         res.status(500).json({ error: "Failed to update theme" });

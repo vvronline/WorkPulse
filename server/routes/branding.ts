@@ -138,6 +138,13 @@ router.put("/", requireRole("hr_admin"), requireSameOrg, async (req: Request, re
             `SELECT logo_url, accent_color, updated_at FROM org_branding WHERE org_id = $1`,
             [req.userOrgId],
         )).rows[0];
+        // Push the new branding to every connected client of this tenant so the
+        // accent color updates instantly across all devices (web + desktop)
+        // without a refresh. Clients re-fetch their own org-scoped branding.
+        try {
+            const { broadcast } = require("../utils/ws");
+            broadcast(req.tenantId, "branding_changed", { orgId: req.userOrgId });
+        } catch { /* ws not initialised (e.g. tests) — best-effort */ }
         res.json(row);
     } catch (err) {
         req.log.error({ err }, "PUT /branding failed");
@@ -168,6 +175,10 @@ router.post("/logo", requireRole("hr_admin"), requireSameOrg, upload.single("log
         );
         invalidateBrandingCache(req.tenantId, req.userOrgId);
         logAction(req, "update", "org_branding_logo", req.userOrgId, { logo_url: newUrl });
+        try {
+            const { broadcast } = require("../utils/ws");
+            broadcast(req.tenantId, "branding_changed", { orgId: req.userOrgId });
+        } catch { /* ws not initialised (e.g. tests) — best-effort */ }
 
         if (oldLogo) {
             const oldPath = safeLogoPath(oldLogo);
@@ -205,6 +216,10 @@ router.delete("/logo", requireRole("hr_admin"), requireSameOrg, async (req: Requ
             if (oldPath) { try { await fsPromises.unlink(oldPath); } catch { /* ignore */ } }
         }
         logAction(req, "delete", "org_branding_logo", req.userOrgId, {});
+        try {
+            const { broadcast } = require("../utils/ws");
+            broadcast(req.tenantId, "branding_changed", { orgId: req.userOrgId });
+        } catch { /* ws not initialised (e.g. tests) — best-effort */ }
         res.json({ ok: true });
     } catch (err) {
         req.log.error({ err }, "DELETE /branding/logo failed");

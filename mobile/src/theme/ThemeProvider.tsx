@@ -16,6 +16,7 @@ import {
 } from "../theme";
 import { useAuth } from "../auth/AuthContext";
 import { getBranding } from "../admin";
+import { socket } from "../realtime/socket";
 
 /**
  * ThemeProvider — fetches the tenant's accent colour and broadcasts a reactive
@@ -91,6 +92,20 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     fetchedForUser.current = user.id;
     void refreshBranding();
   }, [user?.id, refreshBranding, applyAccent]);
+
+  // Live sync: when an admin changes the org accent / logo, the server
+  // broadcasts `branding_changed` over the realtime socket to every connected
+  // client of the tenant. Re-fetch so the new accent applies instantly without
+  // needing to re-launch the app.
+  useEffect(() => {
+    if (!user?.id) return;
+    const unsubscribe = socket.subscribe((msg) => {
+      if (msg?.type === "branding_changed") {
+        void refreshBranding();
+      }
+    });
+    return unsubscribe;
+  }, [user?.id, refreshBranding]);
 
   const theme = useMemo(() => makeTheme(accent), [accent]);
 
