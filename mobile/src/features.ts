@@ -1503,15 +1503,23 @@ export function getEntries(date: string) {
   return api.get<TrackerEntry[]>(`/tracker/entries/${date}`);
 }
 
-/** Pending manual-entry approval requests raised by the current user. */
+/** Pending manual-entry approval requests raised by the current user.
+ *  The server nests the entry details under `metadata` (date, clock_in,
+ *  clock_out, work_mode) — mirrors GET /tracker/manual-entries. */
 export type ManualEntryRequest = {
   request_id: number;
-  date?: string;
   approval_status: "pending" | "approved" | "rejected" | string;
   reject_reason?: string | null;
   created_at?: string;
-  clock_in?: string;
-  clock_out?: string;
+  reviewed_at?: string | null;
+  approver_name?: string | null;
+  metadata?: {
+    date?: string;
+    clock_in?: string;
+    clock_out?: string | null;
+    work_mode?: string;
+    [k: string]: unknown;
+  } | null;
   [k: string]: unknown;
 };
 
@@ -1519,15 +1527,20 @@ export function getManualEntryRequests() {
   return api.get<ManualEntryRequest[]>("/tracker/manual-entries");
 }
 
-/** Overtime requests raised by the current user. */
+/** Overtime requests raised by the current user. The date/hours live under
+ *  `metadata` (mirrors GET /tracker/overtime-requests). */
 export type OvertimeRequest = {
   id: number;
-  date: string;
-  hours: number;
   reason?: string | null;
   status: "pending" | "approved" | "rejected" | string;
   reject_reason?: string | null;
   created_at?: string;
+  approver_name?: string | null;
+  metadata?: {
+    date?: string;
+    hours?: number;
+    [k: string]: unknown;
+  } | null;
 };
 
 export function getOvertimeRequests() {

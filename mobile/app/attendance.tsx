@@ -10,7 +10,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { Stack, useLocalSearchParams } from "expo-router";
+import { Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
 import {
   BarChart3,
   Building2,
@@ -18,19 +18,32 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  Download,
   FileEdit,
+  FileText,
   House,
   Palmtree,
+  PieChart,
   Plus,
   Timer,
   X,
 } from "lucide-react-native";
 import type { Theme } from "../src/theme";
 import { useTheme } from "../src/theme/ThemeProvider";
+import { useDialog } from "../src/hooks/useDialog";
+import { socket } from "../src/realtime/socket";
 import { formatTime } from "../src/utils/time";
 import LeavesTab from "../src/components/LeavesTab";
 import DatePicker from "../src/components/DatePicker";
 import TimePicker from "../src/components/TimePicker";
+import PendingRequestsList from "../src/components/manualEntry/PendingRequestsList";
+import AnalyticsWidgetsGrid from "../src/components/analytics/WidgetsGrid";
+import AnalyticsSummaryStats from "../src/components/analytics/SummaryStats";
+import WorkBreakChart from "../src/components/analytics/WorkBreakChart";
+import TrendChart from "../src/components/analytics/TrendChart";
+import DoughnutChart from "../src/components/analytics/DoughnutChart";
+import AnalyticsHistoryTable from "../src/components/analytics/HistoryTable";
+import { exportMyAnalytics } from "../src/components/analytics/analyticsExport";
 import {
   addManualEntry,
   getCurrentOrg,
@@ -42,6 +55,7 @@ import {
   getTrackerAnalytics,
   getTrackerHistory,
   getTrackerStatus,
+  getTrackerWidgets,
   submitOvertimeRequest,
   updateManualEntry,
   type AnalyticsPoint,
@@ -53,6 +67,7 @@ import {
   type OvertimeRequest,
   type TrackerEntry,
 } from "../src/features";
+import type { WidgetsData } from "../src/components/analytics/WidgetsGrid";
 
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 
@@ -598,6 +613,26 @@ function ManualTab() {
     loadPending();
   }, [loadPending]);
 
+  // Refresh the pending-request list whenever the tab regains focus (e.g. after
+  // the entry was approved/rejected on another screen).
+  useFocusEffect(
+    useCallback(() => {
+      loadPending();
+    }, [loadPending]),
+  );
+
+  // Real-time refresh: the server broadcasts `approval_update` to the requester
+  // when a manual entry is approved/rejected. Re-pull the request list so its
+  // status badge flips without needing a manual reload (mirrors the web client).
+  useEffect(() => {
+    const off = socket.subscribe((msg) => {
+      if (msg.type === "approval_update") {
+        loadPending();
+      }
+    });
+    return off;
+  }, [loadPending]);
+
   const checkDate = useCallback(
     async (dateVal: string) => {
       setExistingEntries(null);
@@ -904,37 +939,16 @@ function ManualTab() {
           <ClipboardList size={16} color={theme.text} />
           <Text style={styles.sectionTitle}>Your Manual-Entry Requests</Text>
         </View>
-        {pendingRequests.length === 0 ? (
-          <Text style={styles.emptyDetail}>No pending manual-entry requests.</Text>
-        ) : (
-          <View style={{ gap: 8 }}>
-            {pendingRequests.map((r) => {
-              const st =
-                STATUS_BADGE[r.approval_status] ?? STATUS_BADGE.pending;
-              return (
-                <View key={r.request_id} style={styles.requestItem}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.requestDate}>{r.date || "—"}</Text>
-                    <Text style={styles.requestMeta}>
-                      {r.clock_in || ""}
-                      {r.clock_out ? ` → ${r.clock_out}` : ""}
-                    </Text>
-                    {r.reject_reason ? (
-                      <Text style={styles.requestReason}>
-                        Reason: {r.reject_reason}
-                      </Text>
-                    ) : null}
-                  </View>
-                  <View style={[styles.statusBadge, { backgroundColor: st.bg }]}>
-                    <Text style={[styles.statusText, { color: st.color }]}>
-                      {st.label}
-                    </Text>
-                  </View>
-                </View>
-              );
-            })}
-          </View>
-        )}
+        <PendingRequestsList
+          requests={pendingRequests}
+          keyField="request_id"
+          statusField="approval_status"
+          emptyText="No pending manual-entry requests."
+          renderTime={(meta) =>
+            `${meta.clock_in || ""}${meta.clock_out ? ` → ${meta.clock_out}` : ""}` ||
+            "—"
+          }
+        />
       </View>
 
       {/* Overtime */}
@@ -1048,31 +1062,17 @@ function OvertimeSection() {
       </Pressable>
 
       {requests.length > 0 ? (
-        <View style={{ gap: 8, marginTop: 14 }}>
-          {requests.map((r) => {
-            const st = STATUS_BADGE[r.status] ?? STATUS_BADGE.pending;
-            return (
-              <View key={r.id} style={styles.requestItem}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.requestDate}>{r.date}</Text>
-                  <Text style={styles.requestMeta}>{r.hours}h overtime</Text>
-                  {r.reason ? (
-                    <Text style={styles.requestReason}>"{r.reason}"</Text>
-                  ) : null}
-                  {r.reject_reason ? (
-                    <Text style={styles.requestReason}>
-                      Reason: {r.reject_reason}
-                    </Text>
-                  ) : null}
-                </View>
-                <View style={[styles.statusBadge, { backgroundColor: st.bg }]}>
-                  <Text style={[styles.statusText, { color: st.color }]}>
-                    {st.label}
-                  </Text>
-                </View>
-              </View>
-            );
-          })}
+        <View style={{ marginTop: 14 }}>
+          <PendingRequestsList
+            requests={requests}
+            keyField="id"
+            statusField="status"
+            showReason
+            emptyText="No overtime requests yet."
+            renderTime={(meta) =>
+              meta.hours != null ? `${meta.hours}h overtime` : "—"
+            }
+          />
         </View>
       ) : null}
     </View>
@@ -1096,12 +1096,15 @@ function localDateNDaysAgo(n: number): string {
 function AnalyticsTab() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+  const { alert, dialog } = useDialog();
   const [range, setRange] = useState<number | "custom">(7);
   const [customFrom, setCustomFrom] = useState(localDateNDaysAgo(7));
   const [customTo, setCustomTo] = useState(ymd(new Date()));
   const [data, setData] = useState<AnalyticsPoint[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [widgets, setWidgets] = useState<WidgetsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState<"csv" | "pdf" | null>(null);
 
   const isCustom = range === "custom";
   const fromDate = isCustom ? customFrom : localDateNDaysAgo(range as number);
@@ -1111,11 +1114,12 @@ function AnalyticsTab() {
     if (isCustom && (!customFrom || !customTo)) return;
     setLoading(true);
     try {
-      const [aRes, hRes] = await Promise.allSettled([
+      const [aRes, hRes, wRes] = await Promise.allSettled([
         isCustom
           ? getTrackerHistory(fromDate, toDate)
           : getTrackerAnalytics(range as number),
         getTrackerHistory(fromDate, toDate),
+        getTrackerWidgets(),
       ]);
       if (aRes.status === "fulfilled") {
         // history endpoint returns HistoryEntry[]; analytics returns AnalyticsPoint[]
@@ -1132,9 +1136,15 @@ function AnalyticsTab() {
         setData([]);
       }
       setHistory(hRes.status === "fulfilled" ? hRes.value.data || [] : []);
+      setWidgets(
+        wRes.status === "fulfilled"
+          ? ((wRes.value.data || null) as WidgetsData | null)
+          : null,
+      );
     } catch {
       setData([]);
       setHistory([]);
+      setWidgets(null);
     } finally {
       setLoading(false);
     }
@@ -1144,20 +1154,58 @@ function AnalyticsTab() {
     load();
   }, [load]);
 
+  const onExport = useCallback(
+    async (format: "csv" | "pdf") => {
+      setExporting(format);
+      try {
+        await exportMyAnalytics(fromDate, toDate, format);
+      } catch (e: any) {
+        alert("Export failed", e?.message || "Could not export analytics.");
+      } finally {
+        setExporting(null);
+      }
+    },
+    [fromDate, toDate, alert],
+  );
+
+  const labels = useMemo(
+    () =>
+      data.map((d) =>
+        new Date(d.date + "T00:00:00").toLocaleDateString("en-US", {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+        }),
+      ),
+    [data],
+  );
+  const floorHours = useMemo(
+    () => data.map((d) => +((d.floorMinutes || 0) / 60).toFixed(2)),
+    [data],
+  );
+  const breakHours = useMemo(
+    () => data.map((d) => +((d.breakMinutes || 0) / 60).toFixed(2)),
+    [data],
+  );
+
   const totalWorked = data.reduce((s, d) => s + (d.floorMinutes || 0), 0);
   const totalBreak = data.reduce((s, d) => s + (d.breakMinutes || 0), 0);
-  const workedDays = data.filter((d) => (d.floorMinutes || 0) > 0).length;
-  const avg = workedDays > 0 ? totalWorked / workedDays : 0;
-  const maxVal = Math.max(1, ...data.map((d) => d.floorMinutes || 0));
-  const officeDays = history.filter(
-    (d) => (d.floorMinutes || 0) > 0 && d.work_mode !== "remote",
+  const officeDays = data.filter(
+    (d) => (d.floorMinutes || 0) > 0 && d.workMode !== "remote",
   ).length;
-  const remoteDays = history.filter(
-    (d) => (d.floorMinutes || 0) > 0 && d.work_mode === "remote",
+  const remoteDays = data.filter(
+    (d) => (d.floorMinutes || 0) > 0 && d.workMode === "remote",
   ).length;
 
   return (
     <ScrollView contentContainerStyle={styles.body}>
+      <View style={styles.analyticsHeaderRow}>
+        <View style={styles.sectionTitleRow}>
+          <BarChart3 size={18} color={theme.text} />
+          <Text style={styles.analyticsTitle}>Analytics &amp; History</Text>
+        </View>
+      </View>
+
       <View style={styles.rangeRow}>
         {RANGES.map((r) => (
           <Pressable
@@ -1196,88 +1244,85 @@ function AnalyticsTab() {
         </View>
       ) : null}
 
-      <View style={styles.statsRow}>
-        <StatCard label="Total" value={formatTime(totalWorked)} color={theme.primary} />
-        <StatCard label="Avg/Day" value={formatTime(avg)} color={theme.success} />
-        <StatCard label="Break" value={formatTime(totalBreak)} color={theme.warning} />
-      </View>
-
-      {/* Work mode breakdown */}
-      <View style={styles.statsRow}>
-        <StatCard label="Office Days" value={String(officeDays)} color="#0ea5e9" />
-        <StatCard label="Remote Days" value={String(remoteDays)} color="#a855f7" />
-        <StatCard
-          label="Worked Days"
-          value={String(workedDays)}
-          color={theme.success}
-        />
+      {/* Export toolbar */}
+      <View style={styles.exportRow}>
+        <Pressable
+          style={[styles.exportBtn, exporting === "csv" && styles.exportBtnBusy]}
+          onPress={() => onExport("csv")}
+          disabled={!!exporting}
+        >
+          {exporting === "csv" ? (
+            <ActivityIndicator size="small" color={theme.primary} />
+          ) : (
+            <Download size={14} color={theme.primary} />
+          )}
+          <Text style={styles.exportText}>CSV</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.exportBtn, exporting === "pdf" && styles.exportBtnBusy]}
+          onPress={() => onExport("pdf")}
+          disabled={!!exporting}
+        >
+          {exporting === "pdf" ? (
+            <ActivityIndicator size="small" color={theme.primary} />
+          ) : (
+            <FileText size={14} color={theme.primary} />
+          )}
+          <Text style={styles.exportText}>PDF</Text>
+        </Pressable>
       </View>
 
       {loading ? (
         <ActivityIndicator color={theme.primary} style={{ marginTop: 24 }} />
-      ) : data.length === 0 ? (
-        <Text style={styles.emptyDetail}>No data for this period.</Text>
       ) : (
         <>
-          <View style={styles.chartCard}>
-            {data.map((d) => {
-              const pct = ((d.floorMinutes || 0) / maxVal) * 100;
-              const dt = new Date(d.date + "T00:00:00");
-              return (
-                <View key={d.date} style={styles.chartRow}>
-                  <Text style={styles.chartDate}>
-                    {dt.toLocaleDateString("en-US", {
-                      weekday: "short",
-                      day: "numeric",
-                    })}
-                  </Text>
-                  <View style={styles.chartBarTrack}>
-                    <View style={[styles.chartBarFill, { width: `${pct}%` }]} />
-                  </View>
-                  <Text style={styles.chartValue}>
-                    {formatTime(d.floorMinutes || 0)}
-                  </Text>
-                </View>
-              );
-            })}
-          </View>
+          {/* Dashboard widgets */}
+          <AnalyticsWidgetsGrid widgets={widgets} />
 
-          {/* History table */}
-          <View style={styles.sectionTitleRow}>
-            <ClipboardList size={16} color={theme.text} />
-            <Text style={styles.sectionTitle}>History</Text>
-          </View>
-          <View style={styles.tableCard}>
-            <View style={[styles.tableRow, styles.tableHead]}>
-              <Text style={[styles.th, { flex: 1.4 }]}>Date</Text>
-              <Text style={styles.th}>In</Text>
-              <Text style={styles.th}>Out</Text>
-              <Text style={[styles.th, { textAlign: "right" }]}>Worked</Text>
-            </View>
-            {[...history]
-              .sort((a, b) => (a.date < b.date ? 1 : -1))
-              .map((h) => (
-                <View key={h.date} style={styles.tableRow}>
-                  <Text style={[styles.td, { flex: 1.4 }]}>
-                    {new Date(h.date.slice(0, 10) + "T00:00:00").toLocaleDateString(
-                      "en-US",
-                      { month: "short", day: "numeric" },
-                    )}
-                  </Text>
-                  <Text style={styles.td}>
-                    {h.clock_in ? fmtTime(h.clock_in) : "—"}
-                  </Text>
-                  <Text style={styles.td}>
-                    {h.clock_out ? fmtTime(h.clock_out) : "—"}
-                  </Text>
-                  <Text style={[styles.td, { textAlign: "right" }]}>
-                    {formatTime(h.floorMinutes || 0)}
-                  </Text>
-                </View>
-              ))}
-          </View>
+          {/* Summary stats */}
+          <AnalyticsSummaryStats data={data} />
+
+          {data.length === 0 ? (
+            <Text style={styles.emptyDetail}>No data for this period.</Text>
+          ) : (
+            <>
+              <WorkBreakChart
+                labels={labels}
+                floorHours={floorHours}
+                breakHours={breakHours}
+              />
+              <TrendChart labels={labels} floorHours={floorHours} />
+
+              <View style={styles.doughnutRow}>
+                <DoughnutChart
+                  title="Time Distribution"
+                  icon={<PieChart size={16} color={theme.text} />}
+                  slices={[
+                    { label: "Work Time", value: totalWorked, color: "#0ea5e9" },
+                    { label: "Break Time", value: totalBreak, color: "#f59e0b" },
+                  ]}
+                  formatValue={(v) => formatTime(v)}
+                />
+                <DoughnutChart
+                  title="Office vs Remote"
+                  icon={<Building2 size={16} color={theme.text} />}
+                  slices={[
+                    { label: "Office", value: officeDays, color: "#0ea5e9" },
+                    { label: "Remote", value: remoteDays, color: theme.success },
+                  ]}
+                  formatValue={(v) => `${v} days`}
+                />
+              </View>
+            </>
+          )}
+
+          {/* Daily Log */}
+          <AnalyticsHistoryTable history={history} />
         </>
       )}
+
+      {/* Themed export error dialog */}
+      {dialog}
     </ScrollView>
   );
 }
@@ -1614,6 +1659,29 @@ const makeStyles = (theme: Theme) =>
   },
   statusText: { fontSize: 11, fontWeight: "700" },
   // analytics
+  analyticsHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  analyticsTitle: { fontSize: 17, fontWeight: "800", color: theme.text },
+  exportRow: { flexDirection: "row", gap: 10, marginVertical: 6 },
+  exportBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: theme.radiusSm,
+    backgroundColor: theme.glass,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+  },
+  exportBtnBusy: { opacity: 0.7 },
+  exportText: { color: theme.primary, fontSize: 13, fontWeight: "700" },
+  doughnutRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   rangeRow: { flexDirection: "row", gap: 8, marginBottom: 6, flexWrap: "wrap" },
   rangeChip: {
     paddingHorizontal: 16,

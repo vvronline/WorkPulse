@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import Svg, { Circle } from "react-native-svg";
 import {
   Building2,
@@ -24,6 +24,7 @@ import {
   type WorkState,
 } from "../tracker";
 import { getCurrentOrg, getFaceStatus } from "../features";
+import { socket } from "../realtime/socket";
 import ClockInVerifyModal from "./ClockInVerifyModal";
 
 const RADIUS = 42;
@@ -73,6 +74,27 @@ export default function WorkTimerCard() {
     getCurrentOrg()
       .then((r) => setVerifyEnabled(!!r.data?.attendance_verification_enabled))
       .catch(() => setVerifyEnabled(false));
+  }, [refresh]);
+
+  // Re-fetch the live status whenever the dashboard regains focus (e.g. after
+  // the user approves a manual entry on the My Team screen and navigates back).
+  useFocusEffect(
+    useCallback(() => {
+      refresh();
+    }, [refresh]),
+  );
+
+  // Real-time refresh: when a manual-entry / leave approval lands for this user
+  // the server broadcasts `approval_update` / `leave_update`. Re-pull the
+  // tracker status so the ring + timer reflect the approved hours instantly,
+  // mirroring the web client's useFloatingTimer + NotificationBell listeners.
+  useEffect(() => {
+    const off = socket.subscribe((msg) => {
+      if (msg.type === "approval_update" || msg.type === "leave_update") {
+        refresh();
+      }
+    });
+    return off;
   }, [refresh]);
 
   // Decide between the one-tap clock-in (verification off) and the

@@ -723,25 +723,34 @@ router.post("/manual-entry", auth, loadUserContext, async (req: Request, res: Re
             }
         });
 
-        if (needsApproval && txApprover?.id) {
-            try {
-                const requesterName = (await req.db!.query("SELECT full_name FROM users WHERE id = $1", [req.userId])).rows[0]?.full_name || "A team member";
-                await req.db!.query(
-                    "INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)",
-                    [txApprover.id, "approval", "New Manual Entry Request", `${requesterName} submitted a manual time entry for ${date}.`],
-                );
-                sendToUser(req.tenantId, txApprover.id, "approval_update", { type: "manual_entry", status: "pending" });
-            } catch (notifErr) {
-                req.log.error({ err: notifErr }, "Manager notification error (manual entry)");
-            }
-        }
-
+        // Respond immediately after the transaction commits. The
+        // notification / WebSocket fan-out below runs in the background so a
+        // slow notification insert (or a cold tenant DB pool on the first write
+        // after an idle period) never delays the HTTP response. Mobile clients
+        // enforce a request timeout and were surfacing false "failed to update"
+        // errors even though the row was already committed — the web client has
+        // no axios timeout so it never noticed.
         logAction(req, "create", "manual_entry", null, { date, clock_in, clock_out: clock_out || null, status: approvalStatus });
         res.json({
             message: needsApproval ? "Manual entry submitted for approval" : "Manual entry added successfully",
             status: approvalStatus,
             needsApproval,
         });
+
+        if (needsApproval && txApprover?.id) {
+            void (async () => {
+                try {
+                    const requesterName = (await req.db!.query("SELECT full_name FROM users WHERE id = $1", [req.userId])).rows[0]?.full_name || "A team member";
+                    await req.db!.query(
+                        "INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)",
+                        [txApprover.id, "approval", "New Manual Entry Request", `${requesterName} submitted a manual time entry for ${date}.`],
+                    );
+                    sendToUser(req.tenantId, txApprover.id, "approval_update", { type: "manual_entry", status: "pending" });
+                } catch (notifErr) {
+                    req.log.error({ err: notifErr }, "Manager notification error (manual entry)");
+                }
+            })();
+        }
     } catch (err) {
         req.log.error({ err }, "Manual entry error");
         res.status(500).json({ error: "Failed to add manual entry" });
@@ -863,25 +872,29 @@ router.put("/manual-entry/:date", auth, loadUserContext, async (req: Request, re
             }
         });
 
-        if (needsApproval && txApproverEdit?.id) {
-            try {
-                const requesterName = (await req.db!.query("SELECT full_name FROM users WHERE id = $1", [req.userId])).rows[0]?.full_name || "A team member";
-                await req.db!.query(
-                    "INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)",
-                    [txApproverEdit.id, "approval", "Manual Entry Updated", `${requesterName} updated a manual time entry for ${date}.`],
-                );
-                sendToUser(req.tenantId, txApproverEdit.id, "approval_update", { type: "manual_entry", status: "pending" });
-            } catch (notifErr) {
-                req.log.error({ err: notifErr }, "Manager notification error (manual entry edit)");
-            }
-        }
-
+        // Respond immediately after the transaction commits — see the POST
+        // handler above for why the notification fan-out is deferred.
         logAction(req, "update", "manual_entry", null, { date, clock_in, clock_out: clock_out || null, status: approvalStatus });
         res.json({
             message: needsApproval ? "Entry updated and submitted for approval" : "Entry updated successfully",
             status: approvalStatus,
             needsApproval,
         });
+
+        if (needsApproval && txApproverEdit?.id) {
+            void (async () => {
+                try {
+                    const requesterName = (await req.db!.query("SELECT full_name FROM users WHERE id = $1", [req.userId])).rows[0]?.full_name || "A team member";
+                    await req.db!.query(
+                        "INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)",
+                        [txApproverEdit.id, "approval", "Manual Entry Updated", `${requesterName} updated a manual time entry for ${date}.`],
+                    );
+                    sendToUser(req.tenantId, txApproverEdit.id, "approval_update", { type: "manual_entry", status: "pending" });
+                } catch (notifErr) {
+                    req.log.error({ err: notifErr }, "Manager notification error (manual entry edit)");
+                }
+            })();
+        }
     } catch (err) {
         req.log.error({ err }, "Manual entry edit error");
         res.status(500).json({ error: "Failed to update entry" });
