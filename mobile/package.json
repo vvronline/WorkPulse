@@ -1,6 +1,6 @@
 {
   "name": "mobile",
-  "version": "1.0.37",
+  "version": "1.0.38",
   "main": "expo-router/entry",
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^15.0.1",
