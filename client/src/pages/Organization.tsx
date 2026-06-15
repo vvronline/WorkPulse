@@ -32,6 +32,21 @@ export default function Organization() {
         if (user?.role === "super_admin") {
             return <CreateOrgView onCreated={(orgId: number | string) => { fetchOrg(); updateUser({ org_id: orgId, role: "super_admin" }); }} />;
         }
+        // Platform admins (and other admins) aren't scoped to a single org, but
+        // they can still view their own salary slips.
+        if (isAdmin) {
+            return (
+                <div className={s.adminPage}>
+                    <h1>Organization</h1>
+                    <div className={s.tabs}>
+                        <button className={`${s.tab} ${s.active}`}><span><CreditCard size={14} /></span> Salary Slips</button>
+                    </div>
+                    <Suspense fallback={<PageSkeleton />}>
+                        <MySalarySlips />
+                    </Suspense>
+                </div>
+            );
+        }
         return (
             <div className={s.adminPage}>
                 <h1>Organization</h1>

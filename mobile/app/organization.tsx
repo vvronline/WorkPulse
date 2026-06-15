@@ -31,6 +31,7 @@ import {
 } from "lucide-react-native";
 import type { Theme } from "../src/theme";
 import { useTheme } from "../src/theme/ThemeProvider";
+import { useAuth } from "../src/auth/AuthContext";
 import { uploadUrl, API_BASE_URL } from "../src/config";
 import { getToken } from "../src/auth/tokenStore";
 import {
@@ -53,7 +54,9 @@ import {
 
 type TabKey = "salary-slips" | "departments" | "teams" | "chart";
 
-const TABS: { key: TabKey; label: string; icon: typeof CreditCard }[] = [
+const ADMIN_ROLES = ["hr_admin", "super_admin", "platform_admin"];
+
+const ALL_TABS: { key: TabKey; label: string; icon: typeof CreditCard }[] = [
   { key: "salary-slips", label: "Salary Slips", icon: CreditCard },
   { key: "departments", label: "My Department", icon: Building2 },
   { key: "teams", label: "My Team", icon: Users },
@@ -76,9 +79,18 @@ function fmtMoney(v?: number | string | null): string {
 export default function OrganizationScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+  const { user } = useAuth();
+  const isAdmin = ADMIN_ROLES.includes(user?.role ?? "");
   const [org, setOrg] = useState<OrgInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<TabKey>("salary-slips");
+
+  // Admins (incl. platform admin) aren't scoped to a single org and only see
+  // Salary Slips. Regular members get the full set of tabs.
+  const tabs = useMemo(
+    () => (isAdmin ? ALL_TABS.filter((t) => t.key === "salary-slips") : ALL_TABS),
+    [isAdmin],
+  );
 
   useEffect(() => {
     getCurrentOrg()
@@ -96,7 +108,8 @@ export default function OrganizationScreen() {
     );
   }
 
-  if (!org) {
+  // Members without an org get the empty message; admins still see Salary Slips.
+  if (!org && !isAdmin) {
     return (
       <View style={styles.center}>
         <Stack.Screen options={{ title: "Organization" }} />
@@ -110,34 +123,28 @@ export default function OrganizationScreen() {
 
   return (
     <View style={styles.screen}>
-      <Stack.Screen options={{ title: org.name || "Organization" }} />
+      <Stack.Screen options={{ title: org?.name || "Organization" }} />
 
       {/* Tab bar */}
-      <View style={styles.tabBarWrap}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.tabBar}
-        >
-          {TABS.map((t) => {
-            const active = tab === t.key;
-            return (
-              <Pressable
-                key={t.key}
-                style={[styles.tab, active && styles.tabActive]}
-                onPress={() => setTab(t.key)}
-              >
-                <t.icon
-                  size={14}
-                  color={active ? theme.onAccent : theme.textSecondary}
-                />
-                <Text style={[styles.tabText, active && styles.tabTextActive]}>
-                  {t.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+      <View style={styles.tabRow}>
+        {tabs.map((t) => {
+          const active = tab === t.key;
+          return (
+            <Pressable
+              key={t.key}
+              style={[styles.tab, active && styles.tabActive]}
+              onPress={() => setTab(t.key)}
+            >
+              <t.icon
+                size={14}
+                color={active ? theme.onAccent : theme.textSecondary}
+              />
+              <Text style={[styles.tabText, active && styles.tabTextActive]}>
+                {t.label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
 
       {tab === "salary-slips" && <SalarySlipsTab theme={theme} />}
@@ -1093,26 +1100,28 @@ const makeStyles = (theme: Theme) =>
       lineHeight: 20,
     },
 
-    /* Tabs */
-    tabBarWrap: {
-      borderBottomWidth: 1,
-      borderBottomColor: theme.border,
+    /* Tabs — square segmented control (matches Attendance) */
+    tabRow: {
+      flexDirection: "row",
+      backgroundColor: theme.surface,
+      borderRadius: theme.radiusSm,
+      padding: 3,
+      gap: 3,
+      margin: 16,
+      marginBottom: 0,
     },
-    tabBar: { paddingHorizontal: 12, paddingVertical: 10, gap: 8 },
     tab: {
+      flex: 1,
       flexDirection: "row",
       alignItems: "center",
+      justifyContent: "center",
       gap: 6,
-      paddingHorizontal: 14,
-      paddingVertical: 8,
-      borderRadius: theme.radiusFull,
-      borderWidth: 1,
-      borderColor: theme.glassBorder,
-      backgroundColor: theme.glass,
+      paddingVertical: 9,
+      paddingHorizontal: 2,
+      borderRadius: 5,
     },
     tabActive: {
       backgroundColor: theme.primary,
-      borderColor: theme.primary,
     },
     tabText: { fontSize: 13, fontWeight: "600", color: theme.textSecondary },
     tabTextActive: { color: theme.onAccent },

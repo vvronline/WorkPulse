@@ -53,7 +53,7 @@ export default function MobileTabBar() {
     if (hasFeature("notes")) moreItems.push({ to: "/notes", label: "Notes", icon: FileText });
     if (hasFeature("attendance"))
         moreItems.push({ to: "/attendance", label: "Attendance", icon: CalendarCheck });
-    if (user?.org_id && user?.role !== "platform_admin")
+    if (user?.org_id || user?.role === "platform_admin")
         moreItems.push({ to: "/organization", label: "Organization", icon: Building2 });
     if (isTeamLead) moreItems.push({ to: "/manager", label: "My Team", icon: Users });
     if (isHR) moreItems.push({ to: "/admin", label: "Admin", icon: Settings });
