@@ -85,6 +85,17 @@ interface UseMeetingMeshArgs {
 interface PeerEntry {
   pc: RTCPeerConnection;
   remoteStream: MediaStream;
+  // Recovery bookkeeping (mirrors the proven 1:1 call screen).
+  iceRestartAttempted?: boolean;
+  negotiationDone?: boolean;
+  disconnectTimer?: ReturnType<typeof setTimeout> | null;
+  rampTimers?: ReturnType<typeof setTimeout>[];
+}
+
+// Normalize ids so a participant arriving as a number on one path and a numeric
+// string on another can never key the map twice (the "2 people show as 3" bug).
+function normId(id: number | string | null | undefined): string {
+  return id == null ? "" : String(id);
 }
 
 export function useMeetingMesh({
@@ -97,8 +108,11 @@ export function useMeetingMesh({
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [muted, setMuted] = useState(initialMuted);
   const [videoOff, setVideoOff] = useState(initialVideoOff);
+  // Front camera → mirror the self-view; rear camera → do NOT mirror (otherwise
+  // the rear feed renders left-right flipped after the user taps "Flip").
+  const [usingFrontCamera, setUsingFrontCamera] = useState(true);
   const [participants, setParticipants] = useState<
-    Map<number | string, MeetingParticipant>
+    Map<string, MeetingParticipant>
   >(new Map());
   // Start in "lobby" unless the caller opts into legacy auto-join. The lobby
   // shows a live self-preview + mic/cam/flip controls before `join()` fires the
@@ -109,8 +123,8 @@ export function useMeetingMesh({
   const [mediaError, setMediaError] = useState<string | null>(null);
 
   const localStreamRef = useRef<MediaStream | null>(null);
-  const peersRef = useRef<Map<number | string, PeerEntry>>(new Map());
-  const pendingIceRef = useRef<Map<number | string, any[]>>(new Map());
+  const peersRef = useRef<Map<string, PeerEntry>>(new Map());
+  const pendingIceRef = useRef<Map<string, any[]>>(new Map());
   const iceServersRef = useRef<any[]>(FALLBACK_ICE);
   const iceLoadedRef = useRef(false);
   const joinedRef = useRef(false);
@@ -120,7 +134,9 @@ export function useMeetingMesh({
   const mutedRef = useRef(initialMuted);
   const videoOffRef = useRef(initialVideoOff);
   const meetingIdRef = useRef(meetingId);
+  const selfIdRef = useRef(selfId);
   meetingIdRef.current = meetingId;
+  selfIdRef.current = selfId;
   mutedRef.current = muted;
   videoOffRef.current = videoOff;
 
@@ -206,6 +222,69 @@ export function useMeetingMesh({
     }
   }, []);
 
+  // ── Bitrate management (ported from web mesh + 1:1 call screen) ──────────
+  // Uncapped video on a mobile uplink causes congestion → stalls, freezes and
+  // lag (the "very unstable and laggy" report). We cap by peer count and ramp
+  // up gently once connected so the link establishes fast then improves.
+  const setVideoBitrate = useCallback(
+    (pc: RTCPeerConnection, bitrate: number) => {
+      try {
+        const senders =
+          typeof (pc as any).getSenders === "function"
+            ? (pc as any).getSenders()
+            : [];
+        for (const sender of senders) {
+          if (!sender?.track) continue;
+          const params = sender.getParameters?.();
+          if (!params) continue;
+          if (!params.encodings || params.encodings.length === 0) {
+            params.encodings = [{}];
+          }
+          if (sender.track.kind === "video") {
+            params.encodings[0].maxBitrate = bitrate;
+            params.encodings[0].maxFramerate = 30;
+            (params as any).degradationPreference = "maintain-framerate";
+          } else {
+            params.encodings[0].maxBitrate = 48_000;
+          }
+          sender.setParameters?.(params).catch?.(() => {});
+        }
+      } catch {
+        /* setParameters not critical */
+      }
+    },
+    [],
+  );
+
+  const targetBitrateForPeerCount = useCallback((): number => {
+    const peerCount = peersRef.current.size;
+    return peerCount <= 1 ? 800_000 : peerCount <= 3 ? 500_000 : 350_000;
+  }, []);
+
+  const applyBitrateRampUp = useCallback(
+    (entry: PeerEntry) => {
+      const pc = entry.pc;
+      const INITIAL = 300_000;
+      const TARGET = targetBitrateForPeerCount();
+      const STEPS = 3;
+      const STEP_MS = 1000;
+      entry.rampTimers?.forEach((t) => clearTimeout(t));
+      entry.rampTimers = [];
+      setVideoBitrate(pc, INITIAL);
+      for (let step = 1; step <= STEPS; step++) {
+        const timer = setTimeout(() => {
+          if ((pc as any).connectionState !== "connected") return;
+          const bitrate = Math.round(
+            INITIAL + ((TARGET - INITIAL) * step) / STEPS,
+          );
+          setVideoBitrate(pc, bitrate);
+        }, STEP_MS * step);
+        entry.rampTimers.push(timer);
+      }
+    },
+    [setVideoBitrate, targetBitrateForPeerCount],
+  );
+
   // Attach local tracks to a peer connection AFTER setRemoteDescription on the
   // answerer so they bind to the transceivers the offer created. Mirrors the
   // proven 1:1 call screen's `attachLocalTracks`.
@@ -270,30 +349,64 @@ export function useMeetingMesh({
 
   const upsertParticipant = useCallback(
     (
-      userId: number | string,
+      rawUserId: number | string,
       patch: Partial<MeetingParticipant> & { name?: string },
     ) => {
+      const key = normId(rawUserId);
+      // Never let our own id leak into the remote-participant map (the self tile
+      // is rendered separately). This is the primary guard against the
+      // "2 people show as 3" duplicate-tile bug.
+      if (!key || key === normId(selfIdRef.current)) return;
       setParticipants((prev) => {
         const next = new Map(prev);
-        const existing = next.get(userId) || {
-          userId,
+        const existing = next.get(key) || {
+          userId: rawUserId,
           name: "Participant",
           avatar: null,
           stream: null,
           muted: false,
-          videoOff: false,
+          // Default a freshly-seen remote to camera-OFF: we render their avatar
+          // until either a live video track arrives or an explicit
+          // meeting_track_state{videoOff:false} tells us their camera is on.
+          // This stops a black RTCView (no avatar) from showing before the
+          // first frame / state signal lands.
+          videoOff: true,
         };
-        next.set(userId, { ...existing, ...patch });
+        next.set(key, { ...existing, ...patch, userId: rawUserId });
         return next;
       });
     },
     [],
   );
 
+  const removeParticipant = useCallback((rawUserId: number | string) => {
+    const key = normId(rawUserId);
+    setParticipants((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Map(prev);
+      next.delete(key);
+      return next;
+    });
+  }, []);
+
+  const closePeer = useCallback((key: string) => {
+    const entry = peersRef.current.get(key);
+    if (!entry) return;
+    if (entry.disconnectTimer) clearTimeout(entry.disconnectTimer);
+    entry.rampTimers?.forEach((t) => clearTimeout(t));
+    try {
+      entry.pc.close();
+    } catch {
+      /* ignore */
+    }
+    peersRef.current.delete(key);
+  }, []);
+
   // ── Create / reuse a peer connection toward `remoteUserId` ───────────────
   const createPeer = useCallback(
     (remoteUserId: number | string, isInitiator: boolean): PeerEntry => {
-      const existing = peersRef.current.get(remoteUserId);
+      const key = normId(remoteUserId);
+      const existing = peersRef.current.get(key);
       if (
         existing &&
         (existing.pc as any).connectionState !== "closed" &&
@@ -302,12 +415,7 @@ export function useMeetingMesh({
         return existing;
       }
       if (existing) {
-        try {
-          existing.pc.close();
-        } catch {
-          /* ignore */
-        }
-        peersRef.current.delete(remoteUserId);
+        closePeer(key);
       }
 
       const pc = new RTCPeerConnection({
@@ -318,8 +426,15 @@ export function useMeetingMesh({
       } as any);
 
       const remoteStream = new MediaStream();
-      const entry: PeerEntry = { pc, remoteStream };
-      peersRef.current.set(remoteUserId, entry);
+      const entry: PeerEntry = {
+        pc,
+        remoteStream,
+        iceRestartAttempted: false,
+        negotiationDone: false,
+        disconnectTimer: null,
+        rampTimers: [],
+      };
+      peersRef.current.set(key, entry);
 
       // Only the INITIATOR (offerer) adds tracks up-front — createOffer then
       // advertises sendrecv media. The NON-initiator (answerer) must NOT
@@ -359,13 +474,61 @@ export function useMeetingMesh({
             /* ignore */
           }
         }
-        upsertParticipant(remoteUserId, { stream: remoteStream });
+        // A live video track arrived → the peer's camera is on. Clear videoOff
+        // so the tile shows the actual video instead of the avatar. (An
+        // explicit meeting_track_state can still flip it back off later.)
+        const patch: Partial<MeetingParticipant> = { stream: remoteStream };
+        if (track?.kind === "video") patch.videoOff = false;
+        upsertParticipant(remoteUserId, patch);
+      };
+
+      // Fast proactive ICE restart on a brief mobile/VPN network blip — try to
+      // re-establish before the connection escalates to "failed". Mirrors the
+      // recovery ladder proven in the 1:1 call screen.
+      (pc as any).oniceconnectionstatechange = () => {
+        const ice = (pc as any).iceConnectionState;
+        if (
+          ice === "disconnected" &&
+          entry.negotiationDone &&
+          !entry.iceRestartAttempted
+        ) {
+          setTimeout(() => {
+            const cur = (pc as any).iceConnectionState;
+            if (
+              (cur === "disconnected" || cur === "failed") &&
+              peersRef.current.get(key) === entry
+            ) {
+              entry.iceRestartAttempted = true;
+              (async () => {
+                try {
+                  const offer = await pc.createOffer({ iceRestart: true });
+                  await pc.setLocalDescription(offer);
+                  socket.send("meeting_signal", {
+                    meetingId: meetingIdRef.current,
+                    targetUserId: remoteUserId,
+                    signal: { type: "offer", sdp: (pc as any).localDescription },
+                  });
+                } catch {
+                  /* connection-state handler will surface failures */
+                }
+              })();
+            }
+          }, 2000);
+        }
       };
 
       (pc as any).onconnectionstatechange = () => {
         const st = (pc as any).connectionState;
         if (st === "connected") {
+          entry.negotiationDone = true;
+          entry.iceRestartAttempted = false;
+          if (entry.disconnectTimer) {
+            clearTimeout(entry.disconnectTimer);
+            entry.disconnectTimer = null;
+          }
           setStatus("connected");
+          // Ramp the video bitrate up now that the link is established.
+          applyBitrateRampUp(entry);
           // Re-broadcast our current track state so the new peer renders us
           // correctly from the start.
           socket.send("meeting_track_state", {
@@ -374,6 +537,17 @@ export function useMeetingMesh({
             videoOff: videoOffRef.current,
             screenSharing: false,
           });
+        } else if (st === "disconnected") {
+          // Grace period: a temporary network hiccup is common on mobile.
+          if (entry.disconnectTimer) clearTimeout(entry.disconnectTimer);
+          entry.disconnectTimer = setTimeout(() => {
+            if (
+              peersRef.current.get(key) === entry &&
+              (pc as any).connectionState !== "connected"
+            ) {
+              upsertParticipant(remoteUserId, { stream: null });
+            }
+          }, 8000);
         } else if (st === "failed" || st === "closed") {
           // Drop the peer's media; a participant_left or rejoin will rebuild.
           upsertParticipant(remoteUserId, { stream: null });
@@ -383,10 +557,16 @@ export function useMeetingMesh({
       if (isInitiator) {
         (async () => {
           try {
-            const offer = await pc.createOffer({
-              offerToReceiveAudio: true,
-              offerToReceiveVideo: true,
-            } as any);
+            // IMPORTANT: tracks were already added via addTrack above, so the
+            // transceivers are already sendrecv. Calling createOffer() WITHOUT
+            // offerToReceive* flags here mirrors the web client exactly. On
+            // react-native-webrtc, combining up-front addTrack with
+            // offerToReceiveAudio/Video produces duplicate/mismatched m-lines
+            // that the web/desktop answerer can't line up → ICE never nominates
+            // a pair and the call hangs on "Connecting…". This is THE fix for
+            // mobile-started meetings and the mobile→desktop "never connects"
+            // direction.
+            const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
             socket.send("meeting_signal", {
               meetingId: meetingIdRef.current,
@@ -394,21 +574,21 @@ export function useMeetingMesh({
               signal: { type: "offer", sdp: (pc as any).localDescription },
             });
           } catch {
-            /* ignore — connection-state handler will surface failures */
+            /* connection-state handler will surface failures */
           }
         })();
       }
 
       return entry;
     },
-    [upsertParticipant],
+    [upsertParticipant, closePeer, applyBitrateRampUp],
   );
 
   const flushPendingIce = useCallback(
-    async (userId: number | string, pc: RTCPeerConnection) => {
-      const list = pendingIceRef.current.get(userId);
+    async (key: string, pc: RTCPeerConnection) => {
+      const list = pendingIceRef.current.get(key);
       if (!list || !(pc as any).remoteDescription) return;
-      pendingIceRef.current.delete(userId);
+      pendingIceRef.current.delete(key);
       for (const c of list) {
         try {
           await pc.addIceCandidate(new RTCIceCandidate(c));
@@ -426,13 +606,14 @@ export function useMeetingMesh({
       pc: RTCPeerConnection,
       signal: any,
     ) => {
+      const key = normId(fromUserId);
       if (signal.type === "offer") {
         await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
         // Attach our local tracks AFTER setRemoteDescription so they bind to
         // the offer's transceivers (replaceTrack) rather than creating new
         // unmatched m-lines — the key fix that lets mobile↔web/desktop connect.
         await attachLocalTracks(pc, localStreamRef.current);
-        await flushPendingIce(fromUserId, pc);
+        await flushPendingIce(key, pc);
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         socket.send("meeting_signal", {
@@ -445,7 +626,7 @@ export function useMeetingMesh({
           await pc.setRemoteDescription(
             new RTCSessionDescription(signal.sdp),
           );
-          await flushPendingIce(fromUserId, pc);
+          await flushPendingIce(key, pc);
         }
       } else if (signal.type === "candidate") {
         if (signal.candidate == null) return;
@@ -456,9 +637,9 @@ export function useMeetingMesh({
             /* ignore */
           }
         } else {
-          const q = pendingIceRef.current.get(fromUserId) || [];
+          const q = pendingIceRef.current.get(key) || [];
           q.push(signal.candidate);
-          pendingIceRef.current.set(fromUserId, q);
+          pendingIceRef.current.set(key, q);
         }
       }
     },
@@ -471,6 +652,7 @@ export function useMeetingMesh({
       const { type } = msg;
       const data: any = msg.data;
       if (!data) return;
+      const selfKey = normId(selfIdRef.current);
 
       switch (type) {
         case "meeting_participant_joined": {
@@ -479,8 +661,15 @@ export function useMeetingMesh({
           // joiner) — create an INITIATOR PC (send offer).
           let hasPeersToConnect = false;
           if (Array.isArray(data.existingPeers)) {
+            // existingPeers is the authoritative set of OTHER joined
+            // participants at join time. Reconcile our map against it so a
+            // stale tile from a previous session can't linger as a phantom
+            // extra participant.
+            const validKeys = new Set<string>();
             data.existingPeers.forEach((peer: any) => {
-              if (!peer?.userId || peer.userId === selfId) return;
+              const pk = normId(peer?.userId);
+              if (!pk || pk === selfKey) return;
+              validKeys.add(pk);
               hasPeersToConnect = true;
               upsertParticipant(peer.userId, {
                 name: peer.fullName || peer.username || "Participant",
@@ -488,8 +677,24 @@ export function useMeetingMesh({
               });
               createPeer(peer.userId, false);
             });
+            // Prune participants/peers not in the authoritative set.
+            for (const k of Array.from(peersRef.current.keys())) {
+              if (!validKeys.has(k)) closePeer(k);
+            }
+            setParticipants((prev) => {
+              let changed = false;
+              const next = new Map(prev);
+              for (const k of Array.from(next.keys())) {
+                if (!validKeys.has(k)) {
+                  next.delete(k);
+                  changed = true;
+                }
+              }
+              return changed ? next : prev;
+            });
           }
-          if (data.userId && data.userId !== selfId) {
+          const joinerKey = normId(data.userId);
+          if (joinerKey && joinerKey !== selfKey) {
             hasPeersToConnect = true;
             upsertParticipant(data.userId, {
               name: data.fullName || data.username || "Participant",
@@ -524,7 +729,9 @@ export function useMeetingMesh({
           const fromUserId = data.fromUserId;
           const signal = data.signal;
           if (fromUserId == null || !signal) break;
-          let entry = peersRef.current.get(fromUserId);
+          if (normId(fromUserId) === selfKey) break;
+          const key = normId(fromUserId);
+          let entry = peersRef.current.get(key);
           if (!entry) {
             entry = createPeer(fromUserId, false);
           }
@@ -533,7 +740,7 @@ export function useMeetingMesh({
         }
         case "meeting_track_state": {
           const { userId, muted: m, videoOff: v } = data;
-          if (userId == null || userId === selfId) break;
+          if (userId == null || normId(userId) === selfKey) break;
           upsertParticipant(userId, {
             ...(m != null ? { muted: m } : {}),
             ...(v != null ? { videoOff: v } : {}),
@@ -543,20 +750,8 @@ export function useMeetingMesh({
         case "meeting_participant_left": {
           const { userId } = data;
           if (userId == null) break;
-          const entry = peersRef.current.get(userId);
-          if (entry) {
-            try {
-              entry.pc.close();
-            } catch {
-              /* ignore */
-            }
-            peersRef.current.delete(userId);
-          }
-          setParticipants((prev) => {
-            const next = new Map(prev);
-            next.delete(userId);
-            return next;
-          });
+          closePeer(normId(userId));
+          removeParticipant(userId);
           break;
         }
         case "meeting_ended": {
@@ -567,7 +762,7 @@ export function useMeetingMesh({
           break;
       }
     },
-    [selfId, createPeer, handleSignal, upsertParticipant],
+    [createPeer, handleSignal, upsertParticipant, closePeer, removeParticipant],
   );
 
   // ── Load ICE config up front ─────────────────────────────────────────────
@@ -663,6 +858,8 @@ export function useMeetingMesh({
     }
     localStreamRef.current = null;
     peersRef.current.forEach((entry) => {
+      if (entry.disconnectTimer) clearTimeout(entry.disconnectTimer);
+      entry.rampTimers?.forEach((t) => clearTimeout(t));
       try {
         entry.pc.close();
       } catch {
@@ -715,6 +912,8 @@ export function useMeetingMesh({
     localStreamRef.current?.getVideoTracks().forEach((t) => {
       (t as any)._switchCamera?.();
     });
+    // Track facing so the self-view only mirrors for the front camera.
+    setUsingFrontCamera((v) => !v);
   }, []);
 
   return {
@@ -722,6 +921,7 @@ export function useMeetingMesh({
     participants,
     muted,
     videoOff,
+    usingFrontCamera,
     status,
     mediaError,
     toggleMute,

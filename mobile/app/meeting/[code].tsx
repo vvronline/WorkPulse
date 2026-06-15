@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   Linking,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -16,23 +18,37 @@ import { RTCView } from "react-native-webrtc";
 import {
   Check,
   Copy,
+  Hand,
   Mic,
   MicOff,
   Minimize2,
+  MoreVertical,
   PhoneOff,
   SwitchCamera,
+  Users,
   Video as VideoIcon,
   VideoOff,
+  X,
 } from "lucide-react-native";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { useAuth } from "../../src/auth/AuthContext";
 import { getMeeting } from "../../src/features";
 import { SERVER_ORIGIN } from "../../src/config";
+import { socket } from "../../src/realtime/socket";
 import {
   useMeetingMesh,
   type MeetingParticipant,
 } from "../../src/meeting/useMeetingMesh";
+
+// Resolve an avatar path returned by the API (which may be relative, e.g.
+// "/uploads/avatars/x.png") to an absolute URL the <Image> can load. Mirrors
+// the web ParticipantTile's avatar URL resolution.
+function resolveAvatarUrl(avatar?: string | null): string | null {
+  if (!avatar) return null;
+  if (avatar.startsWith("http")) return avatar;
+  return `${SERVER_ORIGIN}${avatar.startsWith("/") ? "" : "/"}${avatar}`;
+}
 
 /**
  * In-app meeting room. Joins the SAME WebRTC mesh as the web/desktop clients
@@ -55,6 +71,15 @@ export default function MeetingScreen() {
   const [opening, setOpening] = useState(false);
   const [codeCopied, setCodeCopied] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  // True when the current user created the meeting → expose host-only controls
+  // (End meeting for all), mirroring the web MeetingBottomBar.
+  const [isHost, setIsHost] = useState(false);
+  // Local raised-hand state + the set of remote userIds with a raised hand
+  // (driven by the server `meeting_hand_raised` broadcast). Mirrors web.
+  const [raisedHand, setRaisedHand] = useState(false);
+  const [raisedHands, setRaisedHands] = useState<Set<string>>(new Set());
+  const [showMore, setShowMore] = useState(false);
+  const [showParticipants, setShowParticipants] = useState(false);
 
   // Resolve the meeting by code (mirrors the web auto-join path).
   useEffect(() => {
@@ -65,6 +90,9 @@ export default function MeetingScreen() {
         if (cancelled) return;
         setMeetingId(r.data.id);
         if (r.data.title) setTitle(r.data.title);
+        if (r.data.created_by != null && user?.id != null) {
+          setIsHost(Number(r.data.created_by) === Number(user.id));
+        }
       })
       .catch(() => {
         if (!cancelled)
@@ -73,13 +101,14 @@ export default function MeetingScreen() {
     return () => {
       cancelled = true;
     };
-  }, [code]);
+  }, [code, user?.id]);
 
   const {
     localStream,
     participants,
     muted,
     videoOff,
+    usingFrontCamera,
     status,
     mediaError,
     toggleMute,
@@ -93,6 +122,39 @@ export default function MeetingScreen() {
     initialMuted: false,
     initialVideoOff: false,
   });
+
+  // Listen for raised-hand broadcasts so we can show the hand badge on tiles
+  // and in the participants list (server `meeting_hand_raised`).
+  useEffect(() => {
+    const off = socket.subscribe((msg) => {
+      if (msg.type !== "meeting_hand_raised") return;
+      const d: any = msg.data || {};
+      if (d.userId == null) return;
+      const key = String(d.userId);
+      setRaisedHands((prev) => {
+        const next = new Set(prev);
+        if (d.raised) next.add(key);
+        else next.delete(key);
+        return next;
+      });
+      if (user?.id != null && Number(d.userId) === Number(user.id)) {
+        setRaisedHand(!!d.raised);
+      }
+    });
+    return off;
+  }, [user?.id]);
+
+  const toggleRaiseHand = () => {
+    const next = !raisedHand;
+    setRaisedHand(next);
+    socket.send("meeting_raise_hand", { meetingId, raised: next });
+  };
+
+  const endMeeting = () => {
+    socket.send("meeting_end", { meetingId });
+    leave();
+    router.back();
+  };
 
   // Elapsed timer — starts ticking once we're connected.
   useEffect(() => {
@@ -243,17 +305,20 @@ export default function MeetingScreen() {
         style={styles.gridScroll}
         contentContainerStyle={styles.grid}
       >
-        {/* Self tile */}
+        {/* Self tile — mirror ONLY when using the front camera, otherwise the
+            rear feed renders left-right flipped. */}
         <VideoTile
           theme={theme}
           tileCount={tileCount}
-          name="You"
+          name={user?.full_name || user?.username || "You"}
+          avatar={user?.avatar}
           isLocal
           stream={localStream}
           videoOff={videoOff}
           muted={muted}
           connected
-          mirror
+          mirror={usingFrontCamera}
+          raisedHand={raisedHand}
         />
         {remoteParticipants.map((p) => (
           <RemoteTile
@@ -261,6 +326,7 @@ export default function MeetingScreen() {
             theme={theme}
             tileCount={tileCount}
             participant={p}
+            raisedHand={raisedHands.has(String(p.userId))}
           />
         ))}
       </ScrollView>
@@ -308,13 +374,156 @@ export default function MeetingScreen() {
         />
         <ControlButton
           theme={theme}
+          active={raisedHand}
+          label="Hand"
+          onPress={toggleRaiseHand}
+          icon={<Hand size={22} color="#fff" />}
+        />
+        <ControlButton
+          theme={theme}
+          label="More"
+          onPress={() => setShowMore(true)}
+          icon={<MoreVertical size={22} color="#fff" />}
+        />
+        <ControlButton
+          theme={theme}
           danger
           label="Leave"
           onPress={handleLeave}
           icon={<PhoneOff size={24} color="#fff" />}
         />
       </View>
+
+      {/* "More" actions drawer (mirrors the web MeetingBottomBar mobile
+          drawer): Participants list + host End-for-all. */}
+      <Modal
+        visible={showMore}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowMore(false)}
+      >
+        <Pressable
+          style={styles.sheetBackdrop}
+          onPress={() => setShowMore(false)}
+        >
+          <Pressable style={styles.sheet}>
+            <Pressable
+              style={styles.sheetItem}
+              onPress={() => {
+                setShowMore(false);
+                setShowParticipants(true);
+              }}
+            >
+              <Users size={18} color={theme.text} />
+              <Text style={styles.sheetItemText}>
+                Participants ({tileCount})
+              </Text>
+            </Pressable>
+            {isHost ? (
+              <Pressable
+                style={styles.sheetItem}
+                onPress={() => {
+                  setShowMore(false);
+                  endMeeting();
+                }}
+              >
+                <PhoneOff size={18} color={theme.danger} />
+                <Text style={[styles.sheetItemText, { color: theme.danger }]}>
+                  End meeting for all
+                </Text>
+              </Pressable>
+            ) : null}
+            <Pressable
+              style={styles.sheetCancel}
+              onPress={() => setShowMore(false)}
+            >
+              <Text style={styles.sheetCancelText}>Cancel</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Participants list modal. */}
+      <Modal
+        visible={showParticipants}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowParticipants(false)}
+      >
+        <Pressable
+          style={styles.sheetBackdrop}
+          onPress={() => setShowParticipants(false)}
+        >
+          <Pressable style={styles.participantsPanel}>
+            <View style={styles.participantsHeader}>
+              <Text style={styles.participantsTitle}>
+                Participants ({tileCount})
+              </Text>
+              <Pressable onPress={() => setShowParticipants(false)}>
+                <X size={20} color={theme.text} />
+              </Pressable>
+            </View>
+            <ScrollView>
+              <ParticipantRow
+                theme={theme}
+                name={`${user?.full_name || user?.username || "You"} (You)`}
+                avatar={user?.avatar}
+                muted={muted}
+                raisedHand={raisedHand}
+              />
+              {remoteParticipants.map((p) => (
+                <ParticipantRow
+                  key={String(p.userId)}
+                  theme={theme}
+                  name={p.name}
+                  avatar={p.avatar}
+                  muted={p.muted}
+                  raisedHand={raisedHands.has(String(p.userId))}
+                />
+              ))}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
+  );
+}
+
+function ParticipantRow({
+  theme,
+  name,
+  avatar,
+  muted,
+  raisedHand,
+}: {
+  theme: Theme;
+  name: string;
+  avatar?: string | null;
+  muted?: boolean;
+  raisedHand?: boolean;
+}) {
+  const styles = useMemo(() => makeStyles(theme), [theme]);
+  const avatarUrl = resolveAvatarUrl(avatar);
+  return (
+    <View style={styles.participantRow}>
+      <View style={styles.participantAvatar}>
+        {avatarUrl ? (
+          <Image
+            source={{ uri: avatarUrl }}
+            style={styles.participantAvatarImg}
+          />
+        ) : (
+          <Text style={styles.participantAvatarText}>
+            {(name || "?")[0]?.toUpperCase()}
+          </Text>
+        )}
+      </View>
+      <Text style={styles.participantName} numberOfLines={1}>
+        {name}
+      </Text>
+      {raisedHand ? <Hand size={16} color={theme.primary} /> : null}
+      {muted ? <MicOff size={16} color={theme.textMuted} /> : null}
+    </View>
   );
 }
 
@@ -510,20 +719,24 @@ function RemoteTile({
   theme,
   participant,
   tileCount,
+  raisedHand = false,
 }: {
   theme: Theme;
   participant: MeetingParticipant;
   tileCount: number;
+  raisedHand?: boolean;
 }) {
   return (
     <VideoTile
       theme={theme}
       tileCount={tileCount}
       name={participant.name}
+      avatar={participant.avatar}
       stream={participant.stream}
       videoOff={participant.videoOff}
       muted={participant.muted}
       connected={!!participant.stream}
+      raisedHand={raisedHand}
     />
   );
 }
@@ -531,6 +744,7 @@ function RemoteTile({
 function VideoTile({
   theme,
   name,
+  avatar,
   stream,
   videoOff,
   muted,
@@ -538,9 +752,11 @@ function VideoTile({
   isLocal = false,
   connected = false,
   mirror = false,
+  raisedHand = false,
 }: {
   theme: Theme;
   name: string;
+  avatar?: string | null;
   stream: any;
   videoOff: boolean;
   muted: boolean;
@@ -548,9 +764,12 @@ function VideoTile({
   isLocal?: boolean;
   connected?: boolean;
   mirror?: boolean;
+  raisedHand?: boolean;
 }) {
   const { width, height } = useWindowDimensions();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+  const [avatarFailed, setAvatarFailed] = useState(false);
+  const avatarUrl = resolveAvatarUrl(avatar);
 
   // Adaptive grid sizing (mirrors web's mobile breakpoints): 1 column for a
   // 1:1 call, 2 columns otherwise. Tiles fill the available width with a
@@ -581,9 +800,17 @@ function VideoTile({
       ) : (
         <View style={styles.tileAvatarWrap}>
           <View style={styles.tileAvatar}>
-            <Text style={styles.tileAvatarText}>
-              {(name || "?")[0]?.toUpperCase()}
-            </Text>
+            {avatarUrl && !avatarFailed ? (
+              <Image
+                source={{ uri: avatarUrl }}
+                style={styles.tileAvatarImg}
+                onError={() => setAvatarFailed(true)}
+              />
+            ) : (
+              <Text style={styles.tileAvatarText}>
+                {(name || "?")[0]?.toUpperCase()}
+              </Text>
+            )}
           </View>
           {showConnecting ? (
             <View style={styles.tileStatusRow}>
@@ -593,6 +820,11 @@ function VideoTile({
           ) : null}
         </View>
       )}
+      {raisedHand ? (
+        <View style={styles.tileHand}>
+          <Hand size={14} color="#fff" />
+        </View>
+      ) : null}
       <View style={styles.tileFooter}>
         {muted ? <MicOff size={12} color="#fff" /> : null}
         <Text style={styles.tileName} numberOfLines={1}>
@@ -676,6 +908,18 @@ const makeStyles = (theme: Theme) =>
       justifyContent: "center",
     },
     tileAvatarText: { color: "#fff", fontSize: 26, fontWeight: "700" },
+    tileAvatarImg: { width: 64, height: 64, borderRadius: 32 },
+    tileHand: {
+      position: "absolute",
+      top: 6,
+      right: 6,
+      width: 26,
+      height: 26,
+      borderRadius: 13,
+      backgroundColor: theme.primary,
+      alignItems: "center",
+      justifyContent: "center",
+    },
     tileStatusRow: {
       flexDirection: "row",
       alignItems: "center",
@@ -829,4 +1073,66 @@ const makeStyles = (theme: Theme) =>
       paddingHorizontal: 48,
     },
     lobbyJoinText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+    // ── More drawer + participants modal ──
+    sheetBackdrop: {
+      flex: 1,
+      backgroundColor: "rgba(0,0,0,0.5)",
+      justifyContent: "flex-end",
+    },
+    sheet: {
+      backgroundColor: theme.bgElevated,
+      borderTopLeftRadius: 18,
+      borderTopRightRadius: 18,
+      padding: 12,
+      gap: 4,
+    },
+    sheetItem: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      paddingVertical: 14,
+      paddingHorizontal: 12,
+      borderRadius: 10,
+    },
+    sheetItemText: { color: theme.text, fontSize: 15, fontWeight: "600" },
+    sheetCancel: {
+      alignItems: "center",
+      paddingVertical: 14,
+      marginTop: 4,
+    },
+    sheetCancelText: { color: theme.textSecondary, fontSize: 15 },
+    participantsPanel: {
+      backgroundColor: theme.bgElevated,
+      borderTopLeftRadius: 18,
+      borderTopRightRadius: 18,
+      paddingHorizontal: 16,
+      paddingTop: 16,
+      paddingBottom: 24,
+      maxHeight: "70%",
+    },
+    participantsHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: 12,
+    },
+    participantsTitle: { color: theme.text, fontSize: 16, fontWeight: "700" },
+    participantRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      paddingVertical: 10,
+    },
+    participantAvatar: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      backgroundColor: theme.primary,
+      alignItems: "center",
+      justifyContent: "center",
+      overflow: "hidden",
+    },
+    participantAvatarImg: { width: 38, height: 38, borderRadius: 19 },
+    participantAvatarText: { color: "#fff", fontSize: 15, fontWeight: "700" },
+    participantName: { color: theme.text, fontSize: 15, flex: 1 },
   });

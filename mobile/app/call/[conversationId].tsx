@@ -99,6 +99,9 @@ export default function CallScreen() {
   const [status, setStatus] = useState<CallStatus>("ringing");
   const [muted, setMuted] = useState(false);
   const [videoOff, setVideoOff] = useState(callType !== "video");
+  // Front camera → mirror the self-view; rear → don't (otherwise the rear feed
+  // renders left-right flipped). Toggled by switchCamera().
+  const [usingFrontCamera, setUsingFrontCamera] = useState(true);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   // Peer's camera state — when true we render the avatar instead of a frozen
@@ -1139,6 +1142,8 @@ export default function CallScreen() {
       // react-native-webrtc track exposes _switchCamera()
       (t as any)._switchCamera?.();
     });
+    // Track facing so the self-view only mirrors for the front camera.
+    setUsingFrontCamera((v) => !v);
   }
 
   const statusLabel =
@@ -1155,9 +1160,18 @@ export default function CallScreen() {
             : "Call ended";
 
   const showVideo = callType === "video";
-  // Only paint the remote video when the peer actually has their camera on.
-  // Otherwise we fall through to the avatar + name on a black screen.
-  const showRemoteVideo = showVideo && remoteStream && !remoteVideoOff;
+  // Only paint the remote video when the peer actually has their camera on AND
+  // a live video track is present. Relying on `!remoteVideoOff` alone meant a
+  // missed/late `video-state` signal left us painting a black RTCView with no
+  // avatar (the "avatar not visible when camera off" bug). Requiring a live
+  // track makes the avatar the reliable fallback.
+  const hasLiveRemoteVideo =
+    !!remoteStream &&
+    remoteStream
+      .getVideoTracks()
+      .some((t) => (t as any).readyState !== "ended");
+  const showRemoteVideo =
+    showVideo && hasLiveRemoteVideo && !remoteVideoOff;
 
   const fmtDuration = (secs: number) => {
     const m = Math.floor(secs / 60);
@@ -1218,9 +1232,11 @@ export default function CallScreen() {
           streamURL={(localStream as any).toURL()}
           style={styles.localVideo}
           objectFit="cover"
-          // Mirror ONLY the self-view (front camera) — natural "mirror"
-          // behaviour users expect, matching the web client.
-          mirror
+          // Mirror ONLY the front-camera self-view (the natural "mirror"
+          // behaviour users expect, matching the web client). After "Flip" to
+          // the rear camera we must NOT mirror, otherwise the rear feed renders
+          // left-right flipped.
+          mirror={usingFrontCamera}
           // Must be a HIGHER media-overlay layer than the remote view, or
           // Android intermittently hides the self preview entirely.
           zOrder={1}
