@@ -88,9 +88,16 @@ const ACCEPTABLE_ACCURACY_M = 200;
 // Hard ceiling — fixes worse than this are treated as garbage and not
 // returned at all, even as a last resort. The renderer will surface a
 // "couldn't determine your location" error instead of silently giving
-// the server a useless 60-km fix that's guaranteed to fail the geofence
+// the server a useless coarse fix that's guaranteed to fail the geofence
 // check anyway.
-const UNUSABLE_ACCURACY_M = 50000;
+//
+// Set to 1000 m: a fix coarser than 1 km can never satisfy a realistic
+// office geofence (org.office_radius_m is typically 50–300 m), and
+// returning it only produces the misleading "Location verified (±50000 m)"
+// → "you are 19843 m from the office" contradiction. Anything coarser is
+// rejected client-side with an actionable message (turn on Location
+// Services / connect to office Wi-Fi) instead.
+const UNUSABLE_ACCURACY_M = 1000;
 
 type ProviderResult =
     | { ok: true; pos: Position }
@@ -124,11 +131,11 @@ export async function getCurrentPosition(opts: PositionOptions = {}): Promise<Po
         try {
             const pos = await getBrowserPosition(opts);
             console.log("[Geolocation] Browser geolocation (non-Electron):", pos);
-            if (pos.accuracy > UNUSABLE_ACCURACY_M) {
-                console.warn("[Geolocation] Browser accuracy > UNUSABLE — rejecting");
+            if (pos.accuracy >= UNUSABLE_ACCURACY_M) {
+                console.warn("[Geolocation] Browser accuracy >= UNUSABLE — rejecting");
                 throw {
                     code: "POSITION_UNAVAILABLE",
-                    message: "Location is too coarse to use.",
+                    message: `Location is too coarse to use (±${Math.round(pos.accuracy)} m).`,
                     accuracy: pos.accuracy,
                     source: pos.source,
                 } as GeolocationError;
@@ -209,7 +216,7 @@ export async function getCurrentPosition(opts: PositionOptions = {}): Promise<Po
         const best = realFixes[0];
         console.log("[Geolocation] Selected best real fix:", best, "(out of", realFixes.length, "candidates)");
 
-        if (best.accuracy <= UNUSABLE_ACCURACY_M) {
+        if (best.accuracy < UNUSABLE_ACCURACY_M) {
             if (best.accuracy > ACCEPTABLE_ACCURACY_M) {
                 console.warn(`[Geolocation] Best fix is ${best.accuracy} m — > ACCEPTABLE_ACCURACY_M (${ACCEPTABLE_ACCURACY_M}). Server may still reject.`);
             }

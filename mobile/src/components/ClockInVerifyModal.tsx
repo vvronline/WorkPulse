@@ -20,6 +20,10 @@ import { useTheme } from "../theme/ThemeProvider";
 import FaceCaptureWebView from "./FaceCaptureWebView";
 import { getOfficeSignals, type Position } from "../utils/officeSignals";
 import { clockIn, getTrackerStatus, type ClockInPayload } from "../tracker";
+import {
+  clockInErrorInfo,
+  type ClockInErrorInfo,
+} from "../utils/clockInError";
 
 type WorkMode = "office" | "remote" | "hybrid";
 
@@ -56,7 +60,7 @@ export default function ClockInVerifyModal({
   );
   const [location, setLocation] = useState<Position | null>(null);
   const [locErr, setLocErr] = useState<string | null>(null);
-  const [submitErr, setSubmitErr] = useState<string | null>(null);
+  const [submitErr, setSubmitErr] = useState<ClockInErrorInfo | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -110,7 +114,6 @@ export default function ClockInVerifyModal({
       // — a dropped/slow connection or the axios timeout firing — axios
       // rejects with NO `response`. Showing the generic "Clock-in failed"
       // in that case is wrong: the user is already clocked in.
-      const serverError: string | undefined = e?.response?.data?.error;
       if (!e?.response) {
         try {
           const { data } = await getTrackerStatus();
@@ -123,12 +126,13 @@ export default function ClockInVerifyModal({
           /* status re-check failed too — fall through to the error below */
         }
       }
-      // A structured server error is a real failure — surface its exact
-      // message (so face-mismatch / geofence reasons are diagnosable)
-      // instead of always showing the generic fallback.
-      const msg = serverError || "Clock-in failed. Please try again.";
-      setSubmitErr(msg);
-      setStep("face");
+      // Map the structured server error (code + message) into a specific
+      // "Location Mismatch" / "Face Mismatch" reason instead of a flat
+      // "Clock-in failed". Route the user back to the relevant step so they
+      // can fix it (move closer / re-scan their face).
+      const info = clockInErrorInfo(e);
+      setSubmitErr(info);
+      setStep(info.kind === "location" && needsLocation ? "location" : "face");
     }
   }
 
@@ -245,8 +249,19 @@ export default function ClockInVerifyModal({
                 ) : null}
                 {submitErr ? (
                   <View style={styles.submitErr}>
-                    <AlertTriangle size={14} color={theme.danger} />
-                    <Text style={styles.submitErrText}>{submitErr}</Text>
+                    {submitErr.kind === "location" ? (
+                      <MapPin size={16} color={theme.danger} />
+                    ) : (
+                      <AlertTriangle size={16} color={theme.danger} />
+                    )}
+                    <View style={styles.submitErrTextWrap}>
+                      <Text style={styles.submitErrTitle}>
+                        {submitErr.title}
+                      </Text>
+                      <Text style={styles.submitErrText}>
+                        {submitErr.message}
+                      </Text>
+                    </View>
                   </View>
                 ) : null}
                 <FaceCaptureWebView
@@ -400,13 +415,15 @@ const makeStyles = (theme: Theme) =>
   locWarnText: { color: theme.warning, fontSize: 12, fontWeight: "600" },
   submitErr: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
+    alignItems: "flex-start",
+    gap: 8,
     backgroundColor: "rgba(224, 62, 62, 0.1)",
     borderRadius: theme.radiusSm,
     padding: 10,
   },
-  submitErrText: { flex: 1, color: theme.danger, fontSize: 12 },
+  submitErrTextWrap: { flex: 1, gap: 2 },
+  submitErrTitle: { color: theme.danger, fontSize: 13, fontWeight: "700" },
+  submitErrText: { color: theme.danger, fontSize: 12 },
   submittingRow: {
     flexDirection: "row",
     alignItems: "center",

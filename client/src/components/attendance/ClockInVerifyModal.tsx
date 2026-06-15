@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ShieldCheck, Loader2, X, AlertTriangle, CheckCircle2, Wifi, WifiOff } from "lucide-react";
+import { ShieldCheck, Loader2, X, AlertTriangle, CheckCircle2, Wifi, WifiOff, MapPin, ScanFace } from "lucide-react";
 import FaceCapture from "./FaceCapture";
 import { getOfficeSignals, geolocationErrorMessage } from "../../utils/geolocation";
 import type { Position, WifiInfo, PositionSource } from "../../utils/geolocation";
@@ -23,6 +23,37 @@ interface LocErrState {
 interface SubmitErrState {
     message: string;
     code?: string;
+}
+
+type SubmitErrKind = "location" | "face" | "generic";
+
+const LOCATION_CODES = new Set([
+    "OUTSIDE_GEOFENCE",
+    "LOCATION_REQUIRED",
+    "OFFICE_LOCATION_NOT_CONFIGURED",
+]);
+const FACE_CODES = new Set([
+    "FACE_MISMATCH",
+    "FACE_NOT_ENROLLED",
+    "FACE_REQUIRED",
+]);
+
+/**
+ * Classify a server clock-in error (code + message) so the modal can show a
+ * specific "Location Mismatch" / "Face Mismatch" title + icon instead of a
+ * single flat red line. Falls back to keyword sniffing when no code is sent.
+ */
+function classifySubmitErr(message: string, code?: string): { kind: SubmitErrKind; title: string } {
+    const lower = message.toLowerCase();
+    const isLocation =
+        (code && LOCATION_CODES.has(code)) ||
+        (!code && (lower.includes("office") || lower.includes("geofence") || lower.includes("location") || lower.includes(" m from")));
+    const isFace =
+        (code && FACE_CODES.has(code)) ||
+        (!code && lower.includes("face"));
+    if (isLocation) return { kind: "location", title: "Location Mismatch" };
+    if (isFace) return { kind: "face", title: "Face Mismatch" };
+    return { kind: "generic", title: "Clock-In Failed" };
 }
 
 interface ClockInPayload {
@@ -279,18 +310,33 @@ export default function ClockInVerifyModal({ workMode, submitClockIn, onSuccess,
                                 </div>
                             )}
                             {needsLocation && location && !wifiVerified && (
-                                <div className={s.locDone}>
-                                    <CheckCircle2 size={14} /> Location verified
-                                    {location.accuracy && (
-                                        <span className={s.acc}> (±{Math.round(location.accuracy)} m)</span>
-                                    )}
-                                </div>
+                                location.accuracy > 200 ? (
+                                    <div className={s.locInfo}>
+                                        <MapPin size={14} /> Approximate location
+                                        <span className={s.acc}> (±{Math.round(location.accuracy)} m) — may be too coarse for the office geofence. Connect to office Wi-Fi if this fails.</span>
+                                    </div>
+                                ) : (
+                                    <div className={s.locDone}>
+                                        <CheckCircle2 size={14} /> Location verified
+                                        {location.accuracy && (
+                                            <span className={s.acc}> (±{Math.round(location.accuracy)} m)</span>
+                                        )}
+                                    </div>
+                                )
                             )}
-                            {submitErr && (
-                                <div className={s.errMsg}>
-                                    <AlertTriangle size={16} /> {submitErr.message}
-                                </div>
-                            )}
+                            {submitErr && (() => {
+                                const { kind, title } = classifySubmitErr(submitErr.message, submitErr.code);
+                                const Icon = kind === "location" ? MapPin : kind === "face" ? ScanFace : AlertTriangle;
+                                return (
+                                    <div className={s.errMsg} style={{ alignItems: "flex-start" }}>
+                                        <Icon size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+                                        <span>
+                                            <strong style={{ display: "block" }}>{title}</strong>
+                                            {submitErr.message}
+                                        </span>
+                                    </div>
+                                );
+                            })()}
                             <FaceCapture
                                 autoStart
                                 captureLabel="Verify & Clock In"
