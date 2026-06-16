@@ -4,6 +4,7 @@ import {
   Image,
   Linking,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -933,6 +934,7 @@ function RemoteTile({
       videoOff={participant.videoOff}
       muted={participant.muted}
       connected={!!participant.stream}
+      mirror={false}
       raisedHand={raisedHand}
     />
   );
@@ -981,6 +983,11 @@ function VideoTile({
       ? Math.min(height * 0.62, tileWidth * 1.2)
       : tileWidth * 1.15;
   const showVideo = stream && !videoOff;
+  // Defensive guard: only the local self-preview may be mirrored.
+  const shouldMirror = isLocal && mirror;
+  const videoStyle = isLocal
+    ? styles.tileVideo
+    : [styles.tileVideo, Platform.OS === "android" && styles.unmirrorVideo];
   const displayName = isLocal ? `${name} (You)` : name;
   const showConnecting = !isLocal && !connected;
 
@@ -989,9 +996,9 @@ function VideoTile({
       {showVideo ? (
         <RTCView
           streamURL={(stream as any).toURL()}
-          style={styles.tileVideo}
+          style={videoStyle}
           objectFit="cover"
-          mirror={mirror}
+          mirror={shouldMirror}
           zOrder={0}
         />
       ) : (
@@ -1090,6 +1097,9 @@ const makeStyles = (theme: Theme) =>
       borderColor: "rgba(255,255,255,0.08)",
     },
     tileVideo: { flex: 1, backgroundColor: "#000" },
+    // Android mobile peers can publish front-camera video mirrored.
+    // Counter-flip only remote tiles; keep local mirror behavior unchanged.
+    unmirrorVideo: { transform: [{ scaleX: -1 }] },
     tileAvatarWrap: {
       flex: 1,
       alignItems: "center",

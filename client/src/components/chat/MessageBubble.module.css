@@ -87,25 +87,41 @@
 .theirs.grouped .theirBubble { border-radius: 16px; }
 
 /* ─── WhatsApp tail (pointer notch) — only on the first of a block ─── */
-.groupStart .myBubble::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    right: -7px;
-    width: 0;
-    height: 0;
-    border-top: 9px solid var(--chat-out-bg);
-    border-right: 8px solid transparent;
-}
+.groupStart .myBubble::before,
+.groupStart .theirBubble::before,
+.groupStart .myBubble::after,
 .groupStart .theirBubble::after {
     content: '';
     position: absolute;
+    width: 10px;
+    height: 10px;
+    clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+
+/* Border layer */
+.groupStart .myBubble::before {
+    top: -1px;
+    right: -9px;
+    background: var(--chat-bubble-border);
+}
+.groupStart .theirBubble::before {
+    top: -1px;
+    left: -9px;
+    transform: scaleX(-1);
+    background: var(--chat-bubble-border);
+}
+
+/* Fill layer */
+.groupStart .myBubble::after {
+    top: 0;
+    right: -7px;
+    background: var(--chat-out-bg);
+}
+.groupStart .theirBubble::after {
     top: 0;
     left: -7px;
-    width: 0;
-    height: 0;
-    border-top: 9px solid var(--chat-in-bg);
-    border-left: 8px solid transparent;
+    transform: scaleX(-1);
+    background: var(--chat-in-bg);
 }
 
 .pinned { border-left: 2px solid #f59e0b; padding-left: 8px; }

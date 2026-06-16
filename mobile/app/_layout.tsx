@@ -9,6 +9,7 @@ import ImpersonationBanner from "../src/components/ImpersonationBanner";
 import UpdateChecker from "../src/components/UpdateChecker";
 import IncomingCallListener from "../src/realtime/IncomingCallListener";
 import MeetingStartedListener from "../src/realtime/MeetingStartedListener";
+import RealtimeSoundListener from "../src/realtime/RealtimeSoundListener";
 import { ThemeProvider, useTheme } from "../src/theme/ThemeProvider";
 
 const queryClient = new QueryClient({
@@ -150,6 +151,7 @@ export default function RootLayout() {
               <StatusBar style="light" />
               <IncomingCallListener />
               <MeetingStartedListener />
+              <RealtimeSoundListener />
               <ImpersonationBanner />
               <UpdateChecker />
               <ThemedStack />

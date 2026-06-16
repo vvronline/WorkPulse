@@ -72,9 +72,13 @@ export default function MessageBubble({
             message._pending && styles.bubblePending,
           ]}
         >
-          {/* WhatsApp-style tail (only on the first/non-grouped bubble look). */}
+          {/* Layered tail keeps the pointer edge crisp with the bubble border. */}
           <View
-            style={[mine ? styles.tailMine : styles.tailTheirs]}
+            style={[mine ? styles.tailMineBorder : styles.tailTheirsBorder]}
+            pointerEvents="none"
+          />
+          <View
+            style={[mine ? styles.tailMineFill : styles.tailTheirsFill]}
             pointerEvents="none"
           />
 
@@ -148,8 +152,19 @@ const makeStyles = (theme: Theme) =>
       borderColor: theme.chatBubbleBorder,
     },
     bubblePending: { opacity: 0.7 },
-    // Little triangular tail at the top corner (WhatsApp pointer notch).
-    tailMine: {
+    // Layered triangular tail: border layer + fill layer.
+    tailMineBorder: {
+      position: "absolute",
+      top: -1,
+      right: -8,
+      width: 0,
+      height: 0,
+      borderTopWidth: 9,
+      borderTopColor: theme.chatBubbleBorder,
+      borderRightWidth: 9,
+      borderRightColor: "transparent",
+    },
+    tailMineFill: {
       position: "absolute",
       top: 0,
       right: -6,
@@ -160,7 +175,18 @@ const makeStyles = (theme: Theme) =>
       borderRightWidth: 8,
       borderRightColor: "transparent",
     },
-    tailTheirs: {
+    tailTheirsBorder: {
+      position: "absolute",
+      top: -1,
+      left: -8,
+      width: 0,
+      height: 0,
+      borderTopWidth: 9,
+      borderTopColor: theme.chatBubbleBorder,
+      borderLeftWidth: 9,
+      borderLeftColor: "transparent",
+    },
+    tailTheirsFill: {
       position: "absolute",
       top: 0,
       left: -6,

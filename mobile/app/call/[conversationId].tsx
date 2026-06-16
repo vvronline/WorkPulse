@@ -12,7 +12,11 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { setAudioModeAsync } from "expo-audio";
+import {
+  setAudioModeAsync,
+  useAudioPlayer,
+  useAudioPlayerStatus,
+} from "expo-audio";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -41,8 +45,13 @@ import {
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { socket } from "../../src/realtime/socket";
-import { getIceConfig } from "../../src/features";
+import { getIceConfig, getNotificationPrefs } from "../../src/features";
 import { SERVER_ORIGIN } from "../../src/config";
+import { getNotificationPreviewDataUri } from "../../src/utils/notificationSoundPreview";
+import {
+  DEFAULT_NOTIFICATION_PREFS,
+  mergeNotificationPrefs,
+} from "../../src/utils/notificationPrefs";
 
 const FALLBACK_ICE = [
   { urls: "stun:stun.l.google.com:19302" },
@@ -156,6 +165,12 @@ export default function CallScreen() {
   const [floatingReactions, setFloatingReactions] = useState<
     Array<{ id: number; emoji: string; fromSelf: boolean }>
   >([]);
+  const [notificationPrefs, setNotificationPrefs] = useState(
+    DEFAULT_NOTIFICATION_PREFS,
+  );
+  const ringPlayer = useAudioPlayer();
+  const ringStatus = useAudioPlayerStatus(ringPlayer);
+  const ringToneKeyRef = useRef<string | null>(null);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -359,15 +374,31 @@ export default function CallScreen() {
   );
 
   useEffect(() => {
+    let active = true;
+    getNotificationPrefs()
+      .then((r) => {
+        if (!active) return;
+        setNotificationPrefs(mergeNotificationPrefs(r.data || {}));
+      })
+      .catch(() => {
+        if (!active) return;
+        setNotificationPrefs(mergeNotificationPrefs());
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
     const applyAudioMode = async () => {
       try {
         await setAudioModeAsync({
           playsInSilentMode: true,
-          allowsRecording: true,
+          allowsRecording: status !== "ringing",
           shouldPlayInBackground: false,
           interruptionMode: "doNotMix",
           shouldRouteThroughEarpiece:
-            callType === "voice" ? !speakerOn : false,
+            status !== "ringing" && callType === "voice" ? !speakerOn : false,
         });
       } catch {
         /* ignore runtime routing failures */
@@ -387,6 +418,78 @@ export default function CallScreen() {
       }).catch(() => {});
     };
   }, []);
+
+  const ringingCategory = mode === "incoming" ? "ringtone" : "outgoing";
+  const ringingToneId =
+    ringingCategory === "ringtone"
+      ? notificationPrefs.ringtone || DEFAULT_NOTIFICATION_PREFS.ringtone || "classic"
+      : notificationPrefs.outgoingTone ||
+        DEFAULT_NOTIFICATION_PREFS.outgoingTone ||
+        "ringback";
+  const shouldPlayRingingTone =
+    status === "ringing" &&
+    !notificationPrefs.muteAll &&
+    ringingToneId !== "none";
+
+  useEffect(() => {
+    if (!shouldPlayRingingTone) {
+      ringToneKeyRef.current = null;
+      try {
+        ringPlayer.pause();
+        ringPlayer.seekTo(0);
+      } catch {
+        /* no-op */
+      }
+      return;
+    }
+    const uri = getNotificationPreviewDataUri(ringingCategory, ringingToneId);
+    if (!uri) return;
+    const key = `${ringingCategory}:${ringingToneId}`;
+    if (ringToneKeyRef.current !== key) {
+      ringPlayer.replace({ uri });
+      ringToneKeyRef.current = key;
+    }
+    setAudioModeAsync({
+      allowsRecording: false,
+      playsInSilentMode: true,
+      shouldPlayInBackground: false,
+      interruptionMode: "doNotMix",
+      shouldRouteThroughEarpiece: false,
+    })
+      .then(() => {
+        ringPlayer.play();
+      })
+      .catch(() => {
+        /* no-op */
+      });
+  }, [
+    ringPlayer,
+    ringingCategory,
+    ringingToneId,
+    shouldPlayRingingTone,
+  ]);
+
+  useEffect(() => {
+    if (!shouldPlayRingingTone || !ringStatus?.didJustFinish) return;
+    try {
+      ringPlayer.seekTo(0);
+      ringPlayer.play();
+    } catch {
+      /* no-op */
+    }
+  }, [ringPlayer, ringStatus?.didJustFinish, shouldPlayRingingTone]);
+
+  useEffect(
+    () => () => {
+      try {
+        ringPlayer.pause();
+        ringPlayer.seekTo(0);
+      } catch {
+        /* no-op */
+      }
+    },
+    [ringPlayer],
+  );
 
   // Bitrate ramp-up (ported from the web useWebRTC applyBitrateRampUp):
   // start LOW (~300 kbps) so the connection establishes fast on a mobile
@@ -1422,7 +1525,10 @@ export default function CallScreen() {
       {showRemoteVideo ? (
         <RTCView
           streamURL={(remoteStream as any).toURL()}
-          style={styles.remoteVideo}
+          style={[
+            styles.remoteVideo,
+            Platform.OS === "android" && styles.unmirrorVideo,
+          ]}
           objectFit="cover"
           // Never mirror the remote feed — only a front-camera self-view should
           // be mirrored. Without this the peer's video renders like a mirror
@@ -1750,6 +1856,11 @@ const makeStyles = (theme: Theme) =>
     right: 0,
     bottom: 0,
     backgroundColor: "#000",
+  },
+  // Android front-camera streams can arrive mirrored from mobile peers.
+  // Counter-flip only remote video so peers render with natural left/right.
+  unmirrorVideo: {
+    transform: [{ scaleX: -1 }],
   },
   localVideo: {
     position: "absolute",

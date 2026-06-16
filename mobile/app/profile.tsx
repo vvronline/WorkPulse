@@ -65,6 +65,7 @@ import {
   getNotificationPreviewDataUri,
   type NotificationSoundCategory,
 } from "../src/utils/notificationSoundPreview";
+import { DEFAULT_NOTIFICATION_PREFS } from "../src/utils/notificationPrefs";
 
 function initials(name?: string) {
   if (!name) return "?";
@@ -660,17 +661,6 @@ function ChangePasswordModal({
 /* ─── Notification sounds modal ─── */
 
 type TonePreset = { id: string; name: string };
-
-const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
-  muteAll: false,
-  ringtone: "classic",
-  outgoingTone: "ringback",
-  messageTone: "ding",
-  mentionTone: "mention",
-  reactionTone: "subtle",
-  playWhenFocused: false,
-  playOnSend: false,
-};
 
 const RINGTONES: TonePreset[] = [
   { id: "classic", name: "Classic" },
