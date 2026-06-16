@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { setAudioModeAsync } from "expo-audio";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   mediaDevices,
   RTCPeerConnection,
@@ -92,6 +93,7 @@ type CallStatus =
 export default function CallScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     conversationId: string;
     mode?: string;
@@ -1450,7 +1452,7 @@ export default function CallScreen() {
       {showVideo && localStream && !videoOff ? (
         <RTCView
           streamURL={(localStream as any).toURL()}
-          style={styles.localVideo}
+          style={[styles.localVideo, { top: insets.top + 50 }]}
           objectFit="cover"
           // Mirror ONLY the front-camera self-view (the natural "mirror"
           // behaviour users expect, matching the web client). After "Flip" to
@@ -1466,7 +1468,7 @@ export default function CallScreen() {
       {/* Top status bar — connection quality + peer-mute, once connected
           (mirrors the web CallOverlay top bar). */}
       {status === "connected" ? (
-        <View style={styles.topBar}>
+        <View style={[styles.topBar, { top: insets.top + 8 }]}>
           <View style={styles.qualityBadge}>
             <Signal size={13} color={qualityColor} />
             <Text style={[styles.qualityLabel, { color: qualityColor }]}>
@@ -1500,7 +1502,7 @@ export default function CallScreen() {
       ) : null}
 
       {/* Header info */}
-      <View style={styles.info}>
+      <View style={[styles.info, { top: insets.top + 60 }]}>
         <Text style={styles.peerName}>{peerName}</Text>
         <Text style={styles.status}>
           {status === "connected" ? fmtDuration(duration) : statusLabel}
@@ -1508,43 +1510,54 @@ export default function CallScreen() {
       </View>
 
       {/* Controls */}
-      <View style={styles.controls}>
-        {mode === "incoming" && status === "ringing" ? (
-          <>
-            <Pressable
-              style={[styles.ctrl, styles.reject]}
-              onPress={rejectIncoming}
-            >
-              <PhoneOff size={26} color="#fff" />
+      {mode === "incoming" && status === "ringing" ? (
+        <View style={[styles.incomingControls, { paddingBottom: Math.max(insets.bottom, 24) }]}>
+          <View style={styles.incomingBtnWrap}>
+            <Pressable style={styles.reject} onPress={rejectIncoming}>
+              <PhoneOff size={28} color="#fff" />
             </Pressable>
-            <Pressable
-              style={[styles.ctrl, styles.accept]}
-              onPress={acceptIncoming}
-            >
-              <Phone size={26} color="#fff" />
+            <Text style={styles.ctrlLabel}>Decline</Text>
+          </View>
+          <View style={styles.incomingBtnWrap}>
+            <Pressable style={styles.accept} onPress={acceptIncoming}>
+              <Phone size={28} color="#fff" />
             </Pressable>
-          </>
-        ) : (
-          <>
-            <Pressable style={styles.ctrl} onPress={toggleMute}>
+            <Text style={styles.ctrlLabel}>Accept</Text>
+          </View>
+        </View>
+      ) : (
+        <View style={[styles.controlsBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.controlsPill}
+            contentContainerStyle={styles.controlsScroll}
+          >
+            <Pressable
+              style={[styles.ctrl, muted && styles.ctrlActive]}
+              onPress={toggleMute}
+            >
               {muted ? (
-                <MicOff size={24} color="#fff" />
+                <MicOff size={20} color="#fff" />
               ) : (
-                <Mic size={24} color="#fff" />
+                <Mic size={20} color="#fff" />
               )}
             </Pressable>
             {showVideo ? (
-              <Pressable style={styles.ctrl} onPress={toggleVideo}>
+              <Pressable
+                style={[styles.ctrl, videoOff && styles.ctrlActive]}
+                onPress={toggleVideo}
+              >
                 {videoOff ? (
-                  <VideoOff size={24} color="#fff" />
+                  <VideoOff size={20} color="#fff" />
                 ) : (
-                  <VideoIcon size={24} color="#fff" />
+                  <VideoIcon size={20} color="#fff" />
                 )}
               </Pressable>
             ) : null}
             {showVideo ? (
               <Pressable style={styles.ctrl} onPress={switchCamera}>
-                <SwitchCamera size={24} color="#fff" />
+                <SwitchCamera size={20} color="#fff" />
               </Pressable>
             ) : null}
             {callType === "voice" ? (
@@ -1552,16 +1565,19 @@ export default function CallScreen() {
                 style={[styles.ctrl, speakerOn && styles.ctrlActive]}
                 onPress={toggleSpeaker}
               >
-                <Volume2 size={24} color="#fff" />
+                <Volume2 size={20} color="#fff" />
               </Pressable>
             ) : null}
             {status === "connected" ? (
               <>
-                <Pressable style={styles.ctrl} onPress={toggleHold}>
+                <Pressable
+                  style={[styles.ctrl, onHold && styles.ctrlHold]}
+                  onPress={toggleHold}
+                >
                   {onHold ? (
-                    <Play size={24} color="#fff" />
+                    <Play size={20} color="#fff" />
                   ) : (
-                    <Pause size={24} color="#fff" />
+                    <Pause size={20} color="#fff" />
                   )}
                 </Pressable>
                 <Pressable
@@ -1571,7 +1587,7 @@ export default function CallScreen() {
                     setChatUnread(0);
                   }}
                 >
-                  <MessageSquare size={24} color="#fff" />
+                  <MessageSquare size={20} color="#fff" />
                   {chatUnread > 0 && !showChat ? (
                     <View style={styles.unreadDot}>
                       <Text style={styles.unreadText}>
@@ -1584,19 +1600,16 @@ export default function CallScreen() {
                   style={[styles.ctrl, showMore && styles.ctrlActive]}
                   onPress={() => setShowMore(true)}
                 >
-                  <MoreVertical size={24} color="#fff" />
+                  <MoreVertical size={20} color="#fff" />
                 </Pressable>
               </>
             ) : null}
-            <Pressable
-              style={[styles.ctrl, styles.reject]}
-              onPress={() => endAndLeave(true)}
-            >
-              <PhoneOff size={26} color="#fff" />
+            <Pressable style={styles.ctrlEnd} onPress={() => endAndLeave(true)}>
+              <PhoneOff size={22} color="#fff" />
             </Pressable>
-          </>
-        )}
-      </View>
+          </ScrollView>
+        </View>
+      )}
 
       {floatingReactions.map((r) => (
         <View
@@ -1787,7 +1800,7 @@ const makeStyles = (theme: Theme) =>
   status: { color: "rgba(255,255,255,0.7)", fontSize: 15 },
   topBar: {
     position: "absolute",
-    top: 44,
+    top: 44, // overridden inline with insets.top + 8
     left: 16,
     right: 16,
     flexDirection: "row",
@@ -1828,24 +1841,85 @@ const makeStyles = (theme: Theme) =>
     paddingVertical: 5,
   },
   muteBadgeText: { color: "#fff", fontSize: 12, fontWeight: "700" },
-  controls: {
+  /* ─── Controls bar (horizontal scrollable frosted pill, mirrors web mobile) ─── */
+  controlsBar: {
     position: "absolute",
-    bottom: 48,
+    bottom: 0,
     left: 0,
     right: 0,
-    flexDirection: "row",
-    justifyContent: "center",
-    gap: 20,
+    alignItems: "center",
+    zIndex: 10,
+    elevation: 10,
+  },
+  controlsPill: {
+    backgroundColor: "rgba(17,24,39,0.88)",
+    borderRadius: 32,
+    borderWidth: 1,
+    borderColor: "rgba(55,65,81,0.4)",
+    maxWidth: "100%" as any,
+  },
+  controlsScroll: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  /* ─── Incoming call layout ─── */
+  incomingControls: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: "row" as const,
+    justifyContent: "center" as const,
+    alignItems: "flex-end" as const,
+    gap: 80,
+  },
+  incomingBtnWrap: {
+    alignItems: "center" as const,
+    gap: 10,
+    paddingBottom: 8,
+  },
+  ctrlLabel: {
+    color: "rgba(255,255,255,0.8)",
+    fontSize: 12,
+    fontWeight: "600" as const,
   },
   ctrl: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: "rgba(255,255,255,0.18)",
     alignItems: "center",
     justifyContent: "center",
   },
   ctrlActive: { backgroundColor: "rgba(59,130,246,0.75)" },
+  ctrlHold: { backgroundColor: "rgba(245,158,11,0.75)" },
+  ctrlEnd: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "#ef4444",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  reject: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: theme.danger,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  accept: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: theme.success,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   unreadDot: {
     position: "absolute",
     top: -2,
@@ -1859,8 +1933,6 @@ const makeStyles = (theme: Theme) =>
     justifyContent: "center",
   },
   unreadText: { color: "#fff", fontSize: 10, fontWeight: "700" },
-  reject: { backgroundColor: theme.danger },
-  accept: { backgroundColor: theme.success },
   sheetBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.45)",
@@ -1904,7 +1976,7 @@ const makeStyles = (theme: Theme) =>
   reactionBtnText: { fontSize: 26 },
   floatingReaction: {
     position: "absolute",
-    bottom: 160,
+    bottom: 110,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 20,
