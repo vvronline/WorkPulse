@@ -27,6 +27,14 @@ jobs:
         working-directory: server
         run: npm ci
 
+      - name: Typecheck server
+        working-directory: server
+        run: npm run typecheck
+
+      - name: Build server
+        working-directory: server
+        run: npm run build
+
       - name: Run server tests
         working-directory: server
         env:
@@ -38,6 +46,10 @@ jobs:
       - name: Install client dependencies
         working-directory: client
         run: npm ci
+
+      - name: Typecheck client
+        working-directory: client
+        run: npm run typecheck
 
       - name: Run client tests
         working-directory: client

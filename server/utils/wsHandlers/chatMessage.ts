@@ -31,6 +31,7 @@
 
 import { logger } from "../logger";
 import { schema, validate } from "../wsValidate";
+import { pushNotifications } from "../../services/pushNotifications";
 const redis = require("../../redis");
 
 type Query = (sql: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount?: number }>;
@@ -212,6 +213,23 @@ async function chatMessage({ db, senderId, tenantId, data, ws, sendToUser }: Cha
         sendToUser(tenantId, p.user_id, "chat_message", outMsg);
         if (p.user_id !== senderId) {
             redis.incrUnread(tenantId, p.user_id, conversationId);
+
+            // Send push notification for new messages to other participants
+            pushNotifications.sendMessageNotification(
+                db.query as any,
+                p.user_id,
+                tenantId,
+                {
+                    conversationId,
+                    messageId: result.id,
+                    senderId,
+                    senderName: sender?.full_name || "Unknown",
+                    senderAvatar: sender?.avatar,
+                    messagePreview: content.trim().substring(0, 150),
+                }
+            ).catch((err: any) => {
+                logger.warn({ err: err.message, userId: p.user_id, messageId: result.id }, "Failed to send message push notification");
+            });
         }
     }
 

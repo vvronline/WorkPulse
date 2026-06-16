@@ -10,6 +10,8 @@ import UpdateChecker from "../src/components/UpdateChecker";
 import IncomingCallListener from "../src/realtime/IncomingCallListener";
 import MeetingStartedListener from "../src/realtime/MeetingStartedListener";
 import RealtimeSoundListener from "../src/realtime/RealtimeSoundListener";
+import PushNotificationListener from "../src/realtime/PushNotificationListener";
+import PushNotificationInitializer from "../src/realtime/PushNotificationInitializer";
 import { ThemeProvider, useTheme } from "../src/theme/ThemeProvider";
 
 const queryClient = new QueryClient({
@@ -149,9 +151,11 @@ export default function RootLayout() {
           <ThemeProvider>
             <SafeAreaProvider>
               <StatusBar style="light" />
+              <PushNotificationInitializer />
               <IncomingCallListener />
               <MeetingStartedListener />
               <RealtimeSoundListener />
+              <PushNotificationListener />
               <ImpersonationBanner />
               <UpdateChecker />
               <ThemedStack />

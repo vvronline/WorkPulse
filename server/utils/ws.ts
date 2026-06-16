@@ -16,6 +16,7 @@ import type { IncomingMessage } from "http";
 import { logger } from "./logger";
 import { chatMessage } from "./wsHandlers/chatMessage";
 import { withIdempotency } from "./wsIdempotency";
+import { pushNotifications } from "../services/pushNotifications";
 const { WebSocketServer } = require("ws");
 const jwt = require("jsonwebtoken");
 const cookie = require("cookie");
@@ -695,6 +696,25 @@ async function handleChatMessage(db: DbLike, senderId: number, tenantId: number 
                 callType,
                 isGroup: conv?.is_group || false,
                 groupName: conv?.name,
+            });
+
+            // Send push notification to recipient if they have registered devices
+            pushNotifications.sendCallNotification(
+                db.query as any,
+                p.user_id,
+                tenantId,
+                {
+                    callId: callLog.id,
+                    conversationId,
+                    callerId: senderId,
+                    callerName: caller?.full_name || "Unknown",
+                    callerAvatar: caller?.avatar,
+                    callType: callType as "voice" | "video",
+                    isGroup: conv?.is_group || false,
+                    groupName: conv?.name,
+                }
+            ).catch((err: any) => {
+                logger.warn({ err: err.message, userId: p.user_id, callId: callLog.id }, "Failed to send call push notification");
             });
         }
 
@@ -1824,6 +1844,24 @@ async function handleChatMessage(db: DbLike, senderId: number, tenantId: number 
             isGroup: true,
             isJoining: true,
         });
+
+        // Send push notification for group call participant addition
+        pushNotifications.sendCallNotification(
+            db.query as any,
+            targetUserId,
+            tenantId,
+            {
+                callId,
+                conversationId,
+                callerId: senderId,
+                callerName: caller?.full_name || "Unknown",
+                callerAvatar: caller?.avatar,
+                callType: callLog.call_type as "voice" | "video",
+                isGroup: true,
+            }
+        ).catch((err: any) => {
+            logger.warn({ err: err.message, userId: targetUserId, callId }, "Failed to send group call push notification");
+        });
     }
 }
 
@@ -1895,6 +1933,21 @@ async function notifyUser(db: DbLike, tenantId: number | null | undefined, userI
                 id: row.id, type, title, body,
                 link_task_id: linkTaskId || null,
                 created_at: row.created_at, is_read: false,
+            });
+
+            // Send push notification for important alerts
+            pushNotifications.sendNotificationAlert(
+                db.query as any,
+                userId,
+                tenantId || null,
+                {
+                    notificationId: row.id,
+                    title,
+                    body,
+                    type,
+                }
+            ).catch((err: any) => {
+                logger.warn({ err: err.message, userId }, "Failed to send push notification alert");
             });
         }
     } catch { /* ignore — notification delivery is best-effort */ }

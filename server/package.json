@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "node dist/index.js",
+    "start": "node dist/migrate.js && node dist/index.js",
     "dev": "tsx watch index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -48,6 +48,7 @@
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "express-rate-limit": "^8.2.1",
+    "firebase-admin": "^14.0.0",
     "helmet": "^8.1.0",
     "ioredis": "^5.10.1",
     "json2csv": "^5.0.7",

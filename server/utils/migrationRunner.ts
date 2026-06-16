@@ -1230,6 +1230,32 @@ const MIGRATIONS: Migration[] = [
             await query(`CREATE INDEX IF NOT EXISTS idx_mfa_reset_tokens_user ON mfa_reset_tokens(user_id)`);
         },
     },
+    {
+        // Push notification device tokens for mobile app (iOS/Android).
+        // Stores FCM registration tokens so the backend can send push notifications
+        // for incoming calls, messages, and alerts when the app is backgrounded.
+        // Tokens are tenant-scoped so multi-tenant orgs don't leak device tokens
+        // across workspaces. A device may have multiple tokens if the user reinstalls
+        // or the app is used across multiple devices.
+        name: '2026_06_v13_push_notification_device_tokens',
+        async up(query) {
+            await query(`
+                CREATE TABLE IF NOT EXISTS device_tokens (
+                    id              SERIAL PRIMARY KEY,
+                    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    tenant_id       INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
+                    device_token    TEXT NOT NULL,
+                    platform        TEXT NOT NULL CHECK(platform IN ('ios','android','web')),
+                    last_seen_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    created_at      TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE(user_id, device_token)
+                )
+            `);
+            await query(`CREATE INDEX IF NOT EXISTS idx_device_tokens_user ON device_tokens(user_id)`);
+            await query(`CREATE INDEX IF NOT EXISTS idx_device_tokens_org ON device_tokens(tenant_id) WHERE tenant_id IS NOT NULL`);
+            await query(`CREATE INDEX IF NOT EXISTS idx_device_tokens_last_seen ON device_tokens(last_seen_at) WHERE last_seen_at > NOW() - INTERVAL '1 year'`);
+        },
+    },
 ];
 
 interface MigrationOpts {

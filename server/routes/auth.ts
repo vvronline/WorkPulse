@@ -815,4 +815,44 @@ router.post("/logout", async (req: Request, res: Response) => {
     res.json({ message: "Logged out successfully" });
 });
 
+/**
+ * Register or update a device token for push notifications.
+ * Called by mobile apps (Expo/FCM) to register their device for push notifications.
+ * POST /api/auth/device-token — requires authentication (user session).
+ */
+router.post("/device-token", auth, async (req: Request, res: Response) => {
+    try {
+        const { deviceToken, platform } = req.body;
+        if (!deviceToken || !deviceToken.trim()) {
+            return res.status(400).json({ error: "Device token is required" });
+        }
+        if (!platform || !["ios", "android", "web"].includes(platform)) {
+            return res.status(400).json({ error: "Valid platform is required (ios, android, or web)" });
+        }
+
+        const userId = (req.user as any)?.id;
+        const tenantId = (req.user as any)?.tenant_id || null;
+
+        if (!userId) {
+            return res.status(401).json({ error: "User not authenticated" });
+        }
+
+        // Register the device token in the database
+        const db = req.db || { query: masterQuery };
+        await db.query(
+            `INSERT INTO device_tokens (user_id, tenant_id, device_token, platform, last_seen_at, created_at)
+             VALUES ($1, $2, $3, $4, NOW(), NOW())
+             ON CONFLICT (user_id, device_token) DO UPDATE
+             SET platform = EXCLUDED.platform, last_seen_at = NOW()`,
+            [userId, tenantId || null, deviceToken, platform]
+        );
+
+        logger.info({ userId, tenantId, platform }, "Device token registered for push notifications");
+        res.json({ message: "Device token registered successfully" });
+    } catch (err: any) {
+        logger.error({ err: err.message }, "POST /device-token error");
+        res.status(500).json({ error: "Failed to register device token" });
+    }
+});
+
 export = router;
