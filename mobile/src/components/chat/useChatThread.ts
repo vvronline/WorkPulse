@@ -874,6 +874,7 @@ export function useChatThread() {
         mode: "outgoing",
         callType: type,
         peerName: name || "Call",
+        peerAvatar: headerAvatar || "",
       },
     });
   }

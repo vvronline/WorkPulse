@@ -356,7 +356,7 @@
    are intentionally NOT mirrored — you should see other people the way
    they actually look (e.g. text on a t-shirt should read normally). */
 .mr-tile--local .mr-tile-video {
-  transform: scaleX(-1);
+  transform: none;
 }
 
 /* Presenter tile (PresenterView main pane). Uses object-fit: contain so

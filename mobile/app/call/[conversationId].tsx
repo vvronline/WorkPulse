@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
+  Image,
+  Modal,
   PermissionsAndroid,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
+import { setAudioModeAsync } from "expo-audio";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import {
   mediaDevices,
@@ -26,11 +31,17 @@ import {
   VideoOff,
   SwitchCamera,
   Signal,
+  MessageSquare,
+  MoreVertical,
+  Pause,
+  Play,
+  Volume2,
 } from "lucide-react-native";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { socket } from "../../src/realtime/socket";
 import { getIceConfig } from "../../src/features";
+import { SERVER_ORIGIN } from "../../src/config";
 
 const FALLBACK_ICE = [
   { urls: "stun:stun.l.google.com:19302" },
@@ -88,6 +99,7 @@ export default function CallScreen() {
     callId?: string;
     peerId?: string;
     peerName?: string;
+    peerAvatar?: string;
   }>();
   const router = useRouter();
 
@@ -95,6 +107,7 @@ export default function CallScreen() {
   const mode = params.mode === "incoming" ? "incoming" : "outgoing";
   const callType = params.callType === "video" ? "video" : "voice";
   const peerName = params.peerName || "Call";
+  const [peerAvatar, setPeerAvatar] = useState(params.peerAvatar || "");
 
   const [status, setStatus] = useState<CallStatus>("ringing");
   const [muted, setMuted] = useState(false);
@@ -117,6 +130,30 @@ export default function CallScreen() {
   // Mirrors the web CallOverlay NetworkStats badge.
   const [connectionQuality, setConnectionQuality] =
     useState<"good" | "fair" | "poor" | "unknown">("unknown");
+  const [onHold, setOnHold] = useState(false);
+  const holdSnapshotRef = useRef<{ muted: boolean; videoOff: boolean } | null>(
+    null,
+  );
+  const [noiseSuppressionEnabled, setNoiseSuppressionEnabled] = useState(true);
+  const [recording, setRecording] = useState(false);
+  const [speakerOn, setSpeakerOn] = useState(false);
+  const [showMore, setShowMore] = useState(false);
+  const [showChat, setShowChat] = useState(false);
+  const [chatText, setChatText] = useState("");
+  const [chatUnread, setChatUnread] = useState(0);
+  const [callMessages, setCallMessages] = useState<
+    Array<{
+      id: string | number;
+      senderId?: number;
+      senderName?: string;
+      content?: string;
+      createdAt?: string;
+    }>
+  >([]);
+  const [showReactionPicker, setShowReactionPicker] = useState(false);
+  const [floatingReactions, setFloatingReactions] = useState<
+    Array<{ id: number; emoji: string; fromSelf: boolean }>
+  >([]);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -285,6 +322,20 @@ export default function CallScreen() {
       for (const constraints of profiles) {
         try {
           const stream = await mediaDevices.getUserMedia(constraints);
+          // Some devices can return a stream without an audio track for
+          // video constraints. Ensure we always publish a microphone track.
+          if (stream.getAudioTracks().length === 0) {
+            try {
+              const audioOnly = await mediaDevices.getUserMedia({
+                audio: true,
+                video: false,
+              });
+              const track = audioOnly.getAudioTracks()[0];
+              if (track) stream.addTrack(track);
+            } catch {
+              /* fall through; existing permission error is handled below */
+            }
+          }
           localStreamRef.current = stream as MediaStream;
           setLocalStream(stream as MediaStream);
           return stream as MediaStream;
@@ -304,6 +355,36 @@ export default function CallScreen() {
     },
     [callType, ensurePermissions],
   );
+
+  useEffect(() => {
+    const applyAudioMode = async () => {
+      try {
+        await setAudioModeAsync({
+          playsInSilentMode: true,
+          allowsRecording: true,
+          shouldPlayInBackground: false,
+          interruptionMode: "doNotMix",
+          shouldRouteThroughEarpiece:
+            callType === "voice" ? !speakerOn : false,
+        });
+      } catch {
+        /* ignore runtime routing failures */
+      }
+    };
+    applyAudioMode();
+  }, [callType, speakerOn, status]);
+
+  useEffect(() => {
+    return () => {
+      setAudioModeAsync({
+        playsInSilentMode: true,
+        allowsRecording: false,
+        shouldPlayInBackground: false,
+        interruptionMode: "doNotMix",
+        shouldRouteThroughEarpiece: false,
+      }).catch(() => {});
+    };
+  }, []);
 
   // Bitrate ramp-up (ported from the web useWebRTC applyBitrateRampUp):
   // start LOW (~300 kbps) so the connection establishes fast on a mobile
@@ -797,6 +878,7 @@ export default function CallScreen() {
           // "wrong state" failures that left the call stuck on Connecting…).
           if (mode !== "outgoing") return;
           peerIdRef.current = d.userId;
+          if (d.userAvatar) setPeerAvatar(String(d.userAvatar));
           setStatus("connecting");
           runSerialized(async () => {
             try {
@@ -967,6 +1049,41 @@ export default function CallScreen() {
           });
           break;
         }
+        case "call_reaction": {
+          if (Number(d.conversationId) !== conversationId) return;
+          if (!d.emoji) break;
+          const id = Date.now() + Math.random();
+          setFloatingReactions((prev) => [
+            ...prev,
+            { id, emoji: String(d.emoji), fromSelf: false },
+          ]);
+          setTimeout(
+            () =>
+              setFloatingReactions((prev) => prev.filter((r) => r.id !== id)),
+            2500,
+          );
+          break;
+        }
+        case "chat_message": {
+          if (Number(d.conversationId) !== conversationId) return;
+          const msgId = d.id ?? d.clientMsgId ?? `${Date.now()}-${Math.random()}`;
+          setCallMessages((prev) => {
+            if (prev.some((m) => String(m.id) === String(msgId))) return prev;
+            return [
+              ...prev,
+              {
+                id: msgId,
+                senderId: d.senderId,
+                senderName: d.senderName,
+                content: d.content,
+                createdAt: d.createdAt,
+              },
+            ];
+          });
+          if (Number(d.senderId) !== Number(peerIdRef.current)) break;
+          if (!showChat) setChatUnread((c) => c + 1);
+          break;
+        }
         case "call_ended":
           if (Number(d.conversationId) === conversationId) {
             setStatus("ended");
@@ -1014,6 +1131,7 @@ export default function CallScreen() {
     waitForIceConfig,
     videoOff,
     runSerialized,
+    showChat,
   ]);
 
   // ── Call duration timer (mirrors web CallOverlay) ──────────────────────────
@@ -1100,6 +1218,8 @@ export default function CallScreen() {
   }
 
   function toggleMute() {
+    setOnHold(false);
+    holdSnapshotRef.current = null;
     const stream = localStreamRef.current;
     if (!stream) return;
     const next = !muted;
@@ -1118,6 +1238,8 @@ export default function CallScreen() {
   }
 
   function toggleVideo() {
+    setOnHold(false);
+    holdSnapshotRef.current = null;
     const stream = localStreamRef.current;
     if (!stream) return;
     const next = !videoOff;
@@ -1144,6 +1266,94 @@ export default function CallScreen() {
     });
     // Track facing so the self-view only mirrors for the front camera.
     setUsingFrontCamera((v) => !v);
+  }
+
+  function toggleHold() {
+    const stream = localStreamRef.current;
+    if (!stream) return;
+    const next = !onHold;
+    if (next) {
+      holdSnapshotRef.current = { muted, videoOff };
+      stream.getAudioTracks().forEach((t) => {
+        t.enabled = false;
+      });
+      stream.getVideoTracks().forEach((t) => {
+        t.enabled = false;
+      });
+      setMuted(true);
+      setVideoOff(true);
+    } else {
+      const snap = holdSnapshotRef.current || { muted: false, videoOff: true };
+      stream.getAudioTracks().forEach((t) => {
+        t.enabled = !snap.muted;
+      });
+      stream.getVideoTracks().forEach((t) => {
+        t.enabled = !snap.videoOff;
+      });
+      setMuted(snap.muted);
+      setVideoOff(snap.videoOff);
+    }
+    const target = peerIdRef.current;
+    if (target) {
+      socket.send("call_signal", {
+        conversationId,
+        targetUserId: target,
+        signal: { type: "audio-state", muted: next ? true : muted },
+      });
+      socket.send("call_signal", {
+        conversationId,
+        targetUserId: target,
+        signal: { type: "video-state", videoOff: next ? true : videoOff },
+      });
+    }
+    setOnHold(next);
+  }
+
+  function toggleNoiseSuppression() {
+    const next = !noiseSuppressionEnabled;
+    const stream = localStreamRef.current;
+    if (stream) {
+      stream.getAudioTracks().forEach((track) => {
+        track
+          .applyConstraints?.({
+            echoCancellation: true,
+            autoGainControl: true,
+            noiseSuppression: next,
+          } as any)
+          .catch(() => {});
+      });
+    }
+    setNoiseSuppressionEnabled(next);
+  }
+
+  function toggleRecording() {
+    setRecording((v) => !v);
+  }
+
+  function toggleSpeaker() {
+    if (callType !== "voice") return;
+    setSpeakerOn((v) => !v);
+  }
+
+  function sendReaction(emoji: string) {
+    const targetUserId = peerIdRef.current;
+    if (!targetUserId) return;
+    socket.send("call_reaction", { conversationId, targetUserId, emoji });
+    const id = Date.now() + Math.random();
+    setFloatingReactions((prev) => [...prev, { id, emoji, fromSelf: true }]);
+    setTimeout(
+      () => setFloatingReactions((prev) => prev.filter((r) => r.id !== id)),
+      2500,
+    );
+    setShowReactionPicker(false);
+    setShowMore(false);
+  }
+
+  function sendChat() {
+    const content = chatText.trim();
+    if (!content) return;
+    socket.send("chat_message", { conversationId, content });
+    setChatText("");
   }
 
   const statusLabel =
@@ -1195,6 +1405,12 @@ export default function CallScreen() {
         : connectionQuality === "poor"
           ? "Poor"
           : "…";
+  const peerAvatarUrl =
+    peerAvatar && peerAvatar.startsWith("http")
+      ? peerAvatar
+      : peerAvatar
+        ? `${SERVER_ORIGIN}${peerAvatar.startsWith("/") ? "" : "/"}${peerAvatar}`
+        : null;
 
   return (
     <View style={styles.screen}>
@@ -1219,9 +1435,13 @@ export default function CallScreen() {
       ) : (
         <View style={styles.avatarWrap}>
           <View style={styles.avatar}>
-            <Text style={styles.avatarText}>
-              {(peerName || "?")[0]?.toUpperCase()}
-            </Text>
+            {peerAvatarUrl ? (
+              <Image source={{ uri: peerAvatarUrl }} style={styles.avatarImg} />
+            ) : (
+              <Text style={styles.avatarText}>
+                {(peerName || "?")[0]?.toUpperCase()}
+              </Text>
+            )}
           </View>
         </View>
       )}
@@ -1252,6 +1472,23 @@ export default function CallScreen() {
             <Text style={[styles.qualityLabel, { color: qualityColor }]}>
               {qualityLabel}
             </Text>
+          </View>
+          <View style={styles.statusBadgeRow}>
+            {onHold ? (
+              <View style={[styles.pill, styles.holdPill]}>
+                <Text style={styles.pillText}>On hold</Text>
+              </View>
+            ) : null}
+            {noiseSuppressionEnabled ? (
+              <View style={[styles.pill, styles.nsPill]}>
+                <Text style={styles.pillText}>NS</Text>
+              </View>
+            ) : null}
+            {recording ? (
+              <View style={[styles.pill, styles.recPill]}>
+                <Text style={styles.pillText}>REC</Text>
+              </View>
+            ) : null}
           </View>
           {peerMuted ? (
             <View style={styles.muteBadge}>
@@ -1310,6 +1547,47 @@ export default function CallScreen() {
                 <SwitchCamera size={24} color="#fff" />
               </Pressable>
             ) : null}
+            {callType === "voice" ? (
+              <Pressable
+                style={[styles.ctrl, speakerOn && styles.ctrlActive]}
+                onPress={toggleSpeaker}
+              >
+                <Volume2 size={24} color="#fff" />
+              </Pressable>
+            ) : null}
+            {status === "connected" ? (
+              <>
+                <Pressable style={styles.ctrl} onPress={toggleHold}>
+                  {onHold ? (
+                    <Play size={24} color="#fff" />
+                  ) : (
+                    <Pause size={24} color="#fff" />
+                  )}
+                </Pressable>
+                <Pressable
+                  style={[styles.ctrl, showChat && styles.ctrlActive]}
+                  onPress={() => {
+                    setShowChat((v) => !v);
+                    setChatUnread(0);
+                  }}
+                >
+                  <MessageSquare size={24} color="#fff" />
+                  {chatUnread > 0 && !showChat ? (
+                    <View style={styles.unreadDot}>
+                      <Text style={styles.unreadText}>
+                        {chatUnread > 9 ? "9+" : chatUnread}
+                      </Text>
+                    </View>
+                  ) : null}
+                </Pressable>
+                <Pressable
+                  style={[styles.ctrl, showMore && styles.ctrlActive]}
+                  onPress={() => setShowMore(true)}
+                >
+                  <MoreVertical size={24} color="#fff" />
+                </Pressable>
+              </>
+            ) : null}
             <Pressable
               style={[styles.ctrl, styles.reject]}
               onPress={() => endAndLeave(true)}
@@ -1319,6 +1597,132 @@ export default function CallScreen() {
           </>
         )}
       </View>
+
+      {floatingReactions.map((r) => (
+        <View
+          key={r.id}
+          style={[
+            styles.floatingReaction,
+            r.fromSelf ? styles.floatingReactionSelf : styles.floatingReactionPeer,
+          ]}
+        >
+          <Text style={styles.floatingReactionText}>{r.emoji}</Text>
+        </View>
+      ))}
+
+      <Modal
+        visible={showMore}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowMore(false)}
+      >
+        <Pressable style={styles.sheetBackdrop} onPress={() => setShowMore(false)}>
+          <Pressable style={styles.sheet}>
+            <Pressable style={styles.sheetItem} onPress={toggleHold}>
+              <Text style={styles.sheetItemText}>{onHold ? "Resume call" : "Hold call"}</Text>
+            </Pressable>
+            <Pressable style={styles.sheetItem} onPress={toggleNoiseSuppression}>
+              <Text style={styles.sheetItemText}>
+                {noiseSuppressionEnabled
+                  ? "Disable noise suppression"
+                  : "Enable noise suppression"}
+              </Text>
+            </Pressable>
+            <Pressable style={styles.sheetItem} onPress={toggleRecording}>
+              <Text style={styles.sheetItemText}>
+                {recording ? "Stop call recording" : "Record call"}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={styles.sheetItem}
+              onPress={() => {
+                setShowMore(false);
+                setShowReactionPicker(true);
+              }}
+            >
+              <Text style={styles.sheetItemText}>Send reaction</Text>
+            </Pressable>
+            <Pressable
+              style={styles.sheetItem}
+              onPress={() => {
+                setShowMore(false);
+                setShowChat(true);
+                setChatUnread(0);
+              }}
+            >
+              <Text style={styles.sheetItemText}>Open chat</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal
+        visible={showReactionPicker}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowReactionPicker(false)}
+      >
+        <Pressable
+          style={styles.sheetBackdrop}
+          onPress={() => setShowReactionPicker(false)}
+        >
+          <Pressable style={styles.reactionSheet}>
+            {["👍", "👏", "❤️", "😂", "🎉", "🤔"].map((emoji) => (
+              <Pressable
+                key={emoji}
+                style={styles.reactionBtn}
+                onPress={() => sendReaction(emoji)}
+              >
+                <Text style={styles.reactionBtnText}>{emoji}</Text>
+              </Pressable>
+            ))}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal
+        visible={showChat}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowChat(false)}
+      >
+        <View style={styles.chatPanel}>
+          <View style={styles.chatHeader}>
+            <Text style={styles.chatTitle}>Call chat</Text>
+            <Pressable onPress={() => setShowChat(false)}>
+              <Text style={styles.chatClose}>Close</Text>
+            </Pressable>
+          </View>
+          <ScrollView style={styles.chatBody}>
+            {callMessages.map((m) => {
+              const mine = Number(m.senderId) !== Number(peerIdRef.current);
+              return (
+                <View
+                  key={String(m.id)}
+                  style={[styles.chatMsg, mine ? styles.chatMsgMine : styles.chatMsgPeer]}
+                >
+                  <Text style={styles.chatMsgSender}>
+                    {mine ? "You" : m.senderName || peerName}
+                  </Text>
+                  <Text style={styles.chatMsgText}>{m.content || ""}</Text>
+                </View>
+              );
+            })}
+          </ScrollView>
+          <View style={styles.chatComposer}>
+            <TextInput
+              style={styles.chatInput}
+              value={chatText}
+              onChangeText={setChatText}
+              placeholder="Type a message"
+              placeholderTextColor="rgba(255,255,255,0.45)"
+            />
+            <Pressable style={styles.chatSendBtn} onPress={sendChat}>
+              <Text style={styles.chatSendText}>Send</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1367,7 +1771,9 @@ const makeStyles = (theme: Theme) =>
     backgroundColor: theme.primary,
     alignItems: "center",
     justifyContent: "center",
+    overflow: "hidden",
   },
+  avatarImg: { width: "100%", height: "100%" },
   avatarText: { color: "#fff", fontSize: 44, fontWeight: "700" },
   info: {
     position: "absolute",
@@ -1389,7 +1795,19 @@ const makeStyles = (theme: Theme) =>
     justifyContent: "space-between",
     zIndex: 6,
     elevation: 9,
+    gap: 8,
   },
+  statusBadgeRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  pill: {
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: "rgba(0,0,0,0.45)",
+  },
+  holdPill: { backgroundColor: "rgba(245,158,11,0.7)" },
+  nsPill: { backgroundColor: "rgba(59,130,246,0.7)" },
+  recPill: { backgroundColor: "rgba(239,68,68,0.75)" },
+  pillText: { color: "#fff", fontSize: 11, fontWeight: "700" },
   qualityBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -1427,6 +1845,138 @@ const makeStyles = (theme: Theme) =>
     alignItems: "center",
     justifyContent: "center",
   },
+  ctrlActive: { backgroundColor: "rgba(59,130,246,0.75)" },
+  unreadDot: {
+    position: "absolute",
+    top: -2,
+    right: -2,
+    minWidth: 16,
+    height: 16,
+    paddingHorizontal: 3,
+    borderRadius: 8,
+    backgroundColor: "#ef4444",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  unreadText: { color: "#fff", fontSize: 10, fontWeight: "700" },
   reject: { backgroundColor: theme.danger },
   accept: { backgroundColor: theme.success },
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    justifyContent: "flex-end",
+  },
+  sheet: {
+    backgroundColor: theme.bgSecondary,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 18,
+    gap: 4,
+  },
+  sheetItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  sheetItemText: { color: theme.text, fontSize: 15, fontWeight: "600" },
+  reactionSheet: {
+    marginTop: "auto",
+    backgroundColor: theme.bgSecondary,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 16,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    justifyContent: "center",
+  },
+  reactionBtn: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  reactionBtnText: { fontSize: 26 },
+  floatingReaction: {
+    position: "absolute",
+    bottom: 160,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: "rgba(0,0,0,0.45)",
+  },
+  floatingReactionSelf: { right: 24 },
+  floatingReactionPeer: { left: 24 },
+  floatingReactionText: { fontSize: 28 },
+  chatPanel: {
+    flex: 1,
+    marginTop: 80,
+    backgroundColor: theme.bgSecondary,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+  },
+  chatHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.glassBorder,
+  },
+  chatTitle: { color: theme.text, fontSize: 16, fontWeight: "700" },
+  chatClose: { color: theme.primary, fontSize: 14, fontWeight: "600" },
+  chatBody: { flex: 1, paddingHorizontal: 12, paddingVertical: 10 },
+  chatMsg: {
+    maxWidth: "82%",
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 8,
+  },
+  chatMsgMine: {
+    alignSelf: "flex-end",
+    backgroundColor: "rgba(59,130,246,0.22)",
+  },
+  chatMsgPeer: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  chatMsgSender: {
+    color: "rgba(255,255,255,0.7)",
+    fontSize: 11,
+    marginBottom: 2,
+  },
+  chatMsgText: { color: "#fff", fontSize: 14 },
+  chatComposer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: theme.glassBorder,
+  },
+  chatInput: {
+    flex: 1,
+    minHeight: 40,
+    maxHeight: 100,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    color: "#fff",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  chatSendBtn: {
+    borderRadius: 18,
+    backgroundColor: theme.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  chatSendText: { color: "#fff", fontSize: 13, fontWeight: "700" },
 });

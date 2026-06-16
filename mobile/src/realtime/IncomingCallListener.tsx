@@ -33,6 +33,7 @@ export default function IncomingCallListener() {
             callId: String(d.callId),
             peerId: String(d.callerId),
             peerName: d.callerName || "Incoming call",
+            peerAvatar: d.callerAvatar || "",
           },
         });
       } else if (

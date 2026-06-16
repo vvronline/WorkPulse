@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PermissionsAndroid, Platform } from "react-native";
+import { setAudioModeAsync } from "expo-audio";
 import {
   mediaDevices,
   RTCPeerConnection,
@@ -192,6 +193,18 @@ export function useMeetingMesh({
         const stream = (await mediaDevices.getUserMedia(
           constraints,
         )) as MediaStream;
+        if (stream.getAudioTracks().length === 0) {
+          try {
+            const audioOnly = (await mediaDevices.getUserMedia({
+              audio: true,
+              video: false,
+            })) as MediaStream;
+            const track = audioOnly.getAudioTracks()[0];
+            if (track) stream.addTrack(track);
+          } catch {
+            /* handled by fallback profiles / mediaError */
+          }
+        }
         // Apply initial mute/video state.
         stream.getAudioTracks().forEach((t) => {
           t.enabled = !mutedRef.current;
@@ -213,6 +226,25 @@ export function useMeetingMesh({
     setMediaError("Could not access the camera/microphone.");
     return null;
   }, [ensurePermissions]);
+
+  useEffect(() => {
+    setAudioModeAsync({
+      playsInSilentMode: true,
+      allowsRecording: true,
+      shouldPlayInBackground: false,
+      interruptionMode: "doNotMix",
+      shouldRouteThroughEarpiece: false,
+    }).catch(() => {});
+    return () => {
+      setAudioModeAsync({
+        playsInSilentMode: true,
+        allowsRecording: false,
+        shouldPlayInBackground: false,
+        interruptionMode: "doNotMix",
+        shouldRouteThroughEarpiece: false,
+      }).catch(() => {});
+    };
+  }, []);
 
   const waitForIceConfig = useCallback(async (timeoutMs = 2000) => {
     if (iceLoadedRef.current) return;

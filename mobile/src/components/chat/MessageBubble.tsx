@@ -127,6 +127,7 @@ const makeStyles = (theme: Theme) =>
     bubbleCol: { maxWidth: "82%" },
     bubble: {
       position: "relative",
+      alignSelf: "stretch",
       borderRadius: 16,
       paddingHorizontal: 12,
       paddingVertical: 7,

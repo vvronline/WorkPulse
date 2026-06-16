@@ -28,7 +28,8 @@
 .theirs .avatarCol { margin-right: 8px; margin-left: 0; }
 
 .bubbleWrap {
-    flex: 1;
+    flex: 0 1 auto;
+    width: fit-content;
     min-width: 0;
     max-width: 68%;
     display: flex;
@@ -62,8 +63,8 @@
     word-break: break-word;
     line-height: 1.5;
     font-size: 0.9375rem;
-    width: fit-content;
-    max-width: 75%;
+    width: 100%;
+    max-width: 100%;
     background: transparent;
     color: var(--text);
 }
@@ -301,6 +302,7 @@
     margin-top: 4px;
     padding-left: 0;
     align-items: center;
+    width: 100%;
 }
 .reactionChip {
     display: inline-flex;

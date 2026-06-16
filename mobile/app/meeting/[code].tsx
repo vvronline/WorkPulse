@@ -8,6 +8,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
   useWindowDimensions,
 } from "react-native";
@@ -22,13 +23,16 @@ import {
   Mic,
   MicOff,
   Minimize2,
+  MessageSquare,
   MoreVertical,
   PhoneOff,
+  SmilePlus,
   SwitchCamera,
   Users,
   Video as VideoIcon,
   VideoOff,
   X,
+  Circle,
 } from "lucide-react-native";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
@@ -80,6 +84,20 @@ export default function MeetingScreen() {
   const [raisedHands, setRaisedHands] = useState<Set<string>>(new Set());
   const [showMore, setShowMore] = useState(false);
   const [showParticipants, setShowParticipants] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [showChat, setShowChat] = useState(false);
+  const [showReactions, setShowReactions] = useState(false);
+  const [chatText, setChatText] = useState("");
+  const [chatUnread, setChatUnread] = useState(0);
+  const [meetingMessages, setMeetingMessages] = useState<
+    Array<{
+      id: string | number;
+      senderId?: number;
+      senderName?: string;
+      content?: string;
+      createdAt?: string;
+    }>
+  >([]);
 
   // Resolve the meeting by code (mirrors the web auto-join path).
   useEffect(() => {
@@ -127,22 +145,67 @@ export default function MeetingScreen() {
   // and in the participants list (server `meeting_hand_raised`).
   useEffect(() => {
     const off = socket.subscribe((msg) => {
-      if (msg.type !== "meeting_hand_raised") return;
       const d: any = msg.data || {};
-      if (d.userId == null) return;
-      const key = String(d.userId);
-      setRaisedHands((prev) => {
-        const next = new Set(prev);
-        if (d.raised) next.add(key);
-        else next.delete(key);
-        return next;
-      });
-      if (user?.id != null && Number(d.userId) === Number(user.id)) {
-        setRaisedHand(!!d.raised);
+      if (msg.type === "meeting_hand_raised") {
+        if (d.userId == null) return;
+        const key = String(d.userId);
+        setRaisedHands((prev) => {
+          const next = new Set(prev);
+          if (d.raised) next.add(key);
+          else next.delete(key);
+          return next;
+        });
+        if (user?.id != null && Number(d.userId) === Number(user.id)) {
+          setRaisedHand(!!d.raised);
+        }
+        return;
+      }
+      if (msg.type === "meeting_message") {
+        if (Number(d.meetingId) !== Number(meetingId)) return;
+        const m = d.message || {};
+        const msgId = m.id ?? m.clientMsgId ?? `${Date.now()}-${Math.random()}`;
+        setMeetingMessages((prev) => {
+          if (prev.some((x) => String(x.id) === String(msgId))) return prev;
+          return [
+            ...prev,
+            {
+              id: msgId,
+              senderId: m.senderId,
+              senderName: m.senderName,
+              content: m.content,
+              createdAt: m.createdAt,
+            },
+          ];
+        });
+        if (Number(m.senderId) !== Number(user?.id) && !showChat) {
+          setChatUnread((c) => c + 1);
+        }
       }
     });
     return off;
-  }, [user?.id]);
+  }, [meetingId, showChat, user?.id]);
+
+  const sendMeetingChat = () => {
+    const content = chatText.trim();
+    if (!content || !meetingId) return;
+    socket.send("meeting_chat", {
+      meetingId,
+      content,
+      clientMsgId: `mobile-${Date.now()}`,
+    });
+    setChatText("");
+  };
+
+  const sendReaction = (emoji: string) => {
+    if (!meetingId) return;
+    socket.send("meeting_chat", {
+      meetingId,
+      content: emoji,
+      clientMsgId: `mobile-r-${Date.now()}`,
+    });
+    setShowReactions(false);
+    setShowMore(false);
+  };
 
   const toggleRaiseHand = () => {
     const next = !raisedHand;
@@ -249,6 +312,7 @@ export default function MeetingScreen() {
         codeCopied={codeCopied}
         copyCode={copyCode}
         localStream={localStream}
+        usingFrontCamera={usingFrontCamera}
         muted={muted}
         videoOff={videoOff}
         toggleMute={toggleMute}
@@ -381,6 +445,27 @@ export default function MeetingScreen() {
         />
         <ControlButton
           theme={theme}
+          active={showChat}
+          label="Chat"
+          onPress={() => {
+            setShowChat((v) => !v);
+            setChatUnread(0);
+          }}
+          icon={
+            <View>
+              <MessageSquare size={22} color="#fff" />
+              {chatUnread > 0 && !showChat ? (
+                <View style={styles.ctrlUnreadDot}>
+                  <Text style={styles.ctrlUnreadText}>
+                    {chatUnread > 9 ? "9+" : chatUnread}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          }
+        />
+        <ControlButton
+          theme={theme}
           label="More"
           onPress={() => setShowMore(true)}
           icon={<MoreVertical size={22} color="#fff" />}
@@ -419,6 +504,48 @@ export default function MeetingScreen() {
                 Participants ({tileCount})
               </Text>
             </Pressable>
+            <Pressable
+              style={styles.sheetItem}
+              onPress={() => {
+                setShowMore(false);
+                setShowChat(true);
+                setChatUnread(0);
+              }}
+            >
+              <MessageSquare size={18} color={theme.text} />
+              <Text style={styles.sheetItemText}>Chat</Text>
+            </Pressable>
+            <Pressable
+              style={styles.sheetItem}
+              onPress={() => {
+                setShowMore(false);
+                setShowReactions(true);
+              }}
+            >
+              <SmilePlus size={18} color={theme.text} />
+              <Text style={styles.sheetItemText}>Send reaction</Text>
+            </Pressable>
+            <Pressable
+              style={styles.sheetItem}
+              onPress={() => {
+                setRecording((v) => !v);
+                setShowMore(false);
+              }}
+            >
+              <Circle
+                size={18}
+                color={recording ? theme.danger : theme.text}
+                fill={recording ? theme.danger : "none"}
+              />
+              <Text
+                style={[
+                  styles.sheetItemText,
+                  recording ? { color: theme.danger } : null,
+                ]}
+              >
+                {recording ? "Stop recording" : "Record meeting"}
+              </Text>
+            </Pressable>
             {isHost ? (
               <Pressable
                 style={styles.sheetItem}
@@ -441,6 +568,74 @@ export default function MeetingScreen() {
             </Pressable>
           </Pressable>
         </Pressable>
+      </Modal>
+
+      <Modal
+        visible={showReactions}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowReactions(false)}
+      >
+        <Pressable
+          style={styles.sheetBackdrop}
+          onPress={() => setShowReactions(false)}
+        >
+          <Pressable style={styles.reactionSheet}>
+            {["👍", "👏", "❤️", "😂", "🎉", "🤔"].map((emoji) => (
+              <Pressable
+                key={emoji}
+                style={styles.reactionBtn}
+                onPress={() => sendReaction(emoji)}
+              >
+                <Text style={styles.reactionText}>{emoji}</Text>
+              </Pressable>
+            ))}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal
+        visible={showChat}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowChat(false)}
+      >
+        <View style={styles.chatPanel}>
+          <View style={styles.chatHeader}>
+            <Text style={styles.chatTitle}>Meeting chat</Text>
+            <Pressable onPress={() => setShowChat(false)}>
+              <Text style={styles.chatClose}>Close</Text>
+            </Pressable>
+          </View>
+          <ScrollView style={styles.chatBody}>
+            {meetingMessages.map((m) => {
+              const mine = Number(m.senderId) === Number(user?.id);
+              return (
+                <View
+                  key={String(m.id)}
+                  style={[styles.chatMsg, mine ? styles.chatMsgMine : styles.chatMsgPeer]}
+                >
+                  <Text style={styles.chatMsgSender}>
+                    {mine ? "You" : m.senderName || "Participant"}
+                  </Text>
+                  <Text style={styles.chatMsgText}>{m.content || ""}</Text>
+                </View>
+              );
+            })}
+          </ScrollView>
+          <View style={styles.chatComposer}>
+            <TextInput
+              style={styles.chatInput}
+              value={chatText}
+              onChangeText={setChatText}
+              placeholder="Type a message"
+              placeholderTextColor={theme.textMuted}
+            />
+            <Pressable style={styles.chatSendBtn} onPress={sendMeetingChat}>
+              <Text style={styles.chatSendText}>Send</Text>
+            </Pressable>
+          </View>
+        </View>
       </Modal>
 
       {/* Participants list modal. */}
@@ -534,6 +729,7 @@ function LobbyScreen({
   codeCopied,
   copyCode,
   localStream,
+  usingFrontCamera,
   muted,
   videoOff,
   toggleMute,
@@ -548,6 +744,7 @@ function LobbyScreen({
   codeCopied: boolean;
   copyCode: () => void;
   localStream: any;
+  usingFrontCamera: boolean;
   muted: boolean;
   videoOff: boolean;
   toggleMute: () => void;
@@ -595,7 +792,7 @@ function LobbyScreen({
               streamURL={(localStream as any).toURL()}
               style={styles.lobbyVideo}
               objectFit="cover"
-              mirror
+              mirror={usingFrontCamera}
               zOrder={0}
             />
           ) : (
@@ -971,6 +1168,19 @@ const makeStyles = (theme: Theme) =>
       alignItems: "center",
       justifyContent: "center",
     },
+    ctrlUnreadDot: {
+      position: "absolute",
+      top: -6,
+      right: -8,
+      minWidth: 16,
+      height: 16,
+      borderRadius: 8,
+      paddingHorizontal: 3,
+      backgroundColor: theme.danger,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    ctrlUnreadText: { color: "#fff", fontSize: 10, fontWeight: "700" },
     ctrlActive: { backgroundColor: "rgba(255,255,255,0.32)" },
     ctrlDanger: { backgroundColor: theme.danger },
     ctrlLabel: { color: "rgba(255,255,255,0.7)", fontSize: 11 },
@@ -1101,6 +1311,92 @@ const makeStyles = (theme: Theme) =>
       marginTop: 4,
     },
     sheetCancelText: { color: theme.textSecondary, fontSize: 15 },
+    reactionSheet: {
+      marginTop: "auto",
+      backgroundColor: theme.bgElevated,
+      borderTopLeftRadius: 18,
+      borderTopRightRadius: 18,
+      padding: 14,
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 10,
+      justifyContent: "center",
+    },
+    reactionBtn: {
+      width: 52,
+      height: 52,
+      borderRadius: 26,
+      backgroundColor: "rgba(255,255,255,0.08)",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    reactionText: { fontSize: 26 },
+    chatPanel: {
+      flex: 1,
+      marginTop: 84,
+      backgroundColor: theme.bgElevated,
+      borderTopLeftRadius: 18,
+      borderTopRightRadius: 18,
+    },
+    chatHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.glassBorder,
+    },
+    chatTitle: { color: theme.text, fontSize: 16, fontWeight: "700" },
+    chatClose: { color: theme.primary, fontSize: 14, fontWeight: "600" },
+    chatBody: { flex: 1, paddingHorizontal: 12, paddingVertical: 10 },
+    chatMsg: {
+      maxWidth: "82%",
+      borderRadius: 12,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      marginBottom: 8,
+    },
+    chatMsgMine: {
+      alignSelf: "flex-end",
+      backgroundColor: "rgba(59,130,246,0.22)",
+    },
+    chatMsgPeer: {
+      alignSelf: "flex-start",
+      backgroundColor: "rgba(255,255,255,0.08)",
+    },
+    chatMsgSender: {
+      color: "rgba(255,255,255,0.7)",
+      fontSize: 11,
+      marginBottom: 2,
+    },
+    chatMsgText: { color: "#fff", fontSize: 14 },
+    chatComposer: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderTopWidth: 1,
+      borderTopColor: theme.glassBorder,
+    },
+    chatInput: {
+      flex: 1,
+      minHeight: 40,
+      maxHeight: 100,
+      borderRadius: 20,
+      backgroundColor: "rgba(255,255,255,0.08)",
+      color: "#fff",
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+    },
+    chatSendBtn: {
+      borderRadius: 18,
+      backgroundColor: theme.primary,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+    },
+    chatSendText: { color: "#fff", fontSize: 13, fontWeight: "700" },
     participantsPanel: {
       backgroundColor: theme.bgElevated,
       borderTopLeftRadius: 18,

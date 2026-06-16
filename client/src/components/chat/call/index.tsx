@@ -878,7 +878,7 @@ export default function CallOverlay({
             {webrtc.remoteHasVideo && (
                 <video
                     ref={webrtc.remoteVideoRef}
-                    className={`${s.remoteVideo} ${swapped ? s.swapped : ""} ${!webrtc.remoteScreenSharing ? s.mirrored : ""}`}
+                    className={`${s.remoteVideo} ${swapped ? s.swapped : ""}`}
                     autoPlay
                     playsInline
                     onClick={swapped ? () => setSwapped(false) : undefined}
