@@ -141,6 +141,21 @@ function marimbaRing(ctx: AudioContext, vol: number): number {
     return 2200;
 }
 
+function crystalRing(ctx: AudioContext, vol: number): number {
+    // Clean glassy triad shimmer
+    pluck(ctx, 659, 0, 0.9, vol * 0.48);
+    pluck(ctx, 988, 0.1, 0.9, vol * 0.4);
+    pluck(ctx, 1318, 0.2, 1, vol * 0.34);
+    return 2200;
+}
+
+function vaporRing(ctx: AudioContext, vol: number): number {
+    // Modern soft synth pulse
+    const notes = [392, 523, 659, 784];
+    notes.forEach((f, i) => tone(ctx, f, i * 0.22, 0.2, vol * 0.5, "triangle"));
+    return 2000;
+}
+
 /* ─── OUTGOING (ring-back you hear while dialing) ───────────────────── */
 
 function ringbackTone(ctx: AudioContext, vol: number): number {
@@ -161,6 +176,18 @@ function softOutgoing(ctx: AudioContext, vol: number): number {
     pluck(ctx, 659, 0, 0.7, vol * 0.4);
     pluck(ctx, 523, 0.4, 0.7, vol * 0.4);
     return 2000;
+}
+
+function echoOutgoing(ctx: AudioContext, vol: number): number {
+    tone(ctx, 587, 0, 0.2, vol * 0.45, "triangle");
+    tone(ctx, 587, 0.24, 0.18, vol * 0.3, "triangle");
+    return 1500;
+}
+
+function driftOutgoing(ctx: AudioContext, vol: number): number {
+    pluck(ctx, 740, 0, 0.5, vol * 0.4);
+    tone(ctx, 622, 0.3, 0.35, vol * 0.28, "sine");
+    return 1700;
 }
 
 /* ─── MESSAGE tones (one-shot) ──────────────────────────────────────── */
@@ -221,6 +248,19 @@ function subtleTone(ctx: AudioContext, vol: number): number {
     return 200;
 }
 
+function glassyTone(ctx: AudioContext, vol: number): number {
+    pluck(ctx, 1046, 0, 0.25, vol * 0.55);
+    pluck(ctx, 1318, 0.06, 0.22, vol * 0.42);
+    return 320;
+}
+
+function rippleTone(ctx: AudioContext, vol: number): number {
+    tone(ctx, 660, 0, 0.1, vol * 0.65, "triangle");
+    tone(ctx, 880, 0.08, 0.14, vol * 0.5, "triangle");
+    tone(ctx, 1175, 0.18, 0.12, vol * 0.4, "triangle");
+    return 380;
+}
+
 /* ─── MENTION tones ─────────────────────────────────────────────────── */
 
 function mentionTone(ctx: AudioContext, vol: number): number {
@@ -237,6 +277,17 @@ function urgentMention(ctx: AudioContext, vol: number): number {
     return 400;
 }
 
+function sparkMention(ctx: AudioContext, vol: number): number {
+    pluck(ctx, 1175, 0, 0.2, vol * 0.65);
+    pluck(ctx, 1568, 0.08, 0.18, vol * 0.45);
+    return 320;
+}
+
+function clickReaction(ctx: AudioContext, vol: number): number {
+    tone(ctx, 1200, 0, 0.05, vol * 0.6, "square");
+    return 120;
+}
+
 /* ─── Registry ──────────────────────────────────────────────────────── */
 
 export const RINGTONES: SoundPreset[] = [
@@ -246,6 +297,8 @@ export const RINGTONES: SoundPreset[] = [
     { id: "urgent", name: "Urgent", synth: urgentRing },
     { id: "boop", name: "Boop", synth: boopRing },
     { id: "marimba", name: "Marimba", synth: marimbaRing },
+    { id: "crystal", name: "Crystal", synth: crystalRing },
+    { id: "vapor", name: "Vapor", synth: vaporRing },
     { id: "none", name: "None (silent)", synth: null },
 ];
 
@@ -253,6 +306,8 @@ export const OUTGOING_TONES: SoundPreset[] = [
     { id: "ringback", name: "Ringback (classic)", synth: ringbackTone },
     { id: "pulse", name: "Pulse", synth: pulseOutgoing },
     { id: "soft", name: "Soft", synth: softOutgoing },
+    { id: "echo", name: "Echo", synth: echoOutgoing },
+    { id: "drift", name: "Drift", synth: driftOutgoing },
     { id: "none", name: "None (silent)", synth: null },
 ];
 
@@ -262,6 +317,8 @@ export const MESSAGE_TONES: SoundPreset[] = [
     { id: "chime", name: "Chime", synth: chimeTone },
     { id: "knock", name: "Knock", synth: knockTone },
     { id: "subtle", name: "Subtle", synth: subtleTone },
+    { id: "glassy", name: "Glassy", synth: glassyTone },
+    { id: "ripple", name: "Ripple", synth: rippleTone },
     { id: "none", name: "None (silent)", synth: null },
 ];
 
@@ -269,12 +326,14 @@ export const MENTION_TONES: SoundPreset[] = [
     { id: "mention", name: "Mention", synth: mentionTone },
     { id: "chime", name: "Chime", synth: chimeTone },
     { id: "urgent", name: "Urgent", synth: urgentMention },
+    { id: "spark", name: "Spark", synth: sparkMention },
     { id: "none", name: "None (silent)", synth: null },
 ];
 
 export const REACTION_TONES: SoundPreset[] = [
     { id: "subtle", name: "Subtle", synth: subtleTone },
     { id: "pop", name: "Pop", synth: popTone },
+    { id: "click", name: "Click", synth: clickReaction },
     { id: "none", name: "None (silent)", synth: null },
 ];
 

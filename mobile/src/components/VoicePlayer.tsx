@@ -206,8 +206,12 @@ const makeStyles = (theme: Theme) =>
       flexDirection: "row",
       alignItems: "center",
       gap: 10,
-      width: "100%",
-      maxWidth: 320,
+      // Keep voice-note bubbles visually consistent in chat rows; without an
+      // explicit width they can render noticeably wider/narrower between sent
+      // and received messages depending on content measurement.
+      width: 260,
+      maxWidth: "100%",
+      minWidth: 220,
       paddingVertical: 10,
       paddingHorizontal: 14,
       backgroundColor: theme.surface,

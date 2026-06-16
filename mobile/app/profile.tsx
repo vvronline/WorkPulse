@@ -653,8 +653,65 @@ function ChangePasswordModal({
 
 /* ─── Notification sounds modal ─── */
 
-const MESSAGE_TONES = ["ding", "pop", "chime", "knock", "subtle", "none"];
-const RINGTONES = ["classic", "calm", "dynamic", "urgent", "boop", "marimba", "none"];
+type TonePreset = { id: string; name: string };
+
+const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
+  muteAll: false,
+  ringtone: "classic",
+  outgoingTone: "ringback",
+  messageTone: "ding",
+  mentionTone: "mention",
+  reactionTone: "subtle",
+  playWhenFocused: false,
+  playOnSend: false,
+};
+
+const RINGTONES: TonePreset[] = [
+  { id: "classic", name: "Classic" },
+  { id: "calm", name: "Calm" },
+  { id: "dynamic", name: "Dynamic" },
+  { id: "urgent", name: "Urgent" },
+  { id: "boop", name: "Boop" },
+  { id: "marimba", name: "Marimba" },
+  { id: "crystal", name: "Crystal" },
+  { id: "vapor", name: "Vapor" },
+  { id: "none", name: "None (silent)" },
+];
+
+const OUTGOING_TONES: TonePreset[] = [
+  { id: "ringback", name: "Ringback (classic)" },
+  { id: "pulse", name: "Pulse" },
+  { id: "soft", name: "Soft" },
+  { id: "echo", name: "Echo" },
+  { id: "drift", name: "Drift" },
+  { id: "none", name: "None (silent)" },
+];
+
+const MESSAGE_TONES: TonePreset[] = [
+  { id: "ding", name: "Ding" },
+  { id: "pop", name: "Pop" },
+  { id: "chime", name: "Chime" },
+  { id: "knock", name: "Knock" },
+  { id: "subtle", name: "Subtle" },
+  { id: "glassy", name: "Glassy" },
+  { id: "ripple", name: "Ripple" },
+  { id: "none", name: "None (silent)" },
+];
+
+const MENTION_TONES: TonePreset[] = [
+  { id: "mention", name: "Mention" },
+  { id: "chime", name: "Chime" },
+  { id: "urgent", name: "Urgent" },
+  { id: "spark", name: "Spark" },
+  { id: "none", name: "None (silent)" },
+];
+
+const REACTION_TONES: TonePreset[] = [
+  { id: "subtle", name: "Subtle" },
+  { id: "pop", name: "Pop" },
+  { id: "click", name: "Click" },
+  { id: "none", name: "None (silent)" },
+];
 
 function NotificationSoundsModal({
   visible,
@@ -665,7 +722,7 @@ function NotificationSoundsModal({
 }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const [prefs, setPrefs] = useState<NotificationPrefs>({});
+  const [prefs, setPrefs] = useState<NotificationPrefs>(DEFAULT_NOTIFICATION_PREFS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -673,8 +730,8 @@ function NotificationSoundsModal({
     if (!visible) return;
     setLoading(true);
     getNotificationPrefs()
-      .then((r) => setPrefs(r.data || {}))
-      .catch(() => setPrefs({}))
+      .then((r) => setPrefs({ ...DEFAULT_NOTIFICATION_PREFS, ...(r.data || {}) }))
+      .catch(() => setPrefs(DEFAULT_NOTIFICATION_PREFS))
       .finally(() => setLoading(false));
   }, [visible]);
 
@@ -697,7 +754,7 @@ function NotificationSoundsModal({
       {loading ? (
         <ActivityIndicator color={theme.primary} style={{ marginVertical: 24 }} />
       ) : (
-        <View style={{ gap: 16 }}>
+        <ScrollView style={styles.soundScroll} contentContainerStyle={styles.soundContent}>
           <Pressable
             style={styles.toggleRow}
             onPress={() => update({ muteAll: !prefs.muteAll })}
@@ -708,50 +765,112 @@ function NotificationSoundsModal({
             </View>
           </Pressable>
 
-          <View>
-            <Text style={styles.label}>Message Tone</Text>
-            <View style={styles.chipRow}>
-              {MESSAGE_TONES.map((t) => (
-                <Pressable
-                  key={t}
-                  style={[styles.chip, prefs.messageTone === t && styles.chipActive]}
-                  onPress={() => update({ messageTone: t })}
-                >
-                  <Text
-                    style={[
-                      styles.chipText,
-                      prefs.messageTone === t && styles.chipTextActive,
-                    ]}
-                  >
-                    {t}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
+          <View style={styles.soundSection}>
+            <Text style={styles.sectionTitle}>Calls</Text>
+            <TonePickerRow
+              label="Incoming call ringtone"
+              presets={RINGTONES}
+              value={prefs.ringtone || DEFAULT_NOTIFICATION_PREFS.ringtone || "classic"}
+              onChange={(id) => update({ ringtone: id })}
+            />
+            <TonePickerRow
+              label="Outgoing call tone"
+              presets={OUTGOING_TONES}
+              value={prefs.outgoingTone || DEFAULT_NOTIFICATION_PREFS.outgoingTone || "ringback"}
+              onChange={(id) => update({ outgoingTone: id })}
+            />
           </View>
 
-          <View>
-            <Text style={styles.label}>Ringtone</Text>
-            <View style={styles.chipRow}>
-              {RINGTONES.map((t) => (
-                <Pressable
-                  key={t}
-                  style={[styles.chip, prefs.ringtone === t && styles.chipActive]}
-                  onPress={() => update({ ringtone: t })}
-                >
-                  <Text
-                    style={[styles.chipText, prefs.ringtone === t && styles.chipTextActive]}
-                  >
-                    {t}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
+          <View style={styles.soundSection}>
+            <Text style={styles.sectionTitle}>Messages</Text>
+            <TonePickerRow
+              label="New message"
+              presets={MESSAGE_TONES}
+              value={prefs.messageTone || DEFAULT_NOTIFICATION_PREFS.messageTone || "ding"}
+              onChange={(id) => update({ messageTone: id })}
+            />
+            <TonePickerRow
+              label="Mention / @-tag"
+              presets={MENTION_TONES}
+              value={prefs.mentionTone || DEFAULT_NOTIFICATION_PREFS.mentionTone || "mention"}
+              onChange={(id) => update({ mentionTone: id })}
+            />
+            <TonePickerRow
+              label="Reaction"
+              presets={REACTION_TONES}
+              value={prefs.reactionTone || DEFAULT_NOTIFICATION_PREFS.reactionTone || "subtle"}
+              onChange={(id) => update({ reactionTone: id })}
+            />
           </View>
+
+          <View style={styles.soundSection}>
+            <Text style={styles.sectionTitle}>Behavior</Text>
+            <Pressable
+              style={styles.toggleRow}
+              onPress={() => update({ playWhenFocused: !prefs.playWhenFocused })}
+            >
+              <Text style={styles.actionText}>Play sounds when app is focused</Text>
+              <View style={[styles.switch, prefs.playWhenFocused && styles.switchOn]}>
+                <View style={[styles.knob, prefs.playWhenFocused && styles.knobOn]} />
+              </View>
+            </Pressable>
+            <Pressable
+              style={styles.toggleRow}
+              onPress={() => update({ playOnSend: !prefs.playOnSend })}
+            >
+              <Text style={styles.actionText}>Play sound when sending messages</Text>
+              <View style={[styles.switch, prefs.playOnSend && styles.switchOn]}>
+                <View style={[styles.knob, prefs.playOnSend && styles.knobOn]} />
+              </View>
+            </Pressable>
+          </View>
+
+          <Pressable
+            style={styles.resetBtn}
+            onPress={() => update(DEFAULT_NOTIFICATION_PREFS)}
+          >
+            <Text style={styles.resetBtnText}>Reset to defaults</Text>
+          </Pressable>
+
           {saving ? <Text style={styles.muted}>Saving…</Text> : null}
-        </View>
+        </ScrollView>
       )}
     </ModalShell>
+  );
+}
+
+function TonePickerRow({
+  label,
+  presets,
+  value,
+  onChange,
+}: {
+  label: string;
+  presets: TonePreset[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
+  return (
+    <View style={styles.toneRow}>
+      <Text style={styles.toneLabel}>{label}</Text>
+      <View style={styles.chipRow}>
+        {presets.map((t) => (
+          <Pressable
+            key={t.id}
+            style={[styles.chip, value === t.id && styles.chipActive]}
+            onPress={() => onChange(t.id)}
+          >
+            <Text
+              style={[styles.chipText, value === t.id && styles.chipTextActive]}
+            >
+              {t.name}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -991,6 +1110,8 @@ const makeStyles = (theme: Theme) =>
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: 10,
+    paddingVertical: 2,
   },
   switch: {
     width: 44,
@@ -1020,4 +1141,33 @@ const makeStyles = (theme: Theme) =>
   chipActive: { backgroundColor: theme.primaryGlow, borderColor: theme.primary },
   chipText: { color: theme.textSecondary, fontSize: 13, textTransform: "capitalize" },
   chipTextActive: { color: theme.primaryLight, fontWeight: "600" },
+  soundScroll: { maxHeight: 560 },
+  soundContent: { gap: 14, paddingBottom: 6 },
+  soundSection: {
+    backgroundColor: theme.surface,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radiusSm,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 10,
+  },
+  sectionTitle: {
+    fontSize: 12,
+    color: theme.textSecondary,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    fontWeight: "700",
+  },
+  toneRow: { gap: 8 },
+  toneLabel: { fontSize: 13, color: theme.text, fontWeight: "600" },
+  resetBtn: {
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    backgroundColor: theme.surfaceHover,
+    paddingVertical: 10,
+    borderRadius: theme.radiusSm,
+    alignItems: "center",
+  },
+  resetBtnText: { color: theme.textSecondary, fontWeight: "600", fontSize: 13 },
 });
