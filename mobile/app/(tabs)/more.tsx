@@ -11,7 +11,7 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react-native";
-import { useAuth } from "../../src/auth/AuthContext";
+import { useAuth, userHasFeature } from "../../src/auth/AuthContext";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 
@@ -41,14 +41,23 @@ export default function MoreScreen() {
   const isTeamLead = level >= 2 || !!user?.has_reports;
   const isHR = level >= 4;
 
-  const items: Item[] = [
-    {
+  // Feature-gate Attendance + Notes to match the web MobileTabBar's More sheet
+  // (only listed when the tenant's plan enables them).
+  const items: Item[] = [];
+  if (userHasFeature(user, "attendance")) {
+    items.push({
       label: "Attendance",
       icon: CalendarCheck,
       onPress: () => router.push("/attendance"),
-    },
-    { label: "Notes", icon: FileText, onPress: () => router.push("/notes") },
-  ];
+    });
+  }
+  if (userHasFeature(user, "notes")) {
+    items.push({
+      label: "Notes",
+      icon: FileText,
+      onPress: () => router.push("/notes"),
+    });
+  }
 
   if (user?.org_id || user?.role === "platform_admin") {
     items.push({

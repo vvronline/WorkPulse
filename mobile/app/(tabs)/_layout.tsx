@@ -8,7 +8,7 @@ import {
   MessageSquare,
   ClipboardList,
 } from "lucide-react-native";
-import { useAuth } from "../../src/auth/AuthContext";
+import { useAuth, userHasFeature } from "../../src/auth/AuthContext";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import TopBar from "../../src/components/TopBar";
 import { getConversations } from "../../src/features";
@@ -17,6 +17,12 @@ import { socket } from "../../src/realtime/socket";
 export default function TabsLayout() {
   const theme = useTheme();
   const { user, loading } = useAuth();
+  // Plan/feature gating — mirrors the web MobileTabBar which only renders the
+  // Calendar/Tasks/Chat tabs when the tenant's plan enables them. A disabled
+  // tab is hidden with `href: null` (same mechanism used for `leaves`).
+  const calendarEnabled = userHasFeature(user, "calendar");
+  const tasksEnabled = userHasFeature(user, "tasks");
+  const chatEnabled = userHasFeature(user, "chat");
   // Total unread chat messages, shown as a badge on the Chat tab icon
   // (mirrors the web sidebar's chat unread count). Driven by the conversations
   // list + live `chat_message` WS events so it updates without opening Chat.
@@ -37,6 +43,11 @@ export default function TabsLayout() {
   useEffect(() => {
     if (!user) return;
     socket.connect();
+    // Don't track chat unread when the chat feature is disabled for the tenant.
+    if (!chatEnabled) {
+      setChatUnread(0);
+      return;
+    }
     refreshUnread();
     // Any incoming chat message (for a conversation we're not actively in)
     // bumps the badge; we re-pull the authoritative unread totals so the count
@@ -54,7 +65,7 @@ export default function TabsLayout() {
       off();
       sub.remove();
     };
-  }, [user, refreshUnread]);
+  }, [user, chatEnabled, refreshUnread]);
 
   if (loading) {
     return (
@@ -105,6 +116,8 @@ export default function TabsLayout() {
         options={{
           title: "Calendar",
           tabBarIcon: ({ color, size }) => <Calendar color={color} size={size} />,
+          // Hidden when the tenant's plan disables the calendar feature.
+          href: calendarEnabled ? undefined : null,
         }}
       />
       <Tabs.Screen
@@ -114,6 +127,8 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => (
             <ClipboardList color={color} size={size} />
           ),
+          // Hidden when the tenant's plan disables the tasks feature.
+          href: tasksEnabled ? undefined : null,
         }}
       />
       <Tabs.Screen
@@ -129,6 +144,8 @@ export default function TabsLayout() {
             color: "#fff",
             fontSize: 10,
           },
+          // Hidden when the tenant's plan disables the chat feature.
+          href: chatEnabled ? undefined : null,
         }}
       />
       <Tabs.Screen

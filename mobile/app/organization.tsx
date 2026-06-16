@@ -24,9 +24,13 @@ import {
   Download,
   Edit3,
   GitBranch,
+  Plus,
   Save,
   Search,
+  Tag,
+  Trash2,
   Users,
+  X,
   XCircle,
 } from "lucide-react-native";
 import type { Theme } from "../src/theme";
@@ -51,10 +55,30 @@ import {
   type OrgInfo,
   type OrgTeam,
 } from "../src/features";
+import {
+  createTaskLabel,
+  deleteTaskLabel,
+  getTaskLabelsManage,
+  updateTaskLabel,
+  type TaskLabelManage,
+} from "../src/admin";
 
-type TabKey = "salary-slips" | "departments" | "teams" | "chart";
+type TabKey = "salary-slips" | "departments" | "teams" | "chart" | "labels";
 
 const ADMIN_ROLES = ["hr_admin", "super_admin", "platform_admin"];
+
+// Label colour presets (mirrors the web TaskLabelsTab + mobile admin/agile).
+const LABEL_PRESETS = [
+  "#6366f1",
+  "#8b5cf6",
+  "#ec4899",
+  "#ef4444",
+  "#f59e0b",
+  "#10b981",
+  "#06b6d4",
+  "#3b82f6",
+  "#64748b",
+];
 
 const ALL_TABS: { key: TabKey; label: string; icon: typeof CreditCard }[] = [
   { key: "salary-slips", label: "Salary Slips", icon: CreditCard },
@@ -81,16 +105,24 @@ export default function OrganizationScreen() {
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const { user } = useAuth();
   const isAdmin = ADMIN_ROLES.includes(user?.role ?? "");
+  // Managers (non-admin) can manage task labels here — mirrors the web
+  // Organization page's `canManageLabels = !isAdmin && role === "manager"`.
+  const canManageLabels = !isAdmin && user?.role === "manager";
   const [org, setOrg] = useState<OrgInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<TabKey>("salary-slips");
 
   // Admins (incl. platform admin) aren't scoped to a single org and only see
-  // Salary Slips. Regular members get the full set of tabs.
-  const tabs = useMemo(
-    () => (isAdmin ? ALL_TABS.filter((t) => t.key === "salary-slips") : ALL_TABS),
-    [isAdmin],
-  );
+  // Salary Slips. Regular members get the full set of tabs; managers also get
+  // the Task Labels tab.
+  const tabs = useMemo(() => {
+    if (isAdmin) return ALL_TABS.filter((t) => t.key === "salary-slips");
+    const base = [...ALL_TABS];
+    if (canManageLabels) {
+      base.push({ key: "labels", label: "Task Labels", icon: Tag });
+    }
+    return base;
+  }, [isAdmin, canManageLabels]);
 
   useEffect(() => {
     getCurrentOrg()
@@ -151,6 +183,7 @@ export default function OrganizationScreen() {
       {tab === "departments" && <DepartmentsTab theme={theme} />}
       {tab === "teams" && <TeamsTab theme={theme} />}
       {tab === "chart" && <OrgChartTab theme={theme} />}
+      {tab === "labels" && canManageLabels && <TaskLabelsTab theme={theme} />}
     </View>
   );
 }
@@ -1083,6 +1116,227 @@ function TreeNode({
   );
 }
 
+/* ───────────────────────── Task Labels Tab (managers) ───────────────────────── */
+
+function TaskLabelsTab({ theme }: { theme: Theme }) {
+  const styles = useMemo(() => makeStyles(theme), [theme]);
+  const [labels, setLabels] = useState<TaskLabelManage[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [editing, setEditing] = useState<TaskLabelManage | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [color, setColor] = useState(LABEL_PRESETS[0]);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await getTaskLabelsManage();
+      setLabels(Array.isArray(r.data) ? r.data : []);
+    } catch {
+      setLabels([]);
+    }
+    setLoading(false);
+    setRefreshing(false);
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  function startCreate() {
+    setEditing(null);
+    setName("");
+    setColor(LABEL_PRESETS[0]);
+    setCreating(true);
+  }
+
+  function startEdit(l: TaskLabelManage) {
+    setCreating(false);
+    setEditing(l);
+    setName(l.name);
+    setColor(l.color || LABEL_PRESETS[0]);
+  }
+
+  function cancel() {
+    setCreating(false);
+    setEditing(null);
+    setName("");
+    setColor(LABEL_PRESETS[0]);
+  }
+
+  async function save() {
+    if (!name.trim()) {
+      Alert.alert("Missing name", "Please enter a label name.");
+      return;
+    }
+    setSaving(true);
+    try {
+      if (editing) {
+        await updateTaskLabel(editing.id, { name: name.trim(), color });
+      } else {
+        await createTaskLabel({ name: name.trim(), color });
+      }
+      cancel();
+      await load();
+    } catch (e: any) {
+      Alert.alert("Error", e?.response?.data?.error || "Failed to save label");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function confirmDelete(l: TaskLabelManage) {
+    Alert.alert(
+      "Delete label",
+      `Delete "${l.name}"? It will be removed from all tasks. This cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () =>
+            deleteTaskLabel(l.id)
+              .then(() => load())
+              .catch((e: any) =>
+                Alert.alert(
+                  "Error",
+                  e?.response?.data?.error || "Failed to delete label",
+                ),
+              ),
+        },
+      ],
+    );
+  }
+
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color={theme.primary} />
+      </View>
+    );
+  }
+
+  const formOpen = creating || !!editing;
+
+  return (
+    <ScrollView
+      contentContainerStyle={styles.tabContent}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={() => {
+            setRefreshing(true);
+            load();
+          }}
+          tintColor={theme.primary}
+        />
+      }
+    >
+      <Text style={styles.formHint}>
+        Free-form tags for cross-cutting filtering (e.g. frontend, tech-debt). A
+        ticket can carry many labels.
+      </Text>
+
+      {/* Create / edit form */}
+      {formOpen ? (
+        <View style={styles.card}>
+          <View style={styles.cardHeaderRow}>
+            <View style={styles.cardHeaderTitle}>
+              <Tag size={16} color={theme.text} />
+              <Text style={styles.cardTitle}>
+                {editing ? "Edit Label" : "New Label"}
+              </Text>
+            </View>
+            <Pressable onPress={cancel} hitSlop={8}>
+              <X size={18} color={theme.textSecondary} />
+            </Pressable>
+          </View>
+          <Field
+            theme={theme}
+            label="Label Name"
+            value={name}
+            onChangeText={setName}
+            placeholder="e.g. frontend"
+          />
+          <View>
+            <Text style={styles.fieldLabel}>Colour</Text>
+            <View style={styles.colorRow}>
+              {LABEL_PRESETS.map((c) => (
+                <Pressable
+                  key={c}
+                  style={[
+                    styles.colorSwatch,
+                    { backgroundColor: c },
+                    color === c && styles.colorSwatchActive,
+                  ]}
+                  onPress={() => setColor(c)}
+                >
+                  {color === c ? (
+                    <CheckCircle2 size={14} color="#fff" />
+                  ) : null}
+                </Pressable>
+              ))}
+            </View>
+          </View>
+          <View style={styles.formActions}>
+            <Pressable
+              style={[styles.primaryBtn, saving && styles.disabled]}
+              onPress={save}
+              disabled={saving}
+            >
+              <Save size={14} color={theme.onAccent} />
+              <Text style={styles.primaryBtnText}>
+                {saving ? "Saving…" : editing ? "Save Changes" : "Create Label"}
+              </Text>
+            </Pressable>
+            <Pressable style={styles.ghostBtn} onPress={cancel}>
+              <Text style={styles.ghostBtnText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : (
+        <Pressable style={styles.primaryBtn} onPress={startCreate}>
+          <Plus size={14} color={theme.onAccent} />
+          <Text style={styles.primaryBtnText}>New Label</Text>
+        </Pressable>
+      )}
+
+      {/* Label list */}
+      <Text style={styles.sectionTitle}>Labels</Text>
+      {labels.length === 0 ? (
+        <Text style={styles.empty}>No labels yet.</Text>
+      ) : (
+        labels.map((l) => (
+          <View key={l.id} style={styles.labelRow}>
+            <View
+              style={[styles.labelBadge, { backgroundColor: l.color || "#888" }]}
+            >
+              <Text style={styles.labelBadgeText}>{l.name}</Text>
+            </View>
+            <View style={styles.labelActions}>
+              <Pressable
+                style={styles.labelActionBtn}
+                onPress={() => startEdit(l)}
+                hitSlop={6}
+              >
+                <Edit3 size={16} color={theme.textSecondary} />
+              </Pressable>
+              <Pressable
+                style={styles.labelActionBtn}
+                onPress={() => confirmDelete(l)}
+                hitSlop={6}
+              >
+                <Trash2 size={16} color={theme.danger} />
+              </Pressable>
+            </View>
+          </View>
+        ))
+      )}
+    </ScrollView>
+  );
+}
+
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
     screen: { flex: 1, backgroundColor: theme.bg },
@@ -1396,4 +1650,36 @@ const makeStyles = (theme: Theme) =>
       borderLeftColor: theme.border,
       paddingLeft: 6,
     },
+
+    /* Task labels */
+    colorRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+    colorSwatch: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      alignItems: "center",
+      justifyContent: "center",
+      borderWidth: 2,
+      borderColor: "transparent",
+    },
+    colorSwatchActive: { borderColor: theme.text },
+    labelRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 10,
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radius,
+      padding: 12,
+    },
+    labelBadge: {
+      borderRadius: theme.radiusFull,
+      paddingHorizontal: 12,
+      paddingVertical: 5,
+    },
+    labelBadgeText: { color: "#fff", fontSize: 13, fontWeight: "700" },
+    labelActions: { flexDirection: "row", gap: 4 },
+    labelActionBtn: { padding: 6 },
   });

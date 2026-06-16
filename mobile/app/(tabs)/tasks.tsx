@@ -37,7 +37,7 @@ import KanbanBoard from "../../src/components/KanbanBoard";
 import ServiceDeskTab from "../../src/components/ServiceDeskTab";
 import { Dropdown } from "../../src/components/Dropdown";
 import DatePicker from "../../src/components/DatePicker";
-import { useAuth } from "../../src/auth/AuthContext";
+import { useAuth, userHasFeature } from "../../src/auth/AuthContext";
 import {
   assignTaskToSprint,
   completeSprint,
@@ -137,6 +137,9 @@ export default function TasksScreen() {
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
 
   const canManageSprint = SPRINT_MANAGER_ROLES.includes(user?.role ?? "");
+  // Sprint Insights is an agile-plan feature (mirrors the web TasksHeader,
+  // which gates the Insights link behind hasFeature("agile")).
+  const agileEnabled = userHasFeature(user, "agile");
 
   const backlogQuery = useMemo(() => {
     const q: Record<string, string> = { limit: "100" };
@@ -443,18 +446,20 @@ export default function TasksScreen() {
                 {/* Sprint toolbar: Insights + Import from Backlog */}
                 {activeSprintId ? (
                   <View style={styles.sprintToolbar}>
-                    <Pressable
-                      style={styles.toolbarBtn}
-                      onPress={() =>
-                        router.push({
-                          pathname: "/sprints/insights",
-                          params: { sprint_id: String(activeSprintId) },
-                        })
-                      }
-                    >
-                      <BarChart3 size={15} color={theme.primary} />
-                      <Text style={styles.toolbarBtnText}>Insights</Text>
-                    </Pressable>
+                    {agileEnabled ? (
+                      <Pressable
+                        style={styles.toolbarBtn}
+                        onPress={() =>
+                          router.push({
+                            pathname: "/sprints/insights",
+                            params: { sprint_id: String(activeSprintId) },
+                          })
+                        }
+                      >
+                        <BarChart3 size={15} color={theme.primary} />
+                        <Text style={styles.toolbarBtnText}>Insights</Text>
+                      </Pressable>
+                    ) : null}
                     <Pressable
                       style={[
                         styles.toolbarBtn,

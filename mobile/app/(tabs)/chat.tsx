@@ -44,7 +44,7 @@ import {
   type CallLogEntry,
   type Conversation,
 } from "../../src/features";
-import { useAuth } from "../../src/auth/AuthContext";
+import { useAuth, userHasFeature } from "../../src/auth/AuthContext";
 import { socket } from "../../src/realtime/socket";
 import ChatAvatar from "../../src/components/ChatAvatar";
 import {
@@ -100,6 +100,9 @@ export default function ChatScreen() {
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const { user } = useAuth();
+  // Meetings chat is gated behind the `meetings` plan feature (mirrors the web
+  // ChatSidebar, which only renders the Meetings tab when it's enabled).
+  const meetingsEnabled = userHasFeature(user, "meetings");
   const kbInset = useKeyboardInset();
   const [items, setItems] = useState<Conversation[]>([]);
   const [calls, setCalls] = useState<CallLogEntry[]>([]);
@@ -175,6 +178,12 @@ export default function ChatScreen() {
   useEffect(() => {
     if (tab === "calls") loadCalls();
   }, [tab, loadCalls]);
+
+  // If the meetings feature is disabled while the Meetings tab is active, fall
+  // back to Messages so the user isn't stranded on a now-hidden tab.
+  useEffect(() => {
+    if (!meetingsEnabled && tab === "meetings") setTab("msgs");
+  }, [meetingsEnabled, tab]);
 
   useFocusEffect(
     useCallback(() => {
@@ -467,13 +476,15 @@ export default function ChatScreen() {
             badge={totalUnread}
             onPress={() => setTab("msgs")}
           />
-          <TabButton
-            active={tab === "meetings"}
-            label="Meetings"
-            icon={<Video size={14} color={tab === "meetings" ? "#fff" : theme.textSecondary} />}
-            badge={meetingConvs.reduce((s, c) => s + (c.unread_count || 0), 0)}
-            onPress={() => setTab("meetings")}
-          />
+          {meetingsEnabled ? (
+            <TabButton
+              active={tab === "meetings"}
+              label="Meetings"
+              icon={<Video size={14} color={tab === "meetings" ? "#fff" : theme.textSecondary} />}
+              badge={meetingConvs.reduce((s, c) => s + (c.unread_count || 0), 0)}
+              onPress={() => setTab("meetings")}
+            />
+          ) : null}
           <TabButton
             active={tab === "calls"}
             label="Calls"
