@@ -12,6 +12,7 @@ import {
   View,
 } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
+import { setAudioModeAsync, useAudioPlayer } from "expo-audio";
 import * as ImagePicker from "expo-image-picker";
 import { useDialog } from "../src/hooks/useDialog";
 import { socket } from "../src/realtime/socket";
@@ -28,6 +29,7 @@ import {
   Minus,
   Pencil,
   Phone,
+  Play,
   RefreshCw,
   ScanFace,
   Trash2,
@@ -59,6 +61,10 @@ import {
   type TrackerStatus,
 } from "../src/features";
 import { uploadUrl } from "../src/config";
+import {
+  getNotificationPreviewDataUri,
+  type NotificationSoundCategory,
+} from "../src/utils/notificationSoundPreview";
 
 function initials(name?: string) {
   if (!name) return "?";
@@ -725,6 +731,7 @@ function NotificationSoundsModal({
   const [prefs, setPrefs] = useState<NotificationPrefs>(DEFAULT_NOTIFICATION_PREFS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const previewPlayer = useAudioPlayer();
 
   useEffect(() => {
     if (!visible) return;
@@ -734,6 +741,26 @@ function NotificationSoundsModal({
       .catch(() => setPrefs(DEFAULT_NOTIFICATION_PREFS))
       .finally(() => setLoading(false));
   }, [visible]);
+
+  useEffect(() => {
+    if (visible) return;
+    try {
+      previewPlayer.pause();
+    } catch {
+      /* ignore */
+    }
+  }, [visible, previewPlayer]);
+
+  useEffect(
+    () => () => {
+      try {
+        previewPlayer.pause();
+      } catch {
+        /* ignore */
+      }
+    },
+    [previewPlayer],
+  );
 
   async function update(patch: NotificationPrefs) {
     const merged = { ...prefs, ...patch };
@@ -748,6 +775,25 @@ function NotificationSoundsModal({
       setSaving(false);
     }
   }
+
+  const preview = useCallback(
+    async (category: NotificationSoundCategory, toneId: string) => {
+      if (!toneId || toneId === "none" || prefs.muteAll) return;
+      const uri = getNotificationPreviewDataUri(category, toneId);
+      if (!uri) return;
+      try {
+        await setAudioModeAsync({
+          allowsRecording: false,
+          playsInSilentMode: true,
+        });
+        previewPlayer.replace({ uri });
+        previewPlayer.play();
+      } catch {
+        /* ignore */
+      }
+    },
+    [prefs.muteAll, previewPlayer],
+  );
 
   return (
     <ModalShell title="Notification Sounds" visible={visible} onClose={onClose}>
@@ -771,13 +817,27 @@ function NotificationSoundsModal({
               label="Incoming call ringtone"
               presets={RINGTONES}
               value={prefs.ringtone || DEFAULT_NOTIFICATION_PREFS.ringtone || "classic"}
-              onChange={(id) => update({ ringtone: id })}
+              onChange={(id) => {
+                update({ ringtone: id });
+                preview("ringtone", id);
+              }}
+              onPreview={() =>
+                preview("ringtone", prefs.ringtone || DEFAULT_NOTIFICATION_PREFS.ringtone || "classic")
+              }
+              previewDisabled={!!prefs.muteAll || (prefs.ringtone || "classic") === "none"}
             />
             <TonePickerRow
               label="Outgoing call tone"
               presets={OUTGOING_TONES}
               value={prefs.outgoingTone || DEFAULT_NOTIFICATION_PREFS.outgoingTone || "ringback"}
-              onChange={(id) => update({ outgoingTone: id })}
+              onChange={(id) => {
+                update({ outgoingTone: id });
+                preview("outgoing", id);
+              }}
+              onPreview={() =>
+                preview("outgoing", prefs.outgoingTone || DEFAULT_NOTIFICATION_PREFS.outgoingTone || "ringback")
+              }
+              previewDisabled={!!prefs.muteAll || (prefs.outgoingTone || "ringback") === "none"}
             />
           </View>
 
@@ -787,19 +847,40 @@ function NotificationSoundsModal({
               label="New message"
               presets={MESSAGE_TONES}
               value={prefs.messageTone || DEFAULT_NOTIFICATION_PREFS.messageTone || "ding"}
-              onChange={(id) => update({ messageTone: id })}
+              onChange={(id) => {
+                update({ messageTone: id });
+                preview("message", id);
+              }}
+              onPreview={() =>
+                preview("message", prefs.messageTone || DEFAULT_NOTIFICATION_PREFS.messageTone || "ding")
+              }
+              previewDisabled={!!prefs.muteAll || (prefs.messageTone || "ding") === "none"}
             />
             <TonePickerRow
               label="Mention / @-tag"
               presets={MENTION_TONES}
               value={prefs.mentionTone || DEFAULT_NOTIFICATION_PREFS.mentionTone || "mention"}
-              onChange={(id) => update({ mentionTone: id })}
+              onChange={(id) => {
+                update({ mentionTone: id });
+                preview("mention", id);
+              }}
+              onPreview={() =>
+                preview("mention", prefs.mentionTone || DEFAULT_NOTIFICATION_PREFS.mentionTone || "mention")
+              }
+              previewDisabled={!!prefs.muteAll || (prefs.mentionTone || "mention") === "none"}
             />
             <TonePickerRow
               label="Reaction"
               presets={REACTION_TONES}
               value={prefs.reactionTone || DEFAULT_NOTIFICATION_PREFS.reactionTone || "subtle"}
-              onChange={(id) => update({ reactionTone: id })}
+              onChange={(id) => {
+                update({ reactionTone: id });
+                preview("reaction", id);
+              }}
+              onPreview={() =>
+                preview("reaction", prefs.reactionTone || DEFAULT_NOTIFICATION_PREFS.reactionTone || "subtle")
+              }
+              previewDisabled={!!prefs.muteAll || (prefs.reactionTone || "subtle") === "none"}
             />
           </View>
 
@@ -844,17 +925,37 @@ function TonePickerRow({
   presets,
   value,
   onChange,
+  onPreview,
+  previewDisabled = false,
 }: {
   label: string;
   presets: TonePreset[];
   value: string;
   onChange: (id: string) => void;
+  onPreview?: () => void;
+  previewDisabled?: boolean;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <View style={styles.toneRow}>
-      <Text style={styles.toneLabel}>{label}</Text>
+      <View style={styles.toneHeader}>
+        <Text style={styles.toneLabel}>{label}</Text>
+        {onPreview ? (
+          <Pressable
+            style={[styles.previewBtn, previewDisabled && styles.previewBtnDisabled]}
+            onPress={onPreview}
+            disabled={previewDisabled}
+          >
+            <Play size={14} color={previewDisabled ? theme.textMuted : theme.primaryLight} />
+            <Text
+              style={[styles.previewBtnText, previewDisabled && styles.previewBtnTextDisabled]}
+            >
+              Preview
+            </Text>
+          </Pressable>
+        ) : null}
+      </View>
       <View style={styles.chipRow}>
         {presets.map((t) => (
           <Pressable
@@ -1159,8 +1260,31 @@ const makeStyles = (theme: Theme) =>
     letterSpacing: 0.5,
     fontWeight: "700",
   },
+  toneHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
   toneRow: { gap: 8 },
   toneLabel: { fontSize: 13, color: theme.text, fontWeight: "600" },
+  previewBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    borderWidth: 1,
+    borderColor: theme.primary + "55",
+    borderRadius: theme.radiusFull,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: theme.primaryGlow,
+  },
+  previewBtnDisabled: {
+    borderColor: theme.glassBorder,
+    backgroundColor: theme.surfaceHover,
+  },
+  previewBtnText: { color: theme.primaryLight, fontSize: 12, fontWeight: "700" },
+  previewBtnTextDisabled: { color: theme.textMuted },
   resetBtn: {
     borderWidth: 1,
     borderColor: theme.glassBorder,
