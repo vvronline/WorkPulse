@@ -12,9 +12,10 @@ import ReactionChips from "./ReactionChips";
 import { fmtTime } from "./chatUtils";
 
 /**
- * A single chat message row (mirrors the web `MessageBubble`). Renders the
- * bubble (sender name, reply quote, file preview, content, meta line with
- * pin/star/edited/time/ticks) plus the reaction chips row below it.
+ * A single chat message row (WhatsApp-style). Own messages render as a solid
+ * accent-filled bubble with a tail on the top-right; incoming messages use a
+ * solid elevated surface with a tail on the top-left. The time + delivery
+ * ticks sit inline on the bottom-right of the bubble, mirroring WhatsApp.
  *
  * The bubble's host node is registered into the parent's ref map via
  * `registerRef` so the parent can `measureInWindow` it to anchor the
@@ -71,6 +72,12 @@ export default function MessageBubble({
             message._pending && styles.bubblePending,
           ]}
         >
+          {/* WhatsApp-style tail (only on the first/non-grouped bubble look). */}
+          <View
+            style={[mine ? styles.tailMine : styles.tailTheirs]}
+            pointerEvents="none"
+          />
+
           {!mine && message.sender_name ? (
             <Text style={styles.sender}>{message.sender_name}</Text>
           ) : null}
@@ -119,28 +126,57 @@ const makeStyles = (theme: Theme) =>
     rowTheirs: { justifyContent: "flex-start" },
     bubbleCol: { maxWidth: "82%" },
     bubble: {
-      borderRadius: 14,
+      position: "relative",
+      borderRadius: 16,
       paddingHorizontal: 12,
-      paddingVertical: 8,
+      paddingVertical: 7,
       gap: 2,
     },
+    // Own messages — solid neutral fill, squared top-right corner (tail side).
     bubbleMine: {
-      backgroundColor: "rgba(35,131,226,0.18)",
+      backgroundColor: theme.chatOutBg,
+      borderTopRightRadius: 4,
       borderWidth: 1,
-      borderColor: "rgba(35,131,226,0.25)",
+      borderColor: theme.chatBubbleBorder,
     },
+    // Incoming messages — solid neutral surface, squared top-left corner.
     bubbleTheirs: {
-      backgroundColor: theme.surface,
+      backgroundColor: theme.chatInBg,
+      borderTopLeftRadius: 4,
       borderWidth: 1,
-      borderColor: theme.glassBorder,
+      borderColor: theme.chatBubbleBorder,
     },
-    bubblePending: { opacity: 0.6 },
+    bubblePending: { opacity: 0.7 },
+    // Little triangular tail at the top corner (WhatsApp pointer notch).
+    tailMine: {
+      position: "absolute",
+      top: 0,
+      right: -6,
+      width: 0,
+      height: 0,
+      borderTopWidth: 8,
+      borderTopColor: theme.chatOutBg,
+      borderRightWidth: 8,
+      borderRightColor: "transparent",
+    },
+    tailTheirs: {
+      position: "absolute",
+      top: 0,
+      left: -6,
+      width: 0,
+      height: 0,
+      borderTopWidth: 8,
+      borderTopColor: theme.chatInBg,
+      borderLeftWidth: 8,
+      borderLeftColor: "transparent",
+    },
     sender: { fontSize: 11, fontWeight: "700", color: theme.primaryLight },
     metaLine: {
       flexDirection: "row",
       alignItems: "center",
-      gap: 6,
+      gap: 4,
       alignSelf: "flex-end",
+      marginTop: -2,
     },
     edited: { fontSize: 10, color: theme.textMuted, fontStyle: "italic" },
     time: { fontSize: 10, color: theme.textMuted },

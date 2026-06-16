@@ -51,6 +51,10 @@
   --chat-bubble-theirs: rgba(255, 255, 255, 0.06);
   --chat-bubble-mine-border: rgba(35, 131, 226, 0.12);
   --chat-active-bg: rgba(255, 255, 255, 0.05);
+  /* WhatsApp-style solid neutral bubbles (no brand accent) */
+  --chat-out-bg: #2f2f2f;
+  --chat-in-bg: #242424;
+  --chat-bubble-border: rgba(255, 255, 255, 0.06);
   --code-block-bg: #15171c;
   --code-block-border: rgba(255, 255, 255, 0.08);
   --separator: rgba(255, 255, 255, 0.05);
@@ -103,6 +107,10 @@
   --chat-bubble-theirs: rgba(55, 53, 47, 0.05);
   --chat-bubble-mine-border: rgba(35, 131, 226, 0.12);
   --chat-active-bg: rgba(55, 53, 47, 0.05);
+  /* WhatsApp-style solid neutral bubbles (no brand accent) */
+  --chat-out-bg: #e7e6e2;
+  --chat-in-bg: #ffffff;
+  --chat-bubble-border: rgba(55, 53, 47, 0.1);
   --code-block-bg: #1e1e2e;
   --code-block-border: rgba(255, 255, 255, 0.08);
   --separator: rgba(55, 53, 47, 0.06);

@@ -1,5 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  GestureResponderEvent,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import {
   setAudioModeAsync,
   useAudioPlayer,
@@ -18,10 +24,15 @@ function fmtSecs(ms?: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+// Playback speeds — mirrors the web client's AudioPlayer (FilePreview.tsx).
+const SPEEDS = [1, 1.5, 2];
+
 /**
  * Inline audio player bubble for voice notes / audio attachments. Mirrors the
- * web chat's audio message: play/pause toggle + a progress bar + elapsed /
- * total duration. Uses expo-audio's player hooks.
+ * web chat's audio message (client/src/components/chat/FilePreview.tsx): a round
+ * play/pause toggle, a seekable progress bar with a thumb, current / total time
+ * split to opposite ends, and a playback-speed button cycling 1x → 1.5x → 2x.
+ * Uses expo-audio's player hooks.
  *
  * IMPORTANT: the server serves /uploads behind auth middleware (cookie OR
  * `Authorization: Bearer` header). The web client gets the cookie for free;
@@ -39,6 +50,7 @@ export default function VoicePlayer({ uri }: { uri: string }) {
   const status = useAudioPlayerStatus(player);
   const [width, setWidth] = useState(0);
   const [loaded, setLoaded] = useState(false);
+  const [speedIdx, setSpeedIdx] = useState(0);
   const loadedUriRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -77,6 +89,18 @@ export default function VoicePlayer({ uri }: { uri: string }) {
   const position = status?.currentTime ? status.currentTime * 1000 : 0;
   const pct = duration > 0 ? Math.min(1, position / duration) : 0;
 
+  // Re-apply the playback rate whenever playback (re)starts — some platforms
+  // reset the rate to 1.0 on play, so keep it in sync with the chosen speed.
+  useEffect(() => {
+    if (playing) {
+      try {
+        player.setPlaybackRate(SPEEDS[speedIdx], "high");
+      } catch {
+        /* non-fatal */
+      }
+    }
+  }, [playing, speedIdx, player]);
+
   async function toggle() {
     if (playing) {
       player.pause();
@@ -108,57 +132,134 @@ export default function VoicePlayer({ uri }: { uri: string }) {
         return;
       }
     }
+    try {
+      player.setPlaybackRate(SPEEDS[speedIdx], "high");
+    } catch {
+      /* non-fatal */
+    }
     player.play();
   }
+
+  // Tap anywhere on the progress bar to seek to that position (mirrors the
+  // web client's click-to-seek behaviour).
+  const seek = useCallback(
+    (e: GestureResponderEvent) => {
+      if (!duration || !width) return;
+      const x = e.nativeEvent.locationX;
+      const ratio = Math.max(0, Math.min(1, x / width));
+      player.seekTo((ratio * duration) / 1000);
+    },
+    [duration, width, player],
+  );
+
+  const cycleSpeed = useCallback(() => {
+    const next = (speedIdx + 1) % SPEEDS.length;
+    setSpeedIdx(next);
+    try {
+      player.setPlaybackRate(SPEEDS[next], "high");
+    } catch {
+      /* non-fatal */
+    }
+  }, [speedIdx, player]);
 
   return (
     <View style={styles.wrap}>
       <Pressable style={styles.btn} onPress={toggle} hitSlop={6}>
         {playing ? (
-          <Pause size={18} color="#fff" />
+          <Pause size={16} color="#fff" />
         ) : (
-          <Play size={18} color="#fff" />
+          <Play size={16} color="#fff" />
         )}
       </Pressable>
-      <View style={styles.right}>
-        <View
+
+      <View style={styles.trackArea}>
+        <Pressable
           style={styles.track}
+          onPress={seek}
           onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
+          hitSlop={8}
         >
           <View style={[styles.fill, { width: width * pct }]} />
+          <View
+            style={[
+              styles.thumb,
+              { left: Math.max(0, Math.min(width, width * pct)) - 6 },
+            ]}
+          />
+        </Pressable>
+        <View style={styles.timeRow}>
+          <Text style={styles.time}>{fmtSecs(position)}</Text>
+          <Text style={styles.time}>{fmtSecs(duration)}</Text>
         </View>
-        <Text style={styles.time}>
-          {fmtSecs(position)} / {fmtSecs(duration)}
-        </Text>
       </View>
+
+      <Pressable style={styles.speedBtn} onPress={cycleSpeed} hitSlop={6}>
+        <Text style={styles.speedText}>{SPEEDS[speedIdx]}x</Text>
+      </Pressable>
     </View>
   );
 }
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-  wrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    minWidth: 190,
-    paddingVertical: 2,
-  },
-  btn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: theme.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  right: { flex: 1, gap: 4 },
-  track: {
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: theme.surfaceHover,
-    overflow: "hidden",
-  },
-  fill: { height: 4, borderRadius: 2, backgroundColor: theme.primary },
-  time: { fontSize: 11, color: theme.textMuted },
-});
+    wrap: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      width: "100%",
+      maxWidth: 320,
+      paddingVertical: 10,
+      paddingHorizontal: 14,
+      backgroundColor: theme.surface,
+      borderRadius: theme.radius,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+    },
+    btn: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: theme.primary,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    trackArea: { flex: 1, minWidth: 0, gap: 4 },
+    track: {
+      position: "relative",
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: theme.glassBorder,
+      justifyContent: "center",
+    },
+    fill: {
+      position: "absolute",
+      left: 0,
+      top: 0,
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: theme.primary,
+    },
+    thumb: {
+      position: "absolute",
+      top: -3,
+      width: 12,
+      height: 12,
+      borderRadius: 6,
+      backgroundColor: theme.primary,
+      borderWidth: 2,
+      borderColor: "#fff",
+    },
+    timeRow: { flexDirection: "row", justifyContent: "space-between" },
+    time: { fontSize: 11, color: theme.textMuted },
+    speedBtn: {
+      backgroundColor: theme.surfaceHover,
+      paddingVertical: 3,
+      paddingHorizontal: 7,
+      borderRadius: 6,
+    },
+    speedText: {
+      fontSize: 11,
+      fontWeight: "700",
+      color: theme.textSecondary,
+    },
+  });

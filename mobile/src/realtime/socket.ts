@@ -20,37 +20,54 @@ class RealtimeSocket {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private shouldRun = false;
   private appStateSub: { remove: () => void } | null = null;
+  private isSocketLive() {
+    return !!this.ws && this.ws.readyState <= 1;
+  }
 
   async connect() {
     this.shouldRun = true;
     if (!this.appStateSub) {
       this.appStateSub = AppState.addEventListener("change", this.onAppState);
     }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.isSocketLive()) return;
     await this.open();
   }
 
   private onAppState = (state: AppStateStatus) => {
     if (state === "active" && this.shouldRun) {
-      if (!this.ws || this.ws.readyState > 1) this.open();
+      if (!this.isSocketLive()) this.open();
     }
   };
 
   private async open() {
+    if (!this.shouldRun || this.isSocketLive()) return;
     const token = await getToken();
     if (!token) return;
+    let ws: WebSocket;
     try {
-      this.ws = new WebSocket(wsUrl(token));
+      ws = new WebSocket(wsUrl(token));
     } catch {
       this.scheduleReconnect();
       return;
     }
+    this.ws = ws;
 
-    this.ws.onopen = () => {
+    ws.onopen = () => {
+      if (this.ws !== ws) return;
       this.reconnectAttempts = 0;
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
       this.startPing();
     };
 
-    this.ws.onmessage = (e) => {
+    ws.onmessage = (e) => {
+      if (this.ws !== ws) return;
       let msg: WSMessage;
       try {
         msg = JSON.parse(typeof e.data === "string" ? e.data : "");
@@ -67,14 +84,16 @@ class RealtimeSocket {
       });
     };
 
-    this.ws.onclose = () => {
+    ws.onclose = () => {
+      if (this.ws !== ws) return;
+      this.ws = null;
       this.stopPing();
       if (this.shouldRun) this.scheduleReconnect();
     };
 
-    this.ws.onerror = () => {
+    ws.onerror = () => {
       try {
-        this.ws?.close();
+        ws.close();
       } catch {
         /* ignore */
       }

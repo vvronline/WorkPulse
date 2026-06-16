@@ -54,35 +54,58 @@
     color: var(--primary);
 }
 
-/* ─── Bubble ─── */
+/* ─── Bubble (WhatsApp-style) ─── */
 .bubble {
     position: relative;
-    padding: 10px 16px 8px;
-    border-radius: 14px;
+    padding: 7px 12px 6px;
+    border-radius: 16px;
     word-break: break-word;
-    line-height: 1.55;
+    line-height: 1.5;
     font-size: 0.9375rem;
     width: fit-content;
-    max-width: 70%;
+    max-width: 75%;
     background: transparent;
     color: var(--text);
 }
-/* Mine – subtle primary tint */
+/* Mine – solid neutral fill, squared top-right (tail corner) */
 .myBubble {
-    background: var(--chat-bubble-mine);
+    background: var(--chat-out-bg);
     color: var(--text);
-    border-radius: 14px;
-    border: 1px solid var(--chat-bubble-mine-border);
+    border-radius: 16px 4px 16px 16px;
+    border: 1px solid var(--chat-bubble-border);
 }
-/* Theirs – elevated surface, no border */
+/* Theirs – solid neutral surface, squared top-left (tail corner) */
 .theirBubble {
-    background: var(--chat-bubble-theirs);
+    background: var(--chat-in-bg);
     color: var(--text);
-    border-radius: 14px;
+    border-radius: 4px 16px 16px 16px;
+    border: 1px solid var(--chat-bubble-border);
 }
-/* Grouped continuation – consistent radius */
-.mine.grouped .myBubble   { border-radius: 14px; }
-.theirs.grouped .theirBubble { border-radius: 14px; }
+/* Grouped continuation – fully rounded (no tail), exactly like WhatsApp */
+.mine.grouped .myBubble      { border-radius: 16px; }
+.theirs.grouped .theirBubble { border-radius: 16px; }
+
+/* ─── WhatsApp tail (pointer notch) — only on the first of a block ─── */
+.groupStart .myBubble::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: -7px;
+    width: 0;
+    height: 0;
+    border-top: 9px solid var(--chat-out-bg);
+    border-right: 8px solid transparent;
+}
+.groupStart .theirBubble::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -7px;
+    width: 0;
+    height: 0;
+    border-top: 9px solid var(--chat-in-bg);
+    border-left: 8px solid transparent;
+}
 
 .pinned { border-left: 2px solid #f59e0b; padding-left: 8px; }
 .pendingBubble { opacity: 0.6; }
@@ -135,13 +158,13 @@
 }
 .link:hover { text-decoration: underline; }
 
-/* ─── Meta: time + edited ─── */
+/* ─── Meta: time + edited (WhatsApp footer, bottom-right) ─── */
 .meta {
     display: flex;
     align-items: center;
-    gap: 4px;
-    margin-top: 2px;
-    justify-content: flex-start;
+    gap: 3px;
+    margin-top: 1px;
+    justify-content: flex-end;
 }
 .time {
     font-size: 0.68rem;

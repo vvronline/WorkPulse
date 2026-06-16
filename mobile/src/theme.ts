@@ -93,6 +93,10 @@ export function makeTheme(accent: string = DEFAULT_ACCENT) {
     bgElevated: "#252525",
     surface: "rgba(255, 255, 255, 0.04)",
     surfaceHover: "rgba(255, 255, 255, 0.07)",
+    // WhatsApp-style solid neutral chat bubbles (no brand accent).
+    chatOutBg: "#2f2f2f",
+    chatInBg: "#242424",
+    chatBubbleBorder: "rgba(255, 255, 255, 0.06)",
     glass: "rgba(255, 255, 255, 0.045)",
     glassBorder: "rgba(255, 255, 255, 0.09)",
     cardBg: "rgba(255, 255, 255, 0.035)",
