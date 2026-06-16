@@ -40,6 +40,7 @@ import {
   type StarredMessage,
 } from "../../features";
 import { socket } from "../../realtime/socket";
+import { emitChatUnreadChanged } from "../../realtime/chatUnreadEvents";
 import { useKeyboardInset } from "../../hooks/useKeyboardInset";
 import { STATUS_LABEL, type HeaderSheet } from "./chatUtils";
 
@@ -167,12 +168,20 @@ export function useChatThread() {
       .catch(() => {});
   }, [convId]);
 
+  const markReadAndSync = useCallback(() => {
+    markConversationRead(convId)
+      .then(() => {
+        emitChatUnreadChanged();
+      })
+      .catch(() => {});
+  }, [convId]);
+
   const load = useCallback(async () => {
     try {
       const { data } = await getMessages(convId);
       setMessages(data || []);
       setHasMore((data || []).length >= 50);
-      markConversationRead(convId).catch(() => {});
+      markReadAndSync();
       // Seed read receipts so own messages show the correct tick immediately.
       getReadStatus(convId)
         .then((r) => {
@@ -192,7 +201,7 @@ export function useChatThread() {
     } finally {
       setLoading(false);
     }
-  }, [convId, scrollToEnd]);
+  }, [convId, markReadAndSync, scrollToEnd]);
 
   useEffect(() => {
     load();
@@ -422,7 +431,7 @@ export function useChatThread() {
           },
         ];
       });
-      markConversationRead(convId).catch(() => {});
+      markReadAndSync();
       // Acknowledge delivery so the sender sees "✓✓ delivered" (mirrors the
       // web ackDelivered call in the chat_message WS handler).
       if (d.senderId !== user?.id && d.id) {
@@ -431,7 +440,7 @@ export function useChatThread() {
       scrollToEnd(true);
     });
     return off;
-  }, [convId, user?.id, loadPinned, scrollToEnd, router]);
+  }, [convId, user?.id, loadPinned, markReadAndSync, scrollToEnd, router]);
 
   const send = useCallback(() => {
     const content = text.trim();

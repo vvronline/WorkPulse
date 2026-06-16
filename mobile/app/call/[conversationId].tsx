@@ -111,12 +111,14 @@ export default function CallScreen() {
     peerId?: string;
     peerName?: string;
     peerAvatar?: string;
+    autoAnswer?: string;
   }>();
   const router = useRouter();
 
   const conversationId = Number(params.conversationId);
   const mode = params.mode === "incoming" ? "incoming" : "outgoing";
   const callType = params.callType === "video" ? "video" : "voice";
+  const autoAnswer = params.autoAnswer === "1";
   const peerName = params.peerName || "Call";
   const [peerAvatar, setPeerAvatar] = useState(params.peerAvatar || "");
 
@@ -559,13 +561,31 @@ export default function CallScreen() {
   // fair chance to arrive avoids negotiating with the STUN-only fallback on
   // networks that require a relay (where the call then never connects).
   // Fast-exits the moment the config has loaded.
-  const waitForIceConfig = useCallback(async (timeoutMs = 2000) => {
+  const waitForIceConfig = useCallback(async (timeoutMs = 1200) => {
     if (iceConfigLoadedRef.current) return;
     const start = Date.now();
     while (!iceConfigLoadedRef.current && Date.now() - start < timeoutMs) {
       await new Promise((r) => setTimeout(r, 50));
     }
   }, []);
+
+  const sendWithRetry = useCallback(
+    async (
+      type: string,
+      data: Record<string, unknown>,
+      timeoutMs = 5000,
+      retryEveryMs = 200,
+    ) => {
+      const deadline = Date.now() + timeoutMs;
+      let sent = socket.send(type, data);
+      while (!sent && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, retryEveryMs));
+        sent = socket.send(type, data);
+      }
+      return sent;
+    },
+    [],
+  );
 
   // Attach local tracks AFTER setRemoteDescription on the answerer so they bind
   // to the transceivers the offer created (mirrors web's attachLocalTracks).
@@ -919,12 +939,14 @@ export default function CallScreen() {
         endAndLeave(false);
         return;
       }
-      const deadline = Date.now() + 5000;
-      let sent = socket.send("call_initiate", { conversationId, callType });
-      while (!sent && !cancelled && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 250));
-        sent = socket.send("call_initiate", { conversationId, callType });
-      }
+      const sent = cancelled
+        ? false
+        : await sendWithRetry(
+            "call_initiate",
+            { conversationId, callType },
+            5000,
+            250,
+          );
       if (!sent && !cancelled) {
         Alert.alert(
           "Connection error",
@@ -937,7 +959,7 @@ export default function CallScreen() {
       cancelled = true;
     };
     // eslint-disable-line react-hooks/exhaustive-deps
-  }, [mode, conversationId, callType, getMedia, endAndLeave]);
+  }, [mode, conversationId, callType, getMedia, endAndLeave, sendWithRetry]);
 
   // Incoming: PRE-WARM camera/mic while the phone is still ringing (mirrors
   // the web client's pre-warm path). Acquiring media only after the user taps
@@ -1297,30 +1319,47 @@ export default function CallScreen() {
   // behind getUserMedia) — the caller starts building its offer right away
   // while we finish acquiring media in parallel. Combined with the ringing
   // pre-warm above this shaves seconds off the connect time.
-  async function acceptIncoming() {
+  const acceptIncoming = useCallback(async () => {
     // Mark THIS session as the accepter so the `call_handled_elsewhere` echo
     // the server sends back to our own user (to dismiss our OTHER devices'
     // ring UI) does not tear down the call we are about to join.
     acceptedRef.current = true;
     setStatus("connecting");
-    socket.send("call_accept", {
-      callId: callIdRef.current,
-      conversationId,
-    });
+    const sent = await sendWithRetry(
+      "call_accept",
+      {
+        callId: callIdRef.current,
+        conversationId,
+      },
+      4000,
+      150,
+    );
+    if (!sent) {
+      Alert.alert(
+        "Connection error",
+        "Could not accept this call because realtime connection is unavailable.",
+      );
+      return endAndLeave(false);
+    }
     if (!localStreamRef.current) {
       const stream = await getMedia();
       if (!stream) return endAndLeave(false);
     }
     // The caller will now send us an offer (handled in call_signal).
-  }
+  }, [conversationId, endAndLeave, getMedia, sendWithRetry]);
 
-  function rejectIncoming() {
+  const rejectIncoming = useCallback(() => {
     socket.send("call_reject", {
       callId: callIdRef.current,
       conversationId,
     });
     endAndLeave(false);
-  }
+  }, [conversationId, endAndLeave]);
+
+  useEffect(() => {
+    if (mode !== "incoming" || !autoAnswer || status !== "ringing") return;
+    acceptIncoming().catch(() => {});
+  }, [acceptIncoming, autoAnswer, mode, status]);
 
   function toggleMute() {
     setOnHold(false);

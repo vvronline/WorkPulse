@@ -5,7 +5,10 @@
  */
 
 import { useEffect } from "react";
-import { usePushNotifications } from "../services/pushNotificationService";
+import {
+  pushNotificationService,
+  usePushNotifications,
+} from "../services/pushNotificationService";
 import { useAuth } from "../auth/AuthContext";
 
 export default function PushNotificationInitializer() {
@@ -23,8 +26,14 @@ export default function PushNotificationInitializer() {
       return;
     }
 
+    pushNotificationService
+      .registerDeviceTokenForCurrentUser(true)
+      .catch((err) =>
+        console.error("Failed to register device token after login:", err),
+      );
+
     console.log("Push notifications ready for user:", user.id);
-  }, [user, initialized]);
+  }, [user?.id, initialized]);
 
   return null;
 }

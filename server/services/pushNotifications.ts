@@ -23,6 +23,7 @@ interface FCMPayload {
         };
     };
     apns?: {
+        headers?: Record<string, string>;
         payload: {
             aps: {
                 alert: {
@@ -128,6 +129,8 @@ class PushNotificationService {
                 callId: String(callData.callId),
                 conversationId: String(callData.conversationId),
                 callerId: String(callData.callerId),
+                callerName: callData.callerName || "",
+                callerAvatar: callData.callerAvatar || "",
                 callType: callData.callType,
                 isGroup: String(callData.isGroup || false),
                 groupName: callData.groupName || "",
@@ -137,16 +140,19 @@ class PushNotificationService {
                 notification: {
                     sound: "default",
                     channelId: "calls",
-                    click_action: "FLUTTER_NOTIFICATION_CLICK",
                 },
             },
             apns: {
+                headers: {
+                    "apns-priority": "10",
+                    "apns-push-type": "alert",
+                },
                 payload: {
                     aps: {
                         alert: { title, body },
                         sound: "default",
                         "mutable-content": 1,
-                        category: "INCOMING_CALL",
+                        category: "incoming-call",
                     },
                 },
             },
@@ -197,6 +203,10 @@ class PushNotificationService {
                 },
             },
             apns: {
+                headers: {
+                    "apns-priority": "10",
+                    "apns-push-type": "alert",
+                },
                 payload: {
                     aps: {
                         alert: {
@@ -250,6 +260,10 @@ class PushNotificationService {
                 },
             },
             apns: {
+                headers: {
+                    "apns-priority": "10",
+                    "apns-push-type": "alert",
+                },
                 payload: {
                     aps: {
                         alert: {

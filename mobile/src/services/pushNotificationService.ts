@@ -33,14 +33,37 @@ export interface NotificationPayload {
 class PushNotificationService {
   private initialized = false;
   private deviceToken: string | null = null;
+  private lastRegisteredAuthToken: string | null = null;
   private listeners: ((notification: Notifications.Notification) => void)[] = [];
+  private foregroundSubscription: Notifications.EventSubscription | null = null;
+  private responseSubscription: Notifications.EventSubscription | null = null;
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
     try {
+      Notifications.setNotificationHandler({
+        handleNotification: async (_notification) => ({
+          shouldShowAlert: true,
+          shouldPlaySound: true,
+          shouldSetBadge: true,
+          shouldShowBanner: true,
+          shouldShowList: true,
+        }),
+      });
+
+      if (Platform.OS === "android") {
+        await this.setupAndroidChannels();
+      }
+      await this.setupNotificationCategories();
+
       // Request notification permissions
-      const { status } = await Notifications.requestPermissionsAsync();
+      const existingPermissions = await Notifications.getPermissionsAsync();
+      const permissionResult =
+        existingPermissions.status === "granted"
+          ? existingPermissions
+          : await Notifications.requestPermissionsAsync();
+      const { status } = permissionResult;
 
       if (status !== "granted") {
         console.warn("Notification permissions not granted");
@@ -56,8 +79,14 @@ class PushNotificationService {
       // Set up notification handlers
       this.setupNotificationHandlers();
 
-      // Register device token with backend
-      await this.registerDeviceToken();
+      // Handle cold start from a notification tap/action.
+      const lastResponse = await Notifications.getLastNotificationResponseAsync();
+      if (lastResponse) {
+        this.handleNotificationResponse(lastResponse);
+      }
+
+      // Register device token with backend when a user token exists.
+      await this.registerDeviceTokenForCurrentUser();
 
       this.initialized = true;
       console.log("Push notification service initialized");
@@ -66,26 +95,58 @@ class PushNotificationService {
     }
   }
 
+  private async setupAndroidChannels(): Promise<void> {
+    await Notifications.setNotificationChannelAsync("calls", {
+      name: "Calls",
+      description: "Incoming call alerts",
+      importance: Notifications.AndroidImportance.MAX,
+      sound: "default",
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      vibrationPattern: [0, 200, 120, 200],
+      bypassDnd: true,
+    });
+    await Notifications.setNotificationChannelAsync("messages", {
+      name: "Messages",
+      description: "Chat message alerts",
+      importance: Notifications.AndroidImportance.HIGH,
+      sound: "default",
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+      vibrationPattern: [0, 160, 80, 160],
+    });
+    await Notifications.setNotificationChannelAsync("notifications", {
+      name: "Notifications",
+      description: "General alerts",
+      importance: Notifications.AndroidImportance.DEFAULT,
+      sound: "default",
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+    });
+  }
+
+  private async setupNotificationCategories(): Promise<void> {
+    await Notifications.setNotificationCategoryAsync("incoming-call", [
+      {
+        identifier: "accept_call",
+        buttonTitle: "Answer",
+      },
+      {
+        identifier: "decline_call",
+        buttonTitle: "Decline",
+        options: { isDestructive: true },
+      },
+    ]);
+  }
+
   private setupNotificationHandlers(): void {
+    if (this.foregroundSubscription || this.responseSubscription) return;
+
     // Handle notifications received while app is in foreground
-    const foregroundSubscription = Notifications.addNotificationReceivedListener((notification) => {
+    this.foregroundSubscription = Notifications.addNotificationReceivedListener((notification) => {
       this.handleNotificationReceived(notification);
     });
 
     // Handle notification taps
-    const responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      this.handleNotificationResponse(response.notification);
-    });
-
-    // Set notification handler configuration
-    Notifications.setNotificationHandler({
-      handleNotification: async (_notification) => ({
-        shouldShowAlert: true,
-        shouldPlaySound: true,
-        shouldSetBadge: true,
-        shouldShowBanner: true,
-        shouldShowList: true,
-      }),
+    this.responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      this.handleNotificationResponse(response);
     });
   }
 
@@ -105,23 +166,31 @@ class PushNotificationService {
     });
   }
 
-  private handleNotificationResponse(notification: Notifications.Notification): void {
+  private handleNotificationResponse(response: Notifications.NotificationResponse): void {
+    const { notification, actionIdentifier } = response;
     const { request } = notification;
     const { content } = request;
     const data = content.data || {};
+    const enrichedData: Record<string, string | undefined> = {
+      ...data,
+      notificationAction:
+        actionIdentifier && actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER
+          ? actionIdentifier
+          : undefined,
+    };
 
-    console.log("Notification response:", data);
+    console.log("Notification response:", enrichedData);
 
     // Handle deep links based on notification type
-    if (data.callId) {
+    if (enrichedData.callId) {
       // Incoming call notification
-      console.log("Navigating to call:", data.conversationId);
+      console.log("Navigating to call:", enrichedData.conversationId);
       // Navigation handled by IncomingCallListener
-    } else if (data.conversationId) {
+    } else if (enrichedData.conversationId) {
       // Message notification
-      console.log("Navigating to chat:", data.conversationId);
+      console.log("Navigating to chat:", enrichedData.conversationId);
       // Navigation handled by the app
-    } else if (data.notificationId) {
+    } else if (enrichedData.notificationId) {
       // General notification
       console.log("Navigating to notifications");
     }
@@ -129,23 +198,37 @@ class PushNotificationService {
     // Trigger listeners
     this.listeners.forEach((listener) => {
       try {
-        listener(notification);
+        listener({
+          ...notification,
+          request: {
+            ...notification.request,
+            content: {
+              ...notification.request.content,
+              data: enrichedData,
+            },
+          },
+        });
       } catch (err) {
         console.error("Listener error:", err);
       }
     });
   }
 
-  private async registerDeviceToken(): Promise<void> {
+  async registerDeviceTokenForCurrentUser(force = false): Promise<void> {
     if (!this.deviceToken) {
-      console.warn("No device token available for registration");
-      return;
+    console.warn("No device token available for registration");
+    return;
     }
 
     try {
       const userToken = await getToken();
       if (!userToken) {
         console.warn("User not authenticated — skipping device token registration");
+        this.lastRegisteredAuthToken = null;
+        return;
+      }
+
+      if (!force && this.lastRegisteredAuthToken === userToken) {
         return;
       }
 
@@ -169,6 +252,7 @@ class PushNotificationService {
         return;
       }
 
+      this.lastRegisteredAuthToken = userToken;
       console.log("Device token registered successfully");
     } catch (err) {
       console.error("Error registering device token:", err);

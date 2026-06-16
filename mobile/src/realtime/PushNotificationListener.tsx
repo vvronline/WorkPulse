@@ -6,8 +6,9 @@
 
 import { useEffect } from "react";
 import { useRouter } from "expo-router";
-import * as Notifications from "expo-notifications";
 import { pushNotificationService, type NotificationPayload } from "../services/pushNotificationService";
+import { socket } from "./socket";
+import { emitChatUnreadChanged } from "./chatUnreadEvents";
 
 /**
  * Root-level listener that handles all incoming push notifications.
@@ -52,8 +53,15 @@ function handlePushNotification(payload: NotificationPayload, router: any): void
       {
         callId: parseInt(data.callId, 10),
         conversationId: parseInt(data.conversationId, 10),
-        callerId: data.senderId ? parseInt(data.senderId, 10) : 0,
+        callerId: data.callerId
+          ? parseInt(data.callerId, 10)
+          : data.senderId
+            ? parseInt(data.senderId, 10)
+            : 0,
         callType: (data.callType as "voice" | "video") || "voice",
+        callerName: data.callerName,
+        callerAvatar: data.callerAvatar,
+        notificationAction: data.notificationAction,
       },
       router,
     );
@@ -95,23 +103,35 @@ function handleCallNotification(
     conversationId: number;
     callerId: number;
     callType: "voice" | "video";
+    callerName?: string;
+    callerAvatar?: string;
+    notificationAction?: string;
   },
   router: any,
 ): void {
   console.log("Handling call notification:", callData);
 
-  // The IncomingCallListener component (in realtime/) will pick up
-  // the call_incoming WebSocket message and navigate. If the app is
-  // in background and only the push notification was delivered,
-  // we manually navigate to the call screen.
-  //
-  // However, since the push payload contains minimal data, and we need
-  // full call context (callerName, avatar, etc.), we defer to the
-  // WebSocket delivery which carries complete information. The push
-  // notification serves as a wake-up signal for the app.
+  if (callData.notificationAction === "decline_call") {
+    socket.send("call_reject", {
+      callId: callData.callId,
+      conversationId: callData.conversationId,
+    });
+    return;
+  }
 
-  // For now, just log it. The WebSocket listener will handle actual navigation.
-  console.log("Call notification — waiting for WebSocket delivery");
+  router.push({
+    pathname: "/call/[conversationId]",
+    params: {
+      conversationId: String(callData.conversationId),
+      mode: "incoming",
+      callType: callData.callType,
+      callId: String(callData.callId),
+      peerId: String(callData.callerId || ""),
+      peerName: callData.callerName || "Incoming call",
+      peerAvatar: callData.callerAvatar || "",
+      autoAnswer: callData.notificationAction === "accept_call" ? "1" : "0",
+    },
+  });
 }
 
 /**
@@ -128,6 +148,7 @@ function handleMessageNotification(
   router: any,
 ): void {
   console.log("Handling message notification:", messageData);
+  emitChatUnreadChanged();
 
   // Optionally auto-navigate to chat
   // Uncomment to navigate automatically on tap:

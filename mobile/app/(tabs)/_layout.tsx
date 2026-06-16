@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Redirect, Tabs } from "expo-router";
 import { ActivityIndicator, AppState, View } from "react-native";
+import * as Notifications from "expo-notifications";
 import {
   Calendar,
   Home,
@@ -13,6 +14,9 @@ import { useTheme } from "../../src/theme/ThemeProvider";
 import TopBar from "../../src/components/TopBar";
 import { getConversations } from "../../src/features";
 import { socket } from "../../src/realtime/socket";
+import {
+  subscribeChatUnreadChanged,
+} from "../../src/realtime/chatUnreadEvents";
 
 export default function TabsLayout() {
   const theme = useTheme();
@@ -53,9 +57,12 @@ export default function TabsLayout() {
     // bumps the badge; we re-pull the authoritative unread totals so the count
     // matches the server's per-conversation unread tracking.
     const off = socket.subscribe((msg) => {
-      if (msg.type === "chat_message" || msg.type === "chat_read") {
+      if (msg.type.startsWith("chat_")) {
         refreshUnread();
       }
+    });
+    const offUnreadChanged = subscribeChatUnreadChanged(() => {
+      refreshUnread();
     });
     // Refresh when returning to the foreground (WS may have reconnected).
     const sub = AppState.addEventListener("change", (s) => {
@@ -63,9 +70,18 @@ export default function TabsLayout() {
     });
     return () => {
       off();
+      offUnreadChanged();
       sub.remove();
     };
   }, [user, chatEnabled, refreshUnread]);
+
+  useEffect(() => {
+    if (!user || !chatEnabled) {
+      Notifications.setBadgeCountAsync(0).catch(() => {});
+      return;
+    }
+    Notifications.setBadgeCountAsync(chatUnread).catch(() => {});
+  }, [chatEnabled, chatUnread, user?.id]);
 
   if (loading) {
     return (
