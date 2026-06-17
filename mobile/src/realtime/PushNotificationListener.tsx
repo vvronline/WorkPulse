@@ -6,9 +6,12 @@
 
 import { useEffect } from "react";
 import { useRouter } from "expo-router";
+import { Alert, Linking, Platform } from "react-native";
+import * as Notifications from "expo-notifications";
 import { pushNotificationService, type NotificationPayload } from "../services/pushNotificationService";
 import { socket } from "./socket";
-import { emitChatUnreadChanged } from "./chatUnreadEvents";
+import { emitChatUnreadChanged, chatUnreadManager } from "./chatUnreadEvents";
+import { backgroundPushService } from "../services/backgroundPushService";
 
 /**
  * Root-level listener that handles all incoming push notifications.
@@ -16,6 +19,11 @@ import { emitChatUnreadChanged } from "./chatUnreadEvents";
  */
 export default function PushNotificationListener() {
   const router = useRouter();
+
+  useEffect(() => {
+    // T032: Check notification permissions on mount and offer recovery if denied
+    checkAndRecoverPermissions().catch(() => {});
+  }, []);
 
   useEffect(() => {
     const unsubscribe = pushNotificationService.subscribe((notification) => {
@@ -31,6 +39,9 @@ export default function PushNotificationListener() {
         data: safeData,
       };
 
+      backgroundPushService.handleNotificationPayload(payload).catch((err) => {
+        console.warn("Failed to route push payload through background service:", err);
+      });
       handlePushNotification(payload, router);
     });
 
@@ -38,6 +49,64 @@ export default function PushNotificationListener() {
   }, [router]);
 
   return null;
+}
+
+/**
+ * T032: Check notification permissions and offer recovery if denied.
+ * Prompts user to enable notifications in settings if they denied permissions.
+ */
+async function checkAndRecoverPermissions(): Promise<void> {
+  try {
+    const permissions = await Notifications.getPermissionsAsync();
+    
+    if (permissions.status === "granted") {
+      console.debug('[PushNotificationListener] Notification permissions granted');
+      return;
+    }
+
+    if (permissions.status === "denied") {
+      console.warn('[PushNotificationListener] Notification permissions denied by user');
+      
+      // T032: Show recovery UX with settings deep-link
+      setTimeout(() => {
+        Alert.alert(
+          "Enable Notifications",
+          "To receive incoming calls and messages, please enable notifications in your device settings.",
+          [
+            {
+              text: "Cancel",
+              onPress: () => {
+                console.debug('[PushNotificationListener] User dismissed permission recovery');
+              },
+              style: "cancel",
+            },
+            {
+              text: "Open Settings",
+              onPress: () => {
+                console.info('[PushNotificationListener] User opened notification settings');
+                // Deep-link to platform-specific notification settings
+                if (Platform.OS === "android") {
+                  Linking.openSettings().catch(() => {
+                    console.error('[PushNotificationListener] Failed to open Android settings');
+                  });
+                } else if (Platform.OS === "ios") {
+                  Linking.openURL("app-settings://notification").catch(() => {
+                    // Fallback: open general settings
+                    Linking.openSettings().catch(() => {
+                      console.error('[PushNotificationListener] Failed to open iOS settings');
+                    });
+                  });
+                }
+              },
+            },
+          ],
+          { cancelable: false },
+        );
+      }, 1000); // Delay to let app mount fully
+    }
+  } catch (err) {
+    console.error('[PushNotificationListener] Permission check failed', err);
+  }
 }
 
 /**
@@ -74,6 +143,7 @@ function handlePushNotification(payload: NotificationPayload, router: any): void
         messageId: parseInt(data.messageId, 10),
         senderId: data.senderId ? parseInt(data.senderId, 10) : 0,
         senderName: payload.title,
+        unreadCount: data.unreadCount ? parseInt(data.unreadCount, 10) : undefined,
       },
       router,
     );
@@ -144,10 +214,17 @@ function handleMessageNotification(
     messageId: number;
     senderId: number;
     senderName: string;
+    unreadCount?: number;
   },
   router: any,
 ): void {
   console.log("Handling message notification:", messageData);
+  
+  // T032: Update unread manager with server-authoritative count if provided
+  if (messageData.unreadCount !== undefined) {
+    chatUnreadManager.updateUnreadCount(messageData.conversationId, messageData.unreadCount);
+  }
+  
   emitChatUnreadChanged();
 
   // Optionally auto-navigate to chat

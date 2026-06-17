@@ -4,6 +4,35 @@ The Android release APK is built **automatically by GitHub Actions** on every
 `mobile-vX.Y.Z` tag push (`.github/workflows/mobile-release.yml`). No local
 Android SDK / EAS account is required.
 
+## Native call parity prerequisites (WhatsApp/Teams-style incoming calls)
+
+For lock-screen/background incoming-call UI and "answer without manually opening
+the app", this project now requires a **custom native build path** (Expo
+prebuild + native modules). Before cutting a release:
+
+1. Ensure native dependencies are installed in `mobile/package.json`:
+   - `react-native-callkeep`
+   - `@react-native-firebase/app`
+   - `@react-native-firebase/messaging`
+2. Run `expo prebuild` and commit any required native config/plugin outputs.
+3. Verify Android permissions in `mobile/app.config.ts` include:
+   - `POST_NOTIFICATIONS`
+   - `USE_FULL_SCREEN_INTENT`
+   - `FOREGROUND_SERVICE_PHONE_CALL`
+   - `WAKE_LOCK`
+4. Verify Firebase service-account config is present in server env
+   (`FIREBASE_SERVICE_ACCOUNT_KEY`).
+
+### Native parity release checklist
+
+- [ ] `mobile/src/services/pushNotificationService.ts` contains `calls` and `messages` channels.
+- [ ] `mobile/src/realtime/PushNotificationListener.tsx` includes permission recovery UX (settings deep-link).
+- [ ] `mobile/src/realtime/socket.ts` includes bounded backoff send helper for call signaling.
+- [ ] `mobile/app/call/[conversationId].tsx` uses reconnect-safe call action sends (`accept/reject/end`).
+- [ ] `server/utils/ws.ts` enforces idempotent call actions + terminal state guards.
+- [ ] `server/services/pushNotifications.ts` includes structured push dispatch attempt/result logs.
+- [ ] `specs/20260617-024245-call-notification-parity/quickstart.md` device matrix is executed and signed off.
+
 ## App icon
 
 The launcher icon is the **same artwork as the desktop `.exe`**

@@ -180,6 +180,10 @@ export default function CallScreen() {
   const callIdRef = useRef<number | null>(
     params.callId ? Number(params.callId) : null,
   );
+  const initiateClientMsgIdRef = useRef(
+    `call-initiate:${conversationId}:${Date.now()}`,
+  );
+  const endClientMsgIdRef = useRef<string | null>(null);
   const peerIdRef = useRef<number | null>(
     params.peerId ? Number(params.peerId) : null,
   );
@@ -232,10 +236,23 @@ export default function CallScreen() {
   const endAndLeave = useCallback(
     (sendEnd: boolean) => {
       if (sendEnd && callIdRef.current) {
-        socket.send("call_end", {
-          callId: callIdRef.current,
-          conversationId,
-        });
+        if (!endClientMsgIdRef.current) {
+          endClientMsgIdRef.current = `call-end:${callIdRef.current}:${conversationId}`;
+        }
+        void socket.sendCallActionWithRetry(
+          "end",
+          {
+            callId: callIdRef.current,
+            conversationId,
+            clientMsgId: endClientMsgIdRef.current,
+          },
+          {
+            timeoutMs: 3500,
+            maxAttempts: 5,
+            initialBackoffMs: 120,
+            maxBackoffMs: 700,
+          },
+        );
       }
       try {
         localStreamRef.current?.getTracks().forEach((t) => t.stop());
@@ -568,24 +585,6 @@ export default function CallScreen() {
       await new Promise((r) => setTimeout(r, 50));
     }
   }, []);
-
-  const sendWithRetry = useCallback(
-    async (
-      type: string,
-      data: Record<string, unknown>,
-      timeoutMs = 5000,
-      retryEveryMs = 200,
-    ) => {
-      const deadline = Date.now() + timeoutMs;
-      let sent = socket.send(type, data);
-      while (!sent && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, retryEveryMs));
-        sent = socket.send(type, data);
-      }
-      return sent;
-    },
-    [],
-  );
 
   // Attach local tracks AFTER setRemoteDescription on the answerer so they bind
   // to the transceivers the offer created (mirrors web's attachLocalTracks).
@@ -941,11 +940,21 @@ export default function CallScreen() {
       }
       const sent = cancelled
         ? false
-        : await sendWithRetry(
+        : await socket.sendWithBackoff(
             "call_initiate",
-            { conversationId, callType },
-            5000,
-            250,
+            {
+              conversationId,
+              callType,
+              clientMsgId: initiateClientMsgIdRef.current,
+            },
+            {
+              timeoutMs: 7000,
+              maxAttempts: 7,
+              initialBackoffMs: 140,
+              maxBackoffMs: 1000,
+              jitterRatio: 0.1,
+              ensureConnected: true,
+            },
           );
       if (!sent && !cancelled) {
         Alert.alert(
@@ -959,7 +968,7 @@ export default function CallScreen() {
       cancelled = true;
     };
     // eslint-disable-line react-hooks/exhaustive-deps
-  }, [mode, conversationId, callType, getMedia, endAndLeave, sendWithRetry]);
+  }, [mode, conversationId, callType, getMedia, endAndLeave]);
 
   // Incoming: PRE-WARM camera/mic while the phone is still ringing (mirrors
   // the web client's pre-warm path). Acquiring media only after the user taps
@@ -1026,19 +1035,40 @@ export default function CallScreen() {
                 offerToReceiveVideo: callType === "video",
               });
               await pc.setLocalDescription(offer);
-              socket.send("call_signal", {
-                conversationId,
-                targetUserId: d.userId,
-                signal: { type: "offer", sdp: offer.sdp },
-              });
+              const offerSent = await socket.sendWithBackoff(
+                "call_signal",
+                {
+                  conversationId,
+                  targetUserId: d.userId,
+                  signal: { type: "offer", sdp: offer.sdp },
+                },
+                {
+                  timeoutMs: 4500,
+                  maxAttempts: 5,
+                  initialBackoffMs: 120,
+                  maxBackoffMs: 800,
+                },
+              );
+              if (!offerSent) {
+                throw new Error("failed to deliver offer");
+              }
               // Tell the peer our current camera state immediately so they
               // render avatar vs. video correctly from the start (mirrors the
               // answerer path, which already sends this).
-              socket.send("call_signal", {
-                conversationId,
-                targetUserId: d.userId,
-                signal: { type: "video-state", videoOff },
-              });
+              await socket.sendWithBackoff(
+                "call_signal",
+                {
+                  conversationId,
+                  targetUserId: d.userId,
+                  signal: { type: "video-state", videoOff },
+                },
+                {
+                  timeoutMs: 2200,
+                  maxAttempts: 4,
+                  initialBackoffMs: 100,
+                  maxBackoffMs: 450,
+                },
+              );
             } catch (err: any) {
               // Fatal negotiation error — end cleanly instead of hanging.
               console.warn(
@@ -1325,14 +1355,13 @@ export default function CallScreen() {
     // ring UI) does not tear down the call we are about to join.
     acceptedRef.current = true;
     setStatus("connecting");
-    const sent = await sendWithRetry(
-      "call_accept",
+    const sent = await socket.sendCallActionWithRetry(
+      "accept",
       {
         callId: callIdRef.current,
         conversationId,
       },
-      4000,
-      150,
+      { timeoutMs: 4000, retryEveryMs: 150 },
     );
     if (!sent) {
       Alert.alert(
@@ -1346,13 +1375,14 @@ export default function CallScreen() {
       if (!stream) return endAndLeave(false);
     }
     // The caller will now send us an offer (handled in call_signal).
-  }, [conversationId, endAndLeave, getMedia, sendWithRetry]);
+  }, [conversationId, endAndLeave, getMedia]);
 
-  const rejectIncoming = useCallback(() => {
-    socket.send("call_reject", {
-      callId: callIdRef.current,
-      conversationId,
-    });
+  const rejectIncoming = useCallback(async () => {
+    await socket.sendCallActionWithRetry(
+      "reject",
+      { callId: callIdRef.current, conversationId },
+      { timeoutMs: 2000, retryEveryMs: 120 },
+    );
     endAndLeave(false);
   }, [conversationId, endAndLeave]);
 

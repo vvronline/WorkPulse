@@ -40,7 +40,7 @@ import {
   type StarredMessage,
 } from "../../features";
 import { socket } from "../../realtime/socket";
-import { emitChatUnreadChanged } from "../../realtime/chatUnreadEvents";
+import { emitChatUnreadChanged, chatUnreadManager } from "../../realtime/chatUnreadEvents";
 import { useKeyboardInset } from "../../hooks/useKeyboardInset";
 import { STATUS_LABEL, type HeaderSheet } from "./chatUtils";
 
@@ -171,6 +171,8 @@ export function useChatThread() {
   const markReadAndSync = useCallback(() => {
     markConversationRead(convId)
       .then(() => {
+        // T030: Update unread manager when conversation is marked read
+        chatUnreadManager.markConversationRead(convId);
         emitChatUnreadChanged();
       })
       .catch(() => {});
