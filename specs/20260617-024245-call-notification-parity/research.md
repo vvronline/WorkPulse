@@ -42,3 +42,29 @@
 - **Rationale**: Missing permissions are the primary non-code cause of delivery failures.
 - **Alternatives considered**:
   - Silent failure with logs only: rejected; poor user recoverability.
+
+## End-to-end validation notes (2026-06-17)
+
+### Automated validation
+
+- ✅ `mobile`: `npx tsc --noEmit -p tsconfig.json`
+- ✅ `server`: `npm run typecheck`
+- ✅ `server`: `npm run test`
+- ✅ `server` reliability subset:
+  - `ws.callAcceptReconnect.test.ts`
+  - `ws.callDuplicateInvite.test.ts`
+  - `ws.callActionIdempotency.test.ts`
+  - `wsMetrics.test.ts`
+
+### Reliability checks covered by automation
+
+- Reconnect-time `call_accept` replay is deduped.
+- Duplicate call invite replay with same `clientMsgId` is deduped.
+- Call-action dedupe keys are isolated by `callId`.
+- Terminal-state call transitions (`answered/rejected/ended`) emit structured diagnostics instead of mutating state again.
+
+### Manual device checks to run before production cut
+
+- Android and iOS physical-device verification of lock-screen incoming-call UI.
+- Background/terminated message status-bar visibility and launcher badge parity.
+- Permission recovery UX flow (Open Settings deep-link) on denied-notification state.

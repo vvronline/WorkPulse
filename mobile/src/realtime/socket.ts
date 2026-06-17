@@ -8,7 +8,45 @@ type SendRetryOptions = {
   timeoutMs?: number;
   retryEveryMs?: number;
   ensureConnected?: boolean;
+  maxAttempts?: number;
+  initialBackoffMs?: number;
+  maxBackoffMs?: number;
+  jitterRatio?: number;
+  useExponentialBackoff?: boolean;
 };
+
+type RetryBackoffPlanOptions = {
+  maxAttempts: number;
+  initialDelayMs: number;
+  maxDelayMs: number;
+  jitterRatio?: number;
+};
+
+export function buildRetryBackoffPlan({
+  maxAttempts,
+  initialDelayMs,
+  maxDelayMs,
+  jitterRatio = 0.15,
+}: RetryBackoffPlanOptions): number[] {
+  const total = Math.max(0, Math.floor(maxAttempts));
+  const initial = Math.max(1, Math.floor(initialDelayMs));
+  const ceiling = Math.max(initial, Math.floor(maxDelayMs));
+  const ratio = Number.isFinite(jitterRatio) ? Math.max(0, jitterRatio) : 0;
+  const plan: number[] = [];
+
+  for (let attempt = 0; attempt < total; attempt += 1) {
+    const baseDelay = Math.min(ceiling, initial * 2 ** attempt);
+    if (ratio === 0) {
+      plan.push(baseDelay);
+      continue;
+    }
+    const jitterBand = baseDelay * ratio;
+    const jitterOffset = (Math.random() * 2 - 1) * jitterBand;
+    plan.push(Math.max(1, Math.round(baseDelay + jitterOffset)));
+  }
+
+  return plan;
+}
 
 /**
  * Singleton WebSocket client for the WorkPulse realtime channel (/ws).
@@ -140,22 +178,72 @@ class RealtimeSocket {
   async sendWithRetry(
     type: string,
     data: any,
-    { timeoutMs = 5000, retryEveryMs = 200, ensureConnected = true }: SendRetryOptions = {},
+    options: SendRetryOptions = {},
+  ): Promise<boolean> {
+    const {
+      timeoutMs = 5000,
+      retryEveryMs = 200,
+      ensureConnected = true,
+    } = options;
+
+    const maxAttempts =
+      options.maxAttempts ??
+      Math.max(1, Math.floor(timeoutMs / Math.max(1, retryEveryMs)));
+
+    return this.sendWithBackoff(type, data, {
+      timeoutMs,
+      ensureConnected,
+      maxAttempts,
+      initialBackoffMs: retryEveryMs,
+      maxBackoffMs: retryEveryMs,
+      jitterRatio: 0,
+      useExponentialBackoff: false,
+    });
+  }
+
+  async sendWithBackoff(
+    type: string,
+    data: any,
+    {
+      timeoutMs = 6000,
+      ensureConnected = true,
+      maxAttempts = 6,
+      initialBackoffMs = 120,
+      maxBackoffMs = 1200,
+      jitterRatio = 0.15,
+      useExponentialBackoff = true,
+    }: SendRetryOptions = {},
   ): Promise<boolean> {
     if (ensureConnected && this.shouldRun && !this.isSocketLive()) {
       this.open();
     }
 
-    const deadline = Date.now() + timeoutMs;
+    const attemptsBudget = Math.max(1, Math.floor(maxAttempts));
+    const deadline = Date.now() + Math.max(1, timeoutMs);
+    const delayPlan = useExponentialBackoff
+      ? buildRetryBackoffPlan({
+          maxAttempts: Math.max(0, attemptsBudget - 1),
+          initialDelayMs: initialBackoffMs,
+          maxDelayMs: maxBackoffMs,
+          jitterRatio,
+        })
+      : new Array(Math.max(0, attemptsBudget - 1)).fill(Math.max(1, initialBackoffMs));
+
     let sent = this.send(type, data);
-    while (!sent && Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, retryEveryMs));
+    if (sent) return true;
+
+    for (const plannedDelay of delayPlan) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      await new Promise((r) => setTimeout(r, Math.min(plannedDelay, remaining)));
       if (ensureConnected && this.shouldRun && !this.isSocketLive()) {
         this.open();
       }
       sent = this.send(type, data);
+      if (sent) return true;
     }
-    return sent;
+
+    return false;
   }
 
   async sendCallActionWithRetry(
@@ -166,14 +254,22 @@ class RealtimeSocket {
     if (!data.callId || !data.conversationId) return false;
     const clientMsgId =
       data.clientMsgId || `native:${action}:${data.callId}:${data.conversationId}:${Date.now()}`;
-    return this.sendWithRetry(
+    return this.sendWithBackoff(
       `call_${action}`,
       {
         callId: data.callId,
         conversationId: data.conversationId,
         clientMsgId,
       },
-      { ...options, ensureConnected: true },
+      {
+        timeoutMs: options.timeoutMs ?? 6000,
+        ensureConnected: true,
+        maxAttempts: options.maxAttempts ?? 7,
+        initialBackoffMs: options.initialBackoffMs ?? 120,
+        maxBackoffMs: options.maxBackoffMs ?? 1000,
+        jitterRatio: options.jitterRatio ?? 0.12,
+        useExponentialBackoff: true,
+      },
     );
   }
 

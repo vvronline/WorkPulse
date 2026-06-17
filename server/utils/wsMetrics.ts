@@ -32,6 +32,7 @@
  */
 
 const WINDOW_SIZE = 256;
+const CALL_FAILURE_WINDOW_SIZE = 200;
 
 interface HandlerSnapshot {
     count: number;
@@ -40,6 +41,40 @@ interface HandlerSnapshot {
     errorRate: number;
     p50Ms: number;
     p95Ms: number;
+}
+
+type CallAction = "initiate" | "answer" | "reject" | "end" | "unknown";
+
+interface CallTransitionFailureEvent {
+    event?: string;
+    action?: string;
+    tenantId?: number | string | null;
+    senderId?: number | string | null;
+    callId?: number | string | null;
+    conversationId?: number | string | null;
+    fromStatus?: string | null;
+    reason?: string;
+    timestamp?: string;
+}
+
+interface NormalizedCallTransitionFailureEvent {
+    event: "call_transition_failed";
+    action: CallAction;
+    tenantId: string | number | null;
+    senderId: string | number | null;
+    callId: string | number | null;
+    conversationId: string | number | null;
+    fromStatus: string | null;
+    reason: string;
+    timestamp: string;
+}
+
+interface CallReliabilitySnapshot {
+    totalFailures: number;
+    byAction: Record<string, number>;
+    byReason: Record<string, number>;
+    recentFailures: NormalizedCallTransitionFailureEvent[];
+    capturedAt: string;
 }
 
 interface TimeoutError extends Error {
@@ -92,6 +127,7 @@ class HandlerStats {
 }
 
 const registry = new Map<string, HandlerStats>(); // type -> HandlerStats
+const callFailureEvents: NormalizedCallTransitionFailureEvent[] = [];
 
 function getOrCreate(type: string): HandlerStats {
     let s = registry.get(type);
@@ -183,14 +219,61 @@ function snapshot(): RegistrySnapshot {
     };
 }
 
+function normalizeAction(action?: string): CallAction {
+    if (action === "initiate" || action === "answer" || action === "reject" || action === "end") {
+        return action;
+    }
+    return "unknown";
+}
+
+function recordCallTransitionFailure(input: CallTransitionFailureEvent): void {
+    const event: NormalizedCallTransitionFailureEvent = {
+        event: "call_transition_failed",
+        action: normalizeAction(input.action),
+        tenantId: input.tenantId ?? null,
+        senderId: input.senderId ?? null,
+        callId: input.callId ?? null,
+        conversationId: input.conversationId ?? null,
+        fromStatus: input.fromStatus ?? null,
+        reason: input.reason || "unspecified",
+        timestamp: input.timestamp || new Date().toISOString(),
+    };
+
+    callFailureEvents.push(event);
+    if (callFailureEvents.length > CALL_FAILURE_WINDOW_SIZE) {
+        callFailureEvents.splice(0, callFailureEvents.length - CALL_FAILURE_WINDOW_SIZE);
+    }
+}
+
+function callReliabilitySnapshot(): CallReliabilitySnapshot {
+    const byAction: Record<string, number> = {};
+    const byReason: Record<string, number> = {};
+
+    for (const event of callFailureEvents) {
+        byAction[event.action] = (byAction[event.action] || 0) + 1;
+        byReason[event.reason] = (byReason[event.reason] || 0) + 1;
+    }
+
+    return {
+        totalFailures: callFailureEvents.length,
+        byAction,
+        byReason,
+        recentFailures: [...callFailureEvents],
+        capturedAt: new Date().toISOString(),
+    };
+}
+
 /** Test-only — drop every collected sample. */
 function __resetForTests(): void {
     registry.clear();
+    callFailureEvents.length = 0;
 }
 
 export {
     recordHandler,
     snapshot,
+    recordCallTransitionFailure,
+    callReliabilitySnapshot,
     __resetForTests,
     WINDOW_SIZE,
 };

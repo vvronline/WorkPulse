@@ -140,10 +140,9 @@ class PushNotificationService {
       sound: "default",
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
       vibrationPattern: [0, 160, 80, 160],
-      enableVibration: true,
+      enableVibrate: true,
       enableLights: true,
       lightColor: "#FF6B6B", // Red notification light
-      groupSummaryFormat: "newer", // Summary shows newest messages
     });
     await Notifications.setNotificationChannelAsync("notifications", {
       name: "Notifications",

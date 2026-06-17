@@ -180,6 +180,10 @@ export default function CallScreen() {
   const callIdRef = useRef<number | null>(
     params.callId ? Number(params.callId) : null,
   );
+  const initiateClientMsgIdRef = useRef(
+    `call-initiate:${conversationId}:${Date.now()}`,
+  );
+  const endClientMsgIdRef = useRef<string | null>(null);
   const peerIdRef = useRef<number | null>(
     params.peerId ? Number(params.peerId) : null,
   );
@@ -232,10 +236,23 @@ export default function CallScreen() {
   const endAndLeave = useCallback(
     (sendEnd: boolean) => {
       if (sendEnd && callIdRef.current) {
-        socket.send("call_end", {
-          callId: callIdRef.current,
-          conversationId,
-        });
+        if (!endClientMsgIdRef.current) {
+          endClientMsgIdRef.current = `call-end:${callIdRef.current}:${conversationId}`;
+        }
+        void socket.sendCallActionWithRetry(
+          "end",
+          {
+            callId: callIdRef.current,
+            conversationId,
+            clientMsgId: endClientMsgIdRef.current,
+          },
+          {
+            timeoutMs: 3500,
+            maxAttempts: 5,
+            initialBackoffMs: 120,
+            maxBackoffMs: 700,
+          },
+        );
       }
       try {
         localStreamRef.current?.getTracks().forEach((t) => t.stop());
@@ -923,10 +940,21 @@ export default function CallScreen() {
       }
       const sent = cancelled
         ? false
-        : await socket.sendWithRetry(
+        : await socket.sendWithBackoff(
             "call_initiate",
-            { conversationId, callType },
-            { timeoutMs: 5000, retryEveryMs: 250 },
+            {
+              conversationId,
+              callType,
+              clientMsgId: initiateClientMsgIdRef.current,
+            },
+            {
+              timeoutMs: 7000,
+              maxAttempts: 7,
+              initialBackoffMs: 140,
+              maxBackoffMs: 1000,
+              jitterRatio: 0.1,
+              ensureConnected: true,
+            },
           );
       if (!sent && !cancelled) {
         Alert.alert(
@@ -1007,19 +1035,40 @@ export default function CallScreen() {
                 offerToReceiveVideo: callType === "video",
               });
               await pc.setLocalDescription(offer);
-              socket.send("call_signal", {
-                conversationId,
-                targetUserId: d.userId,
-                signal: { type: "offer", sdp: offer.sdp },
-              });
+              const offerSent = await socket.sendWithBackoff(
+                "call_signal",
+                {
+                  conversationId,
+                  targetUserId: d.userId,
+                  signal: { type: "offer", sdp: offer.sdp },
+                },
+                {
+                  timeoutMs: 4500,
+                  maxAttempts: 5,
+                  initialBackoffMs: 120,
+                  maxBackoffMs: 800,
+                },
+              );
+              if (!offerSent) {
+                throw new Error("failed to deliver offer");
+              }
               // Tell the peer our current camera state immediately so they
               // render avatar vs. video correctly from the start (mirrors the
               // answerer path, which already sends this).
-              socket.send("call_signal", {
-                conversationId,
-                targetUserId: d.userId,
-                signal: { type: "video-state", videoOff },
-              });
+              await socket.sendWithBackoff(
+                "call_signal",
+                {
+                  conversationId,
+                  targetUserId: d.userId,
+                  signal: { type: "video-state", videoOff },
+                },
+                {
+                  timeoutMs: 2200,
+                  maxAttempts: 4,
+                  initialBackoffMs: 100,
+                  maxBackoffMs: 450,
+                },
+              );
             } catch (err: any) {
               // Fatal negotiation error — end cleanly instead of hanging.
               console.warn(

@@ -6,13 +6,17 @@
  * when notifications arrive or app comes to foreground.
  */
 
-import Logger from '../utils/logger';
-
 interface UnreadSyncState {
   conversationId: string;
   unreadCount: number;
   lastSyncTime: number;
   isDirty: boolean;
+}
+
+type ConversationId = string | number;
+
+function toConversationKey(conversationId: ConversationId): string {
+  return String(conversationId);
 }
 
 // Legacy listener pattern for backward compatibility
@@ -48,9 +52,10 @@ class ChatUnreadManager {
    * Update unread count for a conversation.
    * Marks as dirty for later reconciliation with server.
    */
-  updateUnreadCount(conversationId: string, count: number): void {
-    const current = this.unreadState.get(conversationId) || {
-      conversationId,
+  updateUnreadCount(conversationId: ConversationId, count: number): void {
+    const key = toConversationKey(conversationId);
+    const current = this.unreadState.get(key) || {
+      conversationId: key,
       unreadCount: 0,
       lastSyncTime: 0,
       isDirty: false,
@@ -59,18 +64,18 @@ class ChatUnreadManager {
     const changed = current.unreadCount !== count;
     current.unreadCount = count;
     current.isDirty = true;
-    this.unreadState.set(conversationId, current);
+    this.unreadState.set(key, current);
 
     if (changed) {
-      Logger.debug('[ChatUnreadEvents] Unread count updated', {
-        conversationId,
+      console.debug('[ChatUnreadEvents] Unread count updated', {
+        conversationId: key,
         count,
       });
       this.unreadChangeListeners.forEach((listener) => {
         try {
-          listener(conversationId, count);
+          listener(key, count);
         } catch (e) {
-          Logger.error('[ChatUnreadEvents] Listener error', { error: e });
+          console.error('[ChatUnreadEvents] Listener error', e);
         }
       });
       emitChatUnreadChanged();
@@ -81,19 +86,20 @@ class ChatUnreadManager {
   /**
    * Mark conversation as read, clearing unread count.
    */
-  markConversationRead(conversationId: string): void {
-    const state = this.unreadState.get(conversationId);
+  markConversationRead(conversationId: ConversationId): void {
+    const key = toConversationKey(conversationId);
+    const state = this.unreadState.get(key);
     if (state && state.unreadCount > 0) {
       state.unreadCount = 0;
       state.isDirty = true;
-      Logger.debug('[ChatUnreadEvents] Conversation marked read', {
-        conversationId,
+      console.debug('[ChatUnreadEvents] Conversation marked read', {
+        conversationId: key,
       });
       this.unreadChangeListeners.forEach((listener) => {
         try {
-          listener(conversationId, 0);
+          listener(key, 0);
         } catch (e) {
-          Logger.error('[ChatUnreadEvents] Listener error', { error: e });
+          console.error('[ChatUnreadEvents] Listener error', e);
         }
       });
       emitChatUnreadChanged();
@@ -104,8 +110,8 @@ class ChatUnreadManager {
   /**
    * Get unread count for a specific conversation.
    */
-  getUnreadCount(conversationId: string): number {
-    return this.unreadState.get(conversationId)?.unreadCount || 0;
+  getUnreadCount(conversationId: ConversationId): number {
+    return this.unreadState.get(toConversationKey(conversationId))?.unreadCount || 0;
   }
 
   /**
@@ -127,8 +133,8 @@ class ChatUnreadManager {
   /**
    * Clear dirty flag after successful server sync.
    */
-  clearDirtyFlag(conversationId: string): void {
-    const state = this.unreadState.get(conversationId);
+  clearDirtyFlag(conversationId: ConversationId): void {
+    const state = this.unreadState.get(toConversationKey(conversationId));
     if (state) {
       state.isDirty = false;
       state.lastSyncTime = Date.now();
@@ -138,7 +144,7 @@ class ChatUnreadManager {
   /**
    * Batch update unread counts (typically from server sync).
    */
-  updateBatch(updates: Array<{ conversationId: string; count: number }>): void {
+  updateBatch(updates: Array<{ conversationId: ConversationId; count: number }>): void {
     updates.forEach(({ conversationId, count }) => {
       this.updateUnreadCount(conversationId, count);
     });
@@ -177,12 +183,12 @@ class ChatUnreadManager {
       this.syncScheduled = false;
       const dirty = this.getDirtyConversations();
       if (dirty.length > 0) {
-        Logger.debug('[ChatUnreadEvents] Emitting sync needed', { count: dirty.length });
+        console.debug('[ChatUnreadEvents] Emitting sync needed', { count: dirty.length });
         this.syncNeededListeners.forEach((listener) => {
           try {
             listener(dirty);
           } catch (e) {
-            Logger.error('[ChatUnreadEvents] Sync listener error', { error: e });
+            console.error('[ChatUnreadEvents] Sync listener error', e);
           }
         });
       }
@@ -194,7 +200,7 @@ class ChatUnreadManager {
    */
   reset(): void {
     this.unreadState.clear();
-    Logger.debug('[ChatUnreadEvents] State reset');
+    console.debug('[ChatUnreadEvents] State reset');
   }
 
   /**

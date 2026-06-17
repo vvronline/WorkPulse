@@ -104,16 +104,16 @@
 
 ### Tests for User Story 3
 
-- [ ] T033 [P] [US3] Add websocket integration tests for reconnect-time call_accept retry behavior in `server/__tests__/ws.callAcceptReconnect.test.ts`
-- [ ] T034 [P] [US3] Add websocket integration tests for duplicate invite/action de-duplication in `server/__tests__/ws.callDuplicateInvite.test.ts`
-- [ ] T035 [P] [US3] Add mobile unit tests for retry/backoff send helper in `mobile/app/call/__tests__/callRetryFlow.test.ts`
+- [X] T033 [P] [US3] Add websocket integration tests for reconnect-time call_accept retry behavior in `server/__tests__/ws.callAcceptReconnect.test.ts`
+- [X] T034 [P] [US3] Add websocket integration tests for duplicate invite/action de-duplication in `server/__tests__/ws.callDuplicateInvite.test.ts`
+- [X] T035 [P] [US3] Add mobile unit tests for retry/backoff send helper in `mobile/app/call/__tests__/callRetryFlow.test.ts`
 
 ### Implementation for User Story 3
 
-- [ ] T036 [US3] Implement bounded retry/backoff utility for call signaling sends in `mobile/src/realtime/socket.ts`
-- [ ] T037 [US3] Apply reconnect-safe call action send helper in `mobile/app/call/[conversationId].tsx`
-- [ ] T038 [US3] Enforce server-side dedupe and terminal-state guards for call actions in `server/utils/ws.ts`
-- [ ] T039 [US3] Add structured reliability diagnostics for call transition failures in `server/utils/wsMetrics.ts`
+- [X] T036 [US3] Implement bounded retry/backoff utility for call signaling sends in `mobile/src/realtime/socket.ts`
+- [X] T037 [US3] Apply reconnect-safe call action send helper in `mobile/app/call/[conversationId].tsx`
+- [X] T038 [US3] Enforce server-side dedupe and terminal-state guards for call actions in `server/utils/ws.ts`
+- [X] T039 [US3] Add structured reliability diagnostics for call transition failures in `server/utils/wsMetrics.ts`
 
 **Checkpoint**: US3 is fully functional and independently testable.
 
@@ -123,10 +123,10 @@
 
 **Purpose**: Finish documentation, validation, and cross-story hardening.
 
-- [ ] T040 [P] Update quickstart verification steps with final command and device matrix in `specs/20260617-024245-call-notification-parity/quickstart.md`
-- [ ] T041 Run and document end-to-end validation notes for all stories in `specs/20260617-024245-call-notification-parity/research.md`
-- [ ] T042 [P] Add/refresh release checklist for native build requirements in `mobile/RELEASE.md`
-- [ ] T043 Final structured log field audit for call/message notification lifecycle in `server/services/pushNotifications.ts`
+- [X] T040 [P] Update quickstart verification steps with final command and device matrix in `specs/20260617-024245-call-notification-parity/quickstart.md`
+- [X] T041 Run and document end-to-end validation notes for all stories in `specs/20260617-024245-call-notification-parity/research.md`
+- [X] T042 [P] Add/refresh release checklist for native build requirements in `mobile/RELEASE.md`
+- [X] T043 Final structured log field audit for call/message notification lifecycle in `server/services/pushNotifications.ts`
 
 ---
 

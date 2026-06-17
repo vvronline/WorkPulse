@@ -190,7 +190,11 @@ async function withIdempotency({ tenantId, senderId, type, clientMsgId, cache = 
     return result;
 }
 async function withIdempotentCallAction({ tenantId, senderId, callId, action, clientMsgId, cache = defaultCache }, fn) {
-    const actionClientId = clientMsgId || `${callId}:${senderId}:${action}`;
+    // Include callId in the dedupe token even when clientMsgId is provided so
+    // retries from different calls cannot collide.
+    const actionClientId = clientMsgId
+        ? `${callId}:${clientMsgId}`
+        : `${callId}:${senderId}:${action}`;
     return withIdempotency({
         tenantId,
         senderId,

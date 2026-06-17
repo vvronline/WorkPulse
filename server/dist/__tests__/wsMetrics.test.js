@@ -70,5 +70,39 @@ describe("wsMetrics", () => {
         // All three should land on the same `unknown` bucket.
         expect(s.handlers.unknown.count).toBe(3);
     });
+    test("records call transition failures with action/reason rollups", () => {
+        wsMetrics.recordCallTransitionFailure({
+            action: "answer",
+            reason: "invalid_transition",
+            callId: 100,
+            conversationId: 55,
+        });
+        wsMetrics.recordCallTransitionFailure({
+            action: "reject",
+            reason: "sender_not_participant",
+            callId: 101,
+            conversationId: 55,
+        });
+        wsMetrics.recordCallTransitionFailure({
+            action: "answer",
+            reason: "invalid_transition",
+            callId: 102,
+            conversationId: 56,
+        });
+        const snap = wsMetrics.callReliabilitySnapshot();
+        expect(snap.totalFailures).toBe(3);
+        expect(snap.byAction.answer).toBe(2);
+        expect(snap.byAction.reject).toBe(1);
+        expect(snap.byReason.invalid_transition).toBe(2);
+        expect(snap.byReason.sender_not_participant).toBe(1);
+    });
+    test("normalizes unknown call actions to 'unknown'", () => {
+        wsMetrics.recordCallTransitionFailure({
+            action: "weird_action",
+            reason: "test",
+        });
+        const snap = wsMetrics.callReliabilitySnapshot();
+        expect(snap.byAction.unknown).toBe(1);
+    });
 });
 //# sourceMappingURL=wsMetrics.test.js.map

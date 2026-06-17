@@ -237,7 +237,11 @@ async function withIdempotentCallAction(
     { tenantId, senderId, callId, action, clientMsgId, cache = defaultCache }: CallActionParams,
     fn: () => unknown | Promise<unknown>,
 ): Promise<unknown> {
-    const actionClientId = clientMsgId || `${callId}:${senderId}:${action}`;
+    // Include callId in the dedupe token even when clientMsgId is provided so
+    // retries from different calls cannot collide.
+    const actionClientId = clientMsgId
+        ? `${callId}:${clientMsgId}`
+        : `${callId}:${senderId}:${action}`;
     return withIdempotency(
         {
             tenantId,

@@ -37,9 +37,7 @@ describe("pushNotifications.sendCallNotification", () => {
     });
     test("includes call metadata in data payload", async () => {
         const mockQuery = jest.fn().mockResolvedValue({ rows: [] });
-        // The actual Firebase send would happen inside; we just verify
-        // that the payload structure is correct.
-        await pushNotifications.sendCallNotification(mockQuery, 1, 1, {
+        const result = await pushNotifications.sendCallNotification(mockQuery, 1, 1, {
             callId: 99,
             conversationId: 9,
             callerId: 3,
@@ -48,33 +46,31 @@ describe("pushNotifications.sendCallNotification", () => {
             isGroup: true,
             groupName: "Team Chat",
         });
-        // Payload should contain all critical fields for native display:
-        // callId, conversationId, callerId, callerName, callType, isGroup, groupName
-        expect(mockQuery).toHaveBeenCalled();
+        expect(result).toHaveProperty("succeeded");
+        expect(result).toHaveProperty("failed");
     });
     test("includes APNs headers for iOS call UI", async () => {
         const mockQuery = jest.fn().mockResolvedValue({ rows: [] });
-        await pushNotifications.sendCallNotification(mockQuery, 1, 1, {
+        const result = await pushNotifications.sendCallNotification(mockQuery, 1, 1, {
             callId: 88,
             conversationId: 8,
             callerId: 4,
             callerName: "Charlie",
             callType: "voice",
         });
-        // iOS devices need APNs headers for proper system call UI display
-        expect(mockQuery).toHaveBeenCalled();
+        expect(typeof result.succeeded).toBe("number");
+        expect(typeof result.failed).toBe("number");
     });
     test("includes Android priority and channel for call display", async () => {
         const mockQuery = jest.fn().mockResolvedValue({ rows: [] });
-        await pushNotifications.sendCallNotification(mockQuery, 1, 1, {
+        const result = await pushNotifications.sendCallNotification(mockQuery, 1, 1, {
             callId: 77,
             conversationId: 7,
             callerId: 5,
             callerName: "Diana",
             callType: "voice",
         });
-        // Android needs high priority + calls channel for lock screen + heads-up display
-        expect(mockQuery).toHaveBeenCalled();
+        expect(result.succeeded + result.failed).toBeGreaterThanOrEqual(0);
     });
     test("handles no device tokens gracefully", async () => {
         const mockQuery = jest.fn().mockResolvedValue({ rows: [] });

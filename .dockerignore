@@ -5,6 +5,9 @@ server/node_modules/
 
 # Build outputs
 client/dist/
+dist/
+build/
+coverage/
 
 # Logs
 logs
@@ -17,10 +20,13 @@ npm-debug.log*
 # Git
 .git
 .gitignore
+Dockerfile*
+.dockerignore
 
 # Environment variables (SECURITY)
 .env
 .env.local
+.env*
 
 
 # Uploads (Volume mounted, do not bake into image)

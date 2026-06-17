@@ -151,7 +151,7 @@ describe("withIdempotentCallAction", () => {
         expect(fn).toHaveBeenCalledTimes(2); // no collision
     });
 
-    test("missing clientMsgId bypasses dedup (every call runs)", async () => {
+    test("missing clientMsgId uses deterministic fallback key for dedup", async () => {
         const cache = new IdempotencyCache();
         const fn = jest.fn().mockResolvedValue("ok");
 
@@ -169,7 +169,7 @@ describe("withIdempotentCallAction", () => {
             );
         }
 
-        expect(fn).toHaveBeenCalledTimes(3); // all run — no dedup
+        expect(fn).toHaveBeenCalledTimes(1);
     });
 
     test("generates fallback clientMsgId from call context", async () => {

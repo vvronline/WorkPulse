@@ -35,9 +35,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.WINDOW_SIZE = void 0;
 exports.recordHandler = recordHandler;
 exports.snapshot = snapshot;
+exports.recordCallTransitionFailure = recordCallTransitionFailure;
+exports.callReliabilitySnapshot = callReliabilitySnapshot;
 exports.__resetForTests = __resetForTests;
 const WINDOW_SIZE = 256;
 exports.WINDOW_SIZE = WINDOW_SIZE;
+const CALL_FAILURE_WINDOW_SIZE = 200;
 /** Per-message-type metrics state. */
 class HandlerStats {
     count = 0;
@@ -81,6 +84,7 @@ class HandlerStats {
     }
 }
 const registry = new Map(); // type -> HandlerStats
+const callFailureEvents = [];
 function getOrCreate(type) {
     let s = registry.get(type);
     if (!s) {
@@ -159,8 +163,47 @@ function snapshot() {
         capturedAt: new Date().toISOString(),
     };
 }
+function normalizeAction(action) {
+    if (action === "initiate" || action === "answer" || action === "reject" || action === "end") {
+        return action;
+    }
+    return "unknown";
+}
+function recordCallTransitionFailure(input) {
+    const event = {
+        event: "call_transition_failed",
+        action: normalizeAction(input.action),
+        tenantId: input.tenantId ?? null,
+        senderId: input.senderId ?? null,
+        callId: input.callId ?? null,
+        conversationId: input.conversationId ?? null,
+        fromStatus: input.fromStatus ?? null,
+        reason: input.reason || "unspecified",
+        timestamp: input.timestamp || new Date().toISOString(),
+    };
+    callFailureEvents.push(event);
+    if (callFailureEvents.length > CALL_FAILURE_WINDOW_SIZE) {
+        callFailureEvents.splice(0, callFailureEvents.length - CALL_FAILURE_WINDOW_SIZE);
+    }
+}
+function callReliabilitySnapshot() {
+    const byAction = {};
+    const byReason = {};
+    for (const event of callFailureEvents) {
+        byAction[event.action] = (byAction[event.action] || 0) + 1;
+        byReason[event.reason] = (byReason[event.reason] || 0) + 1;
+    }
+    return {
+        totalFailures: callFailureEvents.length,
+        byAction,
+        byReason,
+        recentFailures: [...callFailureEvents],
+        capturedAt: new Date().toISOString(),
+    };
+}
 /** Test-only — drop every collected sample. */
 function __resetForTests() {
     registry.clear();
+    callFailureEvents.length = 0;
 }
 //# sourceMappingURL=wsMetrics.js.map

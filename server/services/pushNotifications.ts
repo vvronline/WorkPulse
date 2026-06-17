@@ -201,6 +201,21 @@ class PushNotificationService {
             },
         };
 
+        logger.info(
+            {
+                event: "push_dispatch_attempt",
+                notificationType: "call",
+                tenantId,
+                userId,
+                callId: callData.callId,
+                conversationId: callData.conversationId,
+                dedupeKey: payload.data.dedupeKey,
+                channelId: payload.android?.notification?.channelId,
+                tokenCount: tokens.length,
+            },
+            "Dispatching call notification push",
+        );
+
         return this.sendToDevices(query, tokens, payload, `call-${callData.callId}`);
     }
 
@@ -280,17 +295,20 @@ class PushNotificationService {
             },
         };
 
-        // T031: Log message push lifecycle event
         logger.info(
             {
+                event: "push_dispatch_attempt",
+                notificationType: "message",
                 tenantId,
                 userId,
                 conversationId: messageData.conversationId,
                 messageId: messageData.messageId,
                 unreadCount,
+                dedupeKey: payload.data.dedupeKey,
+                channelId: payload.android?.notification?.channelId,
                 recipientCount: tokens.length,
             },
-            '[pushNotifications.sendMessageNotification] Sending message notification'
+            "Dispatching message notification push",
         );
 
         return this.sendToDevices(query, tokens, payload, `msg-${messageData.messageId}`);
@@ -426,11 +444,33 @@ class PushNotificationService {
             }
 
             logger.info(
-                { collapseKey, sent: response.successCount, failed: response.failureCount },
+                {
+                    event: "push_dispatch_result",
+                    collapseKey,
+                    notificationType: payload.data.type || (payload.data.callId ? "call" : "notification"),
+                    tenantId: payload.data.tenantId || null,
+                    dedupeKey: payload.data.dedupeKey || null,
+                    channelId: payload.android?.notification?.channelId,
+                    tokenCount: tokens.length,
+                    sent: response.successCount,
+                    failed: response.failureCount,
+                },
                 "Push notifications sent",
             );
         } catch (err) {
-            logger.error({ err: (err as Error).message, collapseKey }, "Failed to send push notifications");
+            logger.error(
+                {
+                    event: "push_dispatch_failed",
+                    err: (err as Error).message,
+                    collapseKey,
+                    notificationType: payload.data.type || (payload.data.callId ? "call" : "notification"),
+                    tenantId: payload.data.tenantId || null,
+                    dedupeKey: payload.data.dedupeKey || null,
+                    channelId: payload.android?.notification?.channelId,
+                    tokenCount: tokens.length,
+                },
+                "Failed to send push notifications",
+            );
             failed = tokens.length;
         }
 

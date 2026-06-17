@@ -1,4 +1,6 @@
 node_modules/
+dist/
+build/
 
 # ── Expo / React Native (mobile) ──────────────────────
 # Expo dev cache. The mobile/ workspace has its own .gitignore covering its
@@ -36,6 +38,7 @@ server/uploads/
 server/data/
 data/
 .vite/
+coverage/
 
 # ── Environment / secrets ─────────────────────────────
 # Google geolocation API key (injected at build time from CI secrets)
@@ -65,3 +68,10 @@ infra/coturn/turnserver.runtime.conf
 *.pem
 *.key
 !infra/coturn/turnserver.conf
+
+# ── Universal local/editor artifacts ────────────────────
+Thumbs.db
+*.tmp
+*.swp
+.vscode/
+.idea/

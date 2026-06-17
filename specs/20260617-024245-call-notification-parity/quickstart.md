@@ -80,3 +80,25 @@ Set-Location D:\Learnings\WorkPulse\server
 npm run typecheck
 npm run test
 ```
+
+## 8. Final reliability command set (US3 complete)
+
+```powershell
+Set-Location D:\Learnings\WorkPulse\server
+npm run test -- ws.callAcceptReconnect.test.ts ws.callDuplicateInvite.test.ts ws.callActionIdempotency.test.ts wsMetrics.test.ts
+
+Set-Location D:\Learnings\WorkPulse\mobile
+npx tsc --noEmit -p tsconfig.json
+```
+
+## 9. Device and app-state verification matrix
+
+| Scenario | Android 13+ | iOS 16+ | Expected result |
+|----------|-------------|---------|-----------------|
+| Incoming call when app terminated | ✅ | ✅ | Native incoming-call UI shown, answer/reject works |
+| Incoming call when app backgrounded | ✅ | ✅ | Heads-up/lock-screen call UI shown |
+| Message push in background | ✅ | ✅ | Status-bar notification visible |
+| Launcher badge increments on new message | ✅ | ✅ | Badge count matches server unread total |
+| Badge decrements after read (no restart) | ✅ | ✅ | Badge updates immediately after read sync |
+| Reconnect during ringing + accept retry | ✅ | ✅ | Single effective call_accept transition |
+| Duplicate invite/action delivery | ✅ | ✅ | Deduped server-side; no ghost/duplicate call state |

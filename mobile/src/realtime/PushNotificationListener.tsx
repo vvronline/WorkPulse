@@ -4,7 +4,7 @@
  * Integrates with WebSocket listeners for consistent behavior whether online or backgrounded.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRouter } from "expo-router";
 import { Alert, Linking, Platform } from "react-native";
 import * as Notifications from "expo-notifications";
@@ -12,7 +12,6 @@ import { pushNotificationService, type NotificationPayload } from "../services/p
 import { socket } from "./socket";
 import { emitChatUnreadChanged, chatUnreadManager } from "./chatUnreadEvents";
 import { backgroundPushService } from "../services/backgroundPushService";
-import Logger from "../utils/logger";
 
 /**
  * Root-level listener that handles all incoming push notifications.
@@ -20,12 +19,10 @@ import Logger from "../utils/logger";
  */
 export default function PushNotificationListener() {
   const router = useRouter();
-  const [permissionCheckDone, setPermissionCheckDone] = useState(false);
 
   useEffect(() => {
     // T032: Check notification permissions on mount and offer recovery if denied
-    checkAndRecoverPermissions();
-    setPermissionCheckDone(true);
+    checkAndRecoverPermissions().catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -63,12 +60,12 @@ async function checkAndRecoverPermissions(): Promise<void> {
     const permissions = await Notifications.getPermissionsAsync();
     
     if (permissions.status === "granted") {
-      Logger.debug('[PushNotificationListener] Notification permissions granted');
+      console.debug('[PushNotificationListener] Notification permissions granted');
       return;
     }
 
     if (permissions.status === "denied") {
-      Logger.warn('[PushNotificationListener] Notification permissions denied by user');
+      console.warn('[PushNotificationListener] Notification permissions denied by user');
       
       // T032: Show recovery UX with settings deep-link
       setTimeout(() => {
@@ -79,24 +76,24 @@ async function checkAndRecoverPermissions(): Promise<void> {
             {
               text: "Cancel",
               onPress: () => {
-                Logger.debug('[PushNotificationListener] User dismissed permission recovery');
+                console.debug('[PushNotificationListener] User dismissed permission recovery');
               },
               style: "cancel",
             },
             {
               text: "Open Settings",
               onPress: () => {
-                Logger.info('[PushNotificationListener] User opened notification settings');
+                console.info('[PushNotificationListener] User opened notification settings');
                 // Deep-link to platform-specific notification settings
                 if (Platform.OS === "android") {
                   Linking.openSettings().catch(() => {
-                    Logger.error('[PushNotificationListener] Failed to open Android settings');
+                    console.error('[PushNotificationListener] Failed to open Android settings');
                   });
                 } else if (Platform.OS === "ios") {
                   Linking.openURL("app-settings://notification").catch(() => {
                     // Fallback: open general settings
                     Linking.openSettings().catch(() => {
-                      Logger.error('[PushNotificationListener] Failed to open iOS settings');
+                      console.error('[PushNotificationListener] Failed to open iOS settings');
                     });
                   });
                 }
@@ -108,7 +105,7 @@ async function checkAndRecoverPermissions(): Promise<void> {
       }, 1000); // Delay to let app mount fully
     }
   } catch (err) {
-    Logger.error('[PushNotificationListener] Permission check failed', { error: err });
+    console.error('[PushNotificationListener] Permission check failed', err);
   }
 }
 
