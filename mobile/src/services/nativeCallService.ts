@@ -1,4 +1,5 @@
 import * as Linking from "expo-linking";
+import { Platform } from "react-native";
 import type { NotificationPayload } from "./pushNotificationService";
 
 type NativeAction = "answer" | "reject" | "end";
@@ -91,6 +92,16 @@ class NativeCallService {
   }
 
   private resolveCallKeepModule(): CallKeepModule | null {
+    // Temporary Android safeguard: current react-native-callkeep build crashes
+    // at startup on some RN versions due to duplicate exported method names.
+    if (Platform.OS === "android") {
+      if (!this.warnedUnavailable) {
+        this.warnedUnavailable = true;
+        console.warn("react-native-callkeep disabled on Android to avoid startup crash");
+      }
+      return null;
+    }
+
     try {
       const module = require("react-native-callkeep");
       return (module?.default || module) as CallKeepModule;
