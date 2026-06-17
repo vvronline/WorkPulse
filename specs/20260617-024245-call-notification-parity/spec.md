@@ -38,7 +38,7 @@ As a mobile user, I receive message notifications in system status bar and see l
 
 1. **Given** app is backgrounded, **When** message arrives, **Then** OS notification is shown in status bar.
 2. **Given** unread messages exist, **When** user reads conversation, **Then** launcher badge count decreases without app restart.
-3. **Given** user has disabled notification permission, **When** app opens settings prompt flow, **Then** user sees clear action guidance and system state is respected.
+3. **Given** user has disabled notification permission, **When** app opens permission prompt flow, **Then** (a) if user grants: system notification delivery enabled; (b) if user denies: one-time retry prompt shown on next app open, then settings deep-link offered; (c) state persists across app restarts (no repeated prompts within 24 hours); (d) in all cases, existing messages/calls remain functional (graceful fallback, no crashes).
 
 ---
 
@@ -93,7 +93,7 @@ As a caller/callee, call signaling and state remain consistent even during webso
 - **SC-001**: In test runs, >= 95% of valid incoming call pushes surface native incoming-call UI within 2 seconds on supported devices.
 - **SC-002**: >= 95% of answer actions from native UI transition to call `connecting` within 3 seconds.
 - **SC-003**: >= 99% of message pushes generate visible status-bar notifications when permission is granted.
-- **SC-004**: Badge count divergence between server unread total and device launcher badge is <= 1 count for <= 5 seconds after read events.
+- **SC-004**: Badge count divergence between server unread total and device launcher badge is <= 1 count for <= 5 seconds after read events. Steady-state: badge count MUST match server authoritative unread total within 10 seconds of final read event; zero divergence is target.
 
 ## Assumptions
 

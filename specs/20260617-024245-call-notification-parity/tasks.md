@@ -38,6 +38,7 @@
 - [X] T009 [P] Extend mobile push notification service contract helpers for typed call/message payload normalization in `mobile/src/services/pushNotificationService.ts`
 - [X] T010 Add server-side payload builder helpers (call/message/common metadata) in `server/services/pushNotifications.ts`
 - [X] T011 Add idempotency helper for native call action events in `server/utils/wsIdempotency.ts`
+  - **Acceptance Criteria**: (1) Dedup key format: `{userId}:{callId}:{actionType}` (answer/reject/end); (2) Cache TTL: 5 minutes; (3) Handler checks dedup key before state mutation; (4) Duplicate push delivery (T034 scenario) produces single call_accept event; (5) Out-of-order websocket + push actions handled idempotently
 - [X] T012 Add structured logging schema for push/call lifecycle events in `server/utils/logger.ts`
 
 **Checkpoint**: Foundation complete; user stories can proceed.
@@ -53,6 +54,7 @@
 ### Tests for User Story 1
 
 - [X] T013 [P] [US1] Add server integration tests for incoming call push payload contract in `server/__tests__/pushNotifications.callPayload.test.ts`
+  - **Acceptance Criteria**: (1) Valid payload with correct tenant_id generates expected call invite; (2) Payload with spoofed/different tenant_id is rejected by server validation; (3) Payload missing tenant_id generates error; (4) Duplicate invites with same dedupeKey produce single call state
 - [X] T014 [P] [US1] Add server integration tests for call action idempotency (`answer`/`reject`) in `server/__tests__/ws.callActionIdempotency.test.ts`
 - [X] T015 [P] [US1] Add mobile service unit tests for native call action mapping in `mobile/src/services/__tests__/nativeCallService.test.ts`
 
@@ -60,14 +62,15 @@
 
 - [X] T016 [US1] Implement incoming call push -> native UI display flow in `mobile/src/services/backgroundPushService.ts`
 - [X] T017 [US1] Implement native answer/reject callbacks and deep-link bridge in `mobile/src/services/nativeCallService.ts`
+  - **Security Note**: All callbacks MUST use authenticated WebSocket (HttpOnly JWT from session, never plaintext token in push payload). Server-side RBAC enforcement (user owns call) applied before state mutation. No native-action shortcuts around auth.
 - [X] T018 [US1] Update call screen to accept native-entry params and auto-connect flow in `mobile/app/call/[conversationId].tsx`
 - [X] T019 [US1] Add call action retry-on-reconnect helper usage in `mobile/src/realtime/socket.ts`
 - [X] T020 [US1] Extend websocket handler for deduped native call actions in `server/utils/ws.ts`
+  - **Security Note**: Verify caller ownership (authenticated user_id must own call or be invited participant). Enforce RBAC before transitioning call state. Log all answer/reject/end actions with tenant/user/call context.
 - [X] T021 [US1] Extend call push payload fields (`expiresAt`, `dedupeKey`, caller metadata) in `server/services/pushNotifications.ts`
 - [X] T022 [US1] Add call push observability logs with tenant/user/call context in `server/services/pushNotifications.ts`
 - [X] T023 [US1] Add native call onboarding and permission prompt flow in `mobile/src/realtime/PushNotificationInitializer.tsx`
-
-**Checkpoint**: US1 is fully functional and independently testable.
+  - **Acceptance Criteria**: (1) First app launch: show call + notification permission prompts with clear UX; (2) If user grants both: proceed to home; (3) If user denies: show retry option on next app open (max once per 24h); (4) Show settings deep-link if user denies twice; (5) App remains functional without permissions (no crashes); (6) Permissions state persisted in AsyncStorage
 
 ---
 
@@ -91,6 +94,7 @@
 - [X] T030 [US2] Emit unread refresh events after read/write chat mutations in `mobile/src/components/chat/useChatThread.ts`
 - [X] T031 [US2] Normalize message push payload delivery parameters and logging in `server/services/pushNotifications.ts`
 - [X] T032 [US2] Add permissions recovery UX (settings deep-link and state checks) in `mobile/src/realtime/PushNotificationListener.tsx`
+  - **Acceptance Criteria**: (1) If notification permission denied: show banner with settings deep-link; (2) Tapping link opens OS settings (Android: App Settings → Notifications; iOS: Settings → [App] → Notifications); (3) On returning to app: check permission state and update badge/notification delivery; (4) Banner dismissed on permission grant; (5) No infinite retry loops (max 1 retry per session)
 
 **Checkpoint**: US2 is fully functional and independently testable.
 
@@ -116,6 +120,15 @@
 - [X] T039 [US3] Add structured reliability diagnostics for call transition failures in `server/utils/wsMetrics.ts`
 
 **Checkpoint**: US3 is fully functional and independently testable.
+
+---
+
+## Phase 5.5: Performance Validation (Latency & Reliability)
+
+**Purpose**: Validate that incoming call UI display and answer-to-connect transitions meet measurable SLA targets under realistic network conditions.
+
+- [X] T044 [P] [US1, US2] Add latency assertion tests for call UI display and answer-to-connect transitions in `server/__tests__/performanceMetrics.test.ts` and `mobile/app/call/__tests__/callLatency.test.ts`
+  - **Acceptance Criteria**: (1) Call UI display latency from push receipt to native UI render: target <= 2s (95th percentile, 3G/4G network simulation); (2) Answer action from user tap to WebSocket call_accept delivery: target <= 3s (95th percentile); (3) Test harness simulates realistic network delays (100-500ms latency, 1-5% packet loss); (4) SLA validation runs in CI; failures block merge; (5) Metrics logged with percentile breakdown (p50, p95, p99)
 
 ---
 
