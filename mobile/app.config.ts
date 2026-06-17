@@ -84,6 +84,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       },
     ],
     "./scripts/withFirebaseNotificationChannelOverride",
+    // Remove the expo-notifications FCM service so @react-native-firebase/messaging
+    // is the SOLE handler of com.google.firebase.MESSAGING_EVENT. Otherwise the
+    // Expo service intercepts our DATA-ONLY call/message pushes and silently drops
+    // them (no background handler fires → no Notifee call/message UI).
+    "./scripts/withRemoveExpoFirebaseMessagingService",
     // Makes the main Activity show over the lock screen + turn the screen on so
     // full-screen-intent incoming-call notifications surface the call UI over
     // the lock screen without the SYSTEM_ALERT_WINDOW overlay permission.

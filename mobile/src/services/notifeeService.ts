@@ -22,8 +22,15 @@ import * as Linking from "expo-linking";
 import { nativeCallService } from "./nativeCallService";
 import type { NotificationPayload } from "./pushNotificationService";
 
-const CALL_CHANNEL_ID = "calls";
-const MESSAGE_CHANNEL_ID = "messages";
+// Versioned channel IDs. Android notification channels are IMMUTABLE after
+// creation — recreating a channel with the same ID does NOT update its
+// importance/sound/visibility. If a device created "calls"/"messages" under an
+// earlier build with weaker settings, those stale settings would persist and
+// silently downgrade our call/message notifications. Bumping the ID forces the
+// OS to create a fresh channel with the corrected high-importance settings.
+// (Mirrors Signal-Android's `calls_v3` versioned-channel pattern.)
+const CALL_CHANNEL_ID = "calls_v2";
+const MESSAGE_CHANNEL_ID = "messages_v2";
 
 type NotifeeModule = any;
 type AndroidImportanceEnum = Record<string, number>;
