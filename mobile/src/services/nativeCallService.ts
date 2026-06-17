@@ -57,6 +57,18 @@ class NativeCallService {
     };
   }
 
+  /**
+   * Whether native (CallKeep) incoming-call UI is available and configured.
+   * Returns false on Android (CallKeep is currently disabled to avoid a
+   * startup crash) and in builds where the native module is unavailable
+   * (e.g. Expo Go). Callers should fall back to a heads-up status-bar
+   * notification when this is false so incoming calls are never silently
+   * dropped while the app is backgrounded/terminated.
+   */
+  isNativeAvailable(): boolean {
+    return this.nativeEnabled && this.callKeep != null;
+  }
+
   async reportIncomingCall(payload: NotificationPayload["data"]): Promise<void> {
     const callId = toInt(payload?.callId);
     const conversationId = toInt(payload?.conversationId);

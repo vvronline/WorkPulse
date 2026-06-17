@@ -94,6 +94,18 @@ class BackgroundPushService {
       // `notification` block) so this handler is guaranteed to run on Android
       // even when the app is killed.
       await nativeCallService.reportIncomingCall(data);
+
+      // Fallback: when native CallKeep UI is unavailable (e.g. Android, where
+      // CallKeep is currently disabled to avoid a startup crash, or Expo Go),
+      // `reportIncomingCall` is a silent no-op and a data-only call push is NOT
+      // auto-rendered by the OS — so the incoming call would never surface. Post
+      // a high-importance heads-up notification on the `calls` channel with
+      // Answer/Decline actions so the user can still see and act on the call
+      // while the app is backgrounded/terminated.
+      if (!nativeCallService.isNativeAvailable()) {
+        await this.presentCallNotification(payload);
+      }
+
       if (data.notificationAction === "accept_call") {
         await nativeCallService.handleAction("answer", data);
       } else if (data.notificationAction === "decline_call") {
@@ -106,6 +118,63 @@ class BackgroundPushService {
     // the background, the OS will NOT auto-render it, so we post a local
     // notification into the status bar ourselves.
     await this.presentDataNotification(payload);
+  }
+
+  /**
+   * Presents a high-importance incoming-call notification in the status bar /
+   * lock screen for the case where native CallKeep UI is unavailable. Uses the
+   * `calls` channel (MAX importance) and the `incoming-call` category so the OS
+   * renders Answer/Decline actions. Ensures the channel exists first so the
+   * notification is not dropped during first-run / killed-state delivery.
+   */
+  private async presentCallNotification(payload: NotificationPayload): Promise<void> {
+    const data = payload.data || {};
+    const title =
+      payload.title ||
+      data.title ||
+      (data.callType === "video" ? "Incoming Video Call" : "Incoming Voice Call");
+    const body = payload.body || data.body || `${data.callerName || "Someone"} is calling...`;
+
+    try {
+      await this.ensureCallChannel();
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title,
+          body,
+          data,
+          sound: "default",
+          categoryIdentifier: "incoming-call",
+          ...(Platform.OS === "android" ? { channelId: "calls" } : {}),
+        },
+        trigger: null,
+      });
+    } catch (err) {
+      console.warn("Failed to present background call notification:", err);
+    }
+  }
+
+  /**
+   * Ensures the high-importance `calls` Android channel exists. Channels created
+   * at app launch may not exist yet during killed-state delivery, so we (re)create
+   * it here before posting a call notification.
+   */
+  private async ensureCallChannel(): Promise<void> {
+    if (Platform.OS !== "android") return;
+    try {
+      await Notifications.setNotificationChannelAsync("calls", {
+        name: "Calls",
+        description: "Incoming call alerts",
+        importance: Notifications.AndroidImportance.MAX,
+        sound: "default",
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        vibrationPattern: [0, 200, 120, 200],
+        bypassDnd: true,
+        enableVibrate: true,
+        enableLights: true,
+      });
+    } catch (err) {
+      console.warn("Failed to ensure calls notification channel:", err);
+    }
   }
 
   /**

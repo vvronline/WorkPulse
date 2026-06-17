@@ -260,15 +260,23 @@ class PushNotificationService {
 
         const preview = messageData.messagePreview.substring(0, 150);
         const unreadCount = messageData.unreadCount || 1;
-        
-        // T031: Enrich payload with message type and unread count for badge reconciliation
+
+        // IMPORTANT: Message pushes are DATA-ONLY (no top-level `notification`
+        // block), mirroring sendCallNotification. On Android, a message that
+        // contains a `notification` block is treated as a "notification message"
+        // and is handed to the system tray WITHOUT invoking the app's background
+        // message handler when the app is backgrounded/killed. Our background
+        // handler (backgroundPushService.presentDataNotification) is what posts
+        // the status-bar notification on the dedicated "messages" channel (which
+        // it also (re)creates on the fly to survive killed-state delivery). So
+        // the payload MUST be data-only on Android to guarantee status-bar
+        // visibility. Title/body are carried in `data` for the client to render.
+        // iOS still receives a visible alert via the apns.payload.aps.alert below.
         const payload: FCMPayload = {
-            notification: {
-                title: messageData.senderName,
-                body: preview,
-            },
             data: this.buildCommonData({
                 type: "chat_message",
+                title: messageData.senderName,
+                body: preview,
                 conversationId: String(messageData.conversationId),
                 messageId: String(messageData.messageId),
                 senderId: String(messageData.senderId),
