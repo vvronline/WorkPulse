@@ -67,6 +67,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         defaultChannel: "default",
       },
     ],
+    "./scripts/withFirebaseNotificationChannelOverride",
     [
       "expo-audio",
       {
