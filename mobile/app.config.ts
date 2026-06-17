@@ -75,12 +75,12 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       {
         // Ensures push notifications still post when the app process is dead.
         defaultChannel: "default",
-        // Generates the `notification_icon` drawable (monochrome small icon)
-        // used by status-bar notifications. Without a dedicated drawable the
-        // small icon falls back to the full-colour launcher icon (renders as a
-        // white square on Android) and our Notifee `smallIcon` lookup fails.
-        icon: "./assets/android-icon-monochrome.png",
-        color: "#FF6B6B",
+        // NOTE: Do NOT set `icon`/`color` here. Those options inject
+        // `com.google.firebase.messaging.default_notification_color` /
+        // `..._icon` meta-data into the app manifest, which collides with the
+        // same meta-data declared by @react-native-firebase/messaging and FAILS
+        // the manifest merge (`processReleaseMainManifest`). The small icon is
+        // cosmetic; Notifee falls back to the app default icon without it.
       },
     ],
     "./scripts/withFirebaseNotificationChannelOverride",
