@@ -19,6 +19,11 @@ interface FCMPayload {
         notification: {
             sound: string;
             channelId: string;
+            priority?: "min" | "low" | "default" | "high" | "max";
+            visibility?: "private" | "public" | "secret";
+            notificationCount?: number;
+            defaultVibrateTimings?: boolean;
+            defaultLightSettings?: boolean;
             click_action?: string;
         };
     };
@@ -30,6 +35,7 @@ interface FCMPayload {
                     title: string;
                     body: string;
                 };
+                badge?: number;
                 sound: string;
                 "mutable-content": number;
                 category?: string;
@@ -44,6 +50,33 @@ class PushNotificationService {
 
     constructor() {
         this.initialize();
+    }
+
+    private buildCommonData(base: Record<string, string>, tenantId: number | null): Record<string, string> {
+        return {
+            ...base,
+            tenantId: tenantId != null ? String(tenantId) : "",
+            sentAt: new Date().toISOString(),
+        };
+    }
+
+    private buildAndroidNotification(
+        channelId: string,
+        priority: "high" | "max" = "high",
+        visibility: "private" | "public" = "private",
+    ): FCMPayload["android"] {
+        return {
+            priority: "high",
+            notification: {
+                sound: "default",
+                channelId: process.env.PUSH_DEFAULT_ANDROID_CHANNEL || channelId,
+                priority,
+                visibility,
+                notificationCount: 1,
+                defaultVibrateTimings: true,
+                defaultLightSettings: true,
+            },
+        };
     }
 
     private initialize() {
@@ -122,10 +155,11 @@ class PushNotificationService {
 
         const title = callData.callType === "video" ? "Incoming Video Call" : "Incoming Voice Call";
         const body = `${callData.callerName} is calling...`;
+        const callTTLSeconds = Number(process.env.PUSH_CALL_TTL_SECONDS || 30);
 
         const payload: FCMPayload = {
             notification: { title, body },
-            data: {
+            data: this.buildCommonData({
                 callId: String(callData.callId),
                 conversationId: String(callData.conversationId),
                 callerId: String(callData.callerId),
@@ -134,22 +168,31 @@ class PushNotificationService {
                 callType: callData.callType,
                 isGroup: String(callData.isGroup || false),
                 groupName: callData.groupName || "",
-            },
+                expiresAt: new Date(Date.now() + (callTTLSeconds * 1000)).toISOString(),
+                dedupeKey: `call:${callData.callId}`,
+                callCategory: "incoming-call",
+            }, tenantId),
             android: {
                 priority: "high",
                 notification: {
                     sound: "default",
-                    channelId: "calls",
+                    channelId: "calls", // Use dedicated calls channel for system UI display
+                    priority: "max",
+                    visibility: "public",
+                    notificationCount: 1,
+                    defaultVibrateTimings: true,
+                    defaultLightSettings: true,
                 },
             },
             apns: {
                 headers: {
                     "apns-priority": "10",
-                    "apns-push-type": "alert",
+                    "apns-push-type": process.env.PUSH_CALL_APNS_PUSH_TYPE || "alert",
                 },
                 payload: {
                     aps: {
                         alert: { title, body },
+                        badge: 1,
                         sound: "default",
                         "mutable-content": 1,
                         category: "incoming-call",
@@ -172,6 +215,7 @@ class PushNotificationService {
             senderName: string;
             senderAvatar?: string;
             messagePreview: string;
+            unreadCount?: number; // T031: Server-authoritative unread count
         },
     ): Promise<{ succeeded: number; failed: number }> {
         if (!this.initialized || !this.app) {
@@ -184,22 +228,37 @@ class PushNotificationService {
         }
 
         const preview = messageData.messagePreview.substring(0, 150);
+        const unreadCount = messageData.unreadCount || 1;
+        
+        // T031: Enrich payload with message type and unread count for badge reconciliation
         const payload: FCMPayload = {
             notification: {
                 title: messageData.senderName,
                 body: preview,
             },
-            data: {
+            data: this.buildCommonData({
+                type: "message",
                 conversationId: String(messageData.conversationId),
                 messageId: String(messageData.messageId),
                 senderId: String(messageData.senderId),
                 senderName: messageData.senderName,
-            },
+                unreadCount: String(unreadCount),
+                badgeCount: String(unreadCount),
+                dedupeKey: `msg:${messageData.messageId}`,
+                // T031: Add expiry for payload freshness validation (1 hour TTL)
+                expiresAt: String(Math.floor(Date.now() / 1000) + 3600),
+            }, tenantId),
+            // T031: Use dedicated "messages" channel for status-bar visibility
             android: {
                 priority: "high",
                 notification: {
                     sound: "default",
-                    channelId: "messages",
+                    channelId: process.env.PUSH_MESSAGE_ANDROID_CHANNEL || "messages",
+                    priority: "high",
+                    visibility: "private",
+                    notificationCount: unreadCount,
+                    defaultVibrateTimings: true,
+                    defaultLightSettings: true,
                 },
             },
             apns: {
@@ -213,12 +272,26 @@ class PushNotificationService {
                             title: messageData.senderName,
                             body: preview,
                         },
+                        badge: unreadCount,
                         sound: "default",
                         "mutable-content": 1,
                     },
                 },
             },
         };
+
+        // T031: Log message push lifecycle event
+        logger.info(
+            {
+                tenantId,
+                userId,
+                conversationId: messageData.conversationId,
+                messageId: messageData.messageId,
+                unreadCount,
+                recipientCount: tokens.length,
+            },
+            '[pushNotifications.sendMessageNotification] Sending message notification'
+        );
 
         return this.sendToDevices(query, tokens, payload, `msg-${messageData.messageId}`);
     }
@@ -248,17 +321,12 @@ class PushNotificationService {
                 title: notificationData.title,
                 body: notificationData.body,
             },
-            data: {
+            data: this.buildCommonData({
                 notificationId: String(notificationData.notificationId),
                 type: notificationData.type || "notification",
-            },
-            android: {
-                priority: "high",
-                notification: {
-                    sound: "default",
-                    channelId: "notifications",
-                },
-            },
+                dedupeKey: `notif:${notificationData.notificationId}`,
+            }, tenantId),
+            android: this.buildAndroidNotification("default", "high", "private"),
             apns: {
                 headers: {
                     "apns-priority": "10",
@@ -270,6 +338,7 @@ class PushNotificationService {
                             title: notificationData.title,
                             body: notificationData.body,
                         },
+                        badge: 1,
                         sound: "default",
                         "mutable-content": 1,
                     },

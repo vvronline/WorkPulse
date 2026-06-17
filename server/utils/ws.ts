@@ -13,9 +13,9 @@
 import { randomUUID } from "crypto";
 import type { Server as HTTPServer } from "http";
 import type { IncomingMessage } from "http";
-import { logger } from "./logger";
+import { logger, logPushCallLifecycle } from "./logger";
 import { chatMessage } from "./wsHandlers/chatMessage";
-import { withIdempotency } from "./wsIdempotency";
+import { withIdempotency, withIdempotentCallAction } from "./wsIdempotency";
 import { pushNotifications } from "../services/pushNotifications";
 const { WebSocketServer } = require("ws");
 const jwt = require("jsonwebtoken");
@@ -713,8 +713,32 @@ async function handleChatMessage(db: DbLike, senderId: number, tenantId: number 
                     isGroup: conv?.is_group || false,
                     groupName: conv?.name,
                 }
-            ).catch((err: any) => {
+            ).then(() => {
+                logPushCallLifecycle(
+                    {
+                        event: "push_send_result",
+                        tenantId,
+                        userId: p.user_id,
+                        callId: callLog.id,
+                        conversationId,
+                        status: "success",
+                    },
+                    "debug",
+                );
+            }).catch((err: any) => {
                 logger.warn({ err: err.message, userId: p.user_id, callId: callLog.id }, "Failed to send call push notification");
+                logPushCallLifecycle(
+                    {
+                        event: "push_send_result",
+                        tenantId,
+                        userId: p.user_id,
+                        callId: callLog.id,
+                        conversationId,
+                        status: "failed",
+                        failureReason: err.message || "unknown",
+                    },
+                    "warn",
+                );
             });
         }
 
@@ -738,68 +762,86 @@ async function handleChatMessage(db: DbLike, senderId: number, tenantId: number 
 
     } else if (msg.type === "call_accept") {
         // Callee accepts → update call log, notify caller with acceptance
-        const { callId, conversationId } = msg.data || {};
+        const { callId, conversationId, clientMsgId: rawIdAccept } = msg.data || {};
         if (!callId || !conversationId) return;
 
-        const [callLogResult, participantResult] = await Promise.all([
-            db.query(
-                `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2 AND status = 'ringing'`,
-                [callId, conversationId],
-            ),
-            db.query(
-                "SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2",
-                [conversationId, senderId],
-            ),
-        ]);
+        await withIdempotentCallAction(
+            { tenantId, senderId, callId, action: "answer", clientMsgId: rawIdAccept },
+            async () => {
+                const [callLogResult, participantResult] = await Promise.all([
+                    db.query(
+                        `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2 AND status = 'ringing'`,
+                        [callId, conversationId],
+                    ),
+                    db.query(
+                        "SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2",
+                        [conversationId, senderId],
+                    ),
+                ]);
 
-        const callLog = callLogResult.rows[0];
-        if (!callLog) {
-            logger.warn({ senderId, callId, conversationId }, "call_accept: no ringing call found");
-            return;
-        }
-        if (!participantResult.rows[0]) {
-            logger.warn({ senderId, callId, conversationId }, "call_accept: sender not a participant");
-            return;
-        }
+                const callLog = callLogResult.rows[0];
+                if (!callLog) {
+                    logger.warn({ senderId, callId, conversationId }, "call_accept: no ringing call found");
+                    return;
+                }
+                if (!participantResult.rows[0]) {
+                    logger.warn({ senderId, callId, conversationId }, "call_accept: sender not a participant");
+                    return;
+                }
 
-        const [, accepterResult] = await Promise.all([
-            db.query(`UPDATE call_logs SET status = 'answered', started_at = NOW() WHERE id = $1`, [callId]),
-            db.query("SELECT full_name, avatar FROM users WHERE id = $1", [senderId]),
-        ]);
+                const [, accepterResult] = await Promise.all([
+                    db.query(`UPDATE call_logs SET status = 'answered', started_at = NOW() WHERE id = $1`, [callId]),
+                    db.query("SELECT full_name, avatar FROM users WHERE id = $1", [senderId]),
+                ]);
 
-        const accepter = accepterResult.rows[0];
+                const accepter = accepterResult.rows[0];
 
-        logger.info({ senderId, callerId: callLog.caller_id, callId, conversationId, tenantId }, "call_accept: notifying caller");
+                logPushCallLifecycle(
+                    {
+                        event: "native_call_action_applied",
+                        tenantId,
+                        userId: senderId,
+                        callId,
+                        conversationId,
+                        action: "answer",
+                        status: "success",
+                    },
+                    "info",
+                );
 
-        // Notify the caller that call was accepted
-        sendToUser(tenantId, callLog.caller_id, "call_accepted", {
-            callId,
-            conversationId,
-            userId: senderId,
-            userName: accepter?.full_name,
-            userAvatar: accepter?.avatar,
-        });
+                logger.info({ senderId, callerId: callLog.caller_id, callId, conversationId, tenantId }, "call_accept: notifying caller");
 
-        // Multi-session support: the accepter may have other active sessions
-        // (e.g. desktop + browser) where the incoming-call PiP is still
-        // ringing. Tell every one of the accepter's sessions that the call
-        // has been handled so non-accepting devices dismiss their PiP.
-        // The accepting session itself has already cleared its PiP locally
-        // and ignores this event (see CallContext handler).
-        sendToUser(tenantId, senderId, "call_handled_elsewhere", {
-            callId,
-            conversationId,
-            action: "accepted",
-        });
+                // Notify the caller that call was accepted
+                sendToUser(tenantId, callLog.caller_id, "call_accepted", {
+                    callId,
+                    conversationId,
+                    userId: senderId,
+                    userName: accepter?.full_name,
+                    userAvatar: accepter?.avatar,
+                });
 
-        // Status service v2: mark the accepting device (only) as in_call.
-        if (ws._statusSessionKey) {
-            statusService.setSessionActivity(
-                { db, tenantId },
-                ws._statusSessionKey, "in_call", callId,
-            ).catch((err: any) => logger.warn({ err: err.message, callId }, "setSessionActivity(in_call) failed"));
-            ws._callActivityRefId = callId;
-        }
+                // Multi-session support: the accepter may have other active sessions
+                // (e.g. desktop + browser) where the incoming-call PiP is still
+                // ringing. Tell every one of the accepter's sessions that the call
+                // has been handled so non-accepting devices dismiss their PiP.
+                // The accepting session itself has already cleared its PiP locally
+                // and ignores this event (see CallContext handler).
+                sendToUser(tenantId, senderId, "call_handled_elsewhere", {
+                    callId,
+                    conversationId,
+                    action: "accepted",
+                });
+
+                // Status service v2: mark the accepting device (only) as in_call.
+                if (ws._statusSessionKey) {
+                    statusService.setSessionActivity(
+                        { db, tenantId },
+                        ws._statusSessionKey, "in_call", callId,
+                    ).catch((err: any) => logger.warn({ err: err.message, callId }, "setSessionActivity(in_call) failed"));
+                    ws._callActivityRefId = callId;
+                }
+            },
+        );
 
     } else if (msg.type === "call_cancel") {
         // Caller cancels (media acquisition failed after call_initiate was sent)
@@ -835,58 +877,76 @@ async function handleChatMessage(db: DbLike, senderId: number, tenantId: number 
 
     } else if (msg.type === "call_reject") {
         // Callee rejects → update call log, notify caller
-        const { callId, conversationId } = msg.data || {};
+        const { callId, conversationId, clientMsgId: rawIdReject } = msg.data || {};
         if (!callId || !conversationId) return;
 
-        // Verify sender is a participant in this conversation
-        const isParticipant = (await db.query(
-            "SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2",
-            [conversationId, senderId],
-        )).rows[0];
-        if (!isParticipant) return;
+        await withIdempotentCallAction(
+            { tenantId, senderId, callId, action: "reject", clientMsgId: rawIdReject },
+            async () => {
+                // Verify sender is a participant in this conversation
+                const isParticipant = (await db.query(
+                    "SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2",
+                    [conversationId, senderId],
+                )).rows[0];
+                if (!isParticipant) return;
 
-        const callLog = (await db.query(
-            `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2`,
-            [callId, conversationId],
-        )).rows[0];
-        if (!callLog) return;
+                const callLog = (await db.query(
+                    `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2`,
+                    [callId, conversationId],
+                )).rows[0];
+                if (!callLog) return;
 
-        await db.query(
-            `UPDATE call_logs SET status = 'declined', ended_at = NOW() WHERE id = $1 AND status = 'ringing'`,
-            [callId],
+                await db.query(
+                    `UPDATE call_logs SET status = 'declined', ended_at = NOW() WHERE id = $1 AND status = 'ringing'`,
+                    [callId],
+                );
+
+                const rejecter = (await db.query("SELECT full_name FROM users WHERE id = $1", [senderId])).rows[0];
+
+                logPushCallLifecycle(
+                    {
+                        event: "native_call_action_applied",
+                        tenantId,
+                        userId: senderId,
+                        callId,
+                        conversationId,
+                        action: "reject",
+                        status: "success",
+                    },
+                    "info",
+                );
+
+                // Notify other participants
+                const participants = (await db.query(
+                    "SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2",
+                    [conversationId, senderId],
+                )).rows;
+
+                for (const p of participants) {
+                    sendToUser(tenantId, p.user_id, "call_rejected", {
+                        callId,
+                        conversationId,
+                        userId: senderId,
+                        userName: rejecter?.full_name,
+                    });
+                }
+
+                // Multi-session support: dismiss the ringing PiP on the rejecter's
+                // other devices (e.g. desktop + browser). The session that pressed
+                // "reject" has already cleared its PiP locally.
+                sendToUser(tenantId, senderId, "call_handled_elsewhere", {
+                    callId,
+                    conversationId,
+                    action: "rejected",
+                });
+
+                // Status service v2: if the callee had been auto-flagged in_call by a
+                // racy accept (or the caller's device was still marked from initiate),
+                // clear it for every session referencing this call.
+                statusService.clearActivityForRef({ db, tenantId }, "in_call", callId)
+                    .catch((err: any) => logger.warn({ err: err.message, callId }, "clearActivityForRef(in_call) on reject failed"));
+            },
         );
-
-        const rejecter = (await db.query("SELECT full_name FROM users WHERE id = $1", [senderId])).rows[0];
-
-        // Notify other participants
-        const participants = (await db.query(
-            "SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2",
-            [conversationId, senderId],
-        )).rows;
-
-        for (const p of participants) {
-            sendToUser(tenantId, p.user_id, "call_rejected", {
-                callId,
-                conversationId,
-                userId: senderId,
-                userName: rejecter?.full_name,
-            });
-        }
-
-        // Multi-session support: dismiss the ringing PiP on the rejecter's
-        // other devices (e.g. desktop + browser). The session that pressed
-        // "reject" has already cleared its PiP locally.
-        sendToUser(tenantId, senderId, "call_handled_elsewhere", {
-            callId,
-            conversationId,
-            action: "rejected",
-        });
-
-        // Status service v2: if the callee had been auto-flagged in_call by a
-        // racy accept (or the caller's device was still marked from initiate),
-        // clear it for every session referencing this call.
-        statusService.clearActivityForRef({ db, tenantId }, "in_call", callId)
-            .catch((err: any) => logger.warn({ err: err.message, callId }, "clearActivityForRef(in_call) on reject failed"));
 
     } else if (msg.type === "call_end") {
         // Either party ends the call → update log, notify others

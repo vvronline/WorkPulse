@@ -1,4 +1,5 @@
 import "react-native-gesture-handler";
+import { useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
@@ -13,6 +14,8 @@ import RealtimeSoundListener from "../src/realtime/RealtimeSoundListener";
 import PushNotificationListener from "../src/realtime/PushNotificationListener";
 import PushNotificationInitializer from "../src/realtime/PushNotificationInitializer";
 import { ThemeProvider, useTheme } from "../src/theme/ThemeProvider";
+import { nativeCallService } from "../src/services/nativeCallService";
+import { backgroundPushService } from "../src/services/backgroundPushService";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -144,6 +147,11 @@ function ThemedStack() {
 }
 
 export default function RootLayout() {
+  useEffect(() => {
+    nativeCallService.initialize();
+    backgroundPushService.initialize();
+  }, []);
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <QueryClientProvider client={queryClient}>

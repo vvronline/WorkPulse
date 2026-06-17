@@ -29,6 +29,24 @@ interface LogLine {
     userId?: number;
 }
 
+type PushCallLifecycleEvent = {
+    event:
+    | "push_send_attempt"
+    | "push_send_result"
+    | "incoming_call_ui_requested"
+    | "native_call_action_received"
+    | "native_call_action_applied"
+    | "native_call_action_failed";
+    tenantId?: number | string | null;
+    userId?: number | null;
+    callId?: number | null;
+    conversationId?: number | null;
+    platform?: string;
+    action?: "answer" | "reject" | "end";
+    status?: string;
+    failureReason?: string;
+};
+
 /**
  * Express middleware: assigns a unique request ID and attaches a child logger
  * to `req.log`.  Logs request start and finish (with duration).
@@ -87,4 +105,17 @@ function requestLogger(req: Request, res: Response, next: NextFunction): void {
     next();
 }
 
-export { logger, requestLogger };
+function logPushCallLifecycle(
+    event: PushCallLifecycleEvent,
+    level: "debug" | "info" | "warn" | "error" = "info",
+): void {
+    logger[level](
+        {
+            domain: "push-call-lifecycle",
+            ...event,
+        },
+        event.event,
+    );
+}
+
+export { logger, requestLogger, logPushCallLifecycle };

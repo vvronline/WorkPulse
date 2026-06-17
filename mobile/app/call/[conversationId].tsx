@@ -569,24 +569,6 @@ export default function CallScreen() {
     }
   }, []);
 
-  const sendWithRetry = useCallback(
-    async (
-      type: string,
-      data: Record<string, unknown>,
-      timeoutMs = 5000,
-      retryEveryMs = 200,
-    ) => {
-      const deadline = Date.now() + timeoutMs;
-      let sent = socket.send(type, data);
-      while (!sent && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, retryEveryMs));
-        sent = socket.send(type, data);
-      }
-      return sent;
-    },
-    [],
-  );
-
   // Attach local tracks AFTER setRemoteDescription on the answerer so they bind
   // to the transceivers the offer created (mirrors web's attachLocalTracks).
   //
@@ -941,11 +923,10 @@ export default function CallScreen() {
       }
       const sent = cancelled
         ? false
-        : await sendWithRetry(
+        : await socket.sendWithRetry(
             "call_initiate",
             { conversationId, callType },
-            5000,
-            250,
+            { timeoutMs: 5000, retryEveryMs: 250 },
           );
       if (!sent && !cancelled) {
         Alert.alert(
@@ -959,7 +940,7 @@ export default function CallScreen() {
       cancelled = true;
     };
     // eslint-disable-line react-hooks/exhaustive-deps
-  }, [mode, conversationId, callType, getMedia, endAndLeave, sendWithRetry]);
+  }, [mode, conversationId, callType, getMedia, endAndLeave]);
 
   // Incoming: PRE-WARM camera/mic while the phone is still ringing (mirrors
   // the web client's pre-warm path). Acquiring media only after the user taps
@@ -1325,14 +1306,13 @@ export default function CallScreen() {
     // ring UI) does not tear down the call we are about to join.
     acceptedRef.current = true;
     setStatus("connecting");
-    const sent = await sendWithRetry(
-      "call_accept",
+    const sent = await socket.sendCallActionWithRetry(
+      "accept",
       {
         callId: callIdRef.current,
         conversationId,
       },
-      4000,
-      150,
+      { timeoutMs: 4000, retryEveryMs: 150 },
     );
     if (!sent) {
       Alert.alert(
@@ -1346,13 +1326,14 @@ export default function CallScreen() {
       if (!stream) return endAndLeave(false);
     }
     // The caller will now send us an offer (handled in call_signal).
-  }, [conversationId, endAndLeave, getMedia, sendWithRetry]);
+  }, [conversationId, endAndLeave, getMedia]);
 
-  const rejectIncoming = useCallback(() => {
-    socket.send("call_reject", {
-      callId: callIdRef.current,
-      conversationId,
-    });
+  const rejectIncoming = useCallback(async () => {
+    await socket.sendCallActionWithRetry(
+      "reject",
+      { callId: callIdRef.current, conversationId },
+      { timeoutMs: 2000, retryEveryMs: 120 },
+    );
     endAndLeave(false);
   }, [conversationId, endAndLeave]);
 

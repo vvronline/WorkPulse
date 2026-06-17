@@ -4,6 +4,11 @@ import { getToken } from "../auth/tokenStore";
 
 export type WSMessage = { type: string; data?: any };
 type Listener = (msg: WSMessage) => void;
+type SendRetryOptions = {
+  timeoutMs?: number;
+  retryEveryMs?: number;
+  ensureConnected?: boolean;
+};
 
 /**
  * Singleton WebSocket client for the WorkPulse realtime channel (/ws).
@@ -130,6 +135,46 @@ class RealtimeSocket {
       return true;
     }
     return false;
+  }
+
+  async sendWithRetry(
+    type: string,
+    data: any,
+    { timeoutMs = 5000, retryEveryMs = 200, ensureConnected = true }: SendRetryOptions = {},
+  ): Promise<boolean> {
+    if (ensureConnected && this.shouldRun && !this.isSocketLive()) {
+      this.open();
+    }
+
+    const deadline = Date.now() + timeoutMs;
+    let sent = this.send(type, data);
+    while (!sent && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, retryEveryMs));
+      if (ensureConnected && this.shouldRun && !this.isSocketLive()) {
+        this.open();
+      }
+      sent = this.send(type, data);
+    }
+    return sent;
+  }
+
+  async sendCallActionWithRetry(
+    action: "accept" | "reject" | "end",
+    data: { callId: number | null; conversationId: number | null; clientMsgId?: string },
+    options: Omit<SendRetryOptions, "ensureConnected"> = {},
+  ): Promise<boolean> {
+    if (!data.callId || !data.conversationId) return false;
+    const clientMsgId =
+      data.clientMsgId || `native:${action}:${data.callId}:${data.conversationId}:${Date.now()}`;
+    return this.sendWithRetry(
+      `call_${action}`,
+      {
+        callId: data.callId,
+        conversationId: data.conversationId,
+        clientMsgId,
+      },
+      { ...options, ensureConnected: true },
+    );
   }
 
   subscribe(listener: Listener): () => void {

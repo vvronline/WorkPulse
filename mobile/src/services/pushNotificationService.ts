@@ -23,6 +23,24 @@ export interface NotificationPayload {
   };
 }
 
+export function normalizeNotificationData(rawData: Record<string, unknown>): NotificationPayload["data"] {
+  return Object.fromEntries(
+    Object.entries(rawData).map(([k, v]) => [k, typeof v === "string" ? v : String(v ?? "")]),
+  );
+}
+
+export function buildNotificationPayload(
+  title: string | null | undefined,
+  body: string | null | undefined,
+  rawData: Record<string, unknown>,
+): NotificationPayload {
+  return {
+    title: title || "",
+    body: body || "",
+    data: normalizeNotificationData(rawData),
+  };
+}
+
 /**
  * Singleton service for managing push notifications via Firebase Cloud Messaging.
  * - Requests notification permissions on iOS/Android
@@ -35,6 +53,7 @@ class PushNotificationService {
   private deviceToken: string | null = null;
   private lastRegisteredAuthToken: string | null = null;
   private listeners: ((notification: Notifications.Notification) => void)[] = [];
+  private pendingNotifications: Notifications.Notification[] = [];
   private foregroundSubscription: Notifications.EventSubscription | null = null;
   private responseSubscription: Notifications.EventSubscription | null = null;
 
@@ -96,6 +115,14 @@ class PushNotificationService {
   }
 
   private async setupAndroidChannels(): Promise<void> {
+    await Notifications.setNotificationChannelAsync("default", {
+      name: "Default",
+      description: "General alerts",
+      importance: Notifications.AndroidImportance.HIGH,
+      sound: "default",
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+      vibrationPattern: [0, 160, 80, 160],
+    });
     await Notifications.setNotificationChannelAsync("calls", {
       name: "Calls",
       description: "Incoming call alerts",
@@ -105,6 +132,7 @@ class PushNotificationService {
       vibrationPattern: [0, 200, 120, 200],
       bypassDnd: true,
     });
+    // T027: Enhanced messages channel for status-bar notification visibility
     await Notifications.setNotificationChannelAsync("messages", {
       name: "Messages",
       description: "Chat message alerts",
@@ -112,6 +140,10 @@ class PushNotificationService {
       sound: "default",
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
       vibrationPattern: [0, 160, 80, 160],
+      enableVibration: true,
+      enableLights: true,
+      lightColor: "#FF6B6B", // Red notification light
+      groupSummaryFormat: "newer", // Summary shows newest messages
     });
     await Notifications.setNotificationChannelAsync("notifications", {
       name: "Notifications",
@@ -156,7 +188,11 @@ class PushNotificationService {
 
     console.log("Notification received:", content.title, content.body);
 
-    // Trigger all registered listeners
+    // Trigger all registered listeners (or queue until listeners mount).
+    if (this.listeners.length === 0) {
+      this.pendingNotifications.push(notification);
+      return;
+    }
     this.listeners.forEach((listener) => {
       try {
         listener(notification);
@@ -170,7 +206,7 @@ class PushNotificationService {
     const { notification, actionIdentifier } = response;
     const { request } = notification;
     const { content } = request;
-    const data = content.data || {};
+    const data = normalizeNotificationData((content.data || {}) as Record<string, unknown>);
     const enrichedData: Record<string, string | undefined> = {
       ...data,
       notificationAction:
@@ -195,7 +231,20 @@ class PushNotificationService {
       console.log("Navigating to notifications");
     }
 
-    // Trigger listeners
+    // Trigger listeners (or queue until listeners mount).
+    if (this.listeners.length === 0) {
+      this.pendingNotifications.push({
+        ...notification,
+        request: {
+          ...notification.request,
+          content: {
+            ...notification.request.content,
+            data: enrichedData,
+          },
+        },
+      });
+      return;
+    }
     this.listeners.forEach((listener) => {
       try {
         listener({
@@ -261,6 +310,17 @@ class PushNotificationService {
 
   subscribe(listener: (notification: Notifications.Notification) => void): () => void {
     this.listeners.push(listener);
+    if (this.pendingNotifications.length > 0) {
+      const pending = [...this.pendingNotifications];
+      this.pendingNotifications = [];
+      pending.forEach((notification) => {
+        try {
+          listener(notification);
+        } catch (err) {
+          console.error("Listener error:", err);
+        }
+      });
+    }
     return () => {
       this.listeners = this.listeners.filter((l) => l !== listener);
     };
@@ -268,6 +328,38 @@ class PushNotificationService {
 
   getDeviceToken(): string | null {
     return this.deviceToken;
+  }
+
+  /**
+   * T027: Set application icon badge count (launcher badge).
+   * Supports Android and iOS launcher badge display.
+   */
+  async setBadgeCount(count: number): Promise<void> {
+    try {
+      await Notifications.setBadgeCountAsync(count);
+      console.log(`[PushNotificationService] Badge set to ${count}`);
+    } catch (err) {
+      console.error('[PushNotificationService] Failed to set badge count:', err);
+    }
+  }
+
+  /**
+   * T027: Get current application badge count.
+   */
+  async getBadgeCount(): Promise<number> {
+    try {
+      return await Notifications.getBadgeCountAsync();
+    } catch (err) {
+      console.error('[PushNotificationService] Failed to get badge count:', err);
+      return 0;
+    }
+  }
+
+  /**
+   * T027: Clear application badge count (set to 0).
+   */
+  async clearBadge(): Promise<void> {
+    await this.setBadgeCount(0);
   }
 }
 

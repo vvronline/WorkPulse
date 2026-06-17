@@ -4,6 +4,25 @@ The Android release APK is built **automatically by GitHub Actions** on every
 `mobile-vX.Y.Z` tag push (`.github/workflows/mobile-release.yml`). No local
 Android SDK / EAS account is required.
 
+## Native call parity prerequisites (WhatsApp/Teams-style incoming calls)
+
+For lock-screen/background incoming-call UI and "answer without manually opening
+the app", this project now requires a **custom native build path** (Expo
+prebuild + native modules). Before cutting a release:
+
+1. Ensure native dependencies are installed in `mobile/package.json`:
+   - `react-native-callkeep`
+   - `@react-native-firebase/app`
+   - `@react-native-firebase/messaging`
+2. Run `expo prebuild` and commit any required native config/plugin outputs.
+3. Verify Android permissions in `mobile/app.config.ts` include:
+   - `POST_NOTIFICATIONS`
+   - `USE_FULL_SCREEN_INTENT`
+   - `FOREGROUND_SERVICE_PHONE_CALL`
+   - `WAKE_LOCK`
+4. Verify Firebase service-account config is present in server env
+   (`FIREBASE_SERVICE_ACCOUNT_KEY`).
+
 ## App icon
 
 The launcher icon is the **same artwork as the desktop `.exe`**

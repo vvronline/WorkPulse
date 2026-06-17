@@ -89,6 +89,15 @@ interface IdempotencyParams extends KeyParts {
     cache?: IdempotencyCache;
 }
 
+interface CallActionParams {
+    tenantId?: number | string | null;
+    senderId: number | string;
+    callId: number | string;
+    action: "answer" | "reject" | "end";
+    clientMsgId?: string;
+    cache?: IdempotencyCache;
+}
+
 /**
  * Pure-JS LRU with TTL. We deliberately reuse `Map` so iteration order
  * gives us the LRU dimension for free (every `set` after `delete` moves
@@ -209,6 +218,7 @@ async function withIdempotency(
         // No id → no dedup. Run the handler as-is.
         return fn();
     }
+
     const key = buildKey({ tenantId, senderId, type, clientMsgId });
     const prior = cache.get(key);
     if (prior !== undefined) {
@@ -223,10 +233,28 @@ async function withIdempotency(
     return result;
 }
 
+async function withIdempotentCallAction(
+    { tenantId, senderId, callId, action, clientMsgId, cache = defaultCache }: CallActionParams,
+    fn: () => unknown | Promise<unknown>,
+): Promise<unknown> {
+    const actionClientId = clientMsgId || `${callId}:${senderId}:${action}`;
+    return withIdempotency(
+        {
+            tenantId,
+            senderId,
+            type: `call_action_${action}`,
+            clientMsgId: actionClientId,
+            cache,
+        },
+        fn,
+    );
+}
+
 export {
     withIdempotency,
     IdempotencyCache,
     defaultCache,
+    withIdempotentCallAction,
     MAX_ENTRIES as _MAX_ENTRIES,
     TTL_MS as _TTL_MS,
 };

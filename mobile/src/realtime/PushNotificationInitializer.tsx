@@ -10,6 +10,8 @@ import {
   usePushNotifications,
 } from "../services/pushNotificationService";
 import { useAuth } from "../auth/AuthContext";
+import { nativeCallService } from "../services/nativeCallService";
+import { socket } from "./socket";
 
 export default function PushNotificationInitializer() {
   const { user } = useAuth();
@@ -32,7 +34,34 @@ export default function PushNotificationInitializer() {
         console.error("Failed to register device token after login:", err),
       );
 
+    const offNativeActions = nativeCallService.onAction(async ({ action, callId, conversationId }) => {
+      if (action === "answer") {
+        await socket.sendCallActionWithRetry(
+          "accept",
+          { callId, conversationId },
+          { timeoutMs: 4000, retryEveryMs: 150 },
+        );
+        return;
+      }
+
+      if (action === "reject") {
+        await socket.sendCallActionWithRetry(
+          "reject",
+          { callId, conversationId },
+          { timeoutMs: 2000, retryEveryMs: 120 },
+        );
+        return;
+      }
+
+      await socket.sendCallActionWithRetry(
+        "end",
+        { callId, conversationId },
+        { timeoutMs: 2000, retryEveryMs: 120 },
+      );
+    });
+
     console.log("Push notifications ready for user:", user.id);
+    return offNativeActions;
   }, [user?.id, initialized]);
 
   return null;

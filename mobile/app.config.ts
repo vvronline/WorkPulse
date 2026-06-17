@@ -37,6 +37,12 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // Permissions for voice notes (RECORD_AUDIO) and audio/video calls
     // (CAMERA, MODIFY_AUDIO_SETTINGS, network state for WebRTC).
     permissions: [
+      // Android 13+ runtime permission required for status-bar notifications.
+      "android.permission.POST_NOTIFICATIONS",
+      "android.permission.USE_FULL_SCREEN_INTENT",
+      "android.permission.FOREGROUND_SERVICE_PHONE_CALL",
+      "android.permission.WAKE_LOCK",
+      "android.permission.VIBRATE",
       "android.permission.RECORD_AUDIO",
       "android.permission.CAMERA",
       "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -54,7 +60,13 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   plugins: [
     "expo-router",
     "expo-secure-store",
-    "expo-notifications",
+    [
+      "expo-notifications",
+      {
+        // Ensures push notifications still post when the app process is dead.
+        defaultChannel: "default",
+      },
+    ],
     [
       "expo-audio",
       {

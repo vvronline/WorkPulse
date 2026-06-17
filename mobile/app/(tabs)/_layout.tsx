@@ -17,6 +17,8 @@ import { socket } from "../../src/realtime/socket";
 import {
   subscribeChatUnreadChanged,
 } from "../../src/realtime/chatUnreadEvents";
+import { chatUnreadManager } from "../../src/realtime/chatUnreadEvents";
+import { pushNotificationService } from "../../src/services/pushNotificationService";
 
 export default function TabsLayout() {
   const theme = useTheme();
@@ -35,11 +37,18 @@ export default function TabsLayout() {
   const refreshUnread = useCallback(() => {
     getConversations()
       .then((r) => {
-        const total = (r.data || []).reduce(
+        const conversations = r.data || [];
+        // T029: Sync unread counts with chatUnreadManager
+        conversations.forEach((conv) => {
+          chatUnreadManager.updateUnreadCount(conv.id, conv.unread_count || 0);
+        });
+        const total = conversations.reduce(
           (sum, c) => sum + (c.unread_count || 0),
           0,
         );
         setChatUnread(total);
+        // T029: Update launcher badge with total unread
+        pushNotificationService.setBadgeCount(total).catch(() => {});
       })
       .catch(() => {});
   }, []);
@@ -50,6 +59,7 @@ export default function TabsLayout() {
     // Don't track chat unread when the chat feature is disabled for the tenant.
     if (!chatEnabled) {
       setChatUnread(0);
+      pushNotificationService.clearBadge().catch(() => {});
       return;
     }
     refreshUnread();
@@ -64,13 +74,22 @@ export default function TabsLayout() {
     const offUnreadChanged = subscribeChatUnreadChanged(() => {
       refreshUnread();
     });
+    // T029: Listen to unread manager for real-time badge updates
+    const unsubUnreadChange = chatUnreadManager.onUnreadChange((_convId, _count) => {
+      const total = chatUnreadManager.getTotalUnread();
+      setChatUnread(total);
+      pushNotificationService.setBadgeCount(total).catch(() => {});
+    });
     // Refresh when returning to the foreground (WS may have reconnected).
     const sub = AppState.addEventListener("change", (s) => {
-      if (s === "active") refreshUnread();
+      if (s === "active") {
+        refreshUnread();
+      }
     });
     return () => {
       off();
       offUnreadChanged();
+      unsubUnreadChange();
       sub.remove();
     };
   }, [user, chatEnabled, refreshUnread]);
