@@ -18,11 +18,41 @@ class BackgroundPushService {
     if (this.initialized) return;
     this.messaging = this.resolveMessagingModule();
     if (this.messaging) {
-      this.messaging().setBackgroundMessageHandler(async (remoteMessage: RemoteMessage) => {
-        await this.handleRemoteMessage(remoteMessage);
-      });
+      this.registerBackgroundHandlerSafely();
     }
     this.initialized = true;
+  }
+
+  private registerBackgroundHandlerSafely(): void {
+    try {
+      if (!this.hasDefaultFirebaseApp()) {
+        console.warn("[BackgroundPushService] Firebase default app not available; background FCM handler disabled.");
+        return;
+      }
+
+      this.messaging?.().setBackgroundMessageHandler(async (remoteMessage: RemoteMessage) => {
+        await this.handleRemoteMessage(remoteMessage);
+      });
+    } catch (err) {
+      console.warn("[BackgroundPushService] Failed to register background FCM handler:", err);
+    }
+  }
+
+  private hasDefaultFirebaseApp(): boolean {
+    try {
+      const module = require("@react-native-firebase/app");
+      const firebaseApp = module?.default || module;
+
+      if (typeof firebaseApp?.app === "function") {
+        firebaseApp.app();
+        return true;
+      }
+
+      const apps = firebaseApp?.apps;
+      return Array.isArray(apps) && apps.length > 0;
+    } catch {
+      return false;
+    }
   }
 
   private resolveMessagingModule(): any | null {

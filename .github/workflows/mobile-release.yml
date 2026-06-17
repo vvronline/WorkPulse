@@ -58,8 +58,24 @@ jobs:
       # via repo variables) if you ever ship a build pointing at a different API.
       EXPO_PUBLIC_API_BASE_URL: https://workpulse-prod.up.railway.app/api
       EXPO_PUBLIC_WS_BASE_URL: wss://workpulse-prod.up.railway.app
+      EXPO_ANDROID_GOOGLE_SERVICES_FILE: ./google-services.json
     steps:
       - uses: actions/checkout@v6
+
+      - name: Materialize google-services.json from GitHub Secret
+        shell: bash
+        working-directory: mobile
+        env:
+          ANDROID_GOOGLE_SERVICES_JSON: ${{ secrets.ANDROID_GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$ANDROID_GOOGLE_SERVICES_JSON" ]; then
+            echo "::error::Missing GitHub secret ANDROID_GOOGLE_SERVICES_JSON"
+            exit 1
+          fi
+
+          printf '%s' "$ANDROID_GOOGLE_SERVICES_JSON" > google-services.json
+
+          node -e "JSON.parse(require('fs').readFileSync('google-services.json','utf8')); console.log('google-services.json validated')"
 
       - name: Setup Node.js
         uses: actions/setup-node@v6

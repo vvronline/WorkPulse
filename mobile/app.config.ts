@@ -11,6 +11,10 @@ const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_BASE_URL || "https://workpulse-prod.up.railway.app/api";
 const WS_BASE_URL =
   process.env.EXPO_PUBLIC_WS_BASE_URL || "wss://workpulse-prod.up.railway.app";
+const ANDROID_GOOGLE_SERVICES_FILE =
+  process.env.EXPO_ANDROID_GOOGLE_SERVICES_FILE ||
+  process.env.GOOGLE_SERVICES_JSON ||
+  "./google-services.json";
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
@@ -27,6 +31,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   android: {
     package: "app.workpulse.mobile",
+    googleServicesFile: ANDROID_GOOGLE_SERVICES_FILE,
     adaptiveIcon: {
       backgroundColor: "#E6F4FE",
       foregroundImage: "./assets/android-icon-foreground.png",
