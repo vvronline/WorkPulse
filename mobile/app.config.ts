@@ -65,6 +65,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   plugins: [
     "expo-router",
     "expo-secure-store",
+    // Native Firebase Cloud Messaging. These config plugins generate the
+    // native code that registers FCM and enables background/terminated-state
+    // push delivery via setBackgroundMessageHandler.
+    "@react-native-firebase/app",
+    "@react-native-firebase/messaging",
     [
       "expo-notifications",
       {

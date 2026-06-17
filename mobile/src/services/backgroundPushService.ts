@@ -1,3 +1,5 @@
+import { Platform } from "react-native";
+import * as Notifications from "expo-notifications";
 import { nativeCallService } from "./nativeCallService";
 import type { NotificationPayload } from "./pushNotificationService";
 import { buildNotificationPayload } from "./pushNotificationService";
@@ -14,6 +16,15 @@ class BackgroundPushService {
   private initialized = false;
   private messaging: any | null = null;
 
+  /**
+   * Registers the FCM background/terminated-state message handler.
+   *
+   * IMPORTANT: This MUST run at the JS entry top-level (see `mobile/index.js`),
+   * NOT inside a React component lifecycle. When the app is killed, React Native
+   * Firebase spawns a headless JS task — the React tree never mounts, so any
+   * `useEffect`-based registration would be skipped and call/message pushes
+   * would be silently dropped in the terminated state.
+   */
   initialize() {
     if (this.initialized) return;
     this.messaging = this.resolveMessagingModule();
@@ -76,14 +87,91 @@ class BackgroundPushService {
   async handleNotificationPayload(payload: NotificationPayload): Promise<void> {
     const data = payload.data;
     if (!data) return;
+
     if (data.callId && data.conversationId) {
+      // Incoming call: present the native call screen via CallKeep so the user
+      // can answer without opening the app. Call pushes are data-only (no
+      // `notification` block) so this handler is guaranteed to run on Android
+      // even when the app is killed.
       await nativeCallService.reportIncomingCall(data);
       if (data.notificationAction === "accept_call") {
         await nativeCallService.handleAction("answer", data);
       } else if (data.notificationAction === "decline_call") {
         await nativeCallService.handleAction("reject", data);
       }
+      return;
     }
+
+    // Message / general notification: when delivered as a data-only message in
+    // the background, the OS will NOT auto-render it, so we post a local
+    // notification into the status bar ourselves.
+    await this.presentDataNotification(payload);
+  }
+
+  /**
+   * Presents a status-bar notification for non-call data messages received in
+   * the background/terminated state. Ensures the Android channel exists before
+   * posting so the notification is not dropped on first-run / killed delivery.
+   */
+  private async presentDataNotification(payload: NotificationPayload): Promise<void> {
+    const data = payload.data || {};
+    const title = payload.title || data.senderName || "New notification";
+    const body = payload.body || "";
+    if (!title && !body) return;
+
+    try {
+      const channelId = await this.resolveChannelId(data);
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title,
+          body,
+          data,
+          sound: "default",
+          ...(Platform.OS === "android" ? { channelId } : {}),
+        },
+        trigger: null,
+      });
+    } catch (err) {
+      console.warn("Failed to present background data notification:", err);
+    }
+  }
+
+  /**
+   * Ensures the target Android notification channel exists (channels created at
+   * app launch may not exist yet during killed-state delivery) and returns the
+   * channel id to post into.
+   */
+  private async resolveChannelId(data: Record<string, string | undefined>): Promise<string> {
+    if (Platform.OS !== "android") return "default";
+    const isMessage = Boolean(data.messageId || data.conversationId) || data.type === "chat_message" || data.type === "message";
+    const channelId = isMessage ? "messages" : "default";
+    try {
+      if (channelId === "messages") {
+        await Notifications.setNotificationChannelAsync("messages", {
+          name: "Messages",
+          description: "Chat message alerts",
+          importance: Notifications.AndroidImportance.HIGH,
+          sound: "default",
+          lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+          vibrationPattern: [0, 160, 80, 160],
+          enableVibrate: true,
+          enableLights: true,
+          lightColor: "#FF6B6B",
+        });
+      } else {
+        await Notifications.setNotificationChannelAsync("default", {
+          name: "Default",
+          description: "General alerts",
+          importance: Notifications.AndroidImportance.HIGH,
+          sound: "default",
+          lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+          vibrationPattern: [0, 160, 80, 160],
+        });
+      }
+    } catch {
+      return "default";
+    }
+    return channelId;
   }
 }
 

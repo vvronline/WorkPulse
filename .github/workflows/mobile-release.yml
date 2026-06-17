@@ -103,6 +103,24 @@ jobs:
         working-directory: mobile
         run: npm ci
 
+      # app.config.ts references android.googleServicesFile: "./google-services.json".
+      # The file is gitignored / not committed (it carries the FCM sender config),
+      # so we materialize it from the repo secret before prebuild. Without this the
+      # @react-native-firebase config plugins fail and FCM background/terminated
+      # push delivery (incoming calls + message status-bar notifications) breaks.
+      - name: Write google-services.json from secret
+        working-directory: mobile
+        env:
+          ANDROID_GOOGLE_SERVICES_JSON: ${{ secrets.ANDROID_GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$ANDROID_GOOGLE_SERVICES_JSON" ]; then
+            echo "::error::ANDROID_GOOGLE_SERVICES_JSON secret is empty — Firebase Cloud Messaging will not be configured"
+            exit 1
+          fi
+          printf '%s' "$ANDROID_GOOGLE_SERVICES_JSON" > google-services.json
+          # Fail fast if the secret is not valid JSON.
+          node -e "JSON.parse(require('fs').readFileSync('google-services.json','utf8')); console.log('google-services.json written and valid')"
+
       - name: Expo prebuild (generate native android project)
         working-directory: mobile
         run: npx expo prebuild --platform android --no-install
