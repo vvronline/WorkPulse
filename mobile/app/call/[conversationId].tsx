@@ -45,6 +45,7 @@ import {
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { socket } from "../../src/realtime/socket";
+import { endCallNavigation } from "../../src/realtime/callRouting";
 import { getIceConfig, getNotificationPrefs } from "../../src/features";
 import { SERVER_ORIGIN } from "../../src/config";
 import { getNotificationPreviewDataUri } from "../../src/utils/notificationSoundPreview";
@@ -272,6 +273,9 @@ export default function CallScreen() {
       pcRef.current = null;
       localStreamRef.current = null;
       remoteStreamRef.current = null;
+      // Release the cross-path navigation guard so a future call can present
+      // the call screen again (see src/realtime/callRouting.ts).
+      endCallNavigation();
       router.back();
     },
     [conversationId, router],
@@ -910,6 +914,9 @@ export default function CallScreen() {
       }
       bitrateRampTimersRef.current.forEach((t) => clearTimeout(t));
       bitrateRampTimersRef.current = [];
+      // Safety net: always release the navigation guard on unmount, even if the
+      // screen was dismissed without going through endAndLeave.
+      endCallNavigation();
     };
   }, []);
 

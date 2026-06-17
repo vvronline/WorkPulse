@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useRouter, usePathname } from "expo-router";
 import { socket } from "./socket";
 import { useAuth } from "../auth/AuthContext";
+import { beginCallNavigation, endCallNavigation } from "./callRouting";
 
 /**
  * App-wide listener for inbound calls. When a `call_incoming` frame arrives it
@@ -23,6 +24,11 @@ export default function IncomingCallListener() {
         // Avoid double-navigating if we're already showing this call.
         if (ringingRef.current === d.callId) return;
         if (pathname?.startsWith("/call/")) return;
+        // Cross-path guard: the same call may also be surfaced via the push
+        // notification path (PushNotificationListener / Notifee tap). Claim
+        // navigation so only ONE path pushes the /call screen — a double push
+        // crashes React Native Fabric ("child already has a parent").
+        if (!beginCallNavigation(d.callId, d.conversationId)) return;
         ringingRef.current = d.callId;
         router.push({
           pathname: "/call/[conversationId]",
@@ -42,6 +48,7 @@ export default function IncomingCallListener() {
         msg.type === "call_handled_elsewhere"
       ) {
         if (ringingRef.current === d.callId) ringingRef.current = null;
+        endCallNavigation();
       }
     });
     return off;

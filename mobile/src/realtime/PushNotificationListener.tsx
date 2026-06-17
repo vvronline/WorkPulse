@@ -12,6 +12,7 @@ import { pushNotificationService, type NotificationPayload } from "../services/p
 import { socket } from "./socket";
 import { emitChatUnreadChanged, chatUnreadManager } from "./chatUnreadEvents";
 import { backgroundPushService } from "../services/backgroundPushService";
+import { beginCallNavigation, endCallNavigation } from "./callRouting";
 
 /**
  * Root-level listener that handles all incoming push notifications.
@@ -186,6 +187,17 @@ function handleCallNotification(
       callId: callData.callId,
       conversationId: callData.conversationId,
     });
+    endCallNavigation();
+    return;
+  }
+
+  // Cross-path guard: IncomingCallListener (websocket) may also navigate for
+  // this same call. Claim navigation so only ONE path pushes the /call screen —
+  // a double push crashes React Native Fabric ("child already has a parent").
+  // Exception: when the user tapped "Answer" we still want to ensure the screen
+  // is shown, so only skip if it's already active for THIS call.
+  const isAccept = callData.notificationAction === "accept_call";
+  if (!beginCallNavigation(callData.callId, callData.conversationId) && !isAccept) {
     return;
   }
 
