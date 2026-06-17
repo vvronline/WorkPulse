@@ -75,9 +75,19 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       {
         // Ensures push notifications still post when the app process is dead.
         defaultChannel: "default",
+        // Generates the `notification_icon` drawable (monochrome small icon)
+        // used by status-bar notifications. Without a dedicated drawable the
+        // small icon falls back to the full-colour launcher icon (renders as a
+        // white square on Android) and our Notifee `smallIcon` lookup fails.
+        icon: "./assets/android-icon-monochrome.png",
+        color: "#FF6B6B",
       },
     ],
     "./scripts/withFirebaseNotificationChannelOverride",
+    // Makes the main Activity show over the lock screen + turn the screen on so
+    // full-screen-intent incoming-call notifications surface the call UI over
+    // the lock screen without the SYSTEM_ALERT_WINDOW overlay permission.
+    "./scripts/withAndroidCallActivityFlags",
     [
       "expo-audio",
       {

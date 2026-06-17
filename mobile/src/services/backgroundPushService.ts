@@ -16,6 +16,7 @@ type RemoteMessage = {
 class BackgroundPushService {
   private initialized = false;
   private messaging: any | null = null;
+  private foregroundUnsub: (() => void) | null = null;
 
   /**
    * Registers the FCM background/terminated-state message handler.
@@ -37,6 +38,50 @@ class BackgroundPushService {
     // works in the terminated/headless state. Idempotent + safe if unavailable.
     notifeeService.registerBackgroundHandler();
     this.initialized = true;
+  }
+
+  /**
+   * Registers the FCM FOREGROUND message handler (`messaging().onMessage`).
+   *
+   * CRITICAL: The server sends DATA-ONLY FCM payloads (no top-level
+   * `notification` block) for calls AND messages so the background/headless
+   * handler always runs. The side-effect is that when the app is in the
+   * FOREGROUND, Android delivers these as data messages that DO NOT trigger any
+   * system notification and DO NOT fire `expo-notifications`
+   * `addNotificationReceivedListener`. Without an explicit `onMessage` handler,
+   * foreground message/notification pushes are silently dropped (no status-bar
+   * notification, no incoming-call UI). This wires that missing path through the
+   * same `handleNotificationPayload` used by the background handler.
+   *
+   * Safe to call repeatedly; only registers once. No-ops if the native
+   * messaging module / default Firebase app is unavailable (e.g. Expo Go).
+   */
+  registerForegroundHandler(): void {
+    if (this.foregroundUnsub) return;
+    try {
+      this.messaging = this.messaging || this.resolveMessagingModule();
+      if (!this.messaging) return;
+      if (!this.hasDefaultFirebaseApp()) {
+        console.warn("[BackgroundPushService] Firebase default app not available; foreground FCM handler disabled.");
+        return;
+      }
+      const unsub = this.messaging?.().onMessage(async (remoteMessage: RemoteMessage) => {
+        await this.handleRemoteMessage(remoteMessage);
+      });
+      this.foregroundUnsub = typeof unsub === "function" ? unsub : null;
+    } catch (err) {
+      console.warn("[BackgroundPushService] Failed to register foreground FCM handler:", err);
+    }
+  }
+
+  /** Unsubscribes the foreground FCM message handler (if registered). */
+  unregisterForegroundHandler(): void {
+    try {
+      this.foregroundUnsub?.();
+    } catch {
+      // ignore
+    }
+    this.foregroundUnsub = null;
   }
 
   private registerBackgroundHandlerSafely(): void {

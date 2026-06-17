@@ -12,6 +12,7 @@ import { pushNotificationService, type NotificationPayload } from "../services/p
 import { socket } from "./socket";
 import { emitChatUnreadChanged, chatUnreadManager } from "./chatUnreadEvents";
 import { backgroundPushService } from "../services/backgroundPushService";
+import { notifeeService } from "../services/notifeeService";
 import { beginCallNavigation, endCallNavigation } from "./callRouting";
 
 /**
@@ -24,6 +25,10 @@ export default function PushNotificationListener() {
   useEffect(() => {
     // T032: Check notification permissions on mount and offer recovery if denied
     checkAndRecoverPermissions().catch(() => {});
+    // Android 14+: ensure the full-screen-intent permission so the incoming-call
+    // screen can surface over the lock screen (otherwise only the ring sound
+    // plays and the user is forced to open the app to answer/reject).
+    notifeeService.ensureFullScreenIntentPermission().catch(() => {});
   }, []);
 
   useEffect(() => {

@@ -158,10 +158,19 @@ export default function RootLayout() {
     // custom entry point is ever bypassed. The killed/headless state is still
     // handled by `mobile/index.js`.
     backgroundPushService.initialize();
+    // Foreground FCM message handler. The server sends DATA-ONLY pushes (so the
+    // background/headless handler always runs); without this, foreground
+    // message/notification pushes are silently dropped (no status-bar entry).
+    backgroundPushService.registerForegroundHandler();
     // Notifee foreground event handler: handles Answer/Decline taps on the
     // full-screen incoming-call notification while the app is alive.
     const unsubscribeNotifee = notifeeService.registerForegroundHandler();
+    // Ensure Android 14+ full-screen-intent permission so the incoming-call
+    // screen can surface over the lock screen (otherwise only the ring sound
+    // plays and the user must open the app to answer/reject).
+    notifeeService.ensureFullScreenIntentPermission().catch(() => {});
     return () => {
+      backgroundPushService.unregisterForegroundHandler();
       unsubscribeNotifee();
     };
   }, []);
