@@ -1,6 +1,6 @@
 {
   "name": "mobile",
-  "version": "1.0.53",
+  "version": "1.0.54",
   "main": "expo-router/entry",
   "dependencies": {
     "@react-native-firebase/app": "^22.4.0",
