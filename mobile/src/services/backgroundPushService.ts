@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
 import * as Notifications from "expo-notifications";
 import { nativeCallService } from "./nativeCallService";
+import { notifeeService } from "./notifeeService";
 import type { NotificationPayload } from "./pushNotificationService";
 import { buildNotificationPayload } from "./pushNotificationService";
 
@@ -31,6 +32,10 @@ class BackgroundPushService {
     if (this.messaging) {
       this.registerBackgroundHandlerSafely();
     }
+    // Register the Notifee background event handler (Answer/Decline taps from
+    // the full-screen call notification) at the JS entry top-level too, so it
+    // works in the terminated/headless state. Idempotent + safe if unavailable.
+    notifeeService.registerBackgroundHandler();
     this.initialized = true;
   }
 
@@ -88,22 +93,36 @@ class BackgroundPushService {
     const data = payload.data;
     if (!data) return;
 
+    // Call lifecycle cancel events: clear any ringing call notification so it
+    // stops ringing / disappears when the caller hangs up or it's handled
+    // elsewhere. These may arrive as data pushes while backgrounded/terminated.
+    if (
+      data.type === "call_ended" ||
+      data.type === "call_rejected" ||
+      data.type === "call_cancelled" ||
+      data.type === "call_handled_elsewhere"
+    ) {
+      await notifeeService.cancelCall(data.callId, data.conversationId);
+      return;
+    }
+
     if (data.callId && data.conversationId) {
-      // Incoming call: present the native call screen via CallKeep so the user
-      // can answer without opening the app. Call pushes are data-only (no
-      // `notification` block) so this handler is guaranteed to run on Android
-      // even when the app is killed.
+      // Incoming call. On iOS, prefer the native CallKeep/CallKit UI. On Android
+      // (where CallKeep is disabled) and any build without native call UI, render
+      // a full-screen-intent incoming-call notification via Notifee — this is
+      // what reliably surfaces the WhatsApp/Teams-style incoming-call screen
+      // over the lock screen even when the app is terminated. expo-notifications
+      // cannot do full-screen intent and is unreliable from the headless task,
+      // which is why we use Notifee here.
       await nativeCallService.reportIncomingCall(data);
 
-      // Fallback: when native CallKeep UI is unavailable (e.g. Android, where
-      // CallKeep is currently disabled to avoid a startup crash, or Expo Go),
-      // `reportIncomingCall` is a silent no-op and a data-only call push is NOT
-      // auto-rendered by the OS — so the incoming call would never surface. Post
-      // a high-importance heads-up notification on the `calls` channel with
-      // Answer/Decline actions so the user can still see and act on the call
-      // while the app is backgrounded/terminated.
       if (!nativeCallService.isNativeAvailable()) {
-        await this.presentCallNotification(payload);
+        if (notifeeService.isAvailable()) {
+          await notifeeService.displayIncomingCall(data);
+        } else {
+          // Last-resort fallback (e.g. Expo Go) — heads-up sound notification.
+          await this.presentCallNotification(payload);
+        }
       }
 
       if (data.notificationAction === "accept_call") {
@@ -114,10 +133,15 @@ class BackgroundPushService {
       return;
     }
 
-    // Message / general notification: when delivered as a data-only message in
-    // the background, the OS will NOT auto-render it, so we post a local
-    // notification into the status bar ourselves.
-    await this.presentDataNotification(payload);
+    // Message / general notification. Use Notifee for reliable status-bar
+    // delivery in the background/terminated state (expo-notifications is
+    // unreliable from a headless task). Fall back to expo-notifications only
+    // when Notifee is unavailable.
+    if (notifeeService.isAvailable()) {
+      await notifeeService.displayMessage(payload);
+    } else {
+      await this.presentDataNotification(payload);
+    }
   }
 
   /**

@@ -16,6 +16,7 @@ import PushNotificationInitializer from "../src/realtime/PushNotificationInitial
 import { ThemeProvider, useTheme } from "../src/theme/ThemeProvider";
 import { nativeCallService } from "../src/services/nativeCallService";
 import { backgroundPushService } from "../src/services/backgroundPushService";
+import { notifeeService } from "../src/services/notifeeService";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -157,6 +158,12 @@ export default function RootLayout() {
     // custom entry point is ever bypassed. The killed/headless state is still
     // handled by `mobile/index.js`.
     backgroundPushService.initialize();
+    // Notifee foreground event handler: handles Answer/Decline taps on the
+    // full-screen incoming-call notification while the app is alive.
+    const unsubscribeNotifee = notifeeService.registerForegroundHandler();
+    return () => {
+      unsubscribeNotifee();
+    };
   }, []);
 
   return (

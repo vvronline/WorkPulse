@@ -112,6 +112,7 @@ export default function CallScreen() {
     peerName?: string;
     peerAvatar?: string;
     autoAnswer?: string;
+    action?: string;
   }>();
   const router = useRouter();
 
@@ -119,6 +120,10 @@ export default function CallScreen() {
   const mode = params.mode === "incoming" ? "incoming" : "outgoing";
   const callType = params.callType === "video" ? "video" : "voice";
   const autoAnswer = params.autoAnswer === "1";
+  // Deep-linked decline (e.g. user tapped "Decline" on the full-screen call
+  // notification while the app was backgrounded/terminated). When present we
+  // auto-reject the incoming call instead of presenting the ringing UI.
+  const autoDecline = params.action === "decline";
   const peerName = params.peerName || "Call";
   const [peerAvatar, setPeerAvatar] = useState(params.peerAvatar || "");
 
@@ -1390,6 +1395,12 @@ export default function CallScreen() {
     if (mode !== "incoming" || !autoAnswer || status !== "ringing") return;
     acceptIncoming().catch(() => {});
   }, [acceptIncoming, autoAnswer, mode, status]);
+
+  // Auto-decline when launched from the notification's "Decline" action.
+  useEffect(() => {
+    if (mode !== "incoming" || !autoDecline || status !== "ringing") return;
+    rejectIncoming().catch(() => {});
+  }, [autoDecline, mode, rejectIncoming, status]);
 
   function toggleMute() {
     setOnHold(false);
