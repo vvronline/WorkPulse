@@ -15,7 +15,6 @@ import PushNotificationListener from "../src/realtime/PushNotificationListener";
 import PushNotificationInitializer from "../src/realtime/PushNotificationInitializer";
 import { ThemeProvider, useTheme } from "../src/theme/ThemeProvider";
 import { nativeCallService } from "../src/services/nativeCallService";
-import { backgroundPushService } from "../src/services/backgroundPushService";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -148,8 +147,11 @@ function ThemedStack() {
 
 export default function RootLayout() {
   useEffect(() => {
+    // Foreground CallKeep setup. The FCM background message handler is
+    // registered at the JS entry top-level (see `mobile/index.js`) so it also
+    // runs when the app is killed — it must NOT be registered here in a React
+    // lifecycle, which never executes in the terminated/headless state.
     nativeCallService.initialize();
-    backgroundPushService.initialize();
   }, []);
 
   return (

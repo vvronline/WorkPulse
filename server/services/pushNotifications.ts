@@ -9,7 +9,9 @@ import { logger } from "../utils/logger";
 import type { QueryFn } from "../types/domain";
 
 interface FCMPayload {
-    notification: {
+    // Optional: incoming-call pushes are intentionally DATA-ONLY so the mobile
+    // background/headless handler always runs (see sendCallNotification).
+    notification?: {
         title: string;
         body: string;
     };
@@ -157,9 +159,20 @@ class PushNotificationService {
         const body = `${callData.callerName} is calling...`;
         const callTTLSeconds = Number(process.env.PUSH_CALL_TTL_SECONDS || 30);
 
+        // IMPORTANT: Incoming-call pushes are DATA-ONLY (no top-level
+        // `notification` block). On Android, a message that contains a
+        // `notification` block is treated as a "notification message" and is
+        // rendered by the OS without invoking the app's background message
+        // handler when the app is killed. Our headless handler is exactly what
+        // calls CallKeep.displayIncomingCall() to show the native full-screen
+        // call UI, so the payload MUST be data-only to guarantee it fires in the
+        // terminated state. Title/body are carried in `data` for the client to
+        // present the call screen.
         const payload: FCMPayload = {
-            notification: { title, body },
             data: this.buildCommonData({
+                type: "incoming_call",
+                title,
+                body,
                 callId: String(callData.callId),
                 conversationId: String(callData.conversationId),
                 callerId: String(callData.callerId),
@@ -172,18 +185,21 @@ class PushNotificationService {
                 dedupeKey: `call:${callData.callId}`,
                 callCategory: "incoming-call",
             }, tenantId),
+            // Android: high-priority data message wakes the headless JS handler.
             android: {
                 priority: "high",
                 notification: {
+                    // channelId is retained for any client-presented fallback
+                    // notification; no system notification is auto-posted for
+                    // data-only messages.
                     sound: "default",
-                    channelId: "calls", // Use dedicated calls channel for system UI display
+                    channelId: "calls",
                     priority: "max",
                     visibility: "public",
-                    notificationCount: 1,
-                    defaultVibrateTimings: true,
-                    defaultLightSettings: true,
                 },
             },
+            // iOS: use a high-priority alert/VoIP push so the handler runs and
+            // CallKit can present the incoming-call UI.
             apns: {
                 headers: {
                     "apns-priority": "10",
@@ -252,7 +268,7 @@ class PushNotificationService {
                 body: preview,
             },
             data: this.buildCommonData({
-                type: "message",
+                type: "chat_message",
                 conversationId: String(messageData.conversationId),
                 messageId: String(messageData.messageId),
                 senderId: String(messageData.senderId),
@@ -402,17 +418,23 @@ class PushNotificationService {
         try {
             const response = await getMessaging(this.app!).sendEachForMulticast({
                 tokens,
-                notification: payload.notification,
+                // Omitted for data-only payloads (e.g. incoming calls) so Android
+                // delivers a data message that wakes the background handler.
+                ...(payload.notification ? { notification: payload.notification } : {}),
                 data: payload.data,
                 android: payload.android,
                 apns: payload.apns,
                 webpush: {
                     data: payload.data,
-                    notification: {
-                        title: payload.notification.title,
-                        body: payload.notification.body,
-                        icon: "/icon-192.png",
-                    },
+                    ...(payload.notification
+                        ? {
+                              notification: {
+                                  title: payload.notification.title,
+                                  body: payload.notification.body,
+                                  icon: "/icon-192.png",
+                              },
+                          }
+                        : {}),
                 },
             });
 

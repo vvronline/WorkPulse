@@ -33,6 +33,12 @@ yarn-error.*
 # local env files
 .env*.local
 
+# Firebase Cloud Messaging config — provided via the ANDROID_GOOGLE_SERVICES_JSON
+# CI secret (see .github/workflows/mobile-release.yml) and referenced by
+# app.config.ts (android.googleServicesFile). Must never be committed.
+google-services.json
+GoogleService-Info.plist
+
 # typescript
 *.tsbuildinfo
 

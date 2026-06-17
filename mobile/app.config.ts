@@ -27,6 +27,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   android: {
     package: "app.workpulse.mobile",
+    // Required so the native @react-native-firebase modules can initialize
+    // FCM in standalone/dev-client builds. Without this, the background
+    // message handler (terminated-state push) never fires.
+    googleServicesFile: "./google-services.json",
     adaptiveIcon: {
       backgroundColor: "#E6F4FE",
       foregroundImage: "./assets/android-icon-foreground.png",
@@ -60,6 +64,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   plugins: [
     "expo-router",
     "expo-secure-store",
+    // Native Firebase Cloud Messaging. These config plugins generate the
+    // native code that registers FCM and enables background/terminated-state
+    // push delivery via setBackgroundMessageHandler.
+    "@react-native-firebase/app",
+    "@react-native-firebase/messaging",
     [
       "expo-notifications",
       {

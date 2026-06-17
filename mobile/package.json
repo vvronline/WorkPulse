@@ -1,7 +1,7 @@
 {
   "name": "mobile",
-  "version": "1.0.53",
-  "main": "expo-router/entry",
+  "version": "1.0.54",
+  "main": "index.js",
   "dependencies": {
     "@react-native-firebase/app": "^22.4.0",
     "@react-native-firebase/messaging": "^22.4.0",
