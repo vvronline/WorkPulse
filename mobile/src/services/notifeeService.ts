@@ -19,6 +19,7 @@
 
 import { Platform } from "react-native";
 import * as Linking from "expo-linking";
+import { nativeCallService } from "./nativeCallService";
 import type { NotificationPayload } from "./pushNotificationService";
 
 const CALL_CHANNEL_ID = "calls";
@@ -107,6 +108,27 @@ class NotifeeService {
       this.channelsEnsured = true;
     } catch (err) {
       console.warn("[NotifeeService] Failed to create channels:", err);
+    }
+  }
+
+  /**
+   * Requests the runtime notification permission through Notifee as well as
+   * expo-notifications. Data-only FCM pushes can reach the app, but Android 13+
+   * will still block the visible Notifee call/message UI if POST_NOTIFICATIONS
+   * has not been granted to the native notification library.
+   */
+  async requestNotificationPermission(): Promise<boolean> {
+    const notifee = this.resolve();
+    if (!notifee) return false;
+    try {
+      if (typeof notifee.requestPermission !== "function") return true;
+      const settings = await notifee.requestPermission();
+      const authorizationStatus = settings?.authorizationStatus;
+      const DENIED = 0;
+      return authorizationStatus === undefined || authorizationStatus > DENIED;
+    } catch (err) {
+      console.warn("[NotifeeService] Failed to request notification permission:", err);
+      return false;
     }
   }
 
@@ -312,22 +334,18 @@ class NotifeeService {
     await this.cancelCall(data.callId, data.conversationId);
 
     if (pressActionId === "decline") {
-      // Decline: route through the deep link with a decline marker so the app's
-      // listener emits call_reject. We open the call route in incoming mode and
-      // mark the action so the handler rejects.
-      try {
-        const href = `/call/${data.conversationId}?mode=incoming&callId=${data.callId}&callType=${data.callType || "voice"}&action=decline`;
-        await Linking.openURL(Linking.createURL(href));
-      } catch (err) {
-        console.warn("[NotifeeService] Failed to route decline:", err);
-      }
+      await nativeCallService.handleAction("reject", data);
       return true;
     }
 
-    // Answer or body press → open the call screen in incoming mode.
+    if (pressActionId === "answer") {
+      await nativeCallService.handleAction("answer", data);
+      return true;
+    }
+
+    // Body press → open the call screen in incoming mode without auto-answer.
     try {
-      const autoAnswer = pressActionId === "answer" ? "&autoAnswer=1" : "";
-      const href = `/call/${data.conversationId}?mode=incoming&callId=${data.callId}&callType=${data.callType || "voice"}&peerId=${data.callerId || ""}${autoAnswer}`;
+      const href = `/call/${data.conversationId}?mode=incoming&callId=${data.callId}&callType=${data.callType || "voice"}&peerId=${data.callerId || ""}`;
       await Linking.openURL(Linking.createURL(href));
     } catch (err) {
       console.warn("[NotifeeService] Failed to route answer:", err);

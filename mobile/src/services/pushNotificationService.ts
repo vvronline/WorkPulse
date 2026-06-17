@@ -56,6 +56,8 @@ class PushNotificationService {
   private pendingNotifications: Notifications.Notification[] = [];
   private foregroundSubscription: Notifications.EventSubscription | null = null;
   private responseSubscription: Notifications.EventSubscription | null = null;
+  private messaging: any | null = null;
+  private messagingResolved = false;
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
@@ -89,11 +91,13 @@ class PushNotificationService {
         return;
       }
 
-      // Get the raw FCM/APNs device token (used directly with Firebase Admin SDK)
-      const devicePushToken = await Notifications.getDevicePushTokenAsync();
-      this.deviceToken = devicePushToken.data;
+      // Get the raw FCM/APNs device token used directly by Firebase Admin SDK.
+      // Prefer React Native Firebase in custom native builds because the same
+      // native module owns background/terminated delivery. Fall back to Expo's
+      // device token for compatibility with Expo Go / non-native builds.
+      this.deviceToken = await this.getDeviceTokenForFirebaseAdmin();
 
-      console.log("Device Push Token type:", devicePushToken.type);
+      console.log("Device Push Token acquired:", this.deviceToken ? "yes" : "no");
 
       // Set up notification handlers
       this.setupNotificationHandlers();
@@ -165,6 +169,48 @@ class PushNotificationService {
         options: { isDestructive: true },
       },
     ]);
+  }
+
+  private resolveMessagingModule(): any | null {
+    if (this.messagingResolved) return this.messaging;
+    this.messagingResolved = true;
+    try {
+      const module = require("@react-native-firebase/messaging");
+      this.messaging = module?.default || module;
+    } catch {
+      this.messaging = null;
+    }
+    return this.messaging;
+  }
+
+  private async getDeviceTokenForFirebaseAdmin(): Promise<string | null> {
+    const messaging = this.resolveMessagingModule();
+    if (messaging) {
+      try {
+        const instance = messaging();
+        if (typeof instance.registerDeviceForRemoteMessages === "function") {
+          await instance.registerDeviceForRemoteMessages();
+        }
+        if (typeof instance.requestPermission === "function") {
+          await instance.requestPermission();
+        }
+        if (typeof instance.getToken === "function") {
+          const token = await instance.getToken();
+          if (token) return token;
+        }
+      } catch (err) {
+        console.warn("Failed to get native Firebase Messaging token; falling back to Expo token:", err);
+      }
+    }
+
+    try {
+      const devicePushToken = await Notifications.getDevicePushTokenAsync();
+      console.log("Expo device push token type:", devicePushToken.type);
+      return devicePushToken.data;
+    } catch (err) {
+      console.error("Failed to get Expo device push token:", err);
+      return null;
+    }
   }
 
   private setupNotificationHandlers(): void {
@@ -264,8 +310,12 @@ class PushNotificationService {
 
   async registerDeviceTokenForCurrentUser(force = false): Promise<void> {
     if (!this.deviceToken) {
-    console.warn("No device token available for registration");
-    return;
+      this.deviceToken = await this.getDeviceTokenForFirebaseAdmin();
+    }
+
+    if (!this.deviceToken) {
+      console.warn("No device token available for registration");
+      return;
     }
 
     try {

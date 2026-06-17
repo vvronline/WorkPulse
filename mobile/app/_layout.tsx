@@ -165,6 +165,10 @@ export default function RootLayout() {
     // Notifee foreground event handler: handles Answer/Decline taps on the
     // full-screen incoming-call notification while the app is alive.
     const unsubscribeNotifee = notifeeService.registerForegroundHandler();
+    // Ensure Notifee can post visible status-bar/full-screen notifications too.
+    // Expo permission alone is not enough for Notifee-rendered data pushes on
+    // Android 13+.
+    notifeeService.requestNotificationPermission().catch(() => {});
     // Ensure Android 14+ full-screen-intent permission so the incoming-call
     // screen can surface over the lock screen (otherwise only the ring sound
     // plays and the user must open the app to answer/reject).

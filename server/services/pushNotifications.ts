@@ -18,7 +18,10 @@ interface FCMPayload {
     data: Record<string, string>;
     android?: {
         priority: "high" | "normal";
-        notification: {
+        // Optional. Do NOT set for Android call/message data pushes: if this is
+        // present, FCM may treat the message as OS-rendered notification traffic
+        // instead of reliably waking the app's background/headless data handler.
+        notification?: {
             sound: string;
             channelId: string;
             priority?: "min" | "low" | "default" | "high" | "max";
@@ -185,18 +188,11 @@ class PushNotificationService {
                 dedupeKey: `call:${callData.callId}`,
                 callCategory: "incoming-call",
             }, tenantId),
-            // Android: high-priority data message wakes the headless JS handler.
+            // Android: high-priority DATA-ONLY message wakes the RN Firebase
+            // headless JS handler. Do not include `android.notification` here:
+            // the mobile app/Notifee must render the full-screen call UI itself.
             android: {
                 priority: "high",
-                notification: {
-                    // channelId is retained for any client-presented fallback
-                    // notification; no system notification is auto-posted for
-                    // data-only messages.
-                    sound: "default",
-                    channelId: "calls",
-                    priority: "max",
-                    visibility: "public",
-                },
             },
             // iOS: use a high-priority alert/VoIP push so the handler runs and
             // CallKit can present the incoming-call UI.
@@ -226,7 +222,7 @@ class PushNotificationService {
                 callId: callData.callId,
                 conversationId: callData.conversationId,
                 dedupeKey: payload.data.dedupeKey,
-                channelId: payload.android?.notification?.channelId,
+                channelId: payload.android?.notification?.channelId || payload.data.callCategory || "calls",
                 tokenCount: tokens.length,
             },
             "Dispatching call notification push",
@@ -287,18 +283,11 @@ class PushNotificationService {
                 // T031: Add expiry for payload freshness validation (1 hour TTL)
                 expiresAt: String(Math.floor(Date.now() / 1000) + 3600),
             }, tenantId),
-            // T031: Use dedicated "messages" channel for status-bar visibility
+            // Android: high-priority DATA-ONLY message wakes the app's
+            // background/headless handler, which posts the visible status-bar
+            // notification on the dedicated Notifee "messages" channel.
             android: {
                 priority: "high",
-                notification: {
-                    sound: "default",
-                    channelId: process.env.PUSH_MESSAGE_ANDROID_CHANNEL || "messages",
-                    priority: "high",
-                    visibility: "private",
-                    notificationCount: unreadCount,
-                    defaultVibrateTimings: true,
-                    defaultLightSettings: true,
-                },
             },
             apns: {
                 headers: {
@@ -329,7 +318,7 @@ class PushNotificationService {
                 messageId: messageData.messageId,
                 unreadCount,
                 dedupeKey: payload.data.dedupeKey,
-                channelId: payload.android?.notification?.channelId,
+                channelId: payload.android?.notification?.channelId || "messages",
                 recipientCount: tokens.length,
             },
             "Dispatching message notification push",

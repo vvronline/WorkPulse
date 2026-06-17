@@ -1,5 +1,6 @@
 import * as Linking from "expo-linking";
 import { Platform } from "react-native";
+import { socket } from "../realtime/socket";
 import type { NotificationPayload } from "./pushNotificationService";
 
 type NativeAction = "answer" | "reject" | "end";
@@ -93,12 +94,28 @@ class NativeCallService {
     const conversationId = toInt(payload?.conversationId);
     if (!callId || !conversationId) return;
 
+    let handledByMountedApp = false;
     for (const handler of this.actionHandlers) {
+      handledByMountedApp = true;
       await handler({ action, callId, conversationId });
     }
 
+    // When Answer/Decline is tapped from a Notifee background event while the app
+    // is killed, React components are not mounted, so PushNotificationInitializer
+    // has not registered an action handler. Send the websocket action directly
+    // from this service so the caller is notified and ringing stops everywhere.
+    if (!handledByMountedApp) {
+      const socketAction = action === "answer" ? "accept" : action === "reject" ? "reject" : "end";
+      await socket.connect();
+      await socket.sendCallActionWithRetry(
+        socketAction,
+        { callId, conversationId },
+        { timeoutMs: action === "answer" ? 6000 : 3000, initialBackoffMs: 120, maxBackoffMs: 1000 },
+      );
+    }
+
     if (action === "answer") {
-      const href = `/call/${conversationId}?mode=incoming&callId=${callId}&callType=${payload?.callType || "voice"}`;
+      const href = `/call/${conversationId}?mode=incoming&callId=${callId}&callType=${payload?.callType || "voice"}&peerId=${payload?.callerId || ""}&autoAnswer=1`;
       await Linking.openURL(Linking.createURL(href));
     }
   }

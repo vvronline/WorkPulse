@@ -1,133 +1,137 @@
 /**
- * Test: Message push payload contract and Android channel behavior
- * File: server/__tests__/pushNotifications.messagePayload.test.ts
- * 
- * Purpose: Verify message notifications are properly structured for status-bar delivery
- * and Android channel configuration for persistent notification display.
+ * Message push payload contract tests.
+ *
+ * Messages are sent as Android data-only FCM pushes so the mobile
+ * background/headless handler can render the visible status-bar notification via
+ * Notifee on the dedicated "messages" channel. This avoids Android OS handling
+ * swallowing the app-side handler when the app is backgrounded/killed.
  */
 
-describe('Message Push Payload Contract', () => {
-  test('T024.1: Message payload includes required fields for unread badge sync', () => {
-    const payload = {
-      messageId: 'msg-123',
-      body: 'Hello from Alice',
-      conversationId: 'conv-456',
-      senderName: 'Alice',
-      unreadCount: 5,
-    };
-
-    expect(payload).toHaveProperty('messageId');
-    expect(payload).toHaveProperty('unreadCount');
-    expect(payload).toHaveProperty('conversationId');
-    expect(payload).toHaveProperty('senderName');
-  });
-
-  test('T024.2: Message notification includes channel for status-bar', () => {
-    const notificationData = {
-      type: 'message',
-      channelId: 'messages',
-      title: 'Alice',
-      body: 'Hello from Alice',
-    };
-
-    expect(notificationData.channelId).toBe('messages');
-    expect(notificationData.type).toBe('message');
-  });
-
-  test('T024.3: Message payload data includes unreadCount for badge reconciliation', () => {
-    const notificationData = {
-      type: 'message',
-      unreadCount: '7',
-      conversationId: 'conv-456',
-      messageId: 'msg-123',
-    };
-
-    expect(notificationData.unreadCount).toBe('7');
-    expect(notificationData.type).toBe('message');
-  });
-
-  test('T024.4: Message notification respects DND for non-priority channels', () => {
-    const androidConfig = {
-      priority: 'high',
-      notification: {
-        channelId: 'messages',
-        bypassDnd: false, // Messages respect DND
-      },
-    };
-
-    expect(androidConfig.notification.bypassDnd).toBe(false);
-  });
-
-  test('T024.5: Message notification includes expiresAt for payload freshness', () => {
-    const now = Math.floor(Date.now() / 1000);
-    const payload = {
-      messageId: 'msg-123',
-      expiresAt: String(now + 3600), // 1 hour expiry
-      unreadCount: 3,
-    };
-
-    expect(payload).toHaveProperty('expiresAt');
-    expect(parseInt(payload.expiresAt)).toBeGreaterThan(now);
-  });
-
-  test('T024.6: Message payload includes dedupeKey for preventing duplicate notifications', () => {
-    const messageId = 'msg-456';
-    const payload = {
-      messageId,
-      dedupeKey: `msg:${messageId}`,
-      unreadCount: 2,
-    };
-
-    expect(payload.dedupeKey).toBe(`msg:${messageId}`);
-  });
+process.env.FIREBASE_SERVICE_ACCOUNT_KEY = JSON.stringify({
+    projectId: "test-project",
+    clientEmail: "test@test-project.iam.gserviceaccount.com",
+    privateKey: "-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----\n",
 });
 
-describe('Message Notification Channel Behavior', () => {
-  test('T024.7: Android "messages" channel configured with correct settings', () => {
-    const channelConfig = {
-      id: 'messages',
-      name: 'Messages',
-      importance: 3, // AndroidImportance.DEFAULT/HIGH
-      vibration: true,
-      sound: true,
-      lightColor: '#FF6B6B',
-    };
+const sendEachForMulticast = jest.fn(async (message: any) => ({
+    responses: message.tokens.map(() => ({ success: true })),
+    successCount: message.tokens.length,
+    failureCount: 0,
+}));
 
-    expect(channelConfig.id).toBe('messages');
-    expect(channelConfig.importance).toBeGreaterThanOrEqual(3);
-  });
+jest.mock("firebase-admin/app", () => ({
+    initializeApp: jest.fn(() => ({ name: "workpulse" })),
+    getApp: jest.fn(() => ({ name: "workpulse" })),
+    cert: jest.fn((serviceAccount) => serviceAccount),
+}));
 
-  test('T024.8: iOS alert style configured for message notifications', () => {
-    const iosAlert = {
-      title: 'New Message',
-      body: 'From Alice',
-      sound: 'default',
-    };
+jest.mock("firebase-admin/messaging", () => ({
+    getMessaging: jest.fn(() => ({
+        sendEachForMulticast,
+    })),
+}));
 
-    expect(iosAlert).toHaveProperty('sound');
-    expect(iosAlert.sound).toBe('default');
-  });
+jest.mock("../utils/logger", () => ({
+    logger: {
+        info: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        fatal: jest.fn(),
+        debug: jest.fn(),
+        child: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() }),
+    },
+    logPushCallLifecycle: jest.fn(),
+}));
 
-  test('T024.9: Message notification includes badgeCount for launcher badge', () => {
-    const payload = {
-      messageId: 'msg-789',
-      badgeCount: '5',
-      unreadCount: '5',
-    };
+const { pushNotifications } = require("../services/pushNotifications");
 
-    expect(payload).toHaveProperty('badgeCount');
-    expect(payload.badgeCount).toBe(payload.unreadCount);
-  });
+describe("pushNotifications.sendMessageNotification", () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        sendEachForMulticast.mockClear();
+    });
 
-  test('T024.10: Notification payload includes conversationId for tap routing', () => {
-    const payload = {
-      type: 'message',
-      conversationId: 'conv-456',
-      messageId: 'msg-789',
-      unreadCount: '2',
-    };
+    test("sends Android messages as true data-only high-priority pushes", async () => {
+        const mockQuery = jest.fn().mockResolvedValue({ rows: [{ device_token: "token1" }] });
 
-    expect(payload.conversationId).toBe('conv-456');
-  });
+        const result = await pushNotifications.sendMessageNotification(
+            mockQuery,
+            10,
+            1,
+            {
+                conversationId: 456,
+                messageId: 123,
+                senderId: 7,
+                senderName: "Alice",
+                messagePreview: "Hello from Alice",
+                unreadCount: 5,
+            },
+        );
+
+        expect(result).toEqual({ succeeded: 1, failed: 0 });
+
+        const sent = sendEachForMulticast.mock.calls[0][0];
+        expect(sent.notification).toBeUndefined();
+        expect(sent.android).toEqual({ priority: "high" });
+        expect(sent.android.notification).toBeUndefined();
+        expect(sent.data).toMatchObject({
+            type: "chat_message",
+            title: "Alice",
+            body: "Hello from Alice",
+            conversationId: "456",
+            messageId: "123",
+            senderId: "7",
+            senderName: "Alice",
+            unreadCount: "5",
+            badgeCount: "5",
+            dedupeKey: "msg:123",
+        });
+    });
+
+    test("includes APNs alert and badge for iOS message display", async () => {
+        const mockQuery = jest.fn().mockResolvedValue({ rows: [{ device_token: "token1" }] });
+
+        await pushNotifications.sendMessageNotification(
+            mockQuery,
+            10,
+            1,
+            {
+                conversationId: 456,
+                messageId: 123,
+                senderId: 7,
+                senderName: "Alice",
+                messagePreview: "Hello from Alice",
+                unreadCount: 5,
+            },
+        );
+
+        const sent = sendEachForMulticast.mock.calls[0][0];
+        expect(sent.apns.headers["apns-push-type"]).toBe("alert");
+        expect(sent.apns.payload.aps.badge).toBe(5);
+        expect(sent.apns.payload.aps.alert).toEqual({
+            title: "Alice",
+            body: "Hello from Alice",
+        });
+    });
+
+    test("handles no device tokens gracefully", async () => {
+        const mockQuery = jest.fn().mockResolvedValue({ rows: [] });
+
+        const result = await pushNotifications.sendMessageNotification(
+            mockQuery,
+            10,
+            1,
+            {
+                conversationId: 456,
+                messageId: 123,
+                senderId: 7,
+                senderName: "Alice",
+                messagePreview: "Hello from Alice",
+                unreadCount: 5,
+            },
+        );
+
+        expect(result).toEqual({ succeeded: 0, failed: 0 });
+        expect(sendEachForMulticast).not.toHaveBeenCalled();
+    });
 });
-
