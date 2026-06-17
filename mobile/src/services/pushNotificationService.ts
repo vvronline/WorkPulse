@@ -338,6 +338,11 @@ class PushNotificationService {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${userToken}`,
+          // CSRF guard on the server rejects state-changing requests that lack
+          // this header (returns 403 "Missing CSRF header"). The axios `api`
+          // client sets it globally, but this raw fetch must include it too —
+          // otherwise the FCM token is never stored and NO pushes are ever sent.
+          "X-Requested-With": "WorkPulse",
         },
         body: JSON.stringify({
           deviceToken: this.deviceToken,
