@@ -1674,14 +1674,13 @@ export default function CallScreen() {
       {showRemoteVideo ? (
         <RTCView
           streamURL={(remoteStream as any).toURL()}
-          style={[
-            styles.remoteVideo,
-            Platform.OS === "android" && styles.unmirrorVideo,
-          ]}
+          style={styles.remoteVideo}
           objectFit="cover"
           // Never mirror the remote feed — only a front-camera self-view should
-          // be mirrored. Without this the peer's video renders like a mirror
-          // image (left-right flipped) on the phone.
+          // be mirrored. WebRTC transmits the TRUE (un-mirrored) image; the peer
+          // is already sending the correct orientation, so we render it as-is.
+          // (A previous Android-only `scaleX(-1)` transform here ADDED a flip and
+          // made the participant look left-right reversed — removed.)
           mirror={false}
           // Android renders each RTCView on a SurfaceView; without explicit
           // zOrder the surfaces stack unpredictably and the small local
@@ -2019,11 +2018,6 @@ const makeStyles = (theme: Theme) =>
     right: 0,
     bottom: 0,
     backgroundColor: "#000",
-  },
-  // Android front-camera streams can arrive mirrored from mobile peers.
-  // Counter-flip only remote video so peers render with natural left/right.
-  unmirrorVideo: {
-    transform: [{ scaleX: -1 }],
   },
   localVideo: {
     position: "absolute",
