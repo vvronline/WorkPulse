@@ -10,10 +10,17 @@ applyKotlinExpoModulesCorePlugin()
 useCoreDependencies()
 useExpoPublishing()
 
+def safeExtGet(prop, fallback) {
+  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}
+
 android {
   namespace "expo.modules.lockscreen"
+  compileSdkVersion safeExtGet("compileSdkVersion", 36)
+
   defaultConfig {
-    minSdkVersion 24
+    minSdkVersion safeExtGet("minSdkVersion", 24)
+    targetSdkVersion safeExtGet("targetSdkVersion", 36)
   }
   lintOptions {
     abortOnError false
