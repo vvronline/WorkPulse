@@ -823,10 +823,26 @@ router.post("/logout", async (req: Request, res: Response) => {
 router.post("/device-token", auth, async (req: Request, res: Response) => {
     try {
         const { deviceToken, platform } = req.body;
+        // Diagnostic: log every hit (token redacted) so we can confirm the
+        // mobile app is actually reaching this endpoint and see why a
+        // registration is rejected. Without this, a failing/absent registration
+        // is invisible — the #1 reason "no device tokens" persists.
+        logger.info(
+            {
+                userId: (req.user as any)?.id ?? null,
+                tenantId: (req.user as any)?.tenant_id ?? null,
+                platform: platform ?? null,
+                hasToken: Boolean(deviceToken && String(deviceToken).trim()),
+                tokenLen: deviceToken ? String(deviceToken).length : 0,
+            },
+            "POST /device-token received",
+        );
         if (!deviceToken || !deviceToken.trim()) {
+            logger.warn({ userId: (req.user as any)?.id ?? null }, "POST /device-token rejected: missing deviceToken");
             return res.status(400).json({ error: "Device token is required" });
         }
         if (!platform || !["ios", "android", "web"].includes(platform)) {
+            logger.warn({ userId: (req.user as any)?.id ?? null, platform }, "POST /device-token rejected: invalid platform");
             return res.status(400).json({ error: "Valid platform is required (ios, android, or web)" });
         }
 

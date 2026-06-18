@@ -78,7 +78,12 @@ class PushNotificationService {
       }
       await this.setupNotificationCategories();
 
-      // Request notification permissions
+      // Request notification permissions. NOTE: we do NOT abort if the user
+      // declines. The FCM/APNs *device token* can still be acquired and must
+      // still be registered so the backend can deliver DATA pushes (which wake
+      // our headless call/message handler). POST_NOTIFICATIONS only gates the
+      // OS-rendered tray entry, not push delivery itself — aborting here was the
+      // root cause of "no device token ever registered → no push ever sent".
       const existingPermissions = await Notifications.getPermissionsAsync();
       const permissionResult =
         existingPermissions.status === "granted"
@@ -87,8 +92,9 @@ class PushNotificationService {
       const { status } = permissionResult;
 
       if (status !== "granted") {
-        console.warn("Notification permissions not granted");
-        return;
+        console.warn(
+          "Notification permissions not granted — continuing to acquire & register the device token anyway so DATA pushes (calls/messages) are still delivered.",
+        );
       }
 
       // Get the raw FCM/APNs device token used directly by Firebase Admin SDK.
