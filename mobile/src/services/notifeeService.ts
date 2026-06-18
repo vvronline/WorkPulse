@@ -283,6 +283,9 @@ class NotifeeService {
     await this.ensureChannels();
 
     const id = data.messageId ? messageNotificationId(data.messageId) : undefined;
+    // Server-authoritative launcher/app-icon badge total (e.g. "3" unread).
+    const badgeCount = Number(data.badgeCount ?? data.unreadCount);
+    const hasBadge = Number.isFinite(badgeCount) && badgeCount >= 0;
     try {
       await notifee.displayNotification({
         ...(id ? { id } : {}),
@@ -295,6 +298,8 @@ class NotifeeService {
           visibility: this.AndroidVisibility.PRIVATE ?? 0,
           pressAction: { id: "default", launchActivity: "default" },
           sound: "default",
+          // Drive the launcher dot/count from the running total.
+          ...(hasBadge ? { badgeCount } : {}),
           // No custom `smallIcon` — Notifee falls back to the app's launcher
           // icon. We deliberately avoid generating a dedicated notification
           // drawable via expo-notifications `icon`/`color` because those inject

@@ -3,7 +3,7 @@ import * as Notifications from "expo-notifications";
 import { nativeCallService } from "./nativeCallService";
 import { notifeeService } from "./notifeeService";
 import type { NotificationPayload } from "./pushNotificationService";
-import { buildNotificationPayload } from "./pushNotificationService";
+import { buildNotificationPayload, pushNotificationService } from "./pushNotificationService";
 
 type RemoteMessage = {
   notification?: {
@@ -194,11 +194,26 @@ class BackgroundPushService {
     // Message / general notification. Use Notifee for reliable status-bar
     // delivery in the background/terminated state (expo-notifications is
     // unreliable from a headless task). Fall back to expo-notifications only
-    // when Notifee is unavailable.
+    // when Notifee is unavailable. This single branch handles BOTH chat
+    // messages (type=chat_message) AND general alerts (type=notification:
+    // leave approved, task assigned, mentions, …) — both now arrive DATA-ONLY
+    // from the server so they reach here in every app state, including
+    // foreground (where RN Firebase's onMessage does not auto-display them).
     if (notifeeService.isAvailable()) {
       await notifeeService.displayMessage(payload);
     } else {
       await this.presentDataNotification(payload);
+    }
+
+    // Launcher badge: the server sends the authoritative total in
+    // `badgeCount` (falling back to `unreadCount`). Reflect it on the app icon
+    // so e.g. 3 unread messages show "3". A 0/absent value clears the badge.
+    const badgeRaw = data.badgeCount ?? data.unreadCount;
+    if (badgeRaw != null) {
+      const badge = Number(badgeRaw);
+      if (Number.isFinite(badge)) {
+        await pushNotificationService.setBadgeCount(Math.max(0, badge));
+      }
     }
   }
 

@@ -103,6 +103,33 @@ function sendErrorAck(ws: WSLike | null | undefined, clientMsgId: unknown, reaso
 }
 
 /**
+ * Compute a user's TOTAL unread message count across every conversation they
+ * participate in. Used to populate the push badge count so the launcher / app
+ * icon shows the true number (e.g. "3"), not a per-message "1".
+ *
+ * Counts messages newer than the user's per-conversation read cursor
+ * (`message_reads.last_read_at`); conversations the user has never opened count
+ * ALL messages from others. Sender's own messages are excluded. Best-effort: on
+ * any error the caller falls back to the default badge of 1.
+ */
+async function getTotalUnread(db: DbLike, userId: number): Promise<number> {
+    const row = (await db.query(
+        `SELECT COUNT(*)::int AS unread
+           FROM messages m
+           JOIN conversation_participants cp
+             ON cp.conversation_id = m.conversation_id
+            AND cp.user_id = $1
+           LEFT JOIN message_reads mr
+             ON mr.conversation_id = m.conversation_id
+            AND mr.user_id = $1
+          WHERE m.sender_id <> $1
+            AND (mr.last_read_at IS NULL OR m.created_at > mr.last_read_at)`,
+        [userId],
+    )).rows[0];
+    return row?.unread ?? 0;
+}
+
+/**
  * The handler proper. Signature mirrors the call-site in
  * `handleChatMessage` so adoption is a direct replacement.
  *
@@ -214,22 +241,37 @@ async function chatMessage({ db, senderId, tenantId, data, ws, sendToUser }: Cha
         if (p.user_id !== senderId) {
             redis.incrUnread(tenantId, p.user_id, conversationId);
 
-            // Send push notification for new messages to other participants
-            pushNotifications.sendMessageNotification(
-                db.query as any,
-                p.user_id,
-                tenantId,
-                {
-                    conversationId,
-                    messageId: result.id,
-                    senderId,
-                    senderName: sender?.full_name || "Unknown",
-                    senderAvatar: sender?.avatar,
-                    messagePreview: content.trim().substring(0, 150),
+            // Compute the recipient's TOTAL unread across ALL conversations so the
+            // push carries the true badge count (iOS aps.badge + Android
+            // badgeCount). Without this the badge always showed "1" and never
+            // reflected, e.g., "3 messages". Best-effort: a failure here must not
+            // block message delivery, so we fall back to leaving it undefined
+            // (the push service then defaults to 1).
+            void (async () => {
+                let unreadTotal: number | undefined;
+                try {
+                    unreadTotal = await getTotalUnread(db, p.user_id);
+                } catch (err: any) {
+                    logger.warn({ err: err?.message, userId: p.user_id }, "Failed to compute total unread for badge");
                 }
-            ).catch((err: any) => {
-                logger.warn({ err: err.message, userId: p.user_id, messageId: result.id }, "Failed to send message push notification");
-            });
+                // Send push notification for new messages to other participants
+                pushNotifications.sendMessageNotification(
+                    db.query as any,
+                    p.user_id,
+                    tenantId,
+                    {
+                        conversationId,
+                        messageId: result.id,
+                        senderId,
+                        senderName: sender?.full_name || "Unknown",
+                        senderAvatar: sender?.avatar,
+                        messagePreview: content.trim().substring(0, 150),
+                        unreadCount: unreadTotal,
+                    }
+                ).catch((err: any) => {
+                    logger.warn({ err: err.message, userId: p.user_id, messageId: result.id }, "Failed to send message push notification");
+                });
+            })();
         }
     }
 

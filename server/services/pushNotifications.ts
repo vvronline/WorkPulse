@@ -348,6 +348,9 @@ class PushNotificationService {
             title: string;
             body: string;
             type?: string;
+            // Server-authoritative total unread/alert count for the launcher
+            // badge (defaults to 1 when omitted).
+            badgeCount?: number;
         },
     ): Promise<{ succeeded: number; failed: number }> {
         if (!this.initialized || !this.app) {
@@ -360,17 +363,36 @@ class PushNotificationService {
             return { succeeded: 0, failed: 0 };
         }
 
+        // IMPORTANT: Like message pushes, alert pushes are DATA-ONLY on Android
+        // (no top-level `notification` block and no `android.notification`). A
+        // payload containing a `notification` block is handed straight to the
+        // Android system tray and does NOT invoke the app's background/headless
+        // message handler when backgrounded/killed, and is NOT auto-displayed by
+        // RN Firebase's `onMessage` in the foreground — so foreground alerts were
+        // silently dropped and the headless path was bypassed. Routing alerts
+        // through `data` makes the app's handler post them via Notifee in all
+        // states (foreground/background/killed). Title/body travel in `data`.
+        // The webpush.notification block (added in sendToDevices) still renders
+        // the browser/desktop alert. iOS keeps its visible APNs alert below.
+        const badge = notificationData.badgeCount ?? 1;
         const payload: FCMPayload = {
+            data: this.buildCommonData({
+                notificationId: String(notificationData.notificationId),
+                type: notificationData.type || "notification",
+                title: notificationData.title,
+                body: notificationData.body,
+                badgeCount: String(badge),
+                dedupeKey: `notif:${notificationData.notificationId}`,
+            }, tenantId),
+            // Keep webpush rendering via the optional notification block below by
+            // exposing title/body to sendToDevices.
             notification: {
                 title: notificationData.title,
                 body: notificationData.body,
             },
-            data: this.buildCommonData({
-                notificationId: String(notificationData.notificationId),
-                type: notificationData.type || "notification",
-                dedupeKey: `notif:${notificationData.notificationId}`,
-            }, tenantId),
-            android: this.buildAndroidNotification("default", "high", "private"),
+            android: {
+                priority: "high",
+            },
             apns: {
                 headers: {
                     "apns-priority": "10",
@@ -382,7 +404,7 @@ class PushNotificationService {
                             title: notificationData.title,
                             body: notificationData.body,
                         },
-                        badge: 1,
+                        badge,
                         sound: "default",
                         "mutable-content": 1,
                     },

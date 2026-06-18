@@ -47,6 +47,26 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         refreshUnread();
     }, [refreshUnread]);
 
+    // Mirror the unread total onto the desktop taskbar/dock badge (Electron)
+    // and the PWA app badge so the OS shows e.g. "3" without the window open.
+    // Cleared to 0 automatically when everything is read.
+    useEffect(() => {
+        const total = Math.max(0, unreadCount);
+        try {
+            (window as any).electronAPI?.setBadgeCount?.(total);
+        } catch {
+            /* ignore — non-Electron or older preload */
+        }
+        try {
+            if (typeof (navigator as any).setAppBadge === "function") {
+                if (total > 0) (navigator as any).setAppBadge(total);
+                else (navigator as any).clearAppBadge?.();
+            }
+        } catch {
+            /* ignore — Badging API unsupported */
+        }
+    }, [unreadCount]);
+
     const value = useMemo(
         () => ({ unreadCount, refreshUnread }),
         [unreadCount, refreshUnread],

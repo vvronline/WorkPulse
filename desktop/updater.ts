@@ -1,7 +1,22 @@
 import { autoUpdater, type UpdateInfo, type ProgressInfo } from "electron-updater";
-import { ipcMain, app, BrowserWindow, type IpcMainInvokeEvent, type IpcMainEvent } from "electron";
+import { ipcMain, app, BrowserWindow, nativeImage, type IpcMainInvokeEvent, type IpcMainEvent } from "electron";
 
 autoUpdater.logger = console;
+
+/**
+ * Build a small red circular badge PNG (as a data URL) bearing the unread
+ * count, used as the Windows taskbar overlay icon (Windows has no dock badge).
+ * Rendered as a self-contained SVG so we don't ship extra image assets.
+ */
+function buildBadgeDataUrl(label: string, size: number): string {
+    const fontSize = label.length >= 3 ? Math.round(size * 0.42) : Math.round(size * 0.56);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
+        `<circle cx="${size / 2}" cy="${size / 2}" r="${size / 2}" fill="#ef4444"/>` +
+        `<text x="50%" y="50%" dy="0.35em" text-anchor="middle" ` +
+        `font-family="Segoe UI, Arial, sans-serif" font-size="${fontSize}" font-weight="700" fill="#ffffff">${label}</text>` +
+        `</svg>`;
+    return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+}
 
 const GITHUB_OWNER = "vvronline";
 const GITHUB_REPO = "WorkPulse";
@@ -338,6 +353,40 @@ function setupUpdater(mainWindow: BrowserWindow): void {
             if (win.isMinimized()) win.restore();
             win.show();
             win.focus();
+        }
+    });
+
+    // ─── Unread badge: taskbar / dock count ───
+    // The renderer forwards the combined unread total (chat + notifications).
+    // macOS/Linux render it as a dock badge via app.setBadgeCount; Windows has
+    // no dock badge, so we draw a small numeric overlay icon on the taskbar
+    // button instead (cleared with null when the count is 0).
+    ipcMain.on("set-badge-count", (event: IpcMainEvent, rawCount: number) => {
+        const count = Math.max(0, Math.floor(Number(rawCount) || 0));
+        try {
+            if (typeof app.setBadgeCount === "function") {
+                app.setBadgeCount(count);
+            }
+        } catch {
+            /* setBadgeCount unsupported on this platform — ignore */
+        }
+
+        if (process.platform === "win32") {
+            const win = BrowserWindow.fromWebContents(event.sender);
+            if (!win || win.isDestroyed()) return;
+            if (count <= 0) {
+                win.setOverlayIcon(null, "");
+                return;
+            }
+            try {
+                const label = count > 99 ? "99+" : String(count);
+                const size = 32;
+                const dataUrl = buildBadgeDataUrl(label, size);
+                const image = nativeImage.createFromDataURL(dataUrl);
+                win.setOverlayIcon(image, `${count} unread`);
+            } catch {
+                /* overlay drawing failed — non-fatal */
+            }
         }
     });
 

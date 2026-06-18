@@ -57,6 +57,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     flashFrame: (flash: boolean) => ipcRenderer.send("flash-frame", flash),
     showAndFocus: () => ipcRenderer.send("show-and-focus"),
 
+    // Unread badge: set the taskbar / dock unread count. The renderer computes
+    // the combined unread total (chat + notifications) and forwards it here; the
+    // main process renders it as a dock badge (macOS/Linux) or a numeric
+    // taskbar overlay icon (Windows). Pass 0 to clear.
+    setBadgeCount: (count: number) => ipcRenderer.send("set-badge-count", count),
+
     // IP-based geolocation fallback for the attendance clock-in flow.
     // Resolves to { ok: true, latitude, longitude, accuracy } or
     // { ok: false, error }. The renderer only calls this when

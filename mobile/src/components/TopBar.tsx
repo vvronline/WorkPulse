@@ -10,6 +10,8 @@ import { useAuth } from "../auth/AuthContext";
 import { getNotifications, getMyStatus } from "../features";
 import { uploadUrl } from "../config";
 import { socket } from "../realtime/socket";
+import { chatUnreadManager } from "../realtime/chatUnreadEvents";
+import { pushNotificationService } from "../services/pushNotificationService";
 import StatusDot from "./StatusDot";
 
 function initials(name?: string) {
@@ -35,13 +37,20 @@ export default function TopBar() {
   // (mirrors the web Navbar avatar status badge).
   const [myStatus, setMyStatus] = useState<string | null>(null);
 
-  // Refresh unread badge whenever a tab regains focus.
+  // Refresh unread badge whenever a tab regains focus. Also reconcile the
+  // launcher/app-icon badge with the combined unread total (notifications +
+  // chat) so it stays accurate when items are read in-app — push delivery sets
+  // it on arrival, this clears/decrements it once the user catches up.
   useFocusEffect(
     useCallback(() => {
       let active = true;
       getNotifications()
         .then((r) => {
-          if (active) setUnread(r.data.unread || 0);
+          if (!active) return;
+          const notifUnread = r.data.unread || 0;
+          setUnread(notifUnread);
+          const total = notifUnread + chatUnreadManager.getTotalUnread();
+          pushNotificationService.setBadgeCount(Math.max(0, total)).catch(() => {});
         })
         .catch(() => {});
       getMyStatus()
