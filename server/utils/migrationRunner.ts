@@ -1253,7 +1253,13 @@ const MIGRATIONS: Migration[] = [
             `);
             await query(`CREATE INDEX IF NOT EXISTS idx_device_tokens_user ON device_tokens(user_id)`);
             await query(`CREATE INDEX IF NOT EXISTS idx_device_tokens_org ON device_tokens(tenant_id) WHERE tenant_id IS NOT NULL`);
-            await query(`CREATE INDEX IF NOT EXISTS idx_device_tokens_last_seen ON device_tokens(last_seen_at) WHERE last_seen_at > NOW() - INTERVAL '1 year'`);
+            // NOTE: the predicate must NOT reference NOW()/CURRENT_TIMESTAMP —
+            // those are STABLE, not IMMUTABLE, and Postgres rejects a partial
+            // index whose predicate isn't immutable with:
+            //   "functions in index predicate must be marked IMMUTABLE".
+            // A plain b-tree on last_seen_at supports the same range/order
+            // lookups (e.g. pruning stale tokens) without an illegal predicate.
+            await query(`CREATE INDEX IF NOT EXISTS idx_device_tokens_last_seen ON device_tokens(last_seen_at)`);
         },
     },
 ];
