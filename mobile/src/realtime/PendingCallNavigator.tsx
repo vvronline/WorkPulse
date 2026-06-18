@@ -17,7 +17,13 @@
 import { useEffect } from "react";
 import { useRouter } from "expo-router";
 import { useAuth } from "../auth/AuthContext";
-import { consumePendingCall, peekPendingCall } from "./pendingCall";
+import {
+  consumePendingCall,
+  peekPendingCall,
+  setPendingCall,
+  loadPersistedPendingCall,
+  clearPersistedPendingCall,
+} from "./pendingCall";
 import { beginCallNavigation } from "./callRouting";
 import { notifeeService } from "../services/notifeeService";
 
@@ -25,10 +31,33 @@ export default function PendingCallNavigator() {
   const router = useRouter();
   const { user, loading } = useAuth();
 
-  // Capture any cold-start initial notification ONCE on mount, before auth
-  // resolves, so the route is available the moment the user is known.
+  // Capture any cold-start routing source ONCE on mount, before auth resolves,
+  // so a pending call route is available the moment the user is known:
+  //   1. Notifee's initial notification — set when the user TAPPED the call
+  //      notification / its Answer-Decline action to cold-launch the app.
+  //   2. The SecureStore-persisted route — the ONLY signal that survives the
+  //      LOCKED + KILLED case, where the full-screen-intent AUTO-launches the
+  //      activity (no tap → getInitialNotification() is null). Only honoured if
+  //      still fresh (TTL-guarded in loadPersistedPendingCall) so a stale ring
+  //      never reopens a dead call screen. The in-memory route (set by the
+  //      Notifee tap handlers) takes precedence when present.
   useEffect(() => {
-    notifeeService.captureInitialCallRoute().catch(() => {});
+    let cancelled = false;
+    (async () => {
+      await notifeeService.captureInitialCallRoute().catch(() => {});
+      if (cancelled) return;
+      if (peekPendingCall()) return; // a tap-sourced route already exists
+      const persisted = await loadPersistedPendingCall();
+      if (cancelled || !persisted) return;
+      if (peekPendingCall()) return; // re-check: tap route may have arrived
+      setPendingCall(persisted);
+      // Consume the durable copy now that it's promoted to the in-memory route;
+      // the navigation effect below will pick it up and route to the call.
+      await clearPersistedPendingCall();
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {

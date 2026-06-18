@@ -3,6 +3,8 @@ import { useRouter, usePathname } from "expo-router";
 import { socket } from "./socket";
 import { useAuth } from "../auth/AuthContext";
 import { beginCallNavigation, endCallNavigation } from "./callRouting";
+import { clearPersistedPendingCall } from "./pendingCall";
+import { notifeeService } from "../services/notifeeService";
 
 /**
  * App-wide listener for inbound calls. When a `call_incoming` frame arrives it
@@ -49,6 +51,15 @@ export default function IncomingCallListener() {
       ) {
         if (ringingRef.current === d.callId) ringingRef.current = null;
         endCallNavigation();
+        // Tear down any ringing call notification AND drop the persisted route
+        // so a later cold start never re-opens this now-dead call. cancelCall
+        // also clears the persisted entry internally; the explicit clear covers
+        // events that arrive without callId/conversationId.
+        notifeeService.cancelCall(
+          d.callId != null ? String(d.callId) : undefined,
+          d.conversationId != null ? String(d.conversationId) : undefined,
+        );
+        clearPersistedPendingCall().catch(() => {});
       }
     });
     return off;

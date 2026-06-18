@@ -21,7 +21,12 @@ import { Platform } from "react-native";
 import * as Linking from "expo-linking";
 import { nativeCallService } from "./nativeCallService";
 import type { NotificationPayload } from "./pushNotificationService";
-import { setPendingCall, pendingCallFromData } from "../realtime/pendingCall";
+import {
+  setPendingCall,
+  pendingCallFromData,
+  persistPendingCall,
+  clearPersistedPendingCall,
+} from "../realtime/pendingCall";
 
 // Versioned channel IDs. Android notification channels are IMMUTABLE after
 // creation — recreating a channel with the same ID does NOT update its
@@ -249,6 +254,15 @@ class NotifeeService {
           timeoutAfter: 45000,
         },
       });
+
+      // Persist the call route so a LOCKED + KILLED device — where the
+      // full-screen-intent AUTO-launches MainActivity in a brand-new process
+      // (not a notification tap, so getInitialNotification() is null) — can
+      // still route to the incoming-call screen instead of the dashboard. The
+      // in-memory pending route does not survive that process death; SecureStore
+      // does. PendingCallNavigator loads + consumes it (if still fresh) on mount.
+      const route = pendingCallFromData(data);
+      if (route) await persistPendingCall(route);
     } catch (err) {
       console.warn("[NotifeeService] Failed to display incoming call:", err);
     }
@@ -311,6 +325,10 @@ class NotifeeService {
 
   /** Cancels a previously-displayed incoming-call notification (call ended/handled). */
   async cancelCall(callId?: string, conversationId?: string): Promise<void> {
+    // Drop any persisted pending-call route so a future cold start never routes
+    // to a call that has already ended / been handled (avoids "ghost" call
+    // screens). Done regardless of Notifee availability.
+    await clearPersistedPendingCall();
     const notifee = this.resolve();
     if (!notifee || !callId || !conversationId) return;
     try {

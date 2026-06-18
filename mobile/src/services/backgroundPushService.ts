@@ -1,4 +1,4 @@
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
 import * as Notifications from "expo-notifications";
 import { nativeCallService } from "./nativeCallService";
 import { notifeeService } from "./notifeeService";
@@ -161,7 +161,20 @@ class BackgroundPushService {
       // which is why we use Notifee here.
       await nativeCallService.reportIncomingCall(data);
 
-      if (!nativeCallService.isNativeAvailable()) {
+      // APP-STATE GATE (Android, no native CallKeep):
+      //   • active     → the app is OPEN and visible. The in-app
+      //     IncomingCallListener (websocket `call_incoming`) already renders the
+      //     full-screen call UI. Posting a Notifee notification here too would
+      //     DUPLICATE it (full-screen UI + a status-bar incoming-call entry), so
+      //     we SKIP the notification and let the in-app UI own the ring.
+      //   • background/inactive → the user is on another app or the screen is
+      //     locked/killed. Notifee renders the heads-up status-bar incoming call
+      //     (other app in use) or the full-screen-intent call screen over the
+      //     lock screen / when no app is foregrounded (killed/headless). This is
+      //     the ONLY surface in that state, so we MUST post it.
+      const appIsForeground = AppState.currentState === "active";
+
+      if (!nativeCallService.isNativeAvailable() && !appIsForeground) {
         if (notifeeService.isAvailable()) {
           await notifeeService.displayIncomingCall(data);
         } else {
