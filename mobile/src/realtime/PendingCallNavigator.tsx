@@ -1,17 +1,18 @@
 /**
- * Consumes a "pending call route" captured at app launch and navigates to the
- * call screen once the router + auth are ready.
+ * FALLBACK consumer of a "pending call route" captured at app launch.
  *
- * WHY: When the app is launched COLD by a notification tap / Answer action
- * (app cleared from background, possibly over the lock screen), the headless
- * `Linking.openURL(...)` deep link is lost before expo-router mounts, so the
- * app boots its default route (the dashboard) and the call never appears.
+ * PRIMARY cold-start routing now lives in `app/index.tsx`, which detects a
+ * pending/persisted call BEFORE rendering and redirects STRAIGHT to /call so
+ * the dashboard never flashes underneath. This component remains as a safety
+ * net for cases where index.tsx did NOT route — most importantly:
+ *   • the call route arrived while the user was unauthenticated (index stashes
+ *     it back via setPendingCall; once login completes this routes to it), and
+ *   • a route stashed by the Notifee tap handlers while the app was already
+ *     past the index route.
  *
- * `notifeeService.captureInitialCallRoute()` (called at startup) and the
- * Notifee answer/decline handlers stash a `PendingCallRoute`. This component
- * waits for `user` to be loaded, then pushes `/call/[conversationId]` with the
- * correct params (including autoAnswer / decline action). Navigation is guarded
- * via `beginCallNavigation` so it never double-mounts the fullScreenModal.
+ * It is guarded by `beginCallNavigation`: if index.tsx (or any other path)
+ * already claimed navigation for this call, we DO NOT push again — that avoids
+ * double-mounting the /call fullScreenModal (which crashes Fabric).
  */
 
 import { useEffect } from "react";
@@ -69,8 +70,10 @@ export default function PendingCallNavigator() {
     if (!route) return;
 
     // Claim navigation so the websocket / push paths don't also push the
-    // fullScreenModal for this same call (double-mount crashes Fabric).
-    beginCallNavigation(route.callId, route.conversationId);
+    // fullScreenModal for this same call (double-mount crashes Fabric). If the
+    // claim FAILS, index.tsx (or another path) already routed this call as the
+    // root screen — pushing again would double-mount, so bail out.
+    if (!beginCallNavigation(route.callId, route.conversationId)) return;
 
     // Defer one tick so the navigation tree is fully mounted before pushing.
     const t = setTimeout(() => {

@@ -277,7 +277,16 @@ export default function CallScreen() {
       // Release the cross-path navigation guard so a future call can present
       // the call screen again (see src/realtime/callRouting.ts).
       endCallNavigation();
-      router.back();
+      // The call screen can be the ROOT route on a cold call launch (locked
+      // device / killed app → index.tsx redirects straight here, with no
+      // dashboard beneath). In that case router.back() has nowhere to go and
+      // would exit the app; replace into the tabs instead so ending/declining
+      // lands cleanly on the dashboard.
+      if (router.canGoBack()) {
+        router.back();
+      } else {
+        router.replace("/(tabs)");
+      }
     },
     [conversationId, router],
   );
