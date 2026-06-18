@@ -73,13 +73,46 @@ async function main(): Promise<void> {
     await waitForDatabase();
 
     logger.info("migrate.js: initializing master schema...");
-    const { initDB } = require("./db");
+    const { initDB, initTenantSchema } = require("./db");
     await initDB();
+
+    // CRITICAL: ensure every tenant DB has the FULL base schema before the
+    // incremental migration sweep runs. `sweepAllTenants()` only applies the
+    // incremental MIGRATIONS[] array — it does NOT (re)run initTenantSchema().
+    // Any tenant DB that was never fully bootstrapped (or whose bootstrap
+    // aborted) would therefore be missing base tables like `tenant_roles` and
+    // `device_tokens`, which silently breaks features such as push
+    // notifications (device-token registration INSERT fails, getDeviceTokens()
+    // returns [] → no push is ever dispatched). initTenantSchema() is fully
+    // idempotent (every statement is CREATE TABLE / ADD COLUMN IF NOT EXISTS),
+    // so running it on every deploy is safe and self-healing.
+    logger.info("migrate.js: ensuring base tenant schema for all tenants...");
+    const { forEachTenant } = require("./utils/tenantManager");
+    const schemaTotals = { ok: 0, failed: 0 };
+    await forEachTenant(
+        async (db: { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> }, tenant: { slug?: string; db_name?: string }) => {
+            try {
+                await initTenantSchema(db.query);
+                schemaTotals.ok++;
+            } catch (err: unknown) {
+                schemaTotals.failed++;
+                logger.error(
+                    { err: (err as Error).message, tenant: tenant.slug || tenant.db_name },
+                    "migrate.js: initTenantSchema failed for tenant",
+                );
+            }
+        },
+        { label: "tenant-schema-bootstrap" },
+    );
+    logger.info({ schemaTotals }, "migrate.js: base tenant schema ensured");
 
     logger.info("migrate.js: running tenant migrations...");
     const { sweepAllTenants } = require("./utils/migrationRunner");
     const result = await sweepAllTenants();
     logger.info({ result }, "migrate.js: all migrations complete");
+    if (result?.failed > 0) {
+        logger.error({ failed: result.failed }, "migrate.js: one or more tenant migrations FAILED — see per-migration errors above");
+    }
 }
 
 main()

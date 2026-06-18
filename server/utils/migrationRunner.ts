@@ -1360,13 +1360,27 @@ async function sweepAllTenants(): Promise<SweepTotals> {
 
     await forEachTenant(async (db: { query: QueryFn }, tenant: { slug?: string; db_name?: string }) => {
         totals.tenants++;
-        const r = await runTenantMigrations(db.query, { label: tenant.slug || tenant.db_name });
+        const label = tenant.slug || tenant.db_name;
+        const r = await runTenantMigrations(db.query, { label });
         totals.applied += r.applied.length;
         totals.skipped += r.skipped;
         totals.failed += r.failed.length;
+        // Surface per-tenant failures loudly. A silently-failing migration (e.g.
+        // the device_tokens table never gets created) otherwise hides forever,
+        // breaking features like push notifications with no obvious cause.
+        if (r.failed.length > 0) {
+            logger.error(
+                { label, failedMigrations: r.failed },
+                'Migration sweep: tenant has FAILED migrations — feature schema may be incomplete',
+            );
+        }
     }, { label: 'migration-sweep' });
 
-    logger.info(totals, 'Migration sweep complete');
+    if (totals.failed > 0) {
+        logger.error(totals, 'Migration sweep complete WITH FAILURES — see per-tenant errors above');
+    } else {
+        logger.info(totals, 'Migration sweep complete');
+    }
     return totals;
 }
 

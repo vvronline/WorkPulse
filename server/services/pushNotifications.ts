@@ -97,7 +97,14 @@ class PushNotificationService {
                 credential: cert(serviceAccount),
             }, "workpulse");
             this.initialized = true;
-            logger.info("Firebase Cloud Messaging initialized");
+            // Log the resolved Firebase project_id so deploys can confirm the
+            // server's service account matches the mobile app's
+            // google-services.json project. A mismatch here means every send
+            // fails with `mismatched-credential` and NO push is delivered.
+            logger.info(
+                { projectId: serviceAccount.project_id || "unknown", clientEmail: serviceAccount.client_email || "unknown" },
+                "Firebase Cloud Messaging initialized",
+            );
         } catch (err) {
             logger.error({ err: (err as Error).message }, "Failed to initialize Firebase");
         }
@@ -154,7 +161,11 @@ class PushNotificationService {
 
         const tokens = await this.getDeviceTokens(query, userId, tenantId);
         if (tokens.length === 0) {
-            logger.debug({ userId }, "No device tokens found for call notification");
+            // info (not debug) so this is visible in production. The #1 cause of
+            // "push never shows" is the recipient simply having no registered
+            // device token (registration failed, table missing, or never logged
+            // in on a build with FCM). Surfacing it here makes that obvious.
+            logger.info({ event: "push_skip_no_tokens", notificationType: "call", userId, tenantId, callId: callData.callId }, "No device tokens for call notification recipient");
             return { succeeded: 0, failed: 0 };
         }
 
@@ -251,6 +262,7 @@ class PushNotificationService {
 
         const tokens = await this.getDeviceTokens(query, userId, tenantId);
         if (tokens.length === 0) {
+            logger.info({ event: "push_skip_no_tokens", notificationType: "message", userId, tenantId, messageId: messageData.messageId }, "No device tokens for message notification recipient");
             return { succeeded: 0, failed: 0 };
         }
 
@@ -344,6 +356,7 @@ class PushNotificationService {
 
         const tokens = await this.getDeviceTokens(query, userId, tenantId);
         if (tokens.length === 0) {
+            logger.info({ event: "push_skip_no_tokens", notificationType: "notification", userId, tenantId, notificationId: notificationData.notificationId }, "No device tokens for alert notification recipient");
             return { succeeded: 0, failed: 0 };
         }
 
@@ -394,7 +407,20 @@ class PushNotificationService {
             );
             return result.rows.map((r: any) => r.device_token);
         } catch (err) {
-            logger.error({ err: (err as Error).message, userId }, "Failed to get device tokens");
+            const message = (err as Error).message || "";
+            // Distinguish a missing table (tenant DB schema not migrated) from a
+            // genuine query error. A missing `device_tokens` relation means the
+            // migration `2026_06_v13_push_notification_device_tokens` (or the
+            // base initTenantSchema) never ran for this tenant — device-token
+            // registration INSERTs are also failing, so NO push is ever sent.
+            if (/device_tokens.*does not exist|relation .*device_tokens/i.test(message)) {
+                logger.error(
+                    { err: message, userId, tenantId },
+                    "device_tokens table missing for tenant — run migrations (initTenantSchema / 2026_06_v13). Push notifications disabled until fixed.",
+                );
+            } else {
+                logger.error({ err: message, userId, tenantId }, "Failed to get device tokens");
+            }
             return [];
         }
     }
