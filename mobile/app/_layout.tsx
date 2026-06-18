@@ -13,10 +13,12 @@ import MeetingStartedListener from "../src/realtime/MeetingStartedListener";
 import RealtimeSoundListener from "../src/realtime/RealtimeSoundListener";
 import PushNotificationListener from "../src/realtime/PushNotificationListener";
 import PushNotificationInitializer from "../src/realtime/PushNotificationInitializer";
+import PendingCallNavigator from "../src/realtime/PendingCallNavigator";
 import { ThemeProvider, useTheme } from "../src/theme/ThemeProvider";
 import { nativeCallService } from "../src/services/nativeCallService";
 import { backgroundPushService } from "../src/services/backgroundPushService";
 import { notifeeService } from "../src/services/notifeeService";
+import { ensureCallMediaPermissions } from "../src/services/mediaPermissions";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -173,6 +175,12 @@ export default function RootLayout() {
     // screen can surface over the lock screen (otherwise only the ring sound
     // plays and the user must open the app to answer/reject).
     notifeeService.ensureFullScreenIntentPermission().catch(() => {});
+    // Proactively request CAMERA + RECORD_AUDIO while the app is in the
+    // foreground. When a call is later answered from the background / lock
+    // screen, Android can't show a runtime permission dialog — without this the
+    // call would connect with no camera/mic (black self-view, peer sees
+    // nothing). Granting up front makes the background/lock-screen answer work.
+    ensureCallMediaPermissions().catch(() => {});
     return () => {
       backgroundPushService.unregisterForegroundHandler();
       unsubscribeNotifee();
@@ -191,6 +199,7 @@ export default function RootLayout() {
               <MeetingStartedListener />
               <RealtimeSoundListener />
               <PushNotificationListener />
+              <PendingCallNavigator />
               <ImpersonationBanner />
               <UpdateChecker />
               <ThemedStack />

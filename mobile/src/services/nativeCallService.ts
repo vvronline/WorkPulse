@@ -2,6 +2,8 @@ import * as Linking from "expo-linking";
 import { Platform } from "react-native";
 import { socket } from "../realtime/socket";
 import type { NotificationPayload } from "./pushNotificationService";
+import { setPendingCall, pendingCallFromData } from "../realtime/pendingCall";
+import { beginCallNavigation } from "../realtime/callRouting";
 
 type NativeAction = "answer" | "reject" | "end";
 type ActionHandler = (params: {
@@ -94,29 +96,53 @@ class NativeCallService {
     const conversationId = toInt(payload?.conversationId);
     if (!callId || !conversationId) return;
 
+    // Notify any mounted action handlers (app alive). These handle
+    // reject/end over the websocket; for "answer" they are intentionally a
+    // no-op now (the call screen's acceptIncoming owns the accept — see below).
     let handledByMountedApp = false;
     for (const handler of this.actionHandlers) {
       handledByMountedApp = true;
       await handler({ action, callId, conversationId });
     }
 
-    // When Answer/Decline is tapped from a Notifee background event while the app
-    // is killed, React components are not mounted, so PushNotificationInitializer
-    // has not registered an action handler. Send the websocket action directly
-    // from this service so the caller is notified and ringing stops everywhere.
+    if (action === "answer") {
+      // SINGLE ACCEPT PATH: the call screen's acceptIncoming() is the ONE place
+      // that sends `call_accept`, flips status→connecting, sets acceptedRef and
+      // acquires camera/mic. We do NOT send a raw socket accept here (that was
+      // the old double-accept bug that desynced the screen's state machine —
+      // "UI shows but never connects"). Instead we navigate to the call screen
+      // with autoAnswer=1 and let it own the accept.
+      //
+      // Stash a pending route so a COLD-started app (Linking deep link is lost
+      // before expo-router mounts) is still routed to the call screen by the
+      // root layout. Claim navigation so concurrent paths don't double-mount
+      // the fullScreenModal (which crashes Fabric).
+      const route = pendingCallFromData({
+        ...payload,
+        notificationAction: "accept_call",
+      });
+      if (route) setPendingCall(route);
+      beginCallNavigation(callId, conversationId);
+      try {
+        const href = `/call/${conversationId}?mode=incoming&callId=${callId}&callType=${payload?.callType || "voice"}&peerId=${payload?.callerId || ""}&autoAnswer=1`;
+        await Linking.openURL(Linking.createURL(href));
+      } catch (err) {
+        console.warn("[nativeCallService] Failed to open call screen on answer:", err);
+      }
+      return;
+    }
+
+    // reject / end: when the app is KILLED no mounted handler exists, so send
+    // the websocket action straight from this service so ringing stops
+    // everywhere even in the headless state.
     if (!handledByMountedApp) {
-      const socketAction = action === "answer" ? "accept" : action === "reject" ? "reject" : "end";
+      const socketAction = action === "reject" ? "reject" : "end";
       await socket.connect();
       await socket.sendCallActionWithRetry(
         socketAction,
         { callId, conversationId },
-        { timeoutMs: action === "answer" ? 6000 : 3000, initialBackoffMs: 120, maxBackoffMs: 1000 },
+        { timeoutMs: 3000, initialBackoffMs: 120, maxBackoffMs: 1000 },
       );
-    }
-
-    if (action === "answer") {
-      const href = `/call/${conversationId}?mode=incoming&callId=${callId}&callType=${payload?.callType || "voice"}&peerId=${payload?.callerId || ""}&autoAnswer=1`;
-      await Linking.openURL(Linking.createURL(href));
     }
   }
 

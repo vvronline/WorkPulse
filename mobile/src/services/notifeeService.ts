@@ -21,6 +21,7 @@ import { Platform } from "react-native";
 import * as Linking from "expo-linking";
 import { nativeCallService } from "./nativeCallService";
 import type { NotificationPayload } from "./pushNotificationService";
+import { setPendingCall, pendingCallFromData } from "../realtime/pendingCall";
 
 // Versioned channel IDs. Android notification channels are IMMUTABLE after
 // creation — recreating a channel with the same ID does NOT update its
@@ -341,16 +342,29 @@ class NotifeeService {
     await this.cancelCall(data.callId, data.conversationId);
 
     if (pressActionId === "decline") {
+      // Stash a pending "decline" route so a cold-started app still reconciles
+      // (the call screen auto-rejects on mount). nativeCallService also sends
+      // the raw reject for the genuinely-killed case.
+      const route = pendingCallFromData({ ...data, notificationAction: "decline_call" });
+      if (route) setPendingCall(route);
       await nativeCallService.handleAction("reject", data);
       return true;
     }
 
     if (pressActionId === "answer") {
+      // Stash a pending "answer" route so that when the app is launched COLD by
+      // this tap (Linking deep link is lost before expo-router mounts), the
+      // root layout still navigates to the call screen with autoAnswer=1.
+      const route = pendingCallFromData({ ...data, notificationAction: "accept_call" });
+      if (route) setPendingCall(route);
       await nativeCallService.handleAction("answer", data);
       return true;
     }
 
     // Body press → open the call screen in incoming mode without auto-answer.
+    // Stash a pending route too, so a cold start still reaches the call screen.
+    const route = pendingCallFromData(data);
+    if (route) setPendingCall(route);
     try {
       const href = `/call/${data.conversationId}?mode=incoming&callId=${data.callId}&callType=${data.callType || "voice"}&peerId=${data.callerId || ""}`;
       await Linking.openURL(Linking.createURL(href));
@@ -358,6 +372,35 @@ class NotifeeService {
       console.warn("[NotifeeService] Failed to route answer:", err);
     }
     return true;
+  }
+
+  /**
+   * Reads Notifee's initial notification (the call notification that COLD-
+   * launched the app) and returns a pending call route for it, or null. Called
+   * once at app startup from the root layout so a killed-state notification tap
+   * / Answer action routes to the call screen even though the headless deep
+   * link was lost before the router mounted.
+   */
+  async captureInitialCallRoute(): Promise<void> {
+    const notifee = this.resolve();
+    if (!notifee || typeof notifee.getInitialNotification !== "function") return;
+    try {
+      const initial = await notifee.getInitialNotification();
+      if (!initial) return;
+      const data = (initial.notification?.data || {}) as Record<string, string>;
+      if (!data.callId || !data.conversationId) return;
+      const pressActionId: string | undefined = initial.pressAction?.id;
+      const action =
+        pressActionId === "answer"
+          ? "accept_call"
+          : pressActionId === "decline"
+            ? "decline_call"
+            : undefined;
+      const route = pendingCallFromData({ ...data, notificationAction: action });
+      if (route) setPendingCall(route);
+    } catch (err) {
+      console.warn("[NotifeeService] Failed to read initial notification:", err);
+    }
   }
 
   /**

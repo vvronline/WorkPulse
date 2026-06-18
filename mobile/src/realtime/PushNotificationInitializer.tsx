@@ -36,11 +36,12 @@ export default function PushNotificationInitializer() {
 
     const offNativeActions = nativeCallService.onAction(async ({ action, callId, conversationId }) => {
       if (action === "answer") {
-        await socket.sendCallActionWithRetry(
-          "accept",
-          { callId, conversationId },
-          { timeoutMs: 4000, retryEveryMs: 150 },
-        );
+        // SINGLE ACCEPT PATH: do NOT send `call_accept` here. The call screen's
+        // acceptIncoming() (triggered by the autoAnswer=1 deep link that
+        // nativeCallService opens) is the ONE place that accepts — it also sets
+        // acceptedRef, flips status→connecting and acquires media. Sending a
+        // second raw accept from here desynced the screen's state machine and
+        // left the call "showing but never connecting". So this is a no-op.
         return;
       }
 

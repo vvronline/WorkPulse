@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
+  AppState,
   Image,
   Modal,
   PermissionsAndroid,
@@ -1011,6 +1012,46 @@ export default function CallScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
+  // AppState-resume media retry. When a call is answered while the app is
+  // backgrounded or over the lock screen, Android cannot show the runtime
+  // permission dialog and `getUserMedia` fails — leaving a black self-view and
+  // no outbound video/audio. Once the activity actually resumes to the
+  // foreground we retry acquiring media so the camera/mic come up as soon as
+  // possible (and re-attach the tracks to a live peer connection if one exists).
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state !== "active") return;
+      if (status === "ended" || status === "rejected") return;
+      if (localStreamRef.current) return;
+      (async () => {
+        const stream = await getMedia(true);
+        if (!stream) return;
+        // If we already have a peer connection (offer/answer happened while
+        // media was missing), attach the freshly-acquired tracks so the peer
+        // starts receiving our audio/video without needing a fresh call.
+        if (pcRef.current) {
+          try {
+            await attachLocalTracks(stream);
+            const target = peerIdRef.current;
+            if (target) {
+              socket.send("call_signal", {
+                conversationId,
+                targetUserId: target,
+                signal: { type: "video-state", videoOff },
+              });
+            }
+          } catch (err: any) {
+            console.warn(
+              "[call] failed to attach tracks after resume:",
+              err?.message || err,
+            );
+          }
+        }
+      })();
+    });
+    return () => sub.remove();
+  }, [status, getMedia, attachLocalTracks, conversationId, videoOff]);
+
   // Signaling listener.
   useEffect(() => {
     const off = socket.subscribe((msg) => {
@@ -1575,6 +1616,23 @@ export default function CallScreen() {
   const showRemoteVideo =
     showVideo && hasLiveRemoteVideo && !remoteVideoOff;
 
+  // WhatsApp-style incoming video UX: while the call is still RINGING (incoming
+  // video call) and we already pre-warmed the camera, show the local camera
+  // FULL-SCREEN behind the caller name + Accept/Decline. On answer (status →
+  // connecting/connected) the SAME stream object is reused, so the self-view
+  // seamlessly shrinks into the PiP corner and the peer's video takes the main
+  // screen — no camera flicker, no re-acquire.
+  const showFullScreenSelfPreview =
+    showVideo &&
+    mode === "incoming" &&
+    status === "ringing" &&
+    !!localStream &&
+    !videoOff;
+  // The small PiP self-view is shown for the connecting/connected phases (NOT
+  // while ringing, where the self-view is full-screen instead).
+  const showPipSelfPreview =
+    showVideo && !!localStream && !videoOff && !showFullScreenSelfPreview;
+
   const fmtDuration = (secs: number) => {
     const m = Math.floor(secs / 60);
     const s = secs % 60;
@@ -1608,7 +1666,11 @@ export default function CallScreen() {
     <View style={styles.screen}>
       <Stack.Screen options={{ headerShown: false }} />
 
-      {/* Remote video / avatar */}
+      {/* Main stage:
+          1. Connected/connecting with peer video  → remote video full-screen.
+          2. Incoming VIDEO call still ringing      → WhatsApp-style FULL-SCREEN
+             local self-view (so the callee sees themselves before answering).
+          3. Otherwise                              → peer avatar. */}
       {showRemoteVideo ? (
         <RTCView
           streamURL={(remoteStream as any).toURL()}
@@ -1627,6 +1689,17 @@ export default function CallScreen() {
           // "self preview not showing" bug). Remote = base layer.
           zOrder={0}
         />
+      ) : showFullScreenSelfPreview ? (
+        <RTCView
+          streamURL={(localStream as any).toURL()}
+          style={styles.remoteVideo}
+          objectFit="cover"
+          // Front-camera self-view → mirror like a real mirror (WhatsApp style).
+          mirror={usingFrontCamera}
+          // Base layer while ringing; once answered the PiP self-view uses a
+          // higher zOrder so the peer's remote video can sit beneath it.
+          zOrder={0}
+        />
       ) : (
         <View style={styles.avatarWrap}>
           <View style={styles.avatar}>
@@ -1641,8 +1714,11 @@ export default function CallScreen() {
         </View>
       )}
 
-      {/* Local preview */}
-      {showVideo && localStream && !videoOff ? (
+      {/* PiP self-view — shown for the connecting/connected phases. While the
+          incoming video call is still ringing the self-view is rendered
+          FULL-SCREEN above instead, then seamlessly remaps into this PiP the
+          moment the call is answered (same stream object, no re-acquire). */}
+      {showPipSelfPreview ? (
         <RTCView
           streamURL={(localStream as any).toURL()}
           style={[styles.localVideo, { top: insets.top + 50 }]}
