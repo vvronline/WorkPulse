@@ -907,6 +907,18 @@ async function handleChatMessage(db: DbLike, senderId: number, tenantId: number 
                     action: "accepted",
                 });
 
+                // Push-cancel the accepter's OTHER devices (e.g. a locked /
+                // backgrounded twin phone) so the native incoming-call ring is
+                // dismissed there. The WS dismiss above only reaches sessions
+                // with a live socket; a killed/locked device relies on this
+                // data-only "call handled elsewhere" push.
+                pushNotifications.sendCallCancellation(
+                    db.query as any,
+                    senderId,
+                    tenantId,
+                    { callId, conversationId, reason: "accepted" },
+                ).catch((err: any) => logger.warn({ err: err.message, callId, userId: senderId }, "Failed to push-cancel accepter devices on accept"));
+
                 // Status service v2: mark the accepting device (only) as in_call.
                 if (ws._statusSessionKey) {
                     statusService.setSessionActivity(
@@ -941,6 +953,15 @@ async function handleChatMessage(db: DbLike, senderId: number, tenantId: number 
                 callId: callLog.id,
                 conversationId,
             });
+
+            // Push-cancel the callee's devices (locked/backgrounded twin) so a
+            // native incoming-call ring is dismissed when the caller cancels.
+            pushNotifications.sendCallCancellation(
+                db.query as any,
+                p.user_id,
+                tenantId,
+                { callId: callLog.id, conversationId, reason: "cancelled" },
+            ).catch((err: any) => logger.warn({ err: err.message, callId: callLog.id, userId: p.user_id }, "Failed to push-cancel callee devices on cancel"));
         }
 
         // Status service v2: caller cancelled (media acquisition failed);
@@ -1054,6 +1075,22 @@ async function handleChatMessage(db: DbLike, senderId: number, tenantId: number 
                     conversationId,
                     action: "rejected",
                 });
+
+                // Push-cancel the rejecter's OTHER devices (locked/backgrounded
+                // twin) so their native ring is dismissed, plus the caller's
+                // devices so a backgrounded caller stops its outgoing ring.
+                pushNotifications.sendCallCancellation(
+                    db.query as any,
+                    senderId,
+                    tenantId,
+                    { callId, conversationId, reason: "rejected" },
+                ).catch((err: any) => logger.warn({ err: err.message, callId, userId: senderId }, "Failed to push-cancel rejecter devices on reject"));
+                pushNotifications.sendCallCancellation(
+                    db.query as any,
+                    callLog.caller_id,
+                    tenantId,
+                    { callId, conversationId, reason: "rejected" },
+                ).catch((err: any) => logger.warn({ err: err.message, callId, userId: callLog.caller_id }, "Failed to push-cancel caller devices on reject"));
 
                 // Status service v2: if the callee had been auto-flagged in_call by a
                 // racy accept (or the caller's device was still marked from initiate),

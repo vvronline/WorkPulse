@@ -381,6 +381,17 @@ class PushNotificationService {
   }
 
   /**
+   * Reset the "already registered" guard so the NEXT authenticated user
+   * re-registers this device's push token. Called on logout: the device token
+   * itself is kept (it's tied to the FCM installation, not the user), but the
+   * cached auth token is cleared so `registerDeviceTokenForCurrentUser` doesn't
+   * short-circuit when a different user logs in on the same device.
+   */
+  resetRegistrationState(): void {
+    this.lastRegisteredAuthToken = null;
+  }
+
+  /**
    * T027: Set application icon badge count (launcher badge).
    * Supports Android and iOS launcher badge display.
    */

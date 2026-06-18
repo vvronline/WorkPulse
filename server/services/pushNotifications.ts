@@ -242,6 +242,85 @@ class PushNotificationService {
         return this.sendToDevices(query, tokens, payload, `call-${callData.callId}`);
     }
 
+    /**
+     * Send a DATA-ONLY high-priority "call handled elsewhere" push so a twin
+     * device (locked/backgrounded) stops ringing once the call is
+     * accepted/rejected/cancelled on another device (or by the caller).
+     *
+     * The mobile background/headless handler watches for
+     * `type === "call_handled_elsewhere"` and dismisses the active incoming-call
+     * UI (Notifee/CallKeep) for the matching `callId`.
+     */
+    async sendCallCancellation(
+        query: QueryFn,
+        userId: number,
+        tenantId: number | null,
+        cancelData: {
+            callId: number;
+            conversationId: number;
+            reason?: string;
+        },
+    ): Promise<{ succeeded: number; failed: number }> {
+        if (!this.initialized || !this.app) {
+            return { succeeded: 0, failed: 0 };
+        }
+
+        const tokens = await this.getDeviceTokens(query, userId, tenantId);
+        if (tokens.length === 0) {
+            logger.info(
+                { event: "push_skip_no_tokens", notificationType: "call_cancel", userId, tenantId, callId: cancelData.callId },
+                "No device tokens for call cancellation recipient",
+            );
+            return { succeeded: 0, failed: 0 };
+        }
+
+        // DATA-ONLY high-priority message — wakes the background/headless handler
+        // so it can dismiss the active ring. No `notification` block on Android.
+        const payload: FCMPayload = {
+            data: this.buildCommonData({
+                type: "call_handled_elsewhere",
+                callId: String(cancelData.callId),
+                conversationId: String(cancelData.conversationId),
+                reason: cancelData.reason || "handled_elsewhere",
+                dedupeKey: `call_cancel:${cancelData.callId}`,
+            }, tenantId),
+            android: {
+                priority: "high",
+            },
+            apns: {
+                headers: {
+                    "apns-priority": "10",
+                    "apns-push-type": "background",
+                },
+                payload: {
+                    aps: {
+                        // Background/silent push so CallKit/JS can dismiss the call.
+                        alert: { title: "", body: "" },
+                        sound: "",
+                        "mutable-content": 1,
+                    },
+                },
+            },
+        };
+
+        logger.info(
+            {
+                event: "push_dispatch_attempt",
+                notificationType: "call_cancel",
+                tenantId,
+                userId,
+                callId: cancelData.callId,
+                conversationId: cancelData.conversationId,
+                reason: cancelData.reason,
+                dedupeKey: payload.data.dedupeKey,
+                tokenCount: tokens.length,
+            },
+            "Dispatching call cancellation push",
+        );
+
+        return this.sendToDevices(query, tokens, payload, `call-cancel-${cancelData.callId}`);
+    }
+
     async sendMessageNotification(
         query: QueryFn,
         userId: number,

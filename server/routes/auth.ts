@@ -801,6 +801,18 @@ router.post("/logout", async (req: Request, res: Response) => {
                     decoded.id,
                     { source: "logout" }
                 ).catch((err: any) => logger.warn({ err: err.message, userId: decoded.id }, "logout: statusService.closeAllSessions failed"));
+
+                // Remove THIS device's push token (if the client supplied it) so
+                // a logged-out device stops receiving call/message pushes (fixes
+                // "ring after logout"). We only delete the exact token for this
+                // user — other devices of the same user keep their registration.
+                const logoutDeviceToken = (req.body || {}).deviceToken;
+                if (logoutDeviceToken && String(logoutDeviceToken).trim()) {
+                    await req.db!.query(
+                        "DELETE FROM device_tokens WHERE user_id = $1 AND device_token = $2",
+                        [decoded.id, logoutDeviceToken],
+                    ).catch((err: any) => logger.warn({ err: err.message, userId: decoded.id }, "logout: device_tokens delete failed"));
+                }
             }
         }
     } catch { /* token may be expired/invalid — still clear cookie */ }

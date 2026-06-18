@@ -59,6 +59,7 @@ import {
   DEFAULT_NOTIFICATION_PREFS,
   mergeNotificationPrefs,
 } from "../../src/utils/notificationPrefs";
+import { setShowWhenLocked } from "../../modules/lock-screen";
 
 const FALLBACK_ICE = [
   { urls: "stun:stun.l.google.com:19302" },
@@ -279,6 +280,11 @@ export default function CallScreen() {
       pcRef.current = null;
       localStreamRef.current = null;
       remoteStreamRef.current = null;
+      // Return the app BEHIND the lock screen now that the call is over. While
+      // the call UI was up we enabled show-over-lock-screen; disabling it here
+      // (and on unmount below) ensures the device must be unlocked to use the
+      // app again — fixes "app usable over lock screen after call ends".
+      setShowWhenLocked(false);
       // Release the cross-path navigation guard so a future call can present
       // the call screen again (see src/realtime/callRouting.ts).
       endCallNavigation();
@@ -913,6 +919,17 @@ export default function CallScreen() {
         /* ignore */
       }
     }
+  }, []);
+
+  // Show the app OVER the lock screen (and turn the screen on) ONLY while the
+  // call UI is mounted. The native module toggles the Activity flags at
+  // runtime; we disable them on unmount so the app returns behind the lock
+  // screen the moment the call screen goes away. No-op on iOS / Expo Go.
+  useEffect(() => {
+    setShowWhenLocked(true);
+    return () => {
+      setShowWhenLocked(false);
+    };
   }, []);
 
   // Clear all recovery timers when the screen unmounts so a late-firing

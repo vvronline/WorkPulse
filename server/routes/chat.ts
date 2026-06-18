@@ -1722,6 +1722,21 @@ router.post("/calls/:callId/reject", auth, async (req: Request, res: Response) =
             action: "rejected",
         });
 
+        // Push-cancel the rejecter's OTHER devices (locked/backgrounded twin)
+        // and the caller's devices so a backgrounded ring is dismissed even
+        // when the WS dismiss above doesn't reach a killed/locked device.
+        try {
+            const { pushNotifications } = require("../services/pushNotifications");
+            pushNotifications.sendCallCancellation(
+                req.db!.query, senderId, tenantId, { callId, conversationId, reason: "rejected" },
+            ).catch((err: any) => req.log.warn({ err: err.message, callId, userId: senderId }, "Failed to push-cancel rejecter devices on HTTP reject"));
+            pushNotifications.sendCallCancellation(
+                req.db!.query, callLog.caller_id, tenantId, { callId, conversationId, reason: "rejected" },
+            ).catch((err: any) => req.log.warn({ err: err.message, callId, userId: callLog.caller_id }, "Failed to push-cancel caller devices on HTTP reject"));
+        } catch {
+            /* push cancellation is best-effort */
+        }
+
         // Clear any in_call status that a racy accept/initiate may have set.
         try {
             const statusService = require("../services/status");
@@ -1796,6 +1811,17 @@ router.post("/calls/:callId/accept", auth, async (req: Request, res: Response) =
             conversationId,
             action: "accepted",
         });
+
+        // Push-cancel the accepter's OTHER devices (locked/backgrounded twin)
+        // so the native incoming-call ring stops once accepted here.
+        try {
+            const { pushNotifications } = require("../services/pushNotifications");
+            pushNotifications.sendCallCancellation(
+                req.db!.query, senderId, tenantId, { callId, conversationId, reason: "accepted" },
+            ).catch((err: any) => req.log.warn({ err: err.message, callId, userId: senderId }, "Failed to push-cancel accepter devices on HTTP accept"));
+        } catch {
+            /* push cancellation is best-effort */
+        }
 
         res.json({ ok: true, status: "answered" });
     } catch (err) {

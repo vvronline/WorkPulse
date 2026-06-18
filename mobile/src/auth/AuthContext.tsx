@@ -10,6 +10,12 @@ import { api } from "../api";
 import { clearToken, getToken, setToken } from "./tokenStore";
 import { setUnauthorizedHandler } from "../api";
 import { socket } from "../realtime/socket";
+import { pushNotificationService } from "../services/pushNotificationService";
+import { notifeeService } from "../services/notifeeService";
+import {
+  clearPendingCall,
+  clearPersistedPendingCall,
+} from "../realtime/pendingCall";
 
 export type User = {
   id: number;
@@ -59,11 +65,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const logout = useCallback(async () => {
+    // Best-effort, fire BEFORE clearing the token while still authenticated:
+    // delete THIS device's push token server-side so a logged-out device stops
+    // receiving call/message pushes ("ring after logout"). We pass the device
+    // token so the server can scope the delete to this device only.
     try {
-      await api.post("/auth/logout");
+      const deviceToken = pushNotificationService.getDeviceToken();
+      await api.post("/auth/logout", deviceToken ? { deviceToken } : {});
     } catch {
       // ignore network/logout errors — clear local state regardless
     }
+
+    // Dismiss any active incoming-call ring (Notifee/CallKeep) so a ring that
+    // arrived right before logout doesn't linger.
+    try {
+      await notifeeService.cancelCall();
+    } catch {
+      // ignore — best-effort
+    }
+
+    // Kill any pending-call route (in-memory + persisted) so the next login
+    // doesn't flash a stale call screen.
+    try {
+      clearPendingCall();
+      await clearPersistedPendingCall();
+    } catch {
+      // ignore — best-effort
+    }
+
+    // Reset the push-registration guard so the NEXT user to log in on this
+    // device re-registers their device token (the cached auth token no longer
+    // matches once we clear it below).
+    try {
+      pushNotificationService.resetRegistrationState();
+    } catch {
+      // ignore — best-effort
+    }
+
     socket.disconnect();
     await clearToken();
     setUser(null);

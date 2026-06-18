@@ -131,8 +131,10 @@ describe("chatMessage handler — happy path", () => {
             data: { conversationId: 5, content: "hello world", clientMsgId: "abc" },
             ws, sendToUser: send,
         });
-        // 1 participant check + 1 INSERT + 1 conv touch + 1 read upsert + 1 participants fetch + 1 sender fetch = 6
-        expect(db.query).toHaveBeenCalledTimes(6);
+        // 1 participant check + 1 INSERT + 1 conv touch + 1 read upsert + 1 participants
+        // fetch + 1 sender fetch = 6 core queries, PLUS 1 getTotalUnread badge query per
+        // non-sender participant (2 here: users 8 and 9) fired from the fan-out loop = 8.
+        expect(db.query).toHaveBeenCalledTimes(8);
         // 3 broadcasts (one per participant)
         const broadcasts = send.mock.calls.filter((c: any[]) => c[2] === "chat_message");
         expect(broadcasts).toHaveLength(3);
