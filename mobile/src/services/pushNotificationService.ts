@@ -6,7 +6,7 @@
 import { useState, useEffect } from "react";
 import { Platform } from "react-native";
 import * as Notifications from "expo-notifications";
-import { API_BASE_URL } from "../config";
+import { api } from "../api";
 import { getToken } from "../auth/tokenStore";
 
 export interface NotificationPayload {
@@ -333,27 +333,17 @@ class PushNotificationService {
       // Determine platform — backend accepts "ios" | "android" | "web" only
       const platform = Platform.OS === "ios" ? "ios" : Platform.OS === "android" ? "android" : "web";
 
-      const response = await fetch(`${API_BASE_URL}/auth/device-token`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${userToken}`,
-          // CSRF guard on the server rejects state-changing requests that lack
-          // this header (returns 403 "Missing CSRF header"). The axios `api`
-          // client sets it globally, but this raw fetch must include it too —
-          // otherwise the FCM token is never stored and NO pushes are ever sent.
-          "X-Requested-With": "WorkPulse",
-        },
-        body: JSON.stringify({
-          deviceToken: this.deviceToken,
-          platform,
-        }),
+      // Use the shared axios `api` client (NOT a hand-rolled fetch). It is the
+      // single proven-working authenticated path for the whole app: its request
+      // interceptor attaches the Bearer token, the `X-Requested-With` CSRF
+      // header AND the `x-timezone-offset` header in exactly the contract the
+      // server expects. A raw fetch was missing pieces of that contract and the
+      // server rejected it (first 403 for the missing CSRF header, then 401),
+      // so the FCM token was never stored and NO pushes were ever dispatched.
+      await api.post("/auth/device-token", {
+        deviceToken: this.deviceToken,
+        platform,
       });
-
-      if (!response.ok) {
-        console.error("Failed to register device token:", response.status);
-        return;
-      }
 
       this.lastRegisteredAuthToken = userToken;
       console.log("Device token registered successfully");
