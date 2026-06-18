@@ -389,7 +389,11 @@ class NotifeeService {
     const route = pendingCallFromData(data);
     if (route) setPendingCall(route);
     try {
-      const href = `/call/${data.conversationId}?mode=incoming&callId=${data.callId}&callType=${data.callType || "voice"}&peerId=${data.callerId || ""}`;
+      // Include peerName/peerAvatar so the call screen shows the caller's name
+      // (not the generic "Call" fallback) when this body-press deep link wins.
+      const peerName = encodeURIComponent(data.callerName || "");
+      const peerAvatar = encodeURIComponent(data.callerAvatar || "");
+      const href = `/call/${data.conversationId}?mode=incoming&callId=${data.callId}&callType=${data.callType || "voice"}&peerId=${data.callerId || ""}&peerName=${peerName}&peerAvatar=${peerAvatar}`;
       await Linking.openURL(Linking.createURL(href));
     } catch (err) {
       console.warn("[NotifeeService] Failed to route answer:", err);

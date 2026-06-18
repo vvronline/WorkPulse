@@ -1648,4 +1648,160 @@ router.get("/conversations/:id/calls", auth, async (req: Request, res: Response)
     }
 });
 
+/**
+ * POST /api/chat/calls/:callId/reject
+ * HTTP FALLBACK for declining an incoming call. The mobile client normally
+ * rejects over the realtime WebSocket, but from a killed/locked-screen launch
+ * the WS can be slow to authenticate — if the `call_reject` frame is dropped
+ * the CALLER keeps ringing forever. This endpoint mirrors the WS `call_reject`
+ * transition (ringing → declined) so a decline ALWAYS reaches the server and
+ * the caller's ring stops. Idempotent: a no-op when the call is already in a
+ * terminal state.
+ */
+router.post("/calls/:callId/reject", auth, async (req: Request, res: Response) => {
+    try {
+        const callId = parseInt(String(req.params.callId), 10);
+        const conversationId = parseInt(String((req.body || {}).conversationId), 10);
+        const senderId = req.userId!;
+        const tenantId = req.tenantId!;
+        if (isNaN(callId) || isNaN(conversationId)) {
+            return res.status(400).json({ error: "callId and conversationId are required" });
+        }
+
+        // Verify the rejecter is a participant in the conversation.
+        const isParticipant = (await req.db!.query(
+            "SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2",
+            [conversationId, senderId],
+        )).rows[0];
+        if (!isParticipant) return res.status(403).json({ error: "Not a participant" });
+
+        const callLog = (await req.db!.query(
+            `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2`,
+            [callId, conversationId],
+        )).rows[0];
+        if (!callLog) return res.status(404).json({ error: "Call not found" });
+
+        // Already handled (answered/declined/ended). Treat as success so the
+        // client can stop ringing without erroring.
+        if (callLog.status !== "ringing") {
+            return res.json({ ok: true, status: callLog.status });
+        }
+
+        const updated = await req.db!.query(
+            `UPDATE call_logs
+             SET status = 'declined', ended_at = NOW()
+             WHERE id = $1 AND status = 'ringing'
+             RETURNING id`,
+            [callId],
+        );
+        if (!updated.rows[0]) {
+            // Lost the race to another path — still a success from the client's view.
+            return res.json({ ok: true, status: "declined" });
+        }
+
+        const rejecter = (await req.db!.query("SELECT full_name FROM users WHERE id = $1", [senderId])).rows[0];
+
+        // Notify the other participants so the caller's ring stops.
+        const participants = (await req.db!.query(
+            "SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2",
+            [conversationId, senderId],
+        )).rows;
+        for (const p of participants) {
+            sendToUser(tenantId, p.user_id, "call_rejected", {
+                callId,
+                conversationId,
+                userId: senderId,
+                userName: rejecter?.full_name,
+            });
+        }
+
+        // Dismiss the ringing PiP on the rejecter's OTHER devices.
+        sendToUser(tenantId, senderId, "call_handled_elsewhere", {
+            callId,
+            conversationId,
+            action: "rejected",
+        });
+
+        // Clear any in_call status that a racy accept/initiate may have set.
+        try {
+            const statusService = require("../services/status");
+            await statusService.clearActivityForRef({ db: req.db, tenantId }, "in_call", callId);
+        } catch {
+            /* status update is best-effort */
+        }
+
+        res.json({ ok: true, status: "declined" });
+    } catch (err) {
+        req.log.error({ err }, "HTTP call reject error");
+        res.status(500).json({ error: "Failed to reject call" });
+    }
+});
+
+/**
+ * POST /api/chat/calls/:callId/accept
+ * HTTP FALLBACK for accepting an incoming call (parity with the reject
+ * fallback). Mirrors the WS `call_accept` transition (ringing → answered) and
+ * notifies the caller so they begin the WebRTC offer. Used only when the
+ * realtime WS is unavailable; the call screen still owns the media/offer flow.
+ */
+router.post("/calls/:callId/accept", auth, async (req: Request, res: Response) => {
+    try {
+        const callId = parseInt(String(req.params.callId), 10);
+        const conversationId = parseInt(String((req.body || {}).conversationId), 10);
+        const senderId = req.userId!;
+        const tenantId = req.tenantId!;
+        if (isNaN(callId) || isNaN(conversationId)) {
+            return res.status(400).json({ error: "callId and conversationId are required" });
+        }
+
+        const [callLogResult, participantResult] = await Promise.all([
+            req.db!.query(`SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2`, [callId, conversationId]),
+            req.db!.query(
+                "SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2",
+                [conversationId, senderId],
+            ),
+        ]);
+        const callLog = callLogResult.rows[0];
+        if (!callLog) return res.status(404).json({ error: "Call not found" });
+        if (!participantResult.rows[0]) return res.status(403).json({ error: "Not a participant" });
+        if (callLog.status !== "ringing") {
+            return res.json({ ok: true, status: callLog.status });
+        }
+
+        const [updatedCall, accepterResult] = await Promise.all([
+            req.db!.query(
+                `UPDATE call_logs SET status = 'answered', started_at = NOW()
+                 WHERE id = $1 AND status = 'ringing' RETURNING id`,
+                [callId],
+            ),
+            req.db!.query("SELECT full_name, avatar FROM users WHERE id = $1", [senderId]),
+        ]);
+        if (!updatedCall.rows[0]) {
+            return res.json({ ok: true, status: "answered" });
+        }
+        const accepter = accepterResult.rows[0];
+
+        // Notify the caller that the call was accepted so they create the offer.
+        sendToUser(tenantId, callLog.caller_id, "call_accepted", {
+            callId,
+            conversationId,
+            userId: senderId,
+            userName: accepter?.full_name,
+            userAvatar: accepter?.avatar,
+        });
+
+        // Dismiss the ring on the accepter's OTHER devices.
+        sendToUser(tenantId, senderId, "call_handled_elsewhere", {
+            callId,
+            conversationId,
+            action: "accepted",
+        });
+
+        res.json({ ok: true, status: "answered" });
+    } catch (err) {
+        req.log.error({ err }, "HTTP call accept error");
+        res.status(500).json({ error: "Failed to accept call" });
+    }
+});
+
 export = router;

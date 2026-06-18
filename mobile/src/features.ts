@@ -739,6 +739,67 @@ export function getIceConfig() {
   return api.get<IceConfig>("/chat/ice-config");
 }
 
+// ── ICE config cache ──────────────────────────────────────────────────────
+// Warmed once at app start (see app/_layout.tsx) and read by the call screen so
+// `waitForIceConfig()` resolves INSTANTLY instead of polling for up to 1200ms
+// on every call. The cached value is reused while fresh (TURN creds carry an
+// `expiresAt`); a stale/absent cache simply falls back to a live fetch.
+let cachedIceConfig: IceConfig | null = null;
+let cachedIceConfigAt = 0;
+const ICE_CACHE_TTL_MS = 5 * 60_000;
+
+/** Returns the in-memory ICE config if still fresh, else null. */
+export function getCachedIceConfig(): IceConfig | null {
+  if (!cachedIceConfig) return null;
+  // Respect server-provided expiry when present (epoch seconds).
+  const expiresAt = cachedIceConfig.expiresAt;
+  if (typeof expiresAt === "number" && Date.now() / 1000 >= expiresAt) {
+    cachedIceConfig = null;
+    return null;
+  }
+  if (Date.now() - cachedIceConfigAt > ICE_CACHE_TTL_MS) {
+    cachedIceConfig = null;
+    return null;
+  }
+  return cachedIceConfig;
+}
+
+/**
+ * Fetches the ICE config and populates the in-memory cache. Safe to call at app
+ * start to pre-warm; never throws (returns null on failure).
+ */
+export async function warmIceConfig(): Promise<IceConfig | null> {
+  try {
+    const r = await getIceConfig();
+    if (r.data?.iceServers?.length) {
+      cachedIceConfig = r.data;
+      cachedIceConfigAt = Date.now();
+      return r.data;
+    }
+  } catch {
+    /* best-effort pre-warm */
+  }
+  return null;
+}
+
+/**
+ * HTTP fallback for declining an incoming call. Used when the realtime
+ * WebSocket is slow to come up (e.g. from a headless/killed-state task) so the
+ * decline ALWAYS reaches the server and the caller stops ringing. Mirrors the
+ * WS `call_reject` transition server-side.
+ */
+export function rejectCallHttp(callId: number | string, conversationId: number | string) {
+  return api.post(`/chat/calls/${callId}/reject`, { conversationId });
+}
+
+/**
+ * HTTP fallback for accepting an incoming call (parity with rejectCallHttp).
+ * Mirrors the WS `call_accept` transition server-side.
+ */
+export function acceptCallHttp(callId: number | string, conversationId: number | string) {
+  return api.post(`/chat/calls/${callId}/accept`, { conversationId });
+}
+
 /* ───────────────────────── Notes ───────────────────────── */
 
 // Full NotePage shape — mirrors the web client's NotePage so notebook content

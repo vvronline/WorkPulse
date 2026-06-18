@@ -59,19 +59,44 @@ export default function Index() {
     };
   }, []);
 
-  // Show a neutral spinner (NOT the dashboard) while auth resolves or while we
-  // are still determining whether this was a call launch.
-  if (loading || callRoute === undefined) {
+  // While we are still determining whether this was a cold-start CALL launch
+  // (callRoute === undefined), render a DARK, call-styled placeholder that
+  // matches the call screen background (#0a0a0a) instead of a white spinner on
+  // the themed background. This removes the visible "loading animation /
+  // dashboard flash" before the incoming-call UI appears: the screen is already
+  // black like the call UI, so the transition into /call is seamless. Once we
+  // know it is NOT a call (callRoute === null) we fall through to the normal
+  // redirect; the neutral spinner is only used for the plain auth-loading case.
+  if (callRoute === undefined) {
     return (
       <View
         style={{
           flex: 1,
           alignItems: "center",
           justifyContent: "center",
-          backgroundColor: theme.bg,
+          backgroundColor: "#0a0a0a",
         }}
       >
-        <ActivityIndicator size="large" color={theme.primary} />
+        <ActivityIndicator size="large" color="#ffffff" />
+      </View>
+    );
+  }
+
+  // Auth still resolving for a NON-call launch → neutral themed spinner.
+  if (loading) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: callRoute ? "#0a0a0a" : theme.bg,
+        }}
+      >
+        <ActivityIndicator
+          size="large"
+          color={callRoute ? "#ffffff" : theme.primary}
+        />
       </View>
     );
   }

@@ -47,7 +47,12 @@ import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { socket } from "../../src/realtime/socket";
 import { endCallNavigation } from "../../src/realtime/callRouting";
-import { getIceConfig, getNotificationPrefs } from "../../src/features";
+import {
+  getIceConfig,
+  getCachedIceConfig,
+  getNotificationPrefs,
+  rejectCallHttp,
+} from "../../src/features";
 import { SERVER_ORIGIN } from "../../src/config";
 import { getNotificationPreviewDataUri } from "../../src/utils/notificationSoundPreview";
 import {
@@ -930,8 +935,17 @@ export default function CallScreen() {
     };
   }, []);
 
-  // Load ICE config up front.
+  // Load ICE config up front. Prefer the in-memory cache warmed at app start
+  // (see app/_layout.tsx → warmIceConfig) so the TURN creds are available
+  // INSTANTLY and waitForIceConfig() never has to poll — shaving the per-call
+  // connection delay. Fall back to a live fetch when the cache is cold/stale.
   useEffect(() => {
+    const cached = getCachedIceConfig();
+    if (cached?.iceServers?.length) {
+      iceServersRef.current = cached.iceServers;
+      iceConfigLoadedRef.current = true;
+      return;
+    }
     getIceConfig()
       .then((r) => {
         if (r.data?.iceServers?.length) {
@@ -1035,13 +1049,76 @@ export default function CallScreen() {
       (async () => {
         const stream = await getMedia(true);
         if (!stream) return;
+        // Force a re-render so the PiP/self-view RTCView remounts with the
+        // freshly-acquired stream (fixes the "self-view is black" case where
+        // media came up only after the activity resumed). getMedia already
+        // setLocalStream(stream), but set it again defensively in case the ref
+        // was populated by the ringing pre-warm without a state update.
+        setLocalStream(stream);
         // If we already have a peer connection (offer/answer happened while
         // media was missing), attach the freshly-acquired tracks so the peer
         // starts receiving our audio/video without needing a fresh call.
-        if (pcRef.current) {
+        const pc = pcRef.current;
+        if (pc) {
           try {
+            // Snapshot sender count BEFORE attaching so we can detect whether
+            // attachLocalTracks had to ADD a brand-new transceiver (no matching
+            // recvonly transceiver existed because the PC was built track-less
+            // while media was unavailable). A newly-added transceiver requires
+            // RENEGOTIATION — without a fresh offer our audio/video never flows
+            // and the peer keeps seeing a black frame (the "caller sees black"
+            // bug on lock-screen / background answer).
+            const sendersBefore =
+              typeof (pc as any).getSenders === "function"
+                ? (pc as any).getSenders().filter((s: any) => s.track).length
+                : 0;
             await attachLocalTracks(stream);
+            const sendersAfter =
+              typeof (pc as any).getSenders === "function"
+                ? (pc as any).getSenders().filter((s: any) => s.track).length
+                : 0;
             const target = peerIdRef.current;
+
+            const needsRenegotiation = sendersAfter > sendersBefore;
+            if (
+              needsRenegotiation &&
+              target &&
+              (pc as any).signalingState === "stable"
+            ) {
+              // Create + send a fresh offer so the newly-added media m-line is
+              // negotiated and the peer starts receiving our tracks.
+              runSerialized(async () => {
+                try {
+                  const offer = await pc.createOffer({
+                    offerToReceiveAudio: true,
+                    offerToReceiveVideo: callType === "video",
+                  });
+                  await pc.setLocalDescription(offer);
+                  await socket.sendWithBackoff(
+                    "call_signal",
+                    {
+                      conversationId,
+                      targetUserId: target,
+                      signal: { type: "offer", sdp: offer.sdp },
+                    },
+                    {
+                      timeoutMs: 4000,
+                      maxAttempts: 5,
+                      initialBackoffMs: 120,
+                      maxBackoffMs: 800,
+                    },
+                  );
+                } catch (err: any) {
+                  console.warn(
+                    "[call] post-resume renegotiation failed:",
+                    err?.message || err,
+                  );
+                }
+              });
+            }
+
+            // Always re-announce our camera state so the peer flips from the
+            // avatar placeholder to our live video (or vice versa) correctly.
             if (target) {
               socket.send("call_signal", {
                 conversationId,
@@ -1059,7 +1136,15 @@ export default function CallScreen() {
       })();
     });
     return () => sub.remove();
-  }, [status, getMedia, attachLocalTracks, conversationId, videoOff]);
+  }, [
+    status,
+    getMedia,
+    attachLocalTracks,
+    conversationId,
+    videoOff,
+    callType,
+    runSerialized,
+  ]);
 
   // Signaling listener.
   useEffect(() => {
@@ -1440,11 +1525,25 @@ export default function CallScreen() {
   }, [conversationId, endAndLeave, getMedia]);
 
   const rejectIncoming = useCallback(async () => {
-    await socket.sendCallActionWithRetry(
+    const sent = await socket.sendCallActionWithRetry(
       "reject",
       { callId: callIdRef.current, conversationId },
       { timeoutMs: 2000, retryEveryMs: 120 },
     );
+    // If the realtime channel could not deliver the reject (slow/unavailable
+    // WS — common right after a cold/lock-screen launch), fall back to the HTTP
+    // endpoint so the caller ALWAYS stops ringing (fixes "declined but the
+    // caller screen keeps ringing").
+    if (!sent && callIdRef.current) {
+      try {
+        await rejectCallHttp(callIdRef.current, conversationId);
+      } catch (err: any) {
+        console.warn(
+          "[call] HTTP reject fallback failed:",
+          err?.message || err,
+        );
+      }
+    }
     endAndLeave(false);
   }, [conversationId, endAndLeave]);
 
@@ -1631,16 +1730,26 @@ export default function CallScreen() {
   // connecting/connected) the SAME stream object is reused, so the self-view
   // seamlessly shrinks into the PiP corner and the peer's video takes the main
   // screen — no camera flicker, no re-acquire.
+  // Require a LIVE local video track (not just a stream object). On a
+  // background/lock-screen answer the stream can exist while its camera track
+  // is still ended/not-yet-acquired — rendering that produced a BLACK self-view
+  // tile. Gating on a live track makes us fall back to the avatar/no-tile until
+  // real video frames are available (mirrors the hasLiveRemoteVideo guard).
+  const hasLiveLocalVideo =
+    !!localStream &&
+    localStream
+      .getVideoTracks()
+      .some((t) => (t as any).readyState !== "ended" && t.enabled !== false);
   const showFullScreenSelfPreview =
     showVideo &&
     mode === "incoming" &&
     status === "ringing" &&
-    !!localStream &&
+    hasLiveLocalVideo &&
     !videoOff;
   // The small PiP self-view is shown for the connecting/connected phases (NOT
   // while ringing, where the self-view is full-screen instead).
   const showPipSelfPreview =
-    showVideo && !!localStream && !videoOff && !showFullScreenSelfPreview;
+    showVideo && hasLiveLocalVideo && !videoOff && !showFullScreenSelfPreview;
 
   const fmtDuration = (secs: number) => {
     const m = Math.floor(secs / 60);

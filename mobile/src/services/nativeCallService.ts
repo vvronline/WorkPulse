@@ -3,7 +3,8 @@ import { Platform } from "react-native";
 import { socket } from "../realtime/socket";
 import type { NotificationPayload } from "./pushNotificationService";
 import { setPendingCall, pendingCallFromData } from "../realtime/pendingCall";
-import { beginCallNavigation } from "../realtime/callRouting";
+import { beginCallNavigation, isCallActive } from "../realtime/callRouting";
+import { rejectCallHttp } from "../features";
 
 type NativeAction = "answer" | "reject" | "end";
 type ActionHandler = (params: {
@@ -122,27 +123,56 @@ class NativeCallService {
         notificationAction: "accept_call",
       });
       if (route) setPendingCall(route);
-      beginCallNavigation(callId, conversationId);
-      try {
-        const href = `/call/${conversationId}?mode=incoming&callId=${callId}&callType=${payload?.callType || "voice"}&peerId=${payload?.callerId || ""}&autoAnswer=1`;
-        await Linking.openURL(Linking.createURL(href));
-      } catch (err) {
-        console.warn("[nativeCallService] Failed to open call screen on answer:", err);
+
+      // Claim navigation. If the claim SUCCEEDS, this is the first path to
+      // surface this call: the COLD-start consumers (app/index.tsx redirect +
+      // PendingCallNavigator) will route to /call from the pending route above.
+      // We must NOT ALSO fire a Linking deep link in that case — that produced
+      // a SECOND navigation that flashed the dashboard/loader before the call
+      // UI (and risked a Fabric double-mount). Only deep-link when the app is
+      // ALREADY ALIVE and another path has the claim (claim fails) yet no call
+      // screen is actually mounted — a rare warm edge case.
+      const claimed = beginCallNavigation(callId, conversationId);
+      if (!claimed && !isCallActive(callId, conversationId)) {
+        try {
+          // Include peerName/peerAvatar so the call screen shows the caller's
+          // name (not the generic "Call" fallback) on this deep-link path.
+          const peerName = encodeURIComponent(payload?.callerName || "");
+          const peerAvatar = encodeURIComponent(payload?.callerAvatar || "");
+          const href = `/call/${conversationId}?mode=incoming&callId=${callId}&callType=${payload?.callType || "voice"}&peerId=${payload?.callerId || ""}&peerName=${peerName}&peerAvatar=${peerAvatar}&autoAnswer=1`;
+          await Linking.openURL(Linking.createURL(href));
+        } catch (err) {
+          console.warn("[nativeCallService] Failed to open call screen on answer:", err);
+        }
       }
       return;
     }
 
     // reject / end: when the app is KILLED no mounted handler exists, so send
-    // the websocket action straight from this service so ringing stops
-    // everywhere even in the headless state.
+    // the action straight from this service so ringing stops everywhere even in
+    // the headless state.
     if (!handledByMountedApp) {
       const socketAction = action === "reject" ? "reject" : "end";
-      await socket.connect();
-      await socket.sendCallActionWithRetry(
-        socketAction,
-        { callId, conversationId },
-        { timeoutMs: 3000, initialBackoffMs: 120, maxBackoffMs: 1000 },
-      );
+      // Confirm the realtime channel actually comes up before relying on it.
+      // From a killed/headless task the WS is often slow to authenticate; if it
+      // is NOT live within the window we fall back to the HTTP endpoint so the
+      // caller ALWAYS stops ringing (fixes "declined but caller still rings").
+      const connected = await socket.waitUntilConnected(2500);
+      let sent = false;
+      if (connected) {
+        sent = await socket.sendCallActionWithRetry(
+          socketAction,
+          { callId, conversationId },
+          { timeoutMs: 3000, initialBackoffMs: 120, maxBackoffMs: 1000 },
+        );
+      }
+      if (!sent && action === "reject") {
+        try {
+          await rejectCallHttp(callId, conversationId);
+        } catch (err) {
+          console.warn("[nativeCallService] HTTP reject fallback failed:", err);
+        }
+      }
     }
   }
 

@@ -80,6 +80,23 @@ class RealtimeSocket {
     await this.open();
   }
 
+  /**
+   * Awaitable "socket is OPEN" gate. Resolves true once the WS reaches
+   * readyState===1 (connected) within the timeout, false otherwise. Used by the
+   * killed/headless reject path so we can confirm the realtime channel is
+   * actually live before relying on it (and fall back to HTTP when it is not).
+   */
+  async waitUntilConnected(timeoutMs = 3000): Promise<boolean> {
+    await this.connect();
+    const deadline = Date.now() + Math.max(1, timeoutMs);
+    while (Date.now() < deadline) {
+      if (this.ws && this.ws.readyState === 1) return true;
+      if (this.shouldRun && !this.isSocketLive()) this.open();
+      await new Promise((r) => setTimeout(r, 80));
+    }
+    return !!this.ws && this.ws.readyState === 1;
+  }
+
   private onAppState = (state: AppStateStatus) => {
     if (state === "active" && this.shouldRun) {
       if (!this.isSocketLive()) this.open();

@@ -19,6 +19,7 @@ import { nativeCallService } from "../src/services/nativeCallService";
 import { backgroundPushService } from "../src/services/backgroundPushService";
 import { notifeeService } from "../src/services/notifeeService";
 import { ensureCallMediaPermissions } from "../src/services/mediaPermissions";
+import { warmIceConfig } from "../src/features";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -181,6 +182,10 @@ export default function RootLayout() {
     // call would connect with no camera/mic (black self-view, peer sees
     // nothing). Granting up front makes the background/lock-screen answer work.
     ensureCallMediaPermissions().catch(() => {});
+    // Pre-warm the ICE config (TURN credentials) once at startup so the call
+    // screen can read it from cache and skip the per-call wait — shaving the
+    // connection-setup delay (see src/features.ts getCachedIceConfig).
+    warmIceConfig().catch(() => {});
     return () => {
       backgroundPushService.unregisterForegroundHandler();
       unsubscribeNotifee();
