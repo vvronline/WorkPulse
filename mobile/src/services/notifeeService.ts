@@ -265,13 +265,21 @@ class NotifeeService {
           // Persistent + (when not muted) looping sound + vibration so it rings
           // like a real call. When `muteAll` is set we drop the sound, the loop
           // and the vibration pattern so the call surfaces silently.
+          //
+          // NOTE: Notifee VALIDATES `android.vibrationPattern` — it must have an
+          // EVEN number of entries and every value must be > 0. A malformed
+          // pattern (e.g. an odd length or a leading 0) makes
+          // displayNotification() THROW, which the catch below swallows — so the
+          // incoming-call notification is silently dropped in the killed/
+          // background state (it then only appears once the app is opened). Keep
+          // this pattern even-length and all-positive. When muted we omit the
+          // override entirely (do NOT pass `undefined`).
           ongoing: true,
           autoCancel: false,
           loopSound: !muteAll,
           ...(muteAll
-            ? { vibrationPattern: undefined }
-            : { vibrationPattern: [0, 700, 700, 700, 700] }),
-          ...(muteAll ? {} : { sound: "default" }),
+            ? {}
+            : { sound: "default", vibrationPattern: [300, 500, 300, 500] }),
           actions: [
             {
               title: "Answer",
@@ -296,6 +304,48 @@ class NotifeeService {
       if (route) await persistPendingCall(route);
     } catch (err) {
       console.warn("[NotifeeService] Failed to display incoming call:", err);
+      // DEFENSIVE FALLBACK: a single malformed android option (e.g. an invalid
+      // vibrationPattern) makes displayNotification() throw and would otherwise
+      // drop the incoming-call notification entirely in the killed/background
+      // state. Retry once with ONLY the essential fields so the ringing call
+      // still surfaces (full-screen intent + Answer/Decline) even if some
+      // optional styling field was rejected.
+      try {
+        await notifee.displayNotification({
+          id,
+          title,
+          body,
+          data: { ...data } as Record<string, string>,
+          android: {
+            channelId: muteAll ? CALL_SILENT_CHANNEL_ID : CALL_CHANNEL_ID,
+            category: this.AndroidCategory.CALL ?? "call",
+            importance: this.AndroidImportance.HIGH ?? 4,
+            visibility: this.AndroidVisibility.PUBLIC ?? 1,
+            fullScreenAction: { id: "default", launchActivity: "default" },
+            pressAction: { id: "default", launchActivity: "default" },
+            ongoing: true,
+            autoCancel: false,
+            actions: [
+              {
+                title: "Answer",
+                pressAction: { id: "answer", launchActivity: "default" },
+              },
+              {
+                title: "Decline",
+                pressAction: { id: "decline" },
+              },
+            ],
+            timeoutAfter: 45000,
+          },
+        });
+        const route = pendingCallFromData(data);
+        if (route) await persistPendingCall(route);
+      } catch (err2) {
+        console.warn(
+          "[NotifeeService] Fallback incoming-call display also failed:",
+          err2,
+        );
+      }
     }
   }
 
