@@ -11,6 +11,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  Vibration,
   View,
 } from "react-native";
 import {
@@ -60,6 +61,8 @@ import {
   mergeNotificationPrefs,
 } from "../../src/utils/notificationPrefs";
 import { setShowWhenLocked } from "../../modules/lock-screen";
+import { notifeeService } from "../../src/services/notifeeService";
+import { persistCallPrefs } from "../../src/services/callPrefsStore";
 
 const FALLBACK_ICE = [
   { urls: "stun:stun.l.google.com:19302" },
@@ -156,6 +159,14 @@ export default function CallScreen() {
   // Mirrors the web CallOverlay NetworkStats badge.
   const [connectionQuality, setConnectionQuality] =
     useState<"good" | "fair" | "poor" | "unknown">("unknown");
+  // The PEER's self-reported connection quality (received via the `quality-state`
+  // signal). Drives a Teams-style "<name>'s connection is unstable" banner so
+  // the user knows a freeze/stutter is the OTHER side's network, not theirs.
+  const [peerQuality, setPeerQuality] =
+    useState<"good" | "fair" | "poor" | "unknown">("unknown");
+  // Last quality value we SENT to the peer — used to only emit `quality-state`
+  // on a real change (not every 3s sample) so we don't spam the relay.
+  const lastSentQualityRef = useRef<string | null>(null);
   const [onHold, setOnHold] = useState(false);
   const holdSnapshotRef = useRef<{ muted: boolean; videoOff: boolean } | null>(
     null,
@@ -197,6 +208,13 @@ export default function CallScreen() {
     `call-initiate:${conversationId}:${Date.now()}`,
   );
   const endClientMsgIdRef = useRef<string | null>(null);
+  // Caller-abort bookkeeping. `initiatedRef` flips true once call_initiate has
+  // been attempted; `ringTimeoutRef` is the no-answer timer; `cancelClientMsgId`
+  // dedupes the call_cancel we send when the caller backs out before a callId
+  // exists (i.e. before call_started arrives).
+  const initiatedRef = useRef(false);
+  const cancelClientMsgIdRef = useRef<string | null>(null);
+  const ringTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const peerIdRef = useRef<number | null>(
     params.peerId ? Number(params.peerId) : null,
   );
@@ -210,6 +228,18 @@ export default function CallScreen() {
   const relayOnlyRef = useRef(false);
   const iceRestartAttemptedRef = useRef(false);
   const negotiationDoneRef = useRef(false);
+  // ── Perfect Negotiation (glare handling) ───────────────────────────────────
+  // Both peers can emit an offer at the same time (the caller's initial offer,
+  // an ICE-restart from either side, or a post-resume renegotiation). Without
+  // this, an offer arriving while we already have a local offer in flight threw
+  // "Failed to set remote description: wrong state" and the call hung. We adopt
+  // the standard polite/impolite pattern: the callee is POLITE (rolls its own
+  // offer back and accepts the incoming one on collision); the caller is
+  // IMPOLITE (ignores the colliding offer and keeps its own). `makingOfferRef`
+  // marks the window where we are creating/applying our own offer so an
+  // incoming offer in that window is detected as a collision.
+  const politeRef = useRef(mode === "incoming");
+  const makingOfferRef = useRef(false);
   // True once THIS session has accepted the incoming call (or is the caller).
   // The server echoes `call_handled_elsewhere` back to the accepter's own user
   // so their OTHER ringing devices dismiss the PiP. On web that echo is handled
@@ -248,6 +278,11 @@ export default function CallScreen() {
 
   const endAndLeave = useCallback(
     (sendEnd: boolean) => {
+      // Always clear the no-answer ring timer so a late fire can't re-enter.
+      if (ringTimeoutRef.current) {
+        clearTimeout(ringTimeoutRef.current);
+        ringTimeoutRef.current = null;
+      }
       if (sendEnd && callIdRef.current) {
         if (!endClientMsgIdRef.current) {
           endClientMsgIdRef.current = `call-end:${callIdRef.current}:${conversationId}`;
@@ -258,6 +293,33 @@ export default function CallScreen() {
             callId: callIdRef.current,
             conversationId,
             clientMsgId: endClientMsgIdRef.current,
+          },
+          {
+            timeoutMs: 3500,
+            maxAttempts: 5,
+            initialBackoffMs: 120,
+            maxBackoffMs: 700,
+          },
+        );
+      } else if (
+        sendEnd &&
+        !callIdRef.current &&
+        mode === "outgoing" &&
+        initiatedRef.current
+      ) {
+        // Caller aborted (or the ring timed out) BEFORE call_started returned a
+        // callId. Send call_cancel so the server marks the ringing call as
+        // missed and stops the callee's ring + native push. Keyed by
+        // conversation since we have no callId yet. No-op server-side if the
+        // initiate frame never actually reached the server.
+        if (!cancelClientMsgIdRef.current) {
+          cancelClientMsgIdRef.current = `call-cancel:${conversationId}:${Date.now()}`;
+        }
+        void socket.sendWithBackoff(
+          "call_cancel",
+          {
+            conversationId,
+            clientMsgId: cancelClientMsgIdRef.current,
           },
           {
             timeoutMs: 3500,
@@ -299,7 +361,7 @@ export default function CallScreen() {
         router.replace("/(tabs)");
       }
     },
-    [conversationId, router],
+    [conversationId, router, mode],
   );
 
   // Native runtime-permission pre-flight (Android). react-native-webrtc's
@@ -427,7 +489,12 @@ export default function CallScreen() {
     getNotificationPrefs()
       .then((r) => {
         if (!active) return;
-        setNotificationPrefs(mergeNotificationPrefs(r.data || {}));
+        const merged = mergeNotificationPrefs(r.data || {});
+        setNotificationPrefs(merged);
+        // Cache the call-relevant prefs so the KILLED/headless Notifee path can
+        // honour `muteAll` without an authenticated API call (see callPrefsStore
+        // + notifeeService.displayIncomingCall).
+        void persistCallPrefs({ muteAll: !!merged.muteAll });
       })
       .catch(() => {
         if (!active) return;
@@ -437,6 +504,21 @@ export default function CallScreen() {
       active = false;
     };
   }, []);
+
+  // Incoming call surfaced: the call SCREEN now owns the ring (it plays the
+  // user's SELECTED ringtone and respects `muteAll`). Dismiss any system
+  // full-screen-intent call notification Notifee posted for this same call so
+  // we don't DOUBLE-RING (Notifee's looped system sound + the screen's selected
+  // ringtone). Safe no-op when there is no such notification (app was already
+  // foreground / Expo Go). Runs once on mount for incoming calls.
+  useEffect(() => {
+    if (mode !== "incoming") return;
+    const cid = params.callId;
+    const conv = params.conversationId;
+    if (!cid || !conv) return;
+    void notifeeService.cancelCall(String(cid), String(conv));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   useEffect(() => {
     const applyAudioMode = async () => {
@@ -540,6 +622,43 @@ export default function CallScreen() {
     [ringPlayer],
   );
 
+  // Incoming-call vibration loop. While an INCOMING call is ringing (and the
+  // user has not muted everything) buzz the device in a repeating pattern like
+  // a real phone call, alongside the ringtone. Stops the moment the call is
+  // answered/declined/cancelled (status leaves "ringing") and on unmount. The
+  // looped Notifee vibration only runs in the killed/background pre-mount window
+  // and is cancelled when this screen mounts (see the cancelCall effect above),
+  // so there is no double-buzz once the call UI owns the ring.
+  const shouldVibrateRinging =
+    mode === "incoming" &&
+    status === "ringing" &&
+    !notificationPrefs.muteAll;
+  useEffect(() => {
+    if (!shouldVibrateRinging) {
+      try {
+        Vibration.cancel();
+      } catch {
+        /* no-op */
+      }
+      return;
+    }
+    try {
+      // Repeating pattern: wait 0ms, buzz 700ms, pause 1500ms, then repeat.
+      // The `true` second arg loops until Vibration.cancel(). iOS ignores the
+      // pattern timings (fixed buzz) but still repeats — acceptable parity.
+      Vibration.vibrate([0, 700, 1500], true);
+    } catch {
+      /* best-effort — never let a vibration error crash the call screen */
+    }
+    return () => {
+      try {
+        Vibration.cancel();
+      } catch {
+        /* no-op */
+      }
+    };
+  }, [shouldVibrateRinging]);
+
   // Bitrate ramp-up (ported from the web useWebRTC applyBitrateRampUp):
   // start LOW (~300 kbps) so the connection establishes fast on a mobile
   // uplink, then ramp to the target (~800 kbps) over 3s once connected.
@@ -579,8 +698,13 @@ export default function CallScreen() {
 
   const applyBitrateRampUp = useCallback(
     (pc: RTCPeerConnection) => {
+      // Start LOW for a fast, stable connect, then ramp to the target over 3s.
+      // The ceiling was raised from 800 kbps → 1.2 Mbps to close the quality gap
+      // with the web/desktop client (1.5 Mbps). 1.2 Mbps keeps headroom for a
+      // mobile UPLINK (typically the bottleneck) while delivering noticeably
+      // sharper video to desktop peers. The ramp still protects connect time.
       const INITIAL = 300_000;
-      const TARGET = 800_000;
+      const TARGET = 1_200_000;
       const STEPS = 3;
       const STEP_MS = 1000;
       bitrateRampTimersRef.current.forEach((t) => clearTimeout(t));
@@ -877,6 +1001,13 @@ export default function CallScreen() {
                 const builder = createPCRef.current;
                 if (!builder || !localStr) return endAndLeave(false);
                 const newPc = builder(localStr, targetUserId, true);
+                // Apply the conservative initial encoding cap on the rebuilt PC
+                // too. The relay-only rebuild previously skipped this, so the
+                // fresh connection negotiated with NO bitrate ceiling — a sudden
+                // high-bitrate burst over a TURN relay on an already-degraded
+                // network tended to stall/freeze. The connect-time ramp then
+                // re-runs from onconnectionstatechange("connected").
+                applySenderEncodingLimits(newPc);
                 const offer = await newPc.createOffer({
                   offerToReceiveAudio: true,
                   offerToReceiveVideo: callType === "video",
@@ -991,6 +1122,9 @@ export default function CallScreen() {
         endAndLeave(false);
         return;
       }
+      // Mark that we've attempted to initiate so a pre-call_started abort can
+      // send call_cancel (see endAndLeave) and stop the callee's ring.
+      initiatedRef.current = true;
       const sent = cancelled
         ? false
         : await socket.sendWithBackoff(
@@ -1022,6 +1156,33 @@ export default function CallScreen() {
     };
     // eslint-disable-line react-hooks/exhaustive-deps
   }, [mode, conversationId, callType, getMedia, endAndLeave]);
+
+  // Outgoing ring timeout: if the callee never answers within ~35s, stop
+  // ringing and end the call as "No answer" (mirrors Slack/Teams/Meet). The
+  // existing connectionTimeout only arms AFTER the call is accepted, so without
+  // this an unanswered outgoing call rang forever with no feedback. endAndLeave
+  // sends call_end when a callId is known, else call_cancel (pre-accept).
+  useEffect(() => {
+    if (mode !== "outgoing" || status !== "ringing") {
+      if (ringTimeoutRef.current) {
+        clearTimeout(ringTimeoutRef.current);
+        ringTimeoutRef.current = null;
+      }
+      return;
+    }
+    ringTimeoutRef.current = setTimeout(() => {
+      ringTimeoutRef.current = null;
+      setStatus("ended");
+      Alert.alert("No answer", "The person you called didn't pick up.");
+      endAndLeave(true);
+    }, 35000);
+    return () => {
+      if (ringTimeoutRef.current) {
+        clearTimeout(ringTimeoutRef.current);
+        ringTimeoutRef.current = null;
+      }
+    };
+  }, [mode, status, endAndLeave]);
 
   // Incoming: PRE-WARM camera/mic while the phone is still ringing (mirrors
   // the web client's pre-warm path). Acquiring media only after the user taps
@@ -1194,11 +1355,19 @@ export default function CallScreen() {
               // and the call hangs on "Connecting…" forever — the exact
               // mobile→desktop "never connects" bug. Explicitly request
               // bidirectional media so the SDP advertises sendrecv.
-              const offer = await pc.createOffer({
-                offerToReceiveAudio: true,
-                offerToReceiveVideo: callType === "video",
-              });
-              await pc.setLocalDescription(offer);
+              // makingOfferRef marks this offer-in-flight window so a colliding
+              // inbound offer is detected as glare (see Perfect Negotiation).
+              makingOfferRef.current = true;
+              let offer;
+              try {
+                offer = await pc.createOffer({
+                  offerToReceiveAudio: true,
+                  offerToReceiveVideo: callType === "video",
+                });
+                await pc.setLocalDescription(offer);
+              } finally {
+                makingOfferRef.current = false;
+              }
               const offerSent = await socket.sendWithBackoff(
                 "call_signal",
                 {
@@ -1286,6 +1455,31 @@ export default function CallScreen() {
                 if (!stream) return endAndLeave(false);
                 await waitForIceConfig();
                 pc = pcRef.current || createPC(stream, from, false);
+                // Perfect Negotiation glare guard: an offer arriving while we
+                // have our own offer in flight (or are mid-creation) is a
+                // collision. The IMPOLITE peer (caller) ignores it and keeps
+                // its own offer; the POLITE peer (callee) rolls its offer back
+                // and accepts theirs. Without this, setRemoteDescription threw
+                // "wrong state" and the call hung when both sides offered at
+                // once (ICE-restart / post-resume renegotiation races).
+                const offerCollision =
+                  makingOfferRef.current ||
+                  (pc as any).signalingState !== "stable";
+                if (offerCollision) {
+                  if (!politeRef.current) {
+                    console.warn(
+                      "[call] ignoring colliding offer (impolite peer)",
+                    );
+                    return;
+                  }
+                  try {
+                    await pc.setLocalDescription({
+                      type: "rollback",
+                    } as any);
+                  } catch {
+                    /* some impls auto-rollback on setRemoteDescription(offer) */
+                  }
+                }
                 await pc.setRemoteDescription(
                   new RTCSessionDescription(signal),
                 );
@@ -1366,6 +1560,19 @@ export default function CallScreen() {
               // peerMuted + remoteMuteBadge). The explicit signal is reliable
               // where track.onmute is not on react-native-webrtc.
               setPeerMuted(!!signal.muted);
+            } else if (signal.type === "quality-state") {
+              // Peer reported THEIR measured connection quality. Drives the
+              // "<name>'s connection is unstable" banner so a freeze/stutter is
+              // attributed to the correct side (Teams/Meet behaviour).
+              const q = signal.quality;
+              if (
+                q === "good" ||
+                q === "fair" ||
+                q === "poor" ||
+                q === "unknown"
+              ) {
+                setPeerQuality(q);
+              }
             }
           });
           break;
@@ -1475,6 +1682,11 @@ export default function CallScreen() {
       try {
         const stats = await pc.getStats();
         let rtt: number | null = null;
+        // Aggregate packet loss across BOTH inbound audio AND video streams.
+        // Previously only audio was sampled, so a video call could be visibly
+        // stuttering (heavy video loss) while still reporting "Good" because the
+        // audio stream was clean. Summing both kinds reflects the real felt
+        // quality on a video call (mirrors how Teams/Meet grade the link).
         let packetsLost = 0;
         let packetsReceived = 0;
         stats.forEach((report: any) => {
@@ -1486,28 +1698,52 @@ export default function CallScreen() {
               rtt = report.currentRoundTripTime;
             }
           }
-          if (report.type === "inbound-rtp" && report.kind === "audio") {
-            packetsLost = report.packetsLost || 0;
-            packetsReceived = report.packetsReceived || 0;
+          if (
+            report.type === "inbound-rtp" &&
+            (report.kind === "audio" || report.kind === "video")
+          ) {
+            packetsLost += report.packetsLost || 0;
+            packetsReceived += report.packetsReceived || 0;
           }
         });
         const lossRate =
           packetsReceived > 0
             ? packetsLost / (packetsLost + packetsReceived)
             : 0;
+        let q: "good" | "fair" | "poor" | "unknown" = "unknown";
         if (rtt !== null && rtt < 0.15 && lossRate < 0.02) {
-          setConnectionQuality("good");
+          q = "good";
         } else if (rtt !== null && rtt < 0.4 && lossRate < 0.05) {
-          setConnectionQuality("fair");
+          q = "fair";
         } else if (rtt !== null) {
-          setConnectionQuality("poor");
+          q = "poor";
+        }
+        if (q !== "unknown") {
+          setConnectionQuality(q);
+          // Tell the peer OUR measured quality so THEY can surface a
+          // "<name>'s connection is unstable" banner — exactly how Teams/Meet
+          // attribute a freeze to the right side. Only emit on a real change
+          // (not every 3s sample) to avoid spamming the relay. Reuses the
+          // existing call_signal channel; web ignores unknown signal types so
+          // this is forward-compatible.
+          if (lastSentQualityRef.current !== q) {
+            lastSentQualityRef.current = q;
+            const target = peerIdRef.current;
+            if (target) {
+              socket.send("call_signal", {
+                conversationId,
+                targetUserId: target,
+                signal: { type: "quality-state", quality: q },
+              });
+            }
+          }
         }
       } catch {
         /* stats unavailable this tick */
       }
     }, 3000);
     return () => clearInterval(interval);
-  }, [status]);
+  }, [status, conversationId]);
 
   // Incoming: accept handler. Send call_accept IMMEDIATELY (don't serialize
   // behind getUserMedia) — the caller starts building its offer right away
@@ -1912,6 +2148,18 @@ export default function CallScreen() {
         </Text>
       </View>
 
+      {/* Peer poor-connection banner (Teams/Meet style). Surfaced when the
+          PEER reports their own link is poor, so a freeze/stutter is attributed
+          to the right side rather than looking like our fault. */}
+      {status === "connected" && peerQuality === "poor" ? (
+        <View style={[styles.peerQualityBanner, { top: insets.top + 110 }]}>
+          <Signal size={13} color="#fff" />
+          <Text style={styles.peerQualityText} numberOfLines={1}>
+            {peerName}&apos;s connection is unstable
+          </Text>
+        </View>
+      ) : null}
+
       {/* Controls */}
       {mode === "incoming" && status === "ringing" ? (
         <View style={[styles.incomingControls, { paddingBottom: Math.max(insets.bottom, 24) }]}>
@@ -2244,6 +2492,21 @@ const makeStyles = (theme: Theme) =>
     paddingVertical: 5,
   },
   muteBadgeText: { color: "#fff", fontSize: 12, fontWeight: "700" },
+  peerQualityBanner: {
+    position: "absolute",
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    maxWidth: "85%",
+    backgroundColor: "rgba(239,68,68,0.9)",
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    zIndex: 7,
+    elevation: 9,
+  },
+  peerQualityText: { color: "#fff", fontSize: 12, fontWeight: "600", flexShrink: 1 },
   /* ─── Controls bar (horizontal scrollable frosted pill, mirrors web mobile) ─── */
   controlsBar: {
     position: "absolute",

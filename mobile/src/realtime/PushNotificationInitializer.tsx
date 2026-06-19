@@ -12,6 +12,8 @@ import {
 import { useAuth } from "../auth/AuthContext";
 import { nativeCallService } from "../services/nativeCallService";
 import { socket } from "./socket";
+import { getNotificationPrefs } from "../features";
+import { persistCallPrefs } from "../services/callPrefsStore";
 
 export default function PushNotificationInitializer() {
   const { user } = useAuth();
@@ -33,6 +35,19 @@ export default function PushNotificationInitializer() {
       .catch((err) =>
         console.error("Failed to register device token after login:", err),
       );
+
+    // Cache the call-relevant notification prefs (muteAll) to durable storage so
+    // the KILLED/headless incoming-call Notifee path can honour them WITHOUT an
+    // authenticated API call (see callPrefsStore + notifeeService). The call
+    // screen also refreshes this cache whenever it opens, but priming it at
+    // login covers the very first killed-state ring before any call has occurred.
+    getNotificationPrefs()
+      .then((r) => {
+        void persistCallPrefs({ muteAll: !!r.data?.muteAll });
+      })
+      .catch(() => {
+        /* best-effort — defaults to not-muted so a call is never silently dropped */
+      });
 
     const offNativeActions = nativeCallService.onAction(async ({ action, callId, conversationId }) => {
       if (action === "answer") {

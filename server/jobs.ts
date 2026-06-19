@@ -5,6 +5,8 @@
 import { logger } from "./utils/logger";
 import { forEachTenant } from "./utils/tenantManager";
 import { masterQuery } from "./db";
+import { sendToUser } from "./utils/ws";
+import { pushNotifications } from "./services/pushNotifications";
 
 type Query = (sql: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount?: number | null }>;
 interface TenantDb { query: Query; }
@@ -20,8 +22,17 @@ let autoClockOutQueue: any = null;
 let tokenCleanupQueue: any = null;
 let inspectorPruneQueue: any = null;
 let retentionCleanupQueue: any = null;
+let staleCallQueue: any = null;
 let workers: any[] = [];
 let fallbackIntervals: NodeJS.Timeout[] = [];
+
+// How long an unanswered call may keep `ringing` before the server force-ends
+// it as "missed". Mirrors the caller's client-side no-answer timeout (~35s) but
+// is the authoritative backstop: it fires even when every client died mid-ring
+// (app killed, network dropped), so an abandoned call can never sit ringing
+// forever and the callee's ring UI / native push is always dismissed.
+const STALE_RINGING_TTL_SECS = 45;
+const STALE_CALL_SWEEP_MS = 20 * 1000;
 
 interface InitJobsOpts {
     autoClockOut: () => void | Promise<void>;
@@ -133,6 +144,84 @@ async function runRetentionCleanup(): Promise<{ audit_logs: number; session_logs
 }
 
 /**
+ * Ring-timeout backstop: force-end calls that have been `ringing` longer than
+ * STALE_RINGING_TTL_SECS. For each expired call we:
+ *   • mark the call_log `missed`
+ *   • broadcast `call_ended` to every conversation participant so the caller's
+ *     "Ringing…" UI and the callee's incoming-ring UI both dismiss
+ *   • push-cancel the callee's locked/backgrounded devices so the native
+ *     incoming-call notification is torn down
+ *   • clear the per-session in_call activity
+ *
+ * Runs across every tenant. Safe to run frequently — the UPDATE only touches
+ * rows that are actually stale, and is a no-op when there are none.
+ */
+async function expireStaleRingingCalls(): Promise<number> {
+    let expired = 0;
+    await forEachTenant(
+        async (db: TenantDb, tenant) => {
+            const tenantId = tenant.id;
+            const rows = (await db.query(
+                `UPDATE call_logs
+                    SET status = 'missed', ended_at = NOW()
+                  WHERE status = 'ringing'
+                    AND created_at < NOW() - ($1 || ' seconds')::interval
+                  RETURNING id, conversation_id, caller_id`,
+                [String(STALE_RINGING_TTL_SECS)],
+            )).rows;
+
+            for (const call of rows) {
+                expired++;
+                const callId = call.id;
+                const conversationId = call.conversation_id;
+
+                let participants: { user_id: number }[] = [];
+                try {
+                    participants = (await db.query(
+                        "SELECT user_id FROM conversation_participants WHERE conversation_id = $1",
+                        [conversationId],
+                    )).rows;
+                } catch (err: any) {
+                    logger.warn({ err: err.message, callId }, "expireStaleRingingCalls: participant lookup failed");
+                }
+
+                for (const p of participants) {
+                    try {
+                        sendToUser(tenantId, p.user_id, "call_ended", {
+                            callId,
+                            conversationId,
+                            reason: "no_answer",
+                        });
+                    } catch { /* best-effort */ }
+
+                    // Only the callee(s) had an incoming ring/push to dismiss.
+                    if (p.user_id !== call.caller_id) {
+                        pushNotifications.sendCallCancellation(
+                            db.query as any,
+                            p.user_id,
+                            tenantId,
+                            { callId, conversationId, reason: "cancelled" },
+                        ).catch((err: any) => logger.warn({ err: err.message, callId, userId: p.user_id }, "expireStaleRingingCalls: push-cancel failed"));
+                    }
+                }
+
+                // Clear in_call activity for every session referencing this call.
+                try {
+                    const statusService = require("./services/status");
+                    statusService.clearActivityForRef({ db, tenantId }, "in_call", callId)
+                        .catch((err: any) => logger.warn({ err: err.message, callId }, "expireStaleRingingCalls: clearActivityForRef failed"));
+                } catch { /* status service optional */ }
+            }
+        },
+        { label: "expireStaleRingingCalls" },
+    );
+    if (expired > 0) {
+        logger.info({ expired }, "Expired stale ringing calls");
+    }
+    return expired;
+}
+
+/**
  * Initialize job queues. Must be called after Redis is connected.
  */
 function initJobs({ autoClockOut, cleanupTokens }: InitJobsOpts): void {
@@ -154,6 +243,11 @@ function initJobs({ autoClockOut, cleanupTokens }: InitJobsOpts): void {
             () => runRetentionCleanup().catch((err) =>
                 logger.error({ err }, "Retention cleanup (interval) failed")),
             24 * 60 * 60 * 1000,
+        ));
+        fallbackIntervals.push(setInterval(
+            () => expireStaleRingingCalls().catch((err) =>
+                logger.error({ err }, "Stale-call sweep (interval) failed")),
+            STALE_CALL_SWEEP_MS,
         ));
         return;
     }
@@ -246,10 +340,27 @@ function initJobs({ autoClockOut, cleanupTokens }: InitJobsOpts): void {
     });
     workers.push(retentionWorker);
 
+    // Stale ringing-call sweep: force-end calls left ringing past the TTL so an
+    // abandoned call (every client died mid-ring) can never ring forever.
+    staleCallQueue = new Queue("stale-call-sweep", { connection });
+    staleCallQueue.upsertJobScheduler("stale-call-sweep-schedule", {
+        every: STALE_CALL_SWEEP_MS,
+    }, {
+        name: "stale-call-sweep",
+    }).catch((err: any) => logger.warn({ err: err.message }, "Failed to set stale-call-sweep schedule"));
+
+    const staleCallWorker = new Worker("stale-call-sweep", async () => {
+        await expireStaleRingingCalls();
+    }, { connection, concurrency: 1 });
+    staleCallWorker.on("failed", (job: any, err: any) => {
+        logger.error({ err, jobId: job?.id }, "Stale-call sweep job failed");
+    });
+    workers.push(staleCallWorker);
+
     // Run auto clock-out immediately on startup
     autoClockOut();
 
-    logger.info("BullMQ job queues initialized (auto-clock-out: 5m, token-cleanup: 1h, inspector-prune: 24h, retention-cleanup: 24h)");
+    logger.info("BullMQ job queues initialized (auto-clock-out: 5m, token-cleanup: 1h, inspector-prune: 24h, retention-cleanup: 24h, stale-call-sweep: 20s)");
 }
 
 async function shutdownJobs(): Promise<void> {
@@ -270,6 +381,9 @@ async function shutdownJobs(): Promise<void> {
     if (retentionCleanupQueue) {
         try { await retentionCleanupQueue.close(); } catch { /* ignore */ }
     }
+    if (staleCallQueue) {
+        try { await staleCallQueue.close(); } catch { /* ignore */ }
+    }
 }
 
-export { initJobs, shutdownJobs, pruneStaleInspectorUsers, runRetentionCleanup };
+export { initJobs, shutdownJobs, pruneStaleInspectorUsers, runRetentionCleanup, expireStaleRingingCalls };

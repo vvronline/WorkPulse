@@ -931,45 +931,71 @@ async function handleChatMessage(db: DbLike, senderId: number, tenantId: number 
         );
 
     } else if (msg.type === "call_cancel") {
-        // Caller cancels (media acquisition failed after call_initiate was sent)
-        const { conversationId } = msg.data || {};
+        // Caller cancels — either media acquisition failed after call_initiate
+        // was sent, OR the caller backed out / the outgoing ring timed out
+        // before the callee answered (mobile sends this when it has no callId
+        // yet). Idempotent via the optional clientMsgId so a retried frame on a
+        // flaky link doesn't double-cancel.
+        const { conversationId, clientMsgId: rawCallCancelId } = msg.data || {};
         if (!conversationId) return;
 
-        const callLog = (await db.query(
-            `SELECT id FROM call_logs WHERE conversation_id = $1 AND caller_id = $2 AND status = 'ringing' ORDER BY created_at DESC LIMIT 1`,
-            [conversationId, senderId],
-        )).rows[0];
-        if (!callLog) return;
-
-        await db.query(`UPDATE call_logs SET status = 'missed', ended_at = NOW() WHERE id = $1`, [callLog.id]);
-
-        const participants = (await db.query(
-            "SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2",
-            [conversationId, senderId],
-        )).rows;
-
-        for (const p of participants) {
-            sendToUser(tenantId, p.user_id, "call_ended", {
-                callId: callLog.id,
-                conversationId,
-            });
-
-            // Push-cancel the callee's devices (locked/backgrounded twin) so a
-            // native incoming-call ring is dismissed when the caller cancels.
-            pushNotifications.sendCallCancellation(
-                db.query as any,
-                p.user_id,
+        await withIdempotency(
+            {
                 tenantId,
-                { callId: callLog.id, conversationId, reason: "cancelled" },
-            ).catch((err: any) => logger.warn({ err: err.message, callId: callLog.id, userId: p.user_id }, "Failed to push-cancel callee devices on cancel"));
-        }
+                senderId,
+                type: "call_cancel",
+                clientMsgId: rawCallCancelId,
+            },
+            async () => {
+                const callLog = (await db.query(
+                    `SELECT id FROM call_logs WHERE conversation_id = $1 AND caller_id = $2 AND status = 'ringing' ORDER BY created_at DESC LIMIT 1`,
+                    [conversationId, senderId],
+                )).rows[0];
+                if (!callLog) return;
 
-        // Status service v2: caller cancelled (media acquisition failed);
-        // their device was briefly marked in_call by call_initiate.
-        // Sweep every session referencing this call.
-        statusService.clearActivityForRef({ db, tenantId }, "in_call", callLog.id)
-            .catch((err: any) => logger.warn({ err: err.message, callId: callLog.id }, "clearActivityForRef(in_call) on cancel failed"));
-        ws._callActivityRefId = null;
+                const updated = await db.query(
+                    `UPDATE call_logs SET status = 'missed', ended_at = NOW() WHERE id = $1 AND status = 'ringing' RETURNING id`,
+                    [callLog.id],
+                );
+                if (!updated.rows[0]) return;
+
+                const participants = (await db.query(
+                    "SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2",
+                    [conversationId, senderId],
+                )).rows;
+
+                for (const p of participants) {
+                    sendToUser(tenantId, p.user_id, "call_ended", {
+                        callId: callLog.id,
+                        conversationId,
+                    });
+
+                    // Push-cancel the callee's devices (locked/backgrounded twin)
+                    // so a native incoming-call ring is dismissed when the caller
+                    // cancels.
+                    pushNotifications.sendCallCancellation(
+                        db.query as any,
+                        p.user_id,
+                        tenantId,
+                        { callId: callLog.id, conversationId, reason: "cancelled" },
+                    ).catch((err: any) => logger.warn({ err: err.message, callId: callLog.id, userId: p.user_id }, "Failed to push-cancel callee devices on cancel"));
+                }
+
+                // Echo to the caller's OTHER devices so their outgoing-ring UI is
+                // dismissed too (e.g. desktop + mobile both showing the call).
+                sendToUser(tenantId, senderId, "call_ended", {
+                    callId: callLog.id,
+                    conversationId,
+                });
+
+                // Status service v2: caller cancelled; their device was briefly
+                // marked in_call by call_initiate. Sweep every session
+                // referencing this call.
+                statusService.clearActivityForRef({ db, tenantId }, "in_call", callLog.id)
+                    .catch((err: any) => logger.warn({ err: err.message, callId: callLog.id }, "clearActivityForRef(in_call) on cancel failed"));
+                ws._callActivityRefId = null;
+            },
+        );
 
     } else if (msg.type === "call_reject") {
         // Callee rejects → update call log, notify caller

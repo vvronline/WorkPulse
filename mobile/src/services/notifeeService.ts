@@ -27,6 +27,7 @@ import {
   persistPendingCall,
   clearPersistedPendingCall,
 } from "../realtime/pendingCall";
+import { loadCallPrefs } from "./callPrefsStore";
 
 // Versioned channel IDs. Android notification channels are IMMUTABLE after
 // creation — recreating a channel with the same ID does NOT update its
@@ -36,6 +37,11 @@ import {
 // OS to create a fresh channel with the corrected high-importance settings.
 // (Mirrors Signal-Android's `calls_v3` versioned-channel pattern.)
 const CALL_CHANNEL_ID = "calls_v2";
+// Silent sibling of the calls channel, used when the user has muted all
+// notification sounds (`muteAll`). A channel's sound is IMMUTABLE after
+// creation, so a separate silent channel is the only way to post a non-ringing
+// incoming-call notification while still surfacing the full-screen call UI.
+const CALL_SILENT_CHANNEL_ID = "calls_silent_v2";
 const MESSAGE_CHANNEL_ID = "messages_v2";
 
 type NotifeeModule = any;
@@ -104,6 +110,19 @@ class NotifeeService {
         sound: "default",
         vibration: true,
         vibrationPattern: [300, 500, 300, 500],
+        bypassDnd: true,
+        lights: true,
+      });
+      // Silent calls channel for when the user muted all sounds. Still
+      // HIGH-importance so the full-screen-intent call UI surfaces, but with no
+      // sound and no vibration so it honours `muteAll`.
+      await notifee.createChannel({
+        id: CALL_SILENT_CHANNEL_ID,
+        name: "Calls (silent)",
+        description: "Incoming call alerts (muted)",
+        importance: this.AndroidImportance.HIGH ?? 4,
+        sound: undefined,
+        vibration: false,
         bypassDnd: true,
         lights: true,
       });
@@ -215,6 +234,13 @@ class NotifeeService {
     const body = data.body || `${data.callerName || "Someone"} is calling...`;
     const id = callNotificationId(data.callId, data.conversationId);
 
+    // Honour the user's `muteAll` preference even in the killed/headless state.
+    // The prefs are persisted to SecureStore while the app is alive (see
+    // callPrefsStore) so they are readable here without an authenticated API
+    // call. When muted we post on the SILENT channel with no sound/vibration —
+    // the full-screen call UI still surfaces; it just doesn't ring/buzz.
+    const { muteAll } = await loadCallPrefs();
+
     try {
       await notifee.displayNotification({
         id,
@@ -222,7 +248,7 @@ class NotifeeService {
         body,
         data: { ...data } as Record<string, string>,
         android: {
-          channelId: CALL_CHANNEL_ID,
+          channelId: muteAll ? CALL_SILENT_CHANNEL_ID : CALL_CHANNEL_ID,
           category: this.AndroidCategory.CALL ?? "call",
           importance: this.AndroidImportance.HIGH ?? 4,
           visibility: this.AndroidVisibility.PUBLIC ?? 1,
@@ -236,11 +262,16 @@ class NotifeeService {
             id: "default",
             launchActivity: "default",
           },
-          // Persistent + looping sound so it rings like a real call.
+          // Persistent + (when not muted) looping sound + vibration so it rings
+          // like a real call. When `muteAll` is set we drop the sound, the loop
+          // and the vibration pattern so the call surfaces silently.
           ongoing: true,
           autoCancel: false,
-          loopSound: true,
-          sound: "default",
+          loopSound: !muteAll,
+          ...(muteAll
+            ? { vibrationPattern: undefined }
+            : { vibrationPattern: [0, 700, 700, 700, 700] }),
+          ...(muteAll ? {} : { sound: "default" }),
           actions: [
             {
               title: "Answer",

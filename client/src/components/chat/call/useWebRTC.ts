@@ -91,6 +91,15 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     const iceServersRef = useRef<RTCIceServer[]>(FALLBACK_ICE_SERVERS);
     const iceExpiresAtRef = useRef(0);
     const relayOnlyRef = useRef(false); // set true after a UDP-relay failure to force TURN/TCP/TLS only
+    // ── Perfect Negotiation (glare handling) ──────────────────────────────
+    // Both peers can offer simultaneously (initial offer + ICE-restart +
+    // renegotiation). The callee is POLITE (rolls back + accepts the incoming
+    // offer on collision); the caller is IMPOLITE (ignores it, keeps its own).
+    // makingOfferRef marks our own offer-in-flight window so a colliding
+    // inbound offer is detected as glare and handled instead of throwing
+    // "Failed to set remote description: wrong state".
+    const politeRef = useRef(!!isIncoming);
+    const makingOfferRef = useRef(false);
     const networkOnlineRef = useRef(navigator.onLine);
     const initialIceConfigLoadedRef = useRef(false);
     const deferredOfferRef = useRef<any>(null);
@@ -406,6 +415,9 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         pc.onnegotiationneeded = async () => {
             if (!initialNegotiationDone) return;
             try {
+                // Mark the offer-in-flight window so a colliding inbound offer is
+                // detected as glare (Perfect Negotiation).
+                makingOfferRef.current = true;
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
                 wsSend("call_signal", {
@@ -414,6 +426,8 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 });
             } catch (err) {
                 console.error("Renegotiation failed:", err);
+            } finally {
+                makingOfferRef.current = false;
             }
         };
 
@@ -620,6 +634,22 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         try {
             console.log("[call-webrtc] handleSignal:", signal.type, "from:", fromUserId, "pcState:", pcRef.current.signalingState);
             if (signal.type === "offer") {
+                // Perfect Negotiation glare guard: an offer arriving while our
+                // own offer is in flight (or we're mid-creation) is a collision.
+                // Impolite peer ignores it; polite peer rolls back and accepts.
+                const offerCollision =
+                    makingOfferRef.current || pcRef.current.signalingState !== "stable";
+                if (offerCollision) {
+                    if (!politeRef.current) {
+                        console.warn("[call-webrtc] ignoring colliding offer (impolite peer)");
+                        return;
+                    }
+                    try {
+                        await pcRef.current.setLocalDescription({ type: "rollback" } as RTCLocalSessionDescriptionInit);
+                    } catch {
+                        /* some browsers auto-rollback on setRemoteDescription(offer) */
+                    }
+                }
                 await pcRef.current.setRemoteDescription(new RTCSessionDescription(signal));
                 // CRITICAL: attach local tracks AFTER setRemoteDescription so they
                 // bind to the transceivers created by the offer, instead of producing
