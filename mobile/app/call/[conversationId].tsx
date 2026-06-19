@@ -995,7 +995,12 @@ export default function CallScreen() {
               /* ignore */
             }
             pcRef.current = null;
-            pendingIce.current = [];
+            // P1.4: DO NOT clear pendingIce here. Remote ICE candidates buffered
+            // before the new remote description still describe the peer's
+            // relay-only transport and remain valid for the rebuilt PC.
+            // flushIce() drains them after setRemoteDescription on the answer
+            // for this new offer. Polite/impolite + makingOffer glare guards
+            // stay active across the rebuild.
             (async () => {
               try {
                 const builder = createPCRef.current;
@@ -1446,7 +1451,12 @@ export default function CallScreen() {
                     }
                     pcRef.current = null;
                     pc = null;
-                    pendingIce.current = [];
+                    // P1.4: DO NOT clear pendingIce here. Remote ICE candidates
+                    // buffered before the new remote description still describe
+                    // the peer's relay-only transport and remain valid for the
+                    // rebuilt PC. flushIce() below drains them after the new
+                    // setRemoteDescription(offer). Polite/impolite + makingOffer
+                    // glare guards stay active across the rebuild.
                   }
                 }
                 // Callee side: build PC WITHOUT tracks, set remote, THEN attach
@@ -1622,6 +1632,16 @@ export default function CallScreen() {
           if (Number(d.conversationId) === conversationId) {
             setStatus("rejected");
             setTimeout(() => endAndLeave(false), 800);
+          }
+          break;
+        case "call_busy":
+          // P0.3 — the 1:1 callee is already on another call. The server
+          // refused to ring them; tell the user and tear down our outgoing
+          // call.
+          if (Number(d.conversationId) === conversationId) {
+            setStatus("ended");
+            Alert.alert("On another call", `${peerName} is on another call.`);
+            endAndLeave(false);
           }
           break;
         case "call_handled_elsewhere":

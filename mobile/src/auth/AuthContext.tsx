@@ -12,6 +12,7 @@ import { setUnauthorizedHandler } from "../api";
 import { socket } from "../realtime/socket";
 import { pushNotificationService } from "../services/pushNotificationService";
 import { notifeeService } from "../services/notifeeService";
+import { nativeCallService } from "../services/nativeCallService";
 import {
   clearPendingCall,
   clearPersistedPendingCall,
@@ -80,6 +81,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // arrived right before logout doesn't linger.
     try {
       await notifeeService.cancelCall();
+    } catch {
+      // ignore — best-effort
+    }
+
+    // P1.3 — tear down the native CallKeep integration so a subsequent login
+    // (possibly as a different user) re-initializes from a clean slate instead
+    // of stacking a second set of CallKeep event listeners on top of the first
+    // (the iOS bug where one answer/end tap fired the handler multiple times).
+    try {
+      nativeCallService.teardown();
     } catch {
       // ignore — best-effort
     }

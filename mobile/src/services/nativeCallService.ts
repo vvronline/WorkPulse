@@ -35,6 +35,11 @@ function toInt(value?: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// CallKeep events we bind to. Centralised so teardown removes EXACTLY what
+// configureCallKeep added (no stale listeners left bound after logout/re-login,
+// which on iOS caused the answer/end handler to fire multiple times per tap).
+const CALLKEEP_EVENTS = ["answerCall", "endCall"] as const;
+
 class NativeCallService {
   private initialized = false;
   private actionHandlers = new Set<ActionHandler>();
@@ -42,6 +47,9 @@ class NativeCallService {
   private payloadByUuid = new Map<string, NotificationPayload["data"]>();
   private nativeEnabled = false;
   private warnedUnavailable = false;
+  // Tracks whether CallKeep event listeners are currently bound so we never
+  // double-bind on a re-init and can cleanly remove them in teardown().
+  private listenersBound = false;
 
   initialize() {
     if (this.initialized) return;
@@ -52,6 +60,36 @@ class NativeCallService {
       });
     }
     this.initialized = true;
+  }
+
+  /**
+   * Tear the native call integration down. Called on logout so a subsequent
+   * login (possibly as a DIFFERENT user) re-initializes from a clean slate
+   * instead of stacking a second set of CallKeep event listeners on top of the
+   * first — the iOS bug where one "answer"/"end" tap fired the handler N times
+   * (once per accumulated login). Safe to call when never initialized.
+   */
+  teardown() {
+    if (this.callKeep && this.listenersBound) {
+      for (const event of CALLKEEP_EVENTS) {
+        try {
+          this.callKeep.removeEventListener?.(event);
+        } catch (err) {
+          console.warn(`[nativeCallService] failed to remove ${event} listener:`, err);
+        }
+      }
+    }
+    try {
+      this.callKeep?.setAvailable?.(false);
+    } catch {
+      /* ignore */
+    }
+    this.listenersBound = false;
+    this.nativeEnabled = false;
+    this.payloadByUuid.clear();
+    this.initialized = false;
+    // Keep `actionHandlers` intact — those are owned by mounted React
+    // components which manage their own subscribe/unsubscribe lifecycle.
   }
 
   onAction(handler: ActionHandler): () => void {
@@ -220,12 +258,27 @@ class NativeCallService {
     callKeep.setAvailable?.(true);
     this.nativeEnabled = true;
 
+    // Defensive: drop any previously-bound listeners before adding, so a
+    // re-init (e.g. logout without teardown, then login) can never leave two
+    // sets bound — which made one native tap fire the handler twice.
+    if (this.listenersBound) {
+      for (const event of CALLKEEP_EVENTS) {
+        try {
+          callKeep.removeEventListener?.(event);
+        } catch {
+          /* ignore */
+        }
+      }
+      this.listenersBound = false;
+    }
+
     callKeep.addEventListener("answerCall", (event: CallKeepEvent) => {
       this.onNativeCallAction("answer", event);
     });
     callKeep.addEventListener("endCall", (event: CallKeepEvent) => {
       this.onNativeCallAction("reject", event);
     });
+    this.listenersBound = true;
   }
 
   private async onNativeCallAction(action: NativeAction, event: CallKeepEvent): Promise<void> {

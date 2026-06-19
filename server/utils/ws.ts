@@ -683,6 +683,82 @@ async function handleChatMessage(db: DbLike, senderId: number, tenantId: number 
                     return;
                 }
 
+                // P1.5 — gate group calls. 1:1 WebRTC has no mesh/SFU plumbing,
+                // so a group "call" could never actually connect >2 people.
+                // Group n-way belongs to the Meeting flow. Refuse to create a
+                // ringing row for group conversations; tell the caller it's
+                // unsupported so their outgoing-call UI tears down immediately.
+                const isGroupConv = (await db.query(
+                    "SELECT is_group FROM conversations WHERE id = $1",
+                    [conversationId],
+                )).rows[0]?.is_group;
+                if (isGroupConv) {
+                    logger.info({ senderId, conversationId, tenantId }, "call_initiate: group conversation — calls unsupported, redirect to meeting");
+                    sendToUser(tenantId, senderId, "call_ended", {
+                        conversationId,
+                        reason: "group_unsupported",
+                    });
+                    recordCallTransitionFailure({
+                        event: "call_transition_failed",
+                        action: "initiate",
+                        tenantId,
+                        senderId,
+                        conversationId,
+                        reason: "group_unsupported",
+                    });
+                    return;
+                }
+
+                // P0.3 — call_busy on 1:1 collision. For NON-group conversations we
+                // ring at most one callee; if that callee already has an active
+                // (ringing/answered) call we must NOT create another ringing row.
+                // Instead tell the caller the callee is busy and bail out.
+                {
+                    const targetRow = (await db.query(
+                        `SELECT user_id FROM conversation_participants
+                         WHERE conversation_id = $1 AND user_id != $2
+                         ORDER BY user_id ASC
+                         LIMIT 1`,
+                        [conversationId, senderId],
+                    )).rows[0];
+                    if (targetRow) {
+                        const targetUserId = targetRow.user_id;
+                        const busy = (await db.query(
+                            `SELECT 1 FROM call_logs cl
+                             JOIN conversation_participants cp ON cp.conversation_id = cl.conversation_id
+                             WHERE cp.user_id = $1 AND cl.status IN ('ringing','answered') LIMIT 1`,
+                            [targetUserId],
+                        )).rows[0];
+                        if (busy) {
+                            logger.info({ senderId, conversationId, targetUserId, tenantId }, "call_initiate: callee busy, sending call_busy");
+                            // Optionally record a missed-call row for history.
+                            try {
+                                await db.query(
+                                    `INSERT INTO call_logs (conversation_id, caller_id, call_type, status, ended_at)
+                                     VALUES ($1, $2, $3, 'missed', NOW())`,
+                                    [conversationId, senderId, callType],
+                                );
+                            } catch (err: any) {
+                                logger.warn({ err: err?.message, conversationId, senderId }, "call_initiate: failed to record missed busy call log");
+                            }
+                            sendToUser(tenantId, senderId, "call_busy", {
+                                conversationId,
+                                targetUserId,
+                                reason: "busy",
+                            });
+                            recordCallTransitionFailure({
+                                event: "call_transition_failed",
+                                action: "initiate",
+                                tenantId,
+                                senderId,
+                                conversationId,
+                                reason: "callee_busy",
+                            });
+                            return;
+                        }
+                    }
+                }
+
                 const [callLogResult, callerResult, convResult] = await Promise.all([
                     db.query(
                         `INSERT INTO call_logs (conversation_id, caller_id, call_type, status)
@@ -1237,7 +1313,7 @@ async function handleChatMessage(db: DbLike, senderId: number, tenantId: number 
         if (!conversationId || !targetUserId || !signal) return;
 
         // Validate signal type against whitelist
-        const VALID_SIGNAL_TYPES = ["offer", "answer", "ice-candidate", "video-state", "audio-state", "screen-share-state"];
+        const VALID_SIGNAL_TYPES = ["offer", "answer", "ice-candidate", "video-state", "audio-state", "screen-share-state", "quality-state"];
         if (!signal.type || !VALID_SIGNAL_TYPES.includes(signal.type)) {
             logger.warn({ senderId, signalType: signal?.type }, "call_signal: rejected unknown signal type");
             return;
@@ -1256,6 +1332,15 @@ async function handleChatMessage(db: DbLike, senderId: number, tenantId: number 
             }
         } else if (signal.type === "video-state") {
             if (typeof signal.videoOff !== "boolean") return;
+        } else if (signal.type === "quality-state") {
+            // Self-reported connection quality so the peer can surface a
+            // "<name>'s connection is unstable" banner (Teams/Meet parity).
+            // Mobile already emits this every time its measured quality changes;
+            // it MUST be whitelisted here or the relay drops every frame.
+            if (!["good", "fair", "poor", "unknown"].includes(signal.quality)) {
+                logger.warn({ senderId, quality: signal.quality }, "call_signal: invalid quality-state");
+                return;
+            }
         }
 
         // Verify BOTH sender and target are members of the conversation for

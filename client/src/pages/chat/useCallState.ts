@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { useGlobalCall } from "../../CallContext";
+import { useToast } from "../../components/common/Toast";
 import { getActiveCall } from "../../api";
 // NOTE (status v2): client no longer broadcasts auto-status for calls.
 // The server sets/clears per-session `in_call` activity on
@@ -32,6 +33,7 @@ type WsSendRef = React.MutableRefObject<
 export default function useCallState(wsSendRef: WsSendRef) {
     const { setChatPageActive, pendingAcceptedCall, consumePendingCall } =
         useGlobalCall();
+    const toast = useToast() as { error: (msg: string) => void };
     const { pathname } = useLocation();
     const isChatPage = pathname === "/chat";
 
@@ -203,6 +205,19 @@ export default function useCallState(wsSendRef: WsSendRef) {
             case "call_ended": {
                 if (window.electronAPI?.flashFrame)
                     window.electronAPI.flashFrame(false);
+                if (callEndRef.current) callEndRef.current();
+                else setCallState(null);
+                break;
+            }
+            case "call_busy": {
+                // P0.3 — the callee is already on another call. End our
+                // outgoing call locally and surface a toast.
+                if (window.electronAPI?.flashFrame)
+                    window.electronAPI.flashFrame(false);
+                const name =
+                    (callState?.remoteName as string | undefined) ||
+                    "The other person";
+                toast.error(`${name} is on another call`);
                 if (callEndRef.current) callEndRef.current();
                 else setCallState(null);
                 break;

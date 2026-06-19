@@ -68,6 +68,14 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     const [remoteHasVideo, setRemoteHasVideo] = useState(false);
     const [remoteMuted, setRemoteMuted] = useState(false);
     const [remoteScreenSharing, setRemoteScreenSharing] = useState(false);
+    // Peer's self-reported connection quality (via the `quality-state` signal).
+    // Drives a Teams/Meet-style "<name>'s connection is unstable" banner so a
+    // freeze/stutter is attributed to the correct side. Mobile already emits
+    // this; the server now whitelists it (see VALID_SIGNAL_TYPES in ws.ts).
+    const [remotePeerQuality, setRemotePeerQuality] = useState<"good" | "fair" | "poor" | "unknown">("unknown");
+    // Last quality value we SENT to the peer — used to only emit on a real
+    // change (not every sample) so we don't spam the relay.
+    const lastSentQualityRef = useRef<string | null>(null);
 
     // Track whether the *local* user has their camera explicitly off, so the
     // peer can be told and render an avatar instead of a frozen black frame.
@@ -755,6 +763,15 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 setRemoteMuted(!!signal.muted);
             } else if (signal.type === "screen-share-state") {
                 setRemoteScreenSharing(!!signal.sharing);
+            } else if (signal.type === "quality-state") {
+                // Peer reported THEIR measured connection quality so we can
+                // surface a "<name>'s connection is unstable" banner — exactly
+                // how Teams/Meet attribute a freeze to the right side. Mobile
+                // already emits this; the server now whitelists it.
+                const q = signal.quality;
+                if (q === "good" || q === "fair" || q === "poor" || q === "unknown") {
+                    setRemotePeerQuality(q);
+                }
             }
         } catch (err) {
             console.error("[call-webrtc] Signal handling error:", err);
@@ -774,7 +791,12 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 relayOnlyRef.current = true;
                 try { pcRef.current.close(); } catch { /* ignore */ }
                 pcRef.current = null;
-                pendingIceCandidatesRef.current = []; // candidates from the dead PC are useless
+                // P1.4: DO NOT clear pendingIceCandidatesRef here. Remote ICE
+                // candidates buffered before the new remote description still
+                // describe the peer's relay-only transport and remain valid for
+                // the rebuilt PC. flushPendingIceCandidates() drains them after
+                // setRemoteDescription on the new offer/answer. Polite/impolite +
+                // makingOffer glare guards stay active across the rebuild.
             }
         }
         if (!pcRef.current && signal.type === "offer" && localStreamRef.current) {
@@ -1108,6 +1130,25 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         }
     }, [conversationId, wsSend, isIncoming, callerId, acceptedBy, reconnectTo]);
 
+    // ─── Emit OUR measured connection quality to the peer ───
+    // The peer renders a "<name>'s connection is unstable" banner from this
+    // (Teams/Meet parity). Only emit on a real change (not every sample) so we
+    // don't spam the relay. Mirrors the mobile client's quality-state emitter.
+    const sendQualityState = useCallback((quality: "good" | "fair" | "poor" | "unknown") => {
+        if (lastSentQualityRef.current === quality) return;
+        lastSentQualityRef.current = quality;
+        const target = isIncoming ? callerId : (acceptedBy || reconnectTo);
+        if (!target) return;
+        try {
+            wsSend("call_signal", {
+                conversationId, targetUserId: target,
+                signal: { type: "quality-state", quality }
+            });
+        } catch (err: any) {
+            console.warn("[call-webrtc] sendQualityState failed:", err?.message || err);
+        }
+    }, [conversationId, wsSend, isIncoming, callerId, acceptedBy, reconnectTo]);
+
     return {
         pcRef, localStreamRef, screenStreamRef, remoteStreamRef,
         localVideoRef, remoteVideoRef, remoteAudioRef,
@@ -1116,6 +1157,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         stopRingtone, startMedia, createPeerConnection,
         isMobile, remoteVideoOff, remoteHasVideo, remoteMuted, remoteScreenSharing,
         sendLocalVideoState, sendLocalMuteState, sendLocalScreenShareState,
+        sendQualityState, remotePeerQuality,
         localVideoOff
     };
 }

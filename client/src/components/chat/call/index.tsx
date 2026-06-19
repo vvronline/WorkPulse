@@ -35,6 +35,15 @@ const hasDocumentPip =
 
 const REACTION_EMOJIS = ["\u{1F44D}", "\u{1F44F}", "\u{2764}\u{FE0F}", "\u{1F602}", "\u{1F389}", "\u{1F914}"];
 
+// P1.1/P1.2 — client-side call lifecycle timeouts. The server keeps a backstop
+// (`STALE_RINGING_TTL_SECS = 45` in server/jobs.ts) that MUST stay larger than
+// RING_TIMEOUT_MS so the client always shows feedback first.
+const RING_TIMEOUT_MS = 35000; // outgoing ring → "No answer"
+const CONNECT_TIMEOUT_MS = 30000; // connecting/reconnecting → "Couldn't connect"
+// How long the "No answer" / "Couldn't connect" message stays on screen before
+// the overlay tears down.
+const END_MESSAGE_LINGER_MS = 1800;
+
 const MaximizeIcon = () => (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
         <path
@@ -113,6 +122,9 @@ export default function CallOverlay({
     const [showReactionPicker, setShowReactionPicker] = useState(false);
     const [reactions, setReactions] = useState<ReactionItem[]>([]);
     const [reconnectToast, setReconnectToast] = useState<string | null>(null);
+    // P1.1/P1.2 — terminal feedback shown briefly before the overlay closes
+    // (e.g. "No answer", "Couldn't connect").
+    const [endMessage, setEndMessage] = useState<string | null>(null);
     const [localVideoCorner, setLocalVideoCorner] = useState<string>(() => {
         try {
             return sessionStorage.getItem("wp_call_video_corner") || "bottom-right";
@@ -149,14 +161,22 @@ export default function CallOverlay({
         overlayRef: overlayRef as React.MutableRefObject<HTMLElement | null>,
     });
 
-    // ─── Connection timeout ───
+    // ─── Connection / ring timeout ───
+    // P1.1: an unanswered OUTGOING call rings for RING_TIMEOUT_MS (35s), then we
+    // surface "No answer" and end. P1.2: a call stuck in connecting/reconnecting
+    // for CONNECT_TIMEOUT_MS (30s) surfaces "Couldn't connect" and ends. Both
+    // show a brief terminal message before tearing the overlay down.
     useEffect(() => {
         if (status === "ringing" || status === "connecting" || status === "reconnecting") {
+            const isRinging = status === "ringing";
             webrtc.connectionTimeoutRef.current = setTimeout(
                 () => {
-                    if (handleEndRef.current) handleEndRef.current();
+                    setEndMessage(isRinging ? "No answer" : "Couldn't connect");
+                    setTimeout(() => {
+                        if (handleEndRef.current) handleEndRef.current();
+                    }, END_MESSAGE_LINGER_MS);
                 },
-                status === "ringing" ? 60000 : 30000
+                isRinging ? RING_TIMEOUT_MS : CONNECT_TIMEOUT_MS
             );
         }
         return () => clearTimeout(webrtc.connectionTimeoutRef.current as any);
@@ -179,6 +199,18 @@ export default function CallOverlay({
             return () => clearInterval(interval);
         }
     }, [status]);
+
+    // ─── Emit OUR measured connection quality to the peer ───
+    // Mirrors the mobile client: the peer renders a "<name>'s connection is
+    // unstable" banner from this signal (Teams/Meet parity). sendQualityState
+    // dedupes internally so this only emits on a real change.
+    useEffect(() => {
+        if (status !== "connected") return;
+        const q = controls.connectionQuality;
+        if (q === "good" || q === "fair" || q === "poor" || q === "unknown") {
+            webrtc.sendQualityState?.(q);
+        }
+    }, [status, controls.connectionQuality]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ─── Track active device IDs ───
     useEffect(() => {
@@ -1041,6 +1073,17 @@ export default function CallOverlay({
                 </div>
             )}
 
+            {/* ─── Peer connection-quality banner (Teams/Meet parity) ───
+                The peer reports their own measured quality via the
+                `quality-state` signal; when it's "poor" we attribute the
+                freeze/stutter to the correct side instead of the local user
+                blaming their own network. */}
+            {isConnected && webrtc.remotePeerQuality === "poor" && (
+                <div className={s.reconnectToast}>
+                    {`${remoteName || "Your peer"}'s connection is unstable`}
+                </div>
+            )}
+
             {/* ─── Floating emoji reactions ─── */}
             {reactions.length > 0 && (
                 <div className={s.reactionsContainer}>
@@ -1073,12 +1116,18 @@ export default function CallOverlay({
                         </div>
                         <h2 className={s.callerName}>{remoteName || "Unknown"}</h2>
                         <p className={s.callStatus}>
-                            {status === "incoming" && `Incoming ${callType} call...`}
-                            {status === "ringing" && "Ringing..."}
-                            {status === "connecting" && "Connecting..."}
-                            {status === "reconnecting" && "Reconnecting..."}
-                            {isConnected && !controls.onHold && formatDuration(duration)}
-                            {isConnected && controls.onHold && `On Hold \u00B7 ${formatDuration(duration)}`}
+                            {endMessage
+                                ? endMessage
+                                : (
+                                    <>
+                                        {status === "incoming" && `Incoming ${callType} call...`}
+                                        {status === "ringing" && "Ringing..."}
+                                        {status === "connecting" && "Connecting..."}
+                                        {status === "reconnecting" && "Reconnecting..."}
+                                        {isConnected && !controls.onHold && formatDuration(duration)}
+                                        {isConnected && controls.onHold && `On Hold \u00B7 ${formatDuration(duration)}`}
+                                    </>
+                                )}
                         </p>
                         {isConnected && (
                             <button
