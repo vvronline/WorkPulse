@@ -723,11 +723,34 @@ async function handleChatMessage(db: DbLike, senderId: number, tenantId: number 
                     )).rows[0];
                     if (targetRow) {
                         const targetUserId = targetRow.user_id;
+                        // Only treat the callee as busy for a GENUINELY active call.
+                        // Critical guards (a too-broad check here silently blocks all
+                        // future calls + push notifications to that user):
+                        //   • Exclude THIS conversation — in a 1:1 chat both users are
+                        //     participants of it, so a leftover row in the same convo
+                        //     would make the callee look "busy" to their own caller.
+                        //   • Freshness window — a crashed/killed client can leave a
+                        //     row stuck in 'ringing'/'answered' forever (the stale-call
+                        //     sweep is the authoritative cleanup, but we must also not
+                        //     trust rows older than the TTL here, or a user gets pinned
+                        //     "busy" until the next sweep / indefinitely for 'answered').
+                        //   • 'ringing' counts only within the ring TTL (~45s).
+                        //   • 'answered' counts only within a max live-call window
+                        //     (created within 12h) so an abandoned answered row can't
+                        //     permanently block calling.
                         const busy = (await db.query(
                             `SELECT 1 FROM call_logs cl
                              JOIN conversation_participants cp ON cp.conversation_id = cl.conversation_id
-                             WHERE cp.user_id = $1 AND cl.status IN ('ringing','answered') LIMIT 1`,
-                            [targetUserId],
+                             WHERE cp.user_id = $1
+                               AND cl.conversation_id != $2
+                               AND (
+                                     (cl.status = 'ringing'
+                                       AND cl.created_at > NOW() - INTERVAL '45 seconds')
+                                  OR (cl.status = 'answered'
+                                       AND cl.created_at > NOW() - INTERVAL '12 hours')
+                                   )
+                             LIMIT 1`,
+                            [targetUserId, conversationId],
                         )).rows[0];
                         if (busy) {
                             logger.info({ senderId, conversationId, targetUserId, tenantId }, "call_initiate: callee busy, sending call_busy");

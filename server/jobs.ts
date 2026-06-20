@@ -33,6 +33,14 @@ let fallbackIntervals: NodeJS.Timeout[] = [];
 // forever and the callee's ring UI / native push is always dismissed.
 const STALE_RINGING_TTL_SECS = 45;
 const STALE_CALL_SWEEP_MS = 20 * 1000;
+// Hard backstop for ABANDONED answered calls. A normal call ends via the WS
+// `call_end` transition; but if every client dies mid-call (app killed, network
+// dropped, process crash) the row stays `answered` forever. That stuck row then
+// makes BOTH participants look permanently "busy" to the call_initiate busy
+// check — silently blocking all future calls + push notifications to them.
+// This sweep force-ends answered calls older than the max plausible call
+// duration so an abandoned call can never pin a user as busy indefinitely.
+const STALE_ANSWERED_TTL_SECS = 12 * 60 * 60; // 12h
 
 interface InitJobsOpts {
     autoClockOut: () => void | Promise<void>;
@@ -144,17 +152,23 @@ async function runRetentionCleanup(): Promise<{ audit_logs: number; session_logs
 }
 
 /**
- * Ring-timeout backstop: force-end calls that have been `ringing` longer than
- * STALE_RINGING_TTL_SECS. For each expired call we:
- *   • mark the call_log `missed`
- *   • broadcast `call_ended` to every conversation participant so the caller's
- *     "Ringing…" UI and the callee's incoming-ring UI both dismiss
- *   • push-cancel the callee's locked/backgrounded devices so the native
- *     incoming-call notification is torn down
- *   • clear the per-session in_call activity
+ * Ring-timeout + abandoned-call backstop. Two independent sweeps run per tenant:
  *
- * Runs across every tenant. Safe to run frequently — the UPDATE only touches
- * rows that are actually stale, and is a no-op when there are none.
+ *  1. RINGING → MISSED (STALE_RINGING_TTL_SECS): a call left ringing past the
+ *     TTL (every client died mid-ring) is force-ended as `missed`. For each we
+ *     broadcast `call_ended`, push-cancel the callee's locked/backgrounded
+ *     devices, and clear the per-session in_call activity.
+ *
+ *  2. ANSWERED → ENDED (STALE_ANSWERED_TTL_SECS): a call left `answered` past
+ *     the max plausible duration (every client crashed/killed without ever
+ *     sending `call_end`) is force-ended as `ended`. This is CRITICAL because a
+ *     stuck `answered` row makes BOTH participants look permanently "busy" to
+ *     the call_initiate busy check — silently blocking all future calls + push
+ *     notifications until the row is cleared. We also clear the in_call activity
+ *     for each so presence doesn't show them stuck "in a call".
+ *
+ * Runs across every tenant. Safe to run frequently — the UPDATEs only touch
+ * rows that are actually stale, and are no-ops when there are none.
  */
 async function expireStaleRingingCalls(): Promise<number> {
     let expired = 0;
@@ -212,11 +226,67 @@ async function expireStaleRingingCalls(): Promise<number> {
                         .catch((err: any) => logger.warn({ err: err.message, callId }, "expireStaleRingingCalls: clearActivityForRef failed"));
                 } catch { /* status service optional */ }
             }
+
+            // Sweep 2 — abandoned ANSWERED calls. A normal call ends via the WS
+            // `call_end` transition; a crashed/killed client never sends it, so
+            // the row sticks at `answered` forever and pins both participants as
+            // "busy". Force-end past the max-duration TTL and tear down any
+            // lingering ring/in_call state, mirroring sweep 1.
+            const answeredRows = (await db.query(
+                `UPDATE call_logs
+                    SET status = 'ended', ended_at = NOW(),
+                        duration = COALESCE(duration, EXTRACT(EPOCH FROM (NOW() - started_at))::int)
+                  WHERE status = 'answered'
+                    AND created_at < NOW() - ($1 || ' seconds')::interval
+                  RETURNING id, conversation_id, caller_id`,
+                [String(STALE_ANSWERED_TTL_SECS)],
+            )).rows;
+
+            for (const call of answeredRows) {
+                expired++;
+                const callId = call.id;
+                const conversationId = call.conversation_id;
+
+                let participants: { user_id: number }[] = [];
+                try {
+                    participants = (await db.query(
+                        "SELECT user_id FROM conversation_participants WHERE conversation_id = $1",
+                        [conversationId],
+                    )).rows;
+                } catch (err: any) {
+                    logger.warn({ err: err.message, callId }, "expireStaleRingingCalls: answered participant lookup failed");
+                }
+
+                for (const p of participants) {
+                    try {
+                        sendToUser(tenantId, p.user_id, "call_ended", {
+                            callId,
+                            conversationId,
+                            reason: "abandoned",
+                        });
+                    } catch { /* best-effort */ }
+
+                    if (p.user_id !== call.caller_id) {
+                        pushNotifications.sendCallCancellation(
+                            db.query as any,
+                            p.user_id,
+                            tenantId,
+                            { callId, conversationId, reason: "cancelled" },
+                        ).catch((err: any) => logger.warn({ err: err.message, callId, userId: p.user_id }, "expireStaleRingingCalls: answered push-cancel failed"));
+                    }
+                }
+
+                try {
+                    const statusService = require("./services/status");
+                    statusService.clearActivityForRef({ db, tenantId }, "in_call", callId)
+                        .catch((err: any) => logger.warn({ err: err.message, callId }, "expireStaleRingingCalls: answered clearActivityForRef failed"));
+                } catch { /* status service optional */ }
+            }
         },
         { label: "expireStaleRingingCalls" },
     );
     if (expired > 0) {
-        logger.info({ expired }, "Expired stale ringing calls");
+        logger.info({ expired }, "Expired stale ringing/answered calls");
     }
     return expired;
 }

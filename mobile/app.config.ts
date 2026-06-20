@@ -21,7 +21,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   name: "WorkPulse",
   slug: "workpulse",
   version: APP_VERSION,
-  orientation: "portrait",
+  // "default" lets the OS/device sensor control rotation so tablets (and phones
+  // with auto-rotate enabled) can switch between portrait and landscape and the
+  // UI re-aligns. Previously "portrait" injected android:screenOrientation="portrait"
+  // into the manifest, hard-locking every Android screen (incl. tablets) to portrait.
+  orientation: "default",
   icon: "./assets/icon.png",
   scheme: "workpulse",
   userInterfaceStyle: "automatic",
