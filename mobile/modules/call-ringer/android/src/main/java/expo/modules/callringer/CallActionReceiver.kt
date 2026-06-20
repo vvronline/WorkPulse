@@ -41,19 +41,6 @@ class CallActionReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
     val action = intent.action ?: return
 
-    // Stop the ring + dismiss the FGS notification immediately.
-    try {
-      CallRingService.stop(context)
-    } catch (_: Throwable) {
-      // best-effort
-    }
-    try {
-      val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-      nm?.cancel(CallRingService.NOTIFICATION_ID)
-    } catch (_: Throwable) {
-      // best-effort
-    }
-
     val callId = intent.getStringExtra(EXTRA_CALL_ID) ?: ""
     val conversationId = intent.getStringExtra(EXTRA_CONVERSATION_ID) ?: ""
     val callerId = intent.getStringExtra(EXTRA_CALLER_ID) ?: ""
@@ -62,7 +49,11 @@ class CallActionReceiver : BroadcastReceiver() {
     val callType = intent.getStringExtra(EXTRA_CALL_TYPE) ?: "voice"
     val scheme = intent.getStringExtra(EXTRA_SCHEME) ?: "workpulse"
 
-    if (conversationId.isEmpty() || callId.isEmpty()) return
+    if (conversationId.isEmpty() || callId.isEmpty()) {
+      // No valid call identity — still stop any running ring before bailing.
+      stopRing(context)
+      return
+    }
 
     val isAnswer = action == ACTION_ANSWER
 
@@ -82,6 +73,18 @@ class CallActionReceiver : BroadcastReceiver() {
       sb.append("&action=decline")
     }
 
+    // CRITICAL ORDERING (fixes "Answer/Decline does nothing — call never
+    // connects and the caller keeps ringing"):
+    // We MUST launch the Activity BEFORE stopping the foreground service. On
+    // Android 12+ (strictly enforced on 14/15) a BroadcastReceiver may only
+    // start an Activity from the background while the app holds a
+    // background-activity-start (BAL) exemption. The running CallRingService —
+    // a foregroundServiceType="phoneCall" FGS — IS that exemption. If we stop
+    // the service first (the old order), the exemption is gone by the time we
+    // call startActivity(), so the launch is SILENTLY BLOCKED: the ring stops
+    // but the JS call screen never opens, so Answer never sends `accept` and
+    // Decline never sends `reject` (the caller's dialer keeps ringing). Launch
+    // first (while still exempt), THEN stop the ring/notification.
     try {
       val viewIntent = Intent(Intent.ACTION_VIEW, Uri.parse(sb.toString())).apply {
         setPackage(context.packageName)
@@ -101,6 +104,27 @@ class CallActionReceiver : BroadcastReceiver() {
       } catch (_: Throwable) {
         // give up silently
       }
+    }
+
+    // Now that the Activity launch has been dispatched (while we still held the
+    // FGS-based BAL exemption), stop the ring + dismiss the FGS notification.
+    // The JS call screen also calls stopRinging() on mount, so the ring is
+    // guaranteed to end regardless; this just makes it instant.
+    stopRing(context)
+  }
+
+  /** Stop the foreground-service ring + remove its notification. Best-effort. */
+  private fun stopRing(context: Context) {
+    try {
+      CallRingService.stop(context)
+    } catch (_: Throwable) {
+      // best-effort
+    }
+    try {
+      val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+      nm?.cancel(CallRingService.NOTIFICATION_ID)
+    } catch (_: Throwable) {
+      // best-effort
     }
   }
 }

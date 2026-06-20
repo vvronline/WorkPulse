@@ -2186,12 +2186,17 @@ export default function CallScreen() {
   const showRemoteVideo =
     showVideo && hasLiveRemoteVideo && !remoteVideoOff;
 
-  // WhatsApp-style incoming video UX: while the call is still RINGING (incoming
-  // video call) and we already pre-warmed the camera, show the local camera
-  // FULL-SCREEN behind the caller name + Accept/Decline. On answer (status →
-  // connecting/connected) the SAME stream object is reused, so the self-view
-  // seamlessly shrinks into the PiP corner and the peer's video takes the main
-  // screen — no camera flicker, no re-acquire.
+  // WhatsApp-style video UX (BOTH outgoing AND incoming): before the call is
+  // connected with the peer's video, show OUR OWN camera FULL-SCREEN behind the
+  // peer name + status (Ringing…/Connecting…) and the call controls. The moment
+  // the peer's remote video arrives on the main stage (showRemoteVideo), the
+  // SAME local stream object is reused so the self-view seamlessly shrinks into
+  // the PiP corner and the peer's video takes the main screen — no camera
+  // flicker, no re-acquire.
+  //   • Outgoing: as soon as we initiate, the pre-acquired camera fills the
+  //     screen while it rings, exactly like WhatsApp. On connect it drops to PiP.
+  //   • Incoming: the pre-warmed camera fills the screen while ringing, then
+  //     drops to PiP on answer.
   // Require a LIVE local video track (not just a stream object). On a
   // background/lock-screen answer the stream can exist while its camera track
   // is still ended/not-yet-acquired — rendering that produced a BLACK self-view
@@ -2204,10 +2209,14 @@ export default function CallScreen() {
       .some((t) => (t as any).readyState !== "ended" && t.enabled !== false);
   const showFullScreenSelfPreview =
     showVideo &&
-    mode === "incoming" &&
-    status === "ringing" &&
     hasLiveLocalVideo &&
-    !videoOff;
+    !videoOff &&
+    // Only while the peer's video is NOT yet on the main stage — once it is, the
+    // self-view remaps to the PiP corner (peer video takes the main screen).
+    !showRemoteVideo &&
+    // Pre-connected phases only (covers BOTH outgoing ringing AND incoming
+    // ringing, plus the brief connecting window before remote frames arrive).
+    (status === "ringing" || status === "connecting");
   // The small PiP self-view is shown for the connecting/connected phases (NOT
   // while ringing, where the self-view is full-screen instead).
   const showPipSelfPreview =
@@ -2247,10 +2256,12 @@ export default function CallScreen() {
       <Stack.Screen options={{ headerShown: false }} />
 
       {/* Main stage:
-          1. Connected/connecting with peer video  → remote video full-screen.
-          2. Incoming VIDEO call still ringing      → WhatsApp-style FULL-SCREEN
-             local self-view (so the callee sees themselves before answering).
-          3. Otherwise                              → peer avatar. */}
+          1. Connected with peer video               → remote video full-screen.
+          2. Pre-connect video call (outgoing ringing,
+             incoming ringing, or connecting w/o peer
+             video yet)                               → WhatsApp-style FULL-SCREEN
+             local self-view (we see ourselves before the peer's video arrives).
+          3. Otherwise                               → peer avatar. */}
       {showRemoteVideo ? (
         <RTCView
           streamURL={(remoteStream as any).toURL()}
