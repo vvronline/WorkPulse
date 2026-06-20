@@ -26,9 +26,16 @@ vi.mock("../CallContext", () => ({
 
 import useCallState from "../pages/chat/useCallState";
 import useWebRTC from "../components/chat/call/useWebRTC";
+import { ToastProvider } from "../components/common/Toast";
 
+// useCallState now surfaces a toast (e.g. the P0.3 "‹name› is on another call"
+// busy notice) via useToast(), which throws unless a ToastProvider is mounted.
+// Wrap every render in both the router and the toast provider so the hook has
+// the context it needs.
 const routerWrapper = ({ children }: { children: React.ReactNode }) => (
-    <MemoryRouter>{children}</MemoryRouter>
+    <MemoryRouter>
+        <ToastProvider>{children}</ToastProvider>
+    </MemoryRouter>
 );
 
 describe("call signaling races", () => {
