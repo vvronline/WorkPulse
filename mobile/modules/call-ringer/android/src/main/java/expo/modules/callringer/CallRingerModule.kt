@@ -26,24 +26,28 @@ class CallRingerModule : Module() {
     Name("CallRinger")
 
     Function("startRinging") { options: Map<String, Any?>? ->
-      val context = appContext.reactContext ?: return@Function
-      val extras = HashMap<String, String>()
-      options?.forEach { (k, v) ->
-        if (v != null) extras[k] = v.toString()
-      }
-      try {
-        CallRingService.start(context, extras)
-      } catch (_: Throwable) {
-        // best-effort; never throw across the bridge
+      val context = appContext.reactContext
+      if (context != null) {
+        val extras = HashMap<String, String>()
+        options?.forEach { (k, v) ->
+          if (v != null) extras[k] = v.toString()
+        }
+        try {
+          CallRingService.start(context, extras)
+        } catch (_: Throwable) {
+          // best-effort; never throw across the bridge
+        }
       }
     }
 
     Function("stopRinging") {
-      val context = appContext.reactContext ?: return@Function
-      try {
-        CallRingService.stop(context)
-      } catch (_: Throwable) {
-        // best-effort
+      val context = appContext.reactContext
+      if (context != null) {
+        try {
+          CallRingService.stop(context)
+        } catch (_: Throwable) {
+          // best-effort
+        }
       }
     }
   }
