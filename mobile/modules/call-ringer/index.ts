@@ -32,6 +32,16 @@ export type StartRingingOptions = {
   vibrate?: boolean;
   /** Pass true to suppress sound + vibration (muteAll / "none" ringtone). */
   silent?: boolean;
+  /** Call identity — used to build the CallStyle UI + Answer/Decline deep links. */
+  callId?: string;
+  conversationId?: string;
+  callerId?: string;
+  callerName?: string;
+  callerAvatar?: string;
+  /** "voice" | "video". */
+  callType?: string;
+  /** App deep-link scheme (e.g. "workpulse") so action taps open the call screen. */
+  scheme?: string;
 };
 
 /**
@@ -47,6 +57,13 @@ export function startRinging(options: StartRingingOptions = {}): void {
       body: options.body ?? "",
       vibrate: options.vibrate === false ? "0" : "1",
       silent: options.silent ? "1" : "0",
+      callId: options.callId ?? "",
+      conversationId: options.conversationId ?? "",
+      callerId: options.callerId ?? "",
+      callerName: options.callerName ?? "",
+      callerAvatar: options.callerAvatar ?? "",
+      callType: options.callType ?? "voice",
+      scheme: options.scheme ?? "workpulse",
     });
   } catch {
     // Best-effort; never let a native bridge error break the call flow.

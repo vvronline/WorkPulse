@@ -7,8 +7,8 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.media.AudioAttributes
-import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.net.Uri
@@ -18,6 +18,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.core.app.NotificationCompat
+import androidx.core.app.Person as PersonCompat
 
 /**
  * CallRingService
@@ -36,11 +37,13 @@ import androidx.core.app.NotificationCompat
  *   • an INSTANT, deterministic stop the moment the call is answered/declined/
  *     cancelled (just stopService) — no lingering ring.
  *
- * The service posts its OWN call notification (a FGS must show a notification)
- * with a full-screen intent + Answer/Decline actions, so it also surfaces the
- * incoming-call UI over the lock screen. The JS side passes the same action
- * PendingIntents via a launch Intent so taps route through the existing
- * Notifee/native handlers.
+ * The service posts its OWN call notification using the Android CALL STYLE
+ * template (NotificationCompat.CallStyle.forIncomingCall) so the system renders
+ * a branded incoming-call UI with a GREEN "Answer" button and a RED "Decline"
+ * button, plus a full-screen intent that surfaces the call over the lock screen.
+ * The action buttons fire PendingIntents handled by CallActionReceiver, which
+ * stops the ring and deep-links into the JS call screen (single accept/reject
+ * path). This is what fixes "no Answer/Decline buttons in the status bar".
  */
 class CallRingService : Service() {
 
@@ -57,8 +60,20 @@ class CallRingService : Service() {
     const val EXTRA_VIBRATE = "vibrate" // "1" / "0"
     const val EXTRA_SILENT = "silent" // "1" → no sound (muteAll / none)
 
-    private const val CHANNEL_ID = "call_ringer_fgs_v1"
-    private const val NOTIFICATION_ID = 909090
+    // Caller / call identity used to build the CallStyle UI + action deep links.
+    const val EXTRA_CALL_ID = "callId"
+    const val EXTRA_CONVERSATION_ID = "conversationId"
+    const val EXTRA_CALLER_ID = "callerId"
+    const val EXTRA_CALLER_NAME = "callerName"
+    const val EXTRA_CALLER_AVATAR = "callerAvatar"
+    const val EXTRA_CALL_TYPE = "callType"
+    const val EXTRA_SCHEME = "scheme"
+
+    private const val CHANNEL_ID = "call_ringer_fgs_v2"
+    const val NOTIFICATION_ID = 909090
+
+    // WorkPulse brand green used to theme the CallStyle notification accent.
+    private val BRAND_COLOR = Color.parseColor("#22C55E")
 
     fun start(context: Context, extras: Map<String, String>) {
       val intent = Intent(context, CallRingService::class.java).apply {
@@ -111,35 +126,27 @@ class CallRingService : Service() {
     val vibrate = intent?.getStringExtra(EXTRA_VIBRATE) != "0"
     val ringtoneRes = intent?.getStringExtra(EXTRA_RINGTONE_RES) ?: ""
 
-    // Post the foreground notification FIRST (required within ~5s of
-    // startForegroundService or the OS throws). Build a content intent that
-    // re-launches the app so a body tap opens the call UI.
-    val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-    val contentPending = if (launchIntent != null) {
-      PendingIntent.getActivity(
-        this,
-        0,
-        launchIntent,
-        PendingIntent.FLAG_UPDATE_CURRENT or
-          (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0),
-      )
-    } else null
+    val callId = intent?.getStringExtra(EXTRA_CALL_ID) ?: ""
+    val conversationId = intent?.getStringExtra(EXTRA_CONVERSATION_ID) ?: ""
+    val callerId = intent?.getStringExtra(EXTRA_CALLER_ID) ?: ""
+    val callerName = intent?.getStringExtra(EXTRA_CALLER_NAME) ?: title
+    val callerAvatar = intent?.getStringExtra(EXTRA_CALLER_AVATAR) ?: ""
+    val callType = intent?.getStringExtra(EXTRA_CALL_TYPE) ?: "voice"
+    val scheme = intent?.getStringExtra(EXTRA_SCHEME) ?: "workpulse"
 
-    val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-      .setContentTitle(title)
-      .setContentText(body)
-      .setSmallIcon(applicationInfo.icon)
-      .setCategory(NotificationCompat.CATEGORY_CALL)
-      .setPriority(NotificationCompat.PRIORITY_MAX)
-      .setOngoing(true)
-      .setAutoCancel(false)
-      .apply {
-        if (contentPending != null) {
-          setContentIntent(contentPending)
-          setFullScreenIntent(contentPending, true)
-        }
-      }
-      .build()
+    // Post the foreground notification FIRST (required within ~5s of
+    // startForegroundService or the OS throws).
+    val notification = buildCallNotification(
+      title = title,
+      body = body,
+      callId = callId,
+      conversationId = conversationId,
+      callerId = callerId,
+      callerName = callerName,
+      callerAvatar = callerAvatar,
+      callType = callType,
+      scheme = scheme,
+    )
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
       startForeground(
@@ -158,6 +165,185 @@ class CallRingService : Service() {
     // Start vibration (unless silent or explicitly disabled).
     if (!silent && vibrate) {
       startVibration()
+    }
+  }
+
+  /**
+   * Builds the incoming-call notification using the Android CallStyle template so
+   * the system renders the standard branded incoming-call UI with a green Answer
+   * button and a red Decline button. Falls back to a plain ongoing notification
+   * with explicit Answer/Decline actions on older platforms where CallStyle is
+   * unavailable.
+   */
+  private fun buildCallNotification(
+    title: String,
+    body: String,
+    callId: String,
+    conversationId: String,
+    callerId: String,
+    callerName: String,
+    callerAvatar: String,
+    callType: String,
+    scheme: String,
+  ): Notification {
+    // Content (body tap) + FULL-SCREEN intent → open the app's call screen in
+    // the RINGING (incoming) state WITHOUT auto-answering, so the user still
+    // chooses Accept/Decline when the FSI auto-launches over the lock screen.
+    val contentPending = openActivityPendingIntent(
+      callId, conversationId, callerId, callerName, callerAvatar, callType, scheme,
+      requestCode = 1000,
+    )
+
+    val answerPending = answerPendingIntent(
+      callId, conversationId, callerId, callerName, callerAvatar, callType, scheme,
+      requestCode = 1001,
+    )
+    val declinePending = declinePendingIntent(
+      callId, conversationId, callerId, callerName, callerAvatar, callType, scheme,
+      requestCode = 1002,
+    )
+
+    val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+      .setSmallIcon(applicationInfo.icon)
+      .setContentTitle(callerName.ifEmpty { title })
+      .setContentText(
+        body.ifEmpty {
+          if (callType == "video") "Incoming video call" else "Incoming voice call"
+        },
+      )
+      .setCategory(NotificationCompat.CATEGORY_CALL)
+      .setPriority(NotificationCompat.PRIORITY_MAX)
+      .setOngoing(true)
+      .setAutoCancel(false)
+      .setColor(BRAND_COLOR)
+      .setColorized(true)
+      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+      .setFullScreenIntent(contentPending, true)
+
+    // Prefer the CallStyle template (API 23+ via NotificationCompat). It renders
+    // the system's branded green Answer / red Decline buttons.
+    try {
+      val caller = PersonCompat.Builder()
+        .setName(callerName.ifEmpty { title })
+        .setImportant(true)
+        .build()
+      val callStyle = NotificationCompat.CallStyle.forIncomingCall(
+        caller,
+        declinePending,
+        answerPending,
+      )
+      builder.setStyle(callStyle)
+    } catch (_: Throwable) {
+      // Fallback: explicit action buttons so Answer/Decline still appear.
+      builder.setContentIntent(contentPending)
+      builder.addAction(0, "Decline", declinePending)
+      builder.addAction(0, "Answer", answerPending)
+    }
+
+    return builder.build()
+  }
+
+  /**
+   * Content / full-screen PendingIntent that opens the JS call screen in the
+   * RINGING (incoming) state WITHOUT auto-answering. Uses an ACTIVITY intent
+   * (full-screen intents must target an activity) via the app deep link.
+   */
+  private fun openActivityPendingIntent(
+    callId: String,
+    conversationId: String,
+    callerId: String,
+    callerName: String,
+    callerAvatar: String,
+    callType: String,
+    scheme: String,
+    requestCode: Int,
+  ): PendingIntent {
+    val sb = StringBuilder()
+    sb.append(scheme).append("://call/").append(conversationId)
+    sb.append("?mode=incoming")
+    sb.append("&callId=").append(Uri.encode(callId))
+    sb.append("&callType=").append(Uri.encode(callType))
+    sb.append("&peerId=").append(Uri.encode(callerId))
+    sb.append("&peerName=").append(Uri.encode(callerName))
+    sb.append("&peerAvatar=").append(Uri.encode(callerAvatar))
+
+    val viewIntent = Intent(Intent.ACTION_VIEW, Uri.parse(sb.toString())).apply {
+      setPackage(packageName)
+      addFlags(
+        Intent.FLAG_ACTIVITY_NEW_TASK or
+          Intent.FLAG_ACTIVITY_SINGLE_TOP or
+          Intent.FLAG_ACTIVITY_CLEAR_TOP,
+      )
+    }
+    return PendingIntent.getActivity(
+      this,
+      requestCode,
+      viewIntent,
+      pendingIntentFlags(),
+    )
+  }
+
+  private fun answerPendingIntent(
+    callId: String,
+    conversationId: String,
+    callerId: String,
+    callerName: String,
+    callerAvatar: String,
+    callType: String,
+    scheme: String,
+    requestCode: Int,
+  ): PendingIntent {
+    val intent = Intent(this, CallActionReceiver::class.java).apply {
+      action = CallActionReceiver.ACTION_ANSWER
+      putExtra(CallActionReceiver.EXTRA_CALL_ID, callId)
+      putExtra(CallActionReceiver.EXTRA_CONVERSATION_ID, conversationId)
+      putExtra(CallActionReceiver.EXTRA_CALLER_ID, callerId)
+      putExtra(CallActionReceiver.EXTRA_CALLER_NAME, callerName)
+      putExtra(CallActionReceiver.EXTRA_CALLER_AVATAR, callerAvatar)
+      putExtra(CallActionReceiver.EXTRA_CALL_TYPE, callType)
+      putExtra(CallActionReceiver.EXTRA_SCHEME, scheme)
+    }
+    return PendingIntent.getBroadcast(
+      this,
+      requestCode,
+      intent,
+      pendingIntentFlags(),
+    )
+  }
+
+  private fun declinePendingIntent(
+    callId: String,
+    conversationId: String,
+    callerId: String,
+    callerName: String,
+    callerAvatar: String,
+    callType: String,
+    scheme: String,
+    requestCode: Int,
+  ): PendingIntent {
+    val intent = Intent(this, CallActionReceiver::class.java).apply {
+      action = CallActionReceiver.ACTION_DECLINE
+      putExtra(CallActionReceiver.EXTRA_CALL_ID, callId)
+      putExtra(CallActionReceiver.EXTRA_CONVERSATION_ID, conversationId)
+      putExtra(CallActionReceiver.EXTRA_CALLER_ID, callerId)
+      putExtra(CallActionReceiver.EXTRA_CALLER_NAME, callerName)
+      putExtra(CallActionReceiver.EXTRA_CALLER_AVATAR, callerAvatar)
+      putExtra(CallActionReceiver.EXTRA_CALL_TYPE, callType)
+      putExtra(CallActionReceiver.EXTRA_SCHEME, scheme)
+    }
+    return PendingIntent.getBroadcast(
+      this,
+      requestCode,
+      intent,
+      pendingIntentFlags(),
+    )
+  }
+
+  private fun pendingIntentFlags(): Int {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    } else {
+      PendingIntent.FLAG_UPDATE_CURRENT
     }
   }
 

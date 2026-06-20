@@ -742,10 +742,28 @@ export default function CallScreen() {
   // fair chance to arrive avoids negotiating with the STUN-only fallback on
   // networks that require a relay (where the call then never connects).
   // Fast-exits the moment the config has loaded.
-  const waitForIceConfig = useCallback(async (timeoutMs = 1200) => {
+  const waitForIceConfig = useCallback(async (timeoutMs?: number) => {
     if (iceConfigLoadedRef.current) return;
+    // ADAPTIVE WAIT: on a FRESH INSTALL the TURN-credential fetch (warmIceConfig
+    // at app start + the per-screen getIceConfig) may not have completed yet.
+    // Negotiating the first offer with the STUN-only FALLBACK_ICE on a network
+    // that requires a relay makes the FIRST call fail to connect (it works on a
+    // retry once the creds are cached) — the exact "fresh install: first call
+    // doesn't connect" bug. When the real config has NOT loaded yet we wait
+    // substantially longer (up to 5s) for the genuine TURN creds; once loaded
+    // a later call returns immediately. A caller-supplied timeout still wins.
+    const effectiveTimeout =
+      timeoutMs ?? (getCachedIceConfig() ? 1200 : 5000);
     const start = Date.now();
-    while (!iceConfigLoadedRef.current && Date.now() - start < timeoutMs) {
+    while (!iceConfigLoadedRef.current && Date.now() - start < effectiveTimeout) {
+      // Opportunistically adopt the warmed cache the instant it lands so we stop
+      // waiting as soon as the real TURN creds are available.
+      const cached = getCachedIceConfig();
+      if (cached?.iceServers?.length) {
+        iceServersRef.current = cached.iceServers;
+        iceConfigLoadedRef.current = true;
+        return;
+      }
       await new Promise((r) => setTimeout(r, 50));
     }
   }, []);

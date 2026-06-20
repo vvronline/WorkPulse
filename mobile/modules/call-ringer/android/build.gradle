@@ -29,4 +29,8 @@ android {
 
 dependencies {
   implementation project(':expo-modules-core')
+  // NotificationCompat.CallStyle (branded green Answer / red Decline buttons)
+  // requires androidx.core 1.7.0+. Pin a version that ships CallStyle so the
+  // incoming-call notification renders the system call template reliably.
+  implementation "androidx.core:core-ktx:${safeExtGet('androidXCoreVersion', '1.13.1')}"
 }

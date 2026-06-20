@@ -17,5 +17,13 @@
       android:name="expo.modules.callringer.CallRingService"
       android:exported="false"
       android:foregroundServiceType="phoneCall" />
+    <!--
+      Receives the Answer/Decline action-button taps from the CallStyle
+      incoming-call notification. Not exported (only our own PendingIntents
+      target it). It stops the ring and deep-links into the JS call screen.
+    -->
+    <receiver
+      android:name="expo.modules.callringer.CallActionReceiver"
+      android:exported="false" />
   </application>
 </manifest>

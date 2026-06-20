@@ -103,6 +103,44 @@ function callNotificationId(callId: string, conversationId: string): string {
   return `wp-call-${conversationId}-${callId}`;
 }
 
+// ── Cancelled-call tombstones ───────────────────────────────────────────────
+// The `call_incoming` push and the `call_cancelled`/`call_ended` push can arrive
+// out of order (or the cancel can land WHILE the incoming display is still being
+// built in the headless task). Without a guard, a cancel that arrives first is a
+// no-op and the now-dead incoming call still rings a moment later (the "receiver
+// keeps ringing after the caller hung up" bug). We record recently cancelled/
+// ended call ids with a timestamp; displayIncomingCall consults this set and
+// SUPPRESSES a ring for a call that was just cancelled. Entries auto-expire so
+// the set never grows unbounded and a genuine later call with a reused id is not
+// blocked.
+const CANCELLED_CALL_TTL_MS = 30000;
+const cancelledCalls = new Map<string, number>();
+
+function callKey(callId: string, conversationId: string): string {
+  return `${conversationId}:${callId}`;
+}
+
+function markCallCancelled(callId?: string, conversationId?: string): void {
+  if (!callId || !conversationId) return;
+  const now = Date.now();
+  cancelledCalls.set(callKey(callId, conversationId), now);
+  // Opportunistic prune of expired entries.
+  for (const [key, ts] of cancelledCalls) {
+    if (now - ts > CANCELLED_CALL_TTL_MS) cancelledCalls.delete(key);
+  }
+}
+
+function wasCallCancelled(callId?: string, conversationId?: string): boolean {
+  if (!callId || !conversationId) return false;
+  const ts = cancelledCalls.get(callKey(callId, conversationId));
+  if (ts == null) return false;
+  if (Date.now() - ts > CANCELLED_CALL_TTL_MS) {
+    cancelledCalls.delete(callKey(callId, conversationId));
+    return false;
+  }
+  return true;
+}
+
 function messageNotificationId(messageId: string): string {
   return `wp-msg-${messageId}`;
 }
@@ -297,14 +335,91 @@ class NotifeeService {
   }
 
   /**
+   * Starts the native CallRinger foreground service, which posts the branded
+   * CallStyle incoming-call notification (green Answer / red Decline + full-
+   * screen intent) AND plays the user's selected ringtone. Honours `muteAll` and
+   * the "none" ringtone (silent). Persists the pending-call route first so a
+   * LOCKED + KILLED cold launch routes straight to the call screen.
+   */
+  private async startForegroundRinger(
+    data: NonNullable<NotificationPayload["data"]>,
+  ): Promise<void> {
+    const title =
+      data.title ||
+      (data.callType === "video"
+        ? "Incoming Video Call"
+        : "Incoming Voice Call");
+    const body = data.body || `${data.callerName || "Someone"} is calling...`;
+
+    const { muteAll, ringtone } = await loadCallPrefs();
+    const toneId = ringtone || "classic";
+    const isKnownTone = (RINGTONE_IDS as readonly string[]).includes(toneId);
+    const callSoundResource = isKnownTone
+      ? ringtoneResourceForTone(toneId)
+      : CALL_RINGTONE_RESOURCE;
+    const silentRing = muteAll || toneId === "none";
+
+    // Persist the pending route BEFORE starting the FGS — the full-screen intent
+    // can auto-launch a brand-new process and app/index.tsx reads the route on
+    // boot to route straight to /call (see displayIncomingCall's note).
+    const route = pendingCallFromData(data);
+    if (route) await persistPendingCall(route);
+
+    try {
+      startRinging({
+        ringtoneRes: silentRing ? "" : callSoundResource,
+        title,
+        body,
+        vibrate: !silentRing,
+        silent: silentRing,
+        callId: data.callId,
+        conversationId: data.conversationId,
+        callerId: data.callerId,
+        callerName: data.callerName || title,
+        callerAvatar: data.callerAvatar,
+        callType: data.callType || "voice",
+      });
+    } catch (err) {
+      console.warn("[NotifeeService] Failed to start foreground ringer:", err);
+    }
+  }
+
+  /**
    * Displays a full-screen-intent incoming-call notification on Android. This is
    * what surfaces the WhatsApp/Teams-style incoming-call screen over the lock
    * screen even when the app is terminated. Includes Answer/Decline actions
    * handled by the background/foreground event handlers below.
    */
   async displayIncomingCall(data: NotificationPayload["data"]): Promise<void> {
+    if (!data?.callId || !data?.conversationId) return;
+
+    // SUPPRESS a ring for a call that was already cancelled/ended. The
+    // `call_incoming` and `call_cancelled` pushes can arrive out of order in the
+    // headless task; without this the receiver would still ring after the caller
+    // hung up. (Tombstones auto-expire — see wasCallCancelled.)
+    if (wasCallCancelled(data.callId, data.conversationId)) {
+      try {
+        stopRinging();
+      } catch {
+        /* best-effort */
+      }
+      return;
+    }
+
     const notifee = this.resolve();
-    if (!notifee || !data?.callId || !data?.conversationId) return;
+    // The native CallRinger foreground service (when present) OWNS the entire
+    // incoming-call surface: it posts a branded CallStyle notification with a
+    // green Answer / red Decline button + full-screen intent AND plays the ring.
+    // In that case Notifee must NOT post its own competing notification (the
+    // old behaviour produced a button-less ongoing notification that preempted
+    // the proper one). We start the ringer here and return. Notifee is used only
+    // as the FALLBACK when the native module is unavailable (Expo Go / iOS).
+    if (isCallRingerAvailable) {
+      await this.startForegroundRinger(data);
+      return;
+    }
+
+    if (!notifee) return;
 
     await this.ensureChannels();
 
@@ -562,6 +677,11 @@ class NotifeeService {
 
   /** Cancels a previously-displayed incoming-call notification (call ended/handled). */
   async cancelCall(callId?: string, conversationId?: string): Promise<void> {
+    // Record a tombstone so that if a `call_incoming` push for this same call is
+    // still in flight (push ordering race), displayIncomingCall suppresses it
+    // instead of ringing a now-dead call (the "receiver keeps ringing after the
+    // caller hung up" bug).
+    markCallCancelled(callId, conversationId);
     // PHASE 3 — stop the foreground-service ringer (looping ringtone + vibration)
     // IMMEDIATELY so the ring ends the instant the call is answered/declined/
     // cancelled/handled-elsewhere. No-op when the native module is unavailable.

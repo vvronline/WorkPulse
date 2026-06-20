@@ -50,6 +50,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "android.permission.POST_NOTIFICATIONS",
       "android.permission.USE_FULL_SCREEN_INTENT",
       "android.permission.FOREGROUND_SERVICE_PHONE_CALL",
+      // Required on Android 14+ (API 34) for a foregroundServiceType="phoneCall"
+      // service AND for NotificationCompat.CallStyle. Without it the call-ringer
+      // foreground service throws on start (swallowed) so the ring/notification
+      // never surfaces in the background/locked state.
+      "android.permission.MANAGE_OWN_CALLS",
       "android.permission.WAKE_LOCK",
       "android.permission.VIBRATE",
       "android.permission.RECORD_AUDIO",
