@@ -1,10 +1,12 @@
 /**
  * Message push payload contract tests.
  *
- * Messages are sent as Android data-only FCM pushes so the mobile
- * background/headless handler can render the visible status-bar notification via
- * Notifee on the dedicated "messages" channel. This avoids Android OS handling
- * swallowing the app-side handler when the app is backgrounded/killed.
+ * Messages are sent as Android HYBRID FCM pushes: a top-level `notification`
+ * block + an `android.notification` block on the dedicated "messages" channel
+ * (so the OS renders the status-bar/lockscreen entry directly in the
+ * background/killed state — the industry-standard chat approach), PLUS a `data`
+ * block (for in-app routing + badge sync and foreground Notifee rendering).
+ * Calls, by contrast, remain DATA-ONLY (see callPayload tests).
  */
 
 process.env.FIREBASE_SERVICE_ACCOUNT_KEY = JSON.stringify({
@@ -51,7 +53,7 @@ describe("pushNotifications.sendMessageNotification", () => {
         sendEachForMulticast.mockClear();
     });
 
-    test("sends Android messages as true data-only high-priority pushes", async () => {
+    test("sends Android messages as hybrid (notification + data) high-priority pushes", async () => {
         const mockQuery = jest.fn().mockResolvedValue({ rows: [{ device_token: "token1" }] });
 
         const result = await pushNotifications.sendMessageNotification(
@@ -71,9 +73,22 @@ describe("pushNotifications.sendMessageNotification", () => {
         expect(result).toEqual({ succeeded: 1, failed: 0 });
 
         const sent = sendEachForMulticast.mock.calls[0][0];
-        expect(sent.notification).toBeUndefined();
-        expect(sent.android).toEqual({ priority: "high" });
-        expect(sent.android.notification).toBeUndefined();
+        // Top-level notification block so the OS renders the status-bar entry in
+        // the background/killed state.
+        expect(sent.notification).toEqual({
+            title: "Alice",
+            body: "Hello from Alice",
+        });
+        // android.notification targets the dedicated "messages" channel and
+        // carries the launcher badge count.
+        expect(sent.android.priority).toBe("high");
+        expect(sent.android.notification).toMatchObject({
+            channelId: "messages",
+            priority: "high",
+            visibility: "private",
+            notificationCount: 5,
+        });
+        // data is retained for in-app routing + badge sync + foreground render.
         expect(sent.data).toMatchObject({
             type: "chat_message",
             title: "Alice",

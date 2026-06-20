@@ -709,15 +709,21 @@ class NotifeeService {
           visibility: this.AndroidVisibility.PRIVATE ?? 0,
           pressAction: { id: "default", launchActivity: "default" },
           sound: "default",
+          // CRITICAL: an Android notification with NO resolvable small icon is
+          // DROPPED SILENTLY — the channel's sound still plays (the "ding") but
+          // NO status-bar / lockscreen entry ever appears. This was the root
+          // cause of "I hear the sound but the message never shows". The native
+          // CallRingService sets `applicationInfo.icon`, which is exactly why
+          // CALLS always rendered while MESSAGES never did. Point Notifee at the
+          // app's launcher mipmap (always present; carries NO FCM
+          // default-notification meta-data, so it does NOT collide with
+          // @react-native-firebase/messaging like expo-notifications' icon/color
+          // config does) so the message notification actually displays.
+          smallIcon: "ic_launcher",
           // Drive the launcher dot/count from the running total.
           ...(hasBadge ? { badgeCount } : {}),
           // Chat-avatar largeIcon (circular) — parity with the call notification.
           ...largeIconOpts,
-          // No custom `smallIcon` — Notifee falls back to the app's launcher
-          // icon. We deliberately avoid generating a dedicated notification
-          // drawable via expo-notifications `icon`/`color` because those inject
-          // FCM default-notification meta-data that collides with
-          // @react-native-firebase/messaging and fails the manifest merge.
         },
       });
     } catch (err) {
@@ -743,6 +749,9 @@ class NotifeeService {
             importance: this.AndroidImportance.HIGH ?? 4,
             pressAction: { id: "default", launchActivity: "default" },
             sound: "default",
+            // Same icon requirement as the primary attempt above — without a
+            // valid small icon the OS silently drops the notification.
+            smallIcon: "ic_launcher",
             ...(hasBadge ? { badgeCount } : {}),
           },
         });
@@ -761,6 +770,8 @@ class NotifeeService {
               importance: this.AndroidImportance.HIGH ?? 4,
               pressAction: { id: "default", launchActivity: "default" },
               sound: "default",
+              // Last-resort post still needs a valid small icon to render.
+              smallIcon: "ic_launcher",
             },
           });
         } catch (err3) {

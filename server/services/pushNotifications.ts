@@ -348,18 +348,25 @@ class PushNotificationService {
         const preview = messageData.messagePreview.substring(0, 150);
         const unreadCount = messageData.unreadCount || 1;
 
-        // IMPORTANT: Message pushes are DATA-ONLY (no top-level `notification`
-        // block), mirroring sendCallNotification. On Android, a message that
-        // contains a `notification` block is treated as a "notification message"
-        // and is handed to the system tray WITHOUT invoking the app's background
-        // message handler when the app is backgrounded/killed. Our background
-        // handler (backgroundPushService.presentDataNotification) is what posts
-        // the status-bar notification on the dedicated "messages" channel (which
-        // it also (re)creates on the fly to survive killed-state delivery). So
-        // the payload MUST be data-only on Android to guarantee status-bar
-        // visibility. Title/body are carried in `data` for the client to render.
-        // iOS still receives a visible alert via the apns.payload.aps.alert below.
+        // HYBRID PAYLOAD (messages): unlike incoming CALLS (which must stay
+        // data-only so the headless JS handler can drive the full-screen call
+        // UI), chat messages just need a normal status-bar/lockscreen entry.
+        // Previously messages were DATA-ONLY and relied SOLELY on the mobile
+        // headless handler rendering via Notifee — a fragile path that silently
+        // dropped the notification in the background/killed state (the OS would
+        // play the channel sound but show nothing). We now ALSO include a
+        // top-level `notification` block + `android.notification` so Android's
+        // OS renders the message directly in the background/killed state (the
+        // industry-standard approach for chat apps), independent of JS. In the
+        // FOREGROUND, RN Firebase's `onMessage` still fires (data is present) so
+        // the app renders via Notifee; the OS does not double-render notification
+        // messages while foregrounded. `data` is retained for in-app routing and
+        // badge sync. iOS keeps its visible APNs alert below.
         const payload: FCMPayload = {
+            notification: {
+                title: messageData.senderName,
+                body: preview,
+            },
             data: this.buildCommonData({
                 type: "chat_message",
                 title: messageData.senderName,
@@ -379,11 +386,21 @@ class PushNotificationService {
                 // T031: Add expiry for payload freshness validation (1 hour TTL)
                 expiresAt: String(Math.floor(Date.now() / 1000) + 3600),
             }, tenantId),
-            // Android: high-priority DATA-ONLY message wakes the app's
-            // background/headless handler, which posts the visible status-bar
-            // notification on the dedicated Notifee "messages" channel.
+            // Android: high-priority message with an `android.notification` block
+            // so the OS renders it on the dedicated "messages" channel in the
+            // background/killed state (with the launcher badge count). The
+            // channel id matches the one created at app init.
             android: {
                 priority: "high",
+                notification: {
+                    sound: "default",
+                    channelId: process.env.PUSH_DEFAULT_ANDROID_CHANNEL || "messages",
+                    priority: "high",
+                    visibility: "private",
+                    notificationCount: unreadCount,
+                    defaultVibrateTimings: true,
+                    defaultLightSettings: true,
+                },
             },
             apns: {
                 headers: {
