@@ -41,9 +41,14 @@ import androidx.core.app.Person as PersonCompat
  * template (NotificationCompat.CallStyle.forIncomingCall) so the system renders
  * a branded incoming-call UI with a GREEN "Answer" button and a RED "Decline"
  * button, plus a full-screen intent that surfaces the call over the lock screen.
- * The action buttons fire PendingIntents handled by CallActionReceiver, which
- * stops the ring and deep-links into the JS call screen (single accept/reject
- * path). This is what fixes "no Answer/Decline buttons in the status bar".
+ * The action buttons fire PendingIntent.getActivity() PendingIntents handled by
+ * CallActionActivity (a transparent trampoline), which stops the ring and deep-
+ * links into the JS call screen (single accept/reject path). Routing through an
+ * Activity — NOT a BroadcastReceiver — is what makes "Answer" reliably bring the
+ * app forward (a background BroadcastReceiver cannot startActivity() on Android
+ * 10+ due to background-activity-start restrictions). This is what fixes both
+ * "no Answer/Decline buttons in the status bar" and "Answer stops the ring but
+ * the call screen never opens — I have to open the app manually".
  */
 class CallRingService : Service() {
 
@@ -283,6 +288,13 @@ class CallRingService : Service() {
     )
   }
 
+  // Answer/Decline are backed by PendingIntent.getActivity() targeting the
+  // transparent CallActionActivity trampoline — NOT getBroadcast() to a
+  // BroadcastReceiver. A BroadcastReceiver cannot reliably startActivity() in
+  // the background on Android 10+ (BAL restrictions), which caused "Answer in
+  // the status bar stops the ring but never opens the call screen — I have to
+  // open the app manually". An Activity launched by a notification action is
+  // foreground-privileged and reliably brings the app forward in every state.
   private fun answerPendingIntent(
     callId: String,
     conversationId: String,
@@ -293,17 +305,22 @@ class CallRingService : Service() {
     scheme: String,
     requestCode: Int,
   ): PendingIntent {
-    val intent = Intent(this, CallActionReceiver::class.java).apply {
-      action = CallActionReceiver.ACTION_ANSWER
-      putExtra(CallActionReceiver.EXTRA_CALL_ID, callId)
-      putExtra(CallActionReceiver.EXTRA_CONVERSATION_ID, conversationId)
-      putExtra(CallActionReceiver.EXTRA_CALLER_ID, callerId)
-      putExtra(CallActionReceiver.EXTRA_CALLER_NAME, callerName)
-      putExtra(CallActionReceiver.EXTRA_CALLER_AVATAR, callerAvatar)
-      putExtra(CallActionReceiver.EXTRA_CALL_TYPE, callType)
-      putExtra(CallActionReceiver.EXTRA_SCHEME, scheme)
+    val intent = Intent(this, CallActionActivity::class.java).apply {
+      action = CallActionActivity.ACTION_ANSWER
+      addFlags(
+        Intent.FLAG_ACTIVITY_NEW_TASK or
+          Intent.FLAG_ACTIVITY_SINGLE_TOP or
+          Intent.FLAG_ACTIVITY_CLEAR_TOP,
+      )
+      putExtra(CallActionActivity.EXTRA_CALL_ID, callId)
+      putExtra(CallActionActivity.EXTRA_CONVERSATION_ID, conversationId)
+      putExtra(CallActionActivity.EXTRA_CALLER_ID, callerId)
+      putExtra(CallActionActivity.EXTRA_CALLER_NAME, callerName)
+      putExtra(CallActionActivity.EXTRA_CALLER_AVATAR, callerAvatar)
+      putExtra(CallActionActivity.EXTRA_CALL_TYPE, callType)
+      putExtra(CallActionActivity.EXTRA_SCHEME, scheme)
     }
-    return PendingIntent.getBroadcast(
+    return PendingIntent.getActivity(
       this,
       requestCode,
       intent,
@@ -321,17 +338,22 @@ class CallRingService : Service() {
     scheme: String,
     requestCode: Int,
   ): PendingIntent {
-    val intent = Intent(this, CallActionReceiver::class.java).apply {
-      action = CallActionReceiver.ACTION_DECLINE
-      putExtra(CallActionReceiver.EXTRA_CALL_ID, callId)
-      putExtra(CallActionReceiver.EXTRA_CONVERSATION_ID, conversationId)
-      putExtra(CallActionReceiver.EXTRA_CALLER_ID, callerId)
-      putExtra(CallActionReceiver.EXTRA_CALLER_NAME, callerName)
-      putExtra(CallActionReceiver.EXTRA_CALLER_AVATAR, callerAvatar)
-      putExtra(CallActionReceiver.EXTRA_CALL_TYPE, callType)
-      putExtra(CallActionReceiver.EXTRA_SCHEME, scheme)
+    val intent = Intent(this, CallActionActivity::class.java).apply {
+      action = CallActionActivity.ACTION_DECLINE
+      addFlags(
+        Intent.FLAG_ACTIVITY_NEW_TASK or
+          Intent.FLAG_ACTIVITY_SINGLE_TOP or
+          Intent.FLAG_ACTIVITY_CLEAR_TOP,
+      )
+      putExtra(CallActionActivity.EXTRA_CALL_ID, callId)
+      putExtra(CallActionActivity.EXTRA_CONVERSATION_ID, conversationId)
+      putExtra(CallActionActivity.EXTRA_CALLER_ID, callerId)
+      putExtra(CallActionActivity.EXTRA_CALLER_NAME, callerName)
+      putExtra(CallActionActivity.EXTRA_CALLER_AVATAR, callerAvatar)
+      putExtra(CallActionActivity.EXTRA_CALL_TYPE, callType)
+      putExtra(CallActionActivity.EXTRA_SCHEME, scheme)
     }
-    return PendingIntent.getBroadcast(
+    return PendingIntent.getActivity(
       this,
       requestCode,
       intent,

@@ -50,6 +50,13 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "android.permission.POST_NOTIFICATIONS",
       "android.permission.USE_FULL_SCREEN_INTENT",
       "android.permission.FOREGROUND_SERVICE_PHONE_CALL",
+      // Required on Android 14+ (API 34) for the ONGOING-CALL foreground service
+      // (ActiveCallService) declared with foregroundServiceType="microphone|
+      // camera". This keeps the process at foreground priority for the call's
+      // lifetime so the OS doesn't throttle the app mid-call (which surfaces as
+      // video stutter/lag/freeze). Mic is used on every call; camera on video.
+      "android.permission.FOREGROUND_SERVICE_MICROPHONE",
+      "android.permission.FOREGROUND_SERVICE_CAMERA",
       // Required on Android 14+ (API 34) for a foregroundServiceType="phoneCall"
       // service AND for NotificationCompat.CallStyle. Without it the call-ringer
       // foreground service throws on start (swallowed) so the ring/notification

@@ -698,7 +698,7 @@ class NotifeeService {
     // screens). Done regardless of Notifee availability.
     await clearPersistedPendingCall();
     // Also drop any native status-bar Answer/Decline action recorded by
-    // CallActionReceiver so a warm-app action tap (already routed via the deep
+    // CallActionActivity so a warm-app action tap (already routed via the deep
     // link) can't linger and auto-answer/decline a later cold-started call.
     try {
       clearPendingCallAction();
@@ -782,7 +782,7 @@ class NotifeeService {
   async captureInitialCallRoute(): Promise<void> {
     // FIRST: the native CallStyle status-bar notification path. When the user
     // taps Answer/Decline on the foreground-service (CallRingService) call
-    // notification, CallActionReceiver records the choice natively
+    // notification, CallActionActivity records the choice natively
     // (PendingCallActionStore) and launches a deep link. On a COLD start the
     // proven routing path (app/index.tsx) reads the SecureStore-PERSISTED
     // pending-call route — which was written at RING time with autoAnswer="0"

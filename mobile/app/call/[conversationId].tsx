@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   AppState,
@@ -61,6 +61,10 @@ import {
   mergeNotificationPrefs,
 } from "../../src/utils/notificationPrefs";
 import { setShowWhenLocked } from "../../modules/lock-screen";
+import {
+  startActiveCall,
+  stopActiveCall,
+} from "../../modules/call-ringer";
 import { notifeeService } from "../../src/services/notifeeService";
 import { persistCallPrefs } from "../../src/services/callPrefsStore";
 import {
@@ -99,6 +103,90 @@ type CallStatus =
   | "connected"
   | "ended"
   | "rejected";
+
+// ── Decoupled video renderers (Signal-Android model) ─────────────────────────
+// On react-native-webrtc each <RTCView> is backed by an Android SurfaceView/EGL
+// surface. Re-rendering it churns that native surface → flicker, dropped frames
+// and momentary freezes. Signal isolates its renderer from UI state so routine
+// updates (call timer, network badge, reactions) never touch the surface. We do
+// the same by extracting the surfaces into React.memo leaf components that take
+// ONLY primitive, stable props — so the per-second duration tick and the 3s
+// stats tick can never re-render the video surfaces.
+type VideoStyle = ReturnType<typeof makeStyles>["remoteVideo"];
+
+const RemoteVideo = memo(function RemoteVideo(props: {
+  url: string;
+  style: VideoStyle;
+}) {
+  return (
+    <RTCView
+      streamURL={props.url}
+      style={props.style}
+      objectFit="cover"
+      // Never mirror the remote feed — only a front-camera self-view should be
+      // mirrored. WebRTC transmits the TRUE (un-mirrored) image already.
+      mirror={false}
+      // Remote = base layer (zOrder 0); the PiP self-view sits above it.
+      zOrder={0}
+    />
+  );
+});
+
+const FullScreenSelfView = memo(function FullScreenSelfView(props: {
+  url: string;
+  mirror: boolean;
+  style: VideoStyle;
+}) {
+  return (
+    <RTCView
+      streamURL={props.url}
+      style={props.style}
+      objectFit="cover"
+      // Front-camera self-view → mirror like a real mirror (WhatsApp style).
+      mirror={props.mirror}
+      zOrder={0}
+    />
+  );
+});
+
+const PipSelfView = memo(function PipSelfView(props: {
+  url: string;
+  mirror: boolean;
+  style: any;
+}) {
+  return (
+    <RTCView
+      streamURL={props.url}
+      style={props.style}
+      objectFit="cover"
+      mirror={props.mirror}
+      // Must be a HIGHER media-overlay layer than the remote view, or Android
+      // intermittently hides the self preview entirely.
+      zOrder={1}
+    />
+  );
+});
+
+// Self-contained call-duration timer. Owning its own state + interval here means
+// the once-per-second tick re-renders ONLY this tiny text node — never the
+// parent CallScreen (and therefore never the memoized video surfaces above).
+// This is the single biggest fix for the "connected video flickers/freezes"
+// bug, mirroring Signal keeping the renderer untouched by UI-state churn.
+const CallDuration = memo(function CallDuration(props: {
+  active: boolean;
+  style: any;
+}) {
+  const [duration, setDuration] = useState(0);
+  useEffect(() => {
+    if (!props.active) return;
+    setDuration(0);
+    const t = setInterval(() => setDuration((d) => d + 1), 1000);
+    return () => clearInterval(t);
+  }, [props.active]);
+  const m = Math.floor(duration / 60);
+  const s = duration % 60;
+  return <Text style={props.style}>{`${m}:${String(s).padStart(2, "0")}`}</Text>;
+});
 
 /**
  * Native audio/video call screen (react-native-webrtc). Mirrors the web call
@@ -158,8 +246,8 @@ export default function CallScreen() {
   // Peer mute indicator (driven by the explicit `audio-state` signal, mirrors
   // web's peerMuted + remoteMuteBadge).
   const [peerMuted, setPeerMuted] = useState(false);
-  // Call duration (seconds) shown once connected, like the web overlay.
-  const [duration, setDuration] = useState(0);
+  // Call duration is owned by the isolated <CallDuration /> component so its
+  // per-second tick never re-renders this screen (and the video surfaces).
   // Connection quality derived from getStats() — good | fair | poor | unknown.
   // Mirrors the web CallOverlay NetworkStats badge.
   const [connectionQuality, setConnectionQuality] =
@@ -1835,13 +1923,34 @@ export default function CallScreen() {
     showChat,
   ]);
 
-  // ── Call duration timer (mirrors web CallOverlay) ──────────────────────────
+  // ── Active-call foreground service (Signal ActiveCallManager model) ─────────
+  // While the call is connecting/connected we run an ongoing-call foreground
+  // service (FOREGROUND_SERVICE_TYPE_MICROPHONE [+ CAMERA for video]) so the OS
+  // keeps the process at foreground priority for the call's lifetime. Without
+  // it Android can doze/throttle the app mid-call (especially when the screen
+  // is interacted with or briefly backgrounded), which surfaces as stutter,
+  // lag and freezes. Stopped on teardown (endAndLeave) and on unmount below.
+  // No-op on iOS / Expo Go / non-prebuilt builds.
   useEffect(() => {
-    if (status !== "connected") return;
-    setDuration(0);
-    const t = setInterval(() => setDuration((d) => d + 1), 1000);
-    return () => clearInterval(t);
-  }, [status]);
+    if (status === "connecting" || status === "connected") {
+      startActiveCall({
+        callType,
+        title: peerName,
+        body: callType === "video" ? "Ongoing video call" : "Ongoing voice call",
+        scheme: "workpulse",
+      });
+    } else {
+      stopActiveCall();
+    }
+  }, [status, callType, peerName]);
+
+  // Always release the active-call foreground service on unmount so a stale
+  // ongoing-call notification can never linger after the screen is gone.
+  useEffect(() => {
+    return () => {
+      stopActiveCall();
+    };
+  }, []);
 
   // ── Connection-quality monitor via getStats() (mirrors web NetworkStats) ───
   useEffect(() => {
@@ -2222,11 +2331,28 @@ export default function CallScreen() {
   const showPipSelfPreview =
     showVideo && hasLiveLocalVideo && !videoOff && !showFullScreenSelfPreview;
 
-  const fmtDuration = (secs: number) => {
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
-    return `${m}:${String(s).padStart(2, "0")}`;
-  };
+  // (Call-duration formatting now lives inside the isolated <CallDuration />
+  // component so the per-second tick never re-renders this screen.)
+
+  // Memoize the stream URLs so toURL() is only called when the underlying stream
+  // OBJECT changes — not on every re-render. A fresh toURL() string each render
+  // would make the (now memoized) RTCView components see a new prop and reattach
+  // their native surface (the flicker/freeze cause). Mirrors Signal binding a
+  // track to a renderer once rather than recomputing a handle per frame.
+  const remoteURL = useMemo(
+    () => (remoteStream ? (remoteStream as any).toURL() : null),
+    [remoteStream],
+  );
+  const localURL = useMemo(
+    () => (localStream ? (localStream as any).toURL() : null),
+    [localStream],
+  );
+  // Memoize the PiP dynamic style so we don't allocate a NEW style array/object
+  // every render (which would also churn the memoized PiP surface).
+  const pipStyle = useMemo(
+    () => [styles.localVideo, { top: insets.top + 50 }],
+    [styles.localVideo, insets.top],
+  );
 
   const qualityColor =
     connectionQuality === "good"
@@ -2262,33 +2388,15 @@ export default function CallScreen() {
              video yet)                               → WhatsApp-style FULL-SCREEN
              local self-view (we see ourselves before the peer's video arrives).
           3. Otherwise                               → peer avatar. */}
-      {showRemoteVideo ? (
-        <RTCView
-          streamURL={(remoteStream as any).toURL()}
-          style={styles.remoteVideo}
-          objectFit="cover"
-          // Never mirror the remote feed — only a front-camera self-view should
-          // be mirrored. WebRTC transmits the TRUE (un-mirrored) image; the peer
-          // is already sending the correct orientation, so we render it as-is.
-          // (A previous Android-only `scaleX(-1)` transform here ADDED a flip and
-          // made the participant look left-right reversed — removed.)
-          mirror={false}
-          // Android renders each RTCView on a SurfaceView; without explicit
-          // zOrder the surfaces stack unpredictably and the small local
-          // preview can be painted UNDER this full-screen view (the
-          // "self preview not showing" bug). Remote = base layer.
-          zOrder={0}
-        />
-      ) : showFullScreenSelfPreview ? (
-        <RTCView
-          streamURL={(localStream as any).toURL()}
-          style={styles.remoteVideo}
-          objectFit="cover"
-          // Front-camera self-view → mirror like a real mirror (WhatsApp style).
+      {showRemoteVideo && remoteURL ? (
+        // Memoized leaf: only re-renders when the URL changes, so the per-second
+        // duration tick / 3s stats tick never churn this native surface.
+        <RemoteVideo url={remoteURL} style={styles.remoteVideo} />
+      ) : showFullScreenSelfPreview && localURL ? (
+        <FullScreenSelfView
+          url={localURL}
           mirror={usingFrontCamera}
-          // Base layer while ringing; once answered the PiP self-view uses a
-          // higher zOrder so the peer's remote video can sit beneath it.
-          zOrder={0}
+          style={styles.remoteVideo}
         />
       ) : (
         <View style={styles.avatarWrap}>
@@ -2308,20 +2416,8 @@ export default function CallScreen() {
           incoming video call is still ringing the self-view is rendered
           FULL-SCREEN above instead, then seamlessly remaps into this PiP the
           moment the call is answered (same stream object, no re-acquire). */}
-      {showPipSelfPreview ? (
-        <RTCView
-          streamURL={(localStream as any).toURL()}
-          style={[styles.localVideo, { top: insets.top + 50 }]}
-          objectFit="cover"
-          // Mirror ONLY the front-camera self-view (the natural "mirror"
-          // behaviour users expect, matching the web client). After "Flip" to
-          // the rear camera we must NOT mirror, otherwise the rear feed renders
-          // left-right flipped.
-          mirror={usingFrontCamera}
-          // Must be a HIGHER media-overlay layer than the remote view, or
-          // Android intermittently hides the self preview entirely.
-          zOrder={1}
-        />
+      {showPipSelfPreview && localURL ? (
+        <PipSelfView url={localURL} mirror={usingFrontCamera} style={pipStyle} />
       ) : null}
 
       {/* Top status bar — connection quality + peer-mute, once connected
@@ -2363,9 +2459,11 @@ export default function CallScreen() {
       {/* Header info */}
       <View style={[styles.info, { top: insets.top + 60 }]}>
         <Text style={styles.peerName}>{peerName}</Text>
-        <Text style={styles.status}>
-          {status === "connected" ? fmtDuration(duration) : statusLabel}
-        </Text>
+        {status === "connected" ? (
+          <CallDuration active={status === "connected"} style={styles.status} />
+        ) : (
+          <Text style={styles.status}>{statusLabel}</Text>
+        )}
       </View>
 
       {/* Peer poor-connection banner (Teams/Meet style). Surfaced when the

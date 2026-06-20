@@ -19,6 +19,8 @@ import { requireOptionalNativeModule } from "expo-modules-core";
 const CallRinger = requireOptionalNativeModule<{
   startRinging(options: Record<string, string>): void;
   stopRinging(): void;
+  startActiveCall?(options: Record<string, string>): void;
+  stopActiveCall?(): void;
   getPendingCallAction?(): PendingCallAction | null;
   clearPendingCallAction?(): void;
 }>("CallRinger");
@@ -94,9 +96,51 @@ export function stopRinging(): void {
   }
 }
 
+export type StartActiveCallOptions = {
+  /** "voice" | "video" — drives the foregroundServiceType (mic vs mic+camera). */
+  callType?: string;
+  /** Ongoing-call notification title (peer name). */
+  title?: string;
+  /** Ongoing-call notification body. */
+  body?: string;
+  /** App deep-link scheme so tapping the notification reopens the call screen. */
+  scheme?: string;
+};
+
+/**
+ * Start the ONGOING-CALL foreground service (Signal ActiveCallManager model).
+ * Keeps the process at foreground priority for the call's lifetime so the OS
+ * does not doze/throttle the app mid-call (a cause of video stutter/lag/freeze).
+ * Declared with FOREGROUND_SERVICE_TYPE_MICROPHONE (+ CAMERA for video).
+ * No-op on iOS / Expo Go / non-prebuilt builds.
+ */
+export function startActiveCall(options: StartActiveCallOptions = {}): void {
+  if (Platform.OS !== "android") return;
+  try {
+    CallRinger?.startActiveCall?.({
+      callType: options.callType ?? "voice",
+      title: options.title ?? "Ongoing call",
+      body: options.body ?? "",
+      scheme: options.scheme ?? "workpulse",
+    });
+  } catch {
+    // Best-effort; never let a native bridge error break the call flow.
+  }
+}
+
+/** Stop the ongoing-call foreground service. No-op when unavailable. */
+export function stopActiveCall(): void {
+  if (Platform.OS !== "android") return;
+  try {
+    CallRinger?.stopActiveCall?.();
+  } catch {
+    // Best-effort.
+  }
+}
+
 /**
  * Read the Answer/Decline choice the user made on the native CallStyle status-
- * bar notification (recorded by CallActionReceiver) so it can be MERGED into the
+ * bar notification (recorded by CallActionActivity) so it can be MERGED into the
  * cold-start pending-call route. Returns null when absent/stale/invalid or when
  * the native module is unavailable. The caller should clearPendingCallAction()
  * after consuming it so a stale tap can't auto-answer a later unrelated call.

@@ -18,12 +18,42 @@
       android:exported="false"
       android:foregroundServiceType="phoneCall" />
     <!--
-      Receives the Answer/Decline action-button taps from the CallStyle
-      incoming-call notification. Not exported (only our own PendingIntents
-      target it). It stops the ring and deep-links into the JS call screen.
+      ActiveCallService — the ONGOING-CALL foreground service that runs for the
+      lifetime of a connected call (Signal ActiveCallManager model). It keeps the
+      process at foreground priority so the OS does not throttle the app mid-call,
+      which would surface as video stutter/lag/freeze. Declared with the
+      microphone|camera foreground-service types (the call uses the mic always
+      and the camera on video calls). The matching FOREGROUND_SERVICE_MICROPHONE
+      / FOREGROUND_SERVICE_CAMERA runtime permissions are declared in
+      app.config.ts's android.permissions.
     -->
-    <receiver
-      android:name="expo.modules.callringer.CallActionReceiver"
-      android:exported="false" />
+    <service
+      android:name="expo.modules.callringer.ActiveCallService"
+      android:exported="false"
+      android:foregroundServiceType="microphone|camera" />
+    <!--
+      Transparent TRAMPOLINE activity that handles the Answer/Decline action-
+      button taps from the CallStyle incoming-call notification. The notification
+      actions target it via PendingIntent.getActivity() — NOT a BroadcastReceiver
+      — because a background BroadcastReceiver cannot reliably startActivity() on
+      Android 10+ (background-activity-start restrictions), which caused "Answer
+      stops the ring but the call screen never opens; I have to open the app
+      manually". An Activity launched by a notification action is foreground-
+      privileged and reliably brings the call/video screen forward in every app
+      state. It records the choice + deep-links into the JS call screen, then
+      finishes immediately (it has no UI). showWhenLocked/turnScreenOn let
+      answering work over the lock screen; the translucent theme keeps it
+      invisible. Not exported (only our own PendingIntents target it).
+    -->
+    <activity
+      android:name="expo.modules.callringer.CallActionActivity"
+      android:exported="false"
+      android:excludeFromRecents="true"
+      android:launchMode="singleTop"
+      android:noHistory="true"
+      android:showWhenLocked="true"
+      android:turnScreenOn="true"
+      android:taskAffinity=""
+      android:theme="@android:style/Theme.Translucent.NoTitleBar" />
   </application>
 </manifest>

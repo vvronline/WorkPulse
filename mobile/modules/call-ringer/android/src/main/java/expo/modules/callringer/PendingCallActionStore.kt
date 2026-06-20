@@ -7,12 +7,12 @@ import org.json.JSONObject
  * PendingCallActionStore
  *
  * A tiny durable bridge that records the user's Answer/Decline CHOICE made on the
- * native CallStyle status-bar notification (see [CallActionReceiver]) so the JS
+ * native CallStyle status-bar notification (see [CallActionActivity]) so the JS
  * layer can apply it after a COLD start.
  *
  * WHY THIS EXISTS:
  * When the app is killed and the user taps Answer/Decline on the foreground-
- * service call notification, [CallActionReceiver] launches a deep link
+ * service call notification, [CallActionActivity] launches a deep link
  * (`workpulse://call/<id>?…&autoAnswer=1` / `&action=decline`). But on a cold
  * launch the proven routing path (`app/index.tsx`) reads the SecureStore-
  * PERSISTED pending-call route — which was written at RING time with
@@ -21,7 +21,7 @@ import org.json.JSONObject
  * the deep link's action params — so Answer never connects and Decline never
  * rejects.
  *
- * To fix that, the receiver writes the chosen action HERE (plain
+ * To fix that, the trampoline writes the chosen action HERE (plain
  * SharedPreferences — readable from any process, including a freshly relaunched
  * one). At JS boot the call-ringer module exposes it so notifeeService can MERGE
  * the real choice into the pending route, making the call screen's existing

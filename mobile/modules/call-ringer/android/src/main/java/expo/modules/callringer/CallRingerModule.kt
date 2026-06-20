@@ -51,8 +51,39 @@ class CallRingerModule : Module() {
       }
     }
 
+    // Start the ONGOING-CALL foreground service (ActiveCallService) for the
+    // lifetime of a connected call. Keeps the process at foreground priority so
+    // the OS does not throttle the app mid-call (a cause of video stutter/lag/
+    // freeze). See ActiveCallService for the full rationale.
+    Function("startActiveCall") { options: Map<String, Any?>? ->
+      val context = appContext.reactContext
+      if (context != null) {
+        val extras = HashMap<String, String>()
+        options?.forEach { (k, v) ->
+          if (v != null) extras[k] = v.toString()
+        }
+        try {
+          ActiveCallService.start(context, extras)
+        } catch (_: Throwable) {
+          // best-effort; never throw across the bridge
+        }
+      }
+    }
+
+    // Stop the ongoing-call foreground service (call ended / screen unmounted).
+    Function("stopActiveCall") {
+      val context = appContext.reactContext
+      if (context != null) {
+        try {
+          ActiveCallService.stop(context)
+        } catch (_: Throwable) {
+          // best-effort
+        }
+      }
+    }
+
     // Return the Answer/Decline choice the user made on the native CallStyle
-    // status-bar notification (written by CallActionReceiver) so the JS layer
+    // status-bar notification (written by CallActionActivity) so the JS layer
     // can MERGE it into the cold-start pending-call route. Returns null when
     // absent/stale/invalid. See PendingCallActionStore for the why.
     Function("getPendingCallAction") {
