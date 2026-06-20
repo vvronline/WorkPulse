@@ -26,12 +26,15 @@ import {
   pendingCallFromData,
   persistPendingCall,
   clearPersistedPendingCall,
+  loadPersistedPendingCall,
 } from "../realtime/pendingCall";
 import { loadCallPrefs } from "./callPrefsStore";
 import {
   startRinging,
   stopRinging,
   isCallRingerAvailable,
+  getPendingCallAction,
+  clearPendingCallAction,
 } from "../../modules/call-ringer";
 
 // Versioned channel IDs. Android notification channels are IMMUTABLE after
@@ -694,6 +697,14 @@ class NotifeeService {
     // to a call that has already ended / been handled (avoids "ghost" call
     // screens). Done regardless of Notifee availability.
     await clearPersistedPendingCall();
+    // Also drop any native status-bar Answer/Decline action recorded by
+    // CallActionReceiver so a warm-app action tap (already routed via the deep
+    // link) can't linger and auto-answer/decline a later cold-started call.
+    try {
+      clearPendingCallAction();
+    } catch {
+      // best-effort
+    }
     const notifee = this.resolve();
     if (!notifee || !callId || !conversationId) return;
     try {
@@ -769,6 +780,61 @@ class NotifeeService {
    * link was lost before the router mounted.
    */
   async captureInitialCallRoute(): Promise<void> {
+    // FIRST: the native CallStyle status-bar notification path. When the user
+    // taps Answer/Decline on the foreground-service (CallRingService) call
+    // notification, CallActionReceiver records the choice natively
+    // (PendingCallActionStore) and launches a deep link. On a COLD start the
+    // proven routing path (app/index.tsx) reads the SecureStore-PERSISTED
+    // pending-call route — which was written at RING time with autoAnswer="0"
+    // and no action — so it would open the call screen in plain RINGING mode and
+    // the deep link's action params are lost (Answer never connects, Decline
+    // never rejects). Here we read that native action and MERGE it into the
+    // in-memory pending route (which app/index.tsx prefers over the persisted
+    // one), so the call screen's autoAnswer/autoDecline effects fire. This is a
+    // no-op when the native module is unavailable or no action was recorded.
+    try {
+      const nativeAction = getPendingCallAction();
+      if (nativeAction) {
+        // The full call details (callType, peerName, peerAvatar, peerId) live in
+        // the persisted route written at ring time; the native record only has
+        // the action + identity. Merge them so the call screen has everything.
+        const persisted = await loadPersistedPendingCall();
+        const matches =
+          persisted &&
+          String(persisted.callId) === String(nativeAction.callId) &&
+          String(persisted.conversationId) ===
+            String(nativeAction.conversationId);
+        const base =
+          matches && persisted
+            ? persisted
+            : {
+                conversationId: String(nativeAction.conversationId),
+                callId: String(nativeAction.callId),
+                callType: "voice",
+                peerId: "",
+                peerName: "Incoming call",
+                peerAvatar: "",
+                autoAnswer: "0",
+              };
+        const merged = {
+          ...base,
+          autoAnswer: nativeAction.action === "answer" ? "1" : "0",
+          ...(nativeAction.action === "decline"
+            ? { action: "decline" }
+            : { action: undefined }),
+        };
+        setPendingCall(merged);
+        // Consumed — clear so a stale tap can't auto-answer a later call.
+        clearPendingCallAction();
+        return;
+      }
+    } catch (err) {
+      console.warn(
+        "[NotifeeService] Failed to read native pending call action:",
+        err,
+      );
+    }
+
     const notifee = this.resolve();
     if (!notifee || typeof notifee.getInitialNotification !== "function") return;
     try {

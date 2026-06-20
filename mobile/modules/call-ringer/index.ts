@@ -19,7 +19,21 @@ import { requireOptionalNativeModule } from "expo-modules-core";
 const CallRinger = requireOptionalNativeModule<{
   startRinging(options: Record<string, string>): void;
   stopRinging(): void;
+  getPendingCallAction?(): PendingCallAction | null;
+  clearPendingCallAction?(): void;
 }>("CallRinger");
+
+/**
+ * The Answer/Decline choice the user made on the native CallStyle status-bar
+ * notification, recorded natively (PendingCallActionStore) so the JS layer can
+ * apply it after a COLD start. See getPendingCallAction below.
+ */
+export type PendingCallAction = {
+  /** "answer" | "decline". */
+  action: string;
+  callId: string;
+  conversationId: string;
+};
 
 export type StartRingingOptions = {
   /** Bundled res/raw resource name, e.g. "ringtone_classic". */
@@ -75,6 +89,48 @@ export function stopRinging(): void {
   if (Platform.OS !== "android") return;
   try {
     CallRinger?.stopRinging();
+  } catch {
+    // Best-effort.
+  }
+}
+
+/**
+ * Read the Answer/Decline choice the user made on the native CallStyle status-
+ * bar notification (recorded by CallActionReceiver) so it can be MERGED into the
+ * cold-start pending-call route. Returns null when absent/stale/invalid or when
+ * the native module is unavailable. The caller should clearPendingCallAction()
+ * after consuming it so a stale tap can't auto-answer a later unrelated call.
+ */
+export function getPendingCallAction(): PendingCallAction | null {
+  if (Platform.OS !== "android") return null;
+  try {
+    const result = CallRinger?.getPendingCallAction?.();
+    if (
+      result &&
+      typeof result.action === "string" &&
+      typeof result.callId === "string" &&
+      typeof result.conversationId === "string" &&
+      result.action.length > 0 &&
+      result.callId.length > 0 &&
+      result.conversationId.length > 0
+    ) {
+      return {
+        action: result.action,
+        callId: result.callId,
+        conversationId: result.conversationId,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Clear the stored pending call action. No-op when unavailable. */
+export function clearPendingCallAction(): void {
+  if (Platform.OS !== "android") return;
+  try {
+    CallRinger?.clearPendingCallAction?.();
   } catch {
     // Best-effort.
   }

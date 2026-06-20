@@ -50,5 +50,31 @@ class CallRingerModule : Module() {
         }
       }
     }
+
+    // Return the Answer/Decline choice the user made on the native CallStyle
+    // status-bar notification (written by CallActionReceiver) so the JS layer
+    // can MERGE it into the cold-start pending-call route. Returns null when
+    // absent/stale/invalid. See PendingCallActionStore for the why.
+    Function("getPendingCallAction") {
+      val context = appContext.reactContext ?: return@Function null
+      try {
+        PendingCallActionStore.read(context)
+      } catch (_: Throwable) {
+        null
+      }
+    }
+
+    // Clear the stored pending action once the JS layer has consumed it so a
+    // stale tap can never auto-answer a later unrelated call.
+    Function("clearPendingCallAction") {
+      val context = appContext.reactContext
+      if (context != null) {
+        try {
+          PendingCallActionStore.clear(context)
+        } catch (_: Throwable) {
+          // best-effort
+        }
+      }
+    }
   }
 }

@@ -57,6 +57,25 @@ class CallActionReceiver : BroadcastReceiver() {
 
     val isAnswer = action == ACTION_ANSWER
 
+    // Record the user's CHOICE durably so a COLD-launched JS layer can apply it.
+    // On a cold start the proven routing path (app/index.tsx) reads the
+    // SecureStore-PERSISTED pending-call route, which was written at RING time
+    // with autoAnswer="0"/no action and therefore wins over the deep-link's
+    // action params below — opening the call screen in plain RINGING mode so
+    // Answer never connects and Decline never rejects. notifeeService merges
+    // this stored action into the pending route at boot to fix that. (No-op for
+    // the warm app, which routes via the deep link / answer-intent bridge.)
+    try {
+      PendingCallActionStore.write(
+        context,
+        if (isAnswer) "answer" else "decline",
+        callId,
+        conversationId,
+      )
+    } catch (_: Throwable) {
+      // best-effort
+    }
+
     // Build the deep link the JS call screen understands (mirrors the JS
     // Linking.createURL(`/call/...`) format used elsewhere).
     val sb = StringBuilder()
