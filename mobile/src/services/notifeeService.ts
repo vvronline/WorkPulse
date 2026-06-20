@@ -19,6 +19,7 @@
 
 import { Platform } from "react-native";
 import * as Linking from "expo-linking";
+import { uploadUrl } from "../config";
 import { nativeCallService } from "./nativeCallService";
 import type { NotificationPayload } from "./pushNotificationService";
 import {
@@ -186,10 +187,55 @@ class NotifeeService {
    * call repeatedly; only does work once per process. Channels must exist before
    * displaying notifications, including during killed-state delivery.
    */
+  /**
+   * Creates (or recreates) the dedicated "messages" channel. Extracted so it
+   * can be called STANDALONE from displayMessage's self-heal path.
+   *
+   * ROOT-CAUSE FIX: previously every channel was created inside ONE try/catch in
+   * ensureChannels(). The very first createChannel (the calls channel, whose
+   * `sound` points at a bundled raw resource) is the most likely to throw — and
+   * when it did, control jumped to the outer catch and the MESSAGE channel below
+   * it NEVER got created. On Android O+ posting to a non-existent channel is
+   * dropped SILENTLY, so chat-message notifications never appeared — while CALLS
+   * kept working because the native CallRingService creates its own independent
+   * channel. Creating each channel in its OWN try/catch (and exposing the
+   * message channel here so displayMessage can recreate it on demand) guarantees
+   * the messages channel exists regardless of any other channel failing.
+   */
+  private async createMessageChannel(): Promise<boolean> {
+    const notifee = this.resolve();
+    if (!notifee || Platform.OS !== "android") return false;
+    try {
+      await notifee.createChannel({
+        id: MESSAGE_CHANNEL_ID,
+        name: "Messages",
+        description: "Chat message alerts",
+        importance: this.AndroidImportance.HIGH ?? 4,
+        sound: "default",
+        vibration: true,
+        vibrationPattern: [160, 80, 160],
+        lights: true,
+        lightColor: "#FF6B6B",
+      });
+      return true;
+    } catch (e) {
+      console.warn("[NotifeeService] failed to create messages channel:", e);
+      return false;
+    }
+  }
+
   async ensureChannels(): Promise<void> {
     const notifee = this.resolve();
     if (!notifee || Platform.OS !== "android") return;
     if (this.channelsEnsured) return;
+
+    // IMPORTANT: each channel is created in its OWN try/catch so a single
+    // failing channel (e.g. a missing bundled ringtone raw resource on the
+    // default calls channel) can NEVER prevent the others — most critically the
+    // MESSAGES channel — from being created. Lumping them under one try/catch
+    // was the root cause of "chat-message push never shows" (see
+    // createMessageChannel's note): the calls channel threw first and the
+    // messages createChannel that followed was skipped entirely.
     try {
       await notifee.createChannel({
         id: CALL_CHANNEL_ID,
@@ -208,35 +254,41 @@ class NotifeeService {
         bypassDnd: true,
         lights: true,
       });
-      // Per-tone calls channels — ONE per selectable ringtone option, each
-      // whose (immutable) sound is the matching bundled res/raw/ringtone_<id>
-      // resource. displayIncomingCall posts on the channel matching the user's
-      // SELECTED ringtone so the status-bar/background ring uses their choice.
-      for (const toneId of RINGTONE_IDS) {
-        try {
-          await notifee.createChannel({
-            id: callChannelIdForTone(toneId),
-            name: `Calls (${toneId})`,
-            description: "Incoming call alerts",
-            importance: this.AndroidImportance.HIGH ?? 4,
-            sound: ringtoneResourceForTone(toneId),
-            vibration: true,
-            vibrationPattern: [0, 700, 1000, 700],
-            bypassDnd: true,
-            lights: true,
-          });
-        } catch (e) {
-          // A single bad tone (e.g. its raw resource missing) must not abort the
-          // remaining channels — the default CALL_CHANNEL_ID still rings.
-          console.warn(
-            `[NotifeeService] failed to create calls channel for ${toneId}:`,
-            e,
-          );
-        }
+    } catch (e) {
+      console.warn("[NotifeeService] failed to create default calls channel:", e);
+    }
+
+    // Per-tone calls channels — ONE per selectable ringtone option, each
+    // whose (immutable) sound is the matching bundled res/raw/ringtone_<id>
+    // resource. displayIncomingCall posts on the channel matching the user's
+    // SELECTED ringtone so the status-bar/background ring uses their choice.
+    for (const toneId of RINGTONE_IDS) {
+      try {
+        await notifee.createChannel({
+          id: callChannelIdForTone(toneId),
+          name: `Calls (${toneId})`,
+          description: "Incoming call alerts",
+          importance: this.AndroidImportance.HIGH ?? 4,
+          sound: ringtoneResourceForTone(toneId),
+          vibration: true,
+          vibrationPattern: [0, 700, 1000, 700],
+          bypassDnd: true,
+          lights: true,
+        });
+      } catch (e) {
+        // A single bad tone (e.g. its raw resource missing) must not abort the
+        // remaining channels — the default CALL_CHANNEL_ID still rings.
+        console.warn(
+          `[NotifeeService] failed to create calls channel for ${toneId}:`,
+          e,
+        );
       }
-      // Silent calls channel for when the user muted all sounds. Still
-      // HIGH-importance so the full-screen-intent call UI surfaces, but with no
-      // sound and no vibration so it honours `muteAll`.
+    }
+
+    // Silent calls channel for when the user muted all sounds. Still
+    // HIGH-importance so the full-screen-intent call UI surfaces, but with no
+    // sound and no vibration so it honours `muteAll`.
+    try {
       await notifee.createChannel({
         id: CALL_SILENT_CHANNEL_ID,
         name: "Calls (silent)",
@@ -247,21 +299,18 @@ class NotifeeService {
         bypassDnd: true,
         lights: true,
       });
-      await notifee.createChannel({
-        id: MESSAGE_CHANNEL_ID,
-        name: "Messages",
-        description: "Chat message alerts",
-        importance: this.AndroidImportance.HIGH ?? 4,
-        sound: "default",
-        vibration: true,
-        vibrationPattern: [160, 80, 160],
-        lights: true,
-        lightColor: "#FF6B6B",
-      });
-      this.channelsEnsured = true;
-    } catch (err) {
-      console.warn("[NotifeeService] Failed to create channels:", err);
+    } catch (e) {
+      console.warn("[NotifeeService] failed to create silent calls channel:", e);
     }
+
+    // The MESSAGES channel — created in its own isolated path so it survives any
+    // calls-channel failure above (the root-cause fix).
+    const messageOk = await this.createMessageChannel();
+
+    // Only latch `channelsEnsured` once the critical messages channel exists so
+    // a transient failure (e.g. mid-boot) is retried on the next call rather
+    // than being permanently skipped.
+    if (messageOk) this.channelsEnsured = true;
   }
 
   /**
@@ -636,6 +685,18 @@ class NotifeeService {
     // Server-authoritative launcher/app-icon badge total (e.g. "3" unread).
     const badgeCount = Number(data.badgeCount ?? data.unreadCount);
     const hasBadge = Number.isFinite(badgeCount) && badgeCount >= 0;
+
+    // Sender's chat avatar → rendered as the notification largeIcon (Signal /
+    // WhatsApp style). The server sends `senderAvatar` (which may be a relative
+    // upload path like `/uploads/...`), so resolve it to an absolute URL Notifee
+    // can fetch. Empty/unset → omit largeIcon and Notifee falls back to the app
+    // icon. `circularLargeIcon` clips it to a circle to match the in-app avatar.
+    const avatarUrl = uploadUrl(data.senderAvatar || data.avatar || "");
+    const largeIconOpts =
+      avatarUrl
+        ? { largeIcon: avatarUrl, circularLargeIcon: true }
+        : {};
+
     try {
       await notifee.displayNotification({
         ...(id ? { id } : {}),
@@ -650,6 +711,8 @@ class NotifeeService {
           sound: "default",
           // Drive the launcher dot/count from the running total.
           ...(hasBadge ? { badgeCount } : {}),
+          // Chat-avatar largeIcon (circular) — parity with the call notification.
+          ...largeIconOpts,
           // No custom `smallIcon` — Notifee falls back to the app's launcher
           // icon. We deliberately avoid generating a dedicated notification
           // drawable via expo-notifications `icon`/`color` because those inject
@@ -658,8 +721,18 @@ class NotifeeService {
         },
       });
     } catch (err) {
-      // Retry once without any extra android options as a last-ditch fallback.
+      // SELF-HEAL: the most likely failure here is the MESSAGE channel not
+      // existing yet (e.g. ensureChannels was interrupted mid-boot, or a prior
+      // build never created it). Recreate it explicitly, then retry WITHOUT the
+      // largeIcon (a bad avatar URL is a secondary failure cause). As a final
+      // fallback post on the always-present "default" channel so the message
+      // ALWAYS surfaces in the status bar.
+      console.warn(
+        "[NotifeeService] message display failed; recreating channel + retrying:",
+        err,
+      );
       try {
+        await this.createMessageChannel();
         await notifee.displayNotification({
           ...(id ? { id } : {}),
           title,
@@ -670,10 +743,29 @@ class NotifeeService {
             importance: this.AndroidImportance.HIGH ?? 4,
             pressAction: { id: "default", launchActivity: "default" },
             sound: "default",
+            ...(hasBadge ? { badgeCount } : {}),
           },
         });
       } catch (err2) {
-        console.warn("[NotifeeService] Failed to display message:", err2);
+        // LAST RESORT: the default channel is created by expo-notifications /
+        // the FCM default-channel meta-data, so it is effectively always
+        // present. Posting here guarantees the user still sees the message.
+        try {
+          await notifee.displayNotification({
+            ...(id ? { id } : {}),
+            title,
+            body,
+            data: { ...data } as Record<string, string>,
+            android: {
+              channelId: "default",
+              importance: this.AndroidImportance.HIGH ?? 4,
+              pressAction: { id: "default", launchActivity: "default" },
+              sound: "default",
+            },
+          });
+        } catch (err3) {
+          console.warn("[NotifeeService] Failed to display message:", err3);
+        }
       }
     }
   }

@@ -13,6 +13,7 @@ import {
   TextInput,
   Vibration,
   View,
+  Dimensions,
 } from "react-native";
 import {
   setAudioModeAsync,
@@ -21,6 +22,12 @@ import {
 } from "expo-audio";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from "react-native-reanimated";
 import {
   mediaDevices,
   RTCPeerConnection,
@@ -164,6 +171,101 @@ const PipSelfView = memo(function PipSelfView(props: {
       // intermittently hides the self preview entirely.
       zOrder={1}
     />
+  );
+});
+
+// ── Draggable PiP self-view (Signal model) ───────────────────────────────────
+// Signal lets you DRAG the local self-preview tile around and it SNAPS to the
+// nearest corner. We replicate that with react-native-gesture-handler (Pan) +
+// react-native-reanimated shared values. CRITICAL for the flicker fix: the drag
+// runs entirely on the UI thread via useAnimatedStyle, so moving the tile NEVER
+// re-renders the memoized <PipSelfView> (RTCView) underneath — the native video
+// surface is never reattached, so there is no flicker/freeze while dragging
+// (the whole reason the surfaces were isolated in the first place).
+const PIP_W = 110;
+const PIP_H = 160;
+const PIP_MARGIN = 16;
+// Vertical clearance above the bottom controls bar so a bottom-snapped tile
+// never overlaps the call buttons.
+const PIP_BOTTOM_CLEARANCE = 120;
+
+const pipStyles = StyleSheet.create({
+  wrap: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    width: PIP_W,
+    height: PIP_H,
+    // Signal-style rounded corners; overflow:hidden clips the RTCView to them.
+    borderRadius: 18,
+    backgroundColor: "#000",
+    overflow: "hidden",
+    // zIndex alone does NOT lift a view above a sibling on Android — elevation
+    // is required, otherwise the full-screen remote video paints over the
+    // self-preview once the call connects and the local tile "disappears".
+    zIndex: 5,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.3)",
+  },
+  inner: {
+    width: "100%",
+    height: "100%",
+  },
+});
+
+const DraggablePipSelfView = memo(function DraggablePipSelfView(props: {
+  url: string;
+  mirror: boolean;
+  topInset: number;
+  bottomInset: number;
+}) {
+  const { width: screenW, height: screenH } = Dimensions.get("window");
+  // The four snap targets (top/bottom × left/right), clamped to safe-area.
+  const topY = props.topInset + 50;
+  const bottomY = screenH - props.bottomInset - PIP_H - PIP_BOTTOM_CLEARANCE;
+  const leftX = PIP_MARGIN;
+  const rightX = screenW - PIP_W - PIP_MARGIN;
+
+  // Start in the top-right corner (matches the previous fixed position).
+  const translateX = useSharedValue(rightX);
+  const translateY = useSharedValue(topY);
+  const startX = useSharedValue(rightX);
+  const startY = useSharedValue(topY);
+
+  const pan = Gesture.Pan()
+    .onStart(() => {
+      startX.value = translateX.value;
+      startY.value = translateY.value;
+    })
+    .onUpdate((e) => {
+      translateX.value = startX.value + e.translationX;
+      translateY.value = startY.value + e.translationY;
+    })
+    .onEnd(() => {
+      // Snap to the NEAREST corner by comparing the tile centre to the screen
+      // midpoints (Signal behaviour). Spring for a natural settle.
+      const centreX = translateX.value + PIP_W / 2;
+      const centreY = translateY.value + PIP_H / 2;
+      const snapX = centreX < screenW / 2 ? leftX : rightX;
+      const snapY = centreY < screenH / 2 ? topY : bottomY;
+      translateX.value = withSpring(snapX, { damping: 18, stiffness: 220 });
+      translateY.value = withSpring(snapY, { damping: 18, stiffness: 220 });
+    });
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: translateX.value },
+      { translateY: translateY.value },
+    ],
+  }));
+
+  return (
+    <GestureDetector gesture={pan}>
+      <Animated.View style={[pipStyles.wrap, animatedStyle]}>
+        <PipSelfView url={props.url} mirror={props.mirror} style={pipStyles.inner} />
+      </Animated.View>
+    </GestureDetector>
   );
 });
 
@@ -763,28 +865,49 @@ export default function CallScreen() {
   // A static high cap caused stalls/freezes at connect time on congested
   // networks — part of why calls to desktop/web felt slow and unstable.
   const bitrateRampTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const setVideoBitrate = useCallback((pc: RTCPeerConnection, bitrate: number) => {
-    try {
-      const senders =
-        typeof (pc as any).getSenders === "function"
-          ? (pc as any).getSenders()
-          : [];
-      for (const sender of senders) {
-        if (sender?.track?.kind !== "video") continue;
-        const params = sender.getParameters?.();
-        if (!params) continue;
-        if (!params.encodings || params.encodings.length === 0) {
-          params.encodings = [{}];
+  // Tracks the bitrate we last asked the encoder for, so the adaptive
+  // controller (in the getStats loop) can ramp DOWN on a degrading link and
+  // back UP on recovery without re-applying the same value every 3s sample.
+  const currentVideoBitrateRef = useRef<number>(300_000);
+  const setVideoBitrate = useCallback(
+    (
+      pc: RTCPeerConnection,
+      bitrate: number,
+      // Optional resolution downscale (1 = full, 2 = half each dimension, …).
+      // On a POOR link, halving resolution is what stops the freezes: a smaller
+      // frame fits the available bandwidth, so the encoder keeps a steady frame
+      // flowing instead of stalling trying to push full-res frames it can't.
+      scaleResolutionDownBy = 1,
+    ) => {
+      try {
+        const senders =
+          typeof (pc as any).getSenders === "function"
+            ? (pc as any).getSenders()
+            : [];
+        for (const sender of senders) {
+          if (sender?.track?.kind !== "video") continue;
+          const params = sender.getParameters?.();
+          if (!params) continue;
+          if (!params.encodings || params.encodings.length === 0) {
+            params.encodings = [{}];
+          }
+          params.encodings[0].maxBitrate = bitrate;
+          params.encodings[0].maxFramerate = 30;
+          params.encodings[0].scaleResolutionDownBy = scaleResolutionDownBy;
+          // "balanced" lets the encoder trade BOTH resolution and framerate as
+          // the link degrades, softening gracefully instead of freezing. The
+          // old "maintain-framerate" forced full FPS on a weak uplink, which
+          // starved quality and produced the stutter/freeze the user reported.
+          (params as any).degradationPreference = "balanced";
+          sender.setParameters?.(params).catch?.(() => {});
         }
-        params.encodings[0].maxBitrate = bitrate;
-        params.encodings[0].maxFramerate = 30;
-        (params as any).degradationPreference = "maintain-framerate";
-        sender.setParameters?.(params).catch?.(() => {});
+        currentVideoBitrateRef.current = bitrate;
+      } catch {
+        /* setParameters not critical — ignore */
       }
-    } catch {
-      /* setParameters not critical — ignore */
-    }
-  }, []);
+    },
+    [],
+  );
 
   const applySenderEncodingLimits = useCallback(
     (pc: RTCPeerConnection) => {
@@ -2001,6 +2124,36 @@ export default function CallScreen() {
           q = "poor";
         }
         if (q !== "unknown") {
+          // ── ADAPTIVE BITRATE (Signal-style sender throttle) ──────────────
+          // Feed the measured quality back into the ENCODER so a degrading link
+          // is met by SENDING LESS, not by freezing. Previously the encoder only
+          // ever ramped UP to a fixed 1.2 Mbps ceiling and never backed off —
+          // overwhelming a weak mobile uplink, which is exactly what produced
+          // the stutter/lag/freeze + "Poor"/"unstable" badge the user saw.
+          //   • poor → 200 kbps + half-resolution (keeps a steady, smaller frame
+          //     flowing instead of stalling on full-res frames it can't push)
+          //   • fair → 500 kbps, full resolution
+          //   • good → restore toward the 1.2 Mbps ceiling, full resolution
+          // We only call setParameters when the TARGET actually changes (the
+          // currentVideoBitrateRef guard) so we never thrash the encoder on
+          // every 3s sample. Voice calls have no video sender → this no-ops.
+          if (callType === "video") {
+            let targetBitrate: number;
+            let scale: number;
+            if (q === "poor") {
+              targetBitrate = 200_000;
+              scale = 2;
+            } else if (q === "fair") {
+              targetBitrate = 500_000;
+              scale = 1;
+            } else {
+              targetBitrate = 1_200_000;
+              scale = 1;
+            }
+            if (currentVideoBitrateRef.current !== targetBitrate) {
+              setVideoBitrate(pc, targetBitrate, scale);
+            }
+          }
           setConnectionQuality(q);
           // Tell the peer OUR measured quality so THEY can surface a
           // "<name>'s connection is unstable" banner — exactly how Teams/Meet
@@ -2347,12 +2500,6 @@ export default function CallScreen() {
     () => (localStream ? (localStream as any).toURL() : null),
     [localStream],
   );
-  // Memoize the PiP dynamic style so we don't allocate a NEW style array/object
-  // every render (which would also churn the memoized PiP surface).
-  const pipStyle = useMemo(
-    () => [styles.localVideo, { top: insets.top + 50 }],
-    [styles.localVideo, insets.top],
-  );
 
   const qualityColor =
     connectionQuality === "good"
@@ -2417,7 +2564,12 @@ export default function CallScreen() {
           FULL-SCREEN above instead, then seamlessly remaps into this PiP the
           moment the call is answered (same stream object, no re-acquire). */}
       {showPipSelfPreview && localURL ? (
-        <PipSelfView url={localURL} mirror={usingFrontCamera} style={pipStyle} />
+        <DraggablePipSelfView
+          url={localURL}
+          mirror={usingFrontCamera}
+          topInset={insets.top}
+          bottomInset={insets.bottom}
+        />
       ) : null}
 
       {/* Top status bar — connection quality + peer-mute, once connected

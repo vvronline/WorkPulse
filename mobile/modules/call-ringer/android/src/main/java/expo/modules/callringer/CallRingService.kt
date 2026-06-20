@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.media.AudioAttributes
 import android.media.MediaPlayer
@@ -139,8 +140,10 @@ class CallRingService : Service() {
     val callType = intent?.getStringExtra(EXTRA_CALL_TYPE) ?: "voice"
     val scheme = intent?.getStringExtra(EXTRA_SCHEME) ?: "workpulse"
 
-    // Post the foreground notification FIRST (required within ~5s of
-    // startForegroundService or the OS throws).
+    // Post the foreground notification FIRST, with NO avatar bitmap yet
+    // (required within ~5s of startForegroundService or the OS throws — a
+    // network avatar fetch must never block this). The avatar is loaded
+    // asynchronously below and the notification is re-posted once it lands.
     val notification = buildCallNotification(
       title = title,
       body = body,
@@ -151,6 +154,7 @@ class CallRingService : Service() {
       callerAvatar = callerAvatar,
       callType = callType,
       scheme = scheme,
+      avatarBitmap = null,
     )
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -161,6 +165,37 @@ class CallRingService : Service() {
       )
     } else {
       startForeground(NOTIFICATION_ID, notification)
+    }
+
+    // CALLER AVATAR (Signal-Android parity): load the caller's chat avatar off
+    // the main thread, then RE-POST the same notification id with the avatar set
+    // as the CallStyle Person icon + largeIcon. Best-effort: any failure just
+    // leaves the already-posted text/icon notification untouched. Skipped when
+    // no avatar URL was supplied.
+    if (callerAvatar.isNotBlank()) {
+      Thread {
+        val bitmap = AvatarLoader.load(applicationContext, callerAvatar)
+        if (bitmap != null) {
+          try {
+            val withAvatar = buildCallNotification(
+              title = title,
+              body = body,
+              callId = callId,
+              conversationId = conversationId,
+              callerId = callerId,
+              callerName = callerName,
+              callerAvatar = callerAvatar,
+              callType = callType,
+              scheme = scheme,
+              avatarBitmap = bitmap,
+            )
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.notify(NOTIFICATION_ID, withAvatar)
+          } catch (_: Throwable) {
+            // Re-notify is best-effort; the original notification still shows.
+          }
+        }
+      }.apply { isDaemon = true }.start()
     }
 
     // Start the ringtone (unless silent).
@@ -190,6 +225,11 @@ class CallRingService : Service() {
     callerAvatar: String,
     callType: String,
     scheme: String,
+    // Pre-loaded, circular caller avatar bitmap (or null on the first text-only
+    // pass / when no avatar is available). When present it is set as both the
+    // CallStyle Person icon AND the notification largeIcon so the caller's chat
+    // photo shows in the status-bar/lock-screen call UI (Signal-Android parity).
+    avatarBitmap: Bitmap?,
   ): Notification {
     // Content (body tap) + FULL-SCREEN intent → open the app's call screen in
     // the RINGING (incoming) state WITHOUT auto-answering, so the user still
@@ -225,13 +265,32 @@ class CallRingService : Service() {
       .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
       .setFullScreenIntent(contentPending, true)
 
+    // Caller's chat avatar as the notification largeIcon (collapsed/expanded
+    // contact photo). Only set when the bitmap has been loaded (the async
+    // re-notify pass) — the first text-only pass passes null so the foreground
+    // service starts within the OS deadline.
+    if (avatarBitmap != null) {
+      builder.setLargeIcon(avatarBitmap)
+    }
+
     // Prefer the CallStyle template (API 23+ via NotificationCompat). It renders
     // the system's branded green Answer / red Decline buttons.
     try {
-      val caller = PersonCompat.Builder()
+      val personBuilder = PersonCompat.Builder()
         .setName(callerName.ifEmpty { title })
         .setImportant(true)
-        .build()
+      // Attach the caller's chat avatar to the Person so the CallStyle template
+      // shows the contact photo (Signal-Android CallNotificationBuilder parity).
+      if (avatarBitmap != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        try {
+          personBuilder.setIcon(
+            androidx.core.graphics.drawable.IconCompat.createWithBitmap(avatarBitmap),
+          )
+        } catch (_: Throwable) {
+          // Icon attach is best-effort; the name-only Person still renders.
+        }
+      }
+      val caller = personBuilder.build()
       val callStyle = NotificationCompat.CallStyle.forIncomingCall(
         caller,
         declinePending,

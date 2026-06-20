@@ -368,6 +368,11 @@ class PushNotificationService {
                 messageId: String(messageData.messageId),
                 senderId: String(messageData.senderId),
                 senderName: messageData.senderName,
+                // Carry the sender's avatar so the mobile client can render it as
+                // the notification largeIcon (chat-avatar parity with calls, which
+                // already send callerAvatar). Empty string when the sender has no
+                // avatar — the client falls back to the app icon.
+                senderAvatar: messageData.senderAvatar || "",
                 unreadCount: String(unreadCount),
                 badgeCount: String(unreadCount),
                 dedupeKey: `msg:${messageData.messageId}`,
