@@ -49,7 +49,24 @@ export default function Index() {
       if (cancelled) return;
       let route = peekPendingCall();
       if (!route) {
-        route = await loadPersistedPendingCall();
+        // Bounded retry for the SecureStore-persisted route. On a LOCKED +
+        // KILLED device the full-screen-intent AUTO-launches this activity the
+        // instant the notification is posted; although displayIncomingCall now
+        // persists the route BEFORE displayNotification(), the async SecureStore
+        // write can still land a few milliseconds after this brand-new process
+        // starts reading. A single read could therefore miss it and fall through
+        // to the dashboard (the flash). Retry a handful of times over ~600ms so
+        // the route is reliably picked up and we route STRAIGHT to /call. This
+        // adds no delay on a normal (non-call) launch beyond the first miss
+        // since a genuinely absent route returns null immediately each attempt.
+        for (let attempt = 0; attempt < 6 && !route; attempt++) {
+          route = await loadPersistedPendingCall();
+          if (route || cancelled) break;
+          // Re-check the in-memory route too — a warm Notifee tap may set it.
+          route = peekPendingCall();
+          if (route) break;
+          await new Promise((r) => setTimeout(r, 100));
+        }
       }
       if (cancelled) return;
       setCallRoute(route ?? null);

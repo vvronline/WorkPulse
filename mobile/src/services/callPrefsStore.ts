@@ -26,16 +26,31 @@ const CALL_PREFS_KEY = "wp_call_notification_prefs";
 export type CachedCallPrefs = {
   /** When true, the incoming-call notification must be posted silently. */
   muteAll: boolean;
+  /**
+   * The user's SELECTED incoming-call ringtone id (e.g. "classic", "calm",
+   * "urgent", … or "none"). Cached so the headless/killed Notifee path can post
+   * the incoming-call notification on the matching per-tone channel (whose sound
+   * is the bundled res/raw/ringtone_<id> resource) — making the status-bar ring
+   * use the user's CHOICE instead of a single fixed tone. Falls back to
+   * "classic" when absent.
+   */
+  ringtone: string;
 };
 
-const DEFAULT_CALL_PREFS: CachedCallPrefs = { muteAll: false };
+const DEFAULT_CALL_PREFS: CachedCallPrefs = {
+  muteAll: false,
+  ringtone: "classic",
+};
 
 /** Persist the call-relevant prefs. Safe from any context; never throws. */
 export async function persistCallPrefs(prefs: CachedCallPrefs): Promise<void> {
   try {
     await SecureStore.setItemAsync(
       CALL_PREFS_KEY,
-      JSON.stringify({ muteAll: !!prefs.muteAll }),
+      JSON.stringify({
+        muteAll: !!prefs.muteAll,
+        ringtone: prefs.ringtone || "classic",
+      }),
     );
   } catch {
     // Best-effort only — the live call screen still respects prefs directly.
@@ -43,15 +58,22 @@ export async function persistCallPrefs(prefs: CachedCallPrefs): Promise<void> {
 }
 
 /**
- * Load the cached call prefs. Returns the safe default (not muted) when absent,
- * malformed, or on any error so an incoming call is never silently dropped.
+ * Load the cached call prefs. Returns the safe default (not muted, classic
+ * ringtone) when absent, malformed, or on any error so an incoming call is never
+ * silently dropped.
  */
 export async function loadCallPrefs(): Promise<CachedCallPrefs> {
   try {
     const raw = await SecureStore.getItemAsync(CALL_PREFS_KEY);
     if (!raw) return DEFAULT_CALL_PREFS;
     const parsed = JSON.parse(raw) as Partial<CachedCallPrefs>;
-    return { muteAll: Boolean(parsed?.muteAll) };
+    return {
+      muteAll: Boolean(parsed?.muteAll),
+      ringtone:
+        typeof parsed?.ringtone === "string" && parsed.ringtone
+          ? parsed.ringtone
+          : "classic",
+    };
   } catch {
     return DEFAULT_CALL_PREFS;
   }

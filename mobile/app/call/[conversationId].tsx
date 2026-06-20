@@ -63,6 +63,11 @@ import {
 import { setShowWhenLocked } from "../../modules/lock-screen";
 import { notifeeService } from "../../src/services/notifeeService";
 import { persistCallPrefs } from "../../src/services/callPrefsStore";
+import {
+  subscribeAnswerIntent,
+  consumeAnswerIntent,
+  clearAnswerIntent,
+} from "../../src/realtime/callAnswerIntent";
 
 const FALLBACK_ICE = [
   { urls: "stun:stun.l.google.com:19302" },
@@ -492,9 +497,14 @@ export default function CallScreen() {
         const merged = mergeNotificationPrefs(r.data || {});
         setNotificationPrefs(merged);
         // Cache the call-relevant prefs so the KILLED/headless Notifee path can
-        // honour `muteAll` without an authenticated API call (see callPrefsStore
-        // + notifeeService.displayIncomingCall).
-        void persistCallPrefs({ muteAll: !!merged.muteAll });
+        // honour `muteAll` AND the user's SELECTED ringtone without an
+        // authenticated API call (see callPrefsStore + notifeeService
+        // .displayIncomingCall, which posts on the per-tone channel matching
+        // this ringtone id so the status-bar ring uses the user's choice).
+        void persistCallPrefs({
+          muteAll: !!merged.muteAll,
+          ringtone: merged.ringtone || "classic",
+        });
       })
       .catch(() => {
         if (!active) return;
@@ -1218,6 +1228,124 @@ export default function CallScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
+  // Re-acquire a DEAD/MISSING video track and republish it. On a background or
+  // over-the-lock-screen answer the camera can come up as an ended/disabled
+  // track (Android won't start the camera while the keyguard is up) — the
+  // stream object exists but carries no LIVE video, so getMedia() returns it
+  // unchanged and BOTH the local self-view AND the peer keep seeing a BLACK
+  // frame even after the activity resumes. This helper (run on resume for video
+  // calls) grabs a fresh camera track and replaceTrack()s it onto the existing
+  // video sender — renegotiating only when no sender exists yet — then
+  // re-announces our camera state. Returns true if it republished a track.
+  const recoverDeadVideoTrack = useCallback(async (): Promise<boolean> => {
+    if (callType !== "video" || videoOff) return false;
+    const stream = localStreamRef.current;
+    if (!stream) return false;
+    const liveVideo = stream
+      .getVideoTracks()
+      .some((t) => (t as any).readyState !== "ended" && t.enabled !== false);
+    if (liveVideo) return false; // already have a usable camera track
+
+    try {
+      const fresh = await mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: usingFrontCamera ? "user" : "environment",
+          width: { ideal: 1280, max: 1280 },
+          height: { ideal: 720, max: 720 },
+          frameRate: { ideal: 30, max: 30 },
+        },
+      });
+      const newTrack = fresh.getVideoTracks()[0];
+      if (!newTrack) return false;
+
+      // Swap the stale/ended video track in our published stream for the fresh
+      // one so the local self-view (RTCView) repaints LIVE video immediately.
+      stream.getVideoTracks().forEach((t) => {
+        try {
+          if ((t as any).readyState === "ended") stream.removeTrack(t);
+        } catch {
+          /* ignore */
+        }
+      });
+      try {
+        stream.addTrack(newTrack);
+      } catch {
+        /* ignore — may already be present */
+      }
+      setLocalStream(stream);
+
+      const pc = pcRef.current;
+      const target = peerIdRef.current;
+      if (pc) {
+        const senders =
+          typeof (pc as any).getSenders === "function"
+            ? (pc as any).getSenders()
+            : [];
+        const videoSender = senders.find(
+          (s: any) => s.track?.kind === "video",
+        );
+        if (videoSender && typeof videoSender.replaceTrack === "function") {
+          // Swap the dead track for the live one — no renegotiation needed.
+          await videoSender.replaceTrack(newTrack);
+        } else if ((pc as any).signalingState === "stable") {
+          // No video sender yet — add the track + renegotiate so the peer
+          // starts receiving our camera.
+          try {
+            pc.addTrack(newTrack, stream);
+          } catch {
+            /* ignore */
+          }
+          if (target) {
+            runSerialized(async () => {
+              try {
+                const offer = await pc.createOffer({
+                  offerToReceiveAudio: true,
+                  offerToReceiveVideo: true,
+                });
+                await pc.setLocalDescription(offer);
+                await socket.sendWithBackoff(
+                  "call_signal",
+                  {
+                    conversationId,
+                    targetUserId: target,
+                    signal: { type: "offer", sdp: offer.sdp },
+                  },
+                  {
+                    timeoutMs: 4000,
+                    maxAttempts: 5,
+                    initialBackoffMs: 120,
+                    maxBackoffMs: 800,
+                  },
+                );
+              } catch (err: any) {
+                console.warn(
+                  "[call] dead-video recovery renegotiation failed:",
+                  err?.message || err,
+                );
+              }
+            });
+          }
+        }
+        // Re-announce camera ON so the peer flips from avatar → our live video.
+        if (target) {
+          socket.send("call_signal", {
+            conversationId,
+            targetUserId: target,
+            signal: { type: "video-state", videoOff: false },
+          });
+        }
+      }
+      return true;
+    } catch (err: any) {
+      console.warn(
+        "[call] failed to recover dead video track:",
+        err?.message || err,
+      );
+      return false;
+    }
+  }, [callType, videoOff, usingFrontCamera, conversationId, runSerialized]);
+
   // AppState-resume media retry. When a call is answered while the app is
   // backgrounded or over the lock screen, Android cannot show the runtime
   // permission dialog and `getUserMedia` fails — leaving a black self-view and
@@ -1228,7 +1356,14 @@ export default function CallScreen() {
     const sub = AppState.addEventListener("change", (state) => {
       if (state !== "active") return;
       if (status === "ended" || status === "rejected") return;
-      if (localStreamRef.current) return;
+      // If we already have a stream BUT its video track is dead (camera came up
+      // behind the keyguard), recover that track instead of bailing — otherwise
+      // the self-view + peer stay black. recoverDeadVideoTrack no-ops for voice
+      // calls / when video is intentionally off / when a live track exists.
+      if (localStreamRef.current) {
+        void recoverDeadVideoTrack();
+        return;
+      }
       (async () => {
         const stream = await getMedia(true);
         if (!stream) return;
@@ -1824,6 +1959,42 @@ export default function CallScreen() {
     if (mode !== "incoming" || !autoAnswer || status !== "ringing") return;
     acceptIncoming().catch(() => {});
   }, [acceptIncoming, autoAnswer, mode, status]);
+
+  // Answer-intent bridge. When the user taps "Answer" on the status-bar /
+  // full-screen call notification while THIS call screen is ALREADY mounted in
+  // the ringing state (the websocket IncomingCallListener pushed it on
+  // `call_incoming`), the notification handler can't navigate — the screen is
+  // already up. Instead nativeCallService.handleAction("answer") emits an
+  // answer intent which we consume here to actually run acceptIncoming(). This
+  // is what fixes "tapping Answer just shows the ringing UI and never connects".
+  // We also synchronously consume any latched intent on mount in case it was
+  // emitted in the tick before this subscription wired up.
+  useEffect(() => {
+    if (mode !== "incoming") return;
+    const callId = callIdRef.current;
+    if (callId == null || !Number.isFinite(conversationId)) return;
+    // Belt-and-suspenders: pick up an intent emitted just before subscribe.
+    if (consumeAnswerIntent(callId, conversationId)) {
+      acceptIncoming().catch(() => {});
+    }
+    const unsub = subscribeAnswerIntent(callId, conversationId, () => {
+      // Only accept while still ringing — ignore a late intent after the call
+      // has already moved on (connecting/connected/ended).
+      if (status === "ringing") acceptIncoming().catch(() => {});
+    });
+    return unsub;
+    // status is intentionally read inside the callback (not a dep) so the
+    // subscription is stable for the call's lifetime; callIdRef is a ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, conversationId, acceptIncoming]);
+
+  // Clear any latched answer intent on unmount so it can't auto-accept a future
+  // unrelated call screen that happens to mount afterwards.
+  useEffect(() => {
+    return () => {
+      clearAnswerIntent();
+    };
+  }, []);
 
   // Auto-decline when launched from the notification's "Decline" action.
   useEffect(() => {

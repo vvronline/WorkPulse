@@ -4,6 +4,7 @@ import { socket } from "../realtime/socket";
 import type { NotificationPayload } from "./pushNotificationService";
 import { setPendingCall, pendingCallFromData } from "../realtime/pendingCall";
 import { beginCallNavigation, isCallActive } from "../realtime/callRouting";
+import { emitAnswerIntent } from "../realtime/callAnswerIntent";
 import { rejectCallHttp } from "../features";
 
 type NativeAction = "answer" | "reject" | "end";
@@ -152,10 +153,19 @@ class NativeCallService {
       // "UI shows but never connects"). Instead we navigate to the call screen
       // with autoAnswer=1 and let it own the accept.
       //
-      // Stash a pending route so a COLD-started app (Linking deep link is lost
-      // before expo-router mounts) is still routed to the call screen by the
-      // root layout. Claim navigation so concurrent paths don't double-mount
-      // the fullScreenModal (which crashes Fabric).
+      // CASE A — the call screen is ALREADY MOUNTED for this call (e.g. the
+      // websocket IncomingCallListener pushed it the moment `call_incoming`
+      // arrived, and it is sitting in the ringing state). In that case there is
+      // nothing to navigate to: instead we EMIT an answer intent that the
+      // mounted screen consumes to run acceptIncoming(). Without this the
+      // navigation guard correctly refused to re-navigate but nobody told the
+      // screen to accept — so the user kept staring at the ringing UI after
+      // tapping Answer (the "opens incoming UI instead of connecting" bug).
+      if (isCallActive(callId, conversationId)) {
+        emitAnswerIntent(callId, conversationId);
+        return;
+      }
+
       const route = pendingCallFromData({
         ...payload,
         notificationAction: "accept_call",
@@ -163,25 +173,23 @@ class NativeCallService {
       if (route) setPendingCall(route);
 
       // Claim navigation. If the claim SUCCEEDS, this is the first path to
-      // surface this call: the COLD-start consumers (app/index.tsx redirect +
-      // PendingCallNavigator) will route to /call from the pending route above.
-      // We must NOT ALSO fire a Linking deep link in that case — that produced
-      // a SECOND navigation that flashed the dashboard/loader before the call
-      // UI (and risked a Fabric double-mount). Only deep-link when the app is
-      // ALREADY ALIVE and another path has the claim (claim fails) yet no call
-      // screen is actually mounted — a rare warm edge case.
-      const claimed = beginCallNavigation(callId, conversationId);
-      if (!claimed && !isCallActive(callId, conversationId)) {
-        try {
-          // Include peerName/peerAvatar so the call screen shows the caller's
-          // name (not the generic "Call" fallback) on this deep-link path.
-          const peerName = encodeURIComponent(payload?.callerName || "");
-          const peerAvatar = encodeURIComponent(payload?.callerAvatar || "");
-          const href = `/call/${conversationId}?mode=incoming&callId=${callId}&callType=${payload?.callType || "voice"}&peerId=${payload?.callerId || ""}&peerName=${peerName}&peerAvatar=${peerAvatar}&autoAnswer=1`;
-          await Linking.openURL(Linking.createURL(href));
-        } catch (err) {
-          console.warn("[nativeCallService] Failed to open call screen on answer:", err);
-        }
+      // surface this call. We BOTH stash the pending route (so a COLD-started
+      // app routed by app/index.tsx / PendingCallNavigator reaches /call) AND
+      // fire the deep link so a WARM, alive app navigates immediately — the
+      // cold-start consumers only run their effects at mount, so in a warm app
+      // nobody else would navigate (the second half of the "Answer does
+      // nothing" bug). The navigation guard + autoAnswer pending route prevent
+      // a double-mount/double-accept if both paths somehow run.
+      beginCallNavigation(callId, conversationId);
+      try {
+        // Include peerName/peerAvatar so the call screen shows the caller's
+        // name (not the generic "Call" fallback) on this deep-link path.
+        const peerName = encodeURIComponent(payload?.callerName || "");
+        const peerAvatar = encodeURIComponent(payload?.callerAvatar || "");
+        const href = `/call/${conversationId}?mode=incoming&callId=${callId}&callType=${payload?.callType || "voice"}&peerId=${payload?.callerId || ""}&peerName=${peerName}&peerAvatar=${peerAvatar}&autoAnswer=1`;
+        await Linking.openURL(Linking.createURL(href));
+      } catch (err) {
+        console.warn("[nativeCallService] Failed to open call screen on answer:", err);
       }
       return;
     }

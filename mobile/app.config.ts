@@ -97,6 +97,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // full-screen-intent incoming-call notifications surface the call UI over
     // the lock screen without the SYSTEM_ALERT_WINDOW overlay permission.
     "./scripts/withAndroidCallActivityFlags",
+    // Copies the bundled call ringtone WAV files (assets/sounds/*.wav, generated
+    // by scripts/generate-call-sounds.cjs) into android res/raw so the Notifee
+    // calls channel can ring with the WorkPulse tone instead of the system
+    // default in the killed/background status-bar state.
+    "./scripts/withAndroidRingtoneAssets",
     [
       "expo-audio",
       {

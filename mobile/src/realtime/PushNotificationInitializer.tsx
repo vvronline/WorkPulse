@@ -36,14 +36,19 @@ export default function PushNotificationInitializer() {
         console.error("Failed to register device token after login:", err),
       );
 
-    // Cache the call-relevant notification prefs (muteAll) to durable storage so
-    // the KILLED/headless incoming-call Notifee path can honour them WITHOUT an
-    // authenticated API call (see callPrefsStore + notifeeService). The call
-    // screen also refreshes this cache whenever it opens, but priming it at
-    // login covers the very first killed-state ring before any call has occurred.
+    // Cache the call-relevant notification prefs (muteAll + selected ringtone) to
+    // durable storage so the KILLED/headless incoming-call Notifee path can
+    // honour them WITHOUT an authenticated API call (see callPrefsStore +
+    // notifeeService, which posts on the per-tone channel matching the selected
+    // ringtone). The call screen also refreshes this cache whenever it opens, but
+    // priming it at login covers the very first killed-state ring before any call
+    // has occurred.
     getNotificationPrefs()
       .then((r) => {
-        void persistCallPrefs({ muteAll: !!r.data?.muteAll });
+        void persistCallPrefs({
+          muteAll: !!r.data?.muteAll,
+          ringtone: r.data?.ringtone || "classic",
+        });
       })
       .catch(() => {
         /* best-effort — defaults to not-muted so a call is never silently dropped */

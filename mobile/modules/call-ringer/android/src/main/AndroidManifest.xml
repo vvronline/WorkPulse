@@ -1,0 +1,21 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!--
+    CallRingService — a SHORT-LIVED foreground service that drives the
+    incoming-call ring (looping MediaPlayer on the user's selected ringtone) and
+    a repeating Vibrator, fully app-controlled, in EVERY app state (foreground,
+    background, locked, killed). This mirrors how Signal/Teams ring on Android:
+    they do NOT rely on the notification channel sound (which is fixed/immutable)
+    but run a foreground service so the ring is consistent and stops the instant
+    the call is answered/declined.
+
+    foregroundServiceType="phoneCall" is required on Android 10+ (API 29) for a
+    call-related FGS. The matching FOREGROUND_SERVICE_PHONE_CALL runtime
+    permission is already declared in app.config.ts's android.permissions.
+  -->
+  <application>
+    <service
+      android:name="expo.modules.callringer.CallRingService"
+      android:exported="false"
+      android:foregroundServiceType="phoneCall" />
+  </application>
+</manifest>

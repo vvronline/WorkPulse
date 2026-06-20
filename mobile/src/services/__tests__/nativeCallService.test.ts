@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 /**
  * Unit tests for NativeCallService action mapping, payload storage and the
  * CallKeep listener lifecycle (P1.3).
@@ -34,6 +35,7 @@ const mockIsCallActive = jest.fn().mockReturnValue(false);
 const mockSetPendingCall = jest.fn();
 const mockPendingCallFromData = jest.fn().mockReturnValue(null);
 const mockRejectCallHttp = jest.fn().mockResolvedValue(undefined);
+const mockEmitAnswerIntent = jest.fn();
 
 // Force the iOS CallKeep path so resolveCallKeepModule() returns our mock
 // (it returns null on Android by design).
@@ -64,6 +66,10 @@ jest.mock("../../realtime/callRouting", () => ({
 
 jest.mock("../../features", () => ({ rejectCallHttp: mockRejectCallHttp }));
 
+jest.mock("../../realtime/callAnswerIntent", () => ({
+  emitAnswerIntent: mockEmitAnswerIntent,
+}));
+
 // Helper: load a FRESH service singleton (module state reset) per test.
 type NativeCallServiceModule =
   typeof import("../nativeCallService");
@@ -75,7 +81,7 @@ function loadService(): NativeCallServiceModule["nativeCallService"] {
   return svc;
 }
 
-const flush = () => new Promise((resolve) => setImmediate(resolve));
+const flush = () => new Promise<void>((resolve) => setImmediate(() => resolve()));
 
 describe("NativeCallService — action mapping & payload handling", () => {
   beforeEach(() => {
@@ -127,7 +133,7 @@ describe("NativeCallService — action mapping & payload handling", () => {
     const nativeCallService = loadService();
 
     let capturedAction: string | null = null;
-    const handler = jest.fn((params) => {
+    const handler = jest.fn((params: { action: string }) => {
       capturedAction = params.action;
     });
 
@@ -146,7 +152,7 @@ describe("NativeCallService — action mapping & payload handling", () => {
     const nativeCallService = loadService();
 
     let capturedAction: string | null = null;
-    const handler = jest.fn((params) => {
+    const handler = jest.fn((params: { action: string }) => {
       capturedAction = params.action;
     });
 
@@ -165,9 +171,11 @@ describe("NativeCallService — action mapping & payload handling", () => {
     const nativeCallService = loadService();
 
     let capturedParams: { callId: number; conversationId: number } | null = null;
-    const handler = jest.fn((params) => {
-      capturedParams = params;
-    });
+    const handler = jest.fn(
+      (params: { callId: number; conversationId: number }) => {
+        capturedParams = params;
+      },
+    );
 
     nativeCallService.onAction(handler);
     await nativeCallService.handleAction("answer", {
@@ -272,6 +280,41 @@ describe("NativeCallService — action mapping & payload handling", () => {
     });
 
     expect(mockRejectCallHttp).toHaveBeenCalledWith(800, 80);
+  });
+
+  test("answer EMITS an answer intent (no navigation) when the call screen is already active", async () => {
+    // The mounted call screen owns the accept; tapping Answer must NOT navigate
+    // again (double-mount crash) — it must emit an intent the screen consumes.
+    mockIsCallActive.mockReturnValueOnce(true);
+    const nativeCallService = loadService();
+
+    await nativeCallService.handleAction("answer", {
+      callId: "900",
+      conversationId: "90",
+      callType: "voice",
+      callerName: "Liam",
+    });
+
+    expect(mockEmitAnswerIntent).toHaveBeenCalledWith(900, 90);
+    // Must not also claim navigation when the screen is already up.
+    expect(mockBeginCallNavigation).not.toHaveBeenCalled();
+  });
+
+  test("answer CLAIMS navigation + deep-links when no call screen is active", async () => {
+    mockIsCallActive.mockReturnValueOnce(false);
+    const nativeCallService = loadService();
+
+    await nativeCallService.handleAction("answer", {
+      callId: "910",
+      conversationId: "91",
+      callType: "voice",
+      callerName: "Mia",
+    });
+
+    // Warm-app path: claims navigation and does NOT emit a (screen-targeted)
+    // answer intent — the freshly-navigated screen auto-answers via autoAnswer.
+    expect(mockBeginCallNavigation).toHaveBeenCalledWith(910, 91);
+    expect(mockEmitAnswerIntent).not.toHaveBeenCalled();
   });
 });
 
