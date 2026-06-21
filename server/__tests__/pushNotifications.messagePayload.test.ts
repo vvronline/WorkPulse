@@ -1,12 +1,14 @@
 /**
  * Message push payload contract tests.
  *
- * Messages are sent as Android HYBRID FCM pushes: a top-level `notification`
- * block + an `android.notification` block on the dedicated "messages" channel
- * (so the OS renders the status-bar/lockscreen entry directly in the
- * background/killed state — the industry-standard chat approach), PLUS a `data`
- * block (for in-app routing + badge sync and foreground Notifee rendering).
- * Calls, by contrast, remain DATA-ONLY (see callPayload tests).
+ * Messages are sent as Android DATA-ONLY FCM pushes (no top-level
+ * `notification` block and no `android.notification` block) — exactly like
+ * CALLS — so the app's background/headless handler ALWAYS runs and renders the
+ * notification itself via Notifee with the sender's circular avatar largeIcon.
+ * The top-level `notification` block is retained on the payload object purely
+ * to render the webpush (desktop/browser) notification and is omitted from the
+ * Android multicast via `androidDataOnly`. iOS still renders via
+ * `apns.payload.aps.alert`.
  */
 
 process.env.FIREBASE_SERVICE_ACCOUNT_KEY = JSON.stringify({
@@ -53,7 +55,7 @@ describe("pushNotifications.sendMessageNotification", () => {
         sendEachForMulticast.mockClear();
     });
 
-    test("sends Android messages as hybrid (notification + data) high-priority pushes", async () => {
+    test("sends Android messages as DATA-ONLY high-priority pushes", async () => {
         const mockQuery = jest.fn().mockResolvedValue({ rows: [{ device_token: "token1" }] });
 
         const result = await pushNotifications.sendMessageNotification(
@@ -73,22 +75,16 @@ describe("pushNotifications.sendMessageNotification", () => {
         expect(result).toEqual({ succeeded: 1, failed: 0 });
 
         const sent = sendEachForMulticast.mock.calls[0][0];
-        // Top-level notification block so the OS renders the status-bar entry in
-        // the background/killed state.
-        expect(sent.notification).toEqual({
-            title: "Alice",
-            body: "Hello from Alice",
-        });
-        // android.notification targets the dedicated "messages" channel and
-        // carries the launcher badge count.
+        // DATA-ONLY: no top-level `notification` block on the Android multicast
+        // (it is omitted via androidDataOnly) so the app's headless/background
+        // handler runs and renders the message itself via Notifee with the
+        // sender's circular avatar largeIcon.
+        expect(sent.notification).toBeUndefined();
+        // No android.notification block either — high priority wakes the handler.
         expect(sent.android.priority).toBe("high");
-        expect(sent.android.notification).toMatchObject({
-            channelId: "messages",
-            priority: "high",
-            visibility: "private",
-            notificationCount: 5,
-        });
-        // data is retained for in-app routing + badge sync + foreground render.
+        expect(sent.android.notification).toBeUndefined();
+        // data carries everything the client needs: in-app routing, badge sync,
+        // foreground/headless Notifee render, and the sender's avatar.
         expect(sent.data).toMatchObject({
             type: "chat_message",
             title: "Alice",
@@ -100,6 +96,11 @@ describe("pushNotifications.sendMessageNotification", () => {
             unreadCount: "5",
             badgeCount: "5",
             dedupeKey: "msg:123",
+        });
+        // webpush still carries the notification block so desktop/browser render.
+        expect(sent.webpush.notification).toMatchObject({
+            title: "Alice",
+            body: "Hello from Alice",
         });
     });
 
