@@ -167,6 +167,30 @@ function messageNotificationId(messageId: string): string {
   return `wp-msg-${messageId}`;
 }
 
+// Notifee VALIDATES `vibrationPattern`: it MUST have an EVEN number of entries
+// (alternating wait/buzz durations) and createChannel()/displayNotification()
+// THROW on a malformed (odd-length) pattern. A throw inside createMessageChannel
+// means the messages channel is NEVER created, and Android then SILENTLY DROPS
+// every message notification (sound may play, but no status-bar/lock-screen
+// entry) — the root cause of "message push not appearing while calls work".
+// This guard returns the pattern only when it is safe, else undefined so the
+// caller omits the override entirely (never passes a bad pattern to Notifee).
+function safeVibrationPattern(
+  pattern: number[],
+): number[] | undefined {
+  if (!Array.isArray(pattern) || pattern.length === 0) return undefined;
+  if (pattern.length % 2 !== 0) return undefined;
+  if (pattern.some((v) => typeof v !== "number" || !Number.isFinite(v) || v < 0)) {
+    return undefined;
+  }
+  return pattern;
+}
+
+// Even-length message vibration pattern (wait 0, buzz 160, pause 80, buzz 160).
+// Mirrors the expo-notifications "messages" channel cadence. MUST stay
+// even-length (see safeVibrationPattern) or the messages channel won't create.
+const MESSAGE_VIBRATION_PATTERN = [0, 160, 80, 160];
+
 class NotifeeService {
   private notifee: NotifeeModule | null = null;
   private AndroidImportance: AndroidImportanceEnum = {};
@@ -286,6 +310,19 @@ class NotifeeService {
   private async createMessageChannel(): Promise<boolean> {
     const notifee = this.resolve();
     if (!notifee || Platform.OS !== "android") return false;
+    // ROOT-CAUSE FIX ("message push not appearing while calls work"): the
+    // previous pattern was `[160, 80, 160]` — an ODD number of entries. Notifee
+    // VALIDATES vibrationPattern (must be EVEN length, all values >= 0) and
+    // THROWS on a malformed one, so createChannel() threw, the `messages_v2`
+    // channel was NEVER created, and Android then SILENTLY DROPPED every chat
+    // notification (no status-bar/lock-screen entry — locked or unlocked).
+    // Calls were unaffected because they are rendered by the native
+    // CallRingService, which creates its own channel and bypasses Notifee.
+    // We now route the pattern through safeVibrationPattern() so a future bad
+    // value can never silently kill the channel again — when it returns
+    // undefined we OMIT the override entirely (Notifee then uses the channel
+    // default) rather than passing an invalid pattern.
+    const vibrationPattern = safeVibrationPattern(MESSAGE_VIBRATION_PATTERN);
     try {
       await notifee.createChannel({
         id: MESSAGE_CHANNEL_ID,
@@ -294,14 +331,35 @@ class NotifeeService {
         importance: this.AndroidImportance.HIGH ?? 4,
         sound: "default",
         vibration: true,
-        vibrationPattern: [160, 80, 160],
+        ...(vibrationPattern ? { vibrationPattern } : {}),
         lights: true,
         lightColor: "#FF6B6B",
       });
       return true;
     } catch (e) {
       console.warn("[NotifeeService] failed to create messages channel:", e);
-      return false;
+      // LAST-DITCH: retry WITHOUT the vibration pattern so a pattern-validation
+      // failure can never leave the messages channel uncreated (which would
+      // silently drop every chat notification).
+      try {
+        await notifee.createChannel({
+          id: MESSAGE_CHANNEL_ID,
+          name: "Messages",
+          description: "Chat message alerts",
+          importance: this.AndroidImportance.HIGH ?? 4,
+          sound: "default",
+          vibration: true,
+          lights: true,
+          lightColor: "#FF6B6B",
+        });
+        return true;
+      } catch (e2) {
+        console.warn(
+          "[NotifeeService] messages channel retry (no vibration) also failed:",
+          e2,
+        );
+        return false;
+      }
     }
   }
 
