@@ -751,6 +751,21 @@ class NotifeeService {
   /**
    * Displays a standard status-bar message notification. Reliable in
    * background/terminated state, unlike expo-notifications from a headless task.
+   *
+   * DELIVERY-FIRST, AVATAR-SECOND (Signal-Android parity / regression fix):
+   * The notification is POSTED IMMEDIATELY with NO avatar so it ALWAYS surfaces
+   * in every app state. The sender's circular avatar largeIcon is then fetched
+   * BEST-EFFORT with a hard timeout and, when it resolves, re-applied via a
+   * second `displayNotification` reusing the SAME notification id (Notifee
+   * updates the existing notification in place). This fixes "message push stopped
+   * working" — the previous implementation `await`-ed a network avatar download
+   * (SecureStore read + FileSystem.downloadAsync, NO timeout) in the CRITICAL
+   * path BEFORE posting. In the background/terminated state the FCM headless JS
+   * task has a very short OS-enforced lifetime; a slow/stalled download (or the
+   * task being killed mid-await) meant `displayNotification` never ran and the
+   * push was silently dropped. Signal-Android encodes the same lesson: post the
+   * notification synchronously, load the contact photo separately, never let the
+   * avatar block the notification from appearing.
    */
   async displayMessage(payload: NotificationPayload): Promise<void> {
     const notifee = this.resolve();
@@ -767,113 +782,113 @@ class NotifeeService {
     const badgeCount = Number(data.badgeCount ?? data.unreadCount);
     const hasBadge = Number.isFinite(badgeCount) && badgeCount >= 0;
 
-    // Sender's chat avatar → rendered as the notification largeIcon (Signal /
-    // WhatsApp style). The server sends `senderAvatar` (which may be a relative
-    // upload path like `/uploads/...`), so resolve it to an absolute URL Notifee
-    // can fetch. Empty/unset → omit largeIcon and Notifee falls back to the app
-    // icon. `circularLargeIcon` clips it to a circle to match the in-app avatar.
-    // The avatar is served behind the server's `/uploads` auth middleware, so a
-    // raw remote URL handed to Notifee's `largeIcon` 401s (Notifee can't attach
-    // a Bearer header) and silently shows no photo. Download it WITH the auth
-    // header to a local cache file first, then point `largeIcon` at that local
-    // `file://` URI. Falls back to the app icon when there is no avatar or the
-    // download fails.
-    const avatarUrl = uploadUrl(data.senderAvatar || data.avatar || "");
-    let localAvatarUri: string | null = null;
-    if (avatarUrl) {
-      localAvatarUri = await this.fetchAvatarToFile(avatarUrl);
-    }
-    const largeIconOpts =
-      localAvatarUri
-        ? { largeIcon: localAvatarUri, circularLargeIcon: true }
-        : {};
+    // Build the base Android options ONCE so the initial (no-avatar) post and the
+    // later avatar-update post stay perfectly in sync.
+    const baseAndroid = (largeIconOpts: Record<string, unknown>) => ({
+      channelId: MESSAGE_CHANNEL_ID,
+      importance: this.AndroidImportance.HIGH ?? 4,
+      visibility: this.AndroidVisibility.PRIVATE ?? 0,
+      pressAction: { id: "default", launchActivity: "default" },
+      sound: "default",
+      // CRITICAL: an Android notification with NO resolvable small icon is
+      // DROPPED SILENTLY — the channel's sound still plays (the "ding") but NO
+      // status-bar / lockscreen entry ever appears. Point Notifee at the app's
+      // launcher mipmap (always present) so the message notification displays.
+      smallIcon: "ic_launcher",
+      // Drive the launcher dot/count from the running total.
+      ...(hasBadge ? { badgeCount } : {}),
+      // Chat-avatar largeIcon (circular) — parity with the call notification.
+      ...largeIconOpts,
+    });
 
-    try {
-      await notifee.displayNotification({
-        ...(id ? { id } : {}),
-        title,
-        body,
-        data: { ...data } as Record<string, string>,
-        android: {
-          channelId: MESSAGE_CHANNEL_ID,
-          importance: this.AndroidImportance.HIGH ?? 4,
-          visibility: this.AndroidVisibility.PRIVATE ?? 0,
-          pressAction: { id: "default", launchActivity: "default" },
-          sound: "default",
-          // CRITICAL: an Android notification with NO resolvable small icon is
-          // DROPPED SILENTLY — the channel's sound still plays (the "ding") but
-          // NO status-bar / lockscreen entry ever appears. This was the root
-          // cause of "I hear the sound but the message never shows". The native
-          // CallRingService sets `applicationInfo.icon`, which is exactly why
-          // CALLS always rendered while MESSAGES never did. Point Notifee at the
-          // app's launcher mipmap (always present; carries NO FCM
-          // default-notification meta-data, so it does NOT collide with
-          // @react-native-firebase/messaging like expo-notifications' icon/color
-          // config does) so the message notification actually displays.
-          smallIcon: "ic_launcher",
-          // Drive the launcher dot/count from the running total.
-          ...(hasBadge ? { badgeCount } : {}),
-          // Chat-avatar largeIcon (circular) — parity with the call notification.
-          ...largeIconOpts,
-        },
-      });
-    } catch (err) {
-      // SELF-HEAL: the most likely failure here is the MESSAGE channel not
-      // existing yet (e.g. ensureChannels was interrupted mid-boot, or a prior
-      // build never created it). Recreate it explicitly, then retry WITHOUT the
-      // largeIcon (a bad avatar URL is a secondary failure cause). As a final
-      // fallback post on the always-present "default" channel so the message
-      // ALWAYS surfaces in the status bar.
-      console.warn(
-        "[NotifeeService] message display failed; recreating channel + retrying:",
-        err,
-      );
+    // ── STEP 1: post the notification IMMEDIATELY (no avatar) ──────────────
+    // This is the actual delivery and must never be blocked by the network.
+    const postNotification = async (
+      largeIconOpts: Record<string, unknown>,
+    ): Promise<void> => {
       try {
-        await this.createMessageChannel();
         await notifee.displayNotification({
           ...(id ? { id } : {}),
           title,
           body,
           data: { ...data } as Record<string, string>,
-          android: {
-            channelId: MESSAGE_CHANNEL_ID,
-            importance: this.AndroidImportance.HIGH ?? 4,
-            pressAction: { id: "default", launchActivity: "default" },
-            sound: "default",
-            // Same icon requirement as the primary attempt above — without a
-            // valid small icon the OS silently drops the notification.
-            smallIcon: "ic_launcher",
-            // KEEP the sender's circular avatar on the retry too. The previous
-            // implementation dropped `largeIconOpts` here, so any failure on the
-            // primary attempt (e.g. a transient channel error) lost the avatar
-            // even though it had already been downloaded successfully. Re-using
-            // the cached local file is free, so always re-attach it.
-            ...largeIconOpts,
-            ...(hasBadge ? { badgeCount } : {}),
-          },
+          android: baseAndroid(largeIconOpts),
         });
-      } catch (err2) {
-        // LAST RESORT: the default channel is created by expo-notifications /
-        // the FCM default-channel meta-data, so it is effectively always
-        // present. Posting here guarantees the user still sees the message.
+      } catch (err) {
+        // SELF-HEAL: the most likely failure is the MESSAGE channel not existing
+        // yet. Recreate it explicitly and retry; as a final fallback post on the
+        // always-present "default" channel so the message ALWAYS surfaces.
+        console.warn(
+          "[NotifeeService] message display failed; recreating channel + retrying:",
+          err,
+        );
         try {
+          await this.createMessageChannel();
           await notifee.displayNotification({
             ...(id ? { id } : {}),
             title,
             body,
             data: { ...data } as Record<string, string>,
             android: {
-              channelId: "default",
+              channelId: MESSAGE_CHANNEL_ID,
               importance: this.AndroidImportance.HIGH ?? 4,
               pressAction: { id: "default", launchActivity: "default" },
               sound: "default",
-              // Last-resort post still needs a valid small icon to render.
               smallIcon: "ic_launcher",
+              ...largeIconOpts,
+              ...(hasBadge ? { badgeCount } : {}),
             },
           });
-        } catch (err3) {
-          console.warn("[NotifeeService] Failed to display message:", err3);
+        } catch (err2) {
+          try {
+            await notifee.displayNotification({
+              ...(id ? { id } : {}),
+              title,
+              body,
+              data: { ...data } as Record<string, string>,
+              android: {
+                channelId: "default",
+                importance: this.AndroidImportance.HIGH ?? 4,
+                pressAction: { id: "default", launchActivity: "default" },
+                sound: "default",
+                smallIcon: "ic_launcher",
+                ...largeIconOpts,
+              },
+            });
+          } catch (err3) {
+            console.warn("[NotifeeService] Failed to display message:", err3);
+          }
         }
+      }
+    };
+
+    // Post NOW without the avatar so the message is guaranteed to appear.
+    await postNotification({});
+
+    // ── STEP 2: attach the sender's avatar BEST-EFFORT (non-blocking) ─────
+    // Fetch the avatar with a HARD TIMEOUT so it can never hang the headless
+    // task. When it resolves, re-post with the SAME id to attach the circular
+    // largeIcon (Notifee updates the existing notification in place). Any
+    // failure/timeout simply leaves the already-posted notification as-is.
+    const avatarUrl = uploadUrl(data.senderAvatar || data.avatar || "");
+    if (avatarUrl) {
+      const AVATAR_TIMEOUT_MS = 3500;
+      try {
+        const localAvatarUri = await Promise.race<string | null>([
+          this.fetchAvatarToFile(avatarUrl),
+          new Promise<null>((resolve) =>
+            setTimeout(() => resolve(null), AVATAR_TIMEOUT_MS),
+          ),
+        ]);
+        if (localAvatarUri) {
+          await postNotification({
+            largeIcon: localAvatarUri,
+            circularLargeIcon: true,
+          });
+        }
+      } catch (err) {
+        // Best-effort: the notification was already delivered in step 1.
+        console.warn("[NotifeeService] avatar attach skipped:", err);
       }
     }
   }

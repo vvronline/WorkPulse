@@ -31,6 +31,8 @@ export default function MessageBubble({
   participantCount,
   readReceipts,
   userId,
+  firstInGroup = true,
+  lastInGroup = true,
   registerRef,
   onLongPress,
   onReact,
@@ -44,6 +46,10 @@ export default function MessageBubble({
   participantCount: number;
   readReceipts: Record<number, string>;
   userId?: number;
+  // Consecutive-message grouping (see docs/CHAT_DESIGN_SPEC.md §4). The sender
+  // name shows on the first of a group; the tail renders on the last.
+  firstInGroup?: boolean;
+  lastInGroup?: boolean;
   registerRef: (id: number, node: View | null) => void;
   onLongPress: (message: ChatMessage, mine: boolean) => void;
   onReact: (message: ChatMessage, emoji: string) => void;
@@ -69,20 +75,27 @@ export default function MessageBubble({
           style={[
             styles.bubble,
             mine ? styles.bubbleMine : styles.bubbleTheirs,
+            // Grouped (non-tail) bubbles get fully-rounded tail-side corners.
+            !lastInGroup && (mine ? styles.bubbleMineGrouped : styles.bubbleTheirsGrouped),
             message._pending && styles.bubblePending,
           ]}
         >
-          {/* Layered tail keeps the pointer edge crisp with the bubble border. */}
-          <View
-            style={[mine ? styles.tailMineBorder : styles.tailTheirsBorder]}
-            pointerEvents="none"
-          />
-          <View
-            style={[mine ? styles.tailMineFill : styles.tailTheirsFill]}
-            pointerEvents="none"
-          />
+          {/* Layered tail keeps the pointer edge crisp with the bubble border.
+              Only the LAST message in a group shows the tail. */}
+          {lastInGroup ? (
+            <>
+              <View
+                style={[mine ? styles.tailMineBorder : styles.tailTheirsBorder]}
+                pointerEvents="none"
+              />
+              <View
+                style={[mine ? styles.tailMineFill : styles.tailTheirsFill]}
+                pointerEvents="none"
+              />
+            </>
+          ) : null}
 
-          {!mine && message.sender_name ? (
+          {!mine && firstInGroup && message.sender_name ? (
             <Text style={styles.sender}>{message.sender_name}</Text>
           ) : null}
           {message.reply_to_id && !deleted ? (
@@ -151,6 +164,10 @@ const makeStyles = (theme: Theme) =>
       borderWidth: 1,
       borderColor: theme.chatBubbleBorder,
     },
+    // Grouped (non-tail) bubbles round the tail-side corner fully so only the
+    // last message in a group shows the squared tail corner.
+    bubbleMineGrouped: { borderTopRightRadius: 16 },
+    bubbleTheirsGrouped: { borderTopLeftRadius: 16 },
     bubblePending: { opacity: 0.7 },
     // Layered triangular tail: border layer + fill layer.
     tailMineBorder: {

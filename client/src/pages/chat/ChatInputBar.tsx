@@ -117,27 +117,6 @@ export default function ChatInputBar({
 
                             {plusOpen && (
                                 <div className={s.plusMenu}>
-                                    <button
-                                        type="button"
-                                        className={s.plusMenuItem}
-                                        onClick={() => {
-                                            onToggleEmoji();
-                                            setPlusOpen(false);
-                                        }}
-                                    >
-                                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                                            <circle cx="9" cy="9" r="7.5" stroke="currentColor" strokeWidth="1.5" />
-                                            <circle cx="6.5" cy="7.5" r="1" fill="currentColor" />
-                                            <circle cx="11.5" cy="7.5" r="1" fill="currentColor" />
-                                            <path
-                                                d="M6 11.5a3.5 3.5 0 006 0"
-                                                stroke="currentColor"
-                                                strokeWidth="1.3"
-                                                strokeLinecap="round"
-                                            />
-                                        </svg>
-                                        Emoji
-                                    </button>
                                     {isGroup && (
                                         <button
                                             type="button"
@@ -236,6 +215,39 @@ export default function ChatInputBar({
                         </div>
 
                         <div className={s.inputBoxWrap}>
+                            <button
+                                type="button"
+                                className={`${s.emojiToggle} ${showEmojiPicker ? s.emojiToggleActive : ""}`}
+                                onClick={onToggleEmoji}
+                                title={showEmojiPicker ? "Keyboard" : "Emoji"}
+                                aria-label={showEmojiPicker ? "Show keyboard" : "Show emoji"}
+                            >
+                                {showEmojiPicker ? (
+                                    /* keyboard icon */
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                                        <rect x="2" y="5" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="1.6" />
+                                        <path
+                                            d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M10 13h.01M14 13h.01M18 13h.01M8 16h8"
+                                            stroke="currentColor"
+                                            strokeWidth="1.6"
+                                            strokeLinecap="round"
+                                        />
+                                    </svg>
+                                ) : (
+                                    /* smiley icon */
+                                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                                        <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5" />
+                                        <circle cx="7" cy="8" r="1" fill="currentColor" />
+                                        <circle cx="13" cy="8" r="1" fill="currentColor" />
+                                        <path
+                                            d="M6.5 12.5a4 4 0 007 0"
+                                            stroke="currentColor"
+                                            strokeWidth="1.3"
+                                            strokeLinecap="round"
+                                        />
+                                    </svg>
+                                )}
+                            </button>
                             <MentionInput
                                 ref={mentionInputRef}
                                 value={input}
@@ -249,6 +261,11 @@ export default function ChatInputBar({
                                 maxLength={5000}
                                 onSubmit={onSend}
                             />
+                            {showEmojiPicker && (
+                                <div className={s.emojiDock}>
+                                    <EmojiGifPicker onSelectEmoji={onEmojiInsert} onClose={onToggleEmoji} />
+                                </div>
+                            )}
                         </div>
 
                         <button
@@ -261,7 +278,6 @@ export default function ChatInputBar({
                             </svg>
                         </button>
                     </form>
-                    {showEmojiPicker && <EmojiGifPicker onSelectEmoji={onEmojiInsert} onClose={onToggleEmoji} />}
                 </div>
             )}
         </>

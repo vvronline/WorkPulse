@@ -8,6 +8,7 @@ export { default as ReactionChips } from "./ReactionChips";
 export { default as PinnedBanner } from "./PinnedBanner";
 export { default as ReactionBar } from "./ReactionBar";
 export { default as EmojiPicker } from "./EmojiPicker";
+export { default as EmojiKeyboard } from "./EmojiKeyboard";
 export { default as AttachmentPicker } from "./AttachmentPicker";
 export { default as MessageActionsSheet } from "./MessageActionsSheet";
 export { default as HeaderMenuSheet } from "./HeaderMenuSheet";

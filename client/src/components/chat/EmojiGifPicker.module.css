@@ -1,10 +1,10 @@
 .picker {
-    width: 340px;
-    max-height: 400px;
+    width: 352px;
+    max-height: 420px;
     background: var(--bg-secondary);
     border: 1px solid var(--glass-border);
     border-radius: 12px;
-    box-shadow: 0 8px 32px rgba(0,0,0,.28), 0 2px 8px rgba(0,0,0,.12);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28), 0 2px 8px rgba(0, 0, 0, 0.12);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -12,11 +12,25 @@
     animation: pickerSlideIn 0.18s ease-out;
 }
 @keyframes pickerSlideIn {
-    from { opacity: 0; transform: translateY(8px) scale(0.96); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
+    from {
+        opacity: 0;
+        transform: translateY(8px) scale(0.96);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+/* ─── Top row: search + skin-tone swatch ─── */
+.topRow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 8px 4px;
 }
 .search {
-    margin: 8px 8px 4px;
+    flex: 1;
     padding: 7px 12px;
     border-radius: 8px;
     border: 1.5px solid var(--glass-border);
@@ -28,15 +42,68 @@
 }
 .search:focus {
     border-color: var(--primary);
-    box-shadow: 0 0 0 2px rgba(14, 165, 233, .15);
+    box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.15);
 }
 
+.toneBtn {
+    width: 34px;
+    height: 34px;
+    flex-shrink: 0;
+    border: 1.5px solid var(--glass-border);
+    background: var(--input-bg);
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.05rem;
+    transition: background 0.15s, border-color 0.15s;
+}
+.toneBtn:hover {
+    background: var(--surface-hover);
+}
+.tonePopup {
+    position: absolute;
+    top: 46px;
+    right: 8px;
+    display: flex;
+    gap: 2px;
+    padding: 4px;
+    background: var(--bg-elevated, var(--bg-secondary));
+    border: 1px solid var(--glass-border);
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+    z-index: 10;
+}
+.toneSwatch {
+    width: 30px;
+    height: 30px;
+    border: none;
+    background: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 1.05rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.12s, transform 0.1s;
+}
+.toneSwatch:hover {
+    background: var(--surface-hover);
+    transform: scale(1.12);
+}
+.toneSwatchActive {
+    background: var(--primary);
+}
+
+/* ─── Sticky category bar ─── */
 .catTabs {
     display: flex;
     gap: 2px;
     padding: 2px 8px 6px;
     overflow-x: auto;
     border-bottom: 1px solid var(--glass-border);
+    scrollbar-width: thin;
 }
 .catTab {
     padding: 4px 7px;
@@ -47,18 +114,44 @@
     border-radius: 6px;
     opacity: 0.5;
     transition: opacity 0.15s, background 0.15s, transform 0.1s;
+    flex-shrink: 0;
 }
-.catTab:hover { background: var(--surface-hover); opacity: 0.85; transform: scale(1.08); }
-.activeCat { opacity: 1; background: var(--surface-hover); }
+.catTab:hover {
+    background: var(--surface-hover);
+    opacity: 0.85;
+    transform: scale(1.08);
+}
+.activeCat {
+    opacity: 1;
+    background: var(--surface-hover);
+}
 
+/* ─── Scrollable grid ─── */
+.scroll {
+    overflow-y: auto;
+    max-height: 300px;
+    scroll-behavior: smooth;
+}
+.section {
+    padding: 0 8px;
+}
+.catLabel {
+    position: sticky;
+    top: 0;
+    background: var(--bg-secondary);
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 8px 2px 4px;
+    z-index: 1;
+}
 .emojiGrid {
     display: grid;
     grid-template-columns: repeat(8, 1fr);
     gap: 2px;
-    padding: 4px 8px 8px;
-    overflow-y: auto;
-    max-height: 280px;
-    scroll-behavior: smooth;
+    padding-bottom: 4px;
 }
 .emojiBtn {
     width: 36px;
@@ -68,27 +161,29 @@
     justify-content: center;
     border: none;
     background: none;
-    font-size: 1.25rem;
     cursor: pointer;
     border-radius: 8px;
     transition: background 0.12s, transform 0.12s;
+    position: relative;
 }
 .emojiBtn:hover {
     background: var(--surface-hover);
-    transform: scale(1.25);
+    transform: scale(1.2);
 }
 .emojiBtn:active {
     transform: scale(0.95);
 }
-
-.catLabel {
-    grid-column: 1 / -1;
-    font-size: 0.68rem;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding: 6px 2px 2px;
+/* tiny corner dot indicating per-emoji skin-tone variants exist */
+.hasSkins::after {
+    content: "";
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    opacity: 0.45;
 }
 
 .noResults {
@@ -106,40 +201,28 @@
     opacity: 0.5;
 }
 
-.hint {
-    padding: 2rem;
-    text-align: center;
-    color: var(--text-muted);
-    font-size: 0.8rem;
-    grid-column: 1 / -1;
+/* ─── Per-emoji tone popup ─── */
+.emojiTonePopup {
+    position: absolute;
+    display: flex;
+    gap: 2px;
+    padding: 4px;
+    background: var(--bg-elevated, var(--bg-secondary));
+    border: 1px solid var(--glass-border);
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+    z-index: 20;
+    transform: translate(-50%, -110%);
 }
 
 /* ─── Tablet ─── */
 @media (max-width: 1024px) {
     .picker {
-        width: 310px;
-        max-height: 360px;
+        width: 320px;
+        max-height: 380px;
     }
     .emojiGrid {
         grid-template-columns: repeat(7, 1fr);
-    }
-}
-
-/* ─── Mobile ─── */
-@media (max-width: 480px) {
-    .picker {
-        width: calc(100vw - 16px);
-        max-width: 340px;
-        max-height: min(360px, 60vh);
-    }
-    .emojiGrid {
-        grid-template-columns: repeat(7, 1fr);
-        max-height: min(240px, 45vh);
-    }
-    .emojiBtn {
-        width: 40px;
-        height: 40px;
-        font-size: 1.3rem;
     }
 }
 
@@ -147,20 +230,18 @@
 @media (max-width: 768px) {
     .picker {
         width: calc(100vw - 2rem);
-        max-width: 340px;
+        max-width: 352px;
         right: 0;
         left: auto;
-        max-height: 50vh;
+        max-height: 55vh;
         border-radius: 14px 14px 0 0;
     }
-    .emojiGrid {
-        grid-template-columns: repeat(8, 1fr);
+    .scroll {
         max-height: 40vh;
     }
     .emojiBtn {
         width: 40px;
         height: 40px;
-        font-size: 1.35rem;
     }
     .catTab {
         font-size: 1.1rem;
@@ -168,7 +249,6 @@
     }
 }
 
-/* ─── Small mobile ─── */
 @media (max-width: 480px) {
     .picker {
         width: 100%;
@@ -183,8 +263,14 @@
         animation: pickerSlideUp 0.22s ease-out;
     }
     @keyframes pickerSlideUp {
-        from { opacity: 0; transform: translateY(100%); }
-        to { opacity: 1; transform: translateY(0); }
+        from {
+            opacity: 0;
+            transform: translateY(100%);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
     }
     .emojiGrid {
         grid-template-columns: repeat(7, 1fr);

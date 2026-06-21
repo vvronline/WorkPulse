@@ -1,50 +1,25 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+// Signal-style emoji picker — categories, search, recents, and skin-tone
+// selection, rendering the bundled image emoji set (with native fallback).
+// Keeps the original props (onSelectEmoji / onClose / style) so every existing
+// caller (composer, reactions) works unchanged.
+//
+// See docs/CHAT_DESIGN_SPEC.md §3.
+
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import s from "./EmojiGifPicker.module.css";
-
-const RECENT_KEY = "wp_recent_emojis";
-const MAX_RECENT = 24;
-
-/* ─── Emoji name map for search ─── */
-const EMOJI_NAMES: Record<string, string> = {
-    "😀": "grinning", "😁": "beaming", "😂": "joy laugh", "🤣": "rofl rolling", "😃": "smiley", "😄": "smile", "😅": "sweat smile", "😆": "laughing", "😉": "wink", "😊": "blush", "😋": "yum", "😎": "sunglasses cool", "😍": "heart eyes", "🥰": "love", "😘": "kiss", "😗": "kissing", "😙": "kiss smile", "😚": "kiss closed", "🙂": "slight smile", "🤗": "hug", "🤩": "star struck", "🤔": "thinking", "🤨": "raised eyebrow", "😐": "neutral", "😑": "expressionless", "😶": "no mouth", "🙄": "eye roll", "😏": "smirk", "😣": "persevere", "😥": "disappointed relieved", "😮": "open mouth wow", "🤐": "zipper", "😯": "hushed", "😪": "sleepy", "😫": "tired", "😴": "sleeping zzz", "😌": "relieved", "😛": "tongue", "😜": "crazy tongue wink", "😝": "squinting tongue", "🤤": "drooling", "😒": "unamused", "😓": "cold sweat", "😔": "pensive", "😕": "confused", "🙃": "upside down", "🤑": "money", "😲": "astonished", "🤯": "mind blown exploding", "😬": "grimace", "🥵": "hot", "🥶": "cold freezing", "😱": "scream", "😨": "fearful", "😰": "anxious", "😢": "cry", "😭": "sobbing", "😤": "huff", "😠": "angry", "😡": "rage", "🤬": "swearing", "😈": "devil smiling", "👿": "devil angry", "💀": "skull dead", "☠️": "skull crossbones", "💩": "poop", "🤡": "clown", "👹": "ogre", "👺": "goblin", "👻": "ghost", "👽": "alien", "👾": "space invader", "🤖": "robot",
-    "👋": "wave", "🤚": "raised back hand", "🖐️": "hand splayed", "✋": "raised hand stop", "🖖": "vulcan", "👌": "ok", "🤌": "pinched", "🤏": "pinching", "✌️": "peace victory", "🤞": "crossed fingers luck", "🤟": "love you", "🤘": "rock on", "🤙": "call me", "👈": "point left", "👉": "point right", "👆": "point up", "🖕": "middle finger", "👇": "point down", "☝️": "index up", "👍": "thumbs up like yes", "👎": "thumbs down dislike no", "✊": "fist", "👊": "fist bump", "🤛": "left fist", "🤜": "right fist", "👏": "clap", "🙌": "raising hands", "👐": "open hands", "🤲": "palms up", "🤝": "handshake", "🙏": "pray please thanks", "💪": "flex strong muscle", "🦾": "mechanical arm",
-    "🖤": "black heart", "❤️": "red heart love", "🧡": "orange heart", "💛": "yellow heart", "💚": "green heart", "💙": "blue heart", "💜": "purple heart", "🤎": "brown heart", "🤍": "white heart", "💯": "hundred perfect", "💢": "anger", "💥": "boom collision", "💫": "dizzy", "💦": "sweat", "💨": "dash", "🕳️": "hole", "💣": "bomb", "💬": "speech bubble",
-    "🎉": "party tada celebrate", "🎊": "confetti", "🎈": "balloon", "🎁": "gift present", "🏆": "trophy winner", "🥇": "gold medal first", "🥈": "silver medal second", "🥉": "bronze medal third", "⚽": "soccer", "🏀": "basketball", "🏈": "football", "⚾": "baseball", "🎾": "tennis", "🏐": "volleyball", "🎱": "billiards pool", "🏓": "ping pong", "🏸": "badminton", "⛳": "golf", "🏹": "archery", "🎣": "fishing", "🥊": "boxing", "🎯": "bullseye target", "🎮": "video game controller", "🕹️": "joystick", "🎲": "dice", "🧩": "puzzle", "♟️": "chess", "🎭": "theater drama", "🎨": "art palette", "🎼": "music", "🎹": "piano keyboard", "🥁": "drum", "🎷": "saxophone", "🎺": "trumpet", "🎸": "guitar", "🎻": "violin", "🎬": "clapperboard movie", "📷": "camera photo",
-    "🍕": "pizza", "🍔": "hamburger burger", "🍟": "fries", "🌭": "hot dog", "🥪": "sandwich", "🌮": "taco", "🌯": "burrito", "🍳": "egg cooking", "🥘": "stew", "🍲": "pot food", "🥗": "salad", "🍿": "popcorn", "🍱": "bento", "🍣": "sushi", "🍤": "shrimp", "🦀": "crab", "🦞": "lobster", "🍦": "ice cream", "🍩": "donut", "🍪": "cookie", "🎂": "birthday cake", "🍰": "cake slice", "🧁": "cupcake", "🍫": "chocolate", "🍬": "candy", "🍭": "lollipop", "☕": "coffee", "🍵": "tea", "🥤": "cup straw", "🍺": "beer", "🍻": "cheers beers", "🥂": "champagne toast", "🍷": "wine",
-    "🌍": "earth globe", "🏔️": "mountain snow", "🌋": "volcano", "🏖️": "beach", "🏜️": "desert", "🌅": "sunrise", "🌄": "sunrise mountains", "🌠": "shooting star", "🌈": "rainbow", "🐶": "dog", "🐱": "cat", "🐭": "mouse", "🐹": "hamster", "🐰": "rabbit bunny", "🦊": "fox", "🐻": "bear", "🐼": "panda", "🐨": "koala", "🐯": "tiger", "🦁": "lion", "🐮": "cow", "🐷": "pig", "🐸": "frog", "🐵": "monkey", "🐔": "chicken", "🐧": "penguin", "🐦": "bird", "🦅": "eagle", "🦉": "owl", "🐴": "horse", "🦄": "unicorn", "🐝": "bee", "🦋": "butterfly", "🌸": "cherry blossom", "🌹": "rose", "🌻": "sunflower", "🌷": "tulip", "🌲": "evergreen tree", "🌳": "tree", "🌵": "cactus", "☀️": "sun", "☁️": "cloud", "🌧️": "rain", "⛈️": "thunderstorm", "⭐": "star", "✨": "sparkles", "🔥": "fire flame hot", "💧": "water drop", "🌊": "wave ocean",
-    "💼": "briefcase", "📁": "folder", "📄": "document page", "📋": "clipboard", "📊": "chart bar", "📈": "chart up trending", "📉": "chart down", "📌": "pin pushpin", "📎": "paperclip", "🔗": "link", "💻": "laptop computer", "🖥️": "desktop computer", "📱": "phone mobile", "📲": "phone arrow", "🔋": "battery", "💡": "light bulb idea", "📕": "book red", "📖": "book open", "📚": "books", "📝": "memo note", "✏️": "pencil", "🔍": "search magnify", "🔐": "lock key", "🔒": "locked", "🔓": "unlocked", "🔑": "key",
-};
-
-interface EmojiCategory {
-    label: string;
-    name: string;
-    keywords: string;
-    emojis: string[];
-}
-
-const EMOJI_CATEGORIES: EmojiCategory[] = [
-    { label: "🕐", name: "Recent", keywords: "", emojis: [] },
-    { label: "😀", name: "Smileys", keywords: "smile face happy laugh cry sad tears emotion mood", emojis: ["😀", "😁", "😂", "🤣", "😃", "😄", "😅", "😆", "😉", "😊", "😋", "😎", "😍", "🥰", "😘", "😗", "😙", "😚", "🙂", "🤗", "🤩", "🤔", "🤨", "😐", "😑", "😶", "🙄", "😏", "😣", "😥", "😮", "🤐", "😯", "😪", "😫", "😴", "😌", "😛", "😜", "😝", "🤤", "😒", "😓", "😔", "😕", "🙃", "🤑", "😲", "🤯", "😬", "🥵", "🥶", "😱", "😨", "😰", "😢", "😭", "😤", "😠", "😡", "🤬", "😈", "👿", "💀", "☠️", "💩", "🤡", "👹", "👺", "👻", "👽", "👾", "🤖"] },
-    { label: "👋", name: "Gestures", keywords: "hand wave gesture thumb like dislike heart love ok clap prayer", emojis: ["👋", "🤚", "🖐️", "✋", "🖖", "👌", "🤌", "🤏", "✌️", "🤞", "🤟", "🤘", "🤙", "👈", "👉", "👆", "🖕", "👇", "☝️", "👍", "👎", "✊", "👊", "🤛", "🤜", "👏", "🙌", "👐", "🤲", "🤝", "🙏", "💪", "🦾", "🖤", "❤️", "🧡", "💛", "💚", "💙", "💜", "🤎", "🖤", "🤍", "💯", "💢", "💥", "💫", "💦", "💨", "🕳️", "💣", "💬"] },
-    { label: "🎉", name: "Activities", keywords: "party celebrate sport trophy medal ball game music art film camera activity", emojis: ["🎉", "🎊", "🎈", "🎁", "🏆", "🥇", "🥈", "🥉", "⚽", "🏀", "🏈", "⚾", "🥎", "🎾", "🏐", "🏉", "🥏", "🎱", "🪀", "🏓", "🏸", "🥅", "⛳", "🪁", "🏹", "🎣", "🤿", "🥊", "🎯", "🎮", "🕹️", "🎲", "🧩", "♟️", "🎭", "🎨", "🎼", "🎹", "🥁", "🎷", "🎺", "🎸", "🪕", "🎻", "🎬", "📷"] },
-    { label: "🍕", name: "Food", keywords: "eat drink food pizza burger coffee tea beer fruit meal snack dessert", emojis: ["🍕", "🍔", "🍟", "🌭", "🥪", "🌮", "🌯", "🥙", "🧆", "🥚", "🍳", "🥘", "🍲", "🥣", "🥗", "🍿", "🧈", "🧂", "🥫", "🍱", "🍘", "🍙", "🍚", "🍛", "🍜", "🍝", "🍠", "🍢", "🍣", "🍤", "🍥", "🥮", "🍡", "🥟", "🥠", "🥡", "🦀", "🦞", "🦐", "🦑", "🍦", "🍧", "🍨", "🍩", "🍪", "🎂", "🍰", "🧁", "🥧", "🍫", "🍬", "🍭", "☕", "🍵", "🥤", "🍺", "🍻", "🥂", "🍷"] },
-    { label: "🌍", name: "Nature", keywords: "nature animal planet earth dog cat bird flower tree weather sun rain star fire water", emojis: ["🌍", "🌎", "🌏", "🌐", "🗺️", "🧭", "🏔️", "⛰️", "🌋", "🗻", "🏕️", "🏖️", "🏜️", "🏝️", "🏞️", "🌅", "🌄", "🌠", "🎇", "🎆", "🌇", "🌆", "🏙️", "🌃", "🌌", "🌉", "🌁", "🐶", "🐱", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼", "🐨", "🐯", "🦁", "🐮", "🐷", "🐸", "🐵", "🐔", "🐧", "🐦", "🦅", "🦆", "🦉", "🐺", "🐗", "🐴", "🦄", "🐝", "🐛", "🦋", "🐌", "🐞", "🐜", "🦟", "🌸", "🌹", "🌺", "🌻", "🌼", "🌷", "🌱", "🌲", "🌳", "🌴", "🌵", "☀️", "🌤️", "⛅", "🌥️", "☁️", "🌦️", "🌧️", "⛈️", "🌩️", "🌈", "⭐", "🌟", "💫", "✨", "🔥", "💧", "🌊"] },
-    { label: "💼", name: "Objects", keywords: "work office tool book phone computer lock key file folder document money", emojis: ["💼", "📁", "📂", "📄", "📋", "📊", "📈", "📉", "📌", "📍", "📎", "🔗", "🖇️", "📐", "📏", "🗂️", "💻", "🖥️", "🖨️", "⌨️", "🖱️", "💾", "💿", "📀", "📱", "📲", "☎️", "📞", "📟", "📠", "🔋", "🔌", "💡", "🔦", "🕯️", "📔", "📕", "📖", "📗", "📘", "📙", "📚", "📓", "📒", "📝", "✏️", "🖊️", "🖋️", "✒️", "🔍", "🔎", "🔐", "🔒", "🔓", "🔑"] },
-];
-
-function getRecent(): string[] {
-    try {
-        return JSON.parse(localStorage.getItem(RECENT_KEY) || "[]").slice(0, MAX_RECENT);
-    } catch { return []; }
-}
-
-function addRecent(emoji: string) {
-    try {
-        const list = getRecent().filter(e => e !== emoji);
-        list.unshift(emoji);
-        localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, MAX_RECENT)));
-    } catch { /* ignore */ }
-}
+import EmojiImage from "../../emoji/EmojiImage";
+import { CATEGORY_ORDER, SKIN_TONES } from "../../emoji/types";
+import type { Emoji, EmojiCategory } from "../../emoji/types";
+import {
+    emojiByCategory,
+    getRecentEmoji,
+    getSkinTone,
+    nativeForTone,
+    recordRecent,
+    searchEmoji,
+    setSkinTone,
+    variantForTone,
+} from "../../emoji/emojiStore";
 
 interface EmojiGifPickerProps {
     onSelectEmoji: (emoji: string) => void;
@@ -53,121 +28,243 @@ interface EmojiGifPickerProps {
 }
 
 export default function EmojiGifPicker({ onSelectEmoji, onClose, style }: EmojiGifPickerProps) {
-    const [catIdx, setCatIdx] = useState(() => {
-        const recent = getRecent();
-        return recent.length > 0 ? 0 : 1; // Show Recent if available, else Smileys
-    });
-    const [emojiSearch, setEmojiSearch] = useState("");
-    const [recentEmojis, setRecentEmojis] = useState<string[]>(getRecent);
     const ref = useRef<HTMLDivElement | null>(null);
-    const gridRef = useRef<HTMLDivElement | null>(null);
+    const scrollRef = useRef<HTMLDivElement | null>(null);
+    const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
-    // Close on click outside
+    const [query, setQuery] = useState("");
+    const [tone, setTone] = useState(getSkinTone);
+    const [toneOpen, setToneOpen] = useState(false);
+    const [activeCat, setActiveCat] = useState<EmojiCategory>("smileys");
+    const [recents, setRecents] = useState<Emoji[]>(getRecentEmoji);
+    const [emojiTone, setEmojiTone] = useState<{ emoji: Emoji; x: number; y: number } | null>(null);
+
+    const isTouch = typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches;
+
+    // Close on outside click + Escape.
     useEffect(() => {
-        const handler = (e: PointerEvent) => {
+        const onDown = (e: MouseEvent) => {
             if (ref.current && !ref.current.contains(e.target as Node)) onClose();
         };
-        document.addEventListener("pointerdown", handler);
-        return () => document.removeEventListener("pointerdown", handler);
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === "Escape") onClose();
+        };
+        document.addEventListener("mousedown", onDown);
+        document.addEventListener("keydown", onKey);
+        return () => {
+            document.removeEventListener("mousedown", onDown);
+            document.removeEventListener("keydown", onKey);
+        };
     }, [onClose]);
 
-    // Close on Escape
-    useEffect(() => {
-        const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-        document.addEventListener("keydown", handler);
-        return () => document.removeEventListener("keydown", handler);
-    }, [onClose]);
+    const results = useMemo(() => (query.trim() ? searchEmoji(query) : []), [query]);
 
-    // Build categories with recent emojis injected
-    const categories = useMemo(() => {
-        const cats = [...EMOJI_CATEGORIES];
-        cats[0] = { ...cats[0], emojis: recentEmojis };
-        return cats;
-    }, [recentEmojis]);
+    // Categories that actually have content (Recent only when non-empty).
+    const sections = useMemo(() => {
+        return CATEGORY_ORDER.filter((c) => (c.key === "recent" ? recents.length > 0 : true));
+    }, [recents]);
 
-    const filteredEmojis = useMemo(() => {
-        if (!emojiSearch.trim()) return categories[catIdx].emojis;
-        const q = emojiSearch.trim().toLowerCase();
-        const results: string[] = [];
-        const seen = new Set<string>();
-        // Search by emoji name, category name, and keywords
-        for (const cat of categories.slice(1)) { // skip Recent for search
-            if (cat.name.toLowerCase().includes(q) || cat.keywords.toLowerCase().includes(q)) {
-                for (const e of cat.emojis) {
-                    if (!seen.has(e)) { seen.add(e); results.push(e); }
-                }
-            } else {
-                for (const e of cat.emojis) {
-                    const name = EMOJI_NAMES[e] || "";
-                    if (name.includes(q) && !seen.has(e)) {
-                        seen.add(e);
-                        results.push(e);
-                    }
-                }
-            }
-        }
-        return results;
-    }, [emojiSearch, catIdx, categories]);
-
-    const handleSelect = (emoji: string) => {
-        addRecent(emoji);
-        setRecentEmojis(getRecent());
-        onSelectEmoji(emoji);
+    const handleSelect = (e: Emoji) => {
+        recordRecent(e.id);
+        setRecents(getRecentEmoji());
+        onSelectEmoji(nativeForTone(e, tone));
         onClose();
     };
 
-    // Skip Recent tab if empty
-    const visibleCategories = categories.filter((c, i) => i !== 0 || c.emojis.length > 0);
+    const handleToneSelect = (t: number) => {
+        setTone(t);
+        setSkinTone(t);
+        setToneOpen(false);
+    };
 
-    const isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+    const handleEmojiContext = (e: React.MouseEvent, emoji: Emoji) => {
+        if (!emoji.skins?.length) return;
+        e.preventDefault();
+        setEmojiTone({ emoji, x: e.clientX, y: e.clientY });
+    };
+
+    // Scroll active-category highlight as the user scrolls through sections.
+    const onScroll = () => {
+        const scroll = scrollRef.current;
+        if (!scroll || query.trim()) return;
+        const top = scroll.scrollTop;
+        let current: EmojiCategory = sections[0]?.key || "smileys";
+        for (const sec of sections) {
+            const node = sectionRefs.current[sec.key];
+            if (node && node.offsetTop - 12 <= top) current = sec.key;
+        }
+        setActiveCat(current);
+    };
+
+    const jumpToCategory = (cat: EmojiCategory) => {
+        const node = sectionRefs.current[cat];
+        const scroll = scrollRef.current;
+        if (node && scroll) {
+            scroll.scrollTo({ top: node.offsetTop - 4, behavior: "smooth" });
+            setActiveCat(cat);
+        }
+    };
 
     return (
-        <div className={s.picker} ref={ref} style={style}>
-            <input
-                className={s.search}
-                placeholder="Search emoji..."
-                value={emojiSearch}
-                onChange={e => setEmojiSearch(e.target.value)}
-                autoFocus={!isTouch}
-            />
-            {!emojiSearch && (
-                <div className={s.catTabs}>
-                    {visibleCategories.map((c) => {
-                        const realIdx = categories.indexOf(c);
-                        return (
+        <div ref={ref} className={s.picker} style={style}>
+            <div className={s.topRow}>
+                <input
+                    className={s.search}
+                    placeholder="Search emoji..."
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    autoFocus={!isTouch}
+                />
+                <button
+                    type="button"
+                    className={s.toneBtn}
+                    title="Default skin tone"
+                    onClick={() => setToneOpen((v) => !v)}
+                >
+                    {SKIN_TONES[tone].swatch}
+                </button>
+                {toneOpen && (
+                    <div className={s.tonePopup}>
+                        {SKIN_TONES.map((t) => (
                             <button
-                                key={c.name}
-                                className={`${s.catTab} ${realIdx === catIdx ? s.activeCat : ""}`}
-                                onClick={() => { setCatIdx(realIdx); gridRef.current?.scrollTo(0, 0); }}
-                                title={c.name}
-                            >{c.label}</button>
+                                key={t.key}
+                                type="button"
+                                className={`${s.toneSwatch} ${t.key === tone ? s.toneSwatchActive : ""}`}
+                                title={t.label}
+                                onClick={() => handleToneSelect(t.key)}
+                            >
+                                {t.swatch}
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {!query.trim() && (
+                <div className={s.catTabs}>
+                    {sections.map((c) => (
+                        <button
+                            key={c.key}
+                            type="button"
+                            className={`${s.catTab} ${activeCat === c.key ? s.activeCat : ""}`}
+                            title={c.label}
+                            onClick={() => jumpToCategory(c.key)}
+                        >
+                            {c.icon}
+                        </button>
+                    ))}
+                </div>
+            )}
+
+            {query.trim() ? (
+                results.length === 0 ? (
+                    <div className={s.noResults}>
+                        <span className={s.noResultsEmoji}>🔍</span>
+                        <span>No emoji found for &ldquo;{query}&rdquo;</span>
+                    </div>
+                ) : (
+                    <div className={s.scroll}>
+                        <div className={s.section}>
+                            <div className={s.catLabel}>Search Results</div>
+                            <div className={s.emojiGrid}>
+                                {results.map((e) => (
+                                    <EmojiCell
+                                        key={e.id}
+                                        emoji={e}
+                                        tone={tone}
+                                        onSelect={handleSelect}
+                                        onContext={handleEmojiContext}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                )
+            ) : (
+                <div className={s.scroll} ref={scrollRef} onScroll={onScroll}>
+                    {sections.map((c) => {
+                        const list = c.key === "recent" ? recents : emojiByCategory(c.key);
+                        if (!list.length) return null;
+                        return (
+                            <div
+                                key={c.key}
+                                className={s.section}
+                                ref={(n) => {
+                                    sectionRefs.current[c.key] = n;
+                                }}
+                            >
+                                <div className={s.catLabel}>{c.label}</div>
+                                <div className={s.emojiGrid}>
+                                    {list.map((e) => (
+                                        <EmojiCell
+                                            key={`${c.key}-${e.id}`}
+                                            emoji={e}
+                                            tone={tone}
+                                            onSelect={handleSelect}
+                                            onContext={handleEmojiContext}
+                                        />
+                                    ))}
+                                </div>
+                            </div>
                         );
                     })}
                 </div>
             )}
-            {emojiSearch && filteredEmojis.length === 0 ? (
-                <div className={s.noResults}>
-                    <span className={s.noResultsEmoji}>🔍</span>
-                    <span>No emoji found for &ldquo;{emojiSearch}&rdquo;</span>
-                </div>
-            ) : (
-                <div className={s.emojiGrid} ref={gridRef}>
-                    {!emojiSearch && catIdx === 0 && recentEmojis.length > 0 && (
-                        <div className={s.catLabel}>Recently Used</div>
-                    )}
-                    {!emojiSearch && catIdx !== 0 && (
-                        <div className={s.catLabel}>{categories[catIdx].name}</div>
-                    )}
-                    {filteredEmojis.map((emoji, i) => (
-                        <button
-                            key={`${emoji}-${i}`}
-                            className={s.emojiBtn}
-                            onClick={() => handleSelect(emoji)}
-                            title={EMOJI_NAMES[emoji] || ""}
-                        >{emoji}</button>
-                    ))}
+
+            {/* Per-emoji skin-tone popup (right-click / long-press) */}
+            {emojiTone && (
+                <div
+                    className={s.emojiTonePopup}
+                    style={{ left: emojiTone.x, top: emojiTone.y }}
+                    onMouseLeave={() => setEmojiTone(null)}
+                >
+                    {[0, 1, 2, 3, 4, 5].map((t) => {
+                        const variant = variantForTone(emojiTone.emoji, t);
+                        return (
+                            <button
+                                key={t}
+                                type="button"
+                                className={s.toneSwatch}
+                                title={SKIN_TONES[t].label}
+                                onClick={() => {
+                                    recordRecent(emojiTone.emoji.id);
+                                    setRecents(getRecentEmoji());
+                                    onSelectEmoji(variant.native);
+                                    setEmojiTone(null);
+                                    onClose();
+                                }}
+                            >
+                                <EmojiImage variant={variant} size={22} />
+                            </button>
+                        );
+                    })}
                 </div>
             )}
         </div>
+    );
+}
+
+function EmojiCell({
+    emoji,
+    tone,
+    onSelect,
+    onContext,
+}: {
+    emoji: Emoji;
+    tone: number;
+    onSelect: (e: Emoji) => void;
+    onContext: (ev: React.MouseEvent, e: Emoji) => void;
+}) {
+    const variant = variantForTone(emoji, tone);
+    return (
+        <button
+            type="button"
+            className={`${s.emojiBtn} ${emoji.skins?.length ? s.hasSkins : ""}`}
+            title={emoji.name}
+            onClick={() => onSelect(emoji)}
+            onContextMenu={(ev) => onContext(ev, emoji)}
+        >
+            <EmojiImage variant={variant} size={24} title={emoji.name} />
+        </button>
     );
 }

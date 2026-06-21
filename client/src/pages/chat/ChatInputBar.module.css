@@ -28,7 +28,8 @@
 .inputBoxWrap {
     flex: 1;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    align-items: flex-end;
     background: var(--input-bg);
     border: 1px solid transparent;
     border-radius: 22px;
@@ -38,9 +39,33 @@
 .inputBoxWrap:focus-within {
     border-color: var(--glass-border);
 }
+/* ─── Inline emoji/keyboard toggle (Signal-style), left inside the pill ─── */
+.emojiToggle {
+    width: 34px;
+    height: 34px;
+    margin: 0 0 2px 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: none;
+    cursor: pointer;
+    border-radius: 50%;
+    color: var(--text-muted);
+    transition: background var(--transition-fast), color 0.15s;
+    flex-shrink: 0;
+}
+.emojiToggle:hover {
+    background: var(--surface-hover);
+    color: var(--primary);
+}
+.emojiToggleActive {
+    color: var(--primary);
+}
 .msgInput {
+    flex: 1;
     width: 100%;
-    padding: 0.6rem 1rem 0.3rem 1.15rem;
+    padding: 0.6rem 1rem 0.3rem 0.5rem;
     border: none;
     background: transparent;
     color: var(--text);
@@ -48,6 +73,13 @@
     outline: none;
     resize: none;
     line-height: 1.5;
+}
+/* ─── Docked emoji picker (sits above the input, not floating) ─── */
+.emojiDock {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 1rem;
+    z-index: 30;
 }
 .inputTools {
     display: none;

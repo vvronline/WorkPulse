@@ -471,7 +471,7 @@ export default function ChatScreen() {
         <View style={styles.tabs}>
           <TabButton
             active={tab === "msgs"}
-            label="Messages"
+            label="Chat"
             icon={<MessageSquare size={14} color={tab === "msgs" ? "#fff" : theme.textSecondary} />}
             badge={totalUnread}
             onPress={() => setTab("msgs")}
@@ -479,7 +479,7 @@ export default function ChatScreen() {
           {meetingsEnabled ? (
             <TabButton
               active={tab === "meetings"}
-              label="Meetings"
+              label="Meet"
               icon={<Video size={14} color={tab === "meetings" ? "#fff" : theme.textSecondary} />}
               badge={meetingConvs.reduce((s, c) => s + (c.unread_count || 0), 0)}
               onPress={() => setTab("meetings")}
@@ -747,9 +747,16 @@ function TabButton({
       onPress={onPress}
     >
       {icon}
-      <Text style={[styles.tabText, active && styles.tabTextActive]}>
+      <Text
+        style={[styles.tabText, active && styles.tabTextActive]}
+        numberOfLines={1}
+      >
         {label}
       </Text>
+      {/* Badge is absolutely positioned so it NEVER shifts/crowds the centered
+          icon+label when a new notification bumps the unread count. Rendering it
+          inline (the old behaviour) pushed the row wider than the flex tab and
+          broke the layout the moment a badge appeared. */}
       {badge && badge > 0 ? (
         <View style={styles.tabBadge}>
           <Text style={styles.tabBadgeText}>{badge > 99 ? "99+" : badge}</Text>
@@ -812,13 +819,32 @@ const makeStyles = (theme: Theme) =>
     justifyContent: "center",
     gap: 4,
     paddingVertical: 8,
+    // Horizontal padding keeps the icon+label off the pill edges; the absolutely
+    // positioned badge (below) overlaps this padding instead of widening the row.
+    paddingHorizontal: 6,
     borderRadius: theme.radiusFull,
     backgroundColor: theme.surface,
+    // Anchor for the absolutely positioned unread badge so it floats in the
+    // top-right corner rather than pushing the centered content sideways.
+    position: "relative",
+    overflow: "hidden",
   },
   tabBtnActive: { backgroundColor: theme.primary },
-  tabText: { fontSize: 12, color: theme.textSecondary, fontWeight: "600" },
+  // `flexShrink` lets the label give way gracefully (with numberOfLines={1}
+  // ellipsis) instead of forcing the row wider than its flex slot.
+  tabText: {
+    fontSize: 12,
+    color: theme.textSecondary,
+    fontWeight: "600",
+    flexShrink: 1,
+  },
   tabTextActive: { color: "#fff" },
   tabBadge: {
+    // Float the badge in the pill's top-right corner so an incoming notification
+    // never shifts or crowds the centered icon+label (the padding-break bug).
+    position: "absolute",
+    top: 2,
+    right: 4,
     minWidth: 16,
     height: 16,
     borderRadius: 8,
@@ -826,6 +852,8 @@ const makeStyles = (theme: Theme) =>
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 4,
+    borderWidth: 1,
+    borderColor: theme.bg,
   },
   tabBadgeText: { color: "#fff", fontSize: 9, fontWeight: "700" },
   fab: {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { View, type FlatList, useWindowDimensions } from "react-native";
+import { Keyboard, View, type FlatList, type TextInput, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
@@ -42,6 +42,7 @@ import {
 import { socket } from "../../realtime/socket";
 import { emitChatUnreadChanged, chatUnreadManager } from "../../realtime/chatUnreadEvents";
 import { useKeyboardInset } from "../../hooks/useKeyboardInset";
+import { hydrateEmojiStore } from "../../emoji/emojiStore";
 import { STATUS_LABEL, type HeaderSheet } from "./chatUtils";
 
 /**
@@ -106,6 +107,10 @@ export function useChatThread() {
   // the selected message ("react").
   const [emojiMode, setEmojiMode] = useState<"react" | "compose">("react");
   const [plusOpen, setPlusOpen] = useState(false);
+  // Docked in-app emoji keyboard (Signal-style). When open we hide the system
+  // keyboard and show EmojiKeyboard at the last-measured keyboard height so the
+  // message list doesn't jump.
+  const [emojiKeyboardOpen, setEmojiKeyboardOpen] = useState(false);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -147,6 +152,24 @@ export function useChatThread() {
   // scroll-to-end on content-size change doesn't yank the list to the
   // bottom and defeat pagination.
   const prependingRef = useRef(false);
+  // TextInput handle so we can blur/focus when switching between the system
+  // keyboard and the in-app emoji keyboard.
+  const inputRef = useRef<TextInput>(null);
+  // Last-measured system keyboard height — the in-app emoji keyboard is shown
+  // at this height so toggling between them doesn't shift the message list.
+  const lastKbHeight = useRef(280);
+  if (kbInset > 100) lastKbHeight.current = kbInset;
+
+  // Hydrate emoji recents + skin-tone preference once.
+  useEffect(() => {
+    hydrateEmojiStore();
+  }, []);
+
+  // If the system keyboard appears (user tapped the field), close the in-app
+  // emoji keyboard so the two never stack.
+  useEffect(() => {
+    if (kbInset > 100 && emojiKeyboardOpen) setEmojiKeyboardOpen(false);
+  }, [kbInset, emojiKeyboardOpen]);
 
   const scrollToEnd = useCallback((animated = false) => {
     requestAnimationFrame(() => {
@@ -877,6 +900,36 @@ export function useChatThread() {
     setShowAllEmoji(false);
   }
 
+  // ── Inline emoji keyboard (Signal-style composer toggle) ──────────────────
+  // Toggle between the system keyboard and the docked in-app emoji keyboard.
+  function toggleEmojiKeyboard() {
+    if (emojiKeyboardOpen) {
+      // Emoji → system keyboard: re-focus the field (which re-shows the OS
+      // keyboard because showSoftInputOnFocus flips back to true).
+      setEmojiKeyboardOpen(false);
+      requestAnimationFrame(() => inputRef.current?.focus());
+    } else {
+      // System → emoji: dismiss the OS keyboard, then dock the emoji keyboard.
+      Keyboard.dismiss();
+      setEmojiKeyboardOpen(true);
+    }
+  }
+
+  // Called from the docked emoji keyboard — insert at the end of the draft.
+  function insertEmoji(native: string) {
+    setText((t) => t + native);
+  }
+
+  // Backspace key on the docked emoji keyboard (mobile keyboard mode).
+  function emojiBackspace() {
+    setText((t) => Array.from(t).slice(0, -1).join(""));
+  }
+
+  // When the field gains focus via a tap, ensure the emoji keyboard is closed.
+  function onComposerInputFocus() {
+    if (emojiKeyboardOpen) setEmojiKeyboardOpen(false);
+  }
+
   function startCall(type: "voice" | "video") {
     router.push({
       pathname: "/call/[conversationId]",
@@ -1045,6 +1098,14 @@ export function useChatThread() {
     startRecording,
     cancelRecording,
     stopRecordingAndSend,
+    // inline emoji keyboard (Signal-style)
+    inputRef,
+    emojiKeyboardOpen,
+    emojiKeyboardHeight: lastKbHeight.current,
+    toggleEmojiKeyboard,
+    insertEmoji,
+    emojiBackspace,
+    onComposerInputFocus,
     // attachment picker
     plusOpen,
     attachFile,

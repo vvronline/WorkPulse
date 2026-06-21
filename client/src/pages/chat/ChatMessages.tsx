@@ -149,11 +149,13 @@ export default function ChatMessages({
                         new Date(m.created_at).toDateString() !==
                             new Date(messages[i - 1].created_at).toDateString();
                     const prev = messages[i - 1];
+                    // Consecutive messages from the same sender within 5 minutes
+                    // form a group (see docs/CHAT_DESIGN_SPEC.md §4).
                     const isNewGroup =
                         !prev ||
                         prev.sender_id !== m.sender_id ||
                         showDate ||
-                        new Date(m.created_at).getTime() - new Date(prev.created_at).getTime() > 120000;
+                        new Date(m.created_at).getTime() - new Date(prev.created_at).getTime() > 300000;
 
                     // System messages (call events, meeting events)
                     if (m.format_type === "system") {

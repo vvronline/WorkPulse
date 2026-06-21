@@ -12,6 +12,7 @@ import {
   PinnedBanner,
   ReactionBar,
   EmojiPicker,
+  EmojiKeyboard,
   AttachmentPicker,
   MessageActionsSheet,
   HeaderMenuSheet,
@@ -105,20 +106,33 @@ export default function ChatThread() {
             />
           ) : null}
           <Composer
+            ref={c.inputRef}
             text={c.text}
             editing={c.editingId != null}
             uploading={c.uploading}
             isRecording={c.recorderState.isRecording}
             recordingMillis={c.recorderState.durationMillis}
-            bottomInset={c.composerBottomInset}
+            bottomInset={c.emojiKeyboardOpen ? 8 : c.composerBottomInset}
+            emojiKeyboardOpen={c.emojiKeyboardOpen}
             onChangeText={c.onChangeText}
             onSend={c.send}
             onSaveEdit={c.saveEdit}
             onOpenAttach={() => c.setPlusOpen(true)}
+            onToggleEmojiKeyboard={c.toggleEmojiKeyboard}
+            onInputFocus={c.onComposerInputFocus}
             onStartRecording={c.startRecording}
             onCancelRecording={c.cancelRecording}
             onStopAndSend={c.stopRecordingAndSend}
           />
+          {/* Docked in-app emoji keyboard (shown in place of the system
+              keyboard when the composer's emoji toggle is active). */}
+          {c.emojiKeyboardOpen ? (
+            <EmojiKeyboard
+              height={c.emojiKeyboardHeight}
+              onPick={c.insertEmoji}
+              onBackspace={c.emojiBackspace}
+            />
+          ) : null}
         </View>
       )}
 
@@ -270,8 +284,22 @@ function ChatList({
           </Pressable>
         ) : null
       }
-      renderItem={({ item }) => {
+      renderItem={({ item, index }) => {
         const mine = item.sender_id === c.user?.id;
+        // Consecutive-message grouping (same sender within 5 min) — see
+        // docs/CHAT_DESIGN_SPEC.md §4. firstInGroup drives the sender name,
+        // lastInGroup drives the bubble tail.
+        const prev = c.messages[index - 1];
+        const next = c.messages[index + 1];
+        const within = (a?: ChatMessage, b?: ChatMessage) =>
+          !!a &&
+          !!b &&
+          a.sender_id === b.sender_id &&
+          Math.abs(
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+          ) <= 300000;
+        const firstInGroup = !within(prev, item);
+        const lastInGroup = !within(item, next);
         return (
           <MessageBubble
             message={item}
@@ -282,6 +310,8 @@ function ChatList({
             participantCount={c.participantCount}
             readReceipts={c.readReceipts}
             userId={c.user?.id}
+            firstInGroup={firstInGroup}
+            lastInGroup={lastInGroup}
             registerRef={c.registerBubbleRef}
             onLongPress={c.openReactionBar}
             onReact={c.react}

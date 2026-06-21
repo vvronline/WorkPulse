@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { forwardRef, useMemo } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -6,7 +6,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { Mic, Plus, Send } from "lucide-react-native";
+import { Keyboard, Mic, Plus, Send, Smile } from "lucide-react-native";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import { scrollFocusedIntoView } from "../../hooks/useKeyboardInset";
@@ -14,39 +14,52 @@ import VoiceRecorderBar from "./VoiceRecorderBar";
 
 /**
  * Chat composer / input bar (mirrors the web message composer). Shows the
- * voice-recording UI while recording, otherwise the attach "+" button, the
- * multiline text input, and a send/mic toggle. Presentational — all state and
- * the recorder/audio-session logic live in the parent.
+ * voice-recording UI while recording, otherwise the inline emoji/keyboard
+ * toggle (Signal-style), attach "+" button, the multiline text input, and a
+ * send/mic toggle. Presentational — all state, the recorder/audio-session logic
+ * and the docked emoji-keyboard live in the parent.
+ *
+ * `ref` is forwarded to the TextInput so the parent can blur/focus it when
+ * switching between the system keyboard and the in-app emoji keyboard.
  */
-export default function Composer({
-  text,
-  editing,
-  uploading,
-  isRecording,
-  recordingMillis,
-  bottomInset,
-  onChangeText,
-  onSend,
-  onSaveEdit,
-  onOpenAttach,
-  onStartRecording,
-  onCancelRecording,
-  onStopAndSend,
-}: {
+const Composer = forwardRef<TextInput, {
   text: string;
   editing: boolean;
   uploading: boolean;
   isRecording: boolean;
   recordingMillis: number;
   bottomInset: number;
+  emojiKeyboardOpen: boolean;
   onChangeText: (v: string) => void;
   onSend: () => void;
   onSaveEdit: () => void;
   onOpenAttach: () => void;
+  onToggleEmojiKeyboard: () => void;
+  onInputFocus: () => void;
   onStartRecording: () => void;
   onCancelRecording: () => void;
   onStopAndSend: () => void;
-}) {
+}>(function Composer(
+  {
+    text,
+    editing,
+    uploading,
+    isRecording,
+    recordingMillis,
+    bottomInset,
+    emojiKeyboardOpen,
+    onChangeText,
+    onSend,
+    onSaveEdit,
+    onOpenAttach,
+    onToggleEmojiKeyboard,
+    onInputFocus,
+    onStartRecording,
+    onCancelRecording,
+    onStopAndSend,
+  },
+  ref
+) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
@@ -71,15 +84,36 @@ export default function Composer({
               <Plus size={22} color={theme.textSecondary} />
             )}
           </Pressable>
-          <TextInput
-            style={styles.input}
-            placeholder={editing ? "Edit message" : "Message"}
-            placeholderTextColor={theme.textMuted}
-            value={text}
-            onChangeText={onChangeText}
-            onFocus={scrollFocusedIntoView}
-            multiline
-          />
+          <View style={styles.pill}>
+            <Pressable
+              style={styles.emojiToggle}
+              onPress={onToggleEmojiKeyboard}
+              hitSlop={6}
+            >
+              {emojiKeyboardOpen ? (
+                <Keyboard size={22} color={theme.textSecondary} />
+              ) : (
+                <Smile size={22} color={theme.textSecondary} />
+              )}
+            </Pressable>
+            <TextInput
+              ref={ref}
+              style={styles.input}
+              placeholder={editing ? "Edit message" : "Message"}
+              placeholderTextColor={theme.textMuted}
+              value={text}
+              onChangeText={onChangeText}
+              onFocus={() => {
+                onInputFocus();
+                scrollFocusedIntoView();
+              }}
+              // Prevent the system keyboard from auto-opening when we want the
+              // in-app emoji keyboard instead. The parent re-enables it by
+              // calling focus() after setting emojiKeyboardOpen=false.
+              showSoftInputOnFocus={!emojiKeyboardOpen}
+              multiline
+            />
+          </View>
           {text.trim() || editing ? (
             <Pressable
               style={styles.sendBtn}
@@ -100,7 +134,9 @@ export default function Composer({
       )}
     </View>
   );
-}
+});
+
+export default Composer;
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
@@ -121,14 +157,29 @@ const makeStyles = (theme: Theme) =>
       alignItems: "center",
       justifyContent: "center",
     },
-    input: {
+    // Rounded "pill" holding the inline emoji toggle + the text input, so the
+    // emoji button sits inside the field (Signal-style).
+    pill: {
       flex: 1,
-      maxHeight: 120,
+      flexDirection: "row",
+      alignItems: "flex-end",
       backgroundColor: theme.inputBg,
       borderWidth: 1,
       borderColor: theme.inputBorder,
       borderRadius: 20,
-      paddingHorizontal: 16,
+      maxHeight: 120,
+    },
+    emojiToggle: {
+      width: 38,
+      height: 40,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    input: {
+      flex: 1,
+      maxHeight: 118,
+      paddingRight: 16,
+      paddingLeft: 4,
       paddingVertical: 10,
       color: theme.text,
       fontSize: 15,
