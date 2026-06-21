@@ -174,6 +174,32 @@ export default function useWebSocket(onMessage: OnMessage) {
         connect();
     }, [connect]);
 
+    // Force a HARD reconnect — unconditionally close the current socket (even if
+    // healthy) and immediately open a fresh one. Used when the authenticated
+    // identity changes (login / logout). Unlike `reconnectNow`, this does NOT
+    // short-circuit on an already-open socket: the whole point is to drop the
+    // socket that is still registered server-side under the PREVIOUS user.
+    const hardReconnect = useCallback(() => {
+        retryCountRef.current = 0;
+        if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+        const ws = wsRef.current;
+        if (ws) {
+            // Detach onclose so its auto-reconnect (with backoff) doesn't race
+            // our explicit connect() below; we drive the reconnect ourselves.
+            ws.onclose = null;
+            try {
+                ws.close();
+            } catch {
+                /* ignore */
+            }
+            wsRef.current = null;
+        }
+        stopHeartbeat();
+        connectingRef.current = false;
+        setConnected(false);
+        connect();
+    }, [connect, stopHeartbeat]);
+
     const sendMessage = useCallback((type: string, data?: AnyData) => {
         const msg = JSON.stringify({ type, data });
         if (wsRef.current && wsRef.current.readyState === 1) {
@@ -209,6 +235,20 @@ export default function useWebSocket(onMessage: OnMessage) {
             connect();
         }
     }, [onMessage, connect]);
+
+    // Reset the socket whenever the authenticated identity changes (login OR
+    // logout). AuthContext dispatches `auth-changed` for both. This is critical
+    // for the no-reload desktop app: after "logout then login as a DIFFERENT
+    // user" on the same device, the previous user's socket would otherwise stay
+    // open and registered server-side as that user — so the new user would, e.g.,
+    // see an INCOMING call (routed to the stale previous-user socket) at the same
+    // time as their own OUTGOING call. Hard-reconnecting binds the socket to the
+    // new user's cookie (or drops it entirely on logout).
+    useEffect(() => {
+        const onAuthChanged = () => hardReconnect();
+        window.addEventListener("auth-changed", onAuthChanged);
+        return () => window.removeEventListener("auth-changed", onAuthChanged);
+    }, [hardReconnect]);
 
     // Force an immediate reconnect when the app comes back to the foreground or
     // the network returns. On the desktop app the window is minimized to the

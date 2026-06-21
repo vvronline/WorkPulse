@@ -123,6 +123,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             /* quota exceeded or private mode */
         }
         setUser(userData);
+        // Signal an auth-identity change so long-lived real-time connections
+        // (the WebSockets opened by useWebSocket from StatusContext, CallContext,
+        // ChatContext, …) tear down and reconnect under the NEW user's cookie.
+        // In the desktop app there is no page reload between logout and login, so
+        // without this the previous user's already-open socket stays registered
+        // server-side as that user — causing ghost behaviour like the new user
+        // simultaneously seeing an OUTGOING call (their own) AND an INCOMING call
+        // (routed to the stale previous-user socket on the same device).
+        try {
+            window.dispatchEvent(
+                new CustomEvent("auth-changed", {
+                    detail: { userId: userData?.id ?? null },
+                }),
+            );
+        } catch {
+            /* CustomEvent unavailable (non-browser env) — ignore */
+        }
         getProfile()
             .then((res) => {
                 if (res.data) {
@@ -166,6 +183,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         localStorage.removeItem("user");
         setUser(null);
+        // Tear down the previous user's real-time WebSockets immediately so the
+        // server drops their socket registration (presence → offline, no more
+        // call/message routing to this device). The fresh socket that reconnects
+        // has no auth cookie and is rejected (4001) until the next login, at
+        // which point it re-authenticates as the new user. See useWebSocket's
+        // `auth-changed` listener.
+        try {
+            window.dispatchEvent(
+                new CustomEvent("auth-changed", { detail: { userId: null } }),
+            );
+        } catch {
+            /* CustomEvent unavailable (non-browser env) — ignore */
+        }
     }, []);
 
     const value = useMemo(

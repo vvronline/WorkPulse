@@ -1,6 +1,6 @@
 {
   "name": "mobile",
-  "version": "1.0.90",
+  "version": "1.0.91",
   "main": "index.js",
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^15.0.1",
