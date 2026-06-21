@@ -843,6 +843,12 @@ class NotifeeService {
             // Same icon requirement as the primary attempt above — without a
             // valid small icon the OS silently drops the notification.
             smallIcon: "ic_launcher",
+            // KEEP the sender's circular avatar on the retry too. The previous
+            // implementation dropped `largeIconOpts` here, so any failure on the
+            // primary attempt (e.g. a transient channel error) lost the avatar
+            // even though it had already been downloaded successfully. Re-using
+            // the cached local file is free, so always re-attach it.
+            ...largeIconOpts,
             ...(hasBadge ? { badgeCount } : {}),
           },
         });

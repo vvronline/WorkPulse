@@ -109,6 +109,7 @@ type CallStatus =
   | "ringing"
   | "connecting"
   | "connected"
+  | "reconnecting"
   | "ended"
   | "rejected";
 
@@ -168,9 +169,18 @@ const PipSelfView = memo(function PipSelfView(props: {
       style={props.style}
       objectFit="cover"
       mirror={props.mirror}
-      // Must be a HIGHER media-overlay layer than the remote view, or Android
-      // intermittently hides the self preview entirely.
-      zOrder={1}
+      // zOrder MUST stay 0 here. On react-native-webrtc a non-zero zOrder forces
+      // an Android SurfaceView with setZOrderMediaOverlay(true), which paints on
+      // its own hardware layer OUTSIDE the parent's rounded-corner clip — that is
+      // exactly why the self preview showed SQUARE corners no matter how the
+      // parent was rounded. zOrder={0} uses a TextureView, which composites in
+      // the normal view hierarchy and therefore RESPECTS the parent's
+      // `overflow:"hidden"` + `borderRadius` (rounded corners actually clip the
+      // video). The tile is still kept ABOVE the remote feed because its wrapper
+      // (`pipStyles.wrap`) carries `elevation: 8` + `zIndex: 5` AND is rendered
+      // AFTER the remote view in the tree — so dropping the media zOrder does not
+      // hide the self preview.
+      zOrder={0}
     />
   );
 });
@@ -343,6 +353,14 @@ export default function CallScreen() {
   const router = useRouter();
 
   const conversationId = Number(params.conversationId);
+  // Reconnect mode: the user is REJOINING a still-active call they navigated
+  // away from (back-press, app killed/reopened). Mirrors the web client's
+  // refresh-rejoin (useCallState `isReconnect`): we skip the ringing/initiate
+  // flow, acquire media, announce `call_reconnect` to the server, and wait for
+  // the peer to send a fresh offer. We treat reconnect as an "outgoing"-shaped
+  // session for the non-incoming UI, but it is neither a fresh outgoing call
+  // nor an incoming ring.
+  const isReconnect = params.mode === "reconnect";
   const mode = params.mode === "incoming" ? "incoming" : "outgoing";
   const callType = params.callType === "video" ? "video" : "voice";
   const autoAnswer = params.autoAnswer === "1";
@@ -353,7 +371,9 @@ export default function CallScreen() {
   const peerName = params.peerName || "Call";
   const [peerAvatar, setPeerAvatar] = useState(params.peerAvatar || "");
 
-  const [status, setStatus] = useState<CallStatus>("ringing");
+  const [status, setStatus] = useState<CallStatus>(
+    isReconnect ? "reconnecting" : "ringing",
+  );
   const [muted, setMuted] = useState(false);
   const [videoOff, setVideoOff] = useState(callType !== "video");
   // Front camera → mirror the self-view; rear → don't (otherwise the rear feed
@@ -453,7 +473,10 @@ export default function CallScreen() {
   // IMPOLITE (ignores the colliding offer and keeps its own). `makingOfferRef`
   // marks the window where we are creating/applying our own offer so an
   // incoming offer in that window is detected as a collision.
-  const politeRef = useRef(mode === "incoming");
+  // Reconnect acts as the POLITE answerer: it waits for the peer to send a
+  // fresh offer (driven by our `call_reconnect`) and answers it, so on an offer
+  // collision it rolls back and accepts theirs (same as an incoming callee).
+  const politeRef = useRef(mode === "incoming" || isReconnect);
   const makingOfferRef = useRef(false);
   // True once THIS session has accepted the incoming call (or is the caller).
   // The server echoes `call_handled_elsewhere` back to the accepter's own user
@@ -465,6 +488,13 @@ export default function CallScreen() {
   const acceptedRef = useRef(mode === "outgoing");
   const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  // Bounded-reconnect safety net (Signal-Android parity). Armed after we send
+  // `call_reconnect`; if the peer never re-offers (so no PC is ever built and
+  // the per-PC connect timeout never arms), this fires and ends the call rather
+  // than leaving the screen stuck on "Reconnecting…" forever.
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
   const createPCRef = useRef<
@@ -1339,6 +1369,10 @@ export default function CallScreen() {
         clearTimeout(disconnectTimerRef.current);
         disconnectTimerRef.current = null;
       }
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
       bitrateRampTimersRef.current.forEach((t) => clearTimeout(t));
       bitrateRampTimersRef.current = [];
       // Safety net: always release the navigation guard on unmount, even if the
@@ -1447,6 +1481,77 @@ export default function CallScreen() {
       }
     };
   }, [mode, status, endAndLeave]);
+
+  // Reconnect: REJOIN a still-active call (mirrors the web useCallState
+  // refresh-rejoin). We acquire media, load ICE config, then tell the server
+  // `call_reconnect` so the OTHER party re-offers; we behave as the polite
+  // answerer and the existing call_signal(offer) handler does the rest. No
+  // ringing, no call_initiate. Runs once on mount when launched in reconnect
+  // mode (OngoingCallBanner → /call/[conversationId]?mode=reconnect).
+  useEffect(() => {
+    if (!isReconnect) return;
+    let cancelled = false;
+    (async () => {
+      const stream = await getMedia();
+      if (cancelled) return;
+      if (!stream) {
+        endAndLeave(false);
+        return;
+      }
+      await waitForIceConfig();
+      if (cancelled) return;
+      const callId = callIdRef.current;
+      if (!callId) {
+        // Without a callId the server can't locate the active call to relay the
+        // reconnect — bail back to the dashboard.
+        endAndLeave(false);
+        return;
+      }
+      // Ask the server to tell the other participant(s) to re-offer to us. The
+      // peer's `call_reconnect` handler (below) creates a fresh offer; our
+      // existing call_signal(offer) handler answers it and the call re-binds.
+      await socket.sendWithBackoff(
+        "call_reconnect",
+        { callId, conversationId },
+        {
+          timeoutMs: 6000,
+          maxAttempts: 6,
+          initialBackoffMs: 140,
+          maxBackoffMs: 1000,
+          ensureConnected: true,
+        },
+      );
+      // BOUNDED RECONNECT (Signal-Android parity). After announcing
+      // `call_reconnect` we wait for the peer to send a FRESH offer; the
+      // call_signal(offer) handler then builds the PC + answers, and
+      // onconnectionstatechange arms the normal 30s connect timeout. But if the
+      // peer never re-offers (they actually left, or the relay dropped the
+      // reconnect), NO peer connection is ever created — so the per-PC connect
+      // timeout never arms and this screen would sit on "Reconnecting…"
+      // forever. Signal bounds its reconnect window and drops the call when it
+      // can't re-establish. Mirror that: if we are still reconnecting (no PC
+      // built) after a grace window, end cleanly instead of hanging. Cleared
+      // automatically the moment a PC is created (pcRef set by createPC).
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      reconnectTimeoutRef.current = setTimeout(() => {
+        if (cancelled) return;
+        // A PC exists → the peer re-offered and negotiation is underway; the
+        // per-PC 30s connect timeout (in createPC) now owns the deadline.
+        if (pcRef.current) return;
+        endAndLeave(false);
+      }, 20000);
+    })();
+    return () => {
+      cancelled = true;
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isReconnect]);
 
   // Incoming: PRE-WARM camera/mic while the phone is still ringing (mirrors
   // the web client's pre-warm path). Acquiring media only after the user taps
@@ -1971,6 +2076,76 @@ export default function CallScreen() {
           });
           break;
         }
+        case "call_reconnect": {
+          // The OTHER party rejoined the call (their app/page came back). The
+          // server asks US to re-offer so their fresh session re-binds media.
+          // Mirrors the web useWebRTC `reconnectTo` effect: close the stale PC
+          // and create + send a brand-new offer to the reconnecting peer. Our
+          // existing call_signal(answer/ice) handlers complete the handshake.
+          if (Number(d.conversationId) !== conversationId) break;
+          const targetUserId = Number(d.userId);
+          if (!targetUserId) break;
+          peerIdRef.current = targetUserId;
+          runSerialized(async () => {
+            try {
+              const stream = localStreamRef.current || (await getMedia());
+              if (!stream) return;
+              await waitForIceConfig();
+              // Tear down the stale peer connection — the reconnecting side has
+              // a brand-new PeerConnection, so ours must be rebuilt to match.
+              try {
+                pcRef.current?.close();
+              } catch {
+                /* ignore */
+              }
+              pcRef.current = null;
+              // Reset recovery flags for the fresh negotiation.
+              iceRestartAttemptedRef.current = false;
+              negotiationDoneRef.current = false;
+              setStatus("connecting");
+              const pc = createPC(stream, targetUserId, true);
+              applySenderEncodingLimits(pc);
+              makingOfferRef.current = true;
+              let offer;
+              try {
+                offer = await pc.createOffer({
+                  offerToReceiveAudio: true,
+                  offerToReceiveVideo: callType === "video",
+                });
+                await pc.setLocalDescription(offer);
+              } finally {
+                makingOfferRef.current = false;
+              }
+              await socket.sendWithBackoff(
+                "call_signal",
+                {
+                  conversationId,
+                  targetUserId,
+                  signal: { type: "offer", sdp: offer.sdp },
+                },
+                {
+                  timeoutMs: 4500,
+                  maxAttempts: 5,
+                  initialBackoffMs: 120,
+                  maxBackoffMs: 800,
+                },
+              );
+              // Re-announce our camera state so the reconnecting peer renders
+              // avatar vs. video correctly from the first frame.
+              socket.send("call_signal", {
+                conversationId,
+                targetUserId,
+                signal: { type: "video-state", videoOff },
+              });
+            } catch (err: any) {
+              console.warn(
+                "[call] reconnect re-offer failed:",
+                err?.message || err,
+              );
+            }
+          });
+          break;
+        }
         case "call_reaction": {
           if (Number(d.conversationId) !== conversationId) return;
           if (!d.emoji) break;
@@ -2446,13 +2621,15 @@ export default function CallScreen() {
       ? mode === "incoming"
         ? "Incoming call…"
         : "Ringing…"
-      : status === "connecting"
-        ? "Connecting…"
-        : status === "connected"
-          ? "Connected"
-          : status === "rejected"
-            ? "Call declined"
-            : "Call ended";
+        : status === "connecting"
+          ? "Connecting…"
+          : status === "reconnecting"
+            ? "Reconnecting…"
+            : status === "connected"
+              ? "Connected"
+              : status === "rejected"
+                ? "Call declined"
+                : "Call ended";
 
   const showVideo = callType === "video";
   // Only paint the remote video when the peer actually has their camera on AND

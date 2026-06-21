@@ -735,6 +735,32 @@ export function getConversationCalls(convId: number) {
   return api.get<CallLogEntry[]>(`/chat/conversations/${convId}/calls`);
 }
 
+/**
+ * The user's currently-active (answered) call, if any. Mirrors the web client's
+ * getActiveCall (GET /chat/calls/active) and is used by the mobile rejoin path
+ * (OngoingCallBanner) to detect a still-live call the user navigated away from
+ * and let them tap back into it. Returns `null` when there is no active call.
+ */
+export type ActiveCall = {
+  id: number;
+  conversation_id: number;
+  caller_id: number;
+  call_type: "audio" | "video" | string;
+  status: string;
+  started_at?: string;
+  caller_name?: string | null;
+  caller_avatar?: string | null;
+  is_group?: boolean;
+  group_name?: string | null;
+  other_user_id?: number | null;
+  other_name?: string | null;
+  other_avatar?: string | null;
+};
+
+export function getActiveCall() {
+  return api.get<ActiveCall | null>("/chat/calls/active");
+}
+
 export function getIceConfig() {
   return api.get<IceConfig>("/chat/ice-config");
 }

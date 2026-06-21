@@ -16,6 +16,16 @@ interface FCMPayload {
         body: string;
     };
     data: Record<string, string>;
+    // When true, the top-level `notification` block is NOT applied to the
+    // Android/multicast message (it is still used to render the webpush
+    // notification, and iOS still renders via `apns.payload.aps.alert`). This
+    // forces Android to deliver a DATA-ONLY message so the app's
+    // background/headless handler runs and renders the notification itself via
+    // Notifee — which is the ONLY way to attach the sender's CIRCULAR avatar as
+    // the notification largeIcon (an OS-rendered FCM `notification` message
+    // cannot carry an authed circular largeIcon, which is why messages showed
+    // no avatar while data-only CALLS did).
+    androidDataOnly?: boolean;
     android?: {
         priority: "high" | "normal";
         // Optional. Do NOT set for Android call/message data pushes: if this is
@@ -348,25 +358,33 @@ class PushNotificationService {
         const preview = messageData.messagePreview.substring(0, 150);
         const unreadCount = messageData.unreadCount || 1;
 
-        // HYBRID PAYLOAD (messages): unlike incoming CALLS (which must stay
-        // data-only so the headless JS handler can drive the full-screen call
-        // UI), chat messages just need a normal status-bar/lockscreen entry.
-        // Previously messages were DATA-ONLY and relied SOLELY on the mobile
-        // headless handler rendering via Notifee — a fragile path that silently
-        // dropped the notification in the background/killed state (the OS would
-        // play the channel sound but show nothing). We now ALSO include a
-        // top-level `notification` block + `android.notification` so Android's
-        // OS renders the message directly in the background/killed state (the
-        // industry-standard approach for chat apps), independent of JS. In the
-        // FOREGROUND, RN Firebase's `onMessage` still fires (data is present) so
-        // the app renders via Notifee; the OS does not double-render notification
-        // messages while foregrounded. `data` is retained for in-app routing and
-        // badge sync. iOS keeps its visible APNs alert below.
+        // ANDROID DATA-ONLY (messages): chat messages are sent DATA-ONLY on
+        // Android (no top-level `notification` block, no `android.notification`)
+        // — exactly like CALLS — so the app's background/headless handler ALWAYS
+        // runs and renders the notification itself via Notifee. This is the ONLY
+        // way to attach the sender's CIRCULAR avatar as the notification
+        // largeIcon: the avatar lives behind the server's `/uploads` auth
+        // middleware, so it must be downloaded WITH a Bearer token (which an
+        // OS-rendered FCM `notification` message cannot do) and clipped to a
+        // circle. Previously messages used a HYBRID payload (top-level
+        // `notification` + `android.notification`), which made Android render the
+        // message itself and BYPASS the headless handler — so the avatar never
+        // showed (calls always showed it because they were data-only). We keep
+        // `androidDataOnly` so sendToDevices omits the top-level `notification`
+        // from the Android multicast; the webpush notification (desktop/browser)
+        // and the iOS APNs alert are still rendered. In every Android state
+        // (foreground via onMessage, background/killed via the headless task) the
+        // handler calls notifeeService.displayMessage, which fetches the authed
+        // avatar and posts it as a circular largeIcon.
         const payload: FCMPayload = {
+            // Used ONLY for the webpush (desktop/browser) notification render —
+            // NOT applied to the Android multicast because androidDataOnly is set
+            // below (see sendToDevices).
             notification: {
                 title: messageData.senderName,
                 body: preview,
             },
+            androidDataOnly: true,
             data: this.buildCommonData({
                 type: "chat_message",
                 title: messageData.senderName,
@@ -386,21 +404,11 @@ class PushNotificationService {
                 // T031: Add expiry for payload freshness validation (1 hour TTL)
                 expiresAt: String(Math.floor(Date.now() / 1000) + 3600),
             }, tenantId),
-            // Android: high-priority message with an `android.notification` block
-            // so the OS renders it on the dedicated "messages" channel in the
-            // background/killed state (with the launcher badge count). The
-            // channel id matches the one created at app init.
+            // Android: high-priority DATA-ONLY message (no `android.notification`)
+            // so the RN Firebase headless/background handler runs and renders the
+            // message via Notifee with the sender's circular avatar largeIcon.
             android: {
                 priority: "high",
-                notification: {
-                    sound: "default",
-                    channelId: process.env.PUSH_DEFAULT_ANDROID_CHANNEL || "messages",
-                    priority: "high",
-                    visibility: "private",
-                    notificationCount: unreadCount,
-                    defaultVibrateTimings: true,
-                    defaultLightSettings: true,
-                },
             },
             apns: {
                 headers: {
@@ -562,11 +570,23 @@ class PushNotificationService {
         let failed = 0;
 
         try {
+            // `androidDataOnly` (chat messages) keeps the top-level
+            // `notification` block OFF the multicast so Android delivers a
+            // DATA-ONLY message — the app's headless/background handler then
+            // renders it via Notifee WITH the sender's circular avatar largeIcon
+            // (an OS-rendered FCM notification can't fetch the authed avatar).
+            // The webpush block below still renders the desktop/browser
+            // notification, and iOS still renders via `apns.payload.aps.alert`.
+            const includeTopLevelNotification =
+                !!payload.notification && !payload.androidDataOnly;
             const response = await getMessaging(this.app!).sendEachForMulticast({
                 tokens,
-                // Omitted for data-only payloads (e.g. incoming calls) so Android
-                // delivers a data message that wakes the background handler.
-                ...(payload.notification ? { notification: payload.notification } : {}),
+                // Omitted for data-only payloads (e.g. incoming calls AND chat
+                // messages) so Android delivers a data message that wakes the
+                // background/headless handler.
+                ...(includeTopLevelNotification
+                    ? { notification: payload.notification }
+                    : {}),
                 data: payload.data,
                 android: payload.android,
                 apns: payload.apns,
