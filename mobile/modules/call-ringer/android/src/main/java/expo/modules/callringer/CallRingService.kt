@@ -72,6 +72,10 @@ class CallRingService : Service() {
     const val EXTRA_CALLER_ID = "callerId"
     const val EXTRA_CALLER_NAME = "callerName"
     const val EXTRA_CALLER_AVATAR = "callerAvatar"
+    // Bearer auth token (the user's JWT). The caller avatar lives behind the
+    // server's `/uploads` auth middleware, so AvatarLoader must send it as an
+    // Authorization header or the fetch 401s and no photo is shown.
+    const val EXTRA_TOKEN = "token"
     const val EXTRA_CALL_TYPE = "callType"
     const val EXTRA_SCHEME = "scheme"
 
@@ -137,6 +141,7 @@ class CallRingService : Service() {
     val callerId = intent?.getStringExtra(EXTRA_CALLER_ID) ?: ""
     val callerName = intent?.getStringExtra(EXTRA_CALLER_NAME) ?: title
     val callerAvatar = intent?.getStringExtra(EXTRA_CALLER_AVATAR) ?: ""
+    val token = intent?.getStringExtra(EXTRA_TOKEN) ?: ""
     val callType = intent?.getStringExtra(EXTRA_CALL_TYPE) ?: "voice"
     val scheme = intent?.getStringExtra(EXTRA_SCHEME) ?: "workpulse"
 
@@ -174,7 +179,7 @@ class CallRingService : Service() {
     // no avatar URL was supplied.
     if (callerAvatar.isNotBlank()) {
       Thread {
-        val bitmap = AvatarLoader.load(applicationContext, callerAvatar)
+        val bitmap = AvatarLoader.load(applicationContext, callerAvatar, token)
         if (bitmap != null) {
           try {
             val withAvatar = buildCallNotification(

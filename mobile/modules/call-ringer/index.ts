@@ -54,6 +54,13 @@ export type StartRingingOptions = {
   callerId?: string;
   callerName?: string;
   callerAvatar?: string;
+  /**
+   * Bearer auth token (the user's JWT). The caller avatar is served from the
+   * server's `/uploads` route behind auth middleware, so the native
+   * AvatarLoader MUST send `Authorization: Bearer <token>` or the fetch 401s
+   * and no avatar is shown in the incoming-call notification.
+   */
+  token?: string;
   /** "voice" | "video". */
   callType?: string;
   /** App deep-link scheme (e.g. "workpulse") so action taps open the call screen. */
@@ -78,6 +85,7 @@ export function startRinging(options: StartRingingOptions = {}): void {
       callerId: options.callerId ?? "",
       callerName: options.callerName ?? "",
       callerAvatar: options.callerAvatar ?? "",
+      token: options.token ?? "",
       callType: options.callType ?? "voice",
       scheme: options.scheme ?? "workpulse",
     });

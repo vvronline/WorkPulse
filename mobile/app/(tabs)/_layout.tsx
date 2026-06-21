@@ -4,6 +4,7 @@ import { ActivityIndicator, AppState, View } from "react-native";
 import * as Notifications from "expo-notifications";
 import {
   Calendar,
+  Clock,
   Home,
   Menu,
   MessageSquare,
@@ -29,6 +30,7 @@ export default function TabsLayout() {
   const calendarEnabled = userHasFeature(user, "calendar");
   const tasksEnabled = userHasFeature(user, "tasks");
   const chatEnabled = userHasFeature(user, "chat");
+  const attendanceEnabled = userHasFeature(user, "attendance");
   // Total unread chat messages, shown as a badge on the Chat tab icon
   // (mirrors the web sidebar's chat unread count). Driven by the conversations
   // list + live `chat_message` WS events so it updates without opening Chat.
@@ -140,10 +142,12 @@ export default function TabsLayout() {
       }}
     >
       <Tabs.Screen
-        name="index"
+        name="attendance"
         options={{
-          title: "Home",
-          tabBarIcon: ({ color, size }) => <Home color={color} size={size} />,
+          title: "Attendance",
+          tabBarIcon: ({ color, size }) => <Clock color={color} size={size} />,
+          // Hidden when the tenant's plan disables the attendance feature.
+          href: attendanceEnabled ? undefined : null,
         }}
       />
       <Tabs.Screen
@@ -151,8 +155,8 @@ export default function TabsLayout() {
         options={{
           title: "Calendar",
           tabBarIcon: ({ color, size }) => <Calendar color={color} size={size} />,
-          // Hidden when the tenant's plan disables the calendar feature.
-          href: calendarEnabled ? undefined : null,
+          // Moved into the More menu — kept registered but hidden from the tab bar.
+          href: null,
         }}
       />
       <Tabs.Screen

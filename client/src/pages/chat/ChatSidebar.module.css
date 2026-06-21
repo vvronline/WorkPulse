@@ -17,11 +17,12 @@
 }
 .tabBtn {
     flex: 1;
+    min-width: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 0.3rem;
-    padding: 0.4rem 0.75rem;
+    gap: 0.25rem;
+    padding: 0.4rem 0.4rem;
     border: none;
     background: none;
     color: var(--text-muted);
@@ -33,6 +34,9 @@
     white-space: nowrap;
     overflow: hidden;
     border-radius: 6px;
+}
+.tabBtn svg {
+    flex-shrink: 0;
 }
 .tabBtn:hover {
     color: var(--text);
@@ -135,8 +139,10 @@
     color: #fff;
     font-size: 0.65rem;
     font-weight: 700;
-    padding: 0.1rem 0.45rem;
+    line-height: 1.2;
+    padding: 0.05rem 0.35rem;
     border-radius: var(--radius-full);
+    flex-shrink: 0;
 }
 .newGroupBtn {
     background: none;

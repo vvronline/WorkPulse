@@ -19,6 +19,7 @@
 
 import { Platform } from "react-native";
 import * as Linking from "expo-linking";
+import * as FileSystem from "expo-file-system/legacy";
 import { uploadUrl } from "../config";
 import { nativeCallService } from "./nativeCallService";
 import type { NotificationPayload } from "./pushNotificationService";
@@ -30,6 +31,7 @@ import {
   loadPersistedPendingCall,
 } from "../realtime/pendingCall";
 import { loadCallPrefs } from "./callPrefsStore";
+import { getToken } from "../auth/tokenStore";
 import {
   startRinging,
   stopRinging,
@@ -180,6 +182,69 @@ class NotifeeService {
 
   isAvailable(): boolean {
     return this.resolve() != null;
+  }
+
+  /**
+   * Download a protected avatar to a LOCAL cache file so Notifee can render it
+   * as a `largeIcon`. Notifee fetches `largeIcon` URLs itself but CANNOT attach
+   * request headers, and our avatars live behind the server's `/uploads` auth
+   * middleware (401 without a Bearer token) — so a remote URL silently shows no
+   * avatar. We instead download it here WITH the Authorization header (mirroring
+   * the in-app AuthedImage component) and hand Notifee the resulting `file://`
+   * URI. Returns the local file URI, or null on any failure (caller then falls
+   * back to the app icon). Cached by a hash of the URL with a short TTL so a
+   * repeat sender doesn't re-download every message.
+   */
+  private async fetchAvatarToFile(
+    absoluteUrl: string,
+  ): Promise<string | null> {
+    if (Platform.OS !== "android") return null;
+    if (!absoluteUrl) return null;
+    try {
+      let token = "";
+      try {
+        token = (await getToken()) || "";
+      } catch {
+        // best-effort
+      }
+
+      const dir = `${FileSystem.cacheDirectory}msg_avatars/`;
+      try {
+        await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+      } catch {
+        // already exists / best-effort
+      }
+      // Stable filename keyed by the URL so repeated messages from the same
+      // sender reuse the cached file instead of re-downloading.
+      const key = absoluteUrl.replace(/[^a-zA-Z0-9]/g, "_").slice(-120);
+      const target = `${dir}${key}.img`;
+
+      // Reuse a fresh cache entry (< 24h) to avoid a network round-trip per push.
+      try {
+        const info = await FileSystem.getInfoAsync(target);
+        const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+        if (
+          info.exists &&
+          typeof info.modificationTime === "number" &&
+          Date.now() - info.modificationTime * 1000 < ONE_DAY_MS
+        ) {
+          return info.uri;
+        }
+      } catch {
+        // fall through to a fresh download
+      }
+
+      const res = await FileSystem.downloadAsync(absoluteUrl, target, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (res.status >= 200 && res.status < 300 && res.uri) {
+        return res.uri;
+      }
+      return null;
+    } catch (err) {
+      console.warn("[NotifeeService] Failed to fetch message avatar:", err);
+      return null;
+    }
   }
 
   /**
@@ -417,6 +482,21 @@ class NotifeeService {
     const route = pendingCallFromData(data);
     if (route) await persistPendingCall(route);
 
+    // Resolve the caller avatar to an ABSOLUTE URL. The server sends a relative
+    // upload path (e.g. `/uploads/...`) which the native AvatarLoader cannot
+    // fetch on its own. Pair it with the user's auth token so the native loader
+    // can pass `Authorization: Bearer <token>` (the avatar lives behind the
+    // server's `/uploads` auth middleware — without it the fetch 401s and no
+    // photo shows). Both are best-effort: on failure the notification simply
+    // falls back to the app icon.
+    const callerAvatarAbs = uploadUrl(data.callerAvatar || "") || "";
+    let token = "";
+    try {
+      token = (await getToken()) || "";
+    } catch {
+      // best-effort; no token → AvatarLoader falls back to the app icon.
+    }
+
     try {
       startRinging({
         ringtoneRes: silentRing ? "" : callSoundResource,
@@ -428,7 +508,8 @@ class NotifeeService {
         conversationId: data.conversationId,
         callerId: data.callerId,
         callerName: data.callerName || title,
-        callerAvatar: data.callerAvatar,
+        callerAvatar: callerAvatarAbs,
+        token,
         callType: data.callType || "voice",
       });
     } catch (err) {
@@ -691,10 +772,20 @@ class NotifeeService {
     // upload path like `/uploads/...`), so resolve it to an absolute URL Notifee
     // can fetch. Empty/unset → omit largeIcon and Notifee falls back to the app
     // icon. `circularLargeIcon` clips it to a circle to match the in-app avatar.
+    // The avatar is served behind the server's `/uploads` auth middleware, so a
+    // raw remote URL handed to Notifee's `largeIcon` 401s (Notifee can't attach
+    // a Bearer header) and silently shows no photo. Download it WITH the auth
+    // header to a local cache file first, then point `largeIcon` at that local
+    // `file://` URI. Falls back to the app icon when there is no avatar or the
+    // download fails.
     const avatarUrl = uploadUrl(data.senderAvatar || data.avatar || "");
+    let localAvatarUri: string | null = null;
+    if (avatarUrl) {
+      localAvatarUri = await this.fetchAvatarToFile(avatarUrl);
+    }
     const largeIconOpts =
-      avatarUrl
-        ? { largeIcon: avatarUrl, circularLargeIcon: true }
+      localAvatarUri
+        ? { largeIcon: localAvatarUri, circularLargeIcon: true }
         : {};
 
     try {

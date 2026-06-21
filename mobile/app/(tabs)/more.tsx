@@ -3,7 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import {
   Building2,
-  CalendarCheck,
+  Calendar,
   ChevronRight,
   FileText,
   Server,
@@ -41,14 +41,15 @@ export default function MoreScreen() {
   const isTeamLead = level >= 2 || !!user?.has_reports;
   const isHR = level >= 4;
 
-  // Feature-gate Attendance + Notes to match the web MobileTabBar's More sheet
+  // Attendance is now a primary tab; Calendar moved here from the tab bar.
+  // Feature-gate Calendar + Notes to match the web MobileTabBar's More sheet
   // (only listed when the tenant's plan enables them).
   const items: Item[] = [];
-  if (userHasFeature(user, "attendance")) {
+  if (userHasFeature(user, "calendar")) {
     items.push({
-      label: "Attendance",
-      icon: CalendarCheck,
-      onPress: () => router.push("/attendance"),
+      label: "Calendar",
+      icon: Calendar,
+      onPress: () => router.push("/calendar"),
     });
   }
   if (userHasFeature(user, "notes")) {

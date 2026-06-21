@@ -20,6 +20,7 @@ import {
   useAudioPlayer,
   useAudioPlayerStatus,
 } from "expo-audio";
+import { useKeepAwake } from "expo-keep-awake";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -189,6 +190,8 @@ const PIP_MARGIN = 16;
 // never overlaps the call buttons.
 const PIP_BOTTOM_CLEARANCE = 120;
 
+const PIP_RADIUS = 18;
+
 const pipStyles = StyleSheet.create({
   wrap: {
     position: "absolute",
@@ -196,21 +199,31 @@ const pipStyles = StyleSheet.create({
     left: 0,
     width: PIP_W,
     height: PIP_H,
-    // Signal-style rounded corners; overflow:hidden clips the RTCView to them.
-    borderRadius: 18,
-    backgroundColor: "#000",
-    overflow: "hidden",
+    borderRadius: PIP_RADIUS,
+    backgroundColor: "transparent",
     // zIndex alone does NOT lift a view above a sibling on Android — elevation
     // is required, otherwise the full-screen remote video paints over the
     // self-preview once the call connects and the local tile "disappears".
     zIndex: 5,
     elevation: 8,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.3)",
+    // IMPORTANT: do NOT put a borderWidth on this OUTER wrap. On Android the
+    // RTCView is backed by a SurfaceView/TextureView that paints OUTSIDE the
+    // parent's rounded-corner clip, so a square video peeked out past the
+    // rounded border (the "square corners around a rounded video" bug). The
+    // rounding + clipping + border now live on the `inner` view that DIRECTLY
+    // wraps the surface so the corners are actually clipped.
   },
   inner: {
     width: "100%",
     height: "100%",
+    // Clip the RTCView surface to rounded corners HERE — on the view that
+    // directly contains it — so Android actually rounds the video instead of
+    // leaving a square surface inside a rounded frame.
+    borderRadius: PIP_RADIUS,
+    overflow: "hidden",
+    backgroundColor: "#000",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.3)",
   },
 });
 
@@ -306,6 +319,13 @@ const CallDuration = memo(function CallDuration(props: {
  *   peerName        display name
  */
 export default function CallScreen() {
+  // Keep the screen awake for the entire lifetime of the call UI. Without this
+  // Android dims/sleeps the display after the system inactivity timeout when the
+  // user is not touching the screen (e.g. just watching a video call), which on
+  // tablets like the OnePlus Pad turns the call screen off mid-call. This sets
+  // FLAG_KEEP_SCREEN_ON while mounted and releases it automatically on unmount.
+  useKeepAwake();
+
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const insets = useSafeAreaInsets();

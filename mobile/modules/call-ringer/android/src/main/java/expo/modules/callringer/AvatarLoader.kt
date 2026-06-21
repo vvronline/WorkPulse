@@ -51,13 +51,18 @@ object AvatarLoader {
    * Loads [url] into a circular [Bitmap] sized for a notification large icon.
    * Returns null on any error (empty URL, network failure, decode failure).
    * Results are cached to the app cache dir keyed by a hash of the URL.
+   *
+   * [token] is the user's Bearer JWT. The avatar is served from the server's
+   * `/uploads` route behind auth middleware, so without an
+   * `Authorization: Bearer <token>` header the request 401s and no avatar is
+   * shown. Pass an empty string for public/unauthenticated URLs.
    */
-  fun load(context: Context, url: String?): Bitmap? {
+  fun load(context: Context, url: String?, token: String? = null): Bitmap? {
     if (url.isNullOrBlank()) return null
     return try {
       val cacheFile = cacheFileFor(context, url)
       val cached = readFreshCache(cacheFile)
-      val raw = cached ?: downloadToCache(url, cacheFile)
+      val raw = cached ?: downloadToCache(url, cacheFile, token)
       raw ?: return null
       circularCrop(raw)
     } catch (_: Throwable) {
@@ -80,7 +85,7 @@ object AvatarLoader {
     }
   }
 
-  private fun downloadToCache(url: String, cacheFile: File): Bitmap? {
+  private fun downloadToCache(url: String, cacheFile: File, token: String?): Bitmap? {
     var connection: HttpURLConnection? = null
     return try {
       connection = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -88,6 +93,13 @@ object AvatarLoader {
         readTimeout = READ_TIMEOUT_MS
         instanceFollowRedirects = true
         requestMethod = "GET"
+        // The avatar lives behind the server's `/uploads` auth middleware, which
+        // returns 401 without a Bearer token. Attach the user's JWT so the
+        // notification can actually fetch the contact photo (mirrors the in-app
+        // AuthedImage component, which sends the same header).
+        if (!token.isNullOrBlank()) {
+          setRequestProperty("Authorization", "Bearer $token")
+        }
       }
       val code = connection.responseCode
       if (code !in 200..299) return null

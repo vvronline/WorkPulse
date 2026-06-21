@@ -28,22 +28,22 @@ import {
   Timer,
   X,
 } from "lucide-react-native";
-import type { Theme } from "../src/theme";
-import { useTheme } from "../src/theme/ThemeProvider";
-import { useDialog } from "../src/hooks/useDialog";
-import { socket } from "../src/realtime/socket";
-import { formatTime } from "../src/utils/time";
-import LeavesTab from "../src/components/LeavesTab";
-import DatePicker from "../src/components/DatePicker";
-import TimePicker from "../src/components/TimePicker";
-import PendingRequestsList from "../src/components/manualEntry/PendingRequestsList";
-import AnalyticsWidgetsGrid from "../src/components/analytics/WidgetsGrid";
-import AnalyticsSummaryStats from "../src/components/analytics/SummaryStats";
-import WorkBreakChart from "../src/components/analytics/WorkBreakChart";
-import TrendChart from "../src/components/analytics/TrendChart";
-import DoughnutChart from "../src/components/analytics/DoughnutChart";
-import AnalyticsHistoryTable from "../src/components/analytics/HistoryTable";
-import { exportMyAnalytics } from "../src/components/analytics/analyticsExport";
+import type { Theme } from "../../src/theme";
+import { useTheme } from "../../src/theme/ThemeProvider";
+import { useDialog } from "../../src/hooks/useDialog";
+import { socket } from "../../src/realtime/socket";
+import { formatTime } from "../../src/utils/time";
+import LeavesTab from "../../src/components/LeavesTab";
+import DatePicker from "../../src/components/DatePicker";
+import TimePicker from "../../src/components/TimePicker";
+import PendingRequestsList from "../../src/components/manualEntry/PendingRequestsList";
+import AnalyticsWidgetsGrid from "../../src/components/analytics/WidgetsGrid";
+import AnalyticsSummaryStats from "../../src/components/analytics/SummaryStats";
+import WorkBreakChart from "../../src/components/analytics/WorkBreakChart";
+import TrendChart from "../../src/components/analytics/TrendChart";
+import DoughnutChart from "../../src/components/analytics/DoughnutChart";
+import AnalyticsHistoryTable from "../../src/components/analytics/HistoryTable";
+import { exportMyAnalytics } from "../../src/components/analytics/analyticsExport";
 import {
   addManualEntry,
   getCurrentOrg,
@@ -66,8 +66,8 @@ import {
   type OrgInfo,
   type OvertimeRequest,
   type TrackerEntry,
-} from "../src/features";
-import type { WidgetsData } from "../src/components/analytics/WidgetsGrid";
+} from "../../src/features";
+import type { WidgetsData } from "../../src/components/analytics/WidgetsGrid";
 
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 

@@ -103,7 +103,7 @@ export default function ChatSidebar({
                     className={`${s.tabBtn} ${sidebarTab === "msgs" ? s.tabActive : ""}`}
                     onClick={() => switchTab("msgs")}
                 >
-                    <MessageSquare size={14} /> Messages
+                    <MessageSquare size={14} /> Chat
                     {totalUnread > 0 && <span className={s.totalBadge}>{totalUnread}</span>}
                 </button>
                 {hasFeature("meetings") && (
@@ -111,7 +111,7 @@ export default function ChatSidebar({
                         className={`${s.tabBtn} ${sidebarTab === "meetings" ? s.tabActive : ""}`}
                         onClick={() => switchTab("meetings")}
                     >
-                        <Video size={14} /> Meetings
+                        <Video size={14} /> Meet
                         {meetingConvs.some((c) => c.unread_count > 0) && (
                             <span className={s.totalBadge}>
                                 {meetingConvs.reduce((sum, c) => sum + (c.unread_count || 0), 0)}
