@@ -28,6 +28,11 @@ import { socket } from "../realtime/socket";
  */
 
 const ACCENT_CACHE_KEY = "wp_brand_accent";
+// The org branding logo URL is cached so the notification handler (which runs
+// in the killed/headless state with NO React context) can read it from
+// SecureStore and use it as the message-notification LARGE icon fallback when a
+// message has no sender avatar. See notifeeService.displayMessage.
+export const BRAND_LOGO_CACHE_KEY = "wp_brand_logo_url";
 
 interface ThemeContextValue {
   theme: Theme;
@@ -76,6 +81,19 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     try {
       const { data } = await getBranding();
       applyAccent(data?.accent_color || DEFAULT_ACCENT);
+      // Persist the org logo URL so the background/headless notification handler
+      // can use it as the message-notification large-icon fallback (it has no
+      // access to this React context / the API). Clear it when unset.
+      try {
+        const logo = data?.logo_url;
+        if (logo) {
+          await SecureStore.setItemAsync(BRAND_LOGO_CACHE_KEY, logo);
+        } else {
+          await SecureStore.deleteItemAsync(BRAND_LOGO_CACHE_KEY);
+        }
+      } catch {
+        /* best-effort cache */
+      }
     } catch {
       /* keep current accent on failure */
     }

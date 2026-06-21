@@ -73,17 +73,6 @@ const Composer = forwardRef<TextInput, {
         />
       ) : (
         <>
-          <Pressable
-            style={styles.attachBtn}
-            onPress={onOpenAttach}
-            disabled={uploading || editing}
-          >
-            {uploading ? (
-              <ActivityIndicator size="small" color={theme.textSecondary} />
-            ) : (
-              <Plus size={22} color={theme.textSecondary} />
-            )}
-          </Pressable>
           <View style={styles.pill}>
             <Pressable
               style={styles.emojiToggle}
@@ -91,9 +80,9 @@ const Composer = forwardRef<TextInput, {
               hitSlop={6}
             >
               {emojiKeyboardOpen ? (
-                <Keyboard size={22} color={theme.textSecondary} />
+                <Keyboard size={24} color={theme.textSecondary} />
               ) : (
-                <Smile size={22} color={theme.textSecondary} />
+                <Smile size={24} color={theme.textSecondary} />
               )}
             </Pressable>
             <TextInput
@@ -113,6 +102,20 @@ const Composer = forwardRef<TextInput, {
               showSoftInputOnFocus={!emojiKeyboardOpen}
               multiline
             />
+            {/* Signal places the "+" attach button INSIDE the pill, on the
+                right edge of the text field. */}
+            <Pressable
+              style={styles.attachBtn}
+              onPress={onOpenAttach}
+              disabled={uploading || editing}
+              hitSlop={6}
+            >
+              {uploading ? (
+                <ActivityIndicator size="small" color={theme.textSecondary} />
+              ) : (
+                <Plus size={24} color={theme.textSecondary} />
+              )}
+            </Pressable>
           </View>
           {text.trim() || editing ? (
             <Pressable

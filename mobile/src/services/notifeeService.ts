@@ -20,6 +20,7 @@
 import { Platform } from "react-native";
 import * as Linking from "expo-linking";
 import * as FileSystem from "expo-file-system/legacy";
+import * as SecureStore from "expo-secure-store";
 import { uploadUrl } from "../config";
 import { nativeCallService } from "./nativeCallService";
 import type { NotificationPayload } from "./pushNotificationService";
@@ -97,6 +98,21 @@ function ringtoneResourceForTone(toneId: string): string {
 // incoming-call notification while still surfacing the full-screen call UI.
 const CALL_SILENT_CHANNEL_ID = "calls_silent_v2";
 const MESSAGE_CHANNEL_ID = "messages_v2";
+
+// Notification SMALL icon — a STATIC, compile-time `drawable` resource (a white-
+// on-transparent silhouette the OS tints). It MUST resolve: a notification
+// posted with no resolvable small icon is DROPPED SILENTLY (sound plays, no
+// status-bar entry) — the root cause of "messages: only sound, no banner". The
+// previous "ic_launcher" value only existed as an ADAPTIVE `mipmap`, which
+// Android rejects as a small icon. See scripts/withAndroidNotificationIcon.js +
+// res/drawable/notification_icon.xml.
+const MESSAGE_SMALL_ICON = "notification_icon";
+
+// SecureStore key holding the admin-set org branding logo URL. Cached by the
+// ThemeProvider (BRAND_LOGO_CACHE_KEY) so the killed/headless message handler —
+// which has NO React context / API access — can use the org logo as the message
+// notification LARGE icon fallback when a message has no sender avatar.
+const BRAND_LOGO_CACHE_KEY = "wp_brand_logo_url";
 
 type NotifeeModule = any;
 type AndroidImportanceEnum = Record<string, number>;
@@ -792,9 +808,10 @@ class NotifeeService {
       sound: "default",
       // CRITICAL: an Android notification with NO resolvable small icon is
       // DROPPED SILENTLY — the channel's sound still plays (the "ding") but NO
-      // status-bar / lockscreen entry ever appears. Point Notifee at the app's
-      // launcher mipmap (always present) so the message notification displays.
-      smallIcon: "ic_launcher",
+      // status-bar / lockscreen entry ever appears. Point Notifee at the bundled
+      // monochrome `drawable` notification icon (NOT the adaptive `ic_launcher`
+      // mipmap, which Android rejects as a small icon → the silent-drop bug).
+      smallIcon: MESSAGE_SMALL_ICON,
       // Drive the launcher dot/count from the running total.
       ...(hasBadge ? { badgeCount } : {}),
       // Chat-avatar largeIcon (circular) — parity with the call notification.
@@ -834,7 +851,7 @@ class NotifeeService {
               importance: this.AndroidImportance.HIGH ?? 4,
               pressAction: { id: "default", launchActivity: "default" },
               sound: "default",
-              smallIcon: "ic_launcher",
+              smallIcon: MESSAGE_SMALL_ICON,
               ...largeIconOpts,
               ...(hasBadge ? { badgeCount } : {}),
             },
@@ -851,7 +868,7 @@ class NotifeeService {
                 importance: this.AndroidImportance.HIGH ?? 4,
                 pressAction: { id: "default", launchActivity: "default" },
                 sound: "default",
-                smallIcon: "ic_launcher",
+                smallIcon: MESSAGE_SMALL_ICON,
                 ...largeIconOpts,
               },
             });
@@ -865,30 +882,47 @@ class NotifeeService {
     // Post NOW without the avatar so the message is guaranteed to appear.
     await postNotification({});
 
-    // ── STEP 2: attach the sender's avatar BEST-EFFORT (non-blocking) ─────
-    // Fetch the avatar with a HARD TIMEOUT so it can never hang the headless
-    // task. When it resolves, re-post with the SAME id to attach the circular
-    // largeIcon (Notifee updates the existing notification in place). Any
-    // failure/timeout simply leaves the already-posted notification as-is.
-    const avatarUrl = uploadUrl(data.senderAvatar || data.avatar || "");
-    if (avatarUrl) {
-      const AVATAR_TIMEOUT_MS = 3500;
+    // ── STEP 2: attach the large icon BEST-EFFORT (non-blocking) ──────────
+    // Avatar-first (option 1): use the SENDER's chat avatar when present; when
+    // the message has NO sender avatar, fall back to the admin-set ORG BRANDING
+    // logo (cached to SecureStore by the ThemeProvider — the headless task has
+    // no React context / API). Both are fetched with a HARD TIMEOUT so they can
+    // never hang the headless task, then re-posted with the SAME id to attach
+    // the circular largeIcon (Notifee updates the existing notification in
+    // place). Any failure/timeout simply leaves the already-posted notification.
+    const LARGE_ICON_TIMEOUT_MS = 3500;
+    const senderAvatarUrl = uploadUrl(data.senderAvatar || data.avatar || "");
+
+    // Resolve the large-icon source URL: sender avatar first, else the cached
+    // org logo. Both live behind the server's `/uploads` auth middleware, so
+    // fetchAvatarToFile downloads them WITH the Bearer token.
+    let largeIconUrl: string | null = senderAvatarUrl;
+    if (!largeIconUrl) {
       try {
-        const localAvatarUri = await Promise.race<string | null>([
-          this.fetchAvatarToFile(avatarUrl),
+        const cachedLogo = await SecureStore.getItemAsync(BRAND_LOGO_CACHE_KEY);
+        largeIconUrl = uploadUrl(cachedLogo || "");
+      } catch {
+        // best-effort — fall back to the app icon (no large icon)
+      }
+    }
+
+    if (largeIconUrl) {
+      try {
+        const localUri = await Promise.race<string | null>([
+          this.fetchAvatarToFile(largeIconUrl),
           new Promise<null>((resolve) =>
-            setTimeout(() => resolve(null), AVATAR_TIMEOUT_MS),
+            setTimeout(() => resolve(null), LARGE_ICON_TIMEOUT_MS),
           ),
         ]);
-        if (localAvatarUri) {
+        if (localUri) {
           await postNotification({
-            largeIcon: localAvatarUri,
+            largeIcon: localUri,
             circularLargeIcon: true,
           });
         }
       } catch (err) {
         // Best-effort: the notification was already delivered in step 1.
-        console.warn("[NotifeeService] avatar attach skipped:", err);
+        console.warn("[NotifeeService] large-icon attach skipped:", err);
       }
     }
   }

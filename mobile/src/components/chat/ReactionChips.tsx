@@ -62,14 +62,17 @@ export default function ReactionChips({
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-    // Reaction chips row BELOW the bubble (web .reactions: margin-top 4px).
+    // Signal-style: reaction pills overlap the bottom edge of the bubble. A
+    // negative top margin pulls them up over the bubble; horizontal padding +
+    // alignment nudges them toward the sender side.
     reactions: {
       flexDirection: "row",
       flexWrap: "wrap",
       alignItems: "center",
       gap: 4,
-      marginTop: 4,
-      paddingHorizontal: 2,
+      marginTop: -10,
+      paddingHorizontal: 8,
+      zIndex: 2,
     },
     reactionsMine: { justifyContent: "flex-end" },
     reactionsTheirs: { justifyContent: "flex-start" },
@@ -77,12 +80,18 @@ const makeStyles = (theme: Theme) =>
       flexDirection: "row",
       alignItems: "center",
       gap: 3,
-      backgroundColor: theme.surface,
+      backgroundColor: theme.bgElevated,
       borderWidth: 1,
-      borderColor: theme.glassBorder,
+      borderColor: theme.bg,
       borderRadius: theme.radiusFull,
       paddingHorizontal: 7,
       paddingVertical: 3,
+      // Subtle lift so the pill reads as floating over the bubble edge.
+      shadowColor: "#000",
+      shadowOpacity: 0.25,
+      shadowRadius: 2,
+      shadowOffset: { width: 0, height: 1 },
+      elevation: 2,
     },
     myReactionChip: {
       backgroundColor: "rgba(35,131,226,0.18)",

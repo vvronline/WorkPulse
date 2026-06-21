@@ -8,6 +8,7 @@ import ChatAvatar from "../../src/components/ChatAvatar";
 import {
   ReplyPreview,
   MessageBubble,
+  TypingIndicator,
   Composer,
   PinnedBanner,
   ReactionBar,
@@ -97,7 +98,9 @@ export default function ChatThread() {
 
           <ChatList c={c} styles={styles} theme={theme} />
 
-          {c.peerTyping ? <Text style={styles.typing}>typing…</Text> : null}
+          {c.peerTyping ? (
+            <TypingIndicator name={c.name} avatar={c.headerAvatar} />
+          ) : null}
           {/* Reply composing strip */}
           {c.replyTo ? (
             <ReplyPreview
@@ -340,7 +343,7 @@ const makeStyles = (theme: Theme) =>
       color: theme.textSecondary,
       maxWidth: 180,
     },
-    list: { padding: 12, gap: 8, paddingBottom: 16 },
+    list: { padding: 12, paddingBottom: 16 },
     loadOlderBtn: {
       alignSelf: "center",
       paddingHorizontal: 16,
@@ -355,12 +358,5 @@ const makeStyles = (theme: Theme) =>
       fontSize: 12,
       color: theme.primaryLight,
       fontWeight: "600",
-    },
-    typing: {
-      color: theme.textMuted,
-      fontSize: 12,
-      fontStyle: "italic",
-      paddingHorizontal: 16,
-      paddingBottom: 4,
     },
   });

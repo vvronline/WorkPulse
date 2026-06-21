@@ -12,10 +12,13 @@ import ReactionChips from "./ReactionChips";
 import { fmtTime } from "./chatUtils";
 
 /**
- * A single chat message row (WhatsApp-style). Own messages render as a solid
- * accent-filled bubble with a tail on the top-right; incoming messages use a
- * solid elevated surface with a tail on the top-left. The time + delivery
- * ticks sit inline on the bottom-right of the bubble, mirroring WhatsApp.
+ * A single chat message row (Signal-Android style). Own messages render as a
+ * solid brand-accent bubble with white text; incoming messages use a flat,
+ * borderless dark surface. There are NO triangular tails — Signal conveys
+ * message grouping purely through corner-radius variation: the corner on the
+ * sender's side is tightened (4px) for messages that are connected to an
+ * adjacent message in the same group, and fully rounded (18px) otherwise. The
+ * time + delivery ticks sit inline on the bottom-right of the bubble.
  *
  * The bubble's host node is registered into the parent's ref map via
  * `registerRef` so the parent can `measureInWindow` it to anchor the
@@ -47,7 +50,8 @@ export default function MessageBubble({
   readReceipts: Record<number, string>;
   userId?: number;
   // Consecutive-message grouping (see docs/CHAT_DESIGN_SPEC.md §4). The sender
-  // name shows on the first of a group; the tail renders on the last.
+  // name shows on the first of a group; Signal tightens the sender-side corners
+  // on the connected edges so a group reads as a single stacked column.
   firstInGroup?: boolean;
   lastInGroup?: boolean;
   registerRef: (id: number, node: View | null) => void;
@@ -58,9 +62,30 @@ export default function MessageBubble({
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
+  // Signal corner-radius grouping. Base radius is 18; the sender-side corner is
+  // tightened to 4 on edges that connect to an adjacent message in the group.
+  // - mine (right-aligned): the RIGHT corners are the sender side.
+  // - theirs (left-aligned): the LEFT corners are the sender side.
+  const R = 18;
+  const TIGHT = 4;
+  const cornerStyle = mine
+    ? {
+        borderTopRightRadius: firstInGroup ? R : TIGHT,
+        borderBottomRightRadius: lastInGroup ? R : TIGHT,
+      }
+    : {
+        borderTopLeftRadius: firstInGroup ? R : TIGHT,
+        borderBottomLeftRadius: lastInGroup ? R : TIGHT,
+      };
+
   return (
     <View
-      style={[styles.bubbleRow, mine ? styles.rowMine : styles.rowTheirs]}
+      style={[
+        styles.bubbleRow,
+        mine ? styles.rowMine : styles.rowTheirs,
+        // Tighter spacing between grouped messages, looser between groups.
+        firstInGroup ? styles.rowGroupStart : styles.rowGrouped,
+      ]}
     >
       <View style={styles.bubbleCol}>
         <Pressable
@@ -75,26 +100,10 @@ export default function MessageBubble({
           style={[
             styles.bubble,
             mine ? styles.bubbleMine : styles.bubbleTheirs,
-            // Grouped (non-tail) bubbles get fully-rounded tail-side corners.
-            !lastInGroup && (mine ? styles.bubbleMineGrouped : styles.bubbleTheirsGrouped),
+            cornerStyle,
             message._pending && styles.bubblePending,
           ]}
         >
-          {/* Layered tail keeps the pointer edge crisp with the bubble border.
-              Only the LAST message in a group shows the tail. */}
-          {lastInGroup ? (
-            <>
-              <View
-                style={[mine ? styles.tailMineBorder : styles.tailTheirsBorder]}
-                pointerEvents="none"
-              />
-              <View
-                style={[mine ? styles.tailMineFill : styles.tailTheirsFill]}
-                pointerEvents="none"
-              />
-            </>
-          ) : null}
-
           {!mine && firstInGroup && message.sender_name ? (
             <Text style={styles.sender}>{message.sender_name}</Text>
           ) : null}
@@ -104,26 +113,35 @@ export default function MessageBubble({
           {message.file_url && !deleted ? (
             <FilePreview message={message} />
           ) : null}
-          <MessageContent message={message} />
+          <MessageContent message={message} mine={mine} />
           <View style={styles.metaLine}>
-            {pinned ? <Pin size={10} color={theme.textMuted} /> : null}
-            {starred ? <Star size={10} color={theme.warning} /> : null}
-            {message.edited_at && !deleted ? (
-              <Text style={styles.edited}>edited</Text>
+            {pinned ? (
+              <Pin size={10} color={mine ? theme.chatOutMeta : theme.textMuted} />
             ) : null}
-            <Text style={styles.time}>{fmtTime(message.created_at)}</Text>
+            {starred ? (
+              <Star size={10} color={mine ? theme.chatOutMeta : theme.warning} />
+            ) : null}
+            {message.edited_at && !deleted ? (
+              <Text style={[styles.edited, mine && styles.editedMine]}>
+                edited
+              </Text>
+            ) : null}
+            <Text style={[styles.time, mine && styles.timeMine]}>
+              {fmtTime(message.created_at)}
+            </Text>
             <MsgTicks
               mine={mine}
               msg={message}
               participantCount={participantCount}
               readReceipts={readReceipts}
               userId={userId}
+              onAccent={mine}
             />
           </View>
         </Pressable>
 
-        {/* Reactions render as a separate row BELOW the bubble (outside it),
-            exactly like the web MessageBubble. */}
+        {/* Reaction chips overlap the bottom edge of the bubble (Signal-style),
+            rendered just below it and aligned toward the sender side. */}
         <ReactionChips
           message={message}
           mine={mine}
@@ -138,82 +156,30 @@ export default function MessageBubble({
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-    bubbleRow: { flexDirection: "row", alignItems: "center", gap: 4 },
+    bubbleRow: { flexDirection: "row", alignItems: "center" },
     rowMine: { justifyContent: "flex-end" },
     rowTheirs: { justifyContent: "flex-start" },
+    // 8px between distinct groups, 2px between messages within a group.
+    rowGroupStart: { marginTop: 6 },
+    rowGrouped: { marginTop: 2 },
     bubbleCol: { maxWidth: "82%" },
     bubble: {
       position: "relative",
       alignSelf: "stretch",
-      borderRadius: 16,
+      borderRadius: 18,
       paddingHorizontal: 12,
       paddingVertical: 7,
       gap: 2,
     },
-    // Own messages — solid neutral fill, squared top-right corner (tail side).
+    // Own messages — solid brand accent fill (Signal blue), borderless.
     bubbleMine: {
       backgroundColor: theme.chatOutBg,
-      borderTopRightRadius: 4,
-      borderWidth: 1,
-      borderColor: theme.chatBubbleBorder,
     },
-    // Incoming messages — solid neutral surface, squared top-left corner.
+    // Incoming messages — flat dark surface, borderless.
     bubbleTheirs: {
       backgroundColor: theme.chatInBg,
-      borderTopLeftRadius: 4,
-      borderWidth: 1,
-      borderColor: theme.chatBubbleBorder,
     },
-    // Grouped (non-tail) bubbles round the tail-side corner fully so only the
-    // last message in a group shows the squared tail corner.
-    bubbleMineGrouped: { borderTopRightRadius: 16 },
-    bubbleTheirsGrouped: { borderTopLeftRadius: 16 },
     bubblePending: { opacity: 0.7 },
-    // Layered triangular tail: border layer + fill layer.
-    tailMineBorder: {
-      position: "absolute",
-      top: -1,
-      right: -8,
-      width: 0,
-      height: 0,
-      borderTopWidth: 9,
-      borderTopColor: theme.chatBubbleBorder,
-      borderRightWidth: 9,
-      borderRightColor: "transparent",
-    },
-    tailMineFill: {
-      position: "absolute",
-      top: 0,
-      right: -6,
-      width: 0,
-      height: 0,
-      borderTopWidth: 8,
-      borderTopColor: theme.chatOutBg,
-      borderRightWidth: 8,
-      borderRightColor: "transparent",
-    },
-    tailTheirsBorder: {
-      position: "absolute",
-      top: -1,
-      left: -8,
-      width: 0,
-      height: 0,
-      borderTopWidth: 9,
-      borderTopColor: theme.chatBubbleBorder,
-      borderLeftWidth: 9,
-      borderLeftColor: "transparent",
-    },
-    tailTheirsFill: {
-      position: "absolute",
-      top: 0,
-      left: -6,
-      width: 0,
-      height: 0,
-      borderTopWidth: 8,
-      borderTopColor: theme.chatInBg,
-      borderLeftWidth: 8,
-      borderLeftColor: "transparent",
-    },
     sender: { fontSize: 11, fontWeight: "700", color: theme.primaryLight },
     metaLine: {
       flexDirection: "row",
@@ -223,5 +189,7 @@ const makeStyles = (theme: Theme) =>
       marginTop: -2,
     },
     edited: { fontSize: 10, color: theme.textMuted, fontStyle: "italic" },
+    editedMine: { color: theme.chatOutMeta },
     time: { fontSize: 10, color: theme.textMuted },
+    timeMine: { color: theme.chatOutMeta },
   });

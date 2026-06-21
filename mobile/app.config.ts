@@ -114,6 +114,12 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // calls channel can ring with the WorkPulse tone instead of the system
     // default in the killed/background status-bar state.
     "./scripts/withAndroidRingtoneAssets",
+    // Copies the monochrome notification small icon (assets/notification/
+    // notification_icon.xml) into android res/drawable so Notifee can resolve
+    // `smallIcon: "notification_icon"`. Without a resolvable small drawable,
+    // Android DROPS the message notification silently (sound plays, but no
+    // status-bar entry) — the root cause of "messages: only sound, no banner".
+    "./scripts/withAndroidNotificationIcon",
     [
       "expo-audio",
       {

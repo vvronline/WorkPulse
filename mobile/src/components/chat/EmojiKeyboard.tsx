@@ -140,7 +140,9 @@ export default function EmojiKeyboard({
           keyExtractor={(e) => e.id}
           numColumns={COLS}
           keyboardShouldPersistTaps="always"
+          style={styles.gridList}
           contentContainerStyle={styles.grid}
+          showsVerticalScrollIndicator={false}
           renderItem={({ item }) => (
             <Pressable style={styles.cell} onPress={() => handlePick(item)}>
               <EmojiImage variant={variantForTone(item, tone)} size={28} />
@@ -228,7 +230,10 @@ const makeStyles = (theme: Theme) =>
     },
     tabActive: { opacity: 1, backgroundColor: theme.surface },
     tabIcon: { fontSize: 18 },
-    grid: { paddingHorizontal: 6, paddingBottom: 8 },
+    // The grid must flex to fill the space between the tabs and the backspace
+    // bar so its last row (e.g. Recents) isn't clipped under the backspace row.
+    gridList: { flex: 1 },
+    grid: { paddingHorizontal: 6, paddingTop: 4, paddingBottom: 12 },
     cell: {
       flex: 1,
       maxWidth: `${100 / COLS}%`,

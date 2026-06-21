@@ -1,4 +1,4 @@
-/**
+ /**
  * Design tokens mirrored from the web client's global.css (Notion-style dark
  * theme). Keep these in sync with client/src/global.css `:root`/`[data-theme="dark"]`.
  *
@@ -93,10 +93,15 @@ export function makeTheme(accent: string = DEFAULT_ACCENT) {
     bgElevated: "#252525",
     surface: "rgba(255, 255, 255, 0.04)",
     surfaceHover: "rgba(255, 255, 255, 0.07)",
-    // WhatsApp-style solid neutral chat bubbles (no brand accent).
-    chatOutBg: "#2f2f2f",
-    chatInBg: "#242424",
-    chatBubbleBorder: "rgba(255, 255, 255, 0.06)",
+    // Signal-style chat bubbles: outgoing uses the solid brand accent (white
+    // text); incoming is a flat, borderless dark surface. No tails — grouping
+    // is conveyed purely through corner-radius variation.
+    chatOutBg: primary,
+    chatInBg: "#2a2a2e",
+    chatBubbleBorder: "transparent",
+    // Translucent white for the outgoing bubble footer (time / edited / ticks)
+    // so it reads on the accent fill.
+    chatOutMeta: "rgba(255, 255, 255, 0.7)",
     glass: "rgba(255, 255, 255, 0.045)",
     glassBorder: "rgba(255, 255, 255, 0.09)",
     cardBg: "rgba(255, 255, 255, 0.035)",

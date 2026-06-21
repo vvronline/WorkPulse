@@ -13,6 +13,7 @@ export { default as AttachmentPicker } from "./AttachmentPicker";
 export { default as MessageActionsSheet } from "./MessageActionsSheet";
 export { default as HeaderMenuSheet } from "./HeaderMenuSheet";
 export { default as MessageBubble } from "./MessageBubble";
+export { default as TypingIndicator } from "./TypingIndicator";
 export { default as Composer } from "./Composer";
 export { default as VoiceRecorderBar } from "./VoiceRecorderBar";
 export { useChatThread } from "./useChatThread";
