@@ -150,81 +150,99 @@ export default function EmojiKeyboard({
     [handlePick, styles, tone]
   );
 
+  // Search + skin-tone row. Rendered as the scrolling list's HEADER (not a
+  // fixed sibling) so it scrolls away as the user browses — freeing the full
+  // panel height for emoji, exactly like Signal-Android. The skin-tone popup
+  // is anchored within this header so it still appears beneath the swatch.
+  const TopRow = useCallback(
+    () => (
+      <View style={styles.topRowWrap}>
+        <View style={styles.topRow}>
+          <View style={styles.searchBox}>
+            <SearchIcon size={16} color={theme.textMuted} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search emoji"
+              placeholderTextColor={theme.textMuted}
+              value={query}
+              onChangeText={(v) => {
+                setQuery(v);
+                setSearching(v.trim().length > 0);
+              }}
+              autoCorrect={false}
+            />
+            {query.length > 0 ? (
+              <Pressable
+                onPress={() => {
+                  setQuery("");
+                  setSearching(false);
+                }}
+                hitSlop={8}
+              >
+                <XIcon size={15} color={theme.textMuted} />
+              </Pressable>
+            ) : null}
+          </View>
+          <Pressable
+            style={styles.toneBtn}
+            onPress={() => setToneOpen((v) => !v)}
+          >
+            <Text style={styles.toneText}>{SKIN_TONES[tone].swatch}</Text>
+          </Pressable>
+        </View>
+
+        {toneOpen && (
+          <View style={styles.tonePopup}>
+            {SKIN_TONES.map((t) => (
+              <Pressable
+                key={t.key}
+                style={[
+                  styles.toneSwatch,
+                  t.key === tone && styles.toneSwatchActive,
+                ]}
+                onPress={() => handleTone(t.key)}
+              >
+                <Text style={styles.toneText}>{t.swatch}</Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
+      </View>
+    ),
+    [query, tone, toneOpen, styles, theme]
+  );
+
   return (
     <View style={[styles.wrap, { height }]}>
-      {/* Search + skin-tone */}
-      <View style={styles.topRow}>
-        <View style={styles.searchBox}>
-          <SearchIcon size={16} color={theme.textMuted} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search emoji"
-            placeholderTextColor={theme.textMuted}
-            value={query}
-            onChangeText={(v) => {
-              setQuery(v);
-              setSearching(v.trim().length > 0);
-            }}
-            autoCorrect={false}
-          />
-          {query.length > 0 ? (
-            <Pressable
-              onPress={() => {
-                setQuery("");
-                setSearching(false);
-              }}
-              hitSlop={8}
-            >
-              <XIcon size={15} color={theme.textMuted} />
-            </Pressable>
-          ) : null}
-        </View>
-        <Pressable style={styles.toneBtn} onPress={() => setToneOpen((v) => !v)}>
-          <Text style={styles.toneText}>{SKIN_TONES[tone].swatch}</Text>
-        </Pressable>
-      </View>
-
-      {toneOpen && (
-        <View style={styles.tonePopup}>
-          {SKIN_TONES.map((t) => (
-            <Pressable
-              key={t.key}
-              style={[styles.toneSwatch, t.key === tone && styles.toneSwatchActive]}
-              onPress={() => handleTone(t.key)}
-            >
-              <Text style={styles.toneText}>{t.swatch}</Text>
-            </Pressable>
-          ))}
-        </View>
-      )}
-
-      {/* Grid (search results OR sectioned categories) */}
+      {/* Grid (search results OR sectioned categories). The search + skin-tone
+          row lives in the list HEADER so it scrolls with the content. */}
       {searching ? (
-        searchRows.length === 0 ? (
-          <View style={styles.empty}>
-            <Text style={styles.emptyText}>No emoji found</Text>
-          </View>
-        ) : (
-          <FlatList
-            data={searchRows}
-            keyExtractor={(r) => r.key}
-            keyboardShouldPersistTaps="always"
-            style={styles.gridList}
-            contentContainerStyle={styles.grid}
-            showsVerticalScrollIndicator={false}
-            renderItem={renderRow}
-          />
-        )
+        <FlatList
+          data={searchRows}
+          keyExtractor={(r) => r.key}
+          keyboardShouldPersistTaps="always"
+          style={styles.gridList}
+          contentContainerStyle={styles.grid}
+          showsVerticalScrollIndicator={false}
+          ListHeaderComponent={TopRow}
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <Text style={styles.emptyText}>No emoji found</Text>
+            </View>
+          }
+          renderItem={renderRow}
+        />
       ) : (
         <SectionList
           ref={listRef}
           sections={sections}
           keyExtractor={(r) => r.key}
           keyboardShouldPersistTaps="always"
-          stickySectionHeadersEnabled
+          stickySectionHeadersEnabled={false}
           style={styles.gridList}
           contentContainerStyle={styles.grid}
           showsVerticalScrollIndicator={false}
+          ListHeaderComponent={TopRow}
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={viewabilityConfig}
           onScrollToIndexFailed={() => {}}
@@ -235,7 +253,8 @@ export default function EmojiKeyboard({
         />
       )}
 
-      {/* Bottom category strip (Signal-style) + backspace */}
+      {/* Bottom category strip (Signal-style) + backspace — the ONLY pinned
+          element, so the grid + search both get the maximum scroll area. */}
       {!searching && (
         <View style={styles.bottomStrip}>
           <FlatList
@@ -271,6 +290,14 @@ const makeStyles = (theme: Theme) =>
       backgroundColor: theme.bgSecondary,
       borderTopWidth: 1,
       borderTopColor: theme.border,
+    },
+    // Wrapper around the search + skin-tone row when it lives inside the
+    // scrolling list header. `position: relative` anchors the skin-tone popup;
+    // `zIndex` keeps the popup above the emoji rows below it.
+    topRowWrap: {
+      position: "relative",
+      zIndex: 10,
+      backgroundColor: theme.bgSecondary,
     },
     topRow: {
       flexDirection: "row",

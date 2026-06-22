@@ -178,6 +178,14 @@ export function useChatThread() {
     });
   }, []);
 
+  // When the peer STARTS typing, the typing-indicator row appears below the
+  // list and shrinks the FlatList — which can crop/hide the newest bubble.
+  // Re-anchor to the bottom so the last message stays fully visible above the
+  // typing indicator (mirrors the web auto-scroll on typing).
+  useEffect(() => {
+    if (peerTyping) scrollToEnd(true);
+  }, [peerTyping, scrollToEnd]);
+
   // Register/unregister a bubble's host node so the reaction bar can measure
   // it (see openReactionBar). Keeping this stable avoids re-registering on
   // every render.

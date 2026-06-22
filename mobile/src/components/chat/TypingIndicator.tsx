@@ -85,7 +85,11 @@ const makeStyles = (theme: Theme) =>
       alignItems: "flex-end",
       gap: 8,
       paddingHorizontal: 12,
-      paddingBottom: 6,
+      // Keep a clear gap above (between the last bubble and this row) and
+      // below (before the composer) so the typing indicator never crowds the
+      // newest message or the input bar.
+      paddingTop: 6,
+      paddingBottom: 8,
     },
     bubble: {
       flexDirection: "row",

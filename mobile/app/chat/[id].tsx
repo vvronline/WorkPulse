@@ -347,8 +347,9 @@ const makeStyles = (theme: Theme) =>
     },
     listFlex: { flex: 1 },
     // Signal-style message list padding — tighter horizontal gutters, more
-    // bottom breathing room so the newest bubble clears the composer.
-    list: { paddingHorizontal: 10, paddingTop: 8, paddingBottom: 12 },
+    // bottom breathing room so the newest bubble always clears the composer
+    // (and the typing indicator, when shown) with a consistent gap.
+    list: { paddingHorizontal: 10, paddingTop: 8, paddingBottom: 16 },
     loadOlderBtn: {
       alignSelf: "center",
       paddingHorizontal: 16,
