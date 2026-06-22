@@ -1060,10 +1060,22 @@ export function useChatThread() {
   // Toggle between the system keyboard and the docked in-app emoji keyboard.
   function toggleEmojiKeyboard() {
     if (emojiKeyboardOpen) {
-      // Emoji → system keyboard: re-focus the field (which re-shows the OS
-      // keyboard because showSoftInputOnFocus flips back to true).
+      // Emoji → system keyboard. Closing the panel flips the TextInput's
+      // `showSoftInputOnFocus` prop from false → true on THIS render. The
+      // re-focus that re-shows the OS keyboard must run AFTER that prop has
+      // been committed to the native view — otherwise Android still sees the
+      // stale `showSoftInputOnFocus=false` and suppresses the soft keyboard,
+      // so the docked panel collapsed with NO keyboard replacing it (the
+      // reported bug). A single requestAnimationFrame fired too early and lost
+      // the race. Blur first to clear any stale internal focus (so the later
+      // focus() isn't treated as a no-op), then focus on a short timeout so the
+      // prop flush has landed. Mirrors Signal-Android's InputAwareLayout, which
+      // requests the soft input on its edit text only after the emoji page has
+      // been torn down — it treats keyboard↔emoji as an explicit transition
+      // rather than assuming a same-frame focus will succeed.
       setEmojiKeyboardOpen(false);
-      requestAnimationFrame(() => inputRef.current?.focus());
+      inputRef.current?.blur();
+      setTimeout(() => inputRef.current?.focus(), 50);
     } else {
       // System → emoji: dismiss the OS keyboard, then dock the emoji keyboard.
       // Arm the guard FIRST so the safety effect ignores the system keyboard's
