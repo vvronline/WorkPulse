@@ -153,7 +153,9 @@ export default function EmojiKeyboard({
   // Search + skin-tone row. Rendered as the scrolling list's HEADER (not a
   // fixed sibling) so it scrolls away as the user browses — freeing the full
   // panel height for emoji, exactly like Signal-Android. The skin-tone popup
-  // is anchored within this header so it still appears beneath the swatch.
+  // is NOT rendered here — it lives at the panel root (see `wrap` below) so it
+  // floats above the emoji grid instead of being clipped by the scroll list's
+  // content area.
   const TopRow = useCallback(
     () => (
       <View style={styles.topRowWrap}>
@@ -190,26 +192,9 @@ export default function EmojiKeyboard({
             <Text style={styles.toneText}>{SKIN_TONES[tone].swatch}</Text>
           </Pressable>
         </View>
-
-        {toneOpen && (
-          <View style={styles.tonePopup}>
-            {SKIN_TONES.map((t) => (
-              <Pressable
-                key={t.key}
-                style={[
-                  styles.toneSwatch,
-                  t.key === tone && styles.toneSwatchActive,
-                ]}
-                onPress={() => handleTone(t.key)}
-              >
-                <Text style={styles.toneText}>{t.swatch}</Text>
-              </Pressable>
-            ))}
-          </View>
-        )}
       </View>
     ),
-    [query, tone, toneOpen, styles, theme]
+    [query, tone, styles, theme]
   );
 
   return (
@@ -280,6 +265,27 @@ export default function EmojiKeyboard({
           </Pressable>
         </View>
       )}
+
+      {/* Skin-tone popup — rendered at the PANEL ROOT (a sibling of the scroll
+          list), not inside the list header, so it floats ABOVE the emoji grid
+          instead of being clipped by the list's content area. Anchored to the
+          top-right beneath the tone swatch. */}
+      {toneOpen && (
+        <View style={styles.tonePopup}>
+          {SKIN_TONES.map((t) => (
+            <Pressable
+              key={t.key}
+              style={[
+                styles.toneSwatch,
+                t.key === tone && styles.toneSwatchActive,
+              ]}
+              onPress={() => handleTone(t.key)}
+            >
+              <Text style={styles.toneText}>{t.swatch}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
     </View>
   );
 }
@@ -290,6 +296,9 @@ const makeStyles = (theme: Theme) =>
       backgroundColor: theme.bgSecondary,
       borderTopWidth: 1,
       borderTopColor: theme.border,
+      // Don't clip the absolutely-positioned skin-tone popup that floats above
+      // the emoji grid (rendered as a sibling of the scroll list).
+      overflow: "visible",
     },
     // Wrapper around the search + skin-tone row when it lives inside the
     // scrolling list header. `position: relative` anchors the skin-tone popup;
@@ -335,7 +344,10 @@ const makeStyles = (theme: Theme) =>
       position: "absolute",
       top: 48,
       right: 10,
-      zIndex: 10,
+      // zIndex (iOS/web) + elevation (Android) so the popup paints ABOVE the
+      // emoji grid sibling instead of being covered/clipped by it.
+      zIndex: 50,
+      elevation: 12,
       flexDirection: "row",
       gap: 2,
       padding: 4,

@@ -152,12 +152,14 @@ export default function ChatThread() {
 
       {/* Long-press reaction + context overlay (Signal ConversationReactionOverlay):
           dim + lifted bubble + reaction pill (quick emoji + "+") + vertical
-          action menu. */}
+          action menu. Hidden while the full emoji picker is open so the picker
+          isn't stuck BEHIND this Modal — but `reactTarget` stays alive so the
+          chosen emoji is still applied to the right message. */}
       <ReactionOverlay
-        visible={!!c.reactTarget}
+        visible={!!c.reactTarget && !c.showAllEmoji}
         anchor={c.reactAnchor}
         message={c.reactTarget}
-        isOwn={c.reactTarget?.sender_id === c.user?.id}
+        isOwn={Number(c.reactTarget?.sender_id) === Number(c.user?.id)}
         isStarred={!!c.reactTarget && c.starredIds.has(c.reactTarget.id)}
         userId={c.user?.id}
         onReact={(emoji) => c.reactTarget && c.react(c.reactTarget, emoji)}
@@ -178,12 +180,15 @@ export default function ChatThread() {
         }}
       />
 
-      {/* Full emoji grid (opened from "All Emoji" or the composer "+"). */}
+      {/* Full emoji grid (opened from "All Emoji" or the composer "+").
+          Closing in "react" mode also clears the long-pressed target so the
+          reaction overlay (hidden only while this picker is open) doesn't pop
+          back up. */}
       <EmojiPicker
         visible={c.showAllEmoji}
         mode={c.emojiMode}
         onPick={c.pickEmoji}
-        onClose={() => c.setShowAllEmoji(false)}
+        onClose={c.closeEmojiPicker}
       />
 
       {/* Message action sheet (forward / save / pin / edit / delete). */}
@@ -192,7 +197,7 @@ export default function ChatThread() {
         forwardMode={c.forwardMode}
         conversations={c.conversations}
         convId={c.convId}
-        isOwn={c.actionTarget?.sender_id === c.user?.id}
+        isOwn={Number(c.actionTarget?.sender_id) === Number(c.user?.id)}
         isStarred={!!c.actionTarget && c.starredIds.has(c.actionTarget.id)}
         onClose={c.closeActionSheet}
         onForwardOpen={c.openForward}
@@ -289,7 +294,9 @@ function ChatList({
         ) : null
       }
       renderItem={({ item, index }) => {
-        const mine = item.sender_id === c.user?.id;
+        // Type-safe ownership: sender_id / user.id can mismatch number vs
+        // string, which previously hid Edit/Delete in the reaction overlay.
+        const mine = Number(item.sender_id) === Number(c.user?.id);
         // Consecutive-message grouping (same sender within 5 min) — see
         // docs/CHAT_DESIGN_SPEC.md §4. firstInGroup drives the sender name,
         // lastInGroup drives the bubble tail.

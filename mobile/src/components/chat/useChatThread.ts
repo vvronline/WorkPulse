@@ -139,9 +139,11 @@ export function useChatThread() {
   const [sharedFiles, setSharedFiles] = useState<SharedFile[]>([]);
   const [savedMsgs, setSavedMsgs] = useState<StarredMessage[]>([]);
   const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Voice recording (expo-audio).
+  // Voice recording (expo-audio). Poll the recorder state every 100ms (vs the
+  // 500ms default) so the in-composer recording bar appears immediately on
+  // record() and the live duration counter ticks smoothly.
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const recorderState = useAudioRecorderState(recorder);
+  const recorderState = useAudioRecorderState(recorder, 100);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   // Bubble host-node refs so we can reliably measure each bubble's window rect
   // for the reaction-bar anchor (Pressable forwards its ref to the host View,
@@ -156,6 +158,16 @@ export function useChatThread() {
   // TextInput handle so we can blur/focus when switching between the system
   // keyboard and the in-app emoji keyboard.
   const inputRef = useRef<TextInput>(null);
+  // One-shot guard so the "system keyboard appeared → close emoji" safety
+  // effect below ignores the STALE keyboard height reported while the OS
+  // keyboard is still animating away after we deliberately switched to the
+  // in-app emoji keyboard. Without it, tapping the emoji toggle WHILE typing
+  // immediately re-closed the emoji panel (the dismiss is async, so kbInset
+  // was still > 100 on the render that opened it). Re-armed once the system
+  // keyboard is genuinely hidden (kbInset back to 0). Mirrors Signal-Android's
+  // transition-based InputAwareLayout (it tracks the keyboard transition, not a
+  // momentary height value).
+  const ignoreKbForEmoji = useRef(false);
   // Last-measured system keyboard height — the in-app emoji keyboard is shown
   // at this height so toggling between them doesn't shift the message list.
   const lastKbHeight = useRef(280);
@@ -166,10 +178,22 @@ export function useChatThread() {
     hydrateEmojiStore();
   }, []);
 
-  // If the system keyboard appears (user tapped the field), close the in-app
-  // emoji keyboard so the two never stack.
+  // If the system keyboard GENUINELY appears (user tapped the field), close the
+  // in-app emoji keyboard so the two never stack. We must ignore the STALE
+  // keyboard height reported while the OS keyboard is still animating away
+  // right after we deliberately switched to the emoji keyboard — otherwise
+  // tapping the emoji toggle WHILE typing instantly re-closed the panel that
+  // had just opened (the dismiss is async, so kbInset was momentarily still
+  // > 100 on the render that set emojiKeyboardOpen=true). Once the keyboard is
+  // fully hidden (kbInset back to 0) we re-arm the guard so a real later
+  // keyboard appearance still closes the emoji panel.
   useEffect(() => {
-    if (kbInset > 100 && emojiKeyboardOpen) setEmojiKeyboardOpen(false);
+    if (kbInset > 100) {
+      if (ignoreKbForEmoji.current) return; // stale height from the dismissing keyboard
+      if (emojiKeyboardOpen) setEmojiKeyboardOpen(false);
+    } else {
+      ignoreKbForEmoji.current = false; // keyboard fully hidden → re-arm
+    }
   }, [kbInset, emojiKeyboardOpen]);
 
   const scrollToEnd = useCallback((animated = false) => {
@@ -959,9 +983,24 @@ export function useChatThread() {
     if (emojiMode === "compose") {
       setText((t) => t + emoji);
     } else if (reactTarget) {
+      // Apply the chosen reaction to the long-pressed message. `react()` clears
+      // reactTarget itself, but clear the anchor too so the reaction overlay
+      // doesn't briefly re-appear behind the closing picker.
       react(reactTarget, emoji);
+      setReactAnchor(null);
     }
     setShowAllEmoji(false);
+  }
+
+  // Close the full emoji picker WITHOUT picking. In "react" mode this must also
+  // drop the long-pressed target/anchor, otherwise the reaction overlay (which
+  // is hidden only while the picker is open) would pop straight back up.
+  function closeEmojiPicker() {
+    setShowAllEmoji(false);
+    if (emojiMode === "react") {
+      setReactTarget(null);
+      setReactAnchor(null);
+    }
   }
 
   // ── Inline emoji keyboard (Signal-style composer toggle) ──────────────────
@@ -974,6 +1013,10 @@ export function useChatThread() {
       requestAnimationFrame(() => inputRef.current?.focus());
     } else {
       // System → emoji: dismiss the OS keyboard, then dock the emoji keyboard.
+      // Arm the guard FIRST so the safety effect ignores the system keyboard's
+      // still-animating (stale) height — otherwise the emoji panel we open on
+      // the next line would be instantly closed again (the dismiss is async).
+      ignoreKbForEmoji.current = true;
       Keyboard.dismiss();
       setEmojiKeyboardOpen(true);
     }
@@ -1191,6 +1234,7 @@ export function useChatThread() {
     showAllEmoji,
     emojiMode,
     pickEmoji,
+    closeEmojiPicker,
     // action sheet
     actionTarget,
     forwardMode,

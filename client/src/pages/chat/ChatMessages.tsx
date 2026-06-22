@@ -143,7 +143,11 @@ export default function ChatMessages({
                     </div>
                 )}
                 {messages.map((m, i) => {
-                    const isMine = m.sender_id === user.id;
+                    // Type-safe ownership check: sender_id / user.id can arrive as
+                    // string vs number, so a strict === wrongly returned false for
+                    // your own messages — hiding the Edit/Delete actions. Compare
+                    // as numbers so own-message actions show correctly.
+                    const isMine = Number(m.sender_id) === Number(user.id);
                     const showDate =
                         i === 0 ||
                         new Date(m.created_at).toDateString() !==
