@@ -1608,6 +1608,12 @@ router.get("/calls/active", auth, async (req: Request, res: Response) => {
                 LIMIT 1
             ) other_u ON true
             WHERE cl.status = 'answered'
+              AND EXISTS (
+                  SELECT 1 FROM user_presence_sessions ups
+                  WHERE ups.activity = 'in_call'
+                    AND ups.activity_ref_id = cl.id
+                    AND ups.disconnected_at IS NULL
+              )
             ORDER BY cl.started_at DESC
             LIMIT 1
         `, [userId])).rows[0];
@@ -1827,6 +1833,90 @@ router.post("/calls/:callId/accept", auth, async (req: Request, res: Response) =
     } catch (err) {
         req.log.error({ err }, "HTTP call accept error");
         res.status(500).json({ error: "Failed to accept call" });
+    }
+});
+
+/**
+ * POST /api/chat/calls/:callId/end
+ * HTTP FALLBACK for ending a call (parity with the accept/reject fallbacks).
+ * Mirrors the WS `call_end` transition. The mobile client normally ends over
+ * the realtime WebSocket from `endAndLeave`, but if that frame is dropped (the
+ * socket was briefly down on hang-up, the app was killed right after, etc.) the
+ * `call_logs` row sticks at `answered` forever — which kept the mobile "Ongoing
+ * call — Return" banner re-appearing after the call had actually ended. This
+ * endpoint guarantees the end transition always reaches the server. Idempotent:
+ * a no-op when the call is already in a terminal state.
+ */
+router.post("/calls/:callId/end", auth, async (req: Request, res: Response) => {
+    try {
+        const callId = parseInt(String(req.params.callId), 10);
+        const conversationId = parseInt(String((req.body || {}).conversationId), 10);
+        const senderId = req.userId!;
+        const tenantId = req.tenantId!;
+        if (isNaN(callId) || isNaN(conversationId)) {
+            return res.status(400).json({ error: "callId and conversationId are required" });
+        }
+
+        const isParticipant = (await req.db!.query(
+            "SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2",
+            [conversationId, senderId],
+        )).rows[0];
+        if (!isParticipant) return res.status(403).json({ error: "Not a participant" });
+
+        const callLog = (await req.db!.query(
+            `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2`,
+            [callId, conversationId],
+        )).rows[0];
+        if (!callLog) return res.status(404).json({ error: "Call not found" });
+
+        // Already terminal — treat as success so the client can move on.
+        if (["ended", "missed", "declined"].includes(callLog.status)) {
+            return res.json({ ok: true, status: callLog.status });
+        }
+
+        let duration: number | null = null;
+        if (callLog.started_at) {
+            duration = Math.round((Date.now() - new Date(callLog.started_at).getTime()) / 1000);
+        }
+
+        const updated = await req.db!.query(
+            `UPDATE call_logs
+             SET status = CASE WHEN status = 'ringing' THEN 'missed' ELSE 'ended' END,
+                 ended_at = NOW(),
+                 duration = $2
+             WHERE id = $1
+             RETURNING id`,
+            [callId, duration],
+        );
+        if (!updated.rows[0]) {
+            return res.json({ ok: true, status: "ended" });
+        }
+
+        // Notify the other participants so their call UI / banner clears.
+        const allParticipants = (await req.db!.query(
+            "SELECT user_id FROM conversation_participants WHERE conversation_id = $1",
+            [conversationId],
+        )).rows;
+        for (const p of allParticipants) {
+            if (p.user_id !== senderId) {
+                sendToUser(tenantId, p.user_id, "call_ended", { callId, conversationId, endedBy: senderId, duration });
+            }
+        }
+
+        // Clear in_call for every session referencing this call (caller + all
+        // callees, across devices) so presence + the active-call liveness guard
+        // both stop reporting the call as live.
+        try {
+            const statusService = require("../services/status");
+            await statusService.clearActivityForRef({ db: req.db, tenantId }, "in_call", callId);
+        } catch {
+            /* status update is best-effort */
+        }
+
+        res.json({ ok: true, status: "ended" });
+    } catch (err) {
+        req.log.error({ err }, "HTTP call end error");
+        res.status(500).json({ error: "Failed to end call" });
     }
 });
 

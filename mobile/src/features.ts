@@ -826,6 +826,17 @@ export function acceptCallHttp(callId: number | string, conversationId: number |
   return api.post(`/chat/calls/${callId}/accept`, { conversationId });
 }
 
+/**
+ * HTTP fallback for ENDING a call. Used when the realtime WS `call_end` frame
+ * could not be confirmed sent on hang-up (socket briefly down, app killed right
+ * after). Without this the server's `call_logs` row sticks at `answered` and the
+ * "Ongoing call — Return" banner keeps re-appearing. Mirrors the WS `call_end`
+ * transition server-side; idempotent when the call is already terminal.
+ */
+export function endCallHttp(callId: number | string, conversationId: number | string) {
+  return api.post(`/chat/calls/${callId}/end`, { conversationId });
+}
+
 /* ───────────────────────── Notes ───────────────────────── */
 
 // Full NotePage shape — mirrors the web client's NotePage so notebook content

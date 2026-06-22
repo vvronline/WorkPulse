@@ -61,6 +61,7 @@ import {
   getCachedIceConfig,
   getNotificationPrefs,
   rejectCallHttp,
+  endCallHttp,
 } from "../../src/features";
 import { SERVER_ORIGIN } from "../../src/config";
 import { getNotificationPreviewDataUri } from "../../src/utils/notificationSoundPreview";
@@ -532,20 +533,50 @@ export default function CallScreen() {
         if (!endClientMsgIdRef.current) {
           endClientMsgIdRef.current = `call-end:${callIdRef.current}:${conversationId}`;
         }
-        void socket.sendCallActionWithRetry(
-          "end",
-          {
-            callId: callIdRef.current,
-            conversationId,
-            clientMsgId: endClientMsgIdRef.current,
-          },
-          {
-            timeoutMs: 3500,
-            maxAttempts: 5,
-            initialBackoffMs: 120,
-            maxBackoffMs: 700,
-          },
-        );
+        // Capture the callId now — the refs below are nulled synchronously as we
+        // tear the call down, but the async WS/HTTP end must still reference it.
+        const endCallId = callIdRef.current;
+        // Send the WS `call_end`, then GUARANTEE the server actually committed
+        // the end via an HTTP fallback. If the WS frame is dropped (socket
+        // briefly down on hang-up, app killed right after) the `call_logs` row
+        // would otherwise stick at `answered` forever — which kept the "Ongoing
+        // call — Return" banner re-appearing after the call had really ended.
+        // The HTTP endpoint mirrors the WS transition and is idempotent, so
+        // firing it unconditionally after the WS attempt is safe.
+        void (async () => {
+          let wsOk = false;
+          try {
+            wsOk = await socket.sendCallActionWithRetry(
+              "end",
+              {
+                callId: endCallId,
+                conversationId,
+                clientMsgId: endClientMsgIdRef.current!,
+              },
+              {
+                timeoutMs: 3500,
+                maxAttempts: 5,
+                initialBackoffMs: 120,
+                maxBackoffMs: 700,
+              },
+            );
+          } catch {
+            wsOk = false;
+          }
+          // Always confirm via HTTP. Even when the WS send "succeeded" (frame
+          // written to the socket) the server may not have applied the
+          // transition; the idempotent endpoint makes the end authoritative.
+          try {
+            await endCallHttp(endCallId, conversationId);
+          } catch (err: any) {
+            if (!wsOk) {
+              console.warn(
+                "[call] HTTP end fallback failed:",
+                err?.message || err,
+              );
+            }
+          }
+        })();
       } else if (
         sendEnd &&
         !callIdRef.current &&
