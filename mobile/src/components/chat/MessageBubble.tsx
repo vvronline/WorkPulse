@@ -180,7 +180,11 @@ const makeStyles = (theme: Theme) =>
       backgroundColor: theme.chatInBg,
     },
     bubblePending: { opacity: 0.7 },
-    sender: { fontSize: 11, fontWeight: "700", color: theme.primaryLight },
+    sender: {
+      fontSize: 11,
+      fontFamily: theme.fontSemiBold,
+      color: theme.primaryLight,
+    },
     metaLine: {
       flexDirection: "row",
       alignItems: "center",
@@ -188,8 +192,13 @@ const makeStyles = (theme: Theme) =>
       alignSelf: "flex-end",
       marginTop: -2,
     },
-    edited: { fontSize: 10, color: theme.textMuted, fontStyle: "italic" },
+    edited: {
+      fontSize: 10,
+      color: theme.textMuted,
+      fontStyle: "italic",
+      fontFamily: theme.fontRegular,
+    },
     editedMine: { color: theme.chatOutMeta },
-    time: { fontSize: 10, color: theme.textMuted },
+    time: { fontSize: 10, color: theme.textMuted, fontFamily: theme.fontRegular },
     timeMine: { color: theme.chatOutMeta },
   });

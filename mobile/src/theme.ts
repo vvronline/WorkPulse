@@ -9,6 +9,8 @@
  * reactive screens read the live theme via `useTheme()`.
  */
 
+import { FONTS } from "./fonts";
+
 export const DEFAULT_ACCENT = "#2383e2";
 
 /* ── colour helpers ── */
@@ -123,6 +125,15 @@ export function makeTheme(accent: string = DEFAULT_ACCENT) {
     radiusLg: 16,
     radiusXl: 24,
     radiusFull: 9999,
+
+    // Typography — Inter (Signal's typeface). On Android a custom font's weight
+    // is selected by its registered family NAME, not via `fontWeight`, so each
+    // weight is exposed as a distinct family token here. Use these in place of
+    // `fontWeight` on Text styles for the Signal-matching look.
+    fontRegular: FONTS.regular,
+    fontMedium: FONTS.medium,
+    fontSemiBold: FONTS.semiBold,
+    fontBold: FONTS.bold,
   } as const;
 }
 

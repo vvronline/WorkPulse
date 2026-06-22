@@ -139,21 +139,15 @@ export default function ChatThread() {
         </View>
       )}
 
-      {/* "+" composer menu — Photo/File, Voice message, Emoji. */}
+      {/* "+" composer menu — Photo + File/Document (Signal-style attach sheet).
+          Voice + Emoji are NOT here: they live in the composer itself (the Mic
+          send-button and the inline emoji toggle), so duplicating them in this
+          sheet was redundant. */}
       <AttachmentPicker
         visible={c.plusOpen}
         onClose={() => c.setPlusOpen(false)}
         onPhoto={c.attachFile}
         onDocument={c.attachDocument}
-        onVoice={() => {
-          c.setPlusOpen(false);
-          c.startRecording();
-        }}
-        onEmoji={() => {
-          c.setPlusOpen(false);
-          c.setEmojiMode("compose");
-          c.setShowAllEmoji(true);
-        }}
       />
 
       {/* Long-press reaction + context overlay (Signal ConversationReactionOverlay):
@@ -257,6 +251,10 @@ function ChatList({
       data={c.messages}
       extraData={c.listSignature}
       keyExtractor={(m) => String(m.id)}
+      // `flex: 1` is load-bearing: without it the FlatList doesn't claim the
+      // available column height, so the last messages render under the composer
+      // and scrollToEnd lands short of the true bottom.
+      style={styles.listFlex}
       contentContainerStyle={styles.list}
       onContentSizeChange={() => {
         // Don't yank to the bottom while older history is being
@@ -337,7 +335,7 @@ const makeStyles = (theme: Theme) =>
     headerTitleWrap: { flexDirection: "row", alignItems: "center", gap: 10 },
     headerTitleText: {
       fontSize: 17,
-      fontWeight: "700",
+      fontFamily: theme.fontBold,
       color: theme.text,
       maxWidth: 180,
     },
@@ -345,8 +343,12 @@ const makeStyles = (theme: Theme) =>
       fontSize: 11,
       color: theme.textSecondary,
       maxWidth: 180,
+      fontFamily: theme.fontRegular,
     },
-    list: { padding: 12, paddingBottom: 16 },
+    listFlex: { flex: 1 },
+    // Signal-style message list padding — tighter horizontal gutters, more
+    // bottom breathing room so the newest bubble clears the composer.
+    list: { paddingHorizontal: 10, paddingTop: 8, paddingBottom: 12 },
     loadOlderBtn: {
       alignSelf: "center",
       paddingHorizontal: 16,
@@ -360,6 +362,6 @@ const makeStyles = (theme: Theme) =>
     loadOlderText: {
       fontSize: 12,
       color: theme.primaryLight,
-      fontWeight: "600",
+      fontFamily: theme.fontSemiBold,
     },
   });

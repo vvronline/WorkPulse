@@ -1,27 +1,28 @@
 import { useMemo } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
-import { FileText, Image as ImageIcon, Mic, Smile } from "lucide-react-native";
+import { FileText, Image as ImageIcon } from "lucide-react-native";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 
 /**
- * "+" composer menu (mirrors the web ChatInputBar plus menu): Photo, File /
- * Document, Voice message, Emoji.
+ * "+" composer attach sheet (Signal-style): Photo + File/Document only.
+ *
+ * Voice messages and Emoji are intentionally NOT in this sheet — they already
+ * have first-class controls in the composer itself (the Mic send-button records
+ * a voice message; the inline Smile/Keyboard toggle opens the emoji keyboard).
+ * Having them here too was a confusing duplicate, so they were removed to match
+ * Signal's attach menu.
  */
 export default function AttachmentPicker({
   visible,
   onClose,
   onPhoto,
   onDocument,
-  onVoice,
-  onEmoji,
 }: {
   visible: boolean;
   onClose: () => void;
   onPhoto: () => void;
   onDocument: () => void;
-  onVoice: () => void;
-  onEmoji: () => void;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
@@ -41,14 +42,6 @@ export default function AttachmentPicker({
           <Pressable style={styles.plusRow} onPress={onDocument}>
             <FileText size={20} color={theme.text} />
             <Text style={styles.plusText}>File / Document</Text>
-          </Pressable>
-          <Pressable style={styles.plusRow} onPress={onVoice}>
-            <Mic size={20} color={theme.text} />
-            <Text style={styles.plusText}>Voice message</Text>
-          </Pressable>
-          <Pressable style={styles.plusRow} onPress={onEmoji}>
-            <Smile size={20} color={theme.text} />
-            <Text style={styles.plusText}>Emoji</Text>
           </Pressable>
         </View>
       </Pressable>
@@ -77,5 +70,5 @@ const makeStyles = (theme: Theme) =>
       paddingHorizontal: 22,
       paddingVertical: 14,
     },
-    plusText: { fontSize: 16, color: theme.text, fontWeight: "500" },
+    plusText: { fontSize: 16, color: theme.text, fontFamily: theme.fontMedium },
   });

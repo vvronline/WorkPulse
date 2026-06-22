@@ -514,27 +514,56 @@ export function useChatThread() {
   );
 
   async function startRecording() {
+    // Guard against a double-tap while a recording is already underway (the
+    // recorder throws if record() is called twice without an intervening stop).
+    if (recorderState.isRecording) return;
     try {
       const perm = await AudioModule.requestRecordingPermissionsAsync();
-      if (!perm.granted) return;
-      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      if (!perm.granted) {
+        alert(
+          "Microphone needed",
+          "Allow microphone access to record a voice message.",
+        );
+        return;
+      }
+      // Switch the audio session into record mode BEFORE preparing/recording.
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+      });
+      // prepareToRecordAsync MUST resolve before record() — calling record()
+      // on an unprepared recorder silently no-ops on Android, which is why the
+      // Mic button "did nothing" (no recording bar, nothing sent).
       await recorder.prepareToRecordAsync();
       recorder.record();
-    } catch {
-      /* ignore */
+    } catch (e: any) {
+      // Restore the playback session so a failed start doesn't leave the audio
+      // route stuck in record mode.
+      setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      }).catch(() => {});
+      alert(
+        "Recording failed",
+        e?.message || "Could not start the voice recording.",
+      );
     }
   }
 
   async function stopRecordingAndSend() {
     try {
       await recorder.stop();
-      // Restore the playback audio session — leaving allowsRecording=true
-      // routes/silences subsequent voice-note playback on iOS.
-      setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(
-        () => {},
-      );
-      const uri = recorder.uri;
-      if (!uri) return;
+    } catch {
+      /* the recorder may already be stopped; fall through to upload the uri */
+    }
+    // Restore the playback audio session — leaving allowsRecording=true
+    // routes/silences subsequent voice-note playback on iOS.
+    setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(
+      () => {},
+    );
+    const uri = recorder.uri;
+    if (!uri) return;
+    try {
       setUploading(true);
       const fileName = `voice-${Date.now()}.m4a`;
       const { data } = await uploadChatFile(convId, uri, fileName);
@@ -542,8 +571,11 @@ export function useChatThread() {
         prev.some((m) => m.id === data.id) ? prev : [...prev, data],
       );
       scrollToEnd(true);
-    } catch {
-      /* ignore */
+    } catch (e: any) {
+      alert(
+        "Send failed",
+        e?.response?.data?.error || "Could not send the voice message.",
+      );
     } finally {
       setUploading(false);
     }

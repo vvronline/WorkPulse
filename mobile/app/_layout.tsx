@@ -1,8 +1,11 @@
 import "react-native-gesture-handler";
 import { useEffect } from "react";
+import { Text as RNText, TextInput as RNTextInput } from "react-native";
+import { useFonts } from "expo-font";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import { interFontMap, FONTS } from "../src/fonts";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider } from "../src/auth/AuthContext";
@@ -151,7 +154,39 @@ function ThemedStack() {
   );
 }
 
+// Apply Inter (Signal's typeface) as the DEFAULT family for every <Text> and
+// <TextInput> that doesn't override `fontFamily`. Setting it via defaultProps
+// once (module scope) is the standard RN way to theme typography app-wide
+// without touching every component. Individual styles can still override the
+// weight by setting an explicit Inter family token from the theme.
+function applyDefaultFont() {
+  const text = RNText as unknown as { defaultProps?: Record<string, unknown> };
+  text.defaultProps = text.defaultProps || {};
+  text.defaultProps.style = [
+    { fontFamily: FONTS.regular },
+    text.defaultProps.style,
+  ];
+  const input = RNTextInput as unknown as {
+    defaultProps?: Record<string, unknown>;
+  };
+  input.defaultProps = input.defaultProps || {};
+  input.defaultProps.style = [
+    { fontFamily: FONTS.regular },
+    input.defaultProps.style,
+  ];
+}
+
 export default function RootLayout() {
+  // Load the Inter font family before rendering the app so text never flashes
+  // in the system font first. We still render once loaded OR errored so a font
+  // CDN hiccup can never permanently block the app (it just falls back to the
+  // system font).
+  const [fontsLoaded, fontError] = useFonts(interFontMap);
+
+  useEffect(() => {
+    if (fontsLoaded) applyDefaultFont();
+  }, [fontsLoaded]);
+
   useEffect(() => {
     // Foreground CallKeep setup. The FCM background message handler is
     // registered at the JS entry top-level (see `mobile/index.js`) so it also
@@ -192,6 +227,11 @@ export default function RootLayout() {
       unsubscribeNotifee();
     };
   }, []);
+
+  // Hold rendering until fonts resolve (or error out) so the first paint uses
+  // Inter. `null` here is fine — Expo keeps the native splash up until the tree
+  // mounts.
+  if (!fontsLoaded && !fontError) return null;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
