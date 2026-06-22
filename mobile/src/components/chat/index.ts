@@ -6,7 +6,7 @@ export { default as FilePreview } from "./FilePreview";
 export { default as MessageContent } from "./MessageContent";
 export { default as ReactionChips } from "./ReactionChips";
 export { default as PinnedBanner } from "./PinnedBanner";
-export { default as ReactionBar } from "./ReactionBar";
+export { default as ReactionOverlay } from "./ReactionOverlay";
 export { default as EmojiPicker } from "./EmojiPicker";
 export { default as EmojiKeyboard } from "./EmojiKeyboard";
 export { default as AttachmentPicker } from "./AttachmentPicker";

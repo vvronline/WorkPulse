@@ -11,7 +11,7 @@ import {
   TypingIndicator,
   Composer,
   PinnedBanner,
-  ReactionBar,
+  ReactionOverlay,
   EmojiPicker,
   EmojiKeyboard,
   AttachmentPicker,
@@ -156,25 +156,28 @@ export default function ChatThread() {
         }}
       />
 
-      {/* Long-press reaction bar (quick emojis · all-emoji · reply · more). */}
-      <ReactionBar
+      {/* Long-press reaction + context overlay (Signal ConversationReactionOverlay):
+          dim + lifted bubble + reaction pill (quick emoji + "+") + vertical
+          action menu. */}
+      <ReactionOverlay
         visible={!!c.reactTarget}
-        positionStyle={c.computeBarPosition()}
-        onLayout={(e) => {
-          const { width, height } = e.nativeEvent.layout;
-          c.onReactionBarLayout(width, height);
-        }}
+        anchor={c.reactAnchor}
+        message={c.reactTarget}
+        isOwn={c.reactTarget?.sender_id === c.user?.id}
+        isStarred={!!c.reactTarget && c.starredIds.has(c.reactTarget.id)}
+        userId={c.user?.id}
         onReact={(emoji) => c.reactTarget && c.react(c.reactTarget, emoji)}
         onOpenAllEmoji={() => {
           c.setEmojiMode("react");
           c.setShowAllEmoji(true);
         }}
         onReply={() => c.reactTarget && c.startReply(c.reactTarget)}
-        onMore={() => {
-          const t = c.reactTarget;
-          c.setReactTarget(null);
-          if (t) c.setActionTarget(t);
-        }}
+        onForward={() => c.reactTarget && c.openForwardFor(c.reactTarget)}
+        onCopy={() => c.reactTarget && c.copyMessage(c.reactTarget)}
+        onStar={() => c.reactTarget && c.doStar(c.reactTarget)}
+        onPin={() => c.reactTarget && c.doPin(c.reactTarget)}
+        onEdit={() => c.reactTarget && c.startEdit(c.reactTarget)}
+        onDelete={() => c.reactTarget && c.doDelete(c.reactTarget)}
         onClose={() => {
           c.setReactTarget(null);
           c.setReactAnchor(null);

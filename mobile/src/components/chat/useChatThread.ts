@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
+import * as Clipboard from "expo-clipboard";
 import {
   AudioModule,
   RecordingPresets,
@@ -817,6 +818,29 @@ export function useChatThread() {
     setReplyTo(message);
   }
 
+  // Copy a message's text to the clipboard (overlay "Copy" action).
+  function copyMessage(message: ChatMessage) {
+    setReactTarget(null);
+    setReactAnchor(null);
+    if (message.content) {
+      Clipboard.setStringAsync(message.content).catch(() => {});
+    }
+  }
+
+  // Open the Forward picker for a message reached from the reaction overlay.
+  // The overlay's target lives in `reactTarget`; we promote it to
+  // `actionTarget` (which drives the forward picker modal + doForward) and
+  // switch into forward mode.
+  function openForwardFor(message: ChatMessage) {
+    setReactTarget(null);
+    setReactAnchor(null);
+    setActionTarget(message);
+    getConversations()
+      .then((r) => setConversations(r.data || []))
+      .catch(() => setConversations([]));
+    setForwardMode(true);
+  }
+
   function openForward() {
     // Switch the already-open action-sheet modal into "forward" mode. We do
     // NOT dismiss this modal and present another — that cross-modal race on
@@ -1112,11 +1136,14 @@ export function useChatThread() {
     attachDocument,
     setEmojiMode,
     setShowAllEmoji,
-    // reaction bar
+    // reaction bar / overlay
     reactTarget,
+    reactAnchor,
     computeBarPosition,
     onReactionBarLayout,
     startReply,
+    copyMessage,
+    openForwardFor,
     setReactTarget,
     setActionTarget,
     setReactAnchor,

@@ -113,18 +113,30 @@ Signal layout, left → right, inside a single rounded "pill":
 
 ## 3. Emoji picker / keyboard
 
-Identical feature set on web and mobile:
+Identical feature set on web and mobile. Modelled on Signal's
+`EmojiKeyboardPageFragment` — ONE continuously-scrolling grid with sticky
+section headers, **not** tab-replaced pages.
 
 1. **Search bar** — filters by name + keywords (e.g. "joy", "ok", "fire").
-2. **Sticky category bar** — Recent · Smileys · People · Nature · Food ·
-   Activity · Travel · Objects · Symbols · Flags. Tapping scrolls to section;
-   active section highlights on scroll.
-3. **Recents** — most-recently + frequently used, persisted
+   On mobile a trailing "✕" clears the query and returns to the sectioned grid.
+2. **Single sectioned grid** — one scroll view (mobile: `SectionList` of
+   8-column chunked rows) with sticky per-category headers: Recent · Smileys &
+   Emotion · People & Body · Animals & Nature · Food & Drink · Activities ·
+   Travel & Places · Objects · Symbols · Flags.
+3. **Bottom category strip** — Signal-style, pinned at the bottom. The active
+   icon tracks **scroll position** (`onViewableItemsChanged`); tapping an icon
+   `scrollToLocation`s that section. The docked keyboard's strip also hosts the
+   backspace key at its right edge.
+4. **Recents** — most-recently + frequently used, persisted
    (web: `localStorage`, mobile: `expo-secure-store` / async store). Max 36.
-4. **Skin-tone selector** — a tone swatch in the corner sets a global preferred
-   Fitzpatrick tone applied to all tone-supporting emoji; long-press/secondary
-   action on an individual emoji opens its per-emoji tone popup.
-5. **Backspace** key (mobile keyboard mode only) to delete the last char.
+   Rendered as the first section when non-empty.
+5. **Skin-tone selector** — a tone swatch in the corner sets a global preferred
+   Fitzpatrick tone applied to all tone-supporting emoji.
+6. **Backspace** key (mobile keyboard mode only) to delete the last char.
+
+The shared sectioning logic lives in `mobile/src/components/chat/emojiSections.ts`
+(`buildEmojiSections`), reused by both `EmojiKeyboard` (docked composer panel)
+and `EmojiPicker` (the reaction / compose sheet).
 
 ---
 
@@ -141,6 +153,25 @@ Identical feature set on web and mobile:
             └───────────────────────────────┘
               😀 3   ❤️ 1                         ← reaction chips (below)
 ```
+
+### Long-press reaction + context overlay
+
+Modelled on Signal-Android's `ConversationReactionOverlay`. Long-pressing a
+bubble:
+
+- **Dims the whole screen** and **lifts the pressed bubble** out — a clone of
+  the bubble is rendered at its measured window rect and scales/fades in above
+  the scrim (`mobile/src/components/chat/ReactionOverlay.tsx`).
+- Floats a rounded **reaction pill** just above the bubble with the six quick
+  emoji (`👍 ❤️ 😂 😮 😢 🙏`, Signal's set) + a trailing **"+"** that opens the
+  full sectioned emoji picker. The user's existing reaction is highlighted.
+- Shows a **vertical context-action menu** below the bubble: Reply · Forward ·
+  Copy (text messages) · Save · Pin · Edit (own) · Delete (own).
+- The pill flips below / the menu clamps to the safe area when the bubble is
+  near a screen edge. Tapping the scrim or any action dismisses the overlay.
+
+On web/desktop the equivalent is the hover `MessageToolbar` (same quick-emoji
+set) + the context menu.
 
 ### Grouping rules (all platforms)
 

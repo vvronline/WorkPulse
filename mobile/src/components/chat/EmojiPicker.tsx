@@ -1,19 +1,21 @@
-// Full emoji picker sheet (mobile) — opened from the reaction bar ("react"
-// mode) or the composer "+" menu ("compose" mode). Upgraded to Signal-style
-// parity: category tabs, search, recents, skin-tone selection, bundled image
-// emoji (native fallback). Mirrors the web EmojiGifPicker.
+// Full emoji picker sheet (mobile) — opened from the reaction overlay ("react"
+// mode) or the composer "+" menu ("compose" mode). Signal-style: ONE
+// continuously-scrolling grid with sticky section headers (Recents first), a
+// BOTTOM category strip whose active icon tracks scroll position, an inline
+// search and a skin-tone selector. Mirrors the docked EmojiKeyboard layout.
 //
 // See docs/CHAT_DESIGN_SPEC.md §3.
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   FlatList,
   Pressable,
-  ScrollView,
+  SectionList,
   StyleSheet,
   Text,
   TextInput,
   View,
+  type ViewToken,
 } from "react-native";
 import { Search as SearchIcon, X as XIcon } from "lucide-react-native";
 import type { Theme } from "../../theme";
@@ -22,7 +24,6 @@ import EmojiImage from "../../emoji/EmojiImage";
 import { CATEGORY_ORDER, SKIN_TONES } from "../../emoji/types";
 import type { Emoji, EmojiCategory } from "../../emoji/types";
 import {
-  emojiByCategory,
   getRecentEmoji,
   getSkinTone,
   nativeForTone,
@@ -31,6 +32,7 @@ import {
   setSkinTone,
   variantForTone,
 } from "../../emoji/emojiStore";
+import { buildEmojiSections, type EmojiRow } from "./emojiSections";
 
 const COLS = 8;
 
@@ -49,36 +51,92 @@ export default function EmojiPicker({
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
   const [query, setQuery] = useState("");
-  const [cat, setCat] = useState<EmojiCategory>("smileys");
+  const [searching, setSearching] = useState(false);
   const [tone, setTone] = useState(getSkinTone);
   const [toneOpen, setToneOpen] = useState(false);
   const [recents, setRecents] = useState<Emoji[]>(getRecentEmoji);
+  const [activeCat, setActiveCat] = useState<EmojiCategory>("smileys");
 
-  const sections = useMemo(
-    () => CATEGORY_ORDER.filter((c) => (c.key === "recent" ? recents.length > 0 : true)),
-    [recents]
+  const listRef = useRef<SectionList<EmojiRow>>(null);
+
+  const sections = useMemo(() => buildEmojiSections(COLS, recents), [recents]);
+  const stripCats = useMemo(
+    () => CATEGORY_ORDER.filter((c) => sections.some((s) => s.key === c.key)),
+    [sections]
   );
 
-  const data: Emoji[] = useMemo(() => {
-    if (query.trim()) return searchEmoji(query);
-    if (cat === "recent") return recents;
-    return emojiByCategory(cat);
-  }, [query, cat, recents]);
+  const searchRows: EmojiRow[] = useMemo(() => {
+    if (!query.trim()) return [];
+    const hits = searchEmoji(query);
+    const rows: EmojiRow[] = [];
+    for (let i = 0; i < hits.length; i += COLS) {
+      rows.push({ items: hits.slice(i, i + COLS), key: `search-${i}` });
+    }
+    return rows;
+  }, [query]);
 
-  if (!visible) return null;
-
-  const handlePick = (e: Emoji) => {
-    recordRecent(e.id);
-    setRecents(getRecentEmoji());
-    onPick(nativeForTone(e, tone));
-    onClose();
-  };
+  const handlePick = useCallback(
+    (e: Emoji) => {
+      recordRecent(e.id);
+      setRecents(getRecentEmoji());
+      onPick(nativeForTone(e, tone));
+      onClose();
+    },
+    [onPick, onClose, tone]
+  );
 
   const handleTone = (t: number) => {
     setTone(t);
     setSkinTone(t);
     setToneOpen(false);
   };
+
+  const onViewableItemsChanged = useRef(
+    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      const first = viewableItems.find((v) => v.section);
+      if (first?.section) {
+        setActiveCat((first.section as { key: EmojiCategory }).key);
+      }
+    }
+  ).current;
+
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 10 }).current;
+
+  const scrollToCat = (cat: EmojiCategory) => {
+    const idx = sections.findIndex((s) => s.key === cat);
+    if (idx < 0) return;
+    setActiveCat(cat);
+    try {
+      listRef.current?.scrollToLocation({
+        sectionIndex: idx,
+        itemIndex: 0,
+        viewOffset: 0,
+        animated: false,
+      });
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const renderRow = useCallback(
+    ({ item }: { item: EmojiRow }) => (
+      <View style={styles.row}>
+        {item.items.map((e) => (
+          <Pressable key={e.id} style={styles.cell} onPress={() => handlePick(e)}>
+            <EmojiImage variant={variantForTone(e, tone)} size={28} />
+          </Pressable>
+        ))}
+        {item.items.length < COLS
+          ? Array.from({ length: COLS - item.items.length }).map((_, i) => (
+              <View key={`pad-${i}`} style={styles.cell} />
+            ))
+          : null}
+      </View>
+    ),
+    [handlePick, styles, tone]
+  );
+
+  if (!visible) return null;
 
   return (
     <View style={styles.overlay}>
@@ -101,9 +159,23 @@ export default function EmojiPicker({
               placeholder="Search emoji"
               placeholderTextColor={theme.textMuted}
               value={query}
-              onChangeText={setQuery}
+              onChangeText={(v) => {
+                setQuery(v);
+                setSearching(v.trim().length > 0);
+              }}
               autoCorrect={false}
             />
+            {query.length > 0 ? (
+              <Pressable
+                onPress={() => {
+                  setQuery("");
+                  setSearching(false);
+                }}
+                hitSlop={8}
+              >
+                <XIcon size={15} color={theme.textMuted} />
+              </Pressable>
+            ) : null}
           </View>
           <Pressable style={styles.toneBtn} onPress={() => setToneOpen((v) => !v)}>
             <Text style={styles.toneText}>{SKIN_TONES[tone].swatch}</Text>
@@ -124,42 +196,63 @@ export default function EmojiPicker({
           </View>
         )}
 
-        {!query.trim() && (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.tabs}
-          >
-            {sections.map((c) => (
-              <Pressable
-                key={c.key}
-                style={[styles.tab, cat === c.key && styles.tabActive]}
-                onPress={() => setCat(c.key)}
-              >
-                <Text style={styles.tabIcon}>{c.icon}</Text>
-              </Pressable>
-            ))}
-          </ScrollView>
+        {searching ? (
+          searchRows.length === 0 ? (
+            <View style={styles.empty}>
+              <Text style={styles.emptyText}>No emoji found</Text>
+            </View>
+          ) : (
+            <FlatList
+              data={searchRows}
+              keyExtractor={(r) => r.key}
+              keyboardShouldPersistTaps="always"
+              style={styles.gridList}
+              contentContainerStyle={styles.grid}
+              showsVerticalScrollIndicator={false}
+              renderItem={renderRow}
+            />
+          )
+        ) : (
+          <SectionList
+            ref={listRef}
+            sections={sections}
+            keyExtractor={(r) => r.key}
+            keyboardShouldPersistTaps="always"
+            stickySectionHeadersEnabled
+            style={styles.gridList}
+            contentContainerStyle={styles.grid}
+            showsVerticalScrollIndicator={false}
+            onViewableItemsChanged={onViewableItemsChanged}
+            viewabilityConfig={viewabilityConfig}
+            onScrollToIndexFailed={() => {}}
+            renderSectionHeader={({ section }) => (
+              <Text style={styles.sectionHeader}>{section.meta.label}</Text>
+            )}
+            renderItem={renderRow}
+          />
         )}
 
-        {data.length === 0 ? (
-          <View style={styles.empty}>
-            <Text style={styles.emptyText}>No emoji found</Text>
+        {!searching && (
+          <View style={styles.bottomStrip}>
+            <FlatList
+              data={stripCats}
+              horizontal
+              keyExtractor={(c) => c.key}
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.strip}
+              renderItem={({ item }) => (
+                <Pressable
+                  style={[
+                    styles.stripTab,
+                    activeCat === item.key && styles.stripTabActive,
+                  ]}
+                  onPress={() => scrollToCat(item.key)}
+                >
+                  <Text style={styles.stripIcon}>{item.icon}</Text>
+                </Pressable>
+              )}
+            />
           </View>
-        ) : (
-          <FlatList
-            data={data}
-            key={query.trim() ? "search" : cat}
-            keyExtractor={(e) => e.id}
-            numColumns={COLS}
-            keyboardShouldPersistTaps="always"
-            contentContainerStyle={styles.grid}
-            renderItem={({ item }) => (
-              <Pressable style={styles.cell} onPress={() => handlePick(item)}>
-                <EmojiImage variant={variantForTone(item, tone)} size={28} />
-              </Pressable>
-            )}
-          />
         )}
       </View>
     </View>
@@ -189,7 +282,7 @@ const makeStyles = (theme: Theme) =>
       borderTopLeftRadius: 20,
       borderTopRightRadius: 20,
       paddingBottom: 24,
-      maxHeight: "65%",
+      height: "65%",
     },
     header: {
       flexDirection: "row",
@@ -252,11 +345,20 @@ const makeStyles = (theme: Theme) =>
       justifyContent: "center",
     },
     toneSwatchActive: { backgroundColor: theme.primary },
-    tabs: { gap: 2, paddingHorizontal: 10, paddingBottom: 4 },
-    tab: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, opacity: 0.5 },
-    tabActive: { opacity: 1, backgroundColor: theme.surface },
-    tabIcon: { fontSize: 18 },
-    grid: { paddingHorizontal: 8, paddingBottom: 12 },
+    gridList: { flex: 1 },
+    grid: { paddingHorizontal: 8, paddingTop: 2, paddingBottom: 12 },
+    sectionHeader: {
+      fontSize: 12,
+      fontWeight: "700",
+      color: theme.textSecondary,
+      backgroundColor: theme.bgElevated,
+      paddingHorizontal: 6,
+      paddingTop: 8,
+      paddingBottom: 4,
+      textTransform: "uppercase",
+      letterSpacing: 0.4,
+    },
+    row: { flexDirection: "row" },
     cell: {
       flex: 1,
       maxWidth: `${100 / COLS}%`,
@@ -264,6 +366,24 @@ const makeStyles = (theme: Theme) =>
       alignItems: "center",
       justifyContent: "center",
     },
-    empty: { paddingVertical: 40, alignItems: "center" },
+    empty: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 40 },
     emptyText: { color: theme.textMuted, fontSize: 13 },
+    bottomStrip: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingHorizontal: 6,
+      paddingVertical: 4,
+      borderTopWidth: 1,
+      borderTopColor: theme.border,
+      backgroundColor: theme.bgElevated,
+    },
+    strip: { gap: 2, alignItems: "center", flexGrow: 1, justifyContent: "space-between" },
+    stripTab: {
+      paddingHorizontal: 8,
+      paddingVertical: 5,
+      borderRadius: 8,
+      opacity: 0.5,
+    },
+    stripTabActive: { opacity: 1, backgroundColor: theme.surface },
+    stripIcon: { fontSize: 18 },
   });

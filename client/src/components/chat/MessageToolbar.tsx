@@ -1,7 +1,9 @@
 import React, { useCallback, useRef } from "react";
 import s from "./MessageBubble.module.css";
 
-const QUICK_EMOJIS = ["👍", "❤️", "😂", "😮", "🔥", "🎉"];
+// Signal-Android's exact six (ConversationReactionOverlay). Kept in sync with
+// the mobile chatUtils EMOJIS quick-reaction row.
+const QUICK_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
 interface ToolbarMsg {
     id: number | string;

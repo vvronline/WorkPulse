@@ -1,13 +1,14 @@
 import type { ChatMessage } from "../../features";
 
-// Quick-reaction row — matches the web MessageToolbar QUICK_EMOJIS exactly.
+// Quick-reaction row — Signal-Android's exact six (ConversationReactionOverlay).
+// Kept in sync with the web MessageToolbar QUICK_EMOJIS.
 export const EMOJIS = [
   "\u{1F44D}", // 👍
   "\u2764\uFE0F", // ❤️
   "\u{1F602}", // 😂
   "\u{1F62E}", // 😮
-  "\u{1F525}", // 🔥
-  "\u{1F389}", // 🎉
+  "\u{1F622}", // 😢
+  "\u{1F64F}", // 🙏
 ];
 
 // Full emoji set for the "All Emoji" browser (grouped, common reactions).
