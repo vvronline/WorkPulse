@@ -113,7 +113,10 @@ export default function ChatThread() {
             text={c.text}
             editing={c.editingId != null}
             uploading={c.uploading}
-            isRecording={c.recorderState.isRecording}
+            // OR the explicit synchronous flag with the polled state so the
+            // recording bar appears INSTANTLY on mic-tap (the poll lags on
+            // Android and previously left the tap with no visible feedback).
+            isRecording={c.isRecordingActive || c.recorderState.isRecording}
             recordingMillis={c.recorderState.durationMillis}
             bottomInset={c.emojiKeyboardOpen ? 8 : c.composerBottomInset}
             emojiKeyboardOpen={c.emojiKeyboardOpen}
@@ -355,8 +358,10 @@ const makeStyles = (theme: Theme) =>
     listFlex: { flex: 1 },
     // Signal-style message list padding — tighter horizontal gutters, more
     // bottom breathing room so the newest bubble always clears the composer
-    // (and the typing indicator, when shown) with a consistent gap.
-    list: { paddingHorizontal: 10, paddingTop: 8, paddingBottom: 16 },
+    // (and the typing indicator, when shown) with a consistent gap. The larger
+    // paddingBottom keeps the last bubble from sitting flush against the
+    // composer / typing-indicator row.
+    list: { paddingHorizontal: 10, paddingTop: 8, paddingBottom: 24 },
     loadOlderBtn: {
       alignSelf: "center",
       paddingHorizontal: 16,

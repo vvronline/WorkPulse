@@ -148,7 +148,10 @@ const makeStyles = (theme: Theme) =>
       alignItems: "flex-end",
       gap: 8,
       paddingHorizontal: 12,
-      paddingTop: 8,
+      // A little more top padding so the input row never sits flush against the
+      // last message bubble / typing indicator above it (the top border would
+      // otherwise touch the newest bubble).
+      paddingTop: 10,
       borderTopWidth: 1,
       borderTopColor: theme.border,
       backgroundColor: theme.bgSecondary,

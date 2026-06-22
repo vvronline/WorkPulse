@@ -144,6 +144,14 @@ export function useChatThread() {
   // record() and the live duration counter ticks smoothly.
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder, 100);
+  // Explicit recording flag set SYNCHRONOUSLY the instant record() succeeds.
+  // The polled `recorderState.isRecording` lags on Android (the 100ms poll can
+  // miss the transition), so the recording bar "didn't appear" when the mic was
+  // tapped. Driving the UI from this state (OR'd with the poll) makes the bar
+  // show immediately. A ref mirror guards against double-start re-entrancy
+  // without depending on the stale polled value.
+  const [isRecordingActive, setIsRecordingActive] = useState(false);
+  const recordingRef = useRef(false);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   // Bubble host-node refs so we can reliably measure each bubble's window rect
   // for the reaction-bar anchor (Pressable forwards its ref to the host View,
@@ -546,9 +554,11 @@ export function useChatThread() {
   );
 
   async function startRecording() {
-    // Guard against a double-tap while a recording is already underway (the
-    // recorder throws if record() is called twice without an intervening stop).
-    if (recorderState.isRecording) return;
+    // Guard against a double-tap while a recording is already underway. Use the
+    // synchronous ref (NOT the polled recorderState) so the guard reflects the
+    // true state the instant record() succeeds — the poll lags up to ~100ms and
+    // let a quick second tap through, which threw "already recording".
+    if (recordingRef.current) return;
     try {
       const perm = await AudioModule.requestRecordingPermissionsAsync();
       if (!perm.granted) {
@@ -568,7 +578,15 @@ export function useChatThread() {
       // Mic button "did nothing" (no recording bar, nothing sent).
       await recorder.prepareToRecordAsync();
       recorder.record();
+      // Flip the recording UI ON synchronously — don't wait for the polled
+      // `recorderState.isRecording` (which can miss the transition on Android,
+      // leaving the mic tap with no visible recording bar). The composer's
+      // recording bar is driven by this flag OR'd with the poll.
+      recordingRef.current = true;
+      setIsRecordingActive(true);
     } catch (e: any) {
+      recordingRef.current = false;
+      setIsRecordingActive(false);
       // Restore the playback session so a failed start doesn't leave the audio
       // route stuck in record mode.
       setAudioModeAsync({
@@ -583,6 +601,9 @@ export function useChatThread() {
   }
 
   async function stopRecordingAndSend() {
+    // Clear the recording UI immediately so the bar collapses on tap.
+    recordingRef.current = false;
+    setIsRecordingActive(false);
     try {
       await recorder.stop();
     } catch {
@@ -614,6 +635,9 @@ export function useChatThread() {
   }
 
   async function cancelRecording() {
+    // Clear the recording UI immediately so the bar collapses on tap.
+    recordingRef.current = false;
+    setIsRecordingActive(false);
     try {
       await recorder.stop();
     } catch {
@@ -687,9 +711,21 @@ export function useChatThread() {
   }
 
   function startEdit(message: ChatMessage) {
+    // Tear down BOTH long-press surfaces. Editing can be triggered from the
+    // long-press reaction overlay (driven by reactTarget/reactAnchor) OR the
+    // action sheet (actionTarget). Previously startEdit only cleared
+    // actionTarget, so when reached via the long-press overlay the dimmed
+    // ReactionOverlay modal stayed ON TOP of the screen and the edit never
+    // appeared to take. Clear all three, load the draft, then focus the
+    // composer so the system keyboard opens ready to edit.
+    setReactTarget(null);
+    setReactAnchor(null);
     setActionTarget(null);
     setEditingId(message.id);
     setText(message.content);
+    // Focus after the overlay/sheet modals have dismissed so the keyboard
+    // reliably opens (focusing while a modal is still up is dropped on Android).
+    setTimeout(() => inputRef.current?.focus(), 150);
   }
 
   async function saveEdit() {
@@ -710,18 +746,35 @@ export function useChatThread() {
   }
 
   function doDelete(message: ChatMessage) {
+    // Dismiss BOTH long-press surfaces (reaction overlay + action sheet) first,
+    // then confirm. Deleting used to fire immediately with no confirmation —
+    // mirror the web/desktop "delete for everyone" confirm flow. Defer the
+    // confirm slightly so the themed dialog never collides with the dismissing
+    // overlay/sheet modal (same pattern as doClearChat).
+    setReactTarget(null);
+    setReactAnchor(null);
     setActionTarget(null);
-    deleteMessage(message.id)
-      .then(() =>
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === message.id
-              ? { ...m, deleted_at: new Date().toISOString() }
-              : m,
-          ),
-        ),
-      )
-      .catch(() => alert("Error", "Could not delete message."));
+    setTimeout(() => {
+      confirm({
+        title: "Delete message",
+        message: "Delete this message for everyone? This cannot be undone.",
+        confirmText: "Delete",
+        isDanger: true,
+        onConfirm: () => {
+          deleteMessage(message.id)
+            .then(() =>
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === message.id
+                    ? { ...m, deleted_at: new Date().toISOString() }
+                    : m,
+                ),
+              ),
+            )
+            .catch(() => alert("Error", "Could not delete message."));
+        },
+      });
+    }, 250);
   }
 
   function doPin(message: ChatMessage) {
@@ -1017,6 +1070,13 @@ export function useChatThread() {
       // still-animating (stale) height — otherwise the emoji panel we open on
       // the next line would be instantly closed again (the dismiss is async).
       ignoreKbForEmoji.current = true;
+      // BLUR the field before dismissing. With the input still focused, RN
+      // re-evaluates showSoftInputOnFocus and on Android re-shows the system
+      // keyboard mid-transition — collapsing the docked panel and forcing the
+      // user to tap the toggle/field again. Blurring first commits the keyboard
+      // dismissal so the emoji panel mounts cleanly (Signal blurs before its
+      // InputAwareLayout swaps to the emoji page).
+      inputRef.current?.blur();
       Keyboard.dismiss();
       setEmojiKeyboardOpen(true);
     }
@@ -1205,6 +1265,7 @@ export function useChatThread() {
     startRecording,
     cancelRecording,
     stopRecordingAndSend,
+    isRecordingActive,
     // inline emoji keyboard (Signal-style)
     inputRef,
     emojiKeyboardOpen,

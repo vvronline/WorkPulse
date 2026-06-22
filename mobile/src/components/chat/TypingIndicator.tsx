@@ -87,8 +87,11 @@ const makeStyles = (theme: Theme) =>
       paddingHorizontal: 12,
       // Keep a clear gap above (between the last bubble and this row) and
       // below (before the composer) so the typing indicator never crowds the
-      // newest message or the input bar.
-      paddingTop: 6,
+      // newest message or the input bar. The list keeps its own bottom padding,
+      // but this row is a SIBLING below the list (it shrinks the FlatList when
+      // shown), so it needs its own generous top margin to avoid touching the
+      // last bubble.
+      paddingTop: 10,
       paddingBottom: 8,
     },
     bubble: {
