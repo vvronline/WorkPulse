@@ -1060,22 +1060,33 @@ export function useChatThread() {
   // Toggle between the system keyboard and the docked in-app emoji keyboard.
   function toggleEmojiKeyboard() {
     if (emojiKeyboardOpen) {
-      // Emoji → system keyboard. Closing the panel flips the TextInput's
-      // `showSoftInputOnFocus` prop from false → true on THIS render. The
-      // re-focus that re-shows the OS keyboard must run AFTER that prop has
-      // been committed to the native view — otherwise Android still sees the
-      // stale `showSoftInputOnFocus=false` and suppresses the soft keyboard,
-      // so the docked panel collapsed with NO keyboard replacing it (the
-      // reported bug). A single requestAnimationFrame fired too early and lost
-      // the race. Blur first to clear any stale internal focus (so the later
-      // focus() isn't treated as a no-op), then focus on a short timeout so the
-      // prop flush has landed. Mirrors Signal-Android's InputAwareLayout, which
-      // requests the soft input on its edit text only after the emoji page has
-      // been torn down — it treats keyboard↔emoji as an explicit transition
-      // rather than assuming a same-frame focus will succeed.
+      // Emoji → system keyboard. This transition fights TWO Android quirks at
+      // once, so it needs BOTH a blur AND a long-enough delayed focus:
+      //
+      //  1. No-op focus: the native EditText KEEPS its focus after a
+      //     `Keyboard.dismiss()` (which is how the emoji panel was opened). On
+      //     Android, calling `.focus()` on an already-focused field does NOT
+      //     re-raise the soft keyboard — it's a no-op. So we must `blur()`
+      //     first to force a real focus *change* on the later focus() call.
+      //     (No keyboard is visible here — the emoji panel is — so the blur
+      //     can't "collapse" anything.)
+      //
+      //  2. Prop-commit race: closing the panel flips the TextInput's
+      //     `showSoftInputOnFocus` false → true, but unmounting the heavy
+      //     EmojiKeyboard SectionList can delay React committing that prop to
+      //     the native view. If focus() fires before the commit lands, Android
+      //     still sees `showSoftInputOnFocus=false` and SUPPRESSES the keyboard
+      //     (the panel collapses with nothing replacing it). A 50ms / rAF timer
+      //     lost this race on real devices; 150ms reliably outlasts the unmount
+      //     + commit (the same delay startEdit uses to focus after a modal
+      //     tears down).
+      //
+      // Mirrors Signal-Android's InputAwareLayout, which requests the soft
+      // input on its edit text only after the emoji page has been torn down,
+      // treating keyboard↔emoji as an explicit transition.
       setEmojiKeyboardOpen(false);
       inputRef.current?.blur();
-      setTimeout(() => inputRef.current?.focus(), 50);
+      setTimeout(() => inputRef.current?.focus(), 150);
     } else {
       // System → emoji: dismiss the OS keyboard, then dock the emoji keyboard.
       // Arm the guard FIRST so the safety effect ignores the system keyboard's
