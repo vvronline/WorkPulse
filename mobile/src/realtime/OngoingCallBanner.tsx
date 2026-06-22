@@ -6,7 +6,11 @@ import { Phone, Video as VideoIcon } from "lucide-react-native";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeProvider";
 import { socket } from "./socket";
-import { beginCallNavigation, isCallActive } from "./callRouting";
+import {
+  beginCallNavigation,
+  isCallActive,
+  onCallNavigationEnd,
+} from "./callRouting";
 import { getActiveCall, type ActiveCall } from "../features";
 import { SERVER_ORIGIN } from "../config";
 
@@ -65,9 +69,25 @@ export default function OngoingCallBanner() {
   }, [user, onCallScreen]);
 
   // Check on mount + whenever the logged-in user or current route changes.
+  // When LEAVING the call screen (onCallScreen true → false), the server may
+  // not have committed `status = 'ended'` yet, so the immediate poll can still
+  // report the call as answered and re-show a stale banner. Re-poll once more
+  // after a short delay to defeat that race.
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+    if (!onCallScreen) {
+      const t = setTimeout(() => void refresh(), 1000);
+      return () => clearTimeout(t);
+    }
+  }, [refresh, onCallScreen]);
+
+  // The party that ENDS a call never receives a `call_ended` socket echo from
+  // the server, so clear the banner immediately when the local user leaves any
+  // call (hang-up / decline / back-press out of the call screen).
+  useEffect(() => {
+    const off = onCallNavigationEnd(() => setActiveCall(null));
+    return off;
+  }, []);
 
   // Re-check whenever the app returns to the foreground (covers killed/reopened
   // and background→foreground while a call is still live on the other side).

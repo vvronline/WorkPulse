@@ -25,6 +25,22 @@
 
 let activeKey: string | null = null;
 
+// Subscribers notified whenever the local user leaves/ends a call
+// (endCallNavigation). The OngoingCallBanner uses this to clear itself
+// immediately on hang-up — the server does NOT echo `call_ended` back to the
+// party that ended the call, so without this the banner would otherwise linger
+// until the next foreground/route change.
+type EndListener = () => void;
+const endListeners = new Set<EndListener>();
+
+/** Subscribe to local call-end events. Returns an unsubscribe function. */
+export function onCallNavigationEnd(listener: EndListener): () => void {
+  endListeners.add(listener);
+  return () => {
+    endListeners.delete(listener);
+  };
+}
+
 function keyFor(callId: number | string, conversationId: number | string): string {
   return `${conversationId}:${callId}`;
 }
@@ -58,4 +74,11 @@ export function isCallActive(
 /** Clear the active-call guard (call screen unmounted / call ended). */
 export function endCallNavigation(): void {
   activeKey = null;
+  for (const listener of endListeners) {
+    try {
+      listener();
+    } catch {
+      // A misbehaving listener must not prevent the others from running.
+    }
+  }
 }
