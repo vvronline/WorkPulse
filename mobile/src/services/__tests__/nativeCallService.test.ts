@@ -66,6 +66,12 @@ jest.mock("../../realtime/callRouting", () => ({
 
 jest.mock("../../features", () => ({ rejectCallHttp: mockRejectCallHttp }));
 
+// P3.15 — nativeCallService now imports `../config` (which pulls in
+// expo-constants). Mock it so requiring the service never loads the real Expo
+// module. Default the Android-native-call-UI flag OFF (production default); the
+// iOS test path is forced via the react-native Platform mock above regardless.
+jest.mock("../../config", () => ({ ANDROID_NATIVE_CALL_UI: false }));
+
 jest.mock("../../realtime/callAnswerIntent", () => ({
   emitAnswerIntent: mockEmitAnswerIntent,
 }));

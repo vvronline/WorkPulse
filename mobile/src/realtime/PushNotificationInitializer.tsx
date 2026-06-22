@@ -5,6 +5,7 @@
  */
 
 import { useEffect } from "react";
+import { AppState, type AppStateStatus } from "react-native";
 import {
   pushNotificationService,
   usePushNotifications,
@@ -81,8 +82,35 @@ export default function PushNotificationInitializer() {
       );
     });
 
+    // P2.11 — Push token freshness / re-registration. The FCM/APNs device token
+    // can ROTATE silently (app reinstall/restore, data clear, FCM key refresh)
+    // — when it does, the backend keeps pushing to a DEAD token and the device
+    // stops receiving call/message pushes with no error. Re-acquire + re-register
+    // the token on the two events that reliably mark "this device is live again":
+    //   1. App FOREGROUND — covers a token that rotated while backgrounded/killed.
+    //   2. WS RECONNECT — covers a token that rotated during a network outage;
+    //      the socket reopening is our strongest signal the device is reachable.
+    // refreshAndRegisterDeviceToken() only POSTs when the token actually changed,
+    // so these hooks are cheap no-ops on the common unchanged path.
+    void pushNotificationService.refreshAndRegisterDeviceToken();
+
+    const onAppStateChange = (state: AppStateStatus) => {
+      if (state === "active") {
+        void pushNotificationService.refreshAndRegisterDeviceToken();
+      }
+    };
+    const appStateSub = AppState.addEventListener("change", onAppStateChange);
+
+    const offSocketOpen = socket.onOpen(() => {
+      void pushNotificationService.refreshAndRegisterDeviceToken();
+    });
+
     console.log("Push notifications ready for user:", user.id);
-    return offNativeActions;
+    return () => {
+      offNativeActions?.();
+      appStateSub.remove();
+      offSocketOpen();
+    };
   }, [user?.id, initialized]);
 
   return null;

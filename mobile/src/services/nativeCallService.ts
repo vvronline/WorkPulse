@@ -1,5 +1,6 @@
 import * as Linking from "expo-linking";
 import { Platform } from "react-native";
+import { ANDROID_NATIVE_CALL_UI } from "../config";
 import { socket } from "../realtime/socket";
 import type { NotificationPayload } from "./pushNotificationService";
 import { setPendingCall, pendingCallFromData } from "../realtime/pendingCall";
@@ -102,11 +103,13 @@ class NativeCallService {
 
   /**
    * Whether native (CallKeep) incoming-call UI is available and configured.
-   * Returns false on Android (CallKeep is currently disabled to avoid a
-   * startup crash) and in builds where the native module is unavailable
-   * (e.g. Expo Go). Callers should fall back to a heads-up status-bar
-   * notification when this is false so incoming calls are never silently
-   * dropped while the app is backgrounded/terminated.
+   * Returns false on Android UNLESS the P3.15 `ANDROID_NATIVE_CALL_UI` feature
+   * flag is enabled (the react-native-callkeep ConnectionService/CallStyle
+   * surface is opt-in there because some builds crash at startup), and false in
+   * builds where the native module is unavailable (e.g. Expo Go). Callers should
+   * fall back to a heads-up status-bar notification when this is false so
+   * incoming calls are never silently dropped while the app is
+   * backgrounded/terminated.
    */
   isNativeAvailable(): boolean {
     return this.nativeEnabled && this.callKeep != null;
@@ -223,12 +226,20 @@ class NativeCallService {
   }
 
   private resolveCallKeepModule(): CallKeepModule | null {
-    // Temporary Android safeguard: current react-native-callkeep build crashes
-    // at startup on some RN versions due to duplicate exported method names.
-    if (Platform.OS === "android") {
+    // P3.15 — Android native incoming-call surface (react-native-callkeep
+    // ConnectionService / CallStyle UI) is gated behind the
+    // `ANDROID_NATIVE_CALL_UI` feature flag. When the flag is OFF (default) we
+    // keep the previous safeguard of NOT loading the module on Android, because
+    // some react-native-callkeep builds crash at startup on certain RN versions
+    // (duplicate exported method names). Enabling the flag opts a verified build
+    // into the native surface; when OFF the app falls back to the Notifee
+    // CallStyle status-bar notification + CallRinger foreground service.
+    if (Platform.OS === "android" && !ANDROID_NATIVE_CALL_UI) {
       if (!this.warnedUnavailable) {
         this.warnedUnavailable = true;
-        console.warn("react-native-callkeep disabled on Android to avoid startup crash");
+        console.warn(
+          "react-native-callkeep disabled on Android (ANDROID_NATIVE_CALL_UI flag off); using Notifee fallback",
+        );
       }
       return null;
     }

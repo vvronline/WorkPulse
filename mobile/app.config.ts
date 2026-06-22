@@ -15,6 +15,12 @@ const ANDROID_GOOGLE_SERVICES_FILE =
   process.env.EXPO_ANDROID_GOOGLE_SERVICES_FILE ||
   process.env.GOOGLE_SERVICES_JSON ||
   "./google-services.json";
+// P3.15 — Android native incoming-call surface (react-native-callkeep) feature
+// flag. DEFAULT OFF: the current callkeep build can crash at startup on some RN
+// versions, so the native ConnectionService/CallStyle UI stays opt-in until a
+// build is verified. Enable per-build via EXPO_PUBLIC_ANDROID_NATIVE_CALL_UI=true.
+const ANDROID_NATIVE_CALL_UI =
+  process.env.EXPO_PUBLIC_ANDROID_NATIVE_CALL_UI === "true";
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
@@ -158,5 +164,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     API_BASE_URL,
     WS_BASE_URL,
     APP_VERSION,
+    // P3.15 — surfaced to src/config.ts so nativeCallService can gate the
+    // Android react-native-callkeep branch behind this feature flag.
+    ANDROID_NATIVE_CALL_UI,
   },
 });

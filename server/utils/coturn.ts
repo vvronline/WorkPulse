@@ -65,6 +65,12 @@ interface IceConfigResult {
     ttl: number | null;
     expiresAt?: number;
     mode: string;
+    // P1.9 — whether the CLIENT is permitted to fall back to the public Open
+    // Relay (openrelay.metered.ca) TURN service when its own /ice-config request
+    // fails or returns no provisioned TURN. STUN is ALWAYS allowed; this flag
+    // gates ONLY the public-TURN relay. Mirrors DISABLE_PUBLIC_TURN so the
+    // public relay is never used in a production deployment that disabled it.
+    allowPublicFallback: boolean;
 }
 
 const DEFAULT_STUN = [
@@ -232,6 +238,14 @@ function generateEphemeralCreds(userId?: string | number): EphemeralCreds | null
 async function buildIceServers(userId?: string | number): Promise<IceConfigResult> {
     const iceServers = buildStunServers();
 
+    // P1.9 — single source of truth for whether the CLIENT may use the public
+    // Open Relay TURN service as a last resort. STUN is always allowed; this
+    // gates ONLY the public TURN relay and mirrors DISABLE_PUBLIC_TURN so a
+    // production deployment that disabled the public relay server-side ALSO
+    // forbids the client's hard-coded public-TURN fallback.
+    const allowPublicFallback =
+        String(process.env.DISABLE_PUBLIC_TURN || "false").toLowerCase() !== "true";
+
     // 1) Preferred when configured: Cloudflare Calls (zero ops, generous free tier).
     //    Cloudflare's response already bundles their STUN URL inside the
     //    iceServers entry, so we drop our DEFAULT_STUN list to avoid handing
@@ -243,6 +257,7 @@ async function buildIceServers(userId?: string | number): Promise<IceConfigResul
             ttl: cf.expiresAt - Math.floor(Date.now() / 1000),
             expiresAt: cf.expiresAt,
             mode: "cloudflare-calls",
+            allowPublicFallback,
         };
     }
 
@@ -255,7 +270,7 @@ async function buildIceServers(userId?: string | number): Promise<IceConfigResul
             username: eph.username,
             credential: eph.credential,
         });
-        return { iceServers, ttl: eph.ttl, mode: "coturn-rest" };
+        return { iceServers, ttl: eph.ttl, mode: "coturn-rest", allowPublicFallback };
     }
 
     // 3) Legacy static creds (Twilio-style providers, or coturn with `lt-cred-mech`)
@@ -268,20 +283,20 @@ async function buildIceServers(userId?: string | number): Promise<IceConfigResul
             username: legacyUser,
             credential: legacyCred,
         });
-        return { iceServers, ttl: null, mode: "static" };
+        return { iceServers, ttl: null, mode: "static", allowPublicFallback };
     }
 
     // 4) Public Open Relay fallback (development only — DO NOT use in prod)
-    if (String(process.env.DISABLE_PUBLIC_TURN || "false").toLowerCase() !== "true") {
+    if (allowPublicFallback) {
         iceServers.push(
             { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
             { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
             { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
         );
-        return { iceServers, ttl: null, mode: "public-fallback" };
+        return { iceServers, ttl: null, mode: "public-fallback", allowPublicFallback };
     }
 
-    return { iceServers, ttl: null, mode: "stun-only" };
+    return { iceServers, ttl: null, mode: "stun-only", allowPublicFallback };
 }
 
 export {

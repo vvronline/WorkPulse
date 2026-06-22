@@ -358,6 +358,43 @@ class PushNotificationService {
     }
   }
 
+  /**
+   * P2.11 — Push token freshness. Re-acquire the FCM/APNs device token from the
+   * native layer (it can ROTATE — app reinstall, data clear, FCM key refresh,
+   * restore-to-new-device) and re-register it with the backend whenever it has
+   * changed. Called on every app foreground AND after each WS reconnect so a
+   * silently-rotated token never leaves the device unreachable for calls/pushes.
+   *
+   * Unlike `registerDeviceTokenForCurrentUser`, this always queries the native
+   * token first; it only POSTs to the backend when the token actually changed
+   * (or registration is forced via the rotation), so the foreground/reconnect
+   * hooks are cheap no-ops on the common "token unchanged" path.
+   */
+  async refreshAndRegisterDeviceToken(): Promise<void> {
+    // No point re-registering if no user is signed in.
+    try {
+      const userToken = await getToken();
+      if (!userToken) return;
+    } catch {
+      return;
+    }
+
+    let freshToken: string | null = null;
+    try {
+      freshToken = await this.getDeviceTokenForFirebaseAdmin();
+    } catch (err) {
+      console.warn("[PushNotificationService] token refresh: acquisition failed:", err);
+      return;
+    }
+    if (!freshToken) return;
+
+    const rotated = freshToken !== this.deviceToken;
+    this.deviceToken = freshToken;
+    // Force a backend re-register when the token rotated; otherwise let the
+    // cached-auth-token guard short-circuit a redundant POST.
+    await this.registerDeviceTokenForCurrentUser(rotated);
+  }
+
   subscribe(listener: (notification: Notifications.Notification) => void): () => void {
     this.listeners.push(listener);
     if (this.pendingNotifications.length > 0) {

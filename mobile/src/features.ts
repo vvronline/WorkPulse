@@ -448,6 +448,10 @@ export type IceConfig = {
   }>;
   mode?: string;
   expiresAt?: number;
+  // P1.9 — whether the client may use its hard-coded public Open Relay TURN
+  // fallback. STUN is always allowed; this gates ONLY the public-TURN relay.
+  // Absent on older servers → treated as allowed for backwards-compat.
+  allowPublicFallback?: boolean;
 };
 
 export type ChatReaction = { emoji: string; userId: number; fullName: string };

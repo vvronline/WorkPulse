@@ -21,6 +21,11 @@ export interface CallState {
     preAccepted?: boolean;
     isReconnect?: boolean;
     reconnectTo?: number | string;
+    // P0.6 — bumped each time the server emits `call_peer_ready`, telling the
+    // CALLER's useWebRTC effect to (re)send its offer (idempotent via Perfect
+    // Negotiation). A nonce (rather than a boolean) so repeated peer-ready
+    // events each trigger exactly one re-offer.
+    peerReadyNonce?: number;
     onSignal?: React.MutableRefObject<unknown>;
     onEndExternal?: React.MutableRefObject<unknown>;
     [key: string]: unknown;
@@ -248,6 +253,24 @@ export default function useCallState(wsSendRef: WsSendRef) {
             case "call_reconnect": {
                 setCallState((prev) =>
                     prev ? { ...prev, reconnectTo: data.userId } : prev,
+                );
+                break;
+            }
+            case "call_peer_ready": {
+                // P0.6 — the OTHER party finished subscribing / became ready.
+                // Bump peerReadyNonce so the CALLER's useWebRTC effect re-sends
+                // its offer (idempotent via Perfect Negotiation). This rescues
+                // the push / cold-start / lock-screen-answer path where the
+                // caller's original offer was dropped before the callee was
+                // connected. Web parity of the mobile P0.4 handler.
+                setCallState((prev) =>
+                    prev
+                        ? {
+                              ...prev,
+                              peerReadyNonce:
+                                  ((prev.peerReadyNonce as number) || 0) + 1,
+                          }
+                        : prev,
                 );
                 break;
             }

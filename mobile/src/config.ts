@@ -3,9 +3,28 @@ import Constants from "expo-constants";
 type Extra = {
   API_BASE_URL?: string;
   WS_BASE_URL?: string;
+  // Feature flags (string "true"/"false" or boolean — coerced below).
+  ANDROID_NATIVE_CALL_UI?: boolean | string;
 };
 
 const extra = (Constants.expoConfig?.extra ?? {}) as Extra;
+
+/** Coerce an extra value that may arrive as a boolean OR a string into bool. */
+function asBool(value: boolean | string | undefined): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value.toLowerCase() === "true";
+  return false;
+}
+
+/**
+ * P3.15 — Feature flag gating the Android native incoming-call surface
+ * (react-native-callkeep ConnectionService / CallStyle UI). DEFAULT OFF: the
+ * current react-native-callkeep build can crash at startup on some RN versions
+ * (duplicate exported method names), so the native surface stays opt-in until a
+ * build is verified. Enable per-build via `EXPO_PUBLIC_ANDROID_NATIVE_CALL_UI=true`.
+ * iOS always uses CallKit (this flag only gates the Android branch).
+ */
+export const ANDROID_NATIVE_CALL_UI = asBool(extra.ANDROID_NATIVE_CALL_UI);
 
 /** REST API base, e.g. https://workpulse-prod.up.railway.app/api */
 export const API_BASE_URL =

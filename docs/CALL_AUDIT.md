@@ -102,8 +102,9 @@ The core is strong (Perfect Negotiation, relay-only escalation, ICE restart, pre
 
 ## P3 — Roadmap (large effort / platform features)
 
-### P3.1 — Android native call UI (CallKeep/ConnectionService)
-- `resolveCallKeepModule` returns null on Android (disabled to avoid a crash). Android relies solely on Notifee full-screen-intent — the biggest parity gap vs WhatsApp/Teams on Android. Re-enabling needs careful native work + device testing. **Effort: L.**
+### P3.1 — Android native call UI (CallKeep/ConnectionService) — ✅ flag-gated re-enable (P3.15)
+- **Was**: `resolveCallKeepModule` returned null on Android (hard-disabled to avoid a startup crash on some RN versions) — Android relied solely on the Notifee full-screen-intent CallStyle surface.
+- **Now (P3.15)**: the Android react-native-callkeep ConnectionService/CallStyle path is re-enabled behind a `ANDROID_NATIVE_CALL_UI` feature flag (DEFAULT OFF). `resolveCallKeepModule` only short-circuits on Android when the flag is off; a verified build opts in via `EXPO_PUBLIC_ANDROID_NATIVE_CALL_UI=true`. When off, the Notifee CallStyle notification + CallRinger foreground service remain the (unchanged) fallback so background/locked/killed calls still ring. Files: `mobile/src/services/nativeCallService.ts`, `mobile/src/config.ts`, `mobile/app.config.ts`. Mobile `tsc --noEmit` clean.
 
 ### P3.2 — Group calling in chat (mesh/SFU)
 - Real N-party calling in the chat call UI (reuse `meeting/` mesh or an SFU). **Effort: L.**

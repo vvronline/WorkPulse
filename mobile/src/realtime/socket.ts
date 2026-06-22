@@ -58,6 +58,10 @@ export function buildRetryBackoffPlan({
 class RealtimeSocket {
   private ws: WebSocket | null = null;
   private listeners = new Set<Listener>();
+  // P2.11 — fired every time the socket transitions to OPEN (initial connect
+  // AND every reconnect). Used to re-register the FCM push token after a
+  // reconnect so a token that rotated while the socket was down is refreshed.
+  private openListeners = new Set<() => void>();
   private reconnectAttempts = 0;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -124,6 +128,16 @@ class RealtimeSocket {
         this.reconnectTimer = null;
       }
       this.startPing();
+      // P2.11 — notify open-listeners (e.g. push-token re-registration) that the
+      // realtime channel is (re)connected. Listener errors must never kill the
+      // socket.
+      this.openListeners.forEach((cb) => {
+        try {
+          cb();
+        } catch {
+          /* listener errors shouldn't kill the socket */
+        }
+      });
     };
 
     ws.onmessage = (e) => {
@@ -293,6 +307,24 @@ class RealtimeSocket {
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /**
+   * P2.11 — Subscribe to socket-OPEN transitions (initial connect + every
+   * reconnect). Returns an unsubscribe function. If the socket is ALREADY open
+   * when subscribing, the callback is invoked once immediately so a late
+   * subscriber doesn't miss the current connection.
+   */
+  onOpen(listener: () => void): () => void {
+    this.openListeners.add(listener);
+    if (this.ws && this.ws.readyState === 1) {
+      try {
+        listener();
+      } catch {
+        /* ignore */
+      }
+    }
+    return () => this.openListeners.delete(listener);
   }
 
   disconnect() {

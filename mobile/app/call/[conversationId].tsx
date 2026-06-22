@@ -1,4 +1,12 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import {
   Alert,
   AppState,
@@ -81,6 +89,10 @@ import {
   consumeAnswerIntent,
   clearAnswerIntent,
 } from "../../src/realtime/callAnswerIntent";
+import {
+  callStateReducer,
+  initialCallPhase,
+} from "../../src/realtime/callStateMachine";
 
 const FALLBACK_ICE = [
   { urls: "stun:stun.l.google.com:19302" },
@@ -105,6 +117,62 @@ const FALLBACK_ICE = [
     credential: "openrelayproject",
   },
 ];
+
+// P1.8 — Deterministic ICE-config gating. A config has "real" (provisioned)
+// TURN only when the server returned managed credentials (Cloudflare Calls /
+// self-hosted coturn / a static 3rd-party provider) rather than the public
+// Open Relay fallback or STUN-only. The server's `mode` is authoritative
+// (cloudflare-calls | coturn-rest | static = real; public-fallback | stun-only
+// = fallback). When `mode` is absent (older server) we sniff the URLs for a
+// non-openrelay turn:/turns: entry. The FIRST offer/answer must never be
+// negotiated against the public-only fallback: on a network that requires a
+// relay this makes the first call hang ("Connecting…") even though a retry
+// works once the real creds are cached — the classic "fresh install: first
+// call doesn't connect" bug.
+const REAL_TURN_MODES = new Set(["cloudflare-calls", "coturn-rest", "static"]);
+function hasRealTurn(
+  cfg: { mode?: string; iceServers?: any[] } | null | undefined,
+): boolean {
+  if (!cfg) return false;
+  if (cfg.mode && REAL_TURN_MODES.has(cfg.mode)) return true;
+  const servers = cfg.iceServers || [];
+  for (const s of servers) {
+    const urls = Array.isArray(s?.urls) ? s.urls : [s?.urls];
+    for (const u of urls) {
+      if (typeof u !== "string") continue;
+      const lower = u.toLowerCase();
+      if (
+        (lower.startsWith("turn:") || lower.startsWith("turns:")) &&
+        !lower.includes("openrelay.metered.ca")
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// P1.9 — Gate the public Open Relay TURN fallback. The server's /ice-config
+// returns `allowPublicFallback`; when it is FALSE the client must NOT relay
+// through the public openrelay.metered.ca service (a deployment that disabled
+// DISABLE_PUBLIC_TURN must not be silently bypassed by the client's hard-coded
+// FALLBACK_ICE). STUN is ALWAYS allowed; only public TURN URLs are stripped.
+// Returns the servers unchanged when public fallback is allowed.
+function applyPublicTurnPolicy(servers: any[], allowPublic: boolean): any[] {
+  if (allowPublic) return servers;
+  const out: any[] = [];
+  for (const s of servers || []) {
+    const urls = Array.isArray(s?.urls) ? s.urls : [s?.urls];
+    const kept = urls.filter(
+      (u: any) =>
+        typeof u === "string" &&
+        !u.toLowerCase().includes("openrelay.metered.ca"),
+    );
+    if (kept.length === 0) continue; // entry was entirely public TURN — drop it
+    out.push({ ...s, urls: kept.length === 1 ? kept[0] : kept });
+  }
+  return out;
+}
 
 type CallStatus =
   | "ringing"
@@ -372,8 +440,16 @@ export default function CallScreen() {
   const peerName = params.peerName || "Call";
   const [peerAvatar, setPeerAvatar] = useState(params.peerAvatar || "");
 
-  const [status, setStatus] = useState<CallStatus>(
-    isReconnect ? "reconnecting" : "ringing",
+  // P3.14 — Consolidated call state machine. `status` is now driven by an
+  // explicit reducer (idle/ringing→connecting→connected→ended/rejected) instead
+  // of nine scattered `setStatus(...)` calls. The reducer's terminal-absorbing
+  // guard (see callStateMachine.ts) fixes the effect race where a late
+  // PC_CONNECTED (a peer connection that reached "connected" a beat after the
+  // call had already ended/been rejected) could flip the UI back to a live call.
+  const [status, dispatchCall] = useReducer(
+    callStateReducer,
+    isReconnect,
+    initialCallPhase,
   );
   const [muted, setMuted] = useState(false);
   const [videoOff, setVideoOff] = useState(callType !== "video");
@@ -456,6 +532,23 @@ export default function CallScreen() {
   );
   const iceServersRef = useRef<any[]>(FALLBACK_ICE);
   const iceConfigLoadedRef = useRef(false);
+  // P1.8 — whether the CURRENTLY-loaded ICE config carries real, provisioned
+  // TURN (Cloudflare/coturn/static) rather than the public Open Relay / STUN
+  // fallback. Drives the deterministic gate in waitForIceConfig so the FIRST
+  // negotiation never proceeds against the public-only fallback when real TURN
+  // is still in flight.
+  const iceHasRealTurnRef = useRef(false);
+  // P1.9 — whether the server permits the public Open Relay TURN fallback for
+  // this client. Defaults to true (backwards-compat for older servers that
+  // don't send `allowPublicFallback`). When the loaded config says false, we
+  // strip the public openrelay.metered.ca TURN entries from whatever ICE list
+  // we hand to RTCPeerConnection (STUN is always kept).
+  const iceAllowPublicRef = useRef(true);
+  // P1.8 — set once the very first offer/answer for this screen has begun
+  // negotiating. After that we no longer block on real-TURN arrival (a later
+  // ICE-restart / renegotiation must proceed promptly with whatever creds we
+  // have); only the FIRST connection is gated on genuine TURN.
+  const firstNegotiationStartedRef = useRef(false);
   const pendingIce = useRef<any[]>([]);
   const startedAt = useRef<number>(0);
   // Recovery state — mirrors the proven web client. relayOnly forces TURN-only
@@ -498,6 +591,34 @@ export default function CallScreen() {
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+  // P0.5 — Callee auto re-offer recovery. Armed right after acceptIncoming()
+  // succeeds: if no OFFER ever arrives (so no PC is built) within a short grace
+  // window, we ask the caller to re-offer via `call_reconnect`. This recovers
+  // the case where the caller's OFFER was emitted/dropped before we finished
+  // accepting (push / cold-start / lock-screen answer) AND the P0.4
+  // `call_ready` → `call_peer_ready` re-offer also failed to land. Cleared the
+  // moment a PC is created (createPC) and on teardown/unmount.
+  const acceptReofferTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  // P1.10 — Black-video watchdog (see onconnectionstatechange + request-video-state).
+  const remoteVideoWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const videoStateRequestedRef = useRef(false);
+  // P0.7 — Reliable local-ICE transport. Bare `socket.send` silently drops a
+  // candidate whenever the WS is momentarily not OPEN (foreground reconnect,
+  // brief mobile/VPN blip). A dropped local ICE candidate can be the ONE
+  // candidate that would have completed the pairing, leaving the call stuck on
+  // "Connecting…". Instead we push every local candidate onto an ordered queue
+  // that flushes via `sendWithBackoff` (which reconnects + retries) and
+  // re-flushes itself on a short timer until the socket is back, so no
+  // candidate is lost across a transient WS outage. Cleared on unmount.
+  const iceOutQueueRef = useRef<
+    Array<{ targetUserId: number; candidate: any }>
+  >([]);
+  const iceFlushingRef = useRef(false);
+  const iceFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const createPCRef = useRef<
     | ((
         stream: MediaStream | null,
@@ -1035,29 +1156,77 @@ export default function CallScreen() {
   // networks that require a relay (where the call then never connects).
   // Fast-exits the moment the config has loaded.
   const waitForIceConfig = useCallback(async (timeoutMs?: number) => {
-    if (iceConfigLoadedRef.current) return;
-    // ADAPTIVE WAIT: on a FRESH INSTALL the TURN-credential fetch (warmIceConfig
-    // at app start + the per-screen getIceConfig) may not have completed yet.
-    // Negotiating the first offer with the STUN-only FALLBACK_ICE on a network
-    // that requires a relay makes the FIRST call fail to connect (it works on a
-    // retry once the creds are cached) — the exact "fresh install: first call
-    // doesn't connect" bug. When the real config has NOT loaded yet we wait
-    // substantially longer (up to 5s) for the genuine TURN creds; once loaded
-    // a later call returns immediately. A caller-supplied timeout still wins.
-    const effectiveTimeout =
-      timeoutMs ?? (getCachedIceConfig() ? 1200 : 5000);
+    // P1.8 — DETERMINISTIC ICE-CONFIG GATING. There are two distinct waits:
+    //   1. Wait for ANY config to load (cache/live fetch finished).
+    //   2. On the FIRST negotiation, ADDITIONALLY wait (bounded) for REAL,
+    //      provisioned TURN to arrive — never negotiate the first offer/answer
+    //      against the public Open Relay / STUN-only fallback. On a network
+    //      that requires a relay, doing so makes the first call hang
+    //      ("Connecting…") even though a retry works once the real creds are
+    //      cached (the classic "fresh install: first call doesn't connect").
+    //      A later ICE-restart / renegotiation (firstNegotiationStarted) must
+    //      proceed promptly with whatever creds we have, so only the FIRST
+    //      connection is gated on genuine TURN.
     const start = Date.now();
-    while (!iceConfigLoadedRef.current && Date.now() - start < effectiveTimeout) {
-      // Opportunistically adopt the warmed cache the instant it lands so we stop
-      // waiting as soon as the real TURN creds are available.
-      const cached = getCachedIceConfig();
-      if (cached?.iceServers?.length) {
-        iceServersRef.current = cached.iceServers;
-        iceConfigLoadedRef.current = true;
-        return;
+
+    // Stage 1 — ensure SOME config is loaded.
+    if (!iceConfigLoadedRef.current) {
+      // ADAPTIVE WAIT: on a FRESH INSTALL the TURN-credential fetch
+      // (warmIceConfig at app start + the per-screen getIceConfig) may not have
+      // completed yet. When the real config has NOT loaded yet we wait
+      // substantially longer (up to 5s) for the genuine TURN creds; once loaded
+      // a later call returns immediately. A caller-supplied timeout still wins.
+      const effectiveTimeout =
+        timeoutMs ?? (getCachedIceConfig() ? 1200 : 5000);
+      while (
+        !iceConfigLoadedRef.current &&
+        Date.now() - start < effectiveTimeout
+      ) {
+        // Opportunistically adopt the warmed cache the instant it lands so we
+        // stop waiting as soon as the real TURN creds are available.
+        const cached = getCachedIceConfig();
+        if (cached?.iceServers?.length) {
+          iceServersRef.current = cached.iceServers;
+          iceConfigLoadedRef.current = true;
+          iceHasRealTurnRef.current = hasRealTurn(cached);
+          // P1.9 — honour the server's public-TURN policy from the cache.
+          iceAllowPublicRef.current = cached.allowPublicFallback !== false;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 50));
       }
-      await new Promise((r) => setTimeout(r, 50));
     }
+
+    // Stage 2 — FIRST-negotiation real-TURN gate. Only blocks the very first
+    // offer/answer of this call screen, and only when we don't already have
+    // provisioned TURN. We keep polling the warmed cache in case the real creds
+    // land a beat after the (possibly fallback) config was first adopted. A
+    // hard cap keeps the connect deterministic: if real TURN never shows up in
+    // time we proceed with what we have (STUN/public fallback) rather than
+    // hanging forever — the recovery ladder (relay-only rebuild) still applies.
+    if (
+      !firstNegotiationStartedRef.current &&
+      !iceHasRealTurnRef.current &&
+      timeoutMs == null
+    ) {
+      // Allow up to ~6s total (from the start of this wait) for genuine TURN.
+      const REAL_TURN_DEADLINE_MS = 6000;
+      while (Date.now() - start < REAL_TURN_DEADLINE_MS) {
+        const cached = getCachedIceConfig();
+        if (cached?.iceServers?.length && hasRealTurn(cached)) {
+          iceServersRef.current = cached.iceServers;
+          iceConfigLoadedRef.current = true;
+          iceHasRealTurnRef.current = true;
+          // P1.9 — honour the server's public-TURN policy from the cache.
+          iceAllowPublicRef.current = cached.allowPublicFallback !== false;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    // Mark that the first negotiation has begun — subsequent waits skip the
+    // real-TURN gate so recovery offers proceed immediately.
+    firstNegotiationStartedRef.current = true;
   }, []);
 
   // Attach local tracks AFTER setRemoteDescription on the answerer so they bind
@@ -1133,7 +1302,12 @@ export default function CallScreen() {
       // call by relaying every byte over TCP/TLS. This is the key recovery
       // path for restrictive mobile carriers / corporate Wi-Fi.
       const pcConfig: any = {
-        iceServers: iceServersRef.current,
+        // P1.9 — strip the public Open Relay TURN entries when the server
+        // forbids the public fallback (DISABLE_PUBLIC_TURN=true). STUN is kept.
+        iceServers: applyPublicTurnPolicy(
+          iceServersRef.current,
+          iceAllowPublicRef.current,
+        ),
         // Pre-gather candidates + fewer ports → faster, firewall-friendlier
         // connection setup (matches web config).
         iceCandidatePoolSize: 10,
@@ -1145,6 +1319,16 @@ export default function CallScreen() {
       }
       const pc = new RTCPeerConnection(pcConfig);
       pcRef.current = pc;
+
+      // P0.5 — a PC now exists, so the callee auto re-offer recovery timer is no
+      // longer needed: an offer DID arrive (or we are re-offering). Clearing it
+      // here covers EVERY path that builds a PC (incoming-offer answer, reconnect
+      // re-offer, relay-only rebuild) so the recovery `call_reconnect` never
+      // fires once negotiation is underway.
+      if (acceptReofferTimeoutRef.current) {
+        clearTimeout(acceptReofferTimeoutRef.current);
+        acceptReofferTimeoutRef.current = null;
+      }
 
       // For the OFFERER tracks must exist before createOffer. For the ANSWERER
       // tracks are attached AFTER setRemoteDescription so they bind to the
@@ -1168,11 +1352,10 @@ export default function CallScreen() {
 
       (pc as any).onicecandidate = (e: any) => {
         if (e.candidate) {
-          socket.send("call_signal", {
-            conversationId,
-            targetUserId,
-            signal: { type: "ice-candidate", candidate: e.candidate.toJSON() },
-          });
+          // P0.7 — enqueue for reliable, ordered delivery (retries over a
+          // transient WS blip) instead of a bare fire-and-forget socket.send
+          // that is silently lost whenever the socket is momentarily closed.
+          enqueueLocalIce(targetUserId, e.candidate.toJSON());
         }
       };
 
@@ -1228,6 +1411,7 @@ export default function CallScreen() {
                   await pc.setLocalDescription(offer);
                   socket.send("call_signal", {
                     conversationId,
+                    callId: callIdRef.current,
                     targetUserId,
                     signal: {
                       type: "offer",
@@ -1257,10 +1441,38 @@ export default function CallScreen() {
             clearTimeout(disconnectTimerRef.current);
             disconnectTimerRef.current = null;
           }
-          setStatus("connected");
+          dispatchCall({ type: "PC_CONNECTED" });
           // Ramp the video bitrate up now that the link is established
           // (mirrors web applyBitrateRampUp).
           applyBitrateRampUp(pc);
+          // P1.10 watchdog armed: if a video call still has no live remote
+          // video a few seconds after connect, ask the peer to re-announce.
+          if (callType === "video" && !videoStateRequestedRef.current) {
+            if (remoteVideoWatchdogRef.current) {
+              clearTimeout(remoteVideoWatchdogRef.current);
+            }
+            remoteVideoWatchdogRef.current = setTimeout(() => {
+              remoteVideoWatchdogRef.current = null;
+              if (pcRef.current !== pc) return;
+              if (videoStateRequestedRef.current) return;
+              const remote = remoteStreamRef.current;
+              const liveRemoteVideo =
+                !!remote &&
+                remote
+                  .getVideoTracks()
+                  .some((t) => (t as any).readyState !== "ended");
+              if (liveRemoteVideo) return;
+              videoStateRequestedRef.current = true;
+              const tgt = peerIdRef.current;
+              if (!tgt) return;
+              socket.send("call_signal", {
+                conversationId,
+                callId: callIdRef.current,
+                targetUserId: tgt,
+                signal: { type: "request-video-state" },
+              });
+            }, 3000);
+          }
         } else if (st === "disconnected") {
           // Grace period: a temporary network hiccup is common on mobile.
           // Wait before tearing the call down so it can self-heal.
@@ -1293,6 +1505,7 @@ export default function CallScreen() {
                 await pc.setLocalDescription(offer);
                 socket.send("call_signal", {
                   conversationId,
+                  callId: callIdRef.current,
                   targetUserId,
                   signal: {
                     type: "offer",
@@ -1307,7 +1520,7 @@ export default function CallScreen() {
             // ICE restart didn't help — escalate to TURN-only and rebuild.
             relayOnlyRef.current = true;
             iceRestartAttemptedRef.current = false;
-            setStatus("connecting");
+            dispatchCall({ type: "PC_RECONNECTING" });
             const localStr = localStreamRef.current;
             try {
               pc.close();
@@ -1340,6 +1553,7 @@ export default function CallScreen() {
                 await newPc.setLocalDescription(offer);
                 socket.send("call_signal", {
                   conversationId,
+                  callId: callIdRef.current,
                   targetUserId,
                   signal: { type: "offer", sdp: offer.sdp },
                 });
@@ -1377,6 +1591,64 @@ export default function CallScreen() {
     }
   }, []);
 
+  // P0.7 — Reliable LOCAL ICE transport. Drain the outbound-ICE queue over the
+  // WS, retrying via `sendWithBackoff` (which reconnects + backs off) so a
+  // candidate is never lost when the socket is momentarily down. Single-flight
+  // (`iceFlushingRef`) so concurrent onicecandidate fires + the periodic
+  // re-flush timer never double-process the same candidate. Anything that fails
+  // to send this pass stays at the FRONT of the queue (FIFO order preserved)
+  // and a short timer schedules another attempt until the socket is back.
+  const flushIceOutQueue = useCallback(async () => {
+    if (iceFlushingRef.current) return;
+    if (iceOutQueueRef.current.length === 0) return;
+    iceFlushingRef.current = true;
+    try {
+      while (iceOutQueueRef.current.length > 0) {
+        const item = iceOutQueueRef.current[0];
+        const ok = await socket.sendWithBackoff(
+          "call_signal",
+          {
+            conversationId,
+            callId: callIdRef.current,
+            targetUserId: item.targetUserId,
+            signal: { type: "ice-candidate", candidate: item.candidate },
+          },
+          {
+            timeoutMs: 4000,
+            maxAttempts: 5,
+            initialBackoffMs: 120,
+            maxBackoffMs: 800,
+            ensureConnected: true,
+          },
+        );
+        if (!ok) break; // leave this + the rest queued; the timer retries.
+        iceOutQueueRef.current.shift();
+      }
+    } finally {
+      iceFlushingRef.current = false;
+    }
+    // If anything is still queued (a send failed), schedule a retry so a
+    // transient WS outage self-heals without dropping candidates.
+    if (iceOutQueueRef.current.length > 0 && !iceFlushTimerRef.current) {
+      iceFlushTimerRef.current = setTimeout(() => {
+        iceFlushTimerRef.current = null;
+        void flushIceOutQueue();
+      }, 1000);
+    }
+  }, [conversationId]);
+
+  // P0.7 — Enqueue a local ICE candidate for reliable, ordered delivery instead
+  // of a bare fire-and-forget `socket.send` (which silently drops on a closed
+  // socket). Kicks the flusher immediately; the flusher's retry timer covers a
+  // down socket.
+  const enqueueLocalIce = useCallback(
+    (targetUserId: number, candidate: any) => {
+      iceOutQueueRef.current.push({ targetUserId, candidate });
+      void flushIceOutQueue();
+    },
+    [flushIceOutQueue],
+  );
+
   // Show the app OVER the lock screen (and turn the screen on) ONLY while the
   // call UI is mounted. The native module toggles the Activity flags at
   // runtime; we disable them on unmount so the app returns behind the lock
@@ -1404,6 +1676,22 @@ export default function CallScreen() {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
       }
+      if (acceptReofferTimeoutRef.current) {
+        clearTimeout(acceptReofferTimeoutRef.current);
+        acceptReofferTimeoutRef.current = null;
+      }
+      // P1.10 — stop the black-video watchdog so it can't fire post-unmount.
+      if (remoteVideoWatchdogRef.current) {
+        clearTimeout(remoteVideoWatchdogRef.current);
+        remoteVideoWatchdogRef.current = null;
+      }
+      // P0.7 — stop the ICE re-flush timer + drop any still-queued local
+      // candidates so a late fire can't try to send after teardown.
+      if (iceFlushTimerRef.current) {
+        clearTimeout(iceFlushTimerRef.current);
+        iceFlushTimerRef.current = null;
+      }
+      iceOutQueueRef.current = [];
       bitrateRampTimersRef.current.forEach((t) => clearTimeout(t));
       bitrateRampTimersRef.current = [];
       // Safety net: always release the navigation guard on unmount, even if the
@@ -1421,12 +1709,21 @@ export default function CallScreen() {
     if (cached?.iceServers?.length) {
       iceServersRef.current = cached.iceServers;
       iceConfigLoadedRef.current = true;
+      // P1.8 — record whether the warmed cache already carries real TURN so the
+      // first-negotiation gate in waitForIceConfig can fast-exit.
+      iceHasRealTurnRef.current = hasRealTurn(cached);
+      // P1.9 — honour the server's public-TURN policy from the warmed cache.
+      iceAllowPublicRef.current = cached.allowPublicFallback !== false;
       return;
     }
     getIceConfig()
       .then((r) => {
         if (r.data?.iceServers?.length) {
           iceServersRef.current = r.data.iceServers;
+          // P1.8 — flag real-TURN availability from the live fetch too.
+          iceHasRealTurnRef.current = hasRealTurn(r.data);
+          // P1.9 — honour the server's public-TURN policy from the live fetch.
+          iceAllowPublicRef.current = r.data.allowPublicFallback !== false;
         }
       })
       .catch(() => {})
@@ -1501,7 +1798,7 @@ export default function CallScreen() {
     }
     ringTimeoutRef.current = setTimeout(() => {
       ringTimeoutRef.current = null;
-      setStatus("ended");
+      dispatchCall({ type: "RING_TIMEOUT" });
       Alert.alert("No answer", "The person you called didn't pick up.");
       endAndLeave(true);
     }, 35000);
@@ -1693,6 +1990,7 @@ export default function CallScreen() {
                   "call_signal",
                   {
                     conversationId,
+                    callId: callIdRef.current,
                     targetUserId: target,
                     signal: { type: "offer", sdp: offer.sdp },
                   },
@@ -1716,6 +2014,7 @@ export default function CallScreen() {
         if (target) {
           socket.send("call_signal", {
             conversationId,
+            callId: callIdRef.current,
             targetUserId: target,
             signal: { type: "video-state", videoOff: false },
           });
@@ -1801,6 +2100,7 @@ export default function CallScreen() {
                     "call_signal",
                     {
                       conversationId,
+                      callId: callIdRef.current,
                       targetUserId: target,
                       signal: { type: "offer", sdp: offer.sdp },
                     },
@@ -1825,6 +2125,7 @@ export default function CallScreen() {
             if (target) {
               socket.send("call_signal", {
                 conversationId,
+                callId: callIdRef.current,
                 targetUserId: target,
                 signal: { type: "video-state", videoOff },
               });
@@ -1849,6 +2150,35 @@ export default function CallScreen() {
     runSerialized,
   ]);
 
+  // P0.4 — Reliable-delivery handshake (callee / reconnect side). The moment
+  // this screen mounts AND is subscribed to `call_signal`, tell the server we
+  // are listening so it (1) replays any OFFER/ICE buffered while we had no
+  // socket and (2) asks the caller to (re)send its offer via `call_peer_ready`.
+  // Without this, an offer the caller fired before our screen mounted
+  // (push / cold-start / lock-screen answer) was dropped and the call hung on
+  // "Connecting…". Only the ANSWERING side (incoming or reconnect) subscribes;
+  // the caller waits for `call_peer_ready` and re-offers. Idempotent + once.
+  const subscribedRef = useRef(false);
+  useEffect(() => {
+    // Pure outgoing caller never subscribes (it is the offerer).
+    if (mode === "outgoing" && !isReconnect) return;
+    if (subscribedRef.current) return;
+    const callId = callIdRef.current;
+    if (!callId || !Number.isFinite(conversationId)) return;
+    subscribedRef.current = true;
+    void socket.sendWithBackoff(
+      "call_subscribe",
+      { callId, conversationId },
+      {
+        timeoutMs: 4000,
+        maxAttempts: 5,
+        initialBackoffMs: 120,
+        maxBackoffMs: 800,
+        ensureConnected: true,
+      },
+    );
+  }, [mode, isReconnect, conversationId]);
+
   // Signaling listener.
   useEffect(() => {
     const off = socket.subscribe((msg) => {
@@ -1865,7 +2195,7 @@ export default function CallScreen() {
           if (mode !== "outgoing") return;
           peerIdRef.current = d.userId;
           if (d.userAvatar) setPeerAvatar(String(d.userAvatar));
-          setStatus("connecting");
+          dispatchCall({ type: "PEER_ACCEPTED" });
           runSerialized(async () => {
             try {
               const stream = localStreamRef.current || (await getMedia());
@@ -1897,6 +2227,7 @@ export default function CallScreen() {
                 "call_signal",
                 {
                   conversationId,
+                  callId: callIdRef.current,
                   targetUserId: d.userId,
                   signal: { type: "offer", sdp: offer.sdp },
                 },
@@ -1917,6 +2248,7 @@ export default function CallScreen() {
                 "call_signal",
                 {
                   conversationId,
+                  callId: callIdRef.current,
                   targetUserId: d.userId,
                   signal: { type: "video-state", videoOff },
                 },
@@ -2024,6 +2356,7 @@ export default function CallScreen() {
                 await pc.setLocalDescription(answer);
                 socket.send("call_signal", {
                   conversationId,
+                  callId: callIdRef.current,
                   targetUserId: from,
                   signal: { type: "answer", sdp: answer.sdp },
                 });
@@ -2031,6 +2364,7 @@ export default function CallScreen() {
                 // render avatar vs. video correctly from the start.
                 socket.send("call_signal", {
                   conversationId,
+                  callId: callIdRef.current,
                   targetUserId: from,
                   signal: { type: "video-state", videoOff },
                 });
@@ -2085,6 +2419,33 @@ export default function CallScreen() {
               // unreliable track.onmute — drives whether we show their video
               // or the avatar + black screen.
               setRemoteVideoOff(!!signal.videoOff);
+            } else if (signal.type === "request-video-state") {
+              // P1.10 — Black-video hardening. The peer's watchdog fired: a few
+              // seconds after `connected` it still had no live remote video, so
+              // it asked us to re-announce our camera state. Reply with the
+              // ground truth derived from our LIVE local video track (enabled +
+              // not ended) rather than a possibly-stale `videoOff` closure, so a
+              // dropped/late original `video-state` self-heals.
+              const tgt = from ?? peerIdRef.current;
+              if (tgt) {
+                const localStr = localStreamRef.current;
+                const liveLocalVideo =
+                  callType === "video" &&
+                  !!localStr &&
+                  localStr
+                    .getVideoTracks()
+                    .some(
+                      (t) =>
+                        (t as any).readyState !== "ended" &&
+                        t.enabled !== false,
+                    );
+                socket.send("call_signal", {
+                  conversationId,
+                  callId: callIdRef.current,
+                  targetUserId: tgt,
+                  signal: { type: "video-state", videoOff: !liveLocalVideo },
+                });
+              }
             } else if (signal.type === "audio-state") {
               // Peer toggled their mic — surface a mute badge (mirrors web's
               // peerMuted + remoteMuteBadge). The explicit signal is reliable
@@ -2133,7 +2494,7 @@ export default function CallScreen() {
               // Reset recovery flags for the fresh negotiation.
               iceRestartAttemptedRef.current = false;
               negotiationDoneRef.current = false;
-              setStatus("connecting");
+              dispatchCall({ type: "PEER_RECONNECT" });
               const pc = createPC(stream, targetUserId, true);
               applySenderEncodingLimits(pc);
               makingOfferRef.current = true;
@@ -2151,6 +2512,7 @@ export default function CallScreen() {
                 "call_signal",
                 {
                   conversationId,
+                  callId: callIdRef.current,
                   targetUserId,
                   signal: { type: "offer", sdp: offer.sdp },
                 },
@@ -2165,6 +2527,7 @@ export default function CallScreen() {
               // avatar vs. video correctly from the first frame.
               socket.send("call_signal", {
                 conversationId,
+                callId: callIdRef.current,
                 targetUserId,
                 signal: { type: "video-state", videoOff },
               });
@@ -2175,6 +2538,45 @@ export default function CallScreen() {
               );
             }
           });
+          break;
+        }
+        case "call_peer_ready": {
+          // P0.4 — the OTHER party's call screen has mounted + subscribed (or
+          // signalled ready). The server asks US, the CALLER, to (re)send our
+          // offer so a cross-instance / never-buffered offer is (re)delivered
+          // the moment the callee is actually listening. This is the core fix
+          // for "answered but never connects": the caller fires its offer the
+          // instant `call_accepted` arrives, but the callee's screen needs
+          // 1–5s to mount + subscribe (push/cold-start/lock-screen answer).
+          // Re-sending is idempotent via Perfect Negotiation (the callee is
+          // POLITE and rolls back on a glare), so a duplicate is harmless.
+          if (Number(d.conversationId) !== conversationId) break;
+          if (
+            d.callId != null &&
+            callIdRef.current != null &&
+            Number(d.callId) !== callIdRef.current
+          ) {
+            break;
+          }
+          // Only the CALLER re-offers. The callee waits for the offer.
+          if (mode !== "outgoing") break;
+          const pc = pcRef.current;
+          const target = peerIdRef.current;
+          if (
+            pc &&
+            target &&
+            (pc as any).localDescription?.type === "offer"
+          ) {
+            socket.send("call_signal", {
+              conversationId,
+              callId: callIdRef.current,
+              targetUserId: target,
+              signal: {
+                type: "offer",
+                sdp: (pc as any).localDescription.sdp,
+              },
+            });
+          }
           break;
         }
         case "call_reaction": {
@@ -2214,13 +2616,13 @@ export default function CallScreen() {
         }
         case "call_ended":
           if (Number(d.conversationId) === conversationId) {
-            setStatus("ended");
+            dispatchCall({ type: "REMOTE_ENDED" });
             endAndLeave(false);
           }
           break;
         case "call_rejected":
           if (Number(d.conversationId) === conversationId) {
-            setStatus("rejected");
+            dispatchCall({ type: "REMOTE_REJECTED" });
             setTimeout(() => endAndLeave(false), 800);
           }
           break;
@@ -2229,7 +2631,7 @@ export default function CallScreen() {
           // refused to ring them; tell the user and tear down our outgoing
           // call.
           if (Number(d.conversationId) === conversationId) {
-            setStatus("ended");
+            dispatchCall({ type: "REMOTE_BUSY" });
             Alert.alert("On another call", `${peerName} is on another call.`);
             endAndLeave(false);
           }
@@ -2393,6 +2795,7 @@ export default function CallScreen() {
             if (target) {
               socket.send("call_signal", {
                 conversationId,
+                callId: callIdRef.current,
                 targetUserId: target,
                 signal: { type: "quality-state", quality: q },
               });
@@ -2415,7 +2818,7 @@ export default function CallScreen() {
     // the server sends back to our own user (to dismiss our OTHER devices'
     // ring UI) does not tear down the call we are about to join.
     acceptedRef.current = true;
-    setStatus("connecting");
+    dispatchCall({ type: "ACCEPT" });
     const sent = await socket.sendCallActionWithRetry(
       "accept",
       {
@@ -2435,7 +2838,55 @@ export default function CallScreen() {
       const stream = await getMedia();
       if (!stream) return endAndLeave(false);
     }
+    // P0.4 — now that media is acquired and our PC will be built when the offer
+    // arrives, tell the server we are READY to receive it so the caller
+    // (re)sends its offer immediately via `call_peer_ready` (idempotent via
+    // Perfect Negotiation). This closes the window where the caller fired its
+    // offer before we were listening (push/cold-start/lock-screen answer).
+    void socket.sendWithBackoff(
+      "call_ready",
+      { callId: callIdRef.current, conversationId },
+      {
+        timeoutMs: 4000,
+        maxAttempts: 5,
+        initialBackoffMs: 120,
+        maxBackoffMs: 800,
+        ensureConnected: true,
+      },
+    );
     // The caller will now send us an offer (handled in call_signal).
+    //
+    // P0.5 — Callee auto re-offer recovery. The `call_ready` above asks the
+    // caller to (re)send its offer via `call_peer_ready`. If BOTH the caller's
+    // original offer AND that re-offer fail to land (caller was cross-instance /
+    // briefly offline, or both signals were dropped), no offer ever arrives, no
+    // PC is built, and this screen would hang on "Connecting…" forever. Arm a
+    // short grace timer: if `pcRef.current` is still null after ~4s, request a
+    // FRESH offer via `call_reconnect` (the server relays it to the caller, who
+    // re-offers — see their `call_reconnect` handler). The timer is cleared the
+    // instant a PC is created (createPC) so it only fires on the stuck path.
+    if (acceptReofferTimeoutRef.current) {
+      clearTimeout(acceptReofferTimeoutRef.current);
+    }
+    acceptReofferTimeoutRef.current = setTimeout(() => {
+      acceptReofferTimeoutRef.current = null;
+      // A PC already exists → the offer arrived and negotiation is underway;
+      // the per-PC 30s connect timeout owns the deadline from here.
+      if (pcRef.current) return;
+      const callId = callIdRef.current;
+      if (!callId || !Number.isFinite(conversationId)) return;
+      void socket.sendWithBackoff(
+        "call_reconnect",
+        { callId, conversationId },
+        {
+          timeoutMs: 4000,
+          maxAttempts: 5,
+          initialBackoffMs: 120,
+          maxBackoffMs: 800,
+          ensureConnected: true,
+        },
+      );
+    }, 4000);
   }, [conversationId, endAndLeave, getMedia]);
 
   const rejectIncoming = useCallback(async () => {
@@ -2522,6 +2973,7 @@ export default function CallScreen() {
     if (target) {
       socket.send("call_signal", {
         conversationId,
+        callId: callIdRef.current,
         targetUserId: target,
         signal: { type: "audio-state", muted: next },
       });
@@ -2543,6 +2995,7 @@ export default function CallScreen() {
     if (target) {
       socket.send("call_signal", {
         conversationId,
+        callId: callIdRef.current,
         targetUserId: target,
         signal: { type: "video-state", videoOff: next },
       });
@@ -2588,11 +3041,13 @@ export default function CallScreen() {
     if (target) {
       socket.send("call_signal", {
         conversationId,
+        callId: callIdRef.current,
         targetUserId: target,
         signal: { type: "audio-state", muted: next ? true : muted },
       });
       socket.send("call_signal", {
         conversationId,
+        callId: callIdRef.current,
         targetUserId: target,
         signal: { type: "video-state", videoOff: next ? true : videoOff },
       });

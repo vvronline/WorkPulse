@@ -145,6 +145,7 @@ describe("call signaling races", () => {
         });
 
         expect(wsSend).toHaveBeenCalledWith("call_signal", {
+            callId: 1,
             conversationId: 55,
             targetUserId: 9,
             signal: { type: "answer", sdp: "answer-sdp" },

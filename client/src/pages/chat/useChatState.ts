@@ -453,6 +453,7 @@ export default function useChatState() {
                 case "call_ended":
                 case "call_signal":
                 case "call_reconnect":
+                case "call_peer_ready":
                 case "call_reaction": {
                     handleCallWsEvent(msg.type, d);
                     break;

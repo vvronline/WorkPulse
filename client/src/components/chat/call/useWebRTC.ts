@@ -15,6 +15,56 @@ const FALLBACK_ICE_SERVERS: RTCIceServer[] = [
     { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
 ];
 
+// P1.8 — Deterministic ICE-config gating. A config has "real" (provisioned)
+// TURN only when the server returned managed credentials (Cloudflare Calls /
+// self-hosted coturn / a static 3rd-party provider) rather than the public
+// Open Relay fallback or STUN-only. The server's `mode` is authoritative
+// (cloudflare-calls | coturn-rest | static = real; public-fallback | stun-only
+// = fallback). When `mode` is absent (older server) we sniff the URLs for a
+// non-openrelay turn:/turns: entry. The FIRST offer/answer must never be
+// negotiated against the public-only fallback: on a network that requires a
+// relay this makes the first call hang ("Connecting…") even though a retry
+// works once the real creds are cached — the classic "fresh load: first call
+// doesn't connect" bug.
+// P1.9 — Gate the public Open Relay TURN fallback. The server's /ice-config
+// returns `allowPublicFallback`; when it is FALSE the client must NOT relay
+// through the public openrelay.metered.ca service (a deployment that disabled
+// DISABLE_PUBLIC_TURN must not be silently bypassed by the client's hard-coded
+// FALLBACK_ICE_SERVERS). STUN is ALWAYS allowed; only public TURN URLs are
+// stripped. Returns the servers unchanged when public fallback is allowed.
+function applyPublicTurnPolicy(servers: RTCIceServer[], allowPublic: boolean): RTCIceServer[] {
+    if (allowPublic) return servers;
+    const out: RTCIceServer[] = [];
+    for (const s of servers || []) {
+        const urls = Array.isArray(s?.urls) ? s.urls : [s?.urls];
+        const kept = urls.filter(
+            (u) => typeof u === "string" && !u.toLowerCase().includes("openrelay.metered.ca"),
+        );
+        if (kept.length === 0) continue; // entry was entirely public TURN — drop it
+        out.push({ ...s, urls: kept.length === 1 ? kept[0] : kept });
+    }
+    return out;
+}
+
+const REAL_TURN_MODES = new Set(["cloudflare-calls", "coturn-rest", "static"]);
+function hasRealTurn(cfg: { mode?: string; iceServers?: RTCIceServer[] } | null | undefined): boolean {
+    if (!cfg) return false;
+    if (cfg.mode && REAL_TURN_MODES.has(cfg.mode)) return true;
+    const servers = cfg.iceServers || [];
+    for (const s of servers) {
+        const urls = Array.isArray(s?.urls) ? s.urls : [s?.urls];
+        for (const u of urls) {
+            if (typeof u !== "string") continue;
+            const lower = u.toLowerCase();
+            if ((lower.startsWith("turn:") || lower.startsWith("turns:")) &&
+                !lower.includes("openrelay.metered.ca")) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 /**
  * Progressively-relaxed audio/video constraints. Each step is attempted in
  * order until getUserMedia succeeds. This is essential on mobile networks /
@@ -60,10 +110,19 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     const {
         callId, conversationId, isIncoming, callerId, acceptedBy,
         accepted, onSignal, onEndExternal, localStream, isReconnect, reconnectTo,
-        preAccepted
+        preAccepted, peerReadyNonce
     } = callState;
 
     const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    // P0.6 — keep the latest callId in a ref so the long-lived RTCPeerConnection
+    // event handlers (created via useCallback that does NOT depend on callId)
+    // always include the CURRENT callId in their `call_signal` payloads. The
+    // server needs callId to buffer offer/ICE for a not-yet-subscribed callee
+    // (push / cold-start / lock-screen answer). For an OUTGOING call the id is
+    // only known after `call_started`, so a plain closure would capture the
+    // initial `undefined`.
+    const callIdRef = useRef(callId);
+    callIdRef.current = callId;
     const [remoteVideoOff, setRemoteVideoOff] = useState(false);
     const [remoteHasVideo, setRemoteHasVideo] = useState(false);
     const [remoteMuted, setRemoteMuted] = useState(false);
@@ -95,6 +154,13 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     const handleEndRef = useRef<(() => void) | null>(null);
     const iceRestartAttemptedRef = useRef(false);
     const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // P1.10 — Black-video watchdog. A few seconds after `connected`, if a video
+    // call still has no live remote video track, ask the peer to re-announce
+    // their `video-state` once (recovers a dropped/late original video-state so
+    // we stop painting a black tile with no avatar). Armed in
+    // onconnectionstatechange, cleared on teardown; gated to once per call.
+    const remoteVideoWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const videoStateRequestedRef = useRef(false);
     const pendingIceCandidatesRef = useRef<any[]>([]);
     const iceServersRef = useRef<RTCIceServer[]>(FALLBACK_ICE_SERVERS);
     const iceExpiresAtRef = useRef(0);
@@ -110,6 +176,23 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     const makingOfferRef = useRef(false);
     const networkOnlineRef = useRef(navigator.onLine);
     const initialIceConfigLoadedRef = useRef(false);
+    // P1.8 — whether the CURRENTLY-loaded ICE config carries real, provisioned
+    // TURN (Cloudflare/coturn/static) rather than the public Open Relay / STUN
+    // fallback. Drives the deterministic gate in waitForIceConfig so the FIRST
+    // negotiation never proceeds against the public-only fallback when real TURN
+    // is still in flight.
+    const iceHasRealTurnRef = useRef(false);
+    // P1.9 — whether the server permits the public Open Relay TURN fallback for
+    // this client. Defaults to true (backwards-compat for older servers that
+    // don't send `allowPublicFallback`). When false, the public
+    // openrelay.metered.ca TURN entries are stripped from the ICE list we hand
+    // to RTCPeerConnection (STUN is always kept).
+    const iceAllowPublicRef = useRef(true);
+    // P1.8 — set once the very first offer/answer for this call has begun. After
+    // that we no longer block on real-TURN arrival (a later ICE-restart /
+    // renegotiation must proceed promptly with whatever creds we have); only the
+    // FIRST connection is gated on genuine TURN.
+    const firstNegotiationStartedRef = useRef(false);
     const deferredOfferRef = useRef<any>(null);
     const preWarmStreamRef = useRef<any>(null);
     const preWarmAbortRef = useRef(false);
@@ -124,7 +207,14 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 iceServersRef.current = data.iceServers;
                 iceExpiresAtRef.current = data.expiresAt || 0;
                 initialIceConfigLoadedRef.current = true;
-                console.log("[call-webrtc] ICE config refreshed (mode:", data.mode || "unknown", ", expiresAt:", data.expiresAt || "never", ")");
+                // P1.9 — honour the server's public-TURN policy. Absent on older
+                // servers → treated as allowed for backwards-compat.
+                iceAllowPublicRef.current = data.allowPublicFallback !== false;
+                // P1.8 — record whether this config carries real, provisioned TURN
+                // so the first-negotiation gate can fast-exit / decide to keep
+                // waiting for genuine creds.
+                iceHasRealTurnRef.current = hasRealTurn(data);
+                console.log("[call-webrtc] ICE config refreshed (mode:", data.mode || "unknown", ", expiresAt:", data.expiresAt || "never", ", realTurn:", iceHasRealTurnRef.current, ")");
             }
         } catch (err: any) {
             console.warn("[call-webrtc] ICE config fetch failed, using fallback:", err?.message || err);
@@ -132,15 +222,53 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     }, []);
 
     const waitForIceConfig = useCallback(async (timeoutMs = 2000) => {
-        if (initialIceConfigLoadedRef.current) return;
+        // P1.8 — DETERMINISTIC ICE-CONFIG GATING. Two distinct waits:
+        //   1. Wait for ANY config to load (the live fetch finished).
+        //   2. On the FIRST negotiation, ADDITIONALLY wait (bounded) for REAL,
+        //      provisioned TURN to arrive — never negotiate the first
+        //      offer/answer against the public Open Relay / STUN-only fallback.
+        //      On a network that requires a relay, doing so makes the first call
+        //      hang ("Connecting…") even though a retry works once the real
+        //      creds are cached (the classic "fresh load: first call doesn't
+        //      connect" bug). A later ICE-restart / renegotiation must proceed
+        //      promptly, so only the FIRST connection is gated on genuine TURN.
         const start = Date.now();
-        while (!initialIceConfigLoadedRef.current && (Date.now() - start) < timeoutMs) {
-            await new Promise(r => setTimeout(r, 100));
-        }
+
+        // Stage 1 — ensure SOME config is loaded.
         if (!initialIceConfigLoadedRef.current) {
-            console.warn("[call-webrtc] ICE config not loaded after", timeoutMs, "ms — proceeding with fallback");
+            while (!initialIceConfigLoadedRef.current && (Date.now() - start) < timeoutMs) {
+                await new Promise(r => setTimeout(r, 100));
+            }
+            if (!initialIceConfigLoadedRef.current) {
+                console.warn("[call-webrtc] ICE config not loaded after", timeoutMs, "ms — proceeding with fallback");
+            }
         }
-    }, []);
+
+        // Stage 2 — FIRST-negotiation real-TURN gate. Only blocks the very first
+        // offer/answer of this call, and only when we don't already have
+        // provisioned TURN. If real TURN never shows up within the deadline we
+        // proceed with what we have (the recovery ladder / relay-only rebuild
+        // still applies) rather than hanging forever. We actively re-fetch once
+        // since the initial config may have resolved to the public fallback
+        // before the managed creds were ready.
+        if (!firstNegotiationStartedRef.current && !iceHasRealTurnRef.current) {
+            const REAL_TURN_DEADLINE_MS = Math.max(timeoutMs, 6000);
+            let refetched = false;
+            while (!iceHasRealTurnRef.current && (Date.now() - start) < REAL_TURN_DEADLINE_MS) {
+                if (!refetched) {
+                    refetched = true;
+                    // Best-effort: ask the server again in case the first config
+                    // landed before managed TURN creds were provisioned.
+                    void refreshIceConfig();
+                }
+                await new Promise(r => setTimeout(r, 150));
+            }
+            if (!iceHasRealTurnRef.current) {
+                console.warn("[call-webrtc] real TURN not available before first negotiation — proceeding with fallback ICE");
+            }
+        }
+        firstNegotiationStartedRef.current = true;
+    }, [refreshIceConfig]);
 
     useEffect(() => {
         refreshIceConfig();
@@ -223,6 +351,8 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         pendingIceCandidatesRef.current = [];
         if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
         if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
+        // P1.10 — stop the black-video watchdog so it can't fire post-teardown.
+        if (remoteVideoWatchdogRef.current) { clearTimeout(remoteVideoWatchdogRef.current); remoteVideoWatchdogRef.current = null; }
         bitrateRampTimersRef.current.forEach(t => clearTimeout(t));
         bitrateRampTimersRef.current = [];
         iceRestartAttemptedRef.current = false;
@@ -381,7 +511,9 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         // RTCPeerConnection to ignore host candidates and use TURN exclusively. This
         // is the lifeline for restrictive corporate networks that block UDP/STUN.
         const pcConfig: RTCConfiguration = {
-            iceServers: iceServersRef.current,
+            // P1.9 — strip the public Open Relay TURN entries when the server
+            // forbids the public fallback (DISABLE_PUBLIC_TURN=true). STUN kept.
+            iceServers: applyPublicTurnPolicy(iceServersRef.current, iceAllowPublicRef.current),
             iceCandidatePoolSize: 10,
             // bundlePolicy=max-bundle reduces port usage — better with corporate firewalls
             bundlePolicy: "max-bundle",
@@ -429,7 +561,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
                 wsSend("call_signal", {
-                    conversationId, targetUserId,
+                    callId: callIdRef.current, conversationId, targetUserId,
                     signal: { type: "offer", sdp: offer.sdp }
                 });
             } catch (err) {
@@ -513,8 +645,16 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
             if (e.candidate) {
                 const c = e.candidate;
                 console.log("[call-webrtc] local ICE candidate →", c.type || "?", c.protocol || "?", c.address || c.candidate?.split(" ")[4] || "?");
+                // P0.7 — Reliable local-ICE transport. `wsSend` (useWebSocket
+                // sendMessage) is NOT a bare fire-and-forget: when the socket is
+                // momentarily not OPEN (foreground reconnect / brief network
+                // blip) it QUEUES the frame (capped, drop-oldest) and
+                // flushQueue() re-sends every queued frame IN ORDER on the next
+                // onopen. So an ICE candidate emitted during a transient WS
+                // outage is not lost — it is delivered the instant the socket
+                // recovers. callId is included (P0.6) for server-side buffering.
                 wsSend("call_signal", {
-                    conversationId, targetUserId,
+                    callId: callIdRef.current, conversationId, targetUserId,
                     signal: { type: "ice-candidate", candidate: c.toJSON() }
                 });
             }
@@ -552,7 +692,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                             pc.createOffer({ iceRestart: true })
                                 .then(o => pc.setLocalDescription(o))
                                 .then(() => wsSend("call_signal", {
-                                    conversationId, targetUserId,
+                                    callId: callIdRef.current, conversationId, targetUserId,
                                     signal: { type: "offer", sdp: pc.localDescription!.sdp }
                                 }))
                                 .catch(err => console.warn("[call-webrtc] ICE restart failed:", err));
@@ -577,6 +717,36 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 applyBitrateRampUp(pc);
                 forceKeyframe(pc);
                 iceRestartAttemptedRef.current = false;
+                // P1.10 — Black-video watchdog. If a video call still has no live
+                // remote video track a few seconds after connect, the peer's
+                // original `video-state` (and any track-unmute) may have been
+                // dropped, leaving us painting a black tile. Ask the peer to
+                // re-announce their camera state ONCE; their inbound
+                // `request-video-state` handler replies with the ground truth.
+                if (callType === "video" && !videoStateRequestedRef.current) {
+                    if (remoteVideoWatchdogRef.current) clearTimeout(remoteVideoWatchdogRef.current);
+                    remoteVideoWatchdogRef.current = setTimeout(() => {
+                        remoteVideoWatchdogRef.current = null;
+                        if (pcRef.current !== pc) return;
+                        if (videoStateRequestedRef.current) return;
+                        const remote = remoteStreamRef.current;
+                        const liveRemoteVideo =
+                            !!remote &&
+                            remote.getVideoTracks().some(t => t.readyState !== "ended");
+                        if (liveRemoteVideo) return;
+                        videoStateRequestedRef.current = true;
+                        const tgt = isIncoming ? callerId : (acceptedBy || reconnectTo);
+                        if (!tgt) return;
+                        try {
+                            wsSend("call_signal", {
+                                callId: callIdRef.current, conversationId, targetUserId: tgt,
+                                signal: { type: "request-video-state" }
+                            });
+                        } catch (err: any) {
+                            console.warn("[call-webrtc] request-video-state failed:", err?.message || err);
+                        }
+                    }, 3000);
+                }
             } else if (pc.connectionState === "disconnected") {
                 // Grace period: temporary network hiccup — wait 5s before ending
                 if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
@@ -592,7 +762,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                         return pc.setLocalDescription(offer);
                     }).then(() => {
                         wsSend("call_signal", {
-                            conversationId, targetUserId,
+                            callId: callIdRef.current, conversationId, targetUserId,
                             signal: { type: "offer", sdp: pc.localDescription!.sdp }
                         });
                     }).catch(() => {
@@ -611,7 +781,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                         const newPc = createPeerConnection(localStreamRef.current, targetUserId, true);
                         newPc.createOffer().then(o => newPc.setLocalDescription(o)).then(() => {
                             wsSend("call_signal", {
-                                conversationId, targetUserId,
+                                callId: callIdRef.current, conversationId, targetUserId,
                                 signal: { type: "offer", sdp: newPc.localDescription!.sdp }
                             });
                         }).catch(err => {
@@ -667,7 +837,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 await pcRef.current.setLocalDescription(answer);
                 console.log("[call-webrtc] sending answer to:", fromUserId);
                 wsSend("call_signal", {
-                    conversationId, targetUserId: fromUserId,
+                    callId: callIdRef.current, conversationId, targetUserId: fromUserId,
                     signal: { type: "answer", sdp: answer.sdp }
                 });
                 await flushPendingIceCandidates();
@@ -759,6 +929,29 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                         } catch { /* ignore */ }
                     }
                 }
+            } else if (signal.type === "request-video-state") {
+                // P1.10 — Black-video hardening. The peer's watchdog fired: a few
+                // seconds after `connected` it still had no live remote video, so
+                // it asked us to re-announce our camera state. Reply with the
+                // ground truth derived from our LIVE local video track (a live,
+                // enabled, non-ended track) rather than a possibly-stale state, so
+                // a dropped/late original `video-state` self-heals on the peer.
+                const tgt = fromUserId ?? (isIncoming ? callerId : (acceptedBy || reconnectTo));
+                if (tgt) {
+                    const localStr = localStreamRef.current;
+                    const liveLocalVideo =
+                        callType === "video" &&
+                        !!localStr &&
+                        localStr.getVideoTracks().some(t => t.readyState !== "ended" && t.enabled);
+                    try {
+                        wsSend("call_signal", {
+                            callId: callIdRef.current, conversationId, targetUserId: tgt,
+                            signal: { type: "video-state", videoOff: !liveLocalVideo }
+                        });
+                    } catch (err: any) {
+                        console.warn("[call-webrtc] reply request-video-state failed:", err?.message || err);
+                    }
+                }
             } else if (signal.type === "audio-state") {
                 setRemoteMuted(!!signal.muted);
             } else if (signal.type === "screen-share-state") {
@@ -776,7 +969,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         } catch (err) {
             console.error("[call-webrtc] Signal handling error:", err);
         }
-    }, [conversationId, wsSend, flushPendingIceCandidates, addIceCandidateSafe, callType]);
+    }, [conversationId, wsSend, flushPendingIceCandidates, addIceCandidateSafe, callType, isIncoming, callerId, acceptedBy, reconnectTo]);
 
     const handleSignal = useCallback((signal: any, fromUserId: any) => {
         // Detect a "fresh session" offer that requires us to tear down our
@@ -867,6 +1060,14 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         }
         if (!stream) { handleEnd(); return; }
 
+        // P0.6 — now that our media is ready, tell the server we're ready so the
+        // caller (re)offers immediately. This is the web parity of the mobile
+        // `acceptIncoming()` `call_ready` emit and is idempotent via Perfect
+        // Negotiation. It rescues the push / cold-start / lock-screen-answer
+        // path where the caller's original offer was dropped because we hadn't
+        // subscribed yet.
+        wsSend("call_ready", { callId: callIdRef.current, conversationId });
+
         await waitForIceConfig(2000);
         createPeerConnection(stream, callerId, false);
         flushPendingSignals();
@@ -880,6 +1081,54 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
             handleAccept();
         }
     }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+
+    // ─── P0.6: callee subscribes to the per-call signal buffer ───
+    // Web parity of the mobile P0.4 `call_subscribe` emit. Once we (the callee)
+    // know the callId, tell the server so it can (a) replay any buffered
+    // offer/early-ICE the caller sent before we were connected and (b) emit
+    // `call_peer_ready` to the caller so they (re)offer. Guarded so we only
+    // send once per call. Reconnect callees benefit too.
+    const subscribedRef = useRef(false);
+    useEffect(() => {
+        if (!isIncoming && !isReconnect) return;
+        if (subscribedRef.current) return;
+        const cid = callIdRef.current;
+        if (!cid) return;
+        subscribedRef.current = true;
+        try {
+            wsSend("call_subscribe", { callId: cid, conversationId });
+        } catch (err: any) {
+            console.warn("[call-webrtc] call_subscribe failed:", err?.message || err);
+        }
+    }, [callId, isIncoming, isReconnect, conversationId, wsSend]);
+
+    // ─── P0.6: caller re-offers on `call_peer_ready` ───
+    // Web parity of the mobile P0.4 inbound `call_peer_ready` handler. The
+    // server fires `call_peer_ready` (surfaced here via a bumped
+    // `peerReadyNonce` on callState) to tell the OTHER party to (re)send their
+    // offer once the callee has subscribed/become ready. Only the CALLER acts,
+    // and only when it has a live PC whose localDescription is an offer. Sending
+    // the same offer again is idempotent via Perfect Negotiation.
+    const peerReadyHandledRef = useRef(0);
+    useEffect(() => {
+        const nonce = Number(peerReadyNonce) || 0;
+        if (!nonce || nonce === peerReadyHandledRef.current) return;
+        peerReadyHandledRef.current = nonce;
+        if (isIncoming) return; // only the caller re-offers
+        const pc = pcRef.current;
+        if (!pc || !pc.localDescription || pc.localDescription.type !== "offer") return;
+        const target = acceptedBy || reconnectTo;
+        if (!target) return;
+        console.log("[call-webrtc] call_peer_ready → re-sending offer to:", target);
+        try {
+            wsSend("call_signal", {
+                callId: callIdRef.current, conversationId, targetUserId: target,
+                signal: { type: "offer", sdp: pc.localDescription.sdp }
+            });
+        } catch (err: any) {
+            console.warn("[call-webrtc] call_peer_ready re-offer failed:", err?.message || err);
+        }
+    }, [peerReadyNonce, isIncoming, acceptedBy, reconnectTo, conversationId, wsSend]);
 
     // ─── Pre-warm media during incoming ringing ───
     useEffect(() => {
@@ -952,7 +1201,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                     await pc.setLocalDescription(offer);
                     console.log("[call-webrtc] deferred offer sent to:", targetUserId);
                     wsSend("call_signal", {
-                        conversationId, targetUserId,
+                        callId: callIdRef.current, conversationId, targetUserId,
                         signal: { type: "offer", sdp: offer.sdp }
                     });
                 })();
@@ -982,7 +1231,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
             wsSend("call_signal", {
-                conversationId, targetUserId,
+                callId: callIdRef.current, conversationId, targetUserId,
                 signal: { type: "offer", sdp: offer.sdp }
             });
         })().catch(console.error);
@@ -1008,7 +1257,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 await pc.setLocalDescription(offer);
                 console.log("[call-webrtc] sending offer to:", acceptedBy);
                 wsSend("call_signal", {
-                    conversationId, targetUserId: acceptedBy,
+                    callId: callIdRef.current, conversationId, targetUserId: acceptedBy,
                     signal: { type: "offer", sdp: offer.sdp }
                 });
             })();
@@ -1038,7 +1287,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                     const target = isIncoming ? callerId : (acceptedBy || reconnectTo);
                     if (!target) return;
                     wsSend("call_signal", {
-                        conversationId, targetUserId: target,
+                        callId: callIdRef.current, conversationId, targetUserId: target,
                         signal: { type: "offer", sdp: pc.localDescription!.sdp }
                     });
                 })
@@ -1096,7 +1345,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         if (!target) return;
         try {
             wsSend("call_signal", {
-                conversationId, targetUserId: target,
+                callId: callIdRef.current, conversationId, targetUserId: target,
                 signal: { type: "video-state", videoOff: !!isVideoOff }
             });
         } catch (err: any) {
@@ -1109,7 +1358,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         if (!target) return;
         try {
             wsSend("call_signal", {
-                conversationId, targetUserId: target,
+                callId: callIdRef.current, conversationId, targetUserId: target,
                 signal: { type: "audio-state", muted: !!isMuted }
             });
         } catch (err: any) {
@@ -1122,7 +1371,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         if (!target) return;
         try {
             wsSend("call_signal", {
-                conversationId, targetUserId: target,
+                callId: callIdRef.current, conversationId, targetUserId: target,
                 signal: { type: "screen-share-state", sharing: !!isSharing }
             });
         } catch (err: any) {
@@ -1141,7 +1390,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         if (!target) return;
         try {
             wsSend("call_signal", {
-                conversationId, targetUserId: target,
+                callId: callIdRef.current, conversationId, targetUserId: target,
                 signal: { type: "quality-state", quality }
             });
         } catch (err: any) {

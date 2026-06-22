@@ -249,7 +249,66 @@ class PushNotificationService {
             "Dispatching call notification push",
         );
 
-        return this.sendToDevices(query, tokens, payload, `call-${callData.callId}`);
+        // P2.12 — Push send verification + WS fallback.
+        // The WS `call_incoming` event (emitted by the call_initiate handler in
+        // server/utils/ws.ts BEFORE this push is dispatched) is the GUARANTEED
+        // fallback for any callee device that already has a live socket. This
+        // push only matters for backgrounded/locked/killed devices that the WS
+        // event can't wake. So when EVERY token fails (succeeded === 0 despite
+        // having tokens), it means the only delivery path for an
+        // offline/backgrounded device just failed — we log a STRUCTURED error
+        // (so it's alertable) and attempt ONE retry before giving up. A live
+        // device will still ring via the WS event regardless of this outcome.
+        let result = await this.sendToDevices(query, tokens, payload, `call-${callData.callId}`);
+
+        if (result.succeeded === 0) {
+            logger.error(
+                {
+                    event: "push_call_all_failed",
+                    notificationType: "call",
+                    tenantId,
+                    userId,
+                    callId: callData.callId,
+                    conversationId: callData.conversationId,
+                    dedupeKey: payload.data.dedupeKey,
+                    tokenCount: tokens.length,
+                    failed: result.failed,
+                    note: "WS call_incoming remains the alive-device fallback; retrying push once",
+                },
+                "Call push notification failed for ALL device tokens — retrying once",
+            );
+
+            // Optional single retry. Re-fetch tokens in case invalid ones were
+            // purged by the failed attempt; if none remain there is nothing to
+            // retry (the WS event still covers any live device).
+            const retryTokens = await this.getDeviceTokens(query, userId, tenantId);
+            if (retryTokens.length > 0) {
+                const retryResult = await this.sendToDevices(query, retryTokens, payload, `call-${callData.callId}-retry`);
+                result = {
+                    succeeded: retryResult.succeeded,
+                    failed: retryResult.failed,
+                };
+                if (retryResult.succeeded === 0) {
+                    logger.error(
+                        {
+                            event: "push_call_retry_failed",
+                            notificationType: "call",
+                            tenantId,
+                            userId,
+                            callId: callData.callId,
+                            conversationId: callData.conversationId,
+                            dedupeKey: payload.data.dedupeKey,
+                            tokenCount: retryTokens.length,
+                            failed: retryResult.failed,
+                            note: "WS call_incoming remains the alive-device fallback",
+                        },
+                        "Call push notification retry also failed for ALL device tokens",
+                    );
+                }
+            }
+        }
+
+        return result;
     }
 
     /**

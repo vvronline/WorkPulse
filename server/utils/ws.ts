@@ -167,6 +167,125 @@ async function isMeetingMember(db: DbLike, meetingId: number, userId: number): P
     );
 }
 
+// ── Per-call WebRTC signal buffer (Signal-Android reliable-delivery parity) ──
+// ROOT-CAUSE FIX for "answered but never connects / black screen / can't connect
+// from push": `call_signal` was a pure fire-and-forget relay (deliverLocal only
+// writes to OPEN sockets and drops the frame otherwise). When the callee answers
+// from a push / lock-screen / cold start, the caller emits its OFFER the instant
+// `call_accepted` arrives — but the callee's call screen needs 1–5s to mount,
+// acquire media and subscribe to `call_signal`. The offer (and early ICE) landed
+// before the callee was listening and was SILENTLY DROPPED, so the callee never
+// answered and the call hung forever.
+//
+// We now BUFFER the latest offer + any ICE candidates destined for a user who
+// has no open socket (or hasn't signalled readiness yet), keyed per call, and
+// REPLAY them the moment that user subscribes (`call_subscribe`), accepts
+// (`call_accept`), or signals `call_ready`. This is the direct analogue of
+// Signal's reliable signaling delivery. Buffers auto-expire and are cleared on
+// any terminal call transition.
+interface BufferedCallSignals {
+    // Latest offer destined for each target user (keyed by targetUserId). A
+    // newer offer (e.g. ICE-restart / relay rebuild) supersedes the previous one.
+    offerByUser: Map<number, { fromUserId: number; signal: any }>;
+    // Ordered ICE candidates destined for each target user, awaiting their
+    // remote description / subscription.
+    iceByUser: Map<number, Array<{ fromUserId: number; signal: any }>>;
+    expiresAt: number;
+}
+
+const CALL_SIGNAL_BUFFER_TTL_MS = 60_000;
+const CALL_SIGNAL_BUFFER_MAX_CALLS = 2000;
+const CALL_SIGNAL_BUFFER_MAX_ICE_PER_USER = 80;
+const _callSignalBuffers = new Map<number, BufferedCallSignals>();
+
+function _pruneCallSignalBuffers(now: number): void {
+    for (const [callId, buf] of _callSignalBuffers) {
+        if (buf.expiresAt <= now) _callSignalBuffers.delete(callId);
+    }
+    // Hard cap: drop the oldest entry if we somehow exceed the ceiling.
+    if (_callSignalBuffers.size > CALL_SIGNAL_BUFFER_MAX_CALLS) {
+        const oldest = _callSignalBuffers.keys().next().value;
+        if (oldest !== undefined) _callSignalBuffers.delete(oldest);
+    }
+}
+
+function _getOrCreateCallBuffer(callId: number): BufferedCallSignals {
+    const now = Date.now();
+    let buf = _callSignalBuffers.get(callId);
+    if (!buf || buf.expiresAt <= now) {
+        buf = { offerByUser: new Map(), iceByUser: new Map(), expiresAt: now + CALL_SIGNAL_BUFFER_TTL_MS };
+        _callSignalBuffers.set(callId, buf);
+        _pruneCallSignalBuffers(now);
+    } else {
+        buf.expiresAt = now + CALL_SIGNAL_BUFFER_TTL_MS;
+    }
+    return buf;
+}
+
+/** Buffer an offer/ice signal destined for a target user with no live socket. */
+function bufferCallSignal(callId: number, fromUserId: number, targetUserId: number, signal: any): void {
+    if (!callId || !targetUserId || !signal) return;
+    if (signal.type !== "offer" && signal.type !== "ice-candidate") return;
+    const buf = _getOrCreateCallBuffer(callId);
+    if (signal.type === "offer") {
+        // Keep only the LATEST offer — a newer one (ICE-restart / relay rebuild)
+        // makes the previous one obsolete.
+        buf.offerByUser.set(targetUserId, { fromUserId, signal });
+        // An offer marks a fresh negotiation: drop stale ICE buffered against the
+        // PREVIOUS offer so we never replay candidates from a dead transport.
+        buf.iceByUser.delete(targetUserId);
+    } else {
+        let list = buf.iceByUser.get(targetUserId);
+        if (!list) {
+            list = [];
+            buf.iceByUser.set(targetUserId, list);
+        }
+        list.push({ fromUserId, signal });
+        if (list.length > CALL_SIGNAL_BUFFER_MAX_ICE_PER_USER) list.shift();
+    }
+}
+
+/**
+ * Replay any buffered offer + ICE candidates for a target user (called when they
+ * subscribe / accept / signal ready). Delivers the offer FIRST, then the ICE
+ * candidates in arrival order, via the supplied deliver() callback. Consumed
+ * entries are removed so a later replay doesn't double-deliver.
+ */
+function replayCallSignals(
+    callId: number,
+    targetUserId: number,
+    deliver: (fromUserId: number, signal: any) => void,
+): void {
+    const buf = _callSignalBuffers.get(callId);
+    if (!buf) return;
+    const offer = buf.offerByUser.get(targetUserId);
+    if (offer) {
+        deliver(offer.fromUserId, offer.signal);
+        buf.offerByUser.delete(targetUserId);
+    }
+    const ice = buf.iceByUser.get(targetUserId);
+    if (ice && ice.length) {
+        for (const c of ice) deliver(c.fromUserId, c.signal);
+        buf.iceByUser.delete(targetUserId);
+    }
+}
+
+/** Clear the entire signal buffer for a call (terminal transition). */
+function clearCallBuffer(callId: number): void {
+    if (!callId) return;
+    _callSignalBuffers.delete(callId);
+}
+
+/** True if the user has at least one OPEN (readyState===1) local socket. */
+function hasOpenSocket(tenantId: number | null | undefined, userId: number): boolean {
+    const set = clients.get(clientKey(tenantId, userId));
+    if (!set) return false;
+    for (const ws of set) {
+        if (ws.readyState === 1) return true;
+    }
+    return false;
+}
+
 function setupWebSocket(server: HTTPServer): any {
     const wss = new WebSocketServer({
         server,
@@ -1026,6 +1145,16 @@ async function handleChatMessage(db: DbLike, senderId: number, tenantId: number 
                     ).catch((err: any) => logger.warn({ err: err.message, callId }, "setSessionActivity(in_call) failed"));
                     ws._callActivityRefId = callId;
                 }
+
+                // P0 — Reliable delivery: replay any OFFER/ICE the caller sent
+                // BEFORE this callee's socket/screen was ready (buffered in
+                // call_signal). This is the key fix for "answered from push but
+                // never connects": the caller fired its offer the instant it saw
+                // call_accepted, but the callee was still mounting; the buffered
+                // offer is now delivered so negotiation actually starts.
+                replayCallSignals(Number(callId), senderId, (fromUserId, signal) => {
+                    sendToUser(tenantId, senderId, "call_signal", { conversationId, fromUserId, signal });
+                });
             },
         );
 
@@ -1093,6 +1222,8 @@ async function handleChatMessage(db: DbLike, senderId: number, tenantId: number 
                 statusService.clearActivityForRef({ db, tenantId }, "in_call", callLog.id)
                     .catch((err: any) => logger.warn({ err: err.message, callId: callLog.id }, "clearActivityForRef(in_call) on cancel failed"));
                 ws._callActivityRefId = null;
+                // P0 — drop any buffered signals for this now-dead call.
+                clearCallBuffer(callLog.id);
             },
         );
 
@@ -1319,6 +1450,21 @@ async function handleChatMessage(db: DbLike, senderId: number, tenantId: number 
                 for (const p of allParticipants) {
                     if (p.user_id !== senderId) {
                         sendToUser(tenantId, p.user_id, "call_ended", { callId, conversationId, endedBy: senderId, duration });
+
+                        // P2.13 — Decline/end teardown parity. The WS `call_ended`
+                        // above only reaches sessions with a live socket. A
+                        // locked/backgrounded/killed twin (e.g. the call was ended
+                        // while it was still ringing, or a second device never
+                        // joined) keeps its native incoming-call ring / ongoing-call
+                        // notification until this data-only "call handled elsewhere"
+                        // push dismisses it — matching the call_cancel / call_reject
+                        // / stale-sweep teardown paths.
+                        pushNotifications.sendCallCancellation(
+                            db.query as any,
+                            p.user_id,
+                            tenantId,
+                            { callId, conversationId, reason: "ended" },
+                        ).catch((err: any) => logger.warn({ err: err.message, callId, userId: p.user_id }, "Failed to push-cancel participant devices on end"));
                     }
                 }
 
@@ -1327,6 +1473,8 @@ async function handleChatMessage(db: DbLike, senderId: number, tenantId: number 
                 statusService.clearActivityForRef({ db, tenantId }, "in_call", callId)
                     .catch((err: any) => logger.warn({ err: err.message, callId }, "clearActivityForRef(in_call) on end failed"));
                 if (ws._callActivityRefId === callId) ws._callActivityRefId = null;
+                // P0 — drop any buffered signals for this now-ended call.
+                clearCallBuffer(Number(callId));
             },
         );
 
@@ -1336,7 +1484,7 @@ async function handleChatMessage(db: DbLike, senderId: number, tenantId: number 
         if (!conversationId || !targetUserId || !signal) return;
 
         // Validate signal type against whitelist
-        const VALID_SIGNAL_TYPES = ["offer", "answer", "ice-candidate", "video-state", "audio-state", "screen-share-state", "quality-state"];
+        const VALID_SIGNAL_TYPES = ["offer", "answer", "ice-candidate", "video-state", "audio-state", "screen-share-state", "quality-state", "request-video-state"];
         if (!signal.type || !VALID_SIGNAL_TYPES.includes(signal.type)) {
             logger.warn({ senderId, signalType: signal?.type }, "call_signal: rejected unknown signal type");
             return;
@@ -1379,12 +1527,77 @@ async function handleChatMessage(db: DbLike, senderId: number, tenantId: number 
 
         logger.debug({ senderId, targetUserId, conversationId, signalType: signal.type, tenantId }, "call_signal: relaying");
 
+        // RELIABLE DELIVERY (Signal-Android parity): if the target has NO open
+        // socket on this instance, buffer the OFFER / ICE so we can replay it the
+        // moment they subscribe/accept/become ready. This is the core fix for
+        // "answered but never connects / black screen / can't connect from push":
+        // the caller fires its offer the instant `call_accepted` arrives, but the
+        // callee's call screen needs 1–5s to mount + subscribe. Without buffering
+        // that offer (and early ICE) was silently dropped and the call hung.
+        // We STILL relay (sendToUser also publishes cross-instance) so a callee on
+        // another instance / already-subscribed still receives it immediately.
+        const callIdForBuffer = Number(msg.data?.callId) || 0;
+        if (
+            (signal.type === "offer" || signal.type === "ice-candidate") &&
+            !hasOpenSocket(tenantId, targetUserId)
+        ) {
+            if (callIdForBuffer) {
+                bufferCallSignal(callIdForBuffer, senderId, targetUserId, signal);
+                logger.debug({ senderId, targetUserId, conversationId, callId: callIdForBuffer, signalType: signal.type }, "call_signal: buffered for offline target");
+            }
+        }
+
         // Relay the signal to the target user
         sendToUser(tenantId, targetUserId, "call_signal", {
             conversationId,
             fromUserId: senderId,
             signal,
         });
+
+    } else if (msg.type === "call_subscribe") {
+        // P0 — Reliable-delivery handshake. The callee's call screen sends this
+        // the moment it mounts + subscribes to `call_signal`. We (1) replay any
+        // OFFER/ICE that was buffered while they had no socket (single-instance
+        // fast path) and (2) tell the OTHER participant(s) to re-send their offer
+        // (`call_peer_ready`) so a cross-instance / never-buffered caller offer
+        // is (re)delivered. The caller's offer creation is idempotent via Perfect
+        // Negotiation so a duplicate is harmless.
+        const { callId, conversationId } = msg.data || {};
+        if (!callId || !conversationId) return;
+        const isParticipant = await isConversationMember(db, conversationId, senderId);
+        if (!isParticipant) return;
+        // Replay buffered signals to THIS subscriber.
+        replayCallSignals(Number(callId), senderId, (fromUserId, signal) => {
+            sendToUser(tenantId, senderId, "call_signal", { conversationId, fromUserId, signal });
+        });
+        // Ask the other participant(s) to (re)send their offer.
+        const others = (await db.query(
+            "SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2",
+            [conversationId, senderId],
+        )).rows;
+        for (const p of others) {
+            sendToUser(tenantId, p.user_id, "call_peer_ready", { callId, conversationId, userId: senderId });
+        }
+
+    } else if (msg.type === "call_ready") {
+        // P0 — The callee signals its PeerConnection exists and it is ready to
+        // receive an offer. Relay to the other participant(s) so the caller
+        // (re)sends its offer immediately (idempotent via Perfect Negotiation),
+        // and replay any locally-buffered signals to the now-ready user.
+        const { callId, conversationId } = msg.data || {};
+        if (!callId || !conversationId) return;
+        const isParticipant = await isConversationMember(db, conversationId, senderId);
+        if (!isParticipant) return;
+        replayCallSignals(Number(callId), senderId, (fromUserId, signal) => {
+            sendToUser(tenantId, senderId, "call_signal", { conversationId, fromUserId, signal });
+        });
+        const others = (await db.query(
+            "SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2",
+            [conversationId, senderId],
+        )).rows;
+        for (const p of others) {
+            sendToUser(tenantId, p.user_id, "call_peer_ready", { callId, conversationId, userId: senderId });
+        }
 
     } else if (msg.type === "call_reconnect") {
         // User refreshed the page during an active call — notify the other party to re-offer

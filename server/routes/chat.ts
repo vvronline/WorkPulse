@@ -104,8 +104,12 @@ async function getUserOrg(userId: number | undefined, db: DbLike): Promise<numbe
 const { buildIceServers } = require("../utils/coturn");
 router.get("/ice-config", auth, async (req: Request, res: Response) => {
     try {
-        const { iceServers, ttl, mode, expiresAt } = await buildIceServers(req.userId);
-        const payload: Record<string, unknown> = { iceServers, mode };
+        const { iceServers, ttl, mode, expiresAt, allowPublicFallback } = await buildIceServers(req.userId);
+        // P1.9 — surface whether the client may use its hard-coded public Open
+        // Relay TURN fallback. STUN is always allowed; this gates ONLY the
+        // public-TURN relay so a deployment with DISABLE_PUBLIC_TURN=true never
+        // relays through openrelay.metered.ca from the client either.
+        const payload: Record<string, unknown> = { iceServers, mode, allowPublicFallback };
         // expiresAt is set directly by the Cloudflare path (absolute epoch);
         // for everything else we derive it from the relative ttl.
         if (expiresAt) payload.expiresAt = expiresAt;
@@ -1900,6 +1904,19 @@ router.post("/calls/:callId/end", auth, async (req: Request, res: Response) => {
         for (const p of allParticipants) {
             if (p.user_id !== senderId) {
                 sendToUser(tenantId, p.user_id, "call_ended", { callId, conversationId, endedBy: senderId, duration });
+
+                // P2.13 — Decline/end teardown parity. The WS `call_ended` above
+                // only reaches sessions with a live socket; a locked/backgrounded/
+                // killed twin keeps its native incoming-call ring / ongoing-call
+                // notification until this data-only "call handled elsewhere" push
+                // dismisses it. Mirrors the WS call_end handler + reject/cancel
+                // HTTP fallbacks so HTTP-end (WS-down) tears down twins too.
+                try {
+                    const { pushNotifications } = require("../services/pushNotifications");
+                    pushNotifications.sendCallCancellation(
+                        req.db!.query, p.user_id, tenantId, { callId, conversationId, reason: "ended" },
+                    ).catch((err: any) => req.log.warn({ err: err.message, callId, userId: p.user_id }, "Failed to push-cancel participant devices on HTTP end"));
+                } catch { /* push is best-effort */ }
             }
         }
 
