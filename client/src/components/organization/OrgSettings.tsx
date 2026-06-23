@@ -14,6 +14,7 @@ interface OrgData {
     fiscal_year_start: number | string;
     min_hours_present?: number | string | null;
     office_start_time?: string | null;
+    biometric_login_enabled?: boolean;
     [key: string]: unknown;
 }
 
@@ -69,6 +70,10 @@ export default function OrgSettings({ org, onUpdate, userRole }: OrgSettingsProp
         // Regular office start time (HH:MM, 24h). Empty string = no override
         // (manual-entry forms fall back to '09:00').
         office_start_time: org.office_start_time ?? "",
+        // Phase 5: tenant-wide biometric / passkey login switch. Defaults to
+        // enabled (matches the column DEFAULT TRUE) when the field is absent
+        // on a not-yet-migrated org row.
+        biometric_login_enabled: org.biometric_login_enabled !== false,
     });
     const [msg, setMsg] = useAutoDismiss("");
     const canEdit = ["hr_admin", "super_admin", "platform_admin"].includes(userRole ?? "");
@@ -101,7 +106,7 @@ export default function OrgSettings({ org, onUpdate, userRole }: OrgSettingsProp
                     form.min_hours_present === "" ? null : Number(form.min_hours_present),
                 office_start_time: form.office_start_time === "" ? null : form.office_start_time,
             };
-            await updateOrgSettings(payload);
+            await updateOrgSettings({ ...payload, biometric_login_enabled: form.biometric_login_enabled });
             setMsg("Settings saved");
             onUpdate();
         } catch (e: any) {
@@ -252,6 +257,27 @@ export default function OrgSettings({ org, onUpdate, userRole }: OrgSettingsProp
                     Used as the default clock-in time when employees add a manual time entry, and as
                     the reference point for attendance/presence checks (instead of midnight). Leave
                     blank to fall back to 09:00.
+                </small>
+            </div>
+            <div className={sf.formGroup}>
+                <label
+                    style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}
+                >
+                    <input
+                        type="checkbox"
+                        checked={form.biometric_login_enabled}
+                        onChange={(e) =>
+                            setForm({ ...form, biometric_login_enabled: e.target.checked })
+                        }
+                        style={{ margin: 0 }}
+                    />
+                    Allow biometric &amp; passkey sign-in
+                </label>
+                <small style={{ color: "var(--text-muted)", display: "block", marginTop: 4 }}>
+                    Lets members sign in with Face ID, Touch ID, Windows Hello, or a passkey instead
+                    of a password. Turning this off blocks new enrollments <strong>and</strong>{" "}
+                    biometric/passkey logins for everyone in the organisation — password sign-in is
+                    unaffected.
                 </small>
             </div>
             <button type="submit" className={s.btnPrimary}>

@@ -59,6 +59,12 @@ jest.mock("../utils/audit", () => ({
     queryLogs: jest.fn(),
 }));
 
+// Disable rate limiting for this suite. The real authLimiter caps at 15
+// requests per window using a process-wide in-memory store shared across
+// suites in a combined run (causing spurious 429s). A passthrough middleware
+// lets every test hit the route logic we actually want to assert.
+jest.mock("express-rate-limit", () => () => (_req: any, _res: any, next: any) => next());
+
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const request = require("supertest");
@@ -115,6 +121,7 @@ describe("POST /api/auth/biometric/enroll", () => {
     test("mints + persists a device secret and returns it once", async () => {
         mockQuery
             .mockResolvedValueOnce({ rows: [{ token_version: 0 }], rowCount: 1 }) // auth middleware
+            .mockResolvedValueOnce({ rows: [{ enabled: true }], rowCount: 1 }) // isBiometricLoginEnabled
             .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // INSERT device_credentials
         const res = await request(app)
             .post("/api/auth/biometric/enroll")
@@ -128,6 +135,19 @@ describe("POST /api/auth/biometric/enroll", () => {
         expect(res.body.deviceSecret).toHaveLength(64);
         // credentialId carries the tenant prefix ("0." for master context in tests).
         expect(res.body.credentialId).toMatch(/^\d+\./);
+    });
+
+    test("returns 403 when biometric login is disabled for the org", async () => {
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ token_version: 0 }], rowCount: 1 }) // auth middleware
+            .mockResolvedValueOnce({ rows: [{ enabled: false }], rowCount: 1 }); // isBiometricLoginEnabled → off
+        const res = await request(app)
+            .post("/api/auth/biometric/enroll")
+            .set(CSRF)
+            .set("Cookie", authCookie())
+            .send({ platform: "ios", deviceLabel: "iPhone 15" });
+        expect(res.status).toBe(403);
+        expect(res.body.error).toMatch(/disabled/i);
     });
 });
 

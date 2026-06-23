@@ -63,6 +63,16 @@ export const refreshToken = () => API.post("/auth/refresh");
 export const forgotPassword = (data: AnyData) => API.post("/auth/forgot-password", data);
 export const resetPassword = (data: AnyData) => API.post("/auth/reset-password", data);
 
+// Biometric device credentials (mobile/desktop "login with your face").
+// enroll is auth-gated; login is public and exchanges the device secret for a
+// session, identical to a password login.
+export const biometricEnroll = (data: { platform: string; deviceLabel?: string }) =>
+    API.post("/auth/biometric/enroll", data);
+export const biometricLogin = (data: { credentialId: string; deviceSecret: string }) =>
+    API.post("/auth/biometric/login", data);
+export const listBiometricDevices = () => API.get("/auth/biometric");
+export const revokeBiometricDevice = (id: string) => API.delete(`/auth/biometric/${id}`);
+
 // Tracker
 // getStatus is deduplicated: concurrent calls within the same event loop
 // tick share a single HTTP request (e.g. Dashboard + WorkStateContext on mount).

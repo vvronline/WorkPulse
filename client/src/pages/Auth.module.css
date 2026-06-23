@@ -128,6 +128,30 @@
   color: var(--primary-light);
 }
 
+/* ---- "or" divider (passkey login) ---- */
+.auth-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  margin: 1.25rem 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--glass-border);
+}
+
+.auth-divider span {
+  padding: 0 0.75rem;
+}
+
 /* ---- Success Message ---- */
 .success-msg {
   background: color-mix(in srgb, var(--success) 12%, transparent);

@@ -130,6 +130,86 @@ Clear authentication cookies.
 - **Auth**: None
 - **Response**: `200 { message: "Logged out" }`
 
+### Biometric login (mobile / desktop device credentials)
+
+OS-biometric "login with your face / fingerprint". The device authenticator
+unlocks a high-entropy secret; the server stores only its bcrypt hash. See
+`docs/BIOMETRIC_LOGIN.md` for the full design.
+
+#### POST `/api/auth/biometric/enroll`
+Mint + store a device credential for the authenticated user.
+
+- **Auth**: `auth`
+- **Body**: `{ "platform": "ios" | "android" | "desktop" | "web", "deviceLabel"?: "string" }`
+- **Response**: `200 { credentialId: "string", deviceSecret: "string (returned once)" }`
+
+#### POST `/api/auth/biometric/login`
+Exchange a device credential for a session (public; rate-limited).
+
+- **Auth**: None
+- **Body**: `{ "credentialId": "string", "deviceSecret": "string" }`
+- **Response**: `200` Sets JWT cookie, returns the user object
+- **Errors**: `401` invalid biometric credential
+
+#### GET `/api/auth/biometric`
+List the caller's enrolled device credentials.
+
+- **Auth**: `auth`
+- **Response**: `200 { devices: [{ id, device_label, platform, created_at, last_used_at }] }`
+
+#### DELETE `/api/auth/biometric/:id`
+Revoke one of the caller's device credentials.
+
+- **Auth**: `auth`
+- **Response**: `200 { message: "Biometric credential revoked" }`
+- **Errors**: `404` not found / not owned by caller
+
+### WebAuthn / passkeys (web biometric login)
+
+Browser-native passwordless login. The platform authenticator holds the
+private key; the server stores the public key + a signature counter.
+
+#### POST `/api/auth/webauthn/register/options`
+Return a passkey registration challenge for the authenticated user.
+
+- **Auth**: `auth`
+- **Response**: `200 { options, rpID, origin }`
+
+#### POST `/api/auth/webauthn/register/verify`
+Verify the attestation and store the public key.
+
+- **Auth**: `auth`
+- **Body**: `{ "response": PublicKeyCredential, "deviceLabel"?: "string" }`
+- **Response**: `200 { verified: true }`
+- **Errors**: `400` expired session / could not be verified
+
+#### POST `/api/auth/webauthn/login/options`
+Return a passkey authentication challenge (public; usernameless/discoverable).
+
+- **Auth**: None
+- **Response**: `200 { options, flowId }`
+
+#### POST `/api/auth/webauthn/login/verify`
+Verify the assertion and issue a session (public; rate-limited).
+
+- **Auth**: None
+- **Body**: `{ "response": PublicKeyCredential, "flowId": "string" }`
+- **Response**: `200` Sets JWT cookie, returns the user object
+- **Errors**: `400` expired session, `401` invalid passkey / verification failed
+
+#### GET `/api/auth/webauthn`
+List the caller's registered passkeys.
+
+- **Auth**: `auth`
+- **Response**: `200 { passkeys: [{ id, device_label, transports, created_at, last_used_at }] }`
+
+#### DELETE `/api/auth/webauthn/:id`
+Revoke one of the caller's passkeys.
+
+- **Auth**: `auth`
+- **Response**: `200 { message: "Passkey removed" }`
+- **Errors**: `404` not found / not owned by caller
+
 ---
 
 ## 2. Time Tracker

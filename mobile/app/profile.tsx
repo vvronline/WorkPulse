@@ -23,6 +23,7 @@ import {
   Check,
   ChevronDown,
   Clock3,
+  Fingerprint,
   House,
   KeyRound,
   LogOut,
@@ -139,6 +140,8 @@ export default function Profile() {
     refreshUser,
     biometricAvailable,
     biometricEnrolled,
+    biometricLabel,
+    biometricKind,
     enableBiometric,
     disableBiometric,
   } = useAuth();
@@ -209,13 +212,13 @@ export default function Profile() {
     try {
       if (biometricEnrolled) {
         await disableBiometric();
-        alert("Face ID disabled", "You'll sign in with your password next time.");
+        alert(`${biometricLabel} disabled`, "You'll sign in with your password next time.");
       } else {
         await enableBiometric();
-        alert("Face ID enabled", "You can now sign in with your face on this device.");
+        alert(`${biometricLabel} enabled`, `You can now sign in with ${biometricLabel} on this device.`);
       }
     } catch (e: any) {
-      alert("Error", e?.response?.data?.error || "Couldn't update Face ID login.");
+      alert("Error", e?.response?.data?.error || `Couldn't update ${biometricLabel} login.`);
     } finally {
       setBiometricBusy(false);
     }
@@ -437,8 +440,12 @@ export default function Profile() {
           onPress={toggleBiometric}
           disabled={biometricBusy}
         >
-          <ScanFace size={16} color={theme.text} />
-          <Text style={styles.actionText}>Sign in with Face ID</Text>
+          {biometricKind === "fingerprint" ? (
+            <Fingerprint size={16} color={theme.text} />
+          ) : (
+            <ScanFace size={16} color={theme.text} />
+          )}
+          <Text style={styles.actionText}>Sign in with {biometricLabel}</Text>
           {biometricBusy ? (
             <ActivityIndicator size="small" color={theme.primary} />
           ) : (

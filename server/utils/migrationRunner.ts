@@ -1304,6 +1304,56 @@ const MIGRATIONS: Migration[] = [
             await query(`CREATE INDEX IF NOT EXISTS idx_device_credentials_user ON device_credentials(user_id) WHERE revoked_at IS NULL`);
         },
     },
+    {
+        // WebAuthn / passkeys for web biometric login (Phase 3).
+        //
+        // Unlike the mobile/desktop `device_credentials` model (a shared
+        // secret), WebAuthn uses public-key cryptography: the browser's
+        // platform authenticator (Touch ID / Windows Hello / Face ID / a
+        // security key) holds the PRIVATE key and never exports it. We store
+        // only the PUBLIC key + a monotonic signature counter here.
+        //
+        // On login the server issues a random challenge; the authenticator
+        // signs it with the private key (gated by the OS biometric) and we
+        // verify the signature against the stored public key. No password, no
+        // shared secret, no biometric data ever leaves the device.
+        //
+        // credential_id is the base64url WebAuthn credential ID (unique per
+        // passkey). counter guards against cloned-authenticator replay.
+        name: '2026_06_v15_webauthn_credentials',
+        async up(query) {
+            await query(`
+                CREATE TABLE IF NOT EXISTS webauthn_credentials (
+                    id             SERIAL PRIMARY KEY,
+                    user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    credential_id  TEXT NOT NULL UNIQUE,
+                    public_key     TEXT NOT NULL,
+                    counter        BIGINT NOT NULL DEFAULT 0,
+                    transports     TEXT,
+                    device_label   TEXT,
+                    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    last_used_at   TIMESTAMPTZ,
+                    revoked_at     TIMESTAMPTZ
+                )
+            `);
+            await query(`CREATE INDEX IF NOT EXISTS idx_webauthn_credentials_user ON webauthn_credentials(user_id) WHERE revoked_at IS NULL`);
+        },
+    },
+    {
+        // Phase 5 — per-tenant feature flag for biometric / passkey login.
+        //
+        // Adds `organizations.biometric_login_enabled` (default TRUE so the
+        // feature keeps working for every existing tenant on deploy). When an
+        // admin turns it OFF, the server refuses both NEW enrollments AND
+        // biometric/passkey LOGINS for users in that org — see the
+        // `isBiometricLoginEnabled()` gate in routes/auth.ts. Password login
+        // is unaffected. The toggle lives on the org-settings screen
+        // (PUT /api/org/settings).
+        name: '2026_06_v16_biometric_login_enabled_flag',
+        async up(query) {
+            await query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS biometric_login_enabled BOOLEAN NOT NULL DEFAULT TRUE`);
+        },
+    },
 ];
 
 interface MigrationOpts {

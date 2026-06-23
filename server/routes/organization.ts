@@ -88,7 +88,7 @@ router.put("/settings", requireRole("hr_admin"), requireSameOrg, async (req: Req
         const {
             name, work_hours_per_day, work_days, timezone, fiscal_year_start, min_hours_present, office_start_time,
             attendance_verification_enabled, office_latitude, office_longitude, office_radius_m, office_address,
-            office_wifi_bssids, office_wifi_verification_enabled,
+            office_wifi_bssids, office_wifi_verification_enabled, biometric_login_enabled,
         } = req.body;
         const updates: string[] = [];
         const params: unknown[] = [];
@@ -283,6 +283,14 @@ router.put("/settings", requireRole("hr_admin"), requireSameOrg, async (req: Req
                 }
             }
             updates.push(`office_wifi_verification_enabled = $${pi++}`); params.push(flag);
+        }
+
+        // Biometric / passkey login (Phase 5). Tenant admins can switch the
+        // whole "log in with your face / fingerprint / passkey" feature off
+        // for their org — when disabled the server refuses both new
+        // enrollments and biometric/passkey logins (password still works).
+        if (biometric_login_enabled !== undefined) {
+            updates.push(`biometric_login_enabled = $${pi++}`); params.push(!!biometric_login_enabled);
         }
 
         updates.push("updated_at = CURRENT_TIMESTAMP");

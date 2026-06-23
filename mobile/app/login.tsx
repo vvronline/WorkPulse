@@ -13,7 +13,14 @@ import {
   View,
 } from "react-native";
 import { AxiosError } from "axios";
-import { ShieldCheck, ArrowRight, Eye, EyeOff, ScanFace } from "lucide-react-native";
+import {
+  ShieldCheck,
+  ArrowRight,
+  Eye,
+  EyeOff,
+  ScanFace,
+  Fingerprint,
+} from "lucide-react-native";
 import { useAuth } from "../src/auth/AuthContext";
 import type { Theme } from "../src/theme";
 import { useTheme } from "../src/theme/ThemeProvider";
@@ -23,6 +30,8 @@ export default function LoginScreen() {
     login,
     biometricAvailable,
     biometricEnrolled,
+    biometricLabel,
+    biometricKind,
     biometricLogin,
   } = useAuth();
   const router = useRouter();
@@ -79,10 +88,10 @@ export default function LoginScreen() {
       const err = e as AxiosError<{ error?: string }>;
       if (err.response?.status === 401) {
         setError(
-          "Face login is no longer valid on this device. Sign in with your password and enable it again.",
+          `${biometricLabel} login is no longer valid on this device. Sign in with your password and enable it again.`,
         );
       } else {
-        setError(err.response?.data?.error || "Face login failed. Use your password instead.");
+        setError(err.response?.data?.error || `${biometricLabel} login failed. Use your password instead.`);
       }
     } finally {
       setBusy(false);
@@ -190,8 +199,12 @@ export default function LoginScreen() {
                 disabled={busy}
                 activeOpacity={0.85}
               >
-                <ScanFace size={18} color={theme.primaryLight} />
-                <Text style={styles.biometricText}>Sign in with Face ID</Text>
+                {biometricKind === "fingerprint" ? (
+                  <Fingerprint size={18} color={theme.primaryLight} />
+                ) : (
+                  <ScanFace size={18} color={theme.primaryLight} />
+                )}
+                <Text style={styles.biometricText}>Sign in with {biometricLabel}</Text>
               </TouchableOpacity>
             </>
           ) : null}

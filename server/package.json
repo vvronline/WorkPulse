@@ -15,7 +15,10 @@
   "jest": {
     "preset": "ts-jest",
     "testEnvironment": "node",
-    "testPathIgnorePatterns": ["/node_modules/", "/dist/"],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/dist/"
+    ],
     "setupFiles": [
       "./jest.setup.ts"
     ],
@@ -42,6 +45,7 @@
   "dependencies": {
     "@hocuspocus/extension-database": "^4.0.0",
     "@hocuspocus/server": "^4.0.0",
+    "@simplewebauthn/server": "^13.3.1",
     "bcryptjs": "^3.0.3",
     "bullmq": "^5.73.0",
     "cookie": "^1.1.1",

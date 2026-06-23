@@ -23,9 +23,62 @@ const SECRET_KEY = "wp_biometric_secret";
 
 export type BiometricPlatform = "ios" | "android";
 
+/** Visual "kind" so the UI can pick the right icon. */
+export type BiometricKind = "face" | "fingerprint" | "biometric";
+
+export interface BiometricCapability {
+  /** Hardware present AND a biometric enrolled with the OS. */
+  available: boolean;
+  /** User-facing label, e.g. "Face ID", "Touch ID", "Fingerprint". */
+  label: string;
+  /** Icon hint for the UI. */
+  kind: BiometricKind;
+}
+
 /** The platform string the server expects for this device. */
 export function biometricPlatform(): BiometricPlatform {
   return Platform.OS === "ios" ? "ios" : "android";
+}
+
+/**
+ * Resolve the device's biometric capability: availability + a HONEST,
+ * platform-aware label/icon. We can't know in advance *which* sensor the OS
+ * will choose on an Android device that has both face + fingerprint, so we use
+ * a neutral "Biometric Login" label there. iOS maps cleanly to Face ID / Touch
+ * ID because a given iPhone has exactly one.
+ */
+export async function getBiometricCapability(): Promise<BiometricCapability> {
+  try {
+    const hasHardware = await LocalAuthentication.hasHardwareAsync();
+    if (!hasHardware) return { available: false, label: "Biometric Login", kind: "biometric" };
+    const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+    if (!isEnrolled) return { available: false, label: "Biometric Login", kind: "biometric" };
+
+    const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
+    const hasFace = types.includes(
+      LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION,
+    );
+    const hasFingerprint = types.includes(
+      LocalAuthentication.AuthenticationType.FINGERPRINT,
+    );
+
+    if (Platform.OS === "ios") {
+      // An iPhone/iPad has exactly one modality, so the label is unambiguous.
+      if (hasFace) return { available: true, label: "Face ID", kind: "face" };
+      return { available: true, label: "Touch ID", kind: "fingerprint" };
+    }
+
+    // Android: a device may expose BOTH. We can't predict which the OS prompt
+    // will use, so prefer an honest neutral label when both are present.
+    if (hasFace && hasFingerprint) {
+      return { available: true, label: "Biometric Login", kind: "biometric" };
+    }
+    if (hasFace) return { available: true, label: "Face Unlock", kind: "face" };
+    if (hasFingerprint) return { available: true, label: "Fingerprint", kind: "fingerprint" };
+    return { available: true, label: "Biometric Login", kind: "biometric" };
+  } catch {
+    return { available: false, label: "Biometric Login", kind: "biometric" };
+  }
 }
 
 /**
@@ -34,14 +87,7 @@ export function biometricPlatform(): BiometricPlatform {
  * before we offer biometric login.
  */
 export async function isBiometricAvailable(): Promise<boolean> {
-  try {
-    const hasHardware = await LocalAuthentication.hasHardwareAsync();
-    if (!hasHardware) return false;
-    const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-    return isEnrolled;
-  } catch {
-    return false;
-  }
+  return (await getBiometricCapability()).available;
 }
 
 /** True when a biometric credential has been enrolled+stored on this device. */

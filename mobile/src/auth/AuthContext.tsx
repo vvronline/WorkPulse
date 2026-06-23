@@ -11,11 +11,12 @@ import { clearToken, getToken, setToken } from "./tokenStore";
 import {
   biometricPlatform,
   clearBiometricCredential,
+  getBiometricCapability,
   getBiometricCredentialId,
   hasBiometricCredential,
-  isBiometricAvailable,
   saveBiometricCredential,
   unlockBiometricCredential,
+  type BiometricKind,
 } from "./biometricStore";
 import { setUnauthorizedHandler } from "../api";
 import { socket } from "../realtime/socket";
@@ -71,6 +72,10 @@ type AuthContextValue = {
   biometricAvailable: boolean;
   /** A biometric credential has been enrolled for THIS device. */
   biometricEnrolled: boolean;
+  /** Honest, platform-aware label, e.g. "Face ID", "Touch ID", "Fingerprint". */
+  biometricLabel: string;
+  /** Icon hint: "face" | "fingerprint" | "biometric". */
+  biometricKind: BiometricKind;
   /** Enroll the current (already-authenticated) user for biometric login. */
   enableBiometric: () => Promise<void>;
   /** Remove biometric login from this device (revokes server-side too). */
@@ -86,18 +91,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const [biometricEnrolled, setBiometricEnrolled] = useState(false);
+  const [biometricLabel, setBiometricLabel] = useState("Biometric Login");
+  const [biometricKind, setBiometricKind] = useState<BiometricKind>("biometric");
 
   // Probe biometric hardware + local credential once at mount so the login
-  // screen can decide whether to show the "Login with Face ID" button.
+  // screen can decide whether to show the biometric button, and with what
+  // label/icon (Face ID vs Touch ID vs Fingerprint).
   useEffect(() => {
     let active = true;
     (async () => {
-      const [available, enrolled] = await Promise.all([
-        isBiometricAvailable(),
+      const [cap, enrolled] = await Promise.all([
+        getBiometricCapability(),
         hasBiometricCredential(),
       ]);
       if (active) {
-        setBiometricAvailable(available);
+        setBiometricAvailable(cap.available);
+        setBiometricLabel(cap.label);
+        setBiometricKind(cap.kind);
         setBiometricEnrolled(enrolled);
       }
     })();
@@ -307,6 +317,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       refreshUser,
       biometricAvailable,
       biometricEnrolled,
+      biometricLabel,
+      biometricKind,
       enableBiometric,
       disableBiometric,
       biometricLogin,
@@ -319,6 +331,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       refreshUser,
       biometricAvailable,
       biometricEnrolled,
+      biometricLabel,
+      biometricKind,
       enableBiometric,
       disableBiometric,
       biometricLogin,

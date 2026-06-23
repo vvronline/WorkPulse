@@ -140,4 +140,22 @@ contextBridge.exposeInMainWorld("electronAPI", {
             return () => ipcRenderer.removeListener("call:pip-state", handler);
         },
     },
+
+    // ─── Desktop biometric login (Windows Hello / Touch ID) ─────────────
+    // Gates a server-issued device secret behind the OS biometric. The
+    // renderer's AuthContext calls these instead of WebAuthn when running
+    // under Electron. See desktop/biometric.ts for the main-process logic.
+    biometric: {
+        // → { available, enrolled, platform }
+        available: () => ipcRenderer.invoke("biometric:available"),
+        // Persist a freshly-enrolled credential behind the OS biometric.
+        // → { ok, error? }
+        enroll: (payload: { credentialId: string; deviceSecret: string }) =>
+            ipcRenderer.invoke("biometric:enroll", payload),
+        // Prompt the OS biometric and return the stored secret on success.
+        // → { ok, credentialId?, deviceSecret?, error? }
+        login: () => ipcRenderer.invoke("biometric:login"),
+        // Forget the stored credential on this device. → { ok }
+        disable: () => ipcRenderer.invoke("biometric:disable"),
+    },
 });

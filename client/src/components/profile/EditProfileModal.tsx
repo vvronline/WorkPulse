@@ -1,10 +1,30 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import ReactDOM from "react-dom";
-import { X, User, Mail, Lock, AlertTriangle, Trash2 } from "lucide-react";
+import { X, User, Mail, Lock, AlertTriangle, Trash2, Fingerprint, Plus, Smartphone, Monitor } from "lucide-react";
 import { useAuth } from "../../AuthContext";
-import { updateProfile, updateEmail, updatePassword, deleteAccount } from "../../api";
+import {
+    updateProfile,
+    updateEmail,
+    updatePassword,
+    deleteAccount,
+    listBiometricDevices,
+    revokeBiometricDevice,
+} from "../../api";
 import PasswordInput from "../common/PasswordInput";
 import { useAsyncAction } from "../../hooks/useAsyncAction";
+import {
+    isPasskeySupported,
+    registerPasskey,
+    listPasskeys,
+    removePasskey,
+    type PasskeyDevice,
+} from "../../auth/webauthn";
+import {
+    isDesktopBiometricBridge,
+    desktopBiometricStatus,
+    enableDesktopBiometric,
+    disableDesktopBiometric,
+} from "../../auth/desktopBiometric";
 import s from "./EditProfileModal.module.css";
 
 interface EditProfileModalProps {
@@ -61,6 +81,123 @@ export default function EditProfileModal({ onClose }: EditProfileModalProps) {
     const [newPw, setNewPw] = useState("");
     const [confirmPw, setConfirmPw] = useState("");
     const pwAction = useAsyncAction() as any;
+
+    // Section: passkeys (WebAuthn)
+    const passkeySupported = isPasskeySupported();
+    const [passkeys, setPasskeys] = useState<PasskeyDevice[]>([]);
+    const passkeyAction = useAsyncAction() as any;
+
+    const loadPasskeys = useCallback(async () => {
+        if (!passkeySupported) return;
+        try {
+            setPasskeys(await listPasskeys());
+        } catch {
+            /* non-fatal — list stays empty */
+        }
+    }, [passkeySupported]);
+
+    useEffect(() => {
+        loadPasskeys();
+    }, [loadPasskeys]);
+
+    const handleAddPasskey = () => {
+        passkeyAction.run(async () => {
+            await registerPasskey();
+            await loadPasskeys();
+            return "Passkey added! You can now sign in with it.";
+        });
+    };
+
+    const handleRemovePasskey = (id: number) => {
+        passkeyAction.run(async () => {
+            await removePasskey(id);
+            await loadPasskeys();
+            return "Passkey removed.";
+        });
+    };
+
+    // Section: registered biometric devices (mobile Face ID / desktop Windows
+    // Hello / Touch ID). These are `device_credentials` rows — distinct from
+    // WebAuthn passkeys. Listing them here gives a single "Manage devices"
+    // view so a user can see and revoke every device that can biometric-login
+    // to their account, from any platform.
+    interface BiometricDevice {
+        id: string;
+        device_label: string | null;
+        platform: string;
+        created_at: string;
+        last_used_at: string | null;
+    }
+    const [bioDevices, setBioDevices] = useState<BiometricDevice[]>([]);
+    const bioDevicesAction = useAsyncAction() as any;
+
+    const loadBioDevices = useCallback(async () => {
+        try {
+            const { data } = await listBiometricDevices();
+            setBioDevices(data.devices || []);
+        } catch {
+            /* non-fatal — list stays empty */
+        }
+    }, []);
+
+    useEffect(() => {
+        loadBioDevices();
+    }, [loadBioDevices]);
+
+    const handleRevokeBioDevice = (id: string) => {
+        bioDevicesAction.run(async () => {
+            await revokeBiometricDevice(id);
+            await loadBioDevices();
+            await loadDesktopBio();
+            return "Device removed.";
+        });
+    };
+
+    const platformLabel = (p: string): string => {
+        switch (p) {
+            case "ios": return "iPhone / iPad";
+            case "android": return "Android device";
+            case "desktop": return "Desktop app";
+            case "web": return "Web browser";
+            default: return p;
+        }
+    };
+
+    // Section: desktop biometric (Electron — Windows Hello / Touch ID).
+    // Distinct from web passkeys: it gates a device secret behind the OS
+    // biometric via the Electron bridge (see desktop/biometric.ts).
+    const isDesktop = isDesktopBiometricBridge();
+    const [desktopBio, setDesktopBio] = useState<{ available: boolean; enrolled: boolean }>({
+        available: false,
+        enrolled: false,
+    });
+    const desktopBioAction = useAsyncAction() as any;
+
+    const loadDesktopBio = useCallback(async () => {
+        if (!isDesktop) return;
+        const status = await desktopBiometricStatus();
+        setDesktopBio({ available: status.available, enrolled: status.enrolled });
+    }, [isDesktop]);
+
+    useEffect(() => {
+        loadDesktopBio();
+    }, [loadDesktopBio]);
+
+    const handleEnableDesktopBio = () => {
+        desktopBioAction.run(async () => {
+            await enableDesktopBiometric();
+            await loadDesktopBio();
+            return "Biometric sign-in enabled on this device.";
+        });
+    };
+
+    const handleDisableDesktopBio = () => {
+        desktopBioAction.run(async () => {
+            await disableDesktopBiometric();
+            await loadDesktopBio();
+            return "Biometric sign-in disabled on this device.";
+        });
+    };
 
     // Section: delete
     const [deletePw, setDeletePw] = useState("");
@@ -283,6 +420,189 @@ export default function EditProfileModal({ onClose }: EditProfileModalProps) {
                             </button>
                         </form>
                     </section>
+
+                    {isDesktop && desktopBio.available && (
+                        <>
+                            <div className={s.divider} />
+                            {/* ── Desktop biometric (Windows Hello / Touch ID) ── */}
+                            <section className={s.section}>
+                                <h3 className={s.sectionTitle}>
+                                    <Fingerprint
+                                        size={15}
+                                        style={{ verticalAlign: "middle", marginRight: 6 }}
+                                    />
+                                    Biometric Login (this device)
+                                </h3>
+                                <p className={s.dangerDesc} style={{ color: "var(--text-secondary)" }}>
+                                    Sign in to the desktop app with Windows Hello / Touch ID instead
+                                    of a password. The credential is stored encrypted on this device
+                                    and your biometric never leaves it.
+                                </p>
+                                {desktopBioAction.msg && (
+                                    <p className={desktopBioAction.msg.ok ? s.success : s.error}>
+                                        {desktopBioAction.msg.text}
+                                    </p>
+                                )}
+                                {desktopBio.enrolled ? (
+                                    <button
+                                        className={s.cancelBtn}
+                                        onClick={handleDisableDesktopBio}
+                                        disabled={desktopBioAction.loading}
+                                    >
+                                        <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+                                            <Trash2 size={14} />
+                                            {desktopBioAction.loading ? "Working…" : "Disable biometric sign-in"}
+                                        </span>
+                                    </button>
+                                ) : (
+                                    <button
+                                        className={s.saveBtn}
+                                        onClick={handleEnableDesktopBio}
+                                        disabled={desktopBioAction.loading}
+                                    >
+                                        <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+                                            <Plus size={14} />
+                                            {desktopBioAction.loading ? "Working…" : "Enable biometric sign-in"}
+                                        </span>
+                                    </button>
+                                )}
+                            </section>
+                        </>
+                    )}
+
+                    {passkeySupported && !isDesktop && (
+                        <>
+                            <div className={s.divider} />
+                            {/* ── Passkeys (biometric login) ── */}
+                            <section className={s.section}>
+                                <h3 className={s.sectionTitle}>
+                                    <Fingerprint
+                                        size={15}
+                                        style={{ verticalAlign: "middle", marginRight: 6 }}
+                                    />
+                                    Passkeys &amp; Biometric Login
+                                </h3>
+                                <p className={s.dangerDesc} style={{ color: "var(--text-secondary)" }}>
+                                    Sign in with your fingerprint, face, or device PIN instead of a
+                                    password. Your biometric never leaves this device.
+                                </p>
+                                {passkeys.length > 0 && (
+                                    <ul style={{ listStyle: "none", padding: 0, margin: "0 0 0.75rem" }}>
+                                        {passkeys.map((pk) => (
+                                            <li
+                                                key={pk.id}
+                                                style={{
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    justifyContent: "space-between",
+                                                    gap: "0.5rem",
+                                                    padding: "0.5rem 0",
+                                                    borderBottom: "1px solid var(--glass-border)",
+                                                }}
+                                            >
+                                                <span style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem" }}>
+                                                    <Fingerprint size={14} />
+                                                    <span>
+                                                        {pk.device_label || "Passkey"}
+                                                        {pk.last_used_at && (
+                                                            <span style={{ color: "var(--text-secondary)", fontSize: "0.8rem", marginLeft: 6 }}>
+                                                                last used {new Date(pk.last_used_at).toLocaleDateString()}
+                                                            </span>
+                                                        )}
+                                                    </span>
+                                                </span>
+                                                <button
+                                                    className={s.cancelBtn}
+                                                    onClick={() => handleRemovePasskey(pk.id)}
+                                                    disabled={passkeyAction.loading}
+                                                    aria-label="Remove passkey"
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                                {passkeyAction.msg && (
+                                    <p className={passkeyAction.msg.ok ? s.success : s.error}>
+                                        {passkeyAction.msg.text}
+                                    </p>
+                                )}
+                                <button
+                                    className={s.saveBtn}
+                                    onClick={handleAddPasskey}
+                                    disabled={passkeyAction.loading}
+                                >
+                                    <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+                                        <Plus size={14} />
+                                        {passkeyAction.loading ? "Working…" : "Add a passkey"}
+                                    </span>
+                                </button>
+                            </section>
+                        </>
+                    )}
+
+                    {bioDevices.length > 0 && (
+                        <>
+                            <div className={s.divider} />
+                            {/* ── Manage devices (all biometric-login devices) ── */}
+                            <section className={s.section}>
+                                <h3 className={s.sectionTitle}>
+                                    <Smartphone
+                                        size={15}
+                                        style={{ verticalAlign: "middle", marginRight: 6 }}
+                                    />
+                                    Devices with biometric sign-in
+                                </h3>
+                                <p className={s.dangerDesc} style={{ color: "var(--text-secondary)" }}>
+                                    These devices can sign in to your account with Face ID, Touch ID,
+                                    or Windows Hello. Remove any you no longer use — removing a device
+                                    forces it back to password sign-in.
+                                </p>
+                                {bioDevicesAction.msg && (
+                                    <p className={bioDevicesAction.msg.ok ? s.success : s.error}>
+                                        {bioDevicesAction.msg.text}
+                                    </p>
+                                )}
+                                <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                                    {bioDevices.map((d) => (
+                                        <li
+                                            key={d.id}
+                                            style={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                justifyContent: "space-between",
+                                                gap: "0.5rem",
+                                                padding: "0.5rem 0",
+                                                borderBottom: "1px solid var(--glass-border)",
+                                            }}
+                                        >
+                                            <span style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem" }}>
+                                                {d.platform === "desktop" ? <Monitor size={14} /> : <Smartphone size={14} />}
+                                                <span>
+                                                    {d.device_label || platformLabel(d.platform)}
+                                                    <span style={{ color: "var(--text-secondary)", fontSize: "0.8rem", marginLeft: 6 }}>
+                                                        {platformLabel(d.platform)}
+                                                        {d.last_used_at && (
+                                                            <> · last used {new Date(d.last_used_at).toLocaleDateString()}</>
+                                                        )}
+                                                    </span>
+                                                </span>
+                                            </span>
+                                            <button
+                                                className={s.cancelBtn}
+                                                onClick={() => handleRevokeBioDevice(d.id)}
+                                                disabled={bioDevicesAction.loading}
+                                                aria-label="Remove device"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </section>
+                        </>
+                    )}
 
                     <div className={s.divider} />
 

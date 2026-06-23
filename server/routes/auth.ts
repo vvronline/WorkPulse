@@ -14,8 +14,32 @@ const auth = require("../middleware/auth");
 const { getEffectiveFeatures } = require("../utils/planCatalog");
 const { logPlatformAction } = require("../utils/platformAudit");
 const { logAction } = require("../utils/audit");
+const {
+    generateRegistrationOptions,
+    verifyRegistrationResponse,
+    generateAuthenticationOptions,
+    verifyAuthenticationResponse,
+} = require("@simplewebauthn/server");
 
 const router = express.Router();
+
+// ── WebAuthn / passkey configuration ──────────────────────────────────────
+// rpID is the registrable domain (no scheme/port), e.g. "app.workpulse.com".
+// origin is the full scheme+host the browser sends, e.g. "https://app.workpulse.com".
+// Both can be overridden via env for multi-domain / custom-domain deployments.
+function webauthnConfig(req: Request): { rpID: string; rpName: string; origin: string } {
+    const envRpId = process.env.WEBAUTHN_RP_ID;
+    const envOrigin = process.env.WEBAUTHN_ORIGIN || process.env.CORS_ORIGIN;
+    // Derive from the request host as a sensible default in dev / single-domain.
+    const host = (req.headers.host || "localhost:5000").split(",")[0].trim();
+    const hostname = host.split(":")[0];
+    const proto = (req.headers["x-forwarded-proto"] as string) || (req.secure ? "https" : "http");
+    const rpID = envRpId || hostname;
+    const origin = envOrigin
+        ? envOrigin.split(",")[0].trim()
+        : `${proto}://${host}`;
+    return { rpID, rpName: "WorkPulse", origin };
+}
 
 const { cookieOptions } = require("../utils/cookie");
 
@@ -742,6 +766,12 @@ router.post("/reset-password", async (req: Request, res: Response) => {
         } catch (e: any) {
             req.log.warn({ err: e?.message, userId: row.user_id }, "reset-password: device_credentials revoke skipped");
         }
+        // Same for WebAuthn passkeys.
+        try {
+            await db.query("UPDATE webauthn_credentials SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL", [row.user_id]);
+        } catch (e: any) {
+            req.log.warn({ err: e?.message, userId: row.user_id }, "reset-password: webauthn_credentials revoke skipped");
+        }
         await db.query("UPDATE password_reset_tokens SET used = TRUE WHERE id = $1", [row.id]);
 
         res.json({ message: "Password has been reset successfully. You can now sign in." });
@@ -916,6 +946,30 @@ router.post("/device-token", auth, async (req: Request, res: Response) => {
 
 const BIOMETRIC_PLATFORMS = ["ios", "android", "desktop", "web"];
 
+/**
+ * Phase 5 feature flag: is biometric / passkey login enabled for the tenant
+ * that owns `userId`? Reads `organizations.biometric_login_enabled`.
+ *
+ * - Platform users (no tenant) are never gated — they manage tenants.
+ * - Fails OPEN (returns true) when the column/row is missing, e.g. a tenant
+ *   DB that hasn't picked up the 2026_06_v16 migration yet. This matches the
+ *   column's DEFAULT TRUE so the feature keeps working through a deploy.
+ */
+async function isBiometricLoginEnabled(db: any, userId: number, isPlatformUser?: boolean): Promise<boolean> {
+    if (isPlatformUser) return true;
+    try {
+        const row = (await db.query(
+            `SELECT o.biometric_login_enabled AS enabled
+             FROM users u JOIN organizations o ON o.id = u.org_id
+             WHERE u.id = $1`,
+            [userId],
+        )).rows[0];
+        return row ? row.enabled !== false : true;
+    } catch {
+        return true; // not-yet-migrated tenant → default enabled
+    }
+}
+
 router.post("/biometric/enroll", auth, async (req: Request, res: Response) => {
     try {
         const { platform, deviceLabel } = req.body || {};
@@ -927,6 +981,12 @@ router.post("/biometric/enroll", auth, async (req: Request, res: Response) => {
 
         const tenantId = (req as any).tenantId || 0;
         const db = req.db || { query: masterQuery };
+
+        // Phase 5 feature-flag gate: refuse new enrollments when the tenant
+        // admin has switched biometric login off.
+        if (!(await isBiometricLoginEnabled(db, userId, (req as any).isPlatformUser))) {
+            return res.status(403).json({ error: "Biometric login is disabled for your organization." });
+        }
 
         // High-entropy device secret (256 bits). Returned to the client ONCE;
         // only its bcrypt hash is persisted. Never logged.
@@ -1009,6 +1069,13 @@ router.post("/biometric/login", async (req: Request, res: Response) => {
             return res.status(403).json({ error: "Your account has been deactivated. Contact your administrator." });
         }
 
+        // Phase 5 feature-flag gate: an admin may have disabled biometric login
+        // for the org after this device enrolled. Block the login (password
+        // still works) — generic message, same shape as other failures.
+        if (!(await isBiometricLoginEnabled(db, cred.user_id, isPlatformUser))) {
+            return res.status(403).json({ error: "Biometric login is disabled for your organization." });
+        }
+
         // Best-effort: record last use (don't fail login if this errors).
         try {
             await db.query("UPDATE device_credentials SET last_used_at = NOW() WHERE id = $1", [credentialId]);
@@ -1060,6 +1127,328 @@ router.delete("/biometric/:id", auth, async (req: Request, res: Response) => {
     } catch (err: any) {
         req.log.error({ err: err?.message }, "DELETE /biometric/:id error");
         res.status(500).json({ error: "Failed to revoke biometric credential" });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// WebAuthn / passkeys — web biometric login (Phase 3).
+//
+// Public-key login: the browser's platform authenticator (Touch ID / Windows
+// Hello / Face ID / a security key) holds the PRIVATE key; we store only the
+// PUBLIC key + a signature counter. On login the authenticator signs a random
+// server challenge (gated by the OS biometric); we verify the signature.
+//
+// Multi-tenant resolution trick: we set the WebAuthn `userHandle` to
+// "<tenantId>.<userId>" at registration time. A usernameless (discoverable)
+// login returns that handle in the assertion, so we resolve the tenant DB +
+// user directly — no cross-tenant credential search needed.
+//
+// Endpoints:
+//   POST /auth/webauthn/register/options  (auth)   — registration challenge
+//   POST /auth/webauthn/register/verify   (auth)   — store the public key
+//   POST /auth/webauthn/login/options     (public) — auth challenge (+ flowId)
+//   POST /auth/webauthn/login/verify      (public) — verify + issue session
+// ─────────────────────────────────────────────────────────────────────────
+
+// Short-lived challenge store. Prefers Redis (multi-instance safe); falls back
+// to an in-memory Map with TTL so the feature still works in single-instance /
+// no-Redis dev environments.
+const WEBAUTHN_CHALLENGE_TTL_S = 300; // 5 minutes
+const _waChallengeMem = new Map<string, { value: string; expiresAt: number }>();
+function _waMemSweep(): void {
+    const now = Date.now();
+    for (const [k, v] of _waChallengeMem) if (v.expiresAt <= now) _waChallengeMem.delete(k);
+}
+async function waSetChallenge(key: string, value: string): Promise<void> {
+    await redis.set(`wa:${key}`, value, WEBAUTHN_CHALLENGE_TTL_S);
+    _waMemSweep();
+    _waChallengeMem.set(key, { value, expiresAt: Date.now() + WEBAUTHN_CHALLENGE_TTL_S * 1000 });
+}
+async function waGetChallenge(key: string): Promise<string | null> {
+    const fromRedis = await redis.get(`wa:${key}`);
+    if (fromRedis) return fromRedis;
+    const entry = _waChallengeMem.get(key);
+    if (entry && entry.expiresAt > Date.now()) return entry.value;
+    return null;
+}
+async function waDelChallenge(key: string): Promise<void> {
+    await redis.del(`wa:${key}`);
+    _waChallengeMem.delete(key);
+}
+
+router.post("/webauthn/register/options", auth, async (req: Request, res: Response) => {
+    try {
+        const userId = (req as any).userId;
+        if (!userId) return res.status(401).json({ error: "User not authenticated" });
+        const tenantId = (req as any).tenantId || 0;
+        const db = req.db || { query: masterQuery };
+
+        // Phase 5 feature-flag gate: refuse new passkey registration when the
+        // tenant admin has switched biometric login off.
+        if (!(await isBiometricLoginEnabled(db, userId, (req as any).isPlatformUser))) {
+            return res.status(403).json({ error: "Biometric login is disabled for your organization." });
+        }
+
+        const { rpID, rpName, origin } = webauthnConfig(req);
+
+        // Exclude already-registered passkeys so the user can't double-enroll
+        // the same authenticator.
+        const existing = (await db.query(
+            "SELECT credential_id, transports FROM webauthn_credentials WHERE user_id = $1 AND revoked_at IS NULL",
+            [userId],
+        )).rows;
+
+        const userHandle = `${tenantId}.${userId}`;
+        const options = await generateRegistrationOptions({
+            rpName,
+            rpID,
+            userID: Buffer.from(userHandle),
+            userName: (req as any).username || `user-${userId}`,
+            userDisplayName: (req as any).username || `user-${userId}`,
+            attestationType: "none",
+            excludeCredentials: existing.map((c: any) => ({
+                id: c.credential_id,
+                transports: c.transports ? String(c.transports).split(",") : undefined,
+            })),
+            authenticatorSelection: {
+                residentKey: "preferred",
+                userVerification: "preferred",
+            },
+        });
+
+        // Stash the challenge server-side keyed by the user; never trust a
+        // client-echoed challenge.
+        await waSetChallenge(`reg:${tenantId}:${userId}`, options.challenge);
+        res.json({ options, rpID, origin });
+    } catch (err: any) {
+        req.log.error({ err: err?.message }, "POST /webauthn/register/options error");
+        res.status(500).json({ error: "Failed to start passkey registration" });
+    }
+});
+
+router.post("/webauthn/register/verify", auth, async (req: Request, res: Response) => {
+    try {
+        const userId = (req as any).userId;
+        if (!userId) return res.status(401).json({ error: "User not authenticated" });
+        const tenantId = (req as any).tenantId || 0;
+        const db = req.db || { query: masterQuery };
+        const { rpID, origin } = webauthnConfig(req);
+
+        const { response, deviceLabel } = req.body || {};
+        if (!response) return res.status(400).json({ error: "Missing attestation response" });
+
+        const expectedChallenge = await waGetChallenge(`reg:${tenantId}:${userId}`);
+        if (!expectedChallenge) {
+            return res.status(400).json({ error: "Registration session expired. Please try again." });
+        }
+
+        const verification = await verifyRegistrationResponse({
+            response,
+            expectedChallenge,
+            expectedOrigin: origin,
+            expectedRPID: rpID,
+            requireUserVerification: false,
+        });
+
+        if (!verification.verified || !verification.registrationInfo) {
+            return res.status(400).json({ error: "Passkey registration could not be verified" });
+        }
+
+        const { credential } = verification.registrationInfo;
+        const publicKeyB64 = Buffer.from(credential.publicKey).toString("base64");
+        const transports = Array.isArray(response.response?.transports)
+            ? response.response.transports.join(",")
+            : null;
+        const label = (typeof deviceLabel === "string" && deviceLabel.trim())
+            ? deviceLabel.trim().slice(0, 100)
+            : null;
+
+        await db.query(
+            `INSERT INTO webauthn_credentials
+               (user_id, credential_id, public_key, counter, transports, device_label, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW())
+             ON CONFLICT (credential_id) DO UPDATE
+               SET public_key = EXCLUDED.public_key, counter = EXCLUDED.counter, revoked_at = NULL`,
+            [userId, credential.id, publicKeyB64, credential.counter || 0, transports, label],
+        );
+
+        await waDelChallenge(`reg:${tenantId}:${userId}`);
+        logAction(req, "webauthn_register", "user", userId, { credential_id: credential.id, device_label: label });
+        res.json({ verified: true });
+    } catch (err: any) {
+        req.log.error({ err: err?.message }, "POST /webauthn/register/verify error");
+        res.status(500).json({ error: "Failed to verify passkey registration" });
+    }
+});
+
+router.post("/webauthn/login/options", async (req: Request, res: Response) => {
+    try {
+        const { rpID } = webauthnConfig(req);
+        // Usernameless / discoverable login: no allowCredentials, so the
+        // browser offers every passkey registered for this RP.
+        const options = await generateAuthenticationOptions({
+            rpID,
+            userVerification: "preferred",
+        });
+        // Key the challenge by a random flowId returned to the client; the
+        // client must echo it on verify. This avoids needing a username up
+        // front while still binding the challenge server-side.
+        const flowId = crypto.randomUUID();
+        await waSetChallenge(`login:${flowId}`, options.challenge);
+        res.json({ options, flowId });
+    } catch (err: any) {
+        req.log.error({ err: err?.message }, "POST /webauthn/login/options error");
+        res.status(500).json({ error: "Failed to start passkey login" });
+    }
+});
+
+router.post("/webauthn/login/verify", async (req: Request, res: Response) => {
+    try {
+        const { rpID, origin } = webauthnConfig(req);
+        const { response, flowId } = req.body || {};
+        if (!response || !flowId || typeof flowId !== "string") {
+            return res.status(400).json({ error: "Missing assertion response or flowId" });
+        }
+
+        const expectedChallenge = await waGetChallenge(`login:${flowId}`);
+        if (!expectedChallenge) {
+            return res.status(400).json({ error: "Login session expired. Please try again." });
+        }
+        // Single-use challenge.
+        await waDelChallenge(`login:${flowId}`);
+
+        // Decode the userHandle ("<tenantId>.<userId>") the authenticator
+        // returns; it tells us which tenant DB + user owns this passkey.
+        const userHandleRaw = response.response?.userHandle;
+        if (!userHandleRaw) {
+            return res.status(401).json({ error: "Invalid passkey" });
+        }
+        // userHandle arrives base64url-encoded from the browser.
+        let userHandle: string;
+        try {
+            userHandle = Buffer.from(userHandleRaw, "base64").toString("utf8");
+        } catch {
+            return res.status(401).json({ error: "Invalid passkey" });
+        }
+        const dot = userHandle.indexOf(".");
+        const tenantPart = dot > 0 ? userHandle.slice(0, dot) : "";
+        const userPart = dot > 0 ? userHandle.slice(dot + 1) : "";
+        const tenantId = /^\d+$/.test(tenantPart) ? parseInt(tenantPart, 10) : NaN;
+        const handleUserId = /^\d+$/.test(userPart) ? parseInt(userPart, 10) : NaN;
+        if (!Number.isFinite(tenantId) || !Number.isFinite(handleUserId)) {
+            return res.status(401).json({ error: "Invalid passkey" });
+        }
+
+        // Resolve the DB + tenant context.
+        let db: any;
+        let resolvedTenantId: number | null;
+        let isPlatformUser = false;
+        if (tenantId > 0) {
+            const tdb = await getTenantDb(tenantId);
+            if (!tdb) return res.status(401).json({ error: "Invalid passkey" });
+            db = tdb;
+            resolvedTenantId = tenantId;
+        } else {
+            db = { query: masterQuery };
+            resolvedTenantId = null;
+            isPlatformUser = true;
+        }
+
+        // Look up the stored public key for this credential id.
+        const credRow = (await db.query(
+            "SELECT id, user_id, public_key, counter FROM webauthn_credentials WHERE credential_id = $1 AND revoked_at IS NULL",
+            [response.id],
+        )).rows[0];
+        if (!credRow || credRow.user_id !== handleUserId) {
+            return res.status(401).json({ error: "Invalid passkey" });
+        }
+
+        const verification = await verifyAuthenticationResponse({
+            response,
+            expectedChallenge,
+            expectedOrigin: origin,
+            expectedRPID: rpID,
+            requireUserVerification: false,
+            credential: {
+                id: response.id,
+                publicKey: new Uint8Array(Buffer.from(credRow.public_key, "base64")),
+                counter: Number(credRow.counter) || 0,
+            },
+        });
+
+        if (!verification.verified) {
+            return res.status(401).json({ error: "Passkey verification failed" });
+        }
+
+        // Bump the signature counter (clone-detection) + last-used.
+        const newCounter = verification.authenticationInfo?.newCounter ?? credRow.counter;
+        try {
+            await db.query(
+                "UPDATE webauthn_credentials SET counter = $1, last_used_at = NOW() WHERE id = $2",
+                [newCounter, credRow.id],
+            );
+        } catch { /* non-fatal */ }
+
+        // Load the user and complete login.
+        const userRes = isPlatformUser
+            ? await db.query("SELECT * FROM platform_users WHERE id = $1", [credRow.user_id])
+            : await db.query("SELECT * FROM users WHERE id = $1", [credRow.user_id]);
+        const user = userRes.rows[0];
+        if (!user) return res.status(401).json({ error: "Invalid passkey" });
+        if (!isPlatformUser && user.is_active === false) {
+            return res.status(403).json({ error: "Your account has been deactivated. Contact your administrator." });
+        }
+
+        // Phase 5 feature-flag gate: an admin may have disabled biometric login
+        // for the org after this passkey was registered.
+        if (!(await isBiometricLoginEnabled(db, credRow.user_id, isPlatformUser))) {
+            return res.status(403).json({ error: "Biometric login is disabled for your organization." });
+        }
+
+        logAction(req, "webauthn_login", "user", user.id, { credential_id: response.id });
+        return finishLogin(req, res, { user, db, tenantId: resolvedTenantId, isPlatformUser });
+    } catch (err: any) {
+        req.log.error({ err: err?.message }, "POST /webauthn/login/verify error");
+        res.status(500).json({ error: "Passkey login failed" });
+    }
+});
+
+router.get("/webauthn", auth, async (req: Request, res: Response) => {
+    try {
+        const userId = (req as any).userId;
+        if (!userId) return res.status(401).json({ error: "User not authenticated" });
+        const db = req.db || { query: masterQuery };
+        const rows = (await db.query(
+            `SELECT id, device_label, transports, created_at, last_used_at
+             FROM webauthn_credentials
+             WHERE user_id = $1 AND revoked_at IS NULL
+             ORDER BY created_at DESC`,
+            [userId],
+        )).rows;
+        res.json({ passkeys: rows });
+    } catch (err: any) {
+        req.log.error({ err: err?.message }, "GET /webauthn error");
+        res.status(500).json({ error: "Failed to list passkeys" });
+    }
+});
+
+router.delete("/webauthn/:id", auth, async (req: Request, res: Response) => {
+    try {
+        const userId = (req as any).userId;
+        if (!userId) return res.status(401).json({ error: "User not authenticated" });
+        const db = req.db || { query: masterQuery };
+        const result = await db.query(
+            "UPDATE webauthn_credentials SET revoked_at = NOW() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+            [req.params.id, userId],
+        );
+        if (!result.rowCount) {
+            return res.status(404).json({ error: "Passkey not found" });
+        }
+        logAction(req, "webauthn_revoke", "user", userId, { passkey_id: req.params.id });
+        res.json({ message: "Passkey removed" });
+    } catch (err: any) {
+        req.log.error({ err: err?.message }, "DELETE /webauthn/:id error");
+        res.status(500).json({ error: "Failed to remove passkey" });
     }
 });
 

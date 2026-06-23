@@ -22,6 +22,7 @@ const execFileP = util.promisify(execFile);
 import { setupTray } from "./tray";
 import { setupUpdater } from "./updater";
 import { setupCallPipWindow } from "./callPipWindow";
+import { setupBiometric } from "./biometric";
 
 // Set app identity for Windows notifications and taskbar
 app.setAppUserModelId("com.workpulse.desktop");
@@ -895,6 +896,10 @@ $w.Stop()
     // Always-on-top mini call window (Teams-style "floatie") — opens via
     // IPC from the renderer when the user clicks the in-call PiP button.
     setupCallPipWindow(mainWindow);
+
+    // Desktop biometric login (Windows Hello / Touch ID) — registers the
+    // biometric:* IPC handlers used by the renderer's AuthContext.
+    setupBiometric(() => mainWindow);
 
     // ─── One-time startup probe of Google Geolocation API ──────────────
     // Chromium's navigator.geolocation calls into this same endpoint, but
