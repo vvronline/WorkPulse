@@ -166,6 +166,17 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
           "Allow WorkPulse to use your location to verify office attendance at clock-in.",
       },
     ],
+    [
+      // Face ID / Touch ID (iOS) + BiometricPrompt (Android) for "log in with
+      // your face / fingerprint". The OS performs the biometric match locally
+      // and unlocks a device secret stored in expo-secure-store — no biometric
+      // data ever leaves the device.
+      "expo-local-authentication",
+      {
+        faceIDPermission:
+          "Allow WorkPulse to use Face ID to sign you in securely.",
+      },
+    ],
     "expo-sharing",
   ],
   extra: {

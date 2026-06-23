@@ -133,9 +133,18 @@ function StatusDot({ meta, size = 14 }: { meta: StatusMetaEntry; size?: number }
 export default function Profile() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const { user, logout, refreshUser } = useAuth();
+  const {
+    user,
+    logout,
+    refreshUser,
+    biometricAvailable,
+    biometricEnrolled,
+    enableBiometric,
+    disableBiometric,
+  } = useAuth();
   const router = useRouter();
   const { alert, confirm, dialog } = useDialog();
+  const [biometricBusy, setBiometricBusy] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
   const [soundsOpen, setSoundsOpen] = useState(false);
@@ -190,6 +199,27 @@ export default function Profile() {
     await logout();
     router.replace("/login");
   };
+
+  // Toggle "Sign in with Face ID" for this device. Enrolling asks the server
+  // for a device secret and stashes it behind the OS biometric; disabling
+  // revokes it server-side and wipes the local secret.
+  async function toggleBiometric() {
+    if (biometricBusy) return;
+    setBiometricBusy(true);
+    try {
+      if (biometricEnrolled) {
+        await disableBiometric();
+        alert("Face ID disabled", "You'll sign in with your password next time.");
+      } else {
+        await enableBiometric();
+        alert("Face ID enabled", "You can now sign in with your face on this device.");
+      }
+    } catch (e: any) {
+      alert("Error", e?.response?.data?.error || "Couldn't update Face ID login.");
+    } finally {
+      setBiometricBusy(false);
+    }
+  }
 
   async function pickAvatar() {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -401,6 +431,23 @@ export default function Profile() {
         <KeyRound size={16} color={theme.text} />
         <Text style={styles.actionText}>Change Password</Text>
       </Pressable>
+      {biometricAvailable ? (
+        <Pressable
+          style={styles.action}
+          onPress={toggleBiometric}
+          disabled={biometricBusy}
+        >
+          <ScanFace size={16} color={theme.text} />
+          <Text style={styles.actionText}>Sign in with Face ID</Text>
+          {biometricBusy ? (
+            <ActivityIndicator size="small" color={theme.primary} />
+          ) : (
+            <View style={[styles.switch, biometricEnrolled && styles.switchOn]}>
+              <View style={[styles.knob, biometricEnrolled && styles.knobOn]} />
+            </View>
+          )}
+        </Pressable>
+      ) : null}
       <Pressable style={styles.action} onPress={() => triggerUpdateCheck()}>
         <RefreshCw size={16} color={theme.text} />
         <Text style={styles.actionText}>Check for Updates</Text>

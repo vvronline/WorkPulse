@@ -13,13 +13,18 @@ import {
   View,
 } from "react-native";
 import { AxiosError } from "axios";
-import { ShieldCheck, ArrowRight, Eye, EyeOff } from "lucide-react-native";
+import { ShieldCheck, ArrowRight, Eye, EyeOff, ScanFace } from "lucide-react-native";
 import { useAuth } from "../src/auth/AuthContext";
 import type { Theme } from "../src/theme";
 import { useTheme } from "../src/theme/ThemeProvider";
 
 export default function LoginScreen() {
-  const { login } = useAuth();
+  const {
+    login,
+    biometricAvailable,
+    biometricEnrolled,
+    biometricLogin,
+  } = useAuth();
   const router = useRouter();
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
@@ -57,6 +62,34 @@ export default function LoginScreen() {
     }
   }
 
+  // Sign in with the device biometric (Face ID / Touch ID / fingerprint).
+  // Only offered when hardware is present AND a credential was enrolled on
+  // this device. A cancelled prompt is a no-op; a revoked credential surfaces
+  // a friendly "set it up again" message.
+  async function onBiometricLogin() {
+    setError(null);
+    setBusy(true);
+    try {
+      const ok = await biometricLogin();
+      if (ok) {
+        router.replace("/(tabs)");
+      }
+      // ok === false → user cancelled the OS prompt; stay on the screen.
+    } catch (e) {
+      const err = e as AxiosError<{ error?: string }>;
+      if (err.response?.status === 401) {
+        setError(
+          "Face login is no longer valid on this device. Sign in with your password and enable it again.",
+        );
+      } else {
+        setError(err.response?.data?.error || "Face login failed. Use your password instead.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const showBiometric = biometricAvailable && biometricEnrolled;
   const canSubmit = username.trim().length > 0 && password.length > 0 && !busy;
 
   return (
@@ -143,6 +176,25 @@ export default function LoginScreen() {
               </View>
             )}
           </TouchableOpacity>
+
+          {showBiometric ? (
+            <>
+              <View style={styles.dividerRow}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>or</Text>
+                <View style={styles.dividerLine} />
+              </View>
+              <TouchableOpacity
+                style={styles.biometricButton}
+                onPress={onBiometricLogin}
+                disabled={busy}
+                activeOpacity={0.85}
+              >
+                <ScanFace size={18} color={theme.primaryLight} />
+                <Text style={styles.biometricText}>Sign in with Face ID</Text>
+              </TouchableOpacity>
+            </>
+          ) : null}
 
           <Text style={styles.switch}>
             Don&apos;t have an account?{" "}
@@ -264,6 +316,33 @@ const makeStyles = (theme: Theme) =>
   buttonDisabled: { opacity: 0.4 },
   buttonContent: { flexDirection: "row", alignItems: "center", gap: 6 },
   buttonText: { color: "#fff", fontSize: 15, fontWeight: "600" },
+  dividerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 18,
+    marginBottom: 4,
+  },
+  dividerLine: { flex: 1, height: 1, backgroundColor: theme.glassBorder },
+  dividerText: {
+    color: theme.textMuted,
+    fontSize: 12,
+    marginHorizontal: 12,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  biometricButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 14,
+    paddingVertical: 13,
+    borderRadius: theme.radiusSm,
+    borderWidth: 1,
+    borderColor: theme.inputBorder,
+    backgroundColor: theme.inputBg,
+  },
+  biometricText: { color: theme.primaryLight, fontSize: 15, fontWeight: "600" },
   switch: {
     textAlign: "center",
     marginTop: 22,

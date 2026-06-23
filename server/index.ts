@@ -302,6 +302,10 @@ app.use("/api", maintenanceModeMiddleware);
 
 app.use("/api/auth/register", registerLimiter);
 app.use("/api/auth/forgot-password", forgotPasswordLimiter);
+// Biometric login is a PUBLIC credential-exchange endpoint (device secret →
+// session). Rate-limit it on its own bucket so brute-forcing a stolen
+// credentialId can't ride the broader /api/auth quota.
+app.use("/api/auth/biometric/login", authLimiter);
 app.use("/api/auth", authLimiter, authRoutes);
 app.use("/api/tracker", apiLimiter, trackerRoutes);
 app.use("/api/leaves", apiLimiter, leaveRoutes);

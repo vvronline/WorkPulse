@@ -1262,6 +1262,48 @@ const MIGRATIONS: Migration[] = [
             await query(`CREATE INDEX IF NOT EXISTS idx_device_tokens_last_seen ON device_tokens(last_seen_at)`);
         },
     },
+    {
+        // Biometric ("login with your face") device credentials.
+        //
+        // Option-B biometric login model: the OS authenticator (Face ID /
+        // Touch ID / Windows Hello / Android BiometricPrompt) performs the
+        // match LOCALLY on the device and unlocks a high-entropy device secret
+        // that the client stores in its secure enclave / keystore. No face or
+        // biometric data ever reaches the server — we only store a one-way
+        // HASH of the device secret here, exactly like a password.
+        //
+        // Flow:
+        //   1. After a normal username/password login, the client calls
+        //      POST /api/auth/biometric/enroll. The server generates a random
+        //      secret, stores its hash in this table, and returns the RAW
+        //      secret ONCE. The client stashes it behind the OS biometric.
+        //   2. On later launches the client unlocks the secret via the OS
+        //      biometric and calls POST /api/auth/biometric/login with
+        //      { credentialId, deviceSecret }. The server verifies the hash
+        //      and mints the normal JWT/session via finishLogin().
+        //
+        // Security:
+        //   • secret_hash is bcrypt — never reversible.
+        //   • revoked_at + a password reset / "log out everywhere" (which
+        //     bumps users.token_version) invalidate the credential.
+        //   • One row per (user, device); a device may re-enroll (new secret).
+        name: '2026_06_v14_biometric_device_credentials',
+        async up(query) {
+            await query(`
+                CREATE TABLE IF NOT EXISTS device_credentials (
+                    id            TEXT PRIMARY KEY,
+                    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    secret_hash   TEXT NOT NULL,
+                    device_label  TEXT,
+                    platform      TEXT NOT NULL CHECK(platform IN ('ios','android','desktop','web')),
+                    last_used_at  TIMESTAMPTZ,
+                    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    revoked_at    TIMESTAMPTZ
+                )
+            `);
+            await query(`CREATE INDEX IF NOT EXISTS idx_device_credentials_user ON device_credentials(user_id) WHERE revoked_at IS NULL`);
+        },
+    },
 ];
 
 interface MigrationOpts {

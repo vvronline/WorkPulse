@@ -8,6 +8,15 @@ import React, {
 } from "react";
 import { api } from "../api";
 import { clearToken, getToken, setToken } from "./tokenStore";
+import {
+  biometricPlatform,
+  clearBiometricCredential,
+  getBiometricCredentialId,
+  hasBiometricCredential,
+  isBiometricAvailable,
+  saveBiometricCredential,
+  unlockBiometricCredential,
+} from "./biometricStore";
 import { setUnauthorizedHandler } from "../api";
 import { socket } from "../realtime/socket";
 import { pushNotificationService } from "../services/pushNotificationService";
@@ -57,6 +66,17 @@ type AuthContextValue = {
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
+  // ── Biometric ("login with your face") ──
+  /** Hardware + OS-enrolled biometric available on this device. */
+  biometricAvailable: boolean;
+  /** A biometric credential has been enrolled for THIS device. */
+  biometricEnrolled: boolean;
+  /** Enroll the current (already-authenticated) user for biometric login. */
+  enableBiometric: () => Promise<void>;
+  /** Remove biometric login from this device (revokes server-side too). */
+  disableBiometric: () => Promise<void>;
+  /** Sign in using the stored biometric credential. Returns false if cancelled. */
+  biometricLogin: () => Promise<boolean>;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -64,6 +84,27 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [biometricEnrolled, setBiometricEnrolled] = useState(false);
+
+  // Probe biometric hardware + local credential once at mount so the login
+  // screen can decide whether to show the "Login with Face ID" button.
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const [available, enrolled] = await Promise.all([
+        isBiometricAvailable(),
+        hasBiometricCredential(),
+      ]);
+      if (active) {
+        setBiometricAvailable(available);
+        setBiometricEnrolled(enrolled);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const logout = useCallback(async () => {
     // Best-effort, fire BEFORE clearing the token while still authenticated:
@@ -154,30 +195,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => setUnauthorizedHandler(null);
   }, []);
 
-  const login = useCallback(async (username: string, password: string) => {
-    const res = await api.post<{ user: User; token: string }>("/auth/login", {
-      username,
-      password,
-    });
-    if (!res.data?.token) {
-      throw new Error("Login did not return a token");
-    }
-    await setToken(res.data.token);
-    // Seed state from the login payload so the UI is responsive immediately.
-    setUser(res.data.user);
-    socket.connect();
-    // The /auth/login response does NOT include plan/feature flags
-    // (tenant_features / tenant_plan). Only /profile attaches them. Re-fetch
-    // the full profile so feature-gated admin sections (payroll, compensation,
-    // salary slips, payment settings) resolve correctly — mirrors the web
-    // client's saveAuth() flow.
-    try {
-      const profile = await api.get<User>("/profile");
-      if (profile.data) setUser(profile.data);
-    } catch {
-      // Non-fatal — keep the login payload; session-restore will hydrate later.
-    }
-  }, []);
+  // Shared post-auth hydration: persist the token, seed user state, connect
+  // the realtime socket, then re-fetch the full profile (which carries the
+  // plan/feature flags the login payload omits). Used by both password and
+  // biometric login so the two paths stay in lock-step.
+  const completeSession = useCallback(
+    async (token: string, seedUser: User) => {
+      await setToken(token);
+      setUser(seedUser);
+      socket.connect();
+      try {
+        const profile = await api.get<User>("/profile");
+        if (profile.data) setUser(profile.data);
+      } catch {
+        // Non-fatal — keep the seed payload; session-restore hydrates later.
+      }
+    },
+    [],
+  );
+
+  const login = useCallback(
+    async (username: string, password: string) => {
+      const res = await api.post<{ user: User; token: string }>("/auth/login", {
+        username,
+        password,
+      });
+      if (!res.data?.token) {
+        throw new Error("Login did not return a token");
+      }
+      await completeSession(res.data.token, res.data.user);
+    },
+    [completeSession],
+  );
 
   const refreshUser = useCallback(async () => {
     try {
@@ -188,9 +237,92 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // ── Biometric login ──────────────────────────────────────────────────────
+
+  // Enroll the currently-authenticated user for biometric login: ask the
+  // server to mint a device secret, then stash it behind the OS biometric.
+  const enableBiometric = useCallback(async () => {
+    const res = await api.post<{ credentialId: string; deviceSecret: string }>(
+      "/auth/biometric/enroll",
+      { platform: biometricPlatform() },
+    );
+    const { credentialId, deviceSecret } = res.data || ({} as any);
+    if (!credentialId || !deviceSecret) {
+      throw new Error("Enrollment did not return a credential");
+    }
+    await saveBiometricCredential(credentialId, deviceSecret);
+    setBiometricEnrolled(true);
+  }, []);
+
+  // Remove biometric login from this device: revoke server-side (best-effort)
+  // then wipe the local credential.
+  const disableBiometric = useCallback(async () => {
+    try {
+      const credId = await getBiometricCredentialId();
+      if (credId) {
+        await api.delete(`/auth/biometric/${encodeURIComponent(credId)}`);
+      }
+    } catch {
+      // Best-effort: even if the server call fails, drop the local secret so
+      // the device can no longer biometric-login.
+    }
+    await clearBiometricCredential();
+    setBiometricEnrolled(false);
+  }, []);
+
+  // Sign in using the stored biometric credential. The OS biometric prompt is
+  // triggered while reading the secret. Returns false if the user cancelled or
+  // no credential exists; throws on a network/auth failure so the caller can
+  // surface an error.
+  const biometricLogin = useCallback(async (): Promise<boolean> => {
+    const unlocked = await unlockBiometricCredential();
+    if (!unlocked) return false; // cancelled / no credential
+    try {
+      const res = await api.post<{ user: User; token: string }>(
+        "/auth/biometric/login",
+        unlocked,
+      );
+      if (!res.data?.token) {
+        throw new Error("Biometric login did not return a token");
+      }
+      await completeSession(res.data.token, res.data.user);
+      return true;
+    } catch (err: any) {
+      // A 401 means the server-side credential was revoked (e.g. password
+      // reset / "log out everywhere"). Clear the now-useless local secret.
+      if (err?.response?.status === 401) {
+        await clearBiometricCredential();
+        setBiometricEnrolled(false);
+      }
+      throw err;
+    }
+  }, [completeSession]);
+
   const value = useMemo(
-    () => ({ user, loading, login, logout, refreshUser }),
-    [user, loading, login, logout, refreshUser],
+    () => ({
+      user,
+      loading,
+      login,
+      logout,
+      refreshUser,
+      biometricAvailable,
+      biometricEnrolled,
+      enableBiometric,
+      disableBiometric,
+      biometricLogin,
+    }),
+    [
+      user,
+      loading,
+      login,
+      logout,
+      refreshUser,
+      biometricAvailable,
+      biometricEnrolled,
+      enableBiometric,
+      disableBiometric,
+      biometricLogin,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

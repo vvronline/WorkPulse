@@ -13,6 +13,7 @@ const { getTransporter, sendMail } = require("../utils/mailer");
 const auth = require("../middleware/auth");
 const { getEffectiveFeatures } = require("../utils/planCatalog");
 const { logPlatformAction } = require("../utils/platformAudit");
+const { logAction } = require("../utils/audit");
 
 const router = express.Router();
 
@@ -732,6 +733,15 @@ router.post("/reset-password", async (req: Request, res: Response) => {
         // Clear all active sessions on password reset
         await db.query("DELETE FROM user_sessions WHERE user_id = $1", [row.user_id]);
         await redis.invalidateUserSessions(req.tenant?.id || null, row.user_id);
+        // Revoke any enrolled biometric device credentials — a password reset
+        // means "I no longer trust the old devices", so the biometric-unlocked
+        // refresh secrets must stop working too (mirrors the session wipe).
+        // Best-effort: the table may not exist on a not-yet-migrated tenant.
+        try {
+            await db.query("UPDATE device_credentials SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL", [row.user_id]);
+        } catch (e: any) {
+            req.log.warn({ err: e?.message, userId: row.user_id }, "reset-password: device_credentials revoke skipped");
+        }
         await db.query("UPDATE password_reset_tokens SET used = TRUE WHERE id = $1", [row.id]);
 
         res.json({ message: "Password has been reset successfully. You can now sign in." });
@@ -880,6 +890,176 @@ router.post("/device-token", auth, async (req: Request, res: Response) => {
     } catch (err: any) {
         logger.error({ err: err.message }, "POST /device-token error");
         res.status(500).json({ error: "Failed to register device token" });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Biometric ("login with your face") device credentials — Option B.
+//
+// The OS authenticator (Face ID / Touch ID / Windows Hello / Android
+// BiometricPrompt / WebAuthn) performs the biometric match LOCALLY on the
+// device. It unlocks a high-entropy device secret that the client keeps in
+// its secure enclave / keystore. The server only ever sees (and stores a
+// bcrypt HASH of) that secret — no face/biometric data ever leaves the
+// device.
+//
+// credentialId format: "<tenantId>.<uuid>"  (tenantId 0 = platform/master).
+// Embedding the tenant id lets the PUBLIC /biometric/login endpoint resolve
+// the correct tenant DB without the client having to send a username first.
+//
+// Endpoints:
+//   POST   /auth/biometric/enroll   (auth)   — mint + store a device secret
+//   POST   /auth/biometric/login    (public) — exchange secret for a session
+//   GET    /auth/biometric          (auth)   — list this user's devices
+//   DELETE /auth/biometric/:id      (auth)   — revoke a device credential
+// ─────────────────────────────────────────────────────────────────────────
+
+const BIOMETRIC_PLATFORMS = ["ios", "android", "desktop", "web"];
+
+router.post("/biometric/enroll", auth, async (req: Request, res: Response) => {
+    try {
+        const { platform, deviceLabel } = req.body || {};
+        if (!platform || !BIOMETRIC_PLATFORMS.includes(platform)) {
+            return res.status(400).json({ error: "Valid platform is required (ios, android, desktop, or web)" });
+        }
+        const userId = (req as any).userId;
+        if (!userId) return res.status(401).json({ error: "User not authenticated" });
+
+        const tenantId = (req as any).tenantId || 0;
+        const db = req.db || { query: masterQuery };
+
+        // High-entropy device secret (256 bits). Returned to the client ONCE;
+        // only its bcrypt hash is persisted. Never logged.
+        const deviceSecret = crypto.randomBytes(32).toString("hex");
+        const secretHash = await bcrypt.hash(deviceSecret, BCRYPT_ROUNDS);
+        const credentialId = `${tenantId}.${crypto.randomUUID()}`;
+        const label = (typeof deviceLabel === "string" && deviceLabel.trim())
+            ? deviceLabel.trim().slice(0, 100)
+            : null;
+
+        await db.query(
+            `INSERT INTO device_credentials (id, user_id, secret_hash, device_label, platform, created_at)
+             VALUES ($1, $2, $3, $4, $5, NOW())`,
+            [credentialId, userId, secretHash, label, platform],
+        );
+
+        logAction(req, "biometric_enroll", "user", userId, { platform, device_label: label });
+        res.json({ credentialId, deviceSecret });
+    } catch (err: any) {
+        req.log.error({ err: err?.message }, "POST /biometric/enroll error");
+        res.status(500).json({ error: "Failed to enroll biometric credential" });
+    }
+});
+
+router.post("/biometric/login", async (req: Request, res: Response) => {
+    try {
+        const { credentialId, deviceSecret } = req.body || {};
+        if (!credentialId || !deviceSecret || typeof credentialId !== "string") {
+            return res.status(400).json({ error: "credentialId and deviceSecret are required" });
+        }
+
+        // Parse the embedded tenant id. Anything malformed → generic failure
+        // (don't leak which part was wrong).
+        const dotIdx = credentialId.indexOf(".");
+        const tenantPart = dotIdx > 0 ? credentialId.slice(0, dotIdx) : "";
+        const tenantId = /^\d+$/.test(tenantPart) ? parseInt(tenantPart, 10) : NaN;
+        if (!Number.isFinite(tenantId)) {
+            return res.status(401).json({ error: "Invalid biometric credential" });
+        }
+
+        // Resolve the DB + (for finishLogin) the tenant context.
+        let db: any;
+        let resolvedTenantId: number | null;
+        let isPlatformUser = false;
+        if (tenantId > 0) {
+            const tdb = await getTenantDb(tenantId);
+            if (!tdb) return res.status(401).json({ error: "Invalid biometric credential" });
+            db = tdb;
+            resolvedTenantId = tenantId;
+        } else {
+            // Platform/master credential.
+            db = { query: masterQuery };
+            resolvedTenantId = null;
+            isPlatformUser = true;
+        }
+
+        const credRes = await db.query(
+            "SELECT id, user_id, secret_hash FROM device_credentials WHERE id = $1 AND revoked_at IS NULL",
+            [credentialId],
+        );
+        const cred = credRes.rows[0];
+
+        // Constant-ish time: always run a bcrypt compare even when the
+        // credential is missing, to avoid a trivial timing oracle.
+        const DUMMY_HASH = "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+        const ok = await bcrypt.compare(deviceSecret, cred ? cred.secret_hash : DUMMY_HASH);
+        if (!cred || !ok) {
+            return res.status(401).json({ error: "Invalid biometric credential" });
+        }
+
+        // Load the user the credential belongs to.
+        const userRes = isPlatformUser
+            ? await db.query("SELECT * FROM platform_users WHERE id = $1", [cred.user_id])
+            : await db.query("SELECT * FROM users WHERE id = $1", [cred.user_id]);
+        const user = userRes.rows[0];
+        if (!user) {
+            return res.status(401).json({ error: "Invalid biometric credential" });
+        }
+        if (!isPlatformUser && user.is_active === false) {
+            return res.status(403).json({ error: "Your account has been deactivated. Contact your administrator." });
+        }
+
+        // Best-effort: record last use (don't fail login if this errors).
+        try {
+            await db.query("UPDATE device_credentials SET last_used_at = NOW() WHERE id = $1", [credentialId]);
+        } catch { /* non-fatal */ }
+
+        logAction(req, "biometric_login", "user", user.id, { credential_id: credentialId });
+        return finishLogin(req, res, { user, db, tenantId: resolvedTenantId, isPlatformUser });
+    } catch (err: any) {
+        req.log.error({ err: err?.message }, "POST /biometric/login error");
+        res.status(500).json({ error: "Biometric login failed" });
+    }
+});
+
+router.get("/biometric", auth, async (req: Request, res: Response) => {
+    try {
+        const userId = (req as any).userId;
+        if (!userId) return res.status(401).json({ error: "User not authenticated" });
+        const db = req.db || { query: masterQuery };
+        const rows = (await db.query(
+            `SELECT id, device_label, platform, created_at, last_used_at
+             FROM device_credentials
+             WHERE user_id = $1 AND revoked_at IS NULL
+             ORDER BY created_at DESC`,
+            [userId],
+        )).rows;
+        res.json({ devices: rows });
+    } catch (err: any) {
+        req.log.error({ err: err?.message }, "GET /biometric error");
+        res.status(500).json({ error: "Failed to list biometric devices" });
+    }
+});
+
+router.delete("/biometric/:id", auth, async (req: Request, res: Response) => {
+    try {
+        const userId = (req as any).userId;
+        if (!userId) return res.status(401).json({ error: "User not authenticated" });
+        const db = req.db || { query: masterQuery };
+        // Scope the revoke to the caller's own credentials so one user can't
+        // revoke another user's device by guessing its id.
+        const result = await db.query(
+            "UPDATE device_credentials SET revoked_at = NOW() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+            [req.params.id, userId],
+        );
+        if (!result.rowCount) {
+            return res.status(404).json({ error: "Biometric credential not found" });
+        }
+        logAction(req, "biometric_revoke", "user", userId, { credential_id: req.params.id });
+        res.json({ message: "Biometric credential revoked" });
+    } catch (err: any) {
+        req.log.error({ err: err?.message }, "DELETE /biometric/:id error");
+        res.status(500).json({ error: "Failed to revoke biometric credential" });
     }
 });
 
