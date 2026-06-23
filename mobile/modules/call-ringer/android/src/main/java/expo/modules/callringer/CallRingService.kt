@@ -85,15 +85,36 @@ class CallRingService : Service() {
     // WorkPulse brand green used to theme the CallStyle notification accent.
     private val BRAND_COLOR = Color.parseColor("#22C55E")
 
-    fun start(context: Context, extras: Map<String, String>) {
+    /**
+     * Start the incoming-call ring foreground service.
+     *
+     * Returns TRUE when the (foreground) service start request was accepted by
+     * the OS, FALSE when it was REFUSED. On Android 12+ (API 31+) calling
+     * startForegroundService() from a BACKGROUNDED-but-alive process throws
+     * ForegroundServiceStartNotAllowedException (background FGS-start
+     * restriction). We surface that as `false` so the caller (notifeeService)
+     * can FALL BACK to the Notifee full-screen-intent call notification — which
+     * needs no foreground service — instead of leaving the incoming call with
+     * no surface at all (the "desktop→android calls silently dropped while the
+     * phone is backgrounded" regression).
+     */
+    fun start(context: Context, extras: Map<String, String>): Boolean {
       val intent = Intent(context, CallRingService::class.java).apply {
         action = ACTION_START
         for ((k, v) in extras) putExtra(k, v)
       }
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        context.startForegroundService(intent)
-      } else {
-        context.startService(intent)
+      return try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+          context.startForegroundService(intent)
+        } else {
+          context.startService(intent)
+        }
+        true
+      } catch (_: Throwable) {
+        // ForegroundServiceStartNotAllowedException (API 31+) when started from
+        // the background, or any OEM-specific refusal. Report failure so the
+        // caller can fall back to the Notifee full-screen-intent notification.
+        false
       }
     }
 

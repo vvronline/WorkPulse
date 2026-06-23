@@ -17,7 +17,7 @@ import { requireOptionalNativeModule } from "expo-modules-core";
  * every export below is a safe no-op there.
  */
 const CallRinger = requireOptionalNativeModule<{
-  startRinging(options: Record<string, string>): void;
+  startRinging(options: Record<string, string>): boolean;
   stopRinging(): void;
   startActiveCall?(options: Record<string, string>): void;
   stopActiveCall?(): void;
@@ -70,27 +70,42 @@ export type StartRingingOptions = {
 /**
  * Start the incoming-call ring (looping selected ringtone + vibration) via the
  * foreground service. No-op on iOS / Expo Go / non-prebuilt builds.
+ *
+ * Returns TRUE when the native foreground-service ring actually STARTED, FALSE
+ * when it could not (module unavailable, or — critically — the OS REFUSED the
+ * foreground-service start: on Android 12+ starting a phoneCall FGS from a
+ * BACKGROUNDED-but-alive process throws ForegroundServiceStartNotAllowedException).
+ * The caller (notifeeService.displayIncomingCall) uses a `false` result to FALL
+ * BACK to the Notifee full-screen-intent call notification — which needs no
+ * foreground service — so a backgrounded incoming call is never left with no
+ * surface at all (the "desktop→android call silently dropped while the phone is
+ * backgrounded" regression introduced when every non-foreground state was routed
+ * through this foreground-service ringer).
  */
-export function startRinging(options: StartRingingOptions = {}): void {
-  if (Platform.OS !== "android") return;
+export function startRinging(options: StartRingingOptions = {}): boolean {
+  if (Platform.OS !== "android" || !CallRinger) return false;
   try {
-    CallRinger?.startRinging({
-      ringtoneRes: options.ringtoneRes ?? "",
-      title: options.title ?? "Incoming call",
-      body: options.body ?? "",
-      vibrate: options.vibrate === false ? "0" : "1",
-      silent: options.silent ? "1" : "0",
-      callId: options.callId ?? "",
-      conversationId: options.conversationId ?? "",
-      callerId: options.callerId ?? "",
-      callerName: options.callerName ?? "",
-      callerAvatar: options.callerAvatar ?? "",
-      token: options.token ?? "",
-      callType: options.callType ?? "voice",
-      scheme: options.scheme ?? "workpulse",
-    });
+    return (
+      CallRinger.startRinging({
+        ringtoneRes: options.ringtoneRes ?? "",
+        title: options.title ?? "Incoming call",
+        body: options.body ?? "",
+        vibrate: options.vibrate === false ? "0" : "1",
+        silent: options.silent ? "1" : "0",
+        callId: options.callId ?? "",
+        conversationId: options.conversationId ?? "",
+        callerId: options.callerId ?? "",
+        callerName: options.callerName ?? "",
+        callerAvatar: options.callerAvatar ?? "",
+        token: options.token ?? "",
+        callType: options.callType ?? "voice",
+        scheme: options.scheme ?? "workpulse",
+      }) === true
+    );
   } catch {
-    // Best-effort; never let a native bridge error break the call flow.
+    // Best-effort; never let a native bridge error break the call flow. Report
+    // failure so the caller can fall back to the Notifee FSI notification.
+    return false;
   }
 }
 

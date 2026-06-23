@@ -531,10 +531,19 @@ class NotifeeService {
    * screen intent) AND plays the user's selected ringtone. Honours `muteAll` and
    * the "none" ringtone (silent). Persists the pending-call route first so a
    * LOCKED + KILLED cold launch routes straight to the call screen.
+   *
+   * Returns TRUE when the foreground service actually started, FALSE when the OS
+   * REFUSED the foreground-service start. On Android 12+ (API 31+) starting a
+   * phoneCall foreground service from a BACKGROUNDED-but-alive process throws
+   * ForegroundServiceStartNotAllowedException. The caller (displayIncomingCall)
+   * uses a `false` result to FALL BACK to the Notifee full-screen-intent call
+   * notification — which needs no foreground service — so a backgrounded
+   * incoming call is never left with no surface at all (the "desktop→android
+   * call silently dropped while the phone is backgrounded" regression).
    */
   private async startForegroundRinger(
     data: NonNullable<NotificationPayload["data"]>,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const title =
       data.title ||
       (data.callType === "video"
@@ -572,7 +581,7 @@ class NotifeeService {
     }
 
     try {
-      startRinging({
+      const started = startRinging({
         ringtoneRes: silentRing ? "" : callSoundResource,
         title,
         body,
@@ -586,8 +595,15 @@ class NotifeeService {
         token,
         callType: data.callType || "voice",
       });
+      if (!started) {
+        console.warn(
+          "[NotifeeService] Foreground ringer was refused (likely Android 12+ background FGS-start restriction); caller will fall back to the Notifee full-screen-intent notification.",
+        );
+      }
+      return started;
     } catch (err) {
       console.warn("[NotifeeService] Failed to start foreground ringer:", err);
+      return false;
     }
   }
 
@@ -619,11 +635,26 @@ class NotifeeService {
     // green Answer / red Decline button + full-screen intent AND plays the ring.
     // In that case Notifee must NOT post its own competing notification (the
     // old behaviour produced a button-less ongoing notification that preempted
-    // the proper one). We start the ringer here and return. Notifee is used only
-    // as the FALLBACK when the native module is unavailable (Expo Go / iOS).
+    // the proper one). We start the ringer here and return ONLY IF IT ACTUALLY
+    // STARTED. Notifee is otherwise the FALLBACK — used when the native module
+    // is unavailable (Expo Go / iOS) OR when the OS REFUSED the foreground
+    // service start.
+    //
+    // REGRESSION FIX (desktop→android calls silently dropped while the phone is
+    // backgrounded): on Android 12+ starting the phoneCall foreground service
+    // from a BACKGROUNDED-but-alive process throws
+    // ForegroundServiceStartNotAllowedException. Previously this method
+    // unconditionally `return`ed after calling the ringer, so when that start
+    // was refused the incoming call had NO surface at all — no ring, no
+    // full-screen notification — and the call was missed. Now we only short-
+    // circuit when the ringer truly started; otherwise we fall through to the
+    // Notifee full-screen-intent CallStyle notification below, which requires no
+    // foreground service and reliably surfaces the call (and rings, since the
+    // FGS is NOT owning the sound in this path — see `ringerStarted` below).
+    let ringerStarted = false;
     if (isCallRingerAvailable) {
-      await this.startForegroundRinger(data);
-      return;
+      ringerStarted = await this.startForegroundRinger(data);
+      if (ringerStarted) return;
     }
 
     if (!notifee) return;
@@ -662,27 +693,21 @@ class NotifeeService {
     const silentRing = muteAll || toneId === "none";
 
     // PHASE 3 — Signal/Teams-parity ringing via a foreground service.
-    // When the native CallRinger module is present we let the FOREGROUND SERVICE
-    // own the ring (looping selected ringtone via MediaPlayer + repeating
-    // Vibrator), which is consistent in every app state and stops instantly on
-    // answer/decline. In that case Notifee must post SILENTLY (silent channel,
-    // no sound/vibration override) so the OS notification channel doesn't ALSO
-    // ring → no double-ring. When the module is unavailable (iOS / Expo Go /
-    // non-prebuilt) we fall back to the per-tone channel ring from Phase 2b.
-    const ringerOwnsSound = isCallRingerAvailable;
-    if (ringerOwnsSound) {
-      try {
-        startRinging({
-          ringtoneRes: silentRing ? "" : callSoundResource,
-          title,
-          body,
-          vibrate: !silentRing,
-          silent: silentRing,
-        });
-      } catch {
-        // Best-effort; the Notifee notification still surfaces the call UI.
-      }
-    }
+    // When the native CallRinger module is present AND its foreground service
+    // actually STARTED (ringerStarted), the FOREGROUND SERVICE owns the ring
+    // (looping selected ringtone via MediaPlayer + repeating Vibrator) and we
+    // already returned above — so this Notifee path only runs as the FALLBACK.
+    //
+    // In this fallback the foreground-service ringer is NOT owning the sound
+    // (it was unavailable OR the OS refused the start — see `ringerStarted`),
+    // so the Notifee notification itself MUST ring via its per-tone channel /
+    // loopSound. We therefore do NOT re-invoke startRinging here (that call
+    // already happened — and failed — inside startForegroundRinger) and we let
+    // `notifeeSilent` depend ONLY on the user's mute/“none” preference. This is
+    // the second half of the regression fix: a backgrounded-but-alive incoming
+    // call that couldn't start the FGS now surfaces AND rings via Notifee's
+    // full-screen-intent notification.
+    const ringerOwnsSound = ringerStarted;
     // Effective channel/sound for the Notifee notification: silent whenever the
     // ring is muted OR the foreground-service ringer is handling the sound.
     const notifeeSilent = silentRing || ringerOwnsSound;

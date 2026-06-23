@@ -25,18 +25,24 @@ class CallRingerModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("CallRinger")
 
+    // Returns TRUE when the ring foreground service actually started, FALSE when
+    // the OS refused it (e.g. Android 12+ background FGS-start restriction) or no
+    // context is available. The JS caller (notifeeService.displayIncomingCall)
+    // uses this to FALL BACK to the Notifee full-screen-intent call notification
+    // when the service couldn't start, so a backgrounded-but-alive incoming call
+    // is never left with no surface (the "desktop→android call silently dropped
+    // while the phone is backgrounded" regression).
     Function("startRinging") { options: Map<String, Any?>? ->
-      val context = appContext.reactContext
-      if (context != null) {
-        val extras = HashMap<String, String>()
-        options?.forEach { (k, v) ->
-          if (v != null) extras[k] = v.toString()
-        }
-        try {
-          CallRingService.start(context, extras)
-        } catch (_: Throwable) {
-          // best-effort; never throw across the bridge
-        }
+      val context = appContext.reactContext ?: return@Function false
+      val extras = HashMap<String, String>()
+      options?.forEach { (k, v) ->
+        if (v != null) extras[k] = v.toString()
+      }
+      try {
+        CallRingService.start(context, extras)
+      } catch (_: Throwable) {
+        // never throw across the bridge; report failure so JS can fall back
+        false
       }
     }
 
