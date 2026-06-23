@@ -13,20 +13,23 @@ type RemoteMessage = {
   data?: Record<string, unknown>;
 };
 
-// MODULE-LEVEL "app booted" flag. This is the reliable way to distinguish
-// "backgrounded but ALIVE" from "killed/headless" — both report
-// AppState.currentState === "background", so AppState alone cannot tell them
-// apart. The React tree (RootLayout's useEffect) calls markAppBooted() exactly
-// once when the app actually boots, so:
+// MODULE-LEVEL "app booted" flag. Distinguishes "backgrounded but ALIVE" from
+// "killed/headless" — both report AppState.currentState === "background", so
+// AppState alone cannot tell them apart. The React tree (RootLayout's useEffect)
+// calls markAppBooted() exactly once when the app actually boots, so:
 //   • backgrounded-but-alive  → appBooted === true  (the runtime already ran
 //     RootLayout in this same JS context before being backgrounded)
 //   • killed / terminated     → appBooted === false (FCM spawned a FRESH
 //     headless JS runtime via mobile/index.js where RootLayout never mounts)
-// We use this to pick the incoming-call surface: a QUIET status-bar heads-up
-// notification when the app is merely backgrounded (tap to open + ring), versus
-// the full-screen ringing experience over the lock screen when the app is
-// killed (so a locked-device call is never missed). Lives at module scope so it
-// survives across the singleton and is readable from the headless task.
+//
+// NOTE: this flag is intentionally NOT used to gate the incoming-call surface
+// anymore. Both backgrounded-but-alive AND killed states now get the SAME
+// full-screen ringing incoming-call UI (Signal/Teams/WhatsApp parity — see
+// handleNotificationPayload). A prior build used this flag to downgrade
+// backgrounded calls to a quiet, non-ringing heads-up banner, which made
+// incoming calls silently missed whenever the app wasn't in the foreground.
+// The flag is kept for diagnostics / potential future use. Lives at module
+// scope so it survives across the singleton and is readable from a headless task.
 let appBooted = false;
 
 class BackgroundPushService {
@@ -206,22 +209,24 @@ class BackgroundPushService {
 
       if (!nativeCallService.isNativeAvailable() && !appIsForeground) {
         if (notifeeService.isAvailable()) {
-          // OPTION A — surface depends on whether the app is merely
-          // BACKGROUNDED-but-alive vs KILLED/headless (AppState reports
-          // "background" for BOTH, so we use the boot flag to tell them apart):
-          //   • backgrounded-but-alive (isAppBooted) → a QUIET heads-up
-          //     status-bar notification. It does NOT auto-ring and does NOT
-          //     take over the screen with the full-screen incoming-call UI;
-          //     the user taps it to open the app, where the in-app call screen
-          //     then rings + shows the accept/decline UI.
-          //   • killed / terminated (not booted) → the full-screen ringing
-          //     experience over the lock screen (startForegroundRinger +
-          //     full-screen intent), so a locked-device call is never missed.
-          if (this.isAppBooted()) {
-            await notifeeService.displayIncomingCallHeadsUp(data);
-          } else {
-            await notifeeService.displayIncomingCall(data);
-          }
+          // WHATSAPP / TEAMS / SIGNAL PARITY (regression fix):
+          // ANY non-foreground state — backgrounded-but-alive OR killed/headless,
+          // locked or unlocked — gets the SAME full-screen RINGING incoming-call
+          // UI (full-screen intent over the lock screen + startForegroundRinger
+          // looping the ringtone). The only state that suppresses the system call
+          // surface is FOREGROUND (handled above by the `!appIsForeground` gate),
+          // where the in-app IncomingCallListener owns the ring.
+          //
+          // REGRESSION HISTORY: a prior build split this by `isAppBooted()` and
+          // routed backgrounded-but-alive calls to a QUIET heads-up banner
+          // (`displayIncomingCallHeadsUp`) that did NOT ring and did NOT show the
+          // full-screen call UI. Because Android freezes the JS/WebSocket the
+          // moment the app is backgrounded, the in-app WS ring also can't fire in
+          // that state — so backgrounded incoming calls were effectively silent
+          // and routinely missed ("calls only ring when the app is open"). Always
+          // using displayIncomingCall restores real, ringing call notifications
+          // in every non-foreground state, exactly like Signal/Teams/WhatsApp.
+          await notifeeService.displayIncomingCall(data);
         } else {
           // Last-resort fallback (e.g. Expo Go) — heads-up sound notification.
           await this.presentCallNotification(payload);
