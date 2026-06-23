@@ -115,6 +115,14 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // full-screen-intent incoming-call notifications surface the call UI over
     // the lock screen without the SYSTEM_ALERT_WINDOW overlay permission.
     "./scripts/withAndroidCallActivityFlags",
+    // Enables Android Picture-in-Picture (PiP) for the call screen: declares
+    // android:supportsPictureInPicture + the screen/orientation configChanges on
+    // MainActivity, and injects onUserLeaveHint/onPictureInPictureModeChanged
+    // overrides that drive the local modules/pip native module. This makes a
+    // live call shrink into a floating window when the user leaves the app
+    // mid-call (Signal-Android parity) instead of the "Ongoing call — Return"
+    // banner. No-op on iOS (the banner remains the fallback there).
+    "./scripts/withAndroidPip",
     // Copies the bundled call ringtone WAV files (assets/sounds/*.wav, generated
     // by scripts/generate-call-sounds.cjs) into android res/raw so the Notifee
     // calls channel can ring with the WorkPulse tone instead of the system

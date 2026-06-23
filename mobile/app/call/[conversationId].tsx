@@ -83,6 +83,12 @@ import {
   startActiveCall,
   stopActiveCall,
 } from "../../modules/call-ringer";
+import {
+  isPipSupported,
+  setCallActive as setPipCallActive,
+  setAutoEnter as setPipAutoEnter,
+  addPipModeListener,
+} from "../../modules/pip";
 import { notifeeService } from "../../src/services/notifeeService";
 import { persistCallPrefs } from "../../src/services/callPrefsStore";
 import {
@@ -273,37 +279,43 @@ const PIP_BOTTOM_CLEARANCE = 120;
 const PIP_RADIUS = 18;
 
 const pipStyles = StyleSheet.create({
+  // OUTER wrapper: owns ONLY the position + stacking (zIndex/elevation). On
+  // Android an elevated view composites on its OWN hardware layer, which BREAKS
+  // `overflow:"hidden"` clipping of rounded children — so elevation MUST live
+  // here and NOT on the clipping view, otherwise the self-view renders with
+  // SQUARE corners. No borderRadius/overflow here on purpose.
   wrap: {
     position: "absolute",
     top: 0,
     left: 0,
     width: PIP_W,
     height: PIP_H,
-    borderRadius: PIP_RADIUS,
     backgroundColor: "transparent",
     // zIndex alone does NOT lift a view above a sibling on Android — elevation
     // is required, otherwise the full-screen remote video paints over the
     // self-preview once the call connects and the local tile "disappears".
     zIndex: 5,
     elevation: 8,
-    // IMPORTANT: do NOT put a borderWidth on this OUTER wrap. On Android the
-    // RTCView is backed by a SurfaceView/TextureView that paints OUTSIDE the
-    // parent's rounded-corner clip, so a square video peeked out past the
-    // rounded border (the "square corners around a rounded video" bug). The
-    // rounding + clipping + border now live on the `inner` view that DIRECTLY
-    // wraps the surface so the corners are actually clipped.
   },
+  // CLIPPING view: a PLAIN, NON-elevated view that actually rounds + clips the
+  // RTCView surface. Keeping elevation OFF this view is what lets
+  // `overflow:"hidden"` mask the rounded corners on Android.
   inner: {
     width: "100%",
     height: "100%",
-    // Clip the RTCView surface to rounded corners HERE — on the view that
-    // directly contains it — so Android actually rounds the video instead of
-    // leaving a square surface inside a rounded frame.
     borderRadius: PIP_RADIUS,
     overflow: "hidden",
     backgroundColor: "#000",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.3)",
+  },
+  // The RTCView style. We ALSO round the surface itself (not just the parent)
+  // because react-native-webrtc's native video surface does not reliably clip
+  // to a parent's borderRadius on its own — applying the radius here is the
+  // reliable Android fix for the square-corner self-view.
+  surface: {
+    flex: 1,
+    borderRadius: PIP_RADIUS,
   },
 });
 
@@ -356,7 +368,16 @@ const DraggablePipSelfView = memo(function DraggablePipSelfView(props: {
   return (
     <GestureDetector gesture={pan}>
       <Animated.View style={[pipStyles.wrap, animatedStyle]}>
-        <PipSelfView url={props.url} mirror={props.mirror} style={pipStyles.inner} />
+        {/* PLAIN, non-elevated clipping view rounds + masks the RTCView surface;
+            the RTCView itself also carries the radius (pipStyles.surface) since
+            the native video surface doesn't reliably clip to a parent alone. */}
+        <View style={pipStyles.inner}>
+          <PipSelfView
+            url={props.url}
+            mirror={props.mirror}
+            style={pipStyles.surface}
+          />
+        </View>
       </Animated.View>
     </GestureDetector>
   );
@@ -507,6 +528,10 @@ export default function CallScreen() {
   const [notificationPrefs, setNotificationPrefs] = useState(
     DEFAULT_NOTIFICATION_PREFS,
   );
+  // Picture-in-Picture (Android). True while the call window is shrunk into the
+  // OS PiP tile (user left the app mid-call). Drives the collapsed layout below
+  // (remote video / avatar only, no controls) — Signal-Android parity.
+  const [isInPip, setIsInPip] = useState(false);
   const ringPlayer = useAudioPlayer();
   const ringStatus = useAudioPlayerStatus(ringPlayer);
   const ringToneKeyRef = useRef<string | null>(null);
@@ -2809,6 +2834,48 @@ export default function CallScreen() {
     };
   }, []);
 
+  // ── Picture-in-Picture (Signal-Android parity) ──────────────────────────────
+  // Subscribe to OS PiP-mode changes for the whole call lifetime so the layout
+  // collapses to video/avatar-only when shrunk and restores when expanded.
+  // No-op on iOS / Expo Go / non-prebuilt builds.
+  useEffect(() => {
+    const off = addPipModeListener((inPip) => {
+      setIsInPip(inPip);
+      // Leaving PiP (user tapped the tile to expand) should close any open
+      // sheets so they don't pop up over the restored full-screen call UI.
+      if (!inPip) {
+        setShowMore(false);
+        setShowReactionPicker(false);
+      }
+    });
+    return off;
+  }, []);
+
+  // Arm/disarm native PiP based on call phase. While the call is live
+  // (connecting/connected — BOTH video AND voice) we mark the call active so the
+  // injected onUserLeaveHint enters PiP on API 26–30, AND enable seamless
+  // auto-enter on API 31+. The aspect ratio is 9:16 for video (matches a phone
+  // camera frame) and 1:1 for voice (a compact square tile for the avatar). The
+  // flag is cleared the moment the call is no longer live (and on unmount below)
+  // so leaving the app afterwards behaves normally — no stray PiP.
+  useEffect(() => {
+    if (!isPipSupported()) return;
+    const live = status === "connecting" || status === "connected";
+    const aspectW = callType === "video" ? 9 : 1;
+    const aspectH = callType === "video" ? 16 : 1;
+    setPipCallActive(live);
+    setPipAutoEnter(live, aspectW, aspectH);
+  }, [status, callType]);
+
+  // Clear the PiP active flag + auto-enter on unmount so a leave-app after the
+  // call screen is gone never shrinks an unrelated screen into PiP.
+  useEffect(() => {
+    return () => {
+      setPipCallActive(false);
+      setPipAutoEnter(false);
+    };
+  }, []);
+
   // ── Connection-quality monitor via getStats() (mirrors web NetworkStats) ───
   useEffect(() => {
     if (status !== "connected") {
@@ -3371,7 +3438,7 @@ export default function CallScreen() {
           incoming video call is still ringing the self-view is rendered
           FULL-SCREEN above instead, then seamlessly remaps into this PiP the
           moment the call is answered (same stream object, no re-acquire). */}
-      {showPipSelfPreview && localURL ? (
+      {!isInPip && showPipSelfPreview && localURL ? (
         <DraggablePipSelfView
           url={localURL}
           mirror={usingFrontCamera}
@@ -3380,9 +3447,33 @@ export default function CallScreen() {
         />
       ) : null}
 
+      {/* ── Picture-in-Picture compact overlay ──────────────────────────────
+          While the call window is shrunk into the OS PiP tile we hide ALL
+          controls/badges/headers below (Signal-Android parity) and show only:
+            • video call → the remote video full-bleed (already rendered above)
+            • voice call → a compact centered avatar + name (the main stage
+              already renders the avatar; we add the name + timer label here so
+              the tiny window still identifies who you're talking to).
+          Everything else is gated on `!isInPip` so the floating window stays
+          clean. */}
+      {isInPip && !showRemoteVideo ? (
+        <View style={styles.pipVoiceOverlay} pointerEvents="none">
+          <Text style={styles.pipVoiceName} numberOfLines={1}>
+            {peerName}
+          </Text>
+          {status === "connected" ? (
+            <CallDuration active style={styles.pipVoiceStatus} />
+          ) : (
+            <Text style={styles.pipVoiceStatus} numberOfLines={1}>
+              {statusLabel}
+            </Text>
+          )}
+        </View>
+      ) : null}
+
       {/* Top status bar — connection quality + peer-mute, once connected
           (mirrors the web CallOverlay top bar). */}
-      {status === "connected" ? (
+      {!isInPip && status === "connected" ? (
         <View style={[styles.topBar, { top: insets.top + 8 }]}>
           <View style={styles.qualityBadge}>
             <Signal size={13} color={qualityColor} />
@@ -3727,6 +3818,19 @@ const makeStyles = (theme: Theme) =>
   },
   peerName: { color: "#fff", fontSize: 24, fontWeight: "700" },
   status: { color: "rgba(255,255,255,0.7)", fontSize: 15 },
+  /* ─── Picture-in-Picture compact voice overlay ─── */
+  pipVoiceOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "flex-end",
+    paddingBottom: 10,
+  },
+  pipVoiceName: { color: "#fff", fontSize: 13, fontWeight: "700" },
+  pipVoiceStatus: { color: "rgba(255,255,255,0.7)", fontSize: 11 },
   topBar: {
     position: "absolute",
     top: 44, // overridden inline with insets.top + 8
