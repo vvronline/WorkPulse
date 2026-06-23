@@ -50,9 +50,41 @@ export function biometricPlatform(): BiometricPlatform {
 export async function getBiometricCapability(): Promise<BiometricCapability> {
   try {
     const hasHardware = await LocalAuthentication.hasHardwareAsync();
-    if (!hasHardware) return { available: false, label: "Biometric Login", kind: "biometric" };
+
+    // `isEnrolledAsync()` only reports TRUE for a *strong* (Class 3) biometric
+    // on Android. Many tablets (e.g. OnePlus Pad Go / Oppo Pad) expose only a
+    // *weak* (Class 2) camera-based Face Unlock and have no fingerprint sensor,
+    // so `isEnrolledAsync()` returns FALSE there even though the user HAS set
+    // up face unlock — which used to hide the login button + profile toggle.
+    //
+    // We additionally consult `getEnrolledLevelAsync()` and treat ANY enrolled
+    // biometric level (weak OR strong) as usable. Only `NONE` means no
+    // biometric is enrolled at all.
     const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-    if (!isEnrolled) return { available: false, label: "Biometric Login", kind: "biometric" };
+    let enrolledLevel: LocalAuthentication.SecurityLevel | null = null;
+    try {
+      enrolledLevel = await LocalAuthentication.getEnrolledLevelAsync();
+    } catch {
+      enrolledLevel = null;
+    }
+    const hasWeakOrStrong =
+      enrolledLevel === LocalAuthentication.SecurityLevel.BIOMETRIC_WEAK ||
+      enrolledLevel === LocalAuthentication.SecurityLevel.BIOMETRIC_STRONG;
+
+    if (__DEV__) {
+      console.log("[biometric] capability probe", {
+        platform: Platform.OS,
+        hasHardware,
+        isEnrolled,
+        enrolledLevel,
+        hasWeakOrStrong,
+      });
+    }
+
+    if (!hasHardware) return { available: false, label: "Biometric Login", kind: "biometric" };
+    if (!isEnrolled && !hasWeakOrStrong) {
+      return { available: false, label: "Biometric Login", kind: "biometric" };
+    }
 
     const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
     const hasFace = types.includes(

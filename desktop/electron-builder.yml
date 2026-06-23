@@ -12,6 +12,7 @@ files:
   - tray.js
   - updater.js
   - callPipWindow.js
+  - biometric.js
   - icons/**/*
   - package.json
   - google-api-key.txt
