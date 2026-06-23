@@ -332,6 +332,71 @@ Files: `docs/CALL_AUDIT.md`, `docs/CALL_RELIABILITY_PLAN.md`
 
 ---
 
+## ✅ P4 — Stability follow-up (Signal-Android parity hardening)
+
+Field report after the P0→P3 rollout: incoming calls now arrive, but (1) when
+the app is backgrounded-but-alive only the SOUND played with no actionable
+status-bar notification (user had to open the app), (2) calls "sometimes don't
+connect", and (3) calls "sometimes don't come at all". Fixes:
+
+### P4.17 — Background incoming-call surface = full-screen-intent ONLY (Signal model)
+File: `mobile/src/realtime/IncomingCallListener.tsx`
+- ROOT CAUSE: on a `call_incoming` WS frame the listener UNCONDITIONALLY
+  `router.push`ed the call screen. When the app was backgrounded/locked the
+  screen mounted INVISIBLY in the background — its in-app ringtone played (the
+  "sound") but the FCM→Notifee/native-CallRinger full-screen-intent CallStyle
+  notification was bypassed, so there was no actionable status-bar/lock-screen
+  surface (the "sound but no notification, must open the app" bug).
+- FIX (Signal-Android model): only auto-navigate when
+  `AppState.currentState === "active"`. When NOT active we do nothing (no
+  navigate, no nav-claim) and let the full-screen-intent CallStyle notification
+  own the surface — its Answer / body-tap deep link opens the same call screen on
+  demand. We also `warmIceConfig()` on the background path so Cloudflare TURN
+  creds are ready before the user answers.
+
+### P4.18 — Deterministic first-connection with Cloudflare TURN
+Files: `mobile/app/call/[conversationId].tsx`, `client/src/components/chat/call/useWebRTC.ts`
+- Tightened the P1.8 first-negotiation real-TURN gate from ~6s → ~1.5s on BOTH
+  clients. Cloudflare creds are minted+cached server-side and warmed at app
+  start / foreground / on `call_incoming`, so the 6s wait was almost always
+  wasted and ate into the ring/connect budget — a primary "call sometimes
+  doesn't connect" cause. If real TURN still isn't here in 1.5s we proceed and
+  let the recovery ladder handle a relay-required network.
+
+### P4.19 — Signal-style RELAY-FIRST fast retry (mobile)
+File: `mobile/app/call/[conversationId].tsx`
+- ROOT CAUSE: ICE can sit in "checking" for many seconds on a relay-required
+  network WITHOUT ever reaching "failed", so the failed-state recovery ladder
+  never fires and the call hangs on "Connecting…" until the 30s timeout.
+- FIX: armed once per call in `createPC` (only on the initial, non-relay PC) —
+  if not `connected` within ~5s, rebuild TURN-only (`iceTransportPolicy:"relay"`)
+  against the provisioned Cloudflare TURN immediately. Caller/reconnecter
+  re-offers; callee asks the caller to re-offer via `call_reconnect` (its
+  `relayOnlyRef` is set so the rebuilt PC negotiates over TURN). Cleared on
+  connect and unmount.
+
+### P4.20 — Never downgrade a good FCM token to the Expo fallback
+File: `mobile/src/services/pushNotificationService.ts`
+- ROOT CAUSE: `refreshAndRegisterDeviceToken` (run on every foreground + WS
+  reconnect) re-acquired the device token; on a transient FCM SDK hiccup it could
+  obtain the EXPO fallback token and register THAT with the backend. The server
+  pushes via Firebase Admin, which only accepts a genuine FCM token — so a
+  downgrade silently killed call/message delivery until the next good refresh
+  (the "calls sometimes don't come at all" bug).
+- FIX: track `deviceTokenSource` ("fcm" | "expo"). When we already hold a valid
+  FCM token but a refresh yields only the Expo fallback, KEEP the FCM token and
+  bail (a later foreground/reconnect retries). Tombstone suppression
+  (`wasCallCancelled`) was audited and is already safe — keyed by exact
+  callId+conversationId with a 30s self-expiry, so a stray "ended/handled" push
+  can never suppress a fresh incoming call (different callId).
+
+### P4 verification
+- `cd mobile && npx tsc --noEmit` → clean; `cd client && npx tsc --noEmit` → clean.
+- Mobile `callStateMachine` + `nativeCallService` suites: 34/34 pass.
+- Web `callSignaling` (vitest): 2/2 pass.
+
+---
+
 ## Handoff protocol
 1. Ensure current file edits compile (`tsc` clean) — never stop mid-edit.
 2. Update this tracker's checkboxes + RESUME pointer.

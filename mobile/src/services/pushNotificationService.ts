@@ -51,6 +51,12 @@ export function buildNotificationPayload(
 class PushNotificationService {
   private initialized = false;
   private deviceToken: string | null = null;
+  // RELIABILITY — provenance of the current `deviceToken`: "fcm" = a genuine
+  // FCM registration token (what the server's Firebase Admin push path needs),
+  // "expo" = the Expo device-token fallback (NOT pushable via Firebase Admin).
+  // Used by refreshAndRegisterDeviceToken to refuse downgrading a good FCM
+  // token to the Expo fallback on a transient FCM SDK hiccup.
+  private deviceTokenSource: "fcm" | "expo" | null = null;
   private lastRegisteredAuthToken: string | null = null;
   private listeners: ((notification: Notifications.Notification) => void)[] = [];
   private pendingNotifications: Notifications.Notification[] = [];
@@ -202,7 +208,17 @@ class PushNotificationService {
         }
         if (typeof instance.getToken === "function") {
           const token = await instance.getToken();
-          if (token) return token;
+          if (token) {
+            // RELIABILITY — record that this token came from the REAL FCM SDK.
+            // The server's Firebase Admin push path requires a genuine FCM
+            // registration token; the Expo fallback below is NOT a valid FCM
+            // token for that path. Tracking the source lets the refresh path
+            // refuse to DOWNGRADE a good FCM token to the Expo fallback on a
+            // transient FCM hiccup (which would silently break call/message
+            // pushes — "calls sometimes don't come at all").
+            this.deviceTokenSource = "fcm";
+            return token;
+          }
         }
       } catch (err) {
         console.warn("Failed to get native Firebase Messaging token; falling back to Expo token:", err);
@@ -212,6 +228,7 @@ class PushNotificationService {
     try {
       const devicePushToken = await Notifications.getDevicePushTokenAsync();
       console.log("Expo device push token type:", devicePushToken.type);
+      this.deviceTokenSource = "expo";
       return devicePushToken.data;
     } catch (err) {
       console.error("Failed to get Expo device push token:", err);
@@ -379,6 +396,12 @@ class PushNotificationService {
       return;
     }
 
+    // Snapshot the source of whatever token we currently hold BEFORE re-acquiring
+    // (getDeviceTokenForFirebaseAdmin overwrites deviceTokenSource as a side
+    // effect of acquisition).
+    const hadFcmToken =
+      this.deviceTokenSource === "fcm" && !!this.deviceToken;
+
     let freshToken: string | null = null;
     try {
       freshToken = await this.getDeviceTokenForFirebaseAdmin();
@@ -387,6 +410,22 @@ class PushNotificationService {
       return;
     }
     if (!freshToken) return;
+
+    // RELIABILITY — NEVER DOWNGRADE a working FCM token to the Expo fallback.
+    // The server pushes via Firebase Admin, which only accepts a genuine FCM
+    // registration token. If we previously had an FCM token but this refresh
+    // could only obtain the Expo fallback (a transient FCM SDK hiccup — common
+    // right after foreground/reconnect before Google Play services is ready),
+    // overwriting would register a token the server CANNOT push to, silently
+    // killing call/message delivery until the next successful refresh. Keep the
+    // good FCM token and bail; a later foreground/reconnect retries.
+    if (hadFcmToken && this.deviceTokenSource === "expo") {
+      console.warn(
+        "[PushNotificationService] token refresh got Expo fallback while a valid FCM token is held — keeping the FCM token (no downgrade)",
+      );
+      this.deviceTokenSource = "fcm";
+      return;
+    }
 
     const rotated = freshToken !== this.deviceToken;
     this.deviceToken = freshToken;

@@ -1,10 +1,12 @@
 import { useEffect, useRef } from "react";
+import { AppState } from "react-native";
 import { useRouter, usePathname } from "expo-router";
 import { socket } from "./socket";
 import { useAuth } from "../auth/AuthContext";
 import { beginCallNavigation, endCallNavigation } from "./callRouting";
 import { clearPersistedPendingCall } from "./pendingCall";
 import { notifeeService } from "../services/notifeeService";
+import { warmIceConfig } from "../features";
 
 /**
  * App-wide listener for inbound calls. When a `call_incoming` frame arrives it
@@ -26,6 +28,26 @@ export default function IncomingCallListener() {
         // Avoid double-navigating if we're already showing this call.
         if (ringingRef.current === d.callId) return;
         if (pathname?.startsWith("/call/")) return;
+
+        // SIGNAL-ANDROID MODEL — the full-screen-intent CallStyle notification
+        // is the SINGLE authoritative incoming-call surface whenever the app is
+        // NOT visibly foregrounded. If we ALSO `router.push` the call screen
+        // here while the app is backgrounded/locked, the screen mounts
+        // INVISIBLY in the background: its in-app ringtone plays (the "sound")
+        // but the user sees NO actionable status-bar/lock-screen notification
+        // and has to open the app to find the call — the exact "sound but no
+        // notification" bug. So when the app is not active we do NOTHING here
+        // (no navigate, no nav-claim) and let the FCM→Notifee/native CallRinger
+        // full-screen-intent CallStyle notification own the surface. Its Answer
+        // / body-tap deep link opens this same call screen on demand. We also
+        // warm the ICE config so Cloudflare TURN creds are ready BEFORE the user
+        // answers (deterministic first-connection).
+        const appActive = AppState.currentState === "active";
+        if (!appActive) {
+          void warmIceConfig();
+          return;
+        }
+
         // Cross-path guard: the same call may also be surfaced via the push
         // notification path (PushNotificationListener / Notifee tap). Claim
         // navigation so only ONE path pushes the /call screen — a double push

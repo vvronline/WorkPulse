@@ -252,7 +252,15 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         // since the initial config may have resolved to the public fallback
         // before the managed creds were ready.
         if (!firstNegotiationStartedRef.current && !iceHasRealTurnRef.current) {
-            const REAL_TURN_DEADLINE_MS = Math.max(timeoutMs, 6000);
+            // P-RELIABILITY — Cloudflare TURN creds are minted+cached server-side
+            // and warmed at app start, so the genuine TURN config is almost
+            // always already available by the time we negotiate. Cap the
+            // first-negotiation real-TURN wait TIGHT (~1.5s, down from 6s) so we
+            // never eat into the connect budget waiting for creds that are
+            // usually already here — the long wait was a primary "call sometimes
+            // doesn't connect" cause. If real TURN still hasn't landed we proceed
+            // with what we have; the recovery ladder rebuilds relay-only on stall.
+            const REAL_TURN_DEADLINE_MS = Math.max(timeoutMs, 1500);
             let refetched = false;
             while (!iceHasRealTurnRef.current && (Date.now() - start) < REAL_TURN_DEADLINE_MS) {
                 if (!refetched) {

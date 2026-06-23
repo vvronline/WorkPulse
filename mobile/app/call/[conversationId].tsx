@@ -606,6 +606,17 @@ export default function CallScreen() {
     null,
   );
   const videoStateRequestedRef = useRef(false);
+  // P-RELIABILITY — Signal-style RELAY-FIRST fast retry. ICE can sit in
+  // "checking" for a long time on a relay-required network WITHOUT ever
+  // transitioning to "failed" (so the failed-state recovery ladder never
+  // fires) — the call just hangs on "Connecting…". Signal bounds this: if the
+  // very first negotiation hasn't reached "connected" within a few seconds, it
+  // rebuilds the PeerConnection TURN-only (iceTransportPolicy:"relay") against
+  // the provisioned Cloudflare TURN so the relay path is tried promptly instead
+  // of waiting out a long host/srflx candidate-gathering stall. Armed once per
+  // call when the first PC is created; cleared on connect and teardown.
+  const relayFastRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const relayFastRetryUsedRef = useRef(false);
   // P0.7 — Reliable local-ICE transport. Bare `socket.send` silently drops a
   // candidate whenever the WS is momentarily not OPEN (foreground reconnect,
   // brief mobile/VPN blip). A dropped local ICE candidate can be the ONE
@@ -1209,8 +1220,17 @@ export default function CallScreen() {
       !iceHasRealTurnRef.current &&
       timeoutMs == null
     ) {
-      // Allow up to ~6s total (from the start of this wait) for genuine TURN.
-      const REAL_TURN_DEADLINE_MS = 6000;
+      // P-RELIABILITY — Cloudflare TURN creds are minted+cached server-side
+      // (warmIceConfig at app start + on app-foreground + on call_incoming), so
+      // the genuine TURN config is almost always already warm by the time we
+      // negotiate. We therefore cap the first-negotiation real-TURN wait at a
+      // TIGHT ~1.5s (down from 6s) so we NEVER eat into the ring/connect budget
+      // waiting for creds that are usually already here — the long 6s wait was a
+      // primary cause of "sometimes the call doesn't connect". If real TURN
+      // still hasn't landed we proceed with whatever we have; the relay-first
+      // fast-retry ladder (below) then rebuilds TURN-only the instant ICE
+      // stalls, so a relay-required network still connects promptly.
+      const REAL_TURN_DEADLINE_MS = 1500;
       while (Date.now() - start < REAL_TURN_DEADLINE_MS) {
         const cached = getCachedIceConfig();
         if (cached?.iceServers?.length && hasRealTurn(cached)) {
@@ -1350,6 +1370,80 @@ export default function CallScreen() {
         }
       }, 30000);
 
+      // P-RELIABILITY — Signal-style RELAY-FIRST fast retry. ICE can sit in
+      // "checking" for many seconds on a relay-required network WITHOUT ever
+      // reaching "failed" (so the failed-state recovery ladder never fires) —
+      // the call just hangs on "Connecting…" until the 30s timeout gives up.
+      // Bound that: if this FIRST connection hasn't reached "connected" within
+      // ~5s and we are NOT already relay-only, rebuild TURN-only against the
+      // provisioned Cloudflare TURN so the relay path is tried promptly. Armed
+      // once per call (relayFastRetryUsedRef), and only on the initial PC (not
+      // the relay-only rebuild itself, which sets relayOnlyRef first).
+      if (!relayOnlyRef.current && !relayFastRetryUsedRef.current) {
+        if (relayFastRetryRef.current) clearTimeout(relayFastRetryRef.current);
+        relayFastRetryRef.current = setTimeout(() => {
+          relayFastRetryRef.current = null;
+          if (pcRef.current !== pc) return;
+          if ((pc as any).connectionState === "connected") return;
+          if (relayOnlyRef.current || relayFastRetryUsedRef.current) return;
+          relayFastRetryUsedRef.current = true;
+          relayOnlyRef.current = true;
+          iceRestartAttemptedRef.current = false;
+          const localStr = localStreamRef.current;
+          if (mode === "outgoing" || isReconnect) {
+            // Caller/reconnecter OWNS the offer → tear down + rebuild relay-only
+            // and re-offer immediately (same as the failed-state escalation).
+            dispatchCall({ type: "PC_RECONNECTING" });
+            try {
+              pc.close();
+            } catch {
+              /* ignore */
+            }
+            pcRef.current = null;
+            (async () => {
+              try {
+                const builder = createPCRef.current;
+                if (!builder || !localStr) return;
+                const newPc = builder(localStr, targetUserId, true);
+                applySenderEncodingLimits(newPc);
+                const offer = await newPc.createOffer({
+                  offerToReceiveAudio: true,
+                  offerToReceiveVideo: callType === "video",
+                });
+                await newPc.setLocalDescription(offer);
+                socket.send("call_signal", {
+                  conversationId,
+                  callId: callIdRef.current,
+                  targetUserId,
+                  signal: { type: "offer", sdp: offer.sdp },
+                });
+              } catch {
+                /* the 30s connect timeout still owns the hard deadline */
+              }
+            })();
+          } else {
+            // Callee waits for the offer → ask the caller to re-offer via
+            // `call_reconnect`. relayOnlyRef is now set, so when their fresh
+            // offer arrives the call_signal(offer) handler builds our PC
+            // relay-only too and both sides negotiate over Cloudflare TURN.
+            const callId = callIdRef.current;
+            if (callId && Number.isFinite(conversationId)) {
+              void socket.sendWithBackoff(
+                "call_reconnect",
+                { callId, conversationId },
+                {
+                  timeoutMs: 4000,
+                  maxAttempts: 5,
+                  initialBackoffMs: 120,
+                  maxBackoffMs: 800,
+                  ensureConnected: true,
+                },
+              );
+            }
+          }
+        }, 5000);
+      }
+
       (pc as any).onicecandidate = (e: any) => {
         if (e.candidate) {
           // P0.7 — enqueue for reliable, ordered delivery (retries over a
@@ -1440,6 +1534,12 @@ export default function CallScreen() {
           if (disconnectTimerRef.current) {
             clearTimeout(disconnectTimerRef.current);
             disconnectTimerRef.current = null;
+          }
+          // P-RELIABILITY — connected: cancel the relay-first fast retry so it
+          // can't tear down a freshly-connected PC.
+          if (relayFastRetryRef.current) {
+            clearTimeout(relayFastRetryRef.current);
+            relayFastRetryRef.current = null;
           }
           dispatchCall({ type: "PC_CONNECTED" });
           // Ramp the video bitrate up now that the link is established
@@ -1679,6 +1779,11 @@ export default function CallScreen() {
       if (acceptReofferTimeoutRef.current) {
         clearTimeout(acceptReofferTimeoutRef.current);
         acceptReofferTimeoutRef.current = null;
+      }
+      // P-RELIABILITY — stop the relay-first fast-retry timer on unmount.
+      if (relayFastRetryRef.current) {
+        clearTimeout(relayFastRetryRef.current);
+        relayFastRetryRef.current = null;
       }
       // P1.10 — stop the black-video watchdog so it can't fire post-unmount.
       if (remoteVideoWatchdogRef.current) {
