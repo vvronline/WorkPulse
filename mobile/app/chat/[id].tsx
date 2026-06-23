@@ -256,32 +256,41 @@ function ChatList({
   return (
     <FlatList
       ref={c.listRef as React.RefObject<FlatList<ChatMessage>>}
-      data={c.messages}
+      // INVERTED list (Signal-Android model). The data is newest-first
+      // (`messagesReversed`) and `inverted` flips the visual axis so index 0
+      // sits at the visual BOTTOM. This pins the newest message to the bottom
+      // STRUCTURALLY — opening/closing the keyboard or sending a message can
+      // never push it under the composer, and no scroll math is needed to stick
+      // to the bottom (fixes "last message hides during typing / I have to
+      // scroll down to see my sent message").
+      inverted
+      data={c.messagesReversed}
       extraData={c.listSignature}
       keyExtractor={(m) => String(m.id)}
       // `flex: 1` is load-bearing: without it the FlatList doesn't claim the
-      // available column height, so the last messages render under the composer
-      // and scrollToEnd lands short of the true bottom.
+      // available column height.
       style={styles.listFlex}
       contentContainerStyle={styles.list}
-      onContentSizeChange={() => {
-        // Don't yank to the bottom while older history is being
-        // prepended above the viewport.
-        if (!c.prependingRef.current) c.scrollToEnd(false);
-      }}
       onScrollToIndexFailed={() => {
         setTimeout(() => c.scrollToEnd(false), 200);
       }}
-      // Keep the visible messages anchored when older pages are
-      // prepended (supported on RN ≥0.72 for both platforms).
-      maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+      // Older history lives at the visual TOP — which in an inverted list is the
+      // END of the scroll range — so `onEndReached` is the "scrolled up to the
+      // top" trigger. Load the previous page there (replaces the old header
+      // button + onContentSizeChange stick-to-bottom hack).
+      onEndReached={() => {
+        if (!c.prependingRef.current) c.loadOlder();
+      }}
+      onEndReachedThreshold={0.4}
       // Android clips off-screen subviews by default; when a reaction is
       // toggled the bubble's height GROWS (a new chip row appears). With
       // clipping on, the freshly-grown region wasn't repainted until the
       // row scrolled — making the reaction look delayed. Disabling it
       // forces the chip to paint instantly (matches the web).
       removeClippedSubviews={false}
-      ListHeaderComponent={
+      // In an inverted list the FOOTER renders at the visual TOP, so the
+      // "load earlier" spinner/button belongs here (not the header).
+      ListFooterComponent={
         c.hasMore ? (
           <Pressable
             style={styles.loadOlderBtn}
@@ -303,8 +312,12 @@ function ChatList({
         // Consecutive-message grouping (same sender within 5 min) — see
         // docs/CHAT_DESIGN_SPEC.md §4. firstInGroup drives the sender name,
         // lastInGroup drives the bubble tail.
-        const prev = c.messages[index - 1];
-        const next = c.messages[index + 1];
+        //
+        // INVERTED-LIST INDEXING: the data is newest-first, so the visually
+        // PREVIOUS (older, ABOVE) message is at index+1 and the visually NEXT
+        // (newer, BELOW) message is at index-1 — the opposite of a normal list.
+        const prev = c.messagesReversed[index + 1]; // older, above
+        const next = c.messagesReversed[index - 1]; // newer, below
         const within = (a?: ChatMessage, b?: ChatMessage) =>
           !!a &&
           !!b &&
@@ -356,12 +369,13 @@ const makeStyles = (theme: Theme) =>
       fontFamily: theme.fontRegular,
     },
     listFlex: { flex: 1 },
-    // Signal-style message list padding — tighter horizontal gutters, more
-    // bottom breathing room so the newest bubble always clears the composer
-    // (and the typing indicator, when shown) with a consistent gap. The larger
-    // paddingBottom keeps the last bubble from sitting flush against the
-    // composer / typing-indicator row.
-    list: { paddingHorizontal: 10, paddingTop: 8, paddingBottom: 24 },
+    // Signal-style message list padding. NOTE: the list is INVERTED (rotated
+    // 180°), so contentContainerStyle padding is applied in the flipped space —
+    // `paddingTop` here appears at the VISUAL BOTTOM (above the composer) and
+    // `paddingBottom` appears at the VISUAL TOP. We therefore put the larger
+    // breathing-room gap on `paddingTop` so the newest bubble always clears the
+    // composer / typing indicator with a consistent gap.
+    list: { paddingHorizontal: 10, paddingTop: 24, paddingBottom: 8 },
     loadOlderBtn: {
       alignSelf: "center",
       paddingHorizontal: 16,

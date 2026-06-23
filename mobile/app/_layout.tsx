@@ -192,6 +192,12 @@ export default function RootLayout() {
     // registered at the JS entry top-level (see `mobile/index.js`) so it also
     // runs when the app is killed.
     nativeCallService.initialize();
+    // Mark the app as fully BOOTED in THIS JS runtime. The background push
+    // handler uses this to distinguish a backgrounded-but-alive app (quiet
+    // heads-up incoming-call notification) from a killed/headless FCM task
+    // (full-screen ringing over the lock screen) — AppState reports
+    // "background" for both, so the boot flag is the only reliable signal.
+    backgroundPushService.markAppBooted();
     // Belt-and-suspenders: also register the FCM handler here (idempotent) so
     // warm foreground/background-but-alive launches are covered even if the
     // custom entry point is ever bypassed. The killed/headless state is still

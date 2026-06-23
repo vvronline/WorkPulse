@@ -823,6 +823,117 @@ class NotifeeService {
   }
 
   /**
+   * OPTION A — QUIET background heads-up incoming-call notification.
+   *
+   * Used when the app is merely BACKGROUNDED-but-alive (not killed). Unlike
+   * displayIncomingCall, this:
+   *   • does NOT start the foreground-service ringer (no looping ringtone),
+   *   • does NOT attach a fullScreenAction (no lock-screen takeover),
+   *   • is NOT ongoing/looping — it is a normal, dismissible heads-up banner.
+   * Tapping the body (or "Answer") deep-links into the app's call screen, where
+   * the in-app ring + accept/decline UI takes over. This implements the
+   * requested behaviour: when the app is in the background, only show a
+   * status-bar notification; the actual ringing + incoming-call UI appears when
+   * the user opens the app. The full-screen ringing path (displayIncomingCall)
+   * is still used for the killed/locked state so those calls are not missed.
+   */
+  async displayIncomingCallHeadsUp(
+    data: NotificationPayload["data"],
+  ): Promise<void> {
+    if (!data?.callId || !data?.conversationId) return;
+
+    // Same cancelled-call guard as displayIncomingCall: suppress a banner for a
+    // call that was already cancelled/ended (out-of-order push race).
+    if (wasCallCancelled(data.callId, data.conversationId)) {
+      try {
+        stopRinging();
+      } catch {
+        /* best-effort */
+      }
+      return;
+    }
+
+    const notifee = this.resolve();
+    if (!notifee) return;
+
+    await this.ensureChannels();
+
+    const title =
+      data.title ||
+      (data.callType === "video"
+        ? "Incoming Video Call"
+        : "Incoming Voice Call");
+    const body = data.body || `${data.callerName || "Someone"} is calling...`;
+    const id = callNotificationId(data.callId, data.conversationId);
+
+    // Honour muteAll so a backgrounded heads-up never rings when the user has
+    // muted everything; otherwise use the user's SELECTED ringtone channel so
+    // the single heads-up alert tone matches their choice. We do NOT loop the
+    // sound — this is a one-shot heads-up, not a continuous ring.
+    const { muteAll, ringtone } = await loadCallPrefs();
+    const toneId = ringtone || "classic";
+    const isKnownTone = (RINGTONE_IDS as readonly string[]).includes(toneId);
+    const silent = muteAll || toneId === "none";
+    const channelId = silent
+      ? CALL_SILENT_CHANNEL_ID
+      : isKnownTone
+        ? callChannelIdForTone(toneId)
+        : CALL_CHANNEL_ID;
+    const soundResource = isKnownTone
+      ? ringtoneResourceForTone(toneId)
+      : CALL_RINGTONE_RESOURCE;
+
+    // Persist the pending-call route so tapping the notification (or its
+    // Answer action) opens straight into the call screen even after a process
+    // swap. PendingCallNavigator / the call screen consume it.
+    const route = pendingCallFromData(data);
+    if (route) await persistPendingCall(route);
+
+    try {
+      await notifee.displayNotification({
+        id,
+        title,
+        body,
+        data: { ...data } as Record<string, string>,
+        android: {
+          channelId,
+          category: this.AndroidCategory.CALL ?? "call",
+          importance: this.AndroidImportance.HIGH ?? 4,
+          visibility: this.AndroidVisibility.PUBLIC ?? 1,
+          // NO fullScreenAction → the call screen does NOT auto-launch over the
+          // lock screen. Tapping the body opens the app on demand.
+          pressAction: {
+            id: "default",
+            launchActivity: "default",
+          },
+          // A normal, dismissible heads-up — NOT ongoing, NOT looping.
+          ongoing: false,
+          autoCancel: true,
+          loopSound: false,
+          // One-shot alert tone (unless muted). No vibration loop.
+          ...(silent ? {} : { sound: soundResource }),
+          actions: [
+            {
+              title: "Answer",
+              pressAction: { id: "answer", launchActivity: "default" },
+            },
+            {
+              title: "Decline",
+              pressAction: { id: "decline" },
+            },
+          ],
+          timeoutAfter: 45000,
+        },
+      });
+    } catch (err) {
+      console.warn(
+        "[NotifeeService] Failed to display heads-up incoming call:",
+        err,
+      );
+    }
+  }
+
+  /**
    * Displays a standard status-bar message notification. Reliable in
    * background/terminated state, unlike expo-notifications from a headless task.
    *

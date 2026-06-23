@@ -13,10 +13,40 @@ type RemoteMessage = {
   data?: Record<string, unknown>;
 };
 
+// MODULE-LEVEL "app booted" flag. This is the reliable way to distinguish
+// "backgrounded but ALIVE" from "killed/headless" — both report
+// AppState.currentState === "background", so AppState alone cannot tell them
+// apart. The React tree (RootLayout's useEffect) calls markAppBooted() exactly
+// once when the app actually boots, so:
+//   • backgrounded-but-alive  → appBooted === true  (the runtime already ran
+//     RootLayout in this same JS context before being backgrounded)
+//   • killed / terminated     → appBooted === false (FCM spawned a FRESH
+//     headless JS runtime via mobile/index.js where RootLayout never mounts)
+// We use this to pick the incoming-call surface: a QUIET status-bar heads-up
+// notification when the app is merely backgrounded (tap to open + ring), versus
+// the full-screen ringing experience over the lock screen when the app is
+// killed (so a locked-device call is never missed). Lives at module scope so it
+// survives across the singleton and is readable from the headless task.
+let appBooted = false;
+
 class BackgroundPushService {
   private initialized = false;
   private messaging: any | null = null;
   private foregroundUnsub: (() => void) | null = null;
+
+  /**
+   * Marks the app as fully BOOTED (React tree mounted). Call once from
+   * RootLayout's mount effect. Distinguishes a backgrounded-but-alive app from
+   * a killed/headless FCM task (see the module-level `appBooted` note).
+   */
+  markAppBooted(): void {
+    appBooted = true;
+  }
+
+  /** Whether the React app has booted in THIS JS runtime (vs a headless task). */
+  isAppBooted(): boolean {
+    return appBooted;
+  }
 
   /**
    * Registers the FCM background/terminated-state message handler.
@@ -176,7 +206,22 @@ class BackgroundPushService {
 
       if (!nativeCallService.isNativeAvailable() && !appIsForeground) {
         if (notifeeService.isAvailable()) {
-          await notifeeService.displayIncomingCall(data);
+          // OPTION A — surface depends on whether the app is merely
+          // BACKGROUNDED-but-alive vs KILLED/headless (AppState reports
+          // "background" for BOTH, so we use the boot flag to tell them apart):
+          //   • backgrounded-but-alive (isAppBooted) → a QUIET heads-up
+          //     status-bar notification. It does NOT auto-ring and does NOT
+          //     take over the screen with the full-screen incoming-call UI;
+          //     the user taps it to open the app, where the in-app call screen
+          //     then rings + shows the accept/decline UI.
+          //   • killed / terminated (not booted) → the full-screen ringing
+          //     experience over the lock screen (startForegroundRinger +
+          //     full-screen intent), so a locked-device call is never missed.
+          if (this.isAppBooted()) {
+            await notifeeService.displayIncomingCallHeadsUp(data);
+          } else {
+            await notifeeService.displayIncomingCall(data);
+          }
         } else {
           // Last-resort fallback (e.g. Expo Go) — heads-up sound notification.
           await this.presentCallNotification(payload);

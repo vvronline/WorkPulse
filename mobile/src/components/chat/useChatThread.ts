@@ -204,10 +204,14 @@ export function useChatThread() {
     }
   }, [kbInset, emojiKeyboardOpen]);
 
+  // Scroll to the newest message. The message list is an INVERTED FlatList
+  // (Signal-Android model: newest row pinned to the visual bottom), so the
+  // "bottom" is offset 0. With an inverted list the newest message is already
+  // structurally at the bottom — the keyboard opening/closing or sending a new
+  // message can NEVER push it under the composer — so this is just a nicety for
+  // explicit "jump to latest" cases (send, incoming, typing-indicator appears).
   const scrollToEnd = useCallback((animated = false) => {
-    requestAnimationFrame(() => {
-      listRef.current?.scrollToEnd({ animated });
-    });
+    listRef.current?.scrollToOffset({ offset: 0, animated });
   }, []);
 
   // When the peer STARTS typing, the typing-indicator row appears below the
@@ -831,10 +835,17 @@ export function useChatThread() {
   }
 
   function jumpToMessage(messageId: number) {
+    // The list is INVERTED, so it is fed the reversed messages array — convert
+    // the natural index to the reversed index before scrolling.
     const idx = messages.findIndex((m) => m.id === messageId);
     if (idx < 0) return;
+    const invertedIdx = messages.length - 1 - idx;
     try {
-      listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.3 });
+      listRef.current?.scrollToIndex({
+        index: invertedIdx,
+        animated: true,
+        viewPosition: 0.3,
+      });
     } catch {
       /* ignore */
     }
@@ -1204,6 +1215,13 @@ export function useChatThread() {
     }
   }
 
+  // Newest-first copy for the INVERTED FlatList (Signal-Android model). The
+  // source `messages` stays oldest-first (server order) for all the existing
+  // logic; the list renders this reversed view so index 0 is the newest message
+  // pinned to the visual bottom — the keyboard or a new message can never push
+  // it under the composer, and no scroll math is needed to "stick to bottom".
+  const messagesReversed = useMemo(() => [...messages].reverse(), [messages]);
+
   const latestPin = pinnedMsgs[0];
 
   // FlatList re-render key. With `maintainVisibleContentPosition` enabled,
@@ -1251,6 +1269,7 @@ export function useChatThread() {
     // list
     loading,
     messages,
+    messagesReversed,
     listRef,
     listSignature,
     scrollToEnd,

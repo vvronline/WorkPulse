@@ -113,30 +113,38 @@ export default function MessageBubble({
           {message.file_url && !deleted ? (
             <FilePreview message={message} />
           ) : null}
-          <MessageContent message={message} mine={mine} />
-          <View style={styles.metaLine}>
-            {pinned ? (
-              <Pin size={10} color={mine ? theme.chatOutMeta : theme.textMuted} />
-            ) : null}
-            {starred ? (
-              <Star size={10} color={mine ? theme.chatOutMeta : theme.warning} />
-            ) : null}
-            {message.edited_at && !deleted ? (
-              <Text style={[styles.edited, mine && styles.editedMine]}>
-                edited
+          {/* Signal inline footer: the message text and the time+ticks live in
+              a SINGLE wrapping row. When the last line of text plus the footer
+              fit within the bubble width, the time/ticks sit on the SAME line as
+              the text (Signal's compact look); when they don't fit, the footer
+              wraps to the bottom-right of the next line. The left margin keeps
+              the footer from visually colliding with the text. */}
+          <View style={styles.contentRow}>
+            <MessageContent message={message} mine={mine} />
+            <View style={styles.metaLine}>
+              {pinned ? (
+                <Pin size={10} color={mine ? theme.chatOutMeta : theme.textMuted} />
+              ) : null}
+              {starred ? (
+                <Star size={10} color={mine ? theme.chatOutMeta : theme.warning} />
+              ) : null}
+              {message.edited_at && !deleted ? (
+                <Text style={[styles.edited, mine && styles.editedMine]}>
+                  edited
+                </Text>
+              ) : null}
+              <Text style={[styles.time, mine && styles.timeMine]}>
+                {fmtTime(message.created_at)}
               </Text>
-            ) : null}
-            <Text style={[styles.time, mine && styles.timeMine]}>
-              {fmtTime(message.created_at)}
-            </Text>
-            <MsgTicks
-              mine={mine}
-              msg={message}
-              participantCount={participantCount}
-              readReceipts={readReceipts}
-              userId={userId}
-              onAccent={mine}
-            />
+              <MsgTicks
+                mine={mine}
+                msg={message}
+                participantCount={participantCount}
+                readReceipts={readReceipts}
+                userId={userId}
+                onAccent={mine}
+              />
+            </View>
           </View>
         </Pressable>
 
@@ -185,12 +193,24 @@ const makeStyles = (theme: Theme) =>
       fontFamily: theme.fontSemiBold,
       color: theme.primaryLight,
     },
+    // Signal inline footer: content + meta share one wrapping row so the
+    // time/ticks tuck onto the last text line when there's room, else wrap to
+    // the bottom-right.
+    contentRow: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      alignItems: "flex-end",
+    },
     metaLine: {
       flexDirection: "row",
       alignItems: "center",
       gap: 4,
-      alignSelf: "flex-end",
-      marginTop: -2,
+      // Pushes the footer to the right of the text on the same line; once the
+      // row wraps, `marginLeft:auto` keeps it bottom-right.
+      marginLeft: "auto",
+      // A little left padding so the time never butts up against the last word
+      // when they share a line.
+      paddingLeft: 8,
     },
     edited: {
       fontSize: 10,

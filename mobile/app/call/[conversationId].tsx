@@ -68,6 +68,7 @@ import {
   getIceConfig,
   getCachedIceConfig,
   getNotificationPrefs,
+  acceptCallHttp,
   rejectCallHttp,
   endCallHttp,
 } from "../../src/features";
@@ -2932,12 +2933,31 @@ export default function CallScreen() {
       },
       { timeoutMs: 4000, retryEveryMs: 150 },
     );
+    // If the realtime channel could not deliver the accept (slow/unavailable
+    // WS — common right after a cold/lock-screen/background launch, when the
+    // socket is still reconnecting), fall back to the idempotent HTTP endpoint
+    // so the call is ALWAYS accepted server-side (mirrors rejectIncoming's HTTP
+    // fallback). Only abort with the error alert when BOTH transports fail.
     if (!sent) {
-      Alert.alert(
-        "Connection error",
-        "Could not accept this call because realtime connection is unavailable.",
-      );
-      return endAndLeave(false);
+      let httpOk = false;
+      if (callIdRef.current) {
+        try {
+          await acceptCallHttp(callIdRef.current, conversationId);
+          httpOk = true;
+        } catch (err: any) {
+          console.warn(
+            "[call] HTTP accept fallback failed:",
+            err?.message || err,
+          );
+        }
+      }
+      if (!httpOk) {
+        Alert.alert(
+          "Connection error",
+          "Could not accept this call because realtime connection is unavailable.",
+        );
+        return endAndLeave(false);
+      }
     }
     if (!localStreamRef.current) {
       const stream = await getMedia();
