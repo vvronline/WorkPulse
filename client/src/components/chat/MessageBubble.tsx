@@ -146,8 +146,10 @@ export default function MessageBubble({
                 <div className={s.avatarCol}>
                     {showAvatar && <ChatAvatar name={msg.sender_name} avatar={msg.sender_avatar} size="sm" />}
                 </div>
-                <div className={`${s.bubble} ${s.deleted}`}>
-                    <em>This message was deleted</em>
+                <div className={s.bubbleWrap}>
+                    <div className={`${s.bubble} ${isMine ? s.myBubble : s.theirBubble} ${s.deleted}`}>
+                        <em>This message was deleted</em>
+                    </div>
                 </div>
             </div>
         );
