@@ -115,17 +115,26 @@ jobs:
               NEED_PREBUILD=1
               REASON="No previous mobile tag to diff against"
             else
+              # Check for actual dependency changes by comparing the dependencies section
+              # of package.json, not just any change. Version-only bumps don't require prebuild.
+              PREV_DEPS=$(git show "${PREV_TAG}:mobile/package.json" 2>/dev/null | jq -r '.dependencies // {}' 2>/dev/null || echo '{}')
+              CURR_DEPS=$(jq -r '.dependencies // {}' mobile/package.json 2>/dev/null || echo '{}')
+              DEPS_CHANGED=$([ "$PREV_DEPS" != "$CURR_DEPS" ] && echo "true" || echo "false")
+
+              # Check for changes to config and other native-impacting files
               CHANGED_NATIVE_INPUTS=$(
                 git diff --name-only "${PREV_TAG}"..HEAD -- \
                   mobile/app.config.ts \
                   mobile/app.json \
-                  mobile/package.json \
-                  mobile/package-lock.json \
                   mobile/scripts \
                   mobile/modules \
                   | sed '/^$/d' || true
               )
-              if [ -n "${CHANGED_NATIVE_INPUTS}" ]; then
+
+              if [ "$DEPS_CHANGED" = "true" ]; then
+                NEED_PREBUILD=1
+                REASON="Dependencies changed since ${PREV_TAG}"
+              elif [ -n "${CHANGED_NATIVE_INPUTS}" ]; then
                 NEED_PREBUILD=1
                 REASON="Native-impacting files changed since ${PREV_TAG}"
                 echo "Detected native-impacting changes:"
