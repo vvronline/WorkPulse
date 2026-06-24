@@ -87,6 +87,12 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   plugins: [
     "expo-router",
     "expo-secure-store",
+    // Re-applies the Gradle JVM heap/metaspace settings during `expo prebuild`.
+    // CI regenerates the gitignored android/ project on every run, which
+    // overwrites android/gradle.properties with Expo's 2 GiB default and OOMs
+    // the release build (:app:mergeReleaseJavaResource → "Java heap space").
+    // This plugin makes the higher limits survive prebuild.
+    "./scripts/withAndroidGradleMemory",
     // Native Firebase Cloud Messaging. These config plugins generate the
     // native code that registers FCM and enables background/terminated-state
     // push delivery via setBackgroundMessageHandler.
