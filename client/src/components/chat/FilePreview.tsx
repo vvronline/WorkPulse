@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { Image, Music, Film, FileText, Table2, FileEdit, Package, Paperclip, X, Eye, EyeOff, Timer } from "lucide-react";
 import { markMessageViewed } from "../../api";
 import s from "./FilePreview.module.css";
@@ -252,12 +253,13 @@ export default function FilePreview({
                     </span>
                     {!alreadyViewed && <Eye size={15} className={s.viewOnceEye} />}
                 </button>
-                {lightbox && revealedUrl && (
+                {lightbox && revealedUrl && createPortal(
                     <div className={s.lightbox} onClick={() => setLightbox(false)}>
                         <button className={s.lbClose} onClick={() => setLightbox(false)}><X size={16} /></button>
                         <img src={revealedUrl} alt={fileName} className={s.lbImage} onClick={(e) => e.stopPropagation()} />
                         <div className={s.lbViewOnceNote}>This photo can only be viewed once</div>
-                    </div>
+                    </div>,
+                    document.body
                 )}
             </>
         );
@@ -269,12 +271,13 @@ export default function FilePreview({
                 <div className={s.imgWrap} onClick={() => setLightbox(true)}>
                     <img src={fileUrl} alt={fileName} className={s.image} loading="lazy" />
                 </div>
-                {lightbox && (
+                {lightbox && createPortal(
                     <FullScreenImage
                         url={fileUrl}
                         fileName={fileName}
                         onClose={() => setLightbox(false)}
-                    />
+                    />,
+                    document.body
                 )}
             </>
         );

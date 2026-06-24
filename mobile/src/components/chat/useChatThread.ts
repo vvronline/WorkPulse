@@ -69,6 +69,56 @@ type ConversationDraft = {
 };
 
 /**
+ * Normalize the server's file-upload response into a snake_case ChatMessage.
+ *
+ * ROOT CAUSE of "image stuck on Queued" + "attachment invisible until I reopen
+ * the chat": the `POST /chat/conversations/:id/files` endpoint returns a
+ * CAMELCASE payload (`fileUrl`, `fileType`, `fileSize`, `mediaState`,
+ * `mediaJobId`, …) — but the rest of the mobile app (the ChatMessage type,
+ * isImageFile(), FilePreview, and the media-job "delivered" guard) reads
+ * SNAKE_CASE (`file_url`, `file_type`, `media_state`, …). Spreading the raw
+ * `{ ...data }` therefore produced a message with `fileUrl` but NO `file_url`,
+ * so:
+ *   • FilePreview rendered nothing (no `file_url`/`file_type`) until the chat
+ *     was reloaded (the GET /messages endpoint returns snake_case), and
+ *   • the chat_media_job handler's `!!m.file_url` "upload done" guard stayed
+ *     false forever, so pipeline `queued`/`processing` events kept dragging the
+ *     bubble back to "Queued" even after it was delivered + read.
+ *
+ * Mapping the camelCase response → snake_case here fixes both at once.
+ */
+function normalizeUploadedMessage(data: any): ChatMessage {
+  if (!data || typeof data !== "object") return data;
+  // GET /messages already returns snake_case — if it's already shaped that way
+  // (has file_url and no fileUrl), pass through untouched.
+  const isCamel = "fileUrl" in data || "mediaState" in data || "senderId" in data;
+  if (!isCamel) return data as ChatMessage;
+  return {
+    id: data.id,
+    sender_id: data.senderId ?? data.sender_id,
+    sender_name: data.senderName ?? data.sender_name,
+    sender_avatar: data.senderAvatar ?? data.sender_avatar ?? null,
+    content: data.content ?? "",
+    created_at: data.createdAt ?? data.created_at,
+    file_url: data.fileUrl ?? data.file_url ?? null,
+    file_name: data.fileName ?? data.file_name ?? null,
+    file_type: data.fileType ?? data.file_type ?? null,
+    file_size: data.fileSize ?? data.file_size ?? null,
+    reply_to_id: data.replyToId ?? data.reply_to_id ?? null,
+    reply_to_content: data.replyContent ?? data.reply_to_content ?? null,
+    reply_to_sender_name: data.replySenderName ?? data.reply_to_sender_name ?? null,
+    metadata: data.metadata ?? null,
+    reactions: data.reactions ?? [],
+    clientMsgId: data.clientMsgId ?? null,
+    media_job_id: data.mediaJobId ?? data.media_job_id ?? null,
+    media_state: data.mediaState ?? data.media_state ?? null,
+    media_stage: data.mediaStage ?? data.media_stage ?? null,
+    media_progress: data.mediaProgress ?? data.media_progress ?? null,
+    media_pipeline_meta: data.mediaPipelineMeta ?? data.media_pipeline_meta ?? null,
+  } as ChatMessage;
+}
+
+/**
  * All state, side-effects and handlers for the chat thread screen. Extracted
  * from `app/chat/[id].tsx` so the screen is a thin presentational orchestrator
  * (mirrors the web ChatMessages container/hook split). Behavior-preserving.
@@ -734,11 +784,22 @@ export function useChatThread() {
               ),
             );
           },
-        })
+          })
           .then(({ data }) => {
+            const normalized = normalizeUploadedMessage(data);
             setMessages((prev) => {
               const replaced = prev.map((m) =>
-                m.id === id ? { ...data, _pending: false, _failed: false } : m,
+                m.id === id
+                  ? {
+                      ...normalized,
+                      // Preserve intrinsic dimensions captured optimistically so
+                      // the bubble keeps its aspect-ratio size (server metadata
+                      // may omit them).
+                      metadata: { ...(m.metadata || {}), ...(normalized.metadata || {}) },
+                      _pending: false,
+                      _failed: false,
+                    }
+                  : m,
               );
               const seen = new Set<number>();
               return replaced.filter((m) => {
@@ -962,9 +1023,19 @@ export function useChatThread() {
           },
         );
         uploadProgressTs.current.delete(tempId);
+        const normalized = normalizeUploadedMessage(data);
         setMessages((prev) => {
           const replaced = prev.map((m) =>
-            m.id === tempId ? { ...data, _pending: false, _failed: false } : m,
+            m.id === tempId
+              ? {
+                  ...normalized,
+                  // Keep intrinsic dimensions from the optimistic message so the
+                  // image doesn't reflow when the server row arrives.
+                  metadata: { ...(m.metadata || {}), ...(normalized.metadata || {}) },
+                  _pending: false,
+                  _failed: false,
+                }
+              : m,
           );
           const seen = new Set<number>();
           return replaced.filter((m) => {
@@ -1608,7 +1679,14 @@ export function useChatThread() {
   function startReply(message: ChatMessage) {
     setActionTarget(null);
     setReactTarget(null);
+    setReactAnchor(null);
     setReplyTo(message);
+    // Signal opens the keyboard with the cursor in the composer the moment you
+    // swipe-to-reply (or tap Reply). Focus after the reply strip + any
+    // dismissing overlay have settled so the keyboard reliably raises on
+    // Android (focusing while a modal is up, or before the reply strip mounts,
+    // is dropped).
+    setTimeout(() => inputRef.current?.focus(), 120);
   }
 
   // Copy a message's text to the clipboard (overlay "Copy" action).

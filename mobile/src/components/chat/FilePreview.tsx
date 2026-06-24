@@ -31,14 +31,16 @@ function fmtSpeed(bytesPerSec?: number): string {
   return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
 }
 
-// Signal-style sent-image bounds. The image is sized by its intrinsic aspect
-// ratio, clamped between a minimum and these maximums so portrait/landscape/
-// square photos all read naturally inside the bubble (instead of a fixed,
-// distorting 200×150 box).
-const IMG_MAX_W_RATIO = 0.7; // ≤ 70% of screen width
-const IMG_MAX_H = 320;
-const IMG_MIN_W = 140;
-const IMG_MIN_H = 100;
+// Signal-style sent-image envelope — matched 1:1 to the web client's
+// FilePreview.module.css (.imgWrap / .image): max 280×330, min 120 wide, 80
+// tall. The image is sized by its intrinsic aspect ratio within that envelope
+// so portrait/landscape/square photos all read naturally (instead of a fixed,
+// distorting box). On narrow phones the width is additionally clamped so the
+// bubble never overflows the screen.
+const IMG_MAX_W = 280;
+const IMG_MAX_H = 330;
+const IMG_MIN_W = 120;
+const IMG_MIN_H = 80;
 
 /** Compute the display box for a chat image from its intrinsic w/h. */
 function computeImageSize(
@@ -46,12 +48,14 @@ function computeImageSize(
   width?: number | null,
   height?: number | null,
 ): { width: number; height: number } {
-  const maxW = Math.round(screenW * IMG_MAX_W_RATIO);
-  // No intrinsic size yet (e.g. remote message before metadata): use a sane
-  // 4:3-ish default box that still respects the max width.
+  // Never let the image exceed the web envelope OR the screen (minus bubble
+  // padding/margins ≈ 64px) on a narrow device.
+  const maxW = Math.min(IMG_MAX_W, Math.round(screenW - 64));
+  // No intrinsic size yet (e.g. remote message before metadata): use the web
+  // default (full envelope width, 4:3-ish height).
   if (!width || !height || width <= 0 || height <= 0) {
-    const w = Math.min(maxW, 240);
-    return { width: w, height: Math.round(w * 0.75) };
+    const w = maxW;
+    return { width: w, height: Math.min(IMG_MAX_H, Math.round(w * 0.75)) };
   }
   const ar = width / height;
   let w = maxW;
@@ -409,8 +413,10 @@ const makeStyles = (theme: Theme) =>
     fileName: { fontSize: 14, color: theme.text, fontWeight: "500" },
     fileSize: { fontSize: 11, color: theme.textMuted },
     fileImage: {
-      width: 200,
-      height: 150,
+      // Width/height are supplied dynamically by computeImageSize(); these are
+      // fallbacks. Matches the web .image (radius 14, surface placeholder).
+      width: 240,
+      height: 180,
       borderRadius: 14,
       marginBottom: 4,
       backgroundColor: theme.surface,

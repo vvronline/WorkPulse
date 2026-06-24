@@ -3,6 +3,33 @@ import { ChatAvatar } from "../../components/chat";
 import { fmtTime, getConvName, getConvAvatar, isUserOnline } from "./chatUtils";
 import s from "./ChatSidebar.module.css";
 
+/**
+ * Signal-style last-message attachment label. Shows a type-aware emoji + word
+ * (Photo / Video / GIF / Voice message / Audio / Document) instead of a plain
+ * "Attachment". Falls back gracefully when type metadata is missing.
+ */
+function attachmentPreview(
+    fileType?: string | null,
+    fileName?: string | null,
+    fileUrl?: string | null,
+): string {
+    const type = (fileType || "").toLowerCase();
+    const name = (fileName || "").toLowerCase();
+    const url = (fileUrl || "").toLowerCase();
+
+    if (url.includes("voice") || name.startsWith("voice.")) return "🎤 Voice message";
+    if (type === "image/gif" || name.endsWith(".gif")) return "🎞️ GIF";
+    if (type.startsWith("image/")) return "📷 Photo";
+    if (type.startsWith("video/")) return "🎥 Video";
+    if (type.startsWith("audio/")) return "🎵 Audio";
+    if (type.includes("pdf")) return "📄 PDF";
+    if (type.includes("spreadsheet") || type.includes("excel")) return "📊 Spreadsheet";
+    if (type.includes("word") || type.includes("document")) return "📝 Document";
+    if (type.includes("zip") || type.includes("compressed")) return "🗜️ Archive";
+    if (fileName) return `📎 ${fileName}`;
+    return "📎 Attachment";
+}
+
 interface ConversationItemProps {
     conv: any;
     activeConvId: number | string | null;
@@ -78,11 +105,9 @@ export default function ConversationItem({
                                 ? "Message deleted"
                                 : c.last_message
                                   ? c.last_message
-                                  : c.last_file_url?.includes("voice")
-                                    ? "Voice message"
-                                    : c.last_file_url
-                                      ? "Attachment"
-                                      : "No messages yet"}
+                                  : c.last_file_url
+                                    ? attachmentPreview(c.last_file_type, c.last_file_name, c.last_file_url)
+                                    : "No messages yet"}
                         </span>
                     )}
                     {c.unread_count > 0 && <span className={s.badge}>{c.unread_count}</span>}

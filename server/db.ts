@@ -1109,6 +1109,10 @@ async function initTenantSchema(q: SchemaQuery): Promise<void> {
     `);
     await q(`ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT FALSE`);
     await q(`ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS is_favourite BOOLEAN NOT NULL DEFAULT FALSE`);
+    // Signal-parity per-participant conversation flags (mobile long-press
+    // action sheet): mute notifications and archive a conversation.
+    await q(`ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS is_muted BOOLEAN NOT NULL DEFAULT FALSE`);
+    await q(`ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT FALSE`);
     await q(`
         CREATE TABLE IF NOT EXISTS messages (
             id              SERIAL PRIMARY KEY,

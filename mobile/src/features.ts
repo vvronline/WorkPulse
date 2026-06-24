@@ -422,6 +422,8 @@ export type Conversation = {
   is_self_chat?: boolean;
   is_pinned?: boolean;
   is_favourite?: boolean;
+  is_muted?: boolean;
+  is_archived?: boolean;
   is_meeting_chat?: boolean;
   meeting_code?: string | null;
 };
@@ -790,6 +792,22 @@ export function favouriteConversation(convId: number) {
 
 export function deleteConversation(convId: number) {
   return api.delete(`/chat/conversations/${convId}`);
+}
+
+export function muteConversation(convId: number) {
+  return api.post<{ muted: boolean }>(`/chat/conversations/${convId}/mute`);
+}
+
+export function archiveConversation(convId: number) {
+  return api.post<{ archived: boolean }>(
+    `/chat/conversations/${convId}/archive`,
+  );
+}
+
+export function markConversationUnread(convId: number) {
+  return api.post<{ ok: boolean; unread: boolean }>(
+    `/chat/conversations/${convId}/unread`,
+  );
 }
 
 export function getAllCallHistory() {

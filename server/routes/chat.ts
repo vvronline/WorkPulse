@@ -491,6 +491,8 @@ router.get("/conversations", auth, async (req: Request, res: Response) => {
                 END AS member_count,
                 cp.is_pinned,
                 cp.is_favourite,
+                cp.is_muted,
+                cp.is_archived,
                 CASE WHEN mtg.id IS NOT NULL THEN TRUE ELSE FALSE END AS is_meeting_chat,
                 mtg.meeting_code
             FROM conversations c
@@ -729,7 +731,9 @@ router.post("/conversations/:id/files", auth, loadUserContext, chatUpload.single
             [convId],
         )).rows;
 
-        const outMsg = {
+        // WebSocket payload — camelCase (the client WS handler maps these to
+        // snake_case message fields). Broadcast to all participants.
+        const wsMsg = {
             id: result.id,
             conversationId: convId,
             senderId: req.userId,
@@ -752,11 +756,39 @@ router.post("/conversations/:id/files", auth, loadUserContext, chatUpload.single
         };
 
         for (const p of participants) {
-            sendToUser(req.tenantId, p.user_id, "chat_message", outMsg);
+            sendToUser(req.tenantId, p.user_id, "chat_message", wsMsg);
             if (p.user_id !== req.userId) {
                 redis.incrUnread(req.tenantId, p.user_id, convId);
             }
         }
+
+        // HTTP response — snake_case, matching GET /messages exactly so the
+        // optimistic media message can be replaced 1:1 without losing
+        // file_url / created_at / media_* (prevents "Invalid date" and the
+        // disappearing-image-until-reopen bug).
+        const outMsg = {
+            id: result.id,
+            conversation_id: convId,
+            sender_id: req.userId,
+            sender_name: sender.full_name,
+            sender_avatar: sender.avatar,
+            sender_username: sender.username,
+            content,
+            created_at: result.created_at,
+            file_url: fileUrl,
+            file_name: safeName,
+            file_type: req.file.mimetype,
+            file_size: req.file.size,
+            reply_to_id: replyToId,
+            metadata,
+            media_job_id: mediaJob.id,
+            media_state: mediaJob.status,
+            media_stage: mediaJob.stage,
+            media_progress: mediaJob.progress,
+            media_pipeline_meta: mediaJob.pipeline_meta,
+            reactions: [],
+            delivered_to: [],
+        };
 
         // Queue staged media processing in BullMQ (prepare -> transform ->
         // upload -> finalize). Falls back to immediate processing when queues
@@ -1612,6 +1644,95 @@ router.post("/conversations/:id/favourite", auth, async (req: Request, res: Resp
     } catch (err) {
         req.log.error({ err }, "Favourite conversation error");
         res.status(500).json({ error: "Failed to favourite conversation" });
+    }
+});
+
+/**
+ * POST /api/chat/conversations/:id/mute
+ * Toggle mute (notification silencing) for the current user. Signal parity for
+ * the mobile chat-list long-press action sheet.
+ */
+router.post("/conversations/:id/mute", auth, async (req: Request, res: Response) => {
+    try {
+        const convId = parseInt(String(req.params.id), 10);
+        if (isNaN(convId)) return res.status(400).json({ error: "Invalid conversation" });
+        if (!(await verifyParticipant(convId, req.userId, req.db as unknown as DbLike))) {
+            return res.status(403).json({ error: "Not a participant" });
+        }
+        const result = (await req.db!.query(
+            `UPDATE conversation_participants SET is_muted = NOT is_muted
+             WHERE conversation_id = $1 AND user_id = $2
+             RETURNING is_muted`,
+            [convId, req.userId],
+        )).rows[0];
+        res.json({ muted: result.is_muted });
+    } catch (err) {
+        req.log.error({ err }, "Mute conversation error");
+        res.status(500).json({ error: "Failed to mute conversation" });
+    }
+});
+
+/**
+ * POST /api/chat/conversations/:id/archive
+ * Toggle archive for the current user (Signal parity).
+ */
+router.post("/conversations/:id/archive", auth, async (req: Request, res: Response) => {
+    try {
+        const convId = parseInt(String(req.params.id), 10);
+        if (isNaN(convId)) return res.status(400).json({ error: "Invalid conversation" });
+        if (!(await verifyParticipant(convId, req.userId, req.db as unknown as DbLike))) {
+            return res.status(403).json({ error: "Not a participant" });
+        }
+        const result = (await req.db!.query(
+            `UPDATE conversation_participants SET is_archived = NOT is_archived
+             WHERE conversation_id = $1 AND user_id = $2
+             RETURNING is_archived`,
+            [convId, req.userId],
+        )).rows[0];
+        res.json({ archived: result.is_archived });
+    } catch (err) {
+        req.log.error({ err }, "Archive conversation error");
+        res.status(500).json({ error: "Failed to archive conversation" });
+    }
+});
+
+/**
+ * POST /api/chat/conversations/:id/unread
+ * Mark a conversation as UNREAD for the current user (Signal parity). We rewind
+ * the user's last_read_at to just before the latest message so the unread
+ * counter shows ≥ 1, and clear any Redis unread cache so it recomputes.
+ */
+router.post("/conversations/:id/unread", auth, async (req: Request, res: Response) => {
+    try {
+        const convId = parseInt(String(req.params.id), 10);
+        if (isNaN(convId)) return res.status(400).json({ error: "Invalid conversation" });
+        if (!(await verifyParticipant(convId, req.userId, req.db as unknown as DbLike))) {
+            return res.status(403).json({ error: "Not a participant" });
+        }
+        // Find the latest message NOT sent by this user; set last_read_at to
+        // one second before it so it (and anything newer) counts as unread.
+        const latest = (await req.db!.query(
+            `SELECT created_at FROM messages
+              WHERE conversation_id = $1 AND sender_id != $2 AND deleted_at IS NULL
+              ORDER BY created_at DESC LIMIT 1`,
+            [convId, req.userId],
+        )).rows[0];
+        if (!latest) {
+            // Nothing from others to mark unread.
+            return res.json({ ok: true, unread: false });
+        }
+        await req.db!.query(
+            `INSERT INTO message_reads (conversation_id, user_id, last_read_at)
+             VALUES ($1, $2, $3::timestamptz - INTERVAL '1 second')
+             ON CONFLICT (conversation_id, user_id)
+             DO UPDATE SET last_read_at = $3::timestamptz - INTERVAL '1 second'`,
+            [convId, req.userId, latest.created_at],
+        );
+        redis.resetUnread(req.tenantId, req.userId, convId);
+        res.json({ ok: true, unread: true });
+    } catch (err) {
+        req.log.error({ err }, "Mark unread error");
+        res.status(500).json({ error: "Failed to mark unread" });
     }
 });
 

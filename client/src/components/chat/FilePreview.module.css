@@ -1,5 +1,26 @@
-.imgWrap { display: block; max-width: 280px; border-radius: 14px; overflow: hidden; cursor: pointer; }
-.image { width: 100%; display: block; border-radius: 14px; }
+/* ─── Signal-style image thumbnail ─── */
+/* Signal bounds attachment thumbnails to a fixed envelope so the timeline
+   stays tidy regardless of the source dimensions: max 280px wide, 330px tall,
+   with a sensible minimum so tiny images don't collapse. */
+.imgWrap {
+    display: block;
+    max-width: 280px;
+    min-width: 120px;
+    border-radius: 14px;
+    overflow: hidden;
+    cursor: pointer;
+    background: var(--surface-hover);
+    line-height: 0;
+}
+.image {
+    display: block;
+    width: 100%;
+    max-width: 280px;
+    max-height: 330px;
+    min-height: 80px;
+    object-fit: cover;
+    border-radius: 14px;
+}
 
 /* ─── View-once card (Signal-style "tap to view") ─── */
 .viewOnceCard {

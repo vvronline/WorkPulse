@@ -84,11 +84,15 @@
 }
 
 /* ─── Media-only bubble: edge-to-edge image/video, no frame (Signal) ─── */
+/* NOTE: overflow MUST stay `visible` so the hover reaction toolbar (which sits
+   above the bubble at top:-18px) is never clipped on images/stickers/GIFs.
+   The inner .imgWrap / media wrappers clip their own corners, so we don't need
+   to clip here. */
 .mediaOnly {
     background: transparent !important;
     border: none !important;
     padding: 0 !important;
-    overflow: hidden;
+    overflow: visible;
     border-radius: 14px;
 }
 .mediaOnly .meta {
@@ -109,6 +113,14 @@
 .mediaOnly .deliveryRead,
 .mediaOnly .deliverySent,
 .mediaOnly .deliveryPartial {
+    color: #fff;
+}
+/* SVG ticks over media: force white for contrast against the photo backdrop. */
+.mediaOnly .tick,
+.mediaOnly .tickSending,
+.mediaOnly .tickSent,
+.mediaOnly .tickDelivered,
+.mediaOnly .tickRead {
     color: #fff;
 }
 /* Grouped continuation – fully rounded (no tail), exactly like WhatsApp */
@@ -501,7 +513,7 @@
 .myBubble .forwarded { color: var(--text-muted); }
 .myBubble .pinnedBadge { color: #f59e0b; }
 
-/* ─── Delivery receipts ─── */
+/* ─── Delivery receipts (legacy text glyph fallbacks) ─── */
 .deliverySent, .deliveryPartial, .deliveryRead, .deliveryPending {
     font-size: 0.6rem;
     margin-left: 2px;
@@ -512,6 +524,43 @@
 .deliverySent { color: var(--text-muted); }
 .deliveryPartial { color: var(--text-secondary); }
 .deliveryRead { color: var(--primary); }
+
+/* ─── Signal-style SVG delivery ticks ─── */
+.tick {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 3px;
+    line-height: 0;
+    vertical-align: middle;
+}
+.tick svg { display: block; }
+/* sending — muted, gently spinning ring */
+.tickSending {
+    color: var(--text-muted);
+    opacity: 0.7;
+    animation: tickSpin 0.9s linear infinite;
+}
+/* sent — single check, muted */
+.tickSent { color: var(--text-muted); }
+/* delivered — circled check, slightly stronger */
+.tickDelivered {
+    color: var(--text-secondary);
+    animation: tickPop 0.18s ease-out;
+}
+/* read — accent-filled double circle */
+.tickRead {
+    color: var(--primary);
+    animation: tickPop 0.22s ease-out;
+}
+@keyframes tickSpin {
+    to { transform: rotate(360deg); }
+}
+@keyframes tickPop {
+    0% { transform: scale(0.5); opacity: 0; }
+    60% { transform: scale(1.18); }
+    100% { transform: scale(1); opacity: 1; }
+}
 
 .retryBtn {
     border: none;

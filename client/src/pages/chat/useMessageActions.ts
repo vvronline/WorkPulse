@@ -17,6 +17,37 @@ type ChatState = ReturnType<typeof useChatState>;
 type Msg = AnyRecord & { id: number | string };
 type PendingMedia = { blob: Blob; name: string; type?: string | null };
 
+/**
+ * Merge the server's upload response into the optimistic media message.
+ *
+ * The HTTP file-upload route now returns snake_case (matching GET /messages),
+ * but we still defensively preserve the optimistic `created_at` / `file_url`
+ * if the server ever omits them — this prevents the "Invalid date" footer and
+ * the disappearing-image-until-reopen bug. We also clear the local upload
+ * progress flags so the "Queued"/"Uploading" chip disappears the moment the
+ * HTTP 201 lands and delivery ticks take over.
+ */
+function finalizeUploadedMessage(optimistic: Msg, data: AnyRecord): Msg {
+    return {
+        ...optimistic,
+        ...data,
+        created_at: (data.created_at as string) || optimistic.created_at,
+        file_url: (data.file_url as string) || optimistic.file_url,
+        file_name: (data.file_name as string) || optimistic.file_name,
+        file_type: (data.file_type as string) || optimistic.file_type,
+        file_size: (data.file_size as number) ?? optimistic.file_size,
+        reactions: (data.reactions as AnyRecord[]) || [],
+        delivered_to: (data.delivered_to as (number | string)[]) || [],
+        // Upload is complete — drop the local progress UI so we never show
+        // "Queued" on a delivered message.
+        _pending: false,
+        _failed: false,
+        _mediaState: undefined,
+        _mediaProgress: undefined,
+        _failureReason: null,
+    };
+}
+
 export default function useMessageActions(state: ChatState) {
     const {
         user,
@@ -192,7 +223,7 @@ export default function useMessageActions(state: ChatState) {
                     mediaPreviewUrlsRef.current.delete(clientMsgId);
                     setMessages((prev) => {
                         const replaced = prev.map((m) =>
-                            m.id === clientMsgId ? { ...data, _pending: false } : m,
+                            m.id === clientMsgId ? finalizeUploadedMessage(m, data) : m,
                         );
                         const seen = new Set<string>();
                         return replaced.filter((m) => {
@@ -336,7 +367,7 @@ export default function useMessageActions(state: ChatState) {
             mediaPreviewUrlsRef.current.delete(tempId);
             setMessages((prev) => {
                 const replaced = prev.map((m) =>
-                    m.id === tempId ? { ...data, _pending: false } : m,
+                    m.id === tempId ? finalizeUploadedMessage(m, data) : m,
                 );
                 const seen = new Set<string>();
                 return replaced.filter((m) => {
@@ -431,7 +462,7 @@ export default function useMessageActions(state: ChatState) {
                 mediaPreviewUrlsRef.current.delete(tempId);
                 setMessages((prev) => {
                     const replaced = prev.map((m) =>
-                        m.id === tempId ? { ...data, _pending: false } : m,
+                        m.id === tempId ? finalizeUploadedMessage(m, data) : m,
                     );
                     const seen = new Set<string>();
                     return replaced.filter((m) => {

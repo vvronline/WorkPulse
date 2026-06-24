@@ -14,10 +14,14 @@ import {
 } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import {
+  Archive,
   BellDot,
+  BellOff,
+  Check,
   FileText,
   Film,
   Image as ImageIcon,
+  MailOpen,
   MessageSquare,
   MessagesSquare,
   Mic,
@@ -36,11 +40,15 @@ import {
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import {
+  archiveConversation,
   deleteConversation,
   favouriteConversation,
   getAllCallHistory,
   getChatPresence,
   getConversations,
+  markConversationRead,
+  markConversationUnread,
+  muteConversation,
   pinConversation,
   searchChatUsers,
   startConversation,
@@ -331,6 +339,27 @@ export default function ChatScreen() {
     deleteConversation(c.id)
       .then(() => setItems((prev) => prev.filter((x) => x.id !== c.id)))
       .catch(() => {});
+  }
+
+  function doMute(c: Conversation) {
+    setMenuConv(null);
+    muteConversation(c.id).then(load).catch(() => {});
+  }
+
+  function doArchive(c: Conversation) {
+    setMenuConv(null);
+    archiveConversation(c.id)
+      .then(() => setItems((prev) => prev.filter((x) => x.id !== c.id)))
+      .catch(() => {});
+  }
+
+  function doToggleRead(c: Conversation) {
+    setMenuConv(null);
+    const action =
+      (c.unread_count || 0) > 0
+        ? markConversationRead(c.id)
+        : markConversationUnread(c.id);
+    action.then(load).catch(() => {});
   }
 
   // Derived lists (mirror web ChatSidebar grouping).
@@ -741,43 +770,103 @@ export default function ChatScreen() {
         </Pressable>
       ) : null}
 
-      {/* Per-conversation action menu */}
+      {/* Per-conversation action sheet — Signal-style: slides up from the
+          bottom, headed by the conversation avatar + name, with the full
+          action set (Pin, Mark read/unread, Mute, Favourite, Archive,
+          Delete). */}
       <Modal
         visible={!!menuConv}
         transparent
-        animationType="fade"
+        animationType="slide"
         onRequestClose={() => setMenuConv(null)}
       >
-        <Pressable style={styles.menuOverlay} onPress={() => setMenuConv(null)}>
-          <View style={styles.menuSheet}>
+        <Pressable
+          style={styles.sheetOverlay}
+          onPress={() => setMenuConv(null)}
+        >
+          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.sheetHandle} />
+            {menuConv ? (
+              <View style={styles.sheetHeader}>
+                <ChatAvatar
+                  name={convName(menuConv)}
+                  avatar={menuConv.is_group ? null : menuConv.other_avatar}
+                  size={40}
+                />
+                <Text style={styles.sheetTitle} numberOfLines={1}>
+                  {convName(menuConv)}
+                </Text>
+              </View>
+            ) : null}
+
             <Pressable
-              style={styles.menuRow}
+              style={styles.sheetRow}
               onPress={() => menuConv && doPin(menuConv)}
             >
-              <Pin size={18} color={theme.text} />
-              <Text style={styles.menuText}>
+              <Pin size={20} color={theme.text} />
+              <Text style={styles.sheetText}>
                 {menuConv?.is_pinned ? "Unpin" : "Pin"}
               </Text>
             </Pressable>
             <Pressable
-              style={styles.menuRow}
+              style={styles.sheetRow}
+              onPress={() => menuConv && doToggleRead(menuConv)}
+            >
+              {(menuConv?.unread_count || 0) > 0 ? (
+                <Check size={20} color={theme.text} />
+              ) : (
+                <MailOpen size={20} color={theme.text} />
+              )}
+              <Text style={styles.sheetText}>
+                {(menuConv?.unread_count || 0) > 0
+                  ? "Mark as read"
+                  : "Mark as unread"}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={styles.sheetRow}
+              onPress={() => menuConv && doMute(menuConv)}
+            >
+              {menuConv?.is_muted ? (
+                <BellDot size={20} color={theme.text} />
+              ) : (
+                <BellOff size={20} color={theme.text} />
+              )}
+              <Text style={styles.sheetText}>
+                {menuConv?.is_muted ? "Unmute" : "Mute"}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={styles.sheetRow}
               onPress={() => menuConv && doFav(menuConv)}
             >
-              <Star size={18} color={theme.text} />
-              <Text style={styles.menuText}>
+              <Star
+                size={20}
+                color={menuConv?.is_favourite ? theme.warning : theme.text}
+              />
+              <Text style={styles.sheetText}>
                 {menuConv?.is_favourite ? "Unfavourite" : "Favourite"}
               </Text>
             </Pressable>
             <Pressable
-              style={styles.menuRow}
+              style={styles.sheetRow}
+              onPress={() => menuConv && doArchive(menuConv)}
+            >
+              <Archive size={20} color={theme.text} />
+              <Text style={styles.sheetText}>
+                {menuConv?.is_archived ? "Unarchive" : "Archive"}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={styles.sheetRow}
               onPress={() => menuConv && doDelete(menuConv)}
             >
-              <Trash2 size={18} color={theme.danger} />
-              <Text style={[styles.menuText, { color: theme.danger }]}>
+              <Trash2 size={20} color={theme.danger} />
+              <Text style={[styles.sheetText, { color: theme.danger }]}>
                 Delete
               </Text>
             </Pressable>
-          </View>
+          </Pressable>
         </Pressable>
       </Modal>
     </View>
@@ -990,26 +1079,45 @@ const makeStyles = (theme: Theme) =>
   empty: { alignItems: "center", gap: 10, paddingTop: 80 },
   emptyText: { color: theme.textMuted, fontSize: 14 },
   hint: { color: theme.textMuted, fontSize: 13, paddingVertical: 16 },
-  menuOverlay: {
+  // Signal-style bottom action sheet.
+  sheetOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
-    alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "flex-end",
   },
-  menuSheet: {
+  sheet: {
     backgroundColor: theme.bgElevated,
-    borderRadius: theme.radius,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    paddingVertical: 6,
-    minWidth: 200,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    paddingTop: 8,
+    paddingBottom: 28,
   },
-  menuRow: {
+  sheetHandle: {
+    alignSelf: "center",
+    width: 38,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: theme.glassBorder,
+    marginBottom: 8,
+  },
+  sheetHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    paddingHorizontal: 18,
-    paddingVertical: 12,
+    paddingHorizontal: 20,
+    paddingTop: 4,
+    paddingBottom: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.glassBorder,
+    marginBottom: 6,
   },
-  menuText: { fontSize: 15, color: theme.text, fontWeight: "500" },
+  sheetTitle: { flex: 1, fontSize: 16, fontWeight: "700", color: theme.text },
+  sheetRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 16,
+    paddingHorizontal: 22,
+    paddingVertical: 14,
+  },
+  sheetText: { fontSize: 15, color: theme.text, fontWeight: "500" },
 });

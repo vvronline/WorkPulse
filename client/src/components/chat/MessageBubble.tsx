@@ -168,9 +168,15 @@ export default function MessageBubble({
     const isPending = String(msg.id).startsWith("pending_");
     const isFailed = !!msg._failed;
     const isPendingMedia = String(msg.id).startsWith("pending_media_");
-    const mediaProgress = Number(msg._mediaProgress ?? msg.media_progress ?? 0);
-    const mediaState = String(msg._mediaState || msg.media_state || "");
-    const serverMediaActive = !!msg.media_job_id && (mediaState === "queued" || mediaState === "processing");
+    // Only the LOCAL upload progress matters for the in-bubble chip. We never
+    // read the simulated server media-pipeline state (queued/processing) here
+    // because a fully delivered message would otherwise show "Queued" forever.
+    // Once the message has a real numeric id, DeliveryStatus owns the status.
+    const mediaProgress = Number(msg._mediaProgress ?? 0);
+    const localMediaState = String(msg._mediaState || "");
+    const isUploadingLocally =
+        isPendingMedia &&
+        (localMediaState === "queued" || localMediaState === "uploading");
 
     const menuItems: ContextMenuItem[] = isPending ? [] : [
         isMine && !msg.file_url && !isPoll && { icon: <Pencil size={14} />, label: "Edit", onClick: () => onEdit?.(msg) },
@@ -241,18 +247,16 @@ export default function MessageBubble({
                             isMine={isMine}
                         />
                     )}
-                    {(isPendingMedia || serverMediaActive) && (mediaState === "queued" || mediaState === "uploading" || mediaState === "processing") && (
+                    {isUploadingLocally && !isFailed && (
                         <div className={s.uploadProgressWrap}>
                             <div className={s.uploadProgressBar}>
                                 <div className={s.uploadProgressFill} style={{ width: `${mediaProgress}%` }} />
                             </div>
                             <div className={s.uploadProgressMeta}>
-                                <span>{mediaState === "queued" ? "Queued" : `Uploading ${mediaProgress}%`}</span>
-                                {isPendingMedia ? (
-                                    <button type="button" className={s.uploadActionBtn} onClick={() => onCancelUpload?.(msg)}>
-                                        Cancel
-                                    </button>
-                                ) : null}
+                                <span>{localMediaState === "queued" ? "Preparing…" : `Uploading ${mediaProgress}%`}</span>
+                                <button type="button" className={s.uploadActionBtn} onClick={() => onCancelUpload?.(msg)}>
+                                    Cancel
+                                </button>
                             </div>
                         </div>
                     )}
