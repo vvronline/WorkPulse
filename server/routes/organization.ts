@@ -689,7 +689,7 @@ router.get("/teams/:id/sprint-config", requireSameOrg, async (req: Request, res:
             currentSprint = { number: sprintNumber, startDate: fmt(sprintStartMs), endDate: fmt(sprintEndMs), daysRemaining: Math.max(0, Math.ceil((sprintEndMs - todayMs) / 86400000)), durationWeeks: team.sprint_duration_weeks };
         }
 
-        res.json({ teamId: team.id, teamName: team.name, sprintDurationWeeks: team.sprint_duration_weeks, sprintStartDate: team.sprint_start_date, currentSprint });
+        res.json({ teamId: team.id, teamName: team.name, sprintDurationWeeks: team.sprint_duration_weeks, sprintStartDate: team.sprint_start_date, sprintMode: team.sprint_mode || "manual", sprintPaused: !!team.sprint_paused, currentSprint });
     } catch (err) {
         req.log.error({ err }, "GET /teams/:id/sprint-config error");
         res.status(500).json({ error: "Failed to fetch sprint config" });
@@ -699,7 +699,7 @@ router.get("/teams/:id/sprint-config", requireSameOrg, async (req: Request, res:
 router.put("/teams/:id/sprint-config", requireRole("team_lead"), requireSameOrg, async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
-        const { sprint_duration_weeks, sprint_start_date } = req.body;
+        const { sprint_duration_weeks, sprint_start_date, sprint_mode } = req.body;
 
         const teamQuery = req.userRole === "platform_admin"
             ? await req.db!.query("SELECT * FROM teams WHERE id = $1", [id])
@@ -716,12 +716,29 @@ router.put("/teams/:id/sprint-config", requireRole("team_lead"), requireSameOrg,
         if (sprint_start_date !== undefined && sprint_start_date !== null && !/^\d{4}-\d{2}-\d{2}$/.test(sprint_start_date)) {
             return res.status(400).json({ error: "Invalid date format. Use YYYY-MM-DD" });
         }
+        if (sprint_mode !== undefined && !["manual", "auto"].includes(sprint_mode)) {
+            return res.status(400).json({ error: "sprint_mode must be 'manual' or 'auto'" });
+        }
 
-        await req.db!.query("UPDATE teams SET sprint_duration_weeks = $1, sprint_start_date = $2 WHERE id = $3",
+        await req.db!.query("UPDATE teams SET sprint_duration_weeks = $1, sprint_start_date = $2, sprint_mode = $3 WHERE id = $4",
             [sprint_duration_weeks !== undefined ? sprint_duration_weeks : team.sprint_duration_weeks,
             sprint_start_date !== undefined ? sprint_start_date : team.sprint_start_date,
+            sprint_mode !== undefined ? sprint_mode : (team.sprint_mode || "manual"),
                 id]);
-        logAction(req, "update", "team", Number(id), { sprint_duration_weeks, sprint_start_date });
+        logAction(req, "update", "team", Number(id), { sprint_duration_weeks, sprint_start_date, sprint_mode });
+
+        // When switching to (or reconfiguring) auto mode, run the lifecycle
+        // engine immediately so the active sprint snaps to the configured
+        // cadence instead of waiting up to an hour for the next sweep.
+        const effectiveMode = sprint_mode !== undefined ? sprint_mode : (team.sprint_mode || "manual");
+        if (effectiveMode === "auto") {
+            try {
+                const { runSprintLifecycle } = require("../services/sprintScheduler");
+                await runSprintLifecycle({ db: req.db, tenantId: req.tenantId }, redis);
+            } catch (e: any) {
+                req.log.warn({ err: e?.message, teamId: id }, "Immediate sprint lifecycle reconcile failed (will retry on next sweep)");
+            }
+        }
         res.json({ message: "Sprint configuration updated" });
     } catch (err) {
         req.log.error({ err }, "PUT /teams/:id/sprint-config error");

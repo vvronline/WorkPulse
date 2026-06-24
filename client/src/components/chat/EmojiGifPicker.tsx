@@ -41,8 +41,6 @@ export default function EmojiGifPicker({
     const ref = useRef<HTMLDivElement | null>(null);
     const scrollRef = useRef<HTMLDivElement | null>(null);
     const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
-    const gifInputRef = useRef<HTMLInputElement | null>(null);
-    const stickerInputRef = useRef<HTMLInputElement | null>(null);
 
     const [query, setQuery] = useState("");
     const [mode, setMode] = useState<PickerMode>("emoji");
@@ -149,10 +147,14 @@ export default function EmojiGifPicker({
         try {
             const res = await fetch(item.mediaUrl);
             const blob = await res.blob();
-            const ext = blob.type.includes("webp") ? "webp" : "gif";
-            const file = new File([blob], `${mode}-${Date.now()}.${ext}`, {
-                type: blob.type || (ext === "webp" ? "image/webp" : "image/gif"),
-            });
+            // Force a recognized image MIME so the message renders as inline
+            // animated media (GIF/sticker) instead of a generic attachment.
+            // Stickers are WebP, GIFs are GIF — derive from the picker mode and
+            // only honour the blob's own type when it is already a WebP.
+            const isWebp = mode === "sticker" || blob.type.includes("webp");
+            const ext = isWebp ? "webp" : "gif";
+            const type = isWebp ? "image/webp" : "image/gif";
+            const file = new File([blob], `${mode}-${Date.now()}.${ext}`, { type });
             onSelectMediaFile(file);
             onClose();
         } catch {
@@ -227,53 +229,6 @@ export default function EmojiGifPicker({
                     </>
                 ) : null}
             </div>
-            {mode === "emoji" && onSelectMediaFile && (
-                <div className={s.mediaRow}>
-                    <button
-                        type="button"
-                        className={s.mediaBtn}
-                        onClick={() => gifInputRef.current?.click()}
-                    >
-                        Local GIF
-                    </button>
-                    <button
-                        type="button"
-                        className={s.mediaBtn}
-                        onClick={() => stickerInputRef.current?.click()}
-                    >
-                        Local Sticker
-                    </button>
-                    <input
-                        ref={gifInputRef}
-                        type="file"
-                        accept="image/gif"
-                        className={s.fileInput}
-                        onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) {
-                                onSelectMediaFile(file);
-                                onClose();
-                            }
-                            e.target.value = "";
-                        }}
-                    />
-                    <input
-                        ref={stickerInputRef}
-                        type="file"
-                        accept="image/webp,image/png,image/jpeg"
-                        className={s.fileInput}
-                        onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) {
-                                onSelectMediaFile(file);
-                                onClose();
-                            }
-                            e.target.value = "";
-                        }}
-                    />
-                </div>
-            )}
-
             {mode === "emoji" && !query.trim() && (
                 <div className={s.catTabs}>
                     {sections.map((c) => (

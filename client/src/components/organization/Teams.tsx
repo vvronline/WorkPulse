@@ -10,6 +10,9 @@ import {
     deleteTeam,
     getTeamSprintConfig,
     updateTeamSprintConfig,
+    getActiveSprint,
+    pauseSprint,
+    resumeSprint,
 } from "../../api";
 import s from "../../pages/Admin.module.css";
 import tc from "./TeamsConfig.module.css";
@@ -48,6 +51,7 @@ interface EditForm {
     lead_id: string;
     sprint_duration_weeks: number;
     sprint_start_date: string;
+    sprint_mode: string;
 }
 
 interface TeamsProps {
@@ -68,7 +72,11 @@ export default function Teams({ orgId, userRole }: TeamsProps) {
         lead_id: "",
         sprint_duration_weeks: 2,
         sprint_start_date: "",
+        sprint_mode: "manual",
     });
+    // Active sprint for the team currently being edited (drives pause/resume).
+    const [editActiveSprint, setEditActiveSprint] = useState<any>(null);
+    const [editPaused, setEditPaused] = useState(false);
     const [msg, setMsg] = useAutoDismiss("");
     const canManage = ["hr_admin", "super_admin", "platform_admin"].includes(userRole ?? "");
     const isAdmin = canManage;
@@ -122,10 +130,29 @@ export default function Teams({ orgId, userRole }: TeamsProps) {
                 await updateTeamSprintConfig(id, {
                     sprint_duration_weeks: editForm.sprint_duration_weeks || 2,
                     sprint_start_date: editForm.sprint_start_date || null,
+                    sprint_mode: editForm.sprint_mode || "manual",
                 });
             }
             setEditId(null);
             fetchTeams();
+        } catch (e: any) {
+            setMsg(e.response?.data?.error || "Failed");
+        }
+    };
+
+    // Pause / resume the team's active sprint (auto mode). team_lead and above
+    // can do this; the server enforces the role gate too.
+    const handlePauseResume = async (sprintId: number | string, paused: boolean) => {
+        try {
+            if (paused) {
+                await resumeSprint(sprintId);
+                setEditPaused(false);
+                setMsg("Sprint resumed");
+            } else {
+                await pauseSprint(sprintId);
+                setEditPaused(true);
+                setMsg("Sprint paused");
+            }
         } catch (e: any) {
             setMsg(e.response?.data?.error || "Failed");
         }
@@ -316,7 +343,10 @@ export default function Teams({ orgId, userRole }: TeamsProps) {
                                                                     : "",
                                                                 sprint_duration_weeks: 2,
                                                                 sprint_start_date: "",
+                                                                sprint_mode: "manual",
                                                             });
+                                                            setEditActiveSprint(null);
+                                                            setEditPaused(false);
                                                             try {
                                                                 const sprintRes =
                                                                     await getTeamSprintConfig(t.id);
@@ -329,12 +359,34 @@ export default function Teams({ orgId, userRole }: TeamsProps) {
                                                                     sprint_start_date:
                                                                         sprintRes.data
                                                                             .sprintStartDate || "",
+                                                                    sprint_mode:
+                                                                        sprintRes.data
+                                                                            .sprintMode || "manual",
                                                                 }));
+                                                                setEditPaused(
+                                                                    !!sprintRes.data.sprintPaused
+                                                                );
                                                             } catch (err) {
                                                                 console.error(
                                                                     "Failed to load sprint config:",
                                                                     err
                                                                 );
+                                                            }
+                                                            // Load the team's active sprint so we
+                                                            // can offer Pause/Resume in auto mode.
+                                                            try {
+                                                                const act = await getActiveSprint();
+                                                                setEditActiveSprint(
+                                                                    act.data?.sprint || null
+                                                                );
+                                                                if (act.data?.sprint) {
+                                                                    setEditPaused(
+                                                                        act.data.sprint.status ===
+                                                                            "paused"
+                                                                    );
+                                                                }
+                                                            } catch {
+                                                                /* non-fatal */
                                                             }
                                                         }}
                                                     >
@@ -411,6 +463,68 @@ export default function Teams({ orgId, userRole }: TeamsProps) {
                                                     auto-calculated from this)
                                                 </small>
                                             </div>
+                                            <div className={tc["sprint-field"]}>
+                                                <label className={tc["field-label"]}>
+                                                    ⚙️ Sprint Mode
+                                                </label>
+                                                <select
+                                                    value={editForm.sprint_mode || "manual"}
+                                                    onChange={(e) =>
+                                                        setEditForm({
+                                                            ...editForm,
+                                                            sprint_mode: e.target.value,
+                                                        })
+                                                    }
+                                                    className={su["edit-inline-input"]}
+                                                >
+                                                    <option value="manual">
+                                                        Manual (start/complete by hand)
+                                                    </option>
+                                                    <option value="auto">
+                                                        Auto (start &amp; rotate on schedule)
+                                                    </option>
+                                                </select>
+                                                <small className={tc["field-hint"]}>
+                                                    Auto mode automatically starts, completes, and
+                                                    rotates sprints on the configured cadence.
+                                                </small>
+                                            </div>
+                                            {editForm.sprint_mode === "auto" &&
+                                                editActiveSprint && (
+                                                    <div className={tc["sprint-field"]}>
+                                                        <label className={tc["field-label"]}>
+                                                            ⏯️ Active Sprint —{" "}
+                                                            {editActiveSprint.name} (
+                                                            {editPaused
+                                                                ? "Paused"
+                                                                : editActiveSprint.status}
+                                                            )
+                                                        </label>
+                                                        <button
+                                                            type="button"
+                                                            className={`${s.btnSmall} ${
+                                                                editPaused
+                                                                    ? s.btnAccent
+                                                                    : s.btnSecondary
+                                                            }`}
+                                                            onClick={() =>
+                                                                handlePauseResume(
+                                                                    editActiveSprint.id,
+                                                                    editPaused
+                                                                )
+                                                            }
+                                                        >
+                                                            {editPaused
+                                                                ? "Resume Sprint"
+                                                                : "Pause Sprint"}
+                                                        </button>
+                                                        <small className={tc["field-hint"]}>
+                                                            {editPaused
+                                                                ? "Resuming extends the end date by the paused duration."
+                                                                : "Pausing freezes the cadence clock until you resume."}
+                                                        </small>
+                                                    </div>
+                                                )}
                                         </div>
                                     </td>
                                 </tr>

@@ -290,6 +290,10 @@ export const getSprintStats = (id: number | string) => API.get(`/sprints/${id}/s
 export const startSprint = (id: number | string) => API.post(`/sprints/${id}/start`);
 export const completeSprint = (id: number | string, rolloverTo?: number | string) =>
     API.post(`/sprints/${id}/complete`, { rolloverTo });
+export const pauseSprint = (id: number | string) => API.post(`/sprints/${id}/pause`);
+export const resumeSprint = (id: number | string) => API.post(`/sprints/${id}/resume`);
+export const getSprintCarriedOver = (id: number | string) =>
+    API.get(`/sprints/${id}/carried-over`);
 export const getSprintBurndown = (id: number | string) => API.get(`/sprints/${id}/burndown`);
 export const getRecentVelocity = (limit?: number) =>
     API.get("/sprints/velocity/recent", { params: { limit } });

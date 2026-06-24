@@ -542,9 +542,14 @@ async function initTenantSchema(q: SchemaQuery): Promise<void> {
             created_at            TIMESTAMPTZ DEFAULT NOW(),
             sprint_duration_weeks INTEGER NOT NULL DEFAULT 2,
             sprint_start_date     TEXT,
+            sprint_mode           TEXT NOT NULL DEFAULT 'manual' CHECK(sprint_mode IN ('manual','auto')),
+            sprint_paused         BOOLEAN NOT NULL DEFAULT FALSE,
             UNIQUE(org_id, name)
         )
     `);
+    // Migration: sprint automation mode + pause flag for existing tenants.
+    await q(`ALTER TABLE teams ADD COLUMN IF NOT EXISTS sprint_mode TEXT NOT NULL DEFAULT 'manual'`);
+    await q(`ALTER TABLE teams ADD COLUMN IF NOT EXISTS sprint_paused BOOLEAN NOT NULL DEFAULT FALSE`);
 
     // Add deferred FK from users -> teams and users -> departments
     await q(`
@@ -753,12 +758,52 @@ async function initTenantSchema(q: SchemaQuery): Promise<void> {
             name       TEXT NOT NULL,
             start_date TEXT NOT NULL,
             end_date   TEXT NOT NULL,
-            status     TEXT NOT NULL DEFAULT 'planned' CHECK(status IN ('planned','active','completed')),
+            status     TEXT NOT NULL DEFAULT 'planned' CHECK(status IN ('planned','active','paused','completed')),
             goal       TEXT,
             created_at TIMESTAMPTZ DEFAULT NOW(),
             UNIQUE(team_id, name)
         )
     `);
+    // Migration: lifecycle + auto-management columns for the sprint scheduler.
+    //   - started_at / completed_at / velocity_points pre-date this change but
+    //     are recreated here defensively for older tenants.
+    //   - paused_at        — when an active sprint was paused (NULL otherwise).
+    //   - auto_managed      — TRUE for sprints created/rotated by the scheduler.
+    //   - sprint_number     — running index within a team for auto sprints.
+    //   - carried_from_sprint_id — origin link when a sprint inherits rolled-
+    //     over (incomplete) tickets from the previous sprint, surfaced in the
+    //     Sprint Insights "Carried Forward" panel.
+    await q(`ALTER TABLE sprints ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ`);
+    await q(`ALTER TABLE sprints ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`);
+    await q(`ALTER TABLE sprints ADD COLUMN IF NOT EXISTS velocity_points NUMERIC(8,2)`);
+    await q(`ALTER TABLE sprints ADD COLUMN IF NOT EXISTS paused_at TIMESTAMPTZ`);
+    await q(`ALTER TABLE sprints ADD COLUMN IF NOT EXISTS auto_managed BOOLEAN NOT NULL DEFAULT FALSE`);
+    await q(`ALTER TABLE sprints ADD COLUMN IF NOT EXISTS sprint_number INTEGER`);
+    await q(`ALTER TABLE sprints ADD COLUMN IF NOT EXISTS carried_from_sprint_id INTEGER`);
+    // Migration: relax the status CHECK to include 'paused' on existing tenants.
+    await q(`
+        DO $do$ BEGIN
+            ALTER TABLE sprints DROP CONSTRAINT IF EXISTS sprints_status_check;
+            ALTER TABLE sprints ADD CONSTRAINT sprints_status_check
+                CHECK(status IN ('planned','active','paused','completed'));
+        EXCEPTION WHEN others THEN NULL;
+        END $do$
+    `);
+    // Self-referential FK for the rollover origin link (deferred — added once
+    // the table exists so re-runs are safe).
+    await q(`
+        DO $do$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints
+                           WHERE constraint_name = 'sprints_carried_from_fkey') THEN
+                ALTER TABLE sprints ADD CONSTRAINT sprints_carried_from_fkey
+                    FOREIGN KEY (carried_from_sprint_id) REFERENCES sprints(id) ON DELETE SET NULL;
+            END IF;
+        EXCEPTION WHEN others THEN NULL;
+        END $do$
+    `);
+    // Unique running number per team for auto-managed sprints (lets the
+    // scheduler upsert the current window without creating duplicates).
+    await q(`CREATE UNIQUE INDEX IF NOT EXISTS uq_sprints_team_number ON sprints(team_id, sprint_number) WHERE sprint_number IS NOT NULL`);
 
     // Deferred FK from tasks -> sprints
     await q(`
@@ -1719,6 +1764,12 @@ async function initTenantSchema(q: SchemaQuery): Promise<void> {
     await q(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS acceptance_criteria JSONB`);
     await q(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN NOT NULL DEFAULT FALSE`);
     await q(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS blocked_reason TEXT`);
+    // Rollover provenance: when a sprint completes (manually or via the
+    // auto-scheduler) any incomplete tickets are moved to the next sprint and
+    // stamped with the sprint they came from. The Sprint Insights "Carried
+    // Forward" panel reads this to link each carried ticket back to its origin.
+    await q(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS carried_over_from_sprint_id INTEGER REFERENCES sprints(id) ON DELETE SET NULL`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_tasks_carried_over ON tasks(carried_over_from_sprint_id) WHERE carried_over_from_sprint_id IS NOT NULL`);
     await q(`CREATE INDEX IF NOT EXISTS idx_tasks_workflow_state ON tasks(workflow_state_id) WHERE workflow_state_id IS NOT NULL`);
     await q(`CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_task_id) WHERE parent_task_id IS NOT NULL`);
     await q(`CREATE INDEX IF NOT EXISTS idx_tasks_sprint_points ON tasks(sprint_id) WHERE sprint_id IS NOT NULL`);

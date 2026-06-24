@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { VoiceRecorder, ReplyPreview, EmojiGifPicker, MentionInput } from "../../components/chat";
+import CameraCapture from "../../components/chat/CameraCapture";
 import s from "./ChatInputBar.module.css";
 
 interface ChatInputBarProps {
@@ -50,8 +52,8 @@ export default function ChatInputBar({
     onTyping,
 }: ChatInputBarProps) {
     const [plusOpen, setPlusOpen] = useState(false);
+    const [cameraOpen, setCameraOpen] = useState(false);
     const plusMenuRef = useRef<HTMLDivElement | null>(null);
-    const cameraInputRef = useRef<HTMLInputElement | null>(null);
 
     useEffect(() => {
         if (!plusOpen) return;
@@ -98,18 +100,6 @@ export default function ChatInputBar({
                                 e.target.value = "";
                             }}
                         />
-                        <input
-                            type="file"
-                            ref={cameraInputRef}
-                            className={s.fileInput}
-                            accept="image/*"
-                            capture="environment"
-                            onChange={(e) => {
-                                if (e.target.files?.[0]) onFileUpload(e.target.files[0]);
-                                e.target.value = "";
-                            }}
-                        />
-
                         <div ref={plusMenuRef} style={{ position: "relative" }}>
                             <button
                                 type="button"
@@ -230,7 +220,7 @@ export default function ChatInputBar({
                             <button
                                 type="button"
                                 className={s.cameraBtn}
-                                onClick={() => cameraInputRef.current?.click()}
+                                onClick={() => setCameraOpen(true)}
                                 title="Camera"
                                 aria-label="Open camera"
                             >
@@ -309,6 +299,15 @@ export default function ChatInputBar({
                     </form>
                 </div>
             )}
+
+            {cameraOpen &&
+                createPortal(
+                    <CameraCapture
+                        onCapture={(file) => onFileUpload(file)}
+                        onClose={() => setCameraOpen(false)}
+                    />,
+                    document.body,
+                )}
         </>
     );
 }

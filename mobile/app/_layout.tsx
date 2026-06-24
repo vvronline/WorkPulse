@@ -24,6 +24,10 @@ import { backgroundPushService } from "../src/services/backgroundPushService";
 import { notifeeService } from "../src/services/notifeeService";
 import { ensureCallMediaPermissions } from "../src/services/mediaPermissions";
 import { warmIceConfig } from "../src/features";
+import {
+  installThemedAlertBridge,
+  ThemedAlertHost,
+} from "../src/dialogs/themedAlertBridge";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -188,6 +192,10 @@ export default function RootLayout() {
   }, [fontsLoaded]);
 
   useEffect(() => {
+    installThemedAlertBridge();
+  }, []);
+
+  useEffect(() => {
     // Foreground CallKeep setup. The FCM background message handler is
     // registered at the JS entry top-level (see `mobile/index.js`) so it also
     // runs when the app is killed.
@@ -256,6 +264,7 @@ export default function RootLayout() {
               <ImpersonationBanner />
               <UpdateChecker />
               <ThemedStack />
+              <ThemedAlertHost />
             </SafeAreaProvider>
           </ThemeProvider>
         </AuthProvider>

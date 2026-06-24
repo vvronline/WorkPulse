@@ -23,6 +23,7 @@ let tokenCleanupQueue: any = null;
 let inspectorPruneQueue: any = null;
 let retentionCleanupQueue: any = null;
 let staleCallQueue: any = null;
+let sprintLifecycleQueue: any = null;
 let workers: any[] = [];
 let fallbackIntervals: NodeJS.Timeout[] = [];
 
@@ -41,6 +42,10 @@ const STALE_CALL_SWEEP_MS = 20 * 1000;
 // This sweep force-ends answered calls older than the max plausible call
 // duration so an abandoned call can never pin a user as busy indefinitely.
 const STALE_ANSWERED_TTL_SECS = 12 * 60 * 60; // 12h
+// How often the sprint lifecycle scheduler runs. Hourly is plenty — sprint
+// windows turn over on day boundaries, so an hourly sweep guarantees a new
+// sprint auto-starts within an hour of the previous one ending.
+const SPRINT_LIFECYCLE_SWEEP_MS = 60 * 60 * 1000;
 
 interface InitJobsOpts {
     autoClockOut: () => void | Promise<void>;
@@ -292,6 +297,31 @@ async function expireStaleRingingCalls(): Promise<number> {
 }
 
 /**
+ * Sprint lifecycle sweep. For every tenant, drives the auto-managed sprint
+ * cadence: auto-creates the current sprint window, auto-starts it, and
+ * auto-completes + rolls over the previous one when its window ends. Teams in
+ * manual mode or paused are skipped by the scheduler itself. Invalidates the
+ * active-sprint Redis cache for any team that transitioned so the board's
+ * "Active" label refreshes immediately.
+ */
+async function runSprintLifecycleSweep(): Promise<number> {
+    const { runSprintLifecycle } = require("./services/sprintScheduler");
+    const redis = require("./redis");
+    let totalTransitions = 0;
+    await forEachTenant(
+        async (db: TenantDb, tenant) => {
+            const { transitions } = await runSprintLifecycle({ db, tenantId: tenant.id }, redis);
+            totalTransitions += transitions || 0;
+        },
+        { label: "sprintLifecycle" },
+    );
+    if (totalTransitions > 0) {
+        logger.info({ transitions: totalTransitions }, "Sprint lifecycle transitions applied");
+    }
+    return totalTransitions;
+}
+
+/**
  * Initialize job queues. Must be called after Redis is connected.
  */
 function initJobs({ autoClockOut, cleanupTokens }: InitJobsOpts): void {
@@ -318,6 +348,14 @@ function initJobs({ autoClockOut, cleanupTokens }: InitJobsOpts): void {
             () => expireStaleRingingCalls().catch((err) =>
                 logger.error({ err }, "Stale-call sweep (interval) failed")),
             STALE_CALL_SWEEP_MS,
+        ));
+        // Sprint lifecycle: run once on boot then hourly.
+        runSprintLifecycleSweep().catch((err) =>
+            logger.error({ err }, "Sprint lifecycle (startup) failed"));
+        fallbackIntervals.push(setInterval(
+            () => runSprintLifecycleSweep().catch((err) =>
+                logger.error({ err }, "Sprint lifecycle (interval) failed")),
+            SPRINT_LIFECYCLE_SWEEP_MS,
         ));
         return;
     }
@@ -427,10 +465,31 @@ function initJobs({ autoClockOut, cleanupTokens }: InitJobsOpts): void {
     });
     workers.push(staleCallWorker);
 
+    // Sprint lifecycle: hourly auto-create / auto-start / auto-complete +
+    // rollover of sprints for teams in auto mode (see services/sprintScheduler).
+    sprintLifecycleQueue = new Queue("sprint-lifecycle", { connection });
+    sprintLifecycleQueue.upsertJobScheduler("sprint-lifecycle-schedule", {
+        every: SPRINT_LIFECYCLE_SWEEP_MS,
+    }, {
+        name: "sprint-lifecycle",
+    }).catch((err: any) => logger.warn({ err: err.message }, "Failed to set sprint-lifecycle schedule"));
+
+    const sprintLifecycleWorker = new Worker("sprint-lifecycle", async () => {
+        await runSprintLifecycleSweep();
+    }, { connection, concurrency: 1 });
+    sprintLifecycleWorker.on("failed", (job: any, err: any) => {
+        logger.error({ err, jobId: job?.id }, "Sprint lifecycle job failed");
+    });
+    workers.push(sprintLifecycleWorker);
+
     // Run auto clock-out immediately on startup
     autoClockOut();
+    // Run a sprint lifecycle pass immediately so a fresh boot picks up any
+    // window that turned over while the server was down.
+    runSprintLifecycleSweep().catch((err) =>
+        logger.error({ err }, "Sprint lifecycle (startup) failed"));
 
-    logger.info("BullMQ job queues initialized (auto-clock-out: 5m, token-cleanup: 1h, inspector-prune: 24h, retention-cleanup: 24h, stale-call-sweep: 20s)");
+    logger.info("BullMQ job queues initialized (auto-clock-out: 5m, token-cleanup: 1h, inspector-prune: 24h, retention-cleanup: 24h, stale-call-sweep: 20s, sprint-lifecycle: 1h)");
 }
 
 async function shutdownJobs(): Promise<void> {
@@ -453,6 +512,9 @@ async function shutdownJobs(): Promise<void> {
     }
     if (staleCallQueue) {
         try { await staleCallQueue.close(); } catch { /* ignore */ }
+    }
+    if (sprintLifecycleQueue) {
+        try { await sprintLifecycleQueue.close(); } catch { /* ignore */ }
     }
 }
 

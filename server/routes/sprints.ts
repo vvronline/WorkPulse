@@ -142,7 +142,7 @@ router.put("/:id", auth, loadUserContext, requireRole("team_lead"), async (req: 
             updates.push(`end_date = $${pi++}`); params.push(end_date);
         }
         if (goal !== undefined) { updates.push(`goal = $${pi++}`); params.push(goal); }
-        if (status !== undefined && ["planned", "active", "completed"].includes(status)) {
+        if (status !== undefined && ["planned", "active", "paused", "completed"].includes(status)) {
             updates.push(`status = $${pi++}`); params.push(status);
         }
 
@@ -441,12 +441,18 @@ router.post("/:id/complete", auth, loadUserContext, requireRole("team_lead"), as
             if (!target) return res.status(400).json({ error: "Target sprint not found" });
             if (target.status === "completed") return res.status(400).json({ error: "Cannot roll over to a completed sprint" });
             const r = await req.db!.query(
-                `UPDATE tasks SET sprint_id = $1
+                `UPDATE tasks SET sprint_id = $1, carried_over_from_sprint_id = $2
                   WHERE sprint_id = $2
                     AND COALESCE((SELECT is_terminal FROM workflow_states WHERE id = tasks.workflow_state_id), FALSE) = FALSE`,
                 [targetId, id]
             );
             rolledOver = r.rowCount;
+            // Record provenance on the target sprint so Insights can show a
+            // "Carried Forward" list that links back to this origin sprint.
+            await req.db!.query(
+                `UPDATE sprints SET carried_from_sprint_id = $1 WHERE id = $2 AND carried_from_sprint_id IS NULL`,
+                [id, targetId]
+            );
         } else {
             const r = await req.db!.query(
                 `UPDATE tasks SET sprint_id = NULL
@@ -479,6 +485,113 @@ router.post("/:id/complete", auth, loadUserContext, requireRole("team_lead"), as
     } catch (err) {
         req.log.error({ err }, "Error completing sprint");
         res.status(500).json({ error: "Failed to complete sprint" });
+    }
+});
+
+// ─── Sprint lifecycle: PAUSE ────────────────────────────────────────────────
+//
+// Pauses an active sprint. Sets status='paused' + paused_at and flags the team
+// as paused so the auto-scheduler skips it (the cadence clock effectively
+// freezes). Restricted to team_lead and above (manager / admins inherit).
+router.post("/:id/pause", auth, loadUserContext, requireRole("team_lead"), async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const sprint = (await req.db!.query(
+            "SELECT s.* FROM sprints s JOIN teams t ON t.id = s.team_id WHERE s.id = $1 AND t.org_id = $2",
+            [id, req.userOrgId]
+        )).rows[0];
+        if (!sprint) return res.status(404).json({ error: "Sprint not found" });
+        if (sprint.team_id !== req.userTeamId) return res.status(403).json({ error: "Access denied" });
+        if (sprint.status !== "active") return res.status(400).json({ error: "Only an active sprint can be paused" });
+
+        await req.db!.query(
+            "UPDATE sprints SET status = 'paused', paused_at = NOW() WHERE id = $1",
+            [id]
+        );
+        // Freeze the auto-scheduler for this team while paused.
+        await req.db!.query("UPDATE teams SET sprint_paused = TRUE WHERE id = $1", [sprint.team_id]);
+        await redis.invalidateActiveSprint(req.tenantId, sprint.team_id);
+
+        const updated = (await req.db!.query("SELECT * FROM sprints WHERE id = $1", [id])).rows[0];
+        res.json({ sprint: updated });
+    } catch (err) {
+        req.log.error({ err }, "Error pausing sprint");
+        res.status(500).json({ error: "Failed to pause sprint" });
+    }
+});
+
+// ─── Sprint lifecycle: RESUME ───────────────────────────────────────────────
+//
+// Resumes a paused sprint. Shifts end_date forward by the paused duration so
+// the team doesn't lose the days they were paused, re-activates it, and clears
+// the team pause flag so the auto-scheduler resumes. Restricted to team_lead+.
+router.post("/:id/resume", auth, loadUserContext, requireRole("team_lead"), async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const sprint = (await req.db!.query(
+            "SELECT s.* FROM sprints s JOIN teams t ON t.id = s.team_id WHERE s.id = $1 AND t.org_id = $2",
+            [id, req.userOrgId]
+        )).rows[0];
+        if (!sprint) return res.status(404).json({ error: "Sprint not found" });
+        if (sprint.team_id !== req.userTeamId) return res.status(403).json({ error: "Access denied" });
+        if (sprint.status !== "paused") return res.status(400).json({ error: "Only a paused sprint can be resumed" });
+
+        // Push the end date out by however long we were paused so the team
+        // keeps their full working window.
+        let pausedDays = 0;
+        if (sprint.paused_at) {
+            pausedDays = Math.max(0, Math.floor((Date.now() - new Date(sprint.paused_at).getTime()) / 86400000));
+        }
+        const newEnd = new Date(new Date(sprint.end_date).getTime() + pausedDays * 86400000)
+            .toISOString().slice(0, 10);
+
+        await req.db!.query(
+            "UPDATE sprints SET status = 'active', paused_at = NULL, end_date = $2 WHERE id = $1",
+            [id, newEnd]
+        );
+        await req.db!.query("UPDATE teams SET sprint_paused = FALSE WHERE id = $1", [sprint.team_id]);
+        await redis.invalidateActiveSprint(req.tenantId, sprint.team_id);
+
+        const updated = (await req.db!.query("SELECT * FROM sprints WHERE id = $1", [id])).rows[0];
+        res.json({ sprint: updated });
+    } catch (err) {
+        req.log.error({ err }, "Error resuming sprint");
+        res.status(500).json({ error: "Failed to resume sprint" });
+    }
+});
+
+// ─── Carried-forward tickets (for Sprint Insights) ──────────────────────────
+//
+// Returns the tickets that were rolled INTO this sprint from a previous one
+// (tasks.carried_over_from_sprint_id points at the origin sprint), along with
+// the origin sprint metadata so the UI can link back. Visible to any member of
+// the team (and org admins).
+router.get("/:id/carried-over", auth, loadUserContext, async (req: Request, res: Response) => {
+    try {
+        const id = parseInt(String(req.params.id), 10);
+        if (isNaN(id)) return res.status(400).json({ error: "Invalid sprint id" });
+        const sprint = await loadAccessibleSprint(req, res, id);
+        if (!sprint) return;
+
+        const tasks = (await req.db!.query(
+            `SELECT t.id, t.title, t.status, t.story_points, t.assigned_to,
+                    t.carried_over_from_sprint_id,
+                    os.name AS origin_sprint_name, os.id AS origin_sprint_id
+               FROM tasks t
+          LEFT JOIN sprints os ON os.id = t.carried_over_from_sprint_id
+              WHERE t.sprint_id = $1 AND t.carried_over_from_sprint_id IS NOT NULL
+              ORDER BY t.created_at ASC`,
+            [id]
+        )).rows;
+
+        res.json({
+            sprint_id: id,
+            carriedFromSprintId: sprint.carried_from_sprint_id || null,
+            tasks,
+        });
+    } catch (err) {
+        req.log.error({ err }, "Error fetching carried-over tasks");
+        res.status(500).json({ error: "Failed to fetch carried-over tasks" });
     }
 });
 

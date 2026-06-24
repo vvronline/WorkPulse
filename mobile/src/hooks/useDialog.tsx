@@ -8,6 +8,7 @@ type DialogConfig = {
   cancelText?: string;
   isDanger?: boolean;
   onConfirm?: () => void;
+  onCancel?: () => void;
 };
 
 type DialogState = DialogConfig & {
@@ -35,7 +36,7 @@ export function useDialog() {
 
   // Informational / error message — single OK button.
   const alert = useCallback(
-    (title: string, message?: string, confirmText = "OK") => {
+    (title: string, message?: string, confirmText = "OK", onConfirm?: () => void) => {
       setState({
         visible: true,
         alertMode: true,
@@ -43,6 +44,8 @@ export function useDialog() {
         message,
         confirmText,
         isDanger: false,
+        onConfirm,
+        onCancel: undefined,
       });
     },
     [],
@@ -69,7 +72,11 @@ export function useDialog() {
       cancelText={state.cancelText}
       isDanger={state.isDanger}
       alertMode={state.alertMode}
-      onCancel={close}
+      onCancel={() => {
+        const fn = state.onCancel;
+        close();
+        fn?.();
+      }}
       onConfirm={() => {
         const fn = state.onConfirm;
         close();

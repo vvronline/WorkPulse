@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,6 +9,7 @@ import {
 } from "react-native";
 import { Stack } from "expo-router";
 import { ScanFace, ShieldCheck, Trash2 } from "lucide-react-native";
+import { useDialog } from "../../src/hooks/useDialog";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import FaceCaptureWebView from "../../src/components/FaceCaptureWebView";
@@ -27,6 +27,7 @@ export default function FaceEnrollment() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [capturing, setCapturing] = useState(false);
+  const { alert, confirm, dialog } = useDialog();
 
   async function load() {
     setLoading(true);
@@ -48,7 +49,7 @@ export default function FaceEnrollment() {
     setBusy(true);
     try {
       await enrollFace(descriptor);
-      Alert.alert("Enrolled", "Your face has been enrolled successfully.");
+      alert("Enrolled", "Your face has been enrolled successfully.");
       setCapturing(false);
       await load();
     } catch (e: any) {
@@ -69,7 +70,7 @@ export default function FaceEnrollment() {
           if (data?.enrolled) {
             // The descriptor was actually saved — surface success.
             setStatus(data);
-            Alert.alert(
+            alert(
               "Enrolled",
               "Your face has been enrolled successfully.",
             );
@@ -80,7 +81,7 @@ export default function FaceEnrollment() {
           /* status re-check failed too — fall through to the error below */
         }
       }
-      Alert.alert(
+      alert(
         "Error",
         serverError || "Failed to enroll face. Try again.",
       );
@@ -90,31 +91,27 @@ export default function FaceEnrollment() {
   }
 
   function confirmClear() {
-    Alert.alert(
-      "Clear Face Enrollment",
-      "Remove your enrolled face descriptor? You'll need to re-enroll to use face verification at clock-in.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Clear",
-          style: "destructive",
-          onPress: async () => {
-            setBusy(true);
-            try {
-              await clearFaceEnrollment();
-              await load();
-            } catch (e: any) {
-              Alert.alert(
-                "Error",
-                e?.response?.data?.error || "Failed to clear enrollment",
-              );
-            } finally {
-              setBusy(false);
-            }
-          },
-        },
-      ],
-    );
+    confirm({
+      title: "Clear Face Enrollment",
+      message:
+        "Remove your enrolled face descriptor? You'll need to re-enroll to use face verification at clock-in.",
+      confirmText: "Clear",
+      isDanger: true,
+      onConfirm: async () => {
+        setBusy(true);
+        try {
+          await clearFaceEnrollment();
+          await load();
+        } catch (e: any) {
+          alert(
+            "Error",
+            e?.response?.data?.error || "Failed to clear enrollment",
+          );
+        } finally {
+          setBusy(false);
+        }
+      },
+    });
   }
 
   if (loading) {
@@ -217,6 +214,7 @@ export default function FaceEnrollment() {
           ) : null}
         </>
       )}
+      {dialog}
     </ScrollView>
   );
 }

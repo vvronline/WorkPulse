@@ -201,9 +201,21 @@ export default function Profile() {
     }, [loadStatus]),
   );
 
-  const onLogout = async () => {
+  const performLogout = async () => {
     await logout();
     router.replace("/login");
+  };
+
+  const onLogout = () => {
+    confirm({
+      title: "Sign Out",
+      message: "Are you sure you want to sign out?",
+      confirmText: "Sign Out",
+      isDanger: true,
+      onConfirm: () => {
+        void performLogout();
+      },
+    });
   };
 
   // Toggle "Sign in with Face ID" for this device. Enrolling asks the server
@@ -493,7 +505,9 @@ export default function Profile() {
       <ChangePasswordModal
         visible={pwOpen}
         onClose={() => setPwOpen(false)}
-        onChanged={onLogout}
+        onChanged={() => {
+          void performLogout();
+        }}
       />
       <NotificationSoundsModal
         visible={soundsOpen}

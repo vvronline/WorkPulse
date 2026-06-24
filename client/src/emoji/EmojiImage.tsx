@@ -21,7 +21,16 @@ const SHEET_COLS = 57;
 // EmojiImage to the native unicode glyph (which renders correctly via the OS
 // color-emoji font on Windows/macOS/Linux). Subscribers re-render on change.
 type SpriteStatus = "pending" | "ok" | "failed";
-let spriteStatus: SpriteStatus = USING_BUNDLED ? "pending" : "failed";
+
+// The packaged Electron desktop app serves the bundled sprite over the
+// workpulse:// protocol where the sprite sheet renders misaligned/garbled
+// (the cells don't map cleanly). The OS color-emoji font (Segoe UI Emoji /
+// Apple Color Emoji) renders perfectly there, so on Electron we skip the
+// sprite entirely and always use the native unicode glyph.
+const IS_ELECTRON =
+    typeof navigator !== "undefined" && /electron/i.test(navigator.userAgent);
+
+let spriteStatus: SpriteStatus = USING_BUNDLED && !IS_ELECTRON ? "pending" : "failed";
 const spriteListeners = new Set<(s: SpriteStatus) => void>();
 
 function setSpriteStatus(s: SpriteStatus) {

@@ -115,10 +115,22 @@ export default function TasksHeader({
                             <h2>
                                 <span className="page-icon">🏃</span> {teamName} —{" "}
                                 {currentSprint ? currentSprint.name : "Sprint"}
+                                {currentSprint?.status === "active" && (
+                                    <span className={s["sprint-status-pill"]} data-status="active">
+                                        Active
+                                    </span>
+                                )}
+                                {currentSprint?.status === "paused" && (
+                                    <span className={s["sprint-status-pill"]} data-status="paused">
+                                        Paused
+                                    </span>
+                                )}
                             </h2>
                             <p>
                                 {currentSprint
-                                    ? `${currentSprint.start_date} → ${currentSprint.end_date} • ${daysLeft}d remaining`
+                                    ? currentSprint.status === "paused"
+                                        ? `${currentSprint.start_date} → ${currentSprint.end_date} • Paused`
+                                        : `${currentSprint.start_date} → ${currentSprint.end_date} • ${daysLeft}d remaining`
                                     : "Loading sprint…"}
                             </p>
                         </>
