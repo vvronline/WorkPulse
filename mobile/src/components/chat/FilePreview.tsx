@@ -77,10 +77,14 @@ export default function FilePreview({
   message,
   onCancelUpload,
   onRetryUpload,
+  onLongPress,
 }: {
   message: ChatMessage;
   onCancelUpload?: (message: ChatMessage) => void;
   onRetryUpload?: (message: ChatMessage) => void;
+  // Forwarded from the bubble so long-pressing an image/file opens the reaction
+  // bar (Signal parity) instead of the inner Pressable swallowing the gesture.
+  onLongPress?: () => void;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
@@ -140,6 +144,8 @@ export default function FilePreview({
         <Pressable
           style={[styles.viewOnceCard, viewedState && styles.viewOnceDone]}
           onPress={viewedState ? undefined : openViewOnce}
+          onLongPress={onLongPress}
+          delayLongPress={250}
           disabled={viewedState || loadingView}
         >
           <View style={styles.viewOnceIcon}>
@@ -183,7 +189,11 @@ export default function FilePreview({
     const isLocal = !!resolved && /^(file|content|data):/i.test(resolved);
     return (
       <View>
-        <Pressable onPress={() => setViewer(resolved || null)}>
+        <Pressable
+          onPress={() => setViewer(resolved || null)}
+          onLongPress={onLongPress}
+          delayLongPress={250}
+        >
           {isLocal ? (
             <Image
               source={{ uri: resolved }}
@@ -235,6 +245,8 @@ export default function FilePreview({
       <Pressable
         style={styles.fileCard}
         disabled={openingFile}
+        onLongPress={onLongPress}
+        delayLongPress={250}
         onPress={async () => {
           if (openingFile) return;
           setOpeningFile(true);

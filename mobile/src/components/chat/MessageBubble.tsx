@@ -212,6 +212,13 @@ export default function MessageBubble({
               message={message}
               onCancelUpload={onCancelUpload}
               onRetryUpload={onRetryUpload}
+              // Long-pressing an image/file must open the reaction bar (Signal
+              // parity). The inner image/file Pressable would otherwise swallow
+              // the gesture, so forward the bubble's long-press into it.
+              onLongPress={() => {
+                if (deleted) return;
+                onLongPress(message, mine);
+              }}
             />
           ) : null}
           {/* Signal inline footer: the message text and the time+ticks live in
