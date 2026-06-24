@@ -1,6 +1,6 @@
 export {};
 
-const { tsToMs, computeFloorMs, computeBreakMs, computeDaySummary, computeStatus } = require("../utils/timeCalc");
+const { tsToMs, endOfLocalDayMs, computeFloorMs, computeBreakMs, computeDaySummary, computeStatus } = require("../utils/timeCalc");
 
 // Helper: create a fake entry
 const entry = (type: string, ts: string, mode?: string) => ({
@@ -46,6 +46,47 @@ describe("computeFloorMs", () => {
         ];
         // 3h work + 4h work = 7h (break excluded)
         expect(computeFloorMs(entries)).toBe(7 * 3600 * 1000);
+    });
+
+    test("open session (no clock_out) counts as 0 when not live", () => {
+        // Regression guard for the "8h on the timer but 0/Absent in attendance"
+        // bug: a never-clocked-out session must NOT silently count as 0 in the
+        // historical (capped) read path — see the capMs tests below.
+        const entries = [entry("clock_in", "2025-01-15T09:00:00Z")];
+        expect(computeFloorMs(entries)).toBe(0);
+    });
+
+    test("open session is credited up to capMs (end-of-local-day)", () => {
+        // 3:30 PM IST clock-in, never clocked out. IST offset = -330.
+        // 09:30:00Z is 15:00 IST… use 10:00:00Z = 15:30 IST.
+        const entries = [entry("clock_in", "2025-01-15T10:00:00Z")];
+        const capMs = endOfLocalDayMs("2025-01-15", -330); // end of IST day
+        const floorMs = computeFloorMs(entries, true, capMs);
+        // From 15:30 IST to 23:59:59.999 IST ≈ 8h29m30s.
+        const hours = floorMs / 3_600_000;
+        expect(hours).toBeGreaterThan(8);
+        expect(hours).toBeLessThan(8.6);
+    });
+
+    test("capMs never counts backwards if it precedes the open clock-in", () => {
+        const entries = [entry("clock_in", "2025-01-15T10:00:00Z")];
+        // Cap before the clock-in (pathological bad-offset / clock-skew case).
+        const capMs = new Date("2025-01-15T08:00:00Z").getTime();
+        expect(computeFloorMs(entries, true, capMs)).toBe(0);
+    });
+});
+
+describe("endOfLocalDayMs", () => {
+    test("returns 23:59:59.999 local expressed as UTC for IST", () => {
+        // IST = UTC+5:30 → offsetMin = -330. End of 2025-01-15 IST =
+        // 2025-01-15T23:59:59.999+05:30 = 2025-01-15T18:29:59.999Z.
+        const ms = endOfLocalDayMs("2025-01-15", -330);
+        expect(new Date(ms).toISOString()).toBe("2025-01-15T18:29:59.999Z");
+    });
+
+    test("returns 23:59:59.999 UTC for offset 0", () => {
+        const ms = endOfLocalDayMs("2025-01-15", 0);
+        expect(new Date(ms).toISOString()).toBe("2025-01-15T23:59:59.999Z");
     });
 });
 

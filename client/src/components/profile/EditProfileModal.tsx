@@ -421,7 +421,7 @@ export default function EditProfileModal({ onClose }: EditProfileModalProps) {
                         </form>
                     </section>
 
-                    {isDesktop && desktopBio.available && (
+                    {isDesktop && (
                         <>
                             <div className={s.divider} />
                             {/* ── Desktop biometric (Windows Hello / Touch ID) ── */}
@@ -438,12 +438,23 @@ export default function EditProfileModal({ onClose }: EditProfileModalProps) {
                                     of a password. The credential is stored encrypted on this device
                                     and your biometric never leaves it.
                                 </p>
+                                {!desktopBio.available && (
+                                    // Surface WHY the toggle is unavailable rather than hiding the
+                                    // whole section — the silent hide was the #1 "I can't find
+                                    // biometric login" confusion. Windows Hello / Touch ID must be
+                                    // set up in the OS first (PIN + face/fingerprint enrolled).
+                                    <p className={s.error} style={{ marginTop: 0 }}>
+                                        No biometric hardware is set up on this device. Enable Windows
+                                        Hello (Settings → Accounts → Sign-in options) or Touch ID in
+                                        macOS, then reopen this dialog.
+                                    </p>
+                                )}
                                 {desktopBioAction.msg && (
                                     <p className={desktopBioAction.msg.ok ? s.success : s.error}>
                                         {desktopBioAction.msg.text}
                                     </p>
                                 )}
-                                {desktopBio.enrolled ? (
+                                {!desktopBio.available ? null : desktopBio.enrolled ? (
                                     <button
                                         className={s.cancelBtn}
                                         onClick={handleDisableDesktopBio}
@@ -470,7 +481,7 @@ export default function EditProfileModal({ onClose }: EditProfileModalProps) {
                         </>
                     )}
 
-                    {passkeySupported && !isDesktop && (
+                    {!isDesktop && (
                         <>
                             <div className={s.divider} />
                             {/* ── Passkeys (biometric login) ── */}
@@ -486,6 +497,17 @@ export default function EditProfileModal({ onClose }: EditProfileModalProps) {
                                     Sign in with your fingerprint, face, or device PIN instead of a
                                     password. Your biometric never leaves this device.
                                 </p>
+                                {!passkeySupported && (
+                                    // WebAuthn requires a secure context (HTTPS or localhost). On a
+                                    // plain-HTTP origin the API is absent and the button would
+                                    // silently disappear — explain why instead.
+                                    <p className={s.error} style={{ marginTop: 0 }}>
+                                        Passkeys aren't available in this browser. They require a
+                                        secure (HTTPS) connection and a device that supports
+                                        Touch ID / Windows Hello / a screen-lock. Open WorkPulse over
+                                        HTTPS and try again.
+                                    </p>
+                                )}
                                 {passkeys.length > 0 && (
                                     <ul style={{ listStyle: "none", padding: 0, margin: "0 0 0.75rem" }}>
                                         {passkeys.map((pk) => (
@@ -528,16 +550,18 @@ export default function EditProfileModal({ onClose }: EditProfileModalProps) {
                                         {passkeyAction.msg.text}
                                     </p>
                                 )}
-                                <button
-                                    className={s.saveBtn}
-                                    onClick={handleAddPasskey}
-                                    disabled={passkeyAction.loading}
-                                >
-                                    <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
-                                        <Plus size={14} />
-                                        {passkeyAction.loading ? "Working…" : "Add a passkey"}
-                                    </span>
-                                </button>
+                                {passkeySupported && (
+                                    <button
+                                        className={s.saveBtn}
+                                        onClick={handleAddPasskey}
+                                        disabled={passkeyAction.loading}
+                                    >
+                                        <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+                                            <Plus size={14} />
+                                            {passkeyAction.loading ? "Working…" : "Add a passkey"}
+                                        </span>
+                                    </button>
+                                )}
                             </section>
                         </>
                     )}

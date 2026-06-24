@@ -4,7 +4,7 @@ const auth = require("../middleware/auth");
 const { loadUserContext, requireRole, getVisibleUserIds, ROLE_LEVEL } = require("../middleware/rbac");
 const { logAction } = require("../utils/audit");
 const { getLocalToday, getTzModifier, getLocalDateFromTs, getOffsetMin } = require("../utils/timezone");
-const { computeFloorMs, computeBreakMs } = require("../utils/timeCalc");
+const { computeFloorMs, computeBreakMs, endOfLocalDayMs } = require("../utils/timeCalc");
 const { updateLeaveBalance } = require("./leaves");
 const { logger } = require("../utils/logger");
 const { notifyByEmail } = require("../utils/mailer");
@@ -255,8 +255,12 @@ router.get("/team-analytics", async (req: Request, res: Response) => {
                 const dayEntries = userDays[date];
                 if (!dayEntries.some((e: any) => e.entry_type === "clock_in")) return;
                 daysWorked++;
-                const floorMs = computeFloorMs(dayEntries);
-                const breakMs = computeBreakMs(dayEntries);
+                // Credit an unterminated session by capping at end-of-local-day
+                // (or "now" for today) — see endOfLocalDayMs. Without this a
+                // never-clocked-out overnight shift counted as 0 → false absent.
+                const capMs = date >= today ? Date.now() : endOfLocalDayMs(date, offsetMin);
+                const floorMs = computeFloorMs(dayEntries, true, capMs);
+                const breakMs = computeBreakMs(dayEntries, true, capMs);
                 const floorMin = Math.round(floorMs / 60000);
                 const breakMin = Math.round(breakMs / 60000);
                 totalFloor += floorMin;
@@ -275,7 +279,8 @@ router.get("/team-analytics", async (req: Request, res: Response) => {
             const trend = trendDates.map(date => {
                 const dayEntries = userDays[date];
                 if (!dayEntries || !dayEntries.some((e: any) => e.entry_type === "clock_in")) return 0;
-                return Math.round(computeFloorMs(dayEntries) / 60000);
+                const capMs = date >= today ? Date.now() : endOfLocalDayMs(date, offsetMin);
+                return Math.round(computeFloorMs(dayEntries, true, capMs) / 60000);
             });
 
             const todayUe = todayByUser[u.id] || [];
@@ -734,10 +739,11 @@ router.get("/member/:userId/hours", async (req: Request, res: Response) => {
         const dailySummaries = Object.keys(grouped).sort().map(date => {
             const dayEntries = grouped[date];
             const clockIn = dayEntries.find((e: any) => e.entry_type === "clock_in");
+            const capMs = date >= today ? Date.now() : endOfLocalDayMs(date, offsetMin);
             return {
                 date,
-                floorMinutes: Math.round(computeFloorMs(dayEntries) / 60000),
-                breakMinutes: Math.round(computeBreakMs(dayEntries) / 60000),
+                floorMinutes: Math.round(computeFloorMs(dayEntries, true, capMs) / 60000),
+                breakMinutes: Math.round(computeBreakMs(dayEntries, true, capMs) / 60000),
                 workMode: clockIn?.work_mode || "office",
             };
         });
@@ -900,11 +906,12 @@ router.get("/member/:userId/overview", async (req: Request, res: Response) => {
             const d = new Date(Date.now() - offsetMin * 60000 - i * 86400000);
             const dateStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
             const dayEntries = trendGrouped[dateStr] || [];
+            const capMs = dateStr >= today ? Date.now() : endOfLocalDayMs(dateStr, offsetMin);
             weeklyTrend.push({
                 date: dateStr,
                 dayLabel: d.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" }),
-                floorMinutes: dayEntries.length > 0 ? Math.round(computeFloorMs(dayEntries) / 60000) : 0,
-                breakMinutes: dayEntries.length > 0 ? Math.round(computeBreakMs(dayEntries) / 60000) : 0,
+                floorMinutes: dayEntries.length > 0 ? Math.round(computeFloorMs(dayEntries, true, capMs) / 60000) : 0,
+                breakMinutes: dayEntries.length > 0 ? Math.round(computeBreakMs(dayEntries, true, capMs) / 60000) : 0,
                 workMode: dayEntries.find((e: any) => e.entry_type === "clock_in")?.work_mode || null,
             });
         }
@@ -926,11 +933,12 @@ router.get("/member/:userId/overview", async (req: Request, res: Response) => {
             if (org?.work_hours_per_day) orgWhpd = org.work_hours_per_day;
         }
         const targetMin = orgWhpd * 60;
-        Object.values(grouped30).forEach((dayEntries: any[]) => {
+        Object.entries(grouped30).forEach(([dateStr, dayEntries]: [string, any[]]) => {
             if (!dayEntries.some((e: any) => e.entry_type === "clock_in")) return;
             days30Worked++;
-            const fMs = computeFloorMs(dayEntries);
-            const bMs = computeBreakMs(dayEntries);
+            const capMs = dateStr >= today ? Date.now() : endOfLocalDayMs(dateStr, offsetMin);
+            const fMs = computeFloorMs(dayEntries, true, capMs);
+            const bMs = computeBreakMs(dayEntries, true, capMs);
             total30Floor += Math.round(fMs / 60000);
             total30Break += Math.round(bMs / 60000);
             if (Math.round(fMs / 60000) >= targetMin) targetMet30++;

@@ -5,7 +5,7 @@ const { loadUserContext, ROLE_LEVEL } = require("../middleware/rbac");
 const { findApprover } = require("../utils/approver");
 const { logAction } = require("../utils/audit");
 const { getLocalToday, getLocalDow, getTzModifier, getLocalDateFromTs, getOffsetMin } = require("../utils/timezone");
-const { computeStatus, computeDaySummary } = require("../utils/timeCalc");
+const { computeStatus, computeDaySummary, endOfLocalDayMs } = require("../utils/timeCalc");
 const { logger } = require("../utils/logger");
 const { notifyByEmail } = require("../utils/mailer");
 const { sendToUser } = require("../utils/ws");
@@ -519,7 +519,10 @@ router.get("/history", auth, async (req: Request, res: Response) => {
 
         const today = getLocalToday(req);
         const dailySummaries = Object.keys(grouped).sort().map((date) => {
-            const summary = computeDaySummary(grouped[date], date === today);
+            // Cap an unterminated session at "now" for today, else end-of-local-day,
+            // so a never-clocked-out / overnight session is credited (not shown as 0).
+            const capMs = date >= today ? Date.now() : endOfLocalDayMs(date, offsetMin);
+            const summary = computeDaySummary(grouped[date], true, capMs);
             return { date, ...summary };
         });
 
@@ -572,7 +575,8 @@ router.get("/analytics", auth, async (req: Request, res: Response) => {
         for (let i = 0; i < numDays; i++) {
             const d = new Date(startMs + i * 86400000);
             const dateStr = d.toISOString().slice(0, 10);
-            const summary = computeDaySummary(grouped[dateStr] || [], dateStr === today);
+            const capMs = dateStr >= today ? Date.now() : endOfLocalDayMs(dateStr, offsetMin);
+            const summary = computeDaySummary(grouped[dateStr] || [], true, capMs);
             analytics.push({ date: dateStr, ...summary });
         }
 
@@ -1004,7 +1008,8 @@ router.get("/widgets", auth, async (req: Request, res: Response) => {
             const dayEntries = grouped[date];
             if (!dayEntries.some((e) => e.entry_type === "clock_in")) return;
             workDays++;
-            const summary = computeDaySummary(dayEntries, date === today);
+            const capMs = date >= today ? Date.now() : endOfLocalDayMs(date, offsetMin);
+            const summary = computeDaySummary(dayEntries, true, capMs);
             totalFloorMin += summary.floorMinutes;
             if (summary.floorMinutes >= TARGET) targetMetDays++;
             if (summary.workMode === "remote") remoteDays++;
@@ -1089,7 +1094,8 @@ router.get("/weekly", auth, async (req: Request, res: Response) => {
             let hours = 0;
             const dayEntries = grouped[dateStr];
             if (dayEntries && dayEntries.length > 0) {
-                const summary = computeDaySummary(dayEntries, dateStr === todayStr);
+                const capMs = dateStr >= todayStr ? Date.now() : endOfLocalDayMs(dateStr, offsetMin);
+                const summary = computeDaySummary(dayEntries, true, capMs);
                 hours = Math.round(summary.floorMinutes / 6) / 10;
             }
             days.push({ date: dateStr, day: dayName, hours, isToday: dateStr === todayStr });

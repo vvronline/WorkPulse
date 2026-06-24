@@ -6,7 +6,7 @@ import type { Request, Response } from "express";
 const auth = require("../middleware/auth");
 const { loadUserContext, requireRole, getVisibleUserIds } = require("../middleware/rbac");
 const { getOffsetMin } = require("../utils/timezone");
-const { computeFloorMs, computeBreakMs } = require("../utils/timeCalc");
+const { computeFloorMs, computeBreakMs, endOfLocalDayMs } = require("../utils/timeCalc");
 const { sendCSV, sendPDF, sendPayrollCSV, sendPayrollPDF } = require("../utils/export");
 const { logger } = require("../utils/logger");
 
@@ -35,7 +35,8 @@ router.get("/my-analytics", async (req: Request, res: Response) => {
         const intervalStr = `${-offsetMin} minutes`;
         const entries = (await req.db!.query(`
             SELECT * FROM time_entries
-            WHERE user_id = $1 AND approval_status = 'approved'
+            WHERE user_id = $1
+                AND (is_manual = FALSE OR approval_status = 'approved')
                 AND (timestamp + $4::interval)::date BETWEEN $2::date AND $3::date
             ORDER BY timestamp ASC
         `, [req.userId, from, to, intervalStr])).rows;
@@ -48,9 +49,14 @@ router.get("/my-analytics", async (req: Request, res: Response) => {
             byDate[d].push(e);
         });
 
+        const exportTodayLocal = new Date(Date.now() - offsetMin * 60000).toISOString().slice(0, 10);
         const rows = Object.entries(byDate).map(([date, dayEntries]) => {
-            const floorMs = computeFloorMs(dayEntries);
-            const breakMs = computeBreakMs(dayEntries);
+            // Credit an unterminated session by capping at end-of-local-day
+            // (or "now" for today) so a never-clocked-out overnight shift is
+            // exported with its real hours rather than 0.
+            const capMs = date >= exportTodayLocal ? Date.now() : endOfLocalDayMs(date, offsetMin);
+            const floorMs = computeFloorMs(dayEntries, true, capMs);
+            const breakMs = computeBreakMs(dayEntries, true, capMs);
             const clockIn = dayEntries.find((e: any) => e.entry_type === "clock_in");
             return {
                 date,
@@ -205,7 +211,8 @@ router.get("/team-analytics", requireRole("team_lead"), async (req: Request, res
             const memberInterval = `${-(member.timezone_offset || offsetMin)} minutes`;
             const entries = (await req.db!.query(`
                 SELECT * FROM time_entries
-                WHERE user_id = $1 AND approval_status = 'approved'
+                WHERE user_id = $1
+                    AND (is_manual = FALSE OR approval_status = 'approved')
                     AND (timestamp + $4::interval)::date BETWEEN $2::date AND $3::date
                 ORDER BY timestamp ASC
             `, [member.id, from, to, memberInterval])).rows;
@@ -226,10 +233,13 @@ router.get("/team-analytics", requireRole("team_lead"), async (req: Request, res
                 if (mOrgCfg?.work_hours_per_day) memberTargetMs = mOrgCfg.work_hours_per_day * 3600000;
             }
 
+            const memberOffsetMin = member.timezone_offset || offsetMin;
+            const memberTodayLocal = new Date(Date.now() - memberOffsetMin * 60000).toISOString().slice(0, 10);
             let totalFloor = 0, totalBreak = 0, daysWorked = 0, targetMet = 0;
-            Object.values(byDate).forEach((dayEntries: any[]) => {
-                const f = computeFloorMs(dayEntries);
-                const b = computeBreakMs(dayEntries);
+            Object.entries(byDate).forEach(([date, dayEntries]: [string, any[]]) => {
+                const capMs = date >= memberTodayLocal ? Date.now() : endOfLocalDayMs(date, memberOffsetMin);
+                const f = computeFloorMs(dayEntries, true, capMs);
+                const b = computeBreakMs(dayEntries, true, capMs);
                 totalFloor += f;
                 totalBreak += b;
                 daysWorked++;
@@ -378,7 +388,8 @@ router.get("/payroll-hours", requireRole("team_lead"), async (req: Request, res:
             // Approved time entries for the period
             const entries = (await req.db!.query(
                 `SELECT * FROM time_entries
-                 WHERE user_id = $1 AND approval_status = 'approved'
+                 WHERE user_id = $1
+                   AND (is_manual = FALSE OR approval_status = 'approved')
                    AND (timestamp + $4::interval)::date BETWEEN $2::date AND $3::date
                  ORDER BY timestamp ASC`,
                 [member.id, from, to, memberInterval]
@@ -456,8 +467,10 @@ router.get("/payroll-hours", requireRole("team_lead"), async (req: Request, res:
                 let clockIn = "", clockOut = "", workMode = "";
 
                 if (hasWork) {
-                    const floorMs = computeFloorMs(dayEntries);
-                    const breakMs = computeBreakMs(dayEntries);
+                    const detailTodayLocal = new Date(Date.now() - memberOffsetMin * 60000).toISOString().slice(0, 10);
+                    const capMs = date >= detailTodayLocal ? Date.now() : endOfLocalDayMs(date, memberOffsetMin);
+                    const floorMs = computeFloorMs(dayEntries, true, capMs);
+                    const breakMs = computeBreakMs(dayEntries, true, capMs);
                     const ci = dayEntries.find((e: any) => e.entry_type === "clock_in");
                     const co = [...dayEntries].reverse().find((e: any) => e.entry_type === "clock_out");
                     totalH = floorMs / 3_600_000;

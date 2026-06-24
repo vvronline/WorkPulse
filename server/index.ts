@@ -412,31 +412,50 @@ async function autoClockOutUser(db: DbContext, user: { id: number; timezone_offs
     const rawOffset = user.timezone_offset || 0;
     // Clamp to valid timezone range: UTC-12 (720) to UTC+14 (-840)
     const offsetMin = (typeof rawOffset === "number" && rawOffset >= -840 && rawOffset <= 720) ? rawOffset : 0;
-    const intervalStr = `${-offsetMin} minutes`;
-
-    const localNow = new Date(Date.now() - offsetMin * 60000);
-    const localYesterday = new Date(localNow.getTime() - 86400000);
-    const yesterdayStr = `${localYesterday.getUTCFullYear()}-${String(localYesterday.getUTCMonth() + 1).padStart(2, "0")}-${String(localYesterday.getUTCDate()).padStart(2, "0")}`;
 
     await db.transaction!(async (client: any) => {
+        // Find the user's single most-recent live entry across ALL dates. A
+        // session is "open" when this latest entry is not a clock_out. Working
+        // from the actual open entry (rather than a recomputed "yesterday")
+        // makes the boundary robust even when `users.timezone_offset` is stale
+        // or 0 — the previous version recomputed "yesterday" from that offset,
+        // so a wrong offset stamped the clock_out into the wrong local day,
+        // which the non-live attendance reader then couldn't pair → the day was
+        // truncated and wrongly marked Absent (e.g. an 8h overnight shift that
+        // showed as 4.06h). We anchor the end-of-day boundary on the OPEN
+        // session's own clock-in day instead.
         const lastEntryRow = (await client.query(`
-            SELECT entry_type, timestamp FROM time_entries
-            WHERE user_id = $1 AND (timestamp + $2::interval)::date = $3::date
-            ORDER BY timestamp DESC LIMIT 1
-        `, [user.id, intervalStr, yesterdayStr])).rows[0];
+            SELECT id, entry_type, timestamp FROM time_entries
+            WHERE user_id = $1 AND is_manual IS NOT TRUE
+            ORDER BY timestamp DESC, id DESC LIMIT 1
+        `, [user.id])).rows[0];
 
         if (!lastEntryRow || lastEntryRow.entry_type === "clock_out") return;
 
-        const alreadyDone = (await client.query(`
-            SELECT 1 FROM time_entries
-            WHERE user_id = $1 AND entry_type = 'clock_out' AND (timestamp + $2::interval)::date = $3::date
-            LIMIT 1
-        `, [user.id, intervalStr, yesterdayStr])).rows[0];
-        if (alreadyDone) return;
+        // Parse the open entry's timestamp to epoch ms (DB stores UTC; the value
+        // may or may not carry a trailing 'Z').
+        const lastTsRaw = lastEntryRow.timestamp instanceof Date
+            ? lastEntryRow.timestamp.toISOString()
+            : String(lastEntryRow.timestamp).replace(" ", "T");
+        const lastMs = new Date(/[Zz]$/.test(lastTsRaw) ? lastTsRaw : lastTsRaw + "Z").getTime();
 
-        const [y, m, d] = yesterdayStr.split("-").map(Number);
-        const utcMs = Date.UTC(y, m - 1, d, 23, 59, 59) + offsetMin * 60000;
-        const autoTs = new Date(utcMs).toISOString().slice(0, 19).replace("T", " ");
+        // Only auto-close sessions that are no longer "today" in the user's
+        // local timezone — i.e. the session has rolled past local midnight.
+        // A still-current-day open session is left alone (the user may still be
+        // working; the /tracker/status target-met path handles same-day close).
+        const nowMs = Date.now();
+        const localToday = new Date(nowMs - offsetMin * 60000).toISOString().slice(0, 10);
+        const sessionLocalDay = new Date(lastMs - offsetMin * 60000).toISOString().slice(0, 10);
+        if (sessionLocalDay >= localToday) return;
+
+        // End-of-day (23:59:59 local) of the OPEN session's own local day,
+        // expressed back in UTC. Guard against ever stamping a clock_out that
+        // precedes the open entry (clock skew / bad offset) by falling back to
+        // lastMs + 1s in that pathological case.
+        const [y, m, d] = sessionLocalDay.split("-").map(Number);
+        let boundaryMs = Date.UTC(y, m - 1, d, 23, 59, 59) + offsetMin * 60000;
+        if (boundaryMs <= lastMs) boundaryMs = lastMs + 1000;
+        const autoTs = new Date(boundaryMs).toISOString().slice(0, 19).replace("T", " ");
 
         if (lastEntryRow.entry_type === "break_start") {
             await client.query("INSERT INTO time_entries (user_id, entry_type, timestamp) VALUES ($1, $2, $3)",
@@ -444,7 +463,7 @@ async function autoClockOutUser(db: DbContext, user: { id: number; timezone_offs
         }
         await client.query("INSERT INTO time_entries (user_id, entry_type, timestamp) VALUES ($1, $2, $3)",
             [user.id, "clock_out", autoTs]);
-        logger.info({ userId: user.id, date: yesterdayStr }, "Auto clock-out applied");
+        logger.info({ userId: user.id, date: sessionLocalDay, offsetMin }, "Auto clock-out applied");
     });
 }
 

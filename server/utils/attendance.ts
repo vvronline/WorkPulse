@@ -1,4 +1,4 @@
-import { computeFloorMs } from "./timeCalc";
+import { computeFloorMs, endOfLocalDayMs } from "./timeCalc";
 import type { TimeEntry } from "../types/domain";
 
 interface DbLike {
@@ -54,8 +54,13 @@ async function calculateAttendance(
     const memberInterval = `${-timezoneOffset} minutes`;
 
     const entries = (await db.query(
+        // Count live clock-ins (approval_status NULL) always; count manual
+        // entries only once approved. Filtering on `approval_status = 'approved'`
+        // alone silently drops every normal in-app clock-in (which is NULL),
+        // making fully-worked days show up as Absent.
         `SELECT * FROM time_entries
-         WHERE user_id = $1 AND approval_status = 'approved'
+         WHERE user_id = $1
+           AND (is_manual = FALSE OR approval_status = 'approved')
            AND (timestamp + $4::interval)::date BETWEEN $2::date AND $3::date
          ORDER BY timestamp ASC`,
         [userId, startDate, endDate, memberInterval]
@@ -90,6 +95,12 @@ async function calculateAttendance(
     let totalHours = 0, regularHours = 0, overtimeHours = 0;
     const minPresentMs = minHoursPresent * 3_600_000;
 
+    // Today (in the member's local timezone) — an open session for *today* must
+    // be capped at "now", not end-of-day, so today's in-progress hours aren't
+    // over-counted. Past days cap an unterminated session at end-of-local-day.
+    const nowMs = Date.now();
+    const todayLocal = new Date(nowMs - timezoneOffset * 60000).toISOString().slice(0, 10);
+
     for (const date of allDays) {
         const dow = new Date(date + "T00:00:00Z").getUTCDay();
         const isWorkDay = workDaySet.has(dow);
@@ -97,7 +108,13 @@ async function calculateAttendance(
         const leave = leaveMap[date];
         const dayEntries = byDate[date] || [];
         const hasWork = dayEntries.length > 0;
-        const floorMs = hasWork ? computeFloorMs(dayEntries) : 0;
+        // Credit an unterminated session (never clocked out, or whose nightly
+        // auto-clock-out landed in the wrong day bucket because of a stale
+        // timezone offset) by capping it at the end of its own local day —
+        // or at "now" for today. Without this, a fully-worked overnight shift
+        // counted as 0 floor minutes and was wrongly marked Absent.
+        const capMs = date >= todayLocal ? nowMs : endOfLocalDayMs(date, timezoneOffset);
+        const floorMs = hasWork ? computeFloorMs(dayEntries, true, capMs) : 0;
         const meetsMinHours = floorMs >= minPresentMs;
 
         if (!isWorkDay) {
