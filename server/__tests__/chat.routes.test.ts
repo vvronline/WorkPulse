@@ -443,3 +443,58 @@ describe("PUT /api/chat/conversations/:id/group", () => {
         expect(deleteCalls[0][1]).toEqual([10, 2]);
     });
 });
+
+describe("POST /api/chat/messages/:id/reactions", () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+    });
+
+    test("rejects reactions on deleted messages", async () => {
+        setupAuth();
+        mockQuery.mockResolvedValueOnce({
+            rows: [{ conversation_id: 10, deleted_at: new Date().toISOString() }],
+            rowCount: 1,
+        });
+
+        const res = await request(app)
+            .post("/api/chat/messages/12/reactions")
+            .set("Cookie", authCookie(1))
+            .set(CSRF)
+            .send({ emoji: "👍" });
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/deleted/i);
+    });
+});
+
+describe("DELETE /api/chat/messages/:id", () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+    });
+
+    test("clears reactions when deleting a message", async () => {
+        setupAuth();
+        mockQuery
+            .mockResolvedValueOnce({
+                rows: [{ id: 12, sender_id: 1, conversation_id: 10, deleted_at: null, file_url: null }],
+                rowCount: 1,
+            })
+            .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+            .mockResolvedValueOnce({ rows: [], rowCount: 2 })
+            .mockResolvedValueOnce({ rows: [{ user_id: 1 }, { user_id: 2 }], rowCount: 2 });
+
+        const res = await request(app)
+            .delete("/api/chat/messages/12")
+            .set("Cookie", authCookie(1))
+            .set(CSRF);
+
+        expect(res.status).toBe(200);
+        const reactionDeleteCall = mockQuery.mock.calls.find(
+            ([sql]: any[]) =>
+                typeof sql === "string" &&
+                sql.includes("DELETE FROM message_reactions WHERE message_id = $1"),
+        );
+        expect(reactionDeleteCall).toBeTruthy();
+        expect(reactionDeleteCall[1]).toEqual([12]);
+    });
+});

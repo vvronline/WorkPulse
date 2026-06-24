@@ -71,7 +71,9 @@ export default function ConversationItem({
                         <span className={s.typing}>typing...</span>
                     ) : (
                         <span className={c.unread_count > 0 ? s.unread : ""}>
-                            {c.is_group && c.last_sender_name ? `${c.last_sender_name.split(" ")[0]}: ` : ""}
+                            {c.is_group && c.last_sender_name && !c.last_deleted
+                                ? `${c.last_sender_name.split(" ")[0]}: `
+                                : ""}
                             {c.last_deleted
                                 ? "Message deleted"
                                 : c.last_message

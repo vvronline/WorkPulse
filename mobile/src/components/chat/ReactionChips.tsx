@@ -34,7 +34,7 @@ export default function ReactionChips({
     if (r.userId === userId) groups[r.emoji].mine = true;
   });
 
-  if (Object.keys(groups).length === 0) return null;
+  if (message.deleted_at || Object.keys(groups).length === 0) return null;
 
   return (
     <View

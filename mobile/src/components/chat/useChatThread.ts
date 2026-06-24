@@ -387,6 +387,7 @@ export function useChatThread() {
         setMessages((prev) =>
           prev.map((m) => {
             if (m.id !== d.messageId) return m;
+            if (m.deleted_at) return { ...m, reactions: [] };
             let reactions = [...(m.reactions || [])];
             if (d.action === "added") {
               // Idempotent: don't duplicate an optimistically-added reaction.
@@ -429,7 +430,16 @@ export function useChatThread() {
         setMessages((prev) =>
           prev.map((m) =>
             m.id === d.messageId
-              ? { ...m, deleted_at: new Date().toISOString() }
+              ? {
+                  ...m,
+                  deleted_at: new Date().toISOString(),
+                  content: "",
+                  file_url: null,
+                  file_name: null,
+                  file_type: null,
+                  file_size: null,
+                  reactions: [],
+                }
               : m,
           ),
         );
@@ -681,6 +691,62 @@ export function useChatThread() {
     }
   }
 
+  async function attachCamera() {
+    setPlusOpen(false);
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) return;
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ["images"],
+      quality: 0.8,
+    });
+    if (result.canceled || !result.assets?.[0]?.uri) return;
+    setUploading(true);
+    try {
+      const asset = result.assets[0];
+      const { data } = await uploadChatFile(
+        convId,
+        asset.uri,
+        asset.fileName || `camera-${Date.now()}.jpg`,
+      );
+      setMessages((prev) =>
+        prev.some((m) => m.id === data.id) ? prev : [...prev, data],
+      );
+      scrollToEnd(true);
+    } catch {
+      /* ignore */
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function attachGifSticker() {
+    setPlusOpen(false);
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      quality: 1,
+    });
+    if (result.canceled || !result.assets?.[0]?.uri) return;
+    setUploading(true);
+    try {
+      const asset = result.assets[0];
+      const { data } = await uploadChatFile(
+        convId,
+        asset.uri,
+        asset.fileName || `media-${Date.now()}`,
+      );
+      setMessages((prev) =>
+        prev.some((m) => m.id === data.id) ? prev : [...prev, data],
+      );
+      scrollToEnd(true);
+    } catch {
+      /* ignore */
+    } finally {
+      setUploading(false);
+    }
+  }
+
   // Document attachment — the old single "Photo / File" option only opened
   // the IMAGE library despite its label, so PDFs/docs could never be sent
   // from mobile (the web supports them). Uses expo-document-picker.
@@ -770,7 +836,16 @@ export function useChatThread() {
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === message.id
-                    ? { ...m, deleted_at: new Date().toISOString() }
+                    ? {
+                        ...m,
+                        deleted_at: new Date().toISOString(),
+                        content: "",
+                        file_url: null,
+                        file_name: null,
+                        file_type: null,
+                        file_size: null,
+                        reactions: [],
+                      }
                     : m,
                 ),
               ),
@@ -1009,6 +1084,7 @@ export function useChatThread() {
   }
 
   async function react(message: ChatMessage, emoji: string) {
+    if (message.deleted_at) return;
     setReactTarget(null);
     // Optimistic toggle FIRST (mirrors web handleReact): the chip appears /
     // disappears instantly. Doing the API call before the state update caused
@@ -1019,6 +1095,7 @@ export function useChatThread() {
     const applyToggle = (prev: ChatMessage[]) =>
       prev.map((m) => {
         if (m.id !== message.id) return m;
+        if (m.deleted_at) return { ...m, reactions: [] };
         const existing = m.reactions || [];
         const mineIdx = existing.findIndex(
           (r) => r.userId === user?.id && r.emoji === emoji,
@@ -1318,7 +1395,9 @@ export function useChatThread() {
     onComposerInputFocus,
     // attachment picker
     plusOpen,
+    attachCamera,
     attachFile,
+    attachGifSticker,
     attachDocument,
     setEmojiMode,
     setShowAllEmoji,

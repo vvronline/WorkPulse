@@ -149,7 +149,9 @@ export default function ChatThread() {
       <AttachmentPicker
         visible={c.plusOpen}
         onClose={() => c.setPlusOpen(false)}
+        onCamera={c.attachCamera}
         onPhoto={c.attachFile}
+        onGifSticker={c.attachGifSticker}
         onDocument={c.attachDocument}
       />
 

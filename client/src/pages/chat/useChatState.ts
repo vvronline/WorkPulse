@@ -209,6 +209,7 @@ export default function useChatState() {
                                           last_message: preview,
                                           last_sender_id: d.senderId,
                                           last_message_at: d.createdAt,
+                                          last_deleted: null,
                                           unread_count: isActive
                                               ? 0
                                               : ((c.unread_count as number) ||
@@ -264,6 +265,7 @@ export default function useChatState() {
                         setMessages((prev) =>
                             prev.map((m) => {
                                 if (m.id !== d.messageId) return m;
+                                if (m.deleted_at) return { ...m, reactions: [] };
                                 let reactions = [
                                     ...((m.reactions as AnyRecord[]) || []),
                                 ];
@@ -314,6 +316,20 @@ export default function useChatState() {
                     break;
                 }
                 case "chat_delete": {
+                    const target = messagesRef.current.find(
+                        (m) => m.id === d.messageId,
+                    );
+                    const targetTs = target
+                        ? new Date(target.created_at as string).getTime()
+                        : null;
+                    const isLatest =
+                        targetTs != null &&
+                        !messagesRef.current.some(
+                            (m) =>
+                                m.id !== d.messageId &&
+                                new Date(m.created_at as string).getTime() >
+                                    targetTs,
+                        );
                     if (activeConvRef.current?.id === d.conversationId) {
                         setMessages((prev) =>
                             prev.map((m) =>
@@ -321,8 +337,30 @@ export default function useChatState() {
                                     ? {
                                           ...m,
                                           deleted_at: new Date().toISOString(),
+                                          content: "",
+                                          file_url: null,
+                                          file_name: null,
+                                          file_type: null,
+                                          file_size: null,
+                                          reactions: [],
                                       }
                                     : m,
+                            ),
+                        );
+                    }
+                    if (isLatest) {
+                        setConversations((prev) =>
+                            prev.map((c) =>
+                                c.id === d.conversationId
+                                    ? {
+                                          ...c,
+                                          last_message: null,
+                                          last_file_url: null,
+                                          last_deleted: new Date().toISOString(),
+                                          last_sender_id: target?.sender_id ?? c.last_sender_id,
+                                          last_sender_name: target?.sender_name ?? c.last_sender_name,
+                                      }
+                                    : c,
                             ),
                         );
                     }

@@ -577,7 +577,9 @@ router.get("/conversations/:id/messages", auth, async (req: Request, res: Respon
                 SELECT mr.message_id, mr.emoji, mr.user_id, u.full_name
                 FROM message_reactions mr
                 JOIN users u ON u.id = mr.user_id
+                JOIN messages m ON m.id = mr.message_id
                 WHERE mr.message_id = ANY($1)
+                  AND m.deleted_at IS NULL
                 ORDER BY mr.created_at
             `, [msgIds])).rows;
 
@@ -587,7 +589,7 @@ router.get("/conversations/:id/messages", auth, async (req: Request, res: Respon
                 reactionMap[r.message_id].push({ emoji: r.emoji, userId: r.user_id, fullName: r.full_name });
             }
             for (const row of rows) {
-                row.reactions = reactionMap[row.id] || [];
+                row.reactions = row.deleted_at ? [] : (reactionMap[row.id] || []);
             }
         }
 
@@ -749,8 +751,9 @@ router.post("/messages/:id/reactions", auth, async (req: Request, res: Response)
         const { emoji } = req.body;
         if (!emoji || emoji.length > 20) return res.status(400).json({ error: "Invalid emoji" });
 
-        const msg = (await req.db!.query("SELECT conversation_id FROM messages WHERE id = $1", [msgId])).rows[0];
+        const msg = (await req.db!.query("SELECT conversation_id, deleted_at FROM messages WHERE id = $1", [msgId])).rows[0];
         if (!msg) return res.status(404).json({ error: "Message not found" });
+        if (msg.deleted_at) return res.status(400).json({ error: "Message is deleted" });
         if (!(await verifyParticipant(msg.conversation_id, req.userId, req.db as unknown as DbLike))) {
             return res.status(403).json({ error: "Not a participant" });
         }
@@ -851,7 +854,18 @@ router.delete("/messages/:id", auth, async (req: Request, res: Response) => {
         if (msg.sender_id !== req.userId) return res.status(403).json({ error: "Can only delete own messages" });
         if (msg.deleted_at) return res.status(400).json({ error: "Already deleted" });
 
-        await req.db!.query("UPDATE messages SET deleted_at = NOW(), content = NULL, file_url = NULL WHERE id = $1", [msgId]);
+        await req.db!.query(
+            `UPDATE messages
+             SET deleted_at = NOW(),
+                 content = NULL,
+                 file_url = NULL,
+                 file_name = NULL,
+                 file_type = NULL,
+                 file_size = NULL
+             WHERE id = $1`,
+            [msgId],
+        );
+        await req.db!.query("DELETE FROM message_reactions WHERE message_id = $1", [msgId]);
 
         const participants = (await req.db!.query(
             "SELECT user_id FROM conversation_participants WHERE conversation_id = $1",

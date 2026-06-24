@@ -137,7 +137,16 @@ export default function useMessageActions(state: ChatState) {
             setMessages((prev) =>
                 prev.map((m) =>
                     m.id === msg.id
-                        ? { ...m, deleted_at: new Date().toISOString() }
+                        ? {
+                              ...m,
+                              deleted_at: new Date().toISOString(),
+                              content: "",
+                              file_url: null,
+                              file_name: null,
+                              file_type: null,
+                              file_size: null,
+                              reactions: [],
+                          }
                         : m,
                 ),
             );
@@ -174,6 +183,7 @@ export default function useMessageActions(state: ChatState) {
         const toggle = (prev: Msg[]) =>
             prev.map((m) => {
                 if (m.id !== msgId) return m;
+                if (m.deleted_at) return { ...m, reactions: [] };
                 const reactions = (m.reactions as AnyRecord[]) || [];
                 const mine = reactions.some(
                     (r) => r.userId === user?.id && r.emoji === emoji,
