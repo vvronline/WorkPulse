@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ShieldCheck, ShieldOff, RefreshCw, Trash2, ChevronLeft } from "lucide-react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { getFaceStatus, enrollFace, clearFaceEnrollment } from "../../api";
 import FaceCapture from "../../components/attendance/FaceCapture";
 import s from "./FaceEnrollment.module.css";
@@ -24,6 +24,7 @@ interface ToastState {
  * the 128-float embedding is sent to the server.
  */
 export default function FaceEnrollment() {
+    const navigate = useNavigate();
     const [status, setStatus] = useState<FaceStatus>({ loading: true, enrolled: false, enrolled_at: null });
     const [mode, setMode] = useState<"view" | "capture">("view"); // 'view' | 'capture'
     const [busy, setBusy] = useState(false);
@@ -86,9 +87,9 @@ export default function FaceEnrollment() {
     return (
         <div className={s.page}>
             <div className={s.header}>
-                <Link to="/profile" className={s.back}>
+                <button onClick={() => navigate(-1)} className={s.back} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.25rem" }}>
                     <ChevronLeft size={16} /> Profile
-                </Link>
+                </button>
                 <h1>Face Enrollment</h1>
                 <p className={s.lede}>
                     Enrol your face so you can clock in when your organization requires attendance verification. Your
