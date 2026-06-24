@@ -8,6 +8,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import s from "./EmojiGifPicker.module.css";
 import EmojiImage from "../../emoji/EmojiImage";
+import { searchGiphy } from "../../api";
 import { CATEGORY_ORDER, SKIN_TONES } from "../../emoji/types";
 import type { Emoji, EmojiCategory } from "../../emoji/types";
 import {
@@ -30,10 +31,6 @@ interface EmojiGifPickerProps {
 
 type PickerMode = "emoji" | "gif" | "sticker";
 type TenorItem = { id: string; previewUrl: string; mediaUrl: string };
-
-const TENOR_API_KEY = import.meta.env.VITE_TENOR_API_KEY as string | undefined;
-const TENOR_CLIENT_KEY =
-    (import.meta.env.VITE_TENOR_CLIENT_KEY as string | undefined) || "workpulse-chat";
 
 export default function EmojiGifPicker({
     onSelectEmoji,
@@ -124,42 +121,27 @@ export default function EmojiGifPicker({
     };
 
     useEffect(() => {
-        if (mode === "emoji" || !TENOR_API_KEY) return;
-        const ctl = new AbortController();
+        if (mode === "emoji") return;
+        let cancelled = false;
         const q = query.trim();
-        const endpoint = q.length
-            ? "search"
-            : "featured";
-        const searchParams = new URLSearchParams({
-            key: TENOR_API_KEY,
-            client_key: TENOR_CLIENT_KEY,
-            limit: "30",
-            media_filter: "tinygif,gif",
-            contentfilter: "medium",
-            locale: "en_US",
-            ...(q.length ? { q } : {}),
-            ...(mode === "sticker" ? { searchfilter: "sticker,-static" } : {}),
-        });
+        const type = mode === "sticker" ? "stickers" : "gifs";
         setTenorLoading(true);
-        fetch(`https://tenor.googleapis.com/v2/${endpoint}?${searchParams.toString()}`, {
-            signal: ctl.signal,
-        })
-            .then((r) => r.json())
-            .then((data) => {
-                const items = Array.isArray(data?.results) ? data.results : [];
-                const normalized: TenorItem[] = items
-                    .map((it: any) => {
-                        const tiny = it?.media_formats?.tinygif?.url;
-                        const full = it?.media_formats?.gif?.url || tiny;
-                        if (!tiny || !full || !it?.id) return null;
-                        return { id: String(it.id), previewUrl: tiny, mediaUrl: full };
-                    })
-                    .filter(Boolean);
-                setTenorItems(normalized);
+        // GIF/Sticker results are proxied through our server (GIPHY key stays
+        // server-side). Empty query falls back to trending on the server.
+        searchGiphy(q, type)
+            .then((res) => {
+                if (cancelled) return;
+                setTenorItems(res.data?.results || []);
             })
-            .catch(() => setTenorItems([]))
-            .finally(() => setTenorLoading(false));
-        return () => ctl.abort();
+            .catch(() => {
+                if (!cancelled) setTenorItems([]);
+            })
+            .finally(() => {
+                if (!cancelled) setTenorLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
     }, [mode, query]);
 
     const selectTenorItem = async (item: TenorItem) => {
@@ -309,11 +291,7 @@ export default function EmojiGifPicker({
             )}
 
             {mode !== "emoji" ? (
-                !TENOR_API_KEY ? (
-                    <div className={s.noResults}>
-                        <span>Set VITE_TENOR_API_KEY to enable GIF/Sticker search.</span>
-                    </div>
-                ) : tenorLoading ? (
+                tenorLoading ? (
                     <div className={s.noResults}>
                         <span>Loading...</span>
                     </div>

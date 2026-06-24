@@ -55,6 +55,13 @@ API.interceptors.response.use(
     }
 );
 
+// GIF/Sticker search via the server-side GIPHY proxy (key stays server-side).
+export type GiphyMedia = { id: string; previewUrl: string; mediaUrl: string };
+export const searchGiphy = (q: string, type: "gifs" | "stickers" = "gifs") =>
+    API.get<{ results: GiphyMedia[] }>("/giphy/search", { params: { q, type } });
+export const trendingGiphy = (type: "gifs" | "stickers" = "gifs") =>
+    API.get<{ results: GiphyMedia[] }>("/giphy/trending", { params: { type } });
+
 // Auth
 export const register = (data: AnyData) => API.post("/auth/register", data);
 export const login = (data: AnyData) => API.post("/auth/login", data);

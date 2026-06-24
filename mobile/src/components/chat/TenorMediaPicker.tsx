@@ -11,7 +11,7 @@ import {
   View,
 } from "react-native";
 import { Search, X } from "lucide-react-native";
-import { TENOR_API_KEY, TENOR_CLIENT_KEY } from "../../config";
+import { api } from "../../api";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 
@@ -36,39 +36,27 @@ export default function TenorMediaPicker({
   const [items, setItems] = useState<TenorItem[]>([]);
 
   useEffect(() => {
-    if (!visible || !TENOR_API_KEY) return;
-    const ctl = new AbortController();
+    if (!visible) return;
+    let cancelled = false;
     const q = query.trim();
-    const endpoint = q.length ? "search" : "featured";
-    const params = new URLSearchParams({
-      key: TENOR_API_KEY,
-      client_key: TENOR_CLIENT_KEY,
-      limit: "30",
-      media_filter: "tinygif,gif",
-      contentfilter: "medium",
-      locale: "en_US",
-      ...(q.length ? { q } : {}),
-      ...(kind === "sticker" ? { searchfilter: "sticker,-static" } : {}),
-    });
+    const type = kind === "sticker" ? "stickers" : "gifs";
     setLoading(true);
-    fetch(`https://tenor.googleapis.com/v2/${endpoint}?${params.toString()}`, {
-      signal: ctl.signal,
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        const normalized: TenorItem[] = (Array.isArray(data?.results) ? data.results : [])
-          .map((it: any) => {
-            const previewUrl = it?.media_formats?.tinygif?.url;
-            const mediaUrl = it?.media_formats?.gif?.url || previewUrl;
-            if (!it?.id || !previewUrl || !mediaUrl) return null;
-            return { id: String(it.id), previewUrl, mediaUrl };
-          })
-          .filter(Boolean);
-        setItems(normalized);
+    // GIF/Sticker search is proxied through our server (GIPHY key stays
+    // server-side). Empty query falls back to trending on the server.
+    api
+      .get<{ results: TenorItem[] }>("/giphy/search", { params: { q, type } })
+      .then((res) => {
+        if (!cancelled) setItems(res.data?.results || []);
       })
-      .catch(() => setItems([]))
-      .finally(() => setLoading(false));
-    return () => ctl.abort();
+      .catch(() => {
+        if (!cancelled) setItems([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [kind, query, visible]);
 
   return (
@@ -94,11 +82,7 @@ export default function TenorMediaPicker({
             />
           </View>
 
-          {!TENOR_API_KEY ? (
-            <View style={styles.center}>
-              <Text style={styles.emptyText}>Set EXPO_PUBLIC_TENOR_API_KEY to enable picker.</Text>
-            </View>
-          ) : loading ? (
+          {loading ? (
             <View style={styles.center}>
               <ActivityIndicator size="small" color={theme.primary} />
             </View>

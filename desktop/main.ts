@@ -638,8 +638,8 @@ $w.Stop()
                         // Attendance Settings to pick an office location. We also
                         // allow unpkg.com so Leaflet's default marker icons load
                         // (they're served from the npm package's CDN copy).
-                        `connect-src 'self' workpulse://app ${RAILWAY_URL} wss://${new URL(RAILWAY_URL).host} https://embed.diagrams.net https://*.tile.openstreetmap.org https://nominatim.openstreetmap.org https://unpkg.com; ` +
-                        "img-src 'self' workpulse://app data: blob: https://embed.diagrams.net https://*.tile.openstreetmap.org https://unpkg.com; " +
+                        `connect-src 'self' workpulse://app ${RAILWAY_URL} wss://${new URL(RAILWAY_URL).host} https://embed.diagrams.net https://*.tile.openstreetmap.org https://nominatim.openstreetmap.org https://unpkg.com https://*.giphy.com; ` +
+                        "img-src 'self' workpulse://app data: blob: https://embed.diagrams.net https://*.tile.openstreetmap.org https://unpkg.com https://*.giphy.com; " +
                         "media-src 'self' workpulse://app blob:; " +
                         "font-src 'self' workpulse://app; " +
                         // MediaPipe spawns helper workers from blob: URLs.

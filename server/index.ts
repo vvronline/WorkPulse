@@ -44,6 +44,7 @@ const calendarRoutes = require("./routes/calendar");
 const notificationsRoutes = require("./routes/notifications");
 const exportRoutes = require("./routes/export");
 const chatRoutes = require("./routes/chat");
+const giphyRoutes = require("./routes/giphy");
 const statusRoutes = require("./routes/status");
 const searchRoutes = require("./routes/search");
 const meetingsRoutes = require("./routes/meetings");
@@ -91,6 +92,9 @@ app.use(helmet({
                 "'self'", "data:", "blob:",
                 "https://*.tile.openstreetmap.org",
                 "https://unpkg.com",
+                // GIPHY GIF/Sticker thumbnails (chat picker) are served from
+                // *.giphy.com (media0-4.giphy.com, i.giphy.com, etc.).
+                "https://*.giphy.com",
             ],
             // Allow loading MediaPipe Selfie Segmentation script + WASM from
             // jsdelivr at runtime (used for meeting background blur / virtual
@@ -109,7 +113,9 @@ app.use(helmet({
             "worker-src": ["'self'", "blob:"],
             // MediaPipe also fetches the .wasm binary + .tflite model files
             // from jsdelivr at runtime — `connect-src` covers those XHR/fetches.
-            "connect-src": ["'self'", "https://cdn.jsdelivr.net", "https://nominatim.openstreetmap.org", "ws:", "wss:"],
+            // *.giphy.com is needed because the chat GIF picker fetches the
+            // selected GIF's media URL client-side to build a File for upload.
+            "connect-src": ["'self'", "https://cdn.jsdelivr.net", "https://nominatim.openstreetmap.org", "https://*.giphy.com", "ws:", "wss:"],
         },
     },
     crossOriginOpenerPolicy: false,
@@ -335,6 +341,7 @@ app.use("/api/meetings", apiLimiter, meetingsRoutes);
 app.use("/api/notifications", apiLimiter, notificationsRoutes);
 app.use("/api/export", apiLimiter, exportRoutes);
 app.use("/api/chat", apiLimiter, chatRoutes);
+app.use("/api/giphy", apiLimiter, giphyRoutes);
 app.use("/api/me/status", apiLimiter, statusRoutes);
 app.use("/api/search", apiLimiter, searchRoutes);
 app.use("/api/service-desk", apiLimiter, serviceDeskRoutes);
