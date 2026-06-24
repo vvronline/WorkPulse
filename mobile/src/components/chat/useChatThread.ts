@@ -6,6 +6,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Clipboard from "expo-clipboard";
+import * as SecureStore from "expo-secure-store";
 import {
   AudioModule,
   RecordingPresets,
@@ -18,6 +19,7 @@ import { useDialog } from "../../hooks/useDialog";
 import {
   ackDelivered,
   clearChat,
+  cancelChatMediaJob,
   deleteMessage,
   editMessage,
   forwardMessage,
@@ -30,6 +32,7 @@ import {
   getStarredMessages,
   markConversationRead,
   pinMessage,
+  retryChatMediaJob,
   searchMessages,
   starMessage,
   toggleReaction,
@@ -46,6 +49,21 @@ import { emitChatUnreadChanged, chatUnreadManager } from "../../realtime/chatUnr
 import { useKeyboardInset } from "../../hooks/useKeyboardInset";
 import { hydrateEmojiStore } from "../../emoji/emojiStore";
 import { STATUS_LABEL, type HeaderSheet } from "./chatUtils";
+
+type PendingMediaSource = {
+  uri: string;
+  fileName: string;
+  mimeType?: string;
+  viewOnce?: boolean;
+  caption?: string;
+};
+
+type ConversationDraft = {
+  text: string;
+  replyTo?: { id: number; content?: string | null; sender_name?: string | null } | null;
+  editing?: { id: number; text?: string | null } | null;
+  mediaDrafts: PendingMediaSource[];
+};
 
 /**
  * All state, side-effects and handlers for the chat thread screen. Extracted
@@ -109,6 +127,10 @@ export function useChatThread() {
   // the selected message ("react").
   const [emojiMode, setEmojiMode] = useState<"react" | "compose">("react");
   const [plusOpen, setPlusOpen] = useState(false);
+  // Signal-style media editor: the picked/captured images awaiting edit + send.
+  const [editorItems, setEditorItems] = useState<
+    { uri: string; width?: number; height?: number }[] | null
+  >(null);
   const [tenorOpen, setTenorOpen] = useState(false);
   const [tenorKind, setTenorKind] = useState<"gif" | "sticker">("gif");
   // Docked in-app emoji keyboard (Signal-style). When open we hide the system
@@ -160,6 +182,12 @@ export function useChatThread() {
   // for the reaction-bar anchor (Pressable forwards its ref to the host View,
   // which exposes measureInWindow — currentTarget often does not).
   const bubbleRefs = useRef<Map<number, View>>(new Map());
+  const mediaUploadControllers = useRef<Map<number, AbortController>>(new Map());
+  const mediaUploadSources = useRef<Map<number, PendingMediaSource>>(new Map());
+  const pendingDraftReply = useRef<ConversationDraft["replyTo"]>(null);
+  const pendingDraftEditing = useRef<ConversationDraft["editing"]>(null);
+  const pendingDraftMedia = useRef<PendingMediaSource[]>([]);
+  const draftHydrated = useRef(false);
   const typingSentAt = useRef(0);
   const typingClear = useRef<ReturnType<typeof setTimeout> | null>(null);
   // True while older messages are being prepended, so the auto
@@ -368,6 +396,58 @@ export function useChatThread() {
         }
         return;
       }
+      if (msg.type === "chat_message_error") {
+        const clientMsgId = typeof d.clientMsgId === "string" ? d.clientMsgId : null;
+        if (!clientMsgId) return;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.clientMsgId === clientMsgId
+              ? {
+                  ...m,
+                  _failed: true,
+                  _pending: false,
+                  _failureReason:
+                    typeof d.reason === "string" && d.reason
+                      ? d.reason
+                      : "Could not send message.",
+                }
+              : m,
+          ),
+        );
+        return;
+      }
+      if (msg.type === "chat_media_job") {
+        if (Number(d.conversationId) !== convId) return;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === d.messageId
+              ? {
+                  ...m,
+                  media_job_id: d.mediaJobId ?? m.media_job_id ?? null,
+                  media_state: d.status ?? m.media_state ?? null,
+                  media_progress:
+                    typeof d.progress === "number"
+                      ? d.progress
+                      : m.media_progress ?? null,
+                  media_failure_reason: d.failureReason ?? null,
+                  _mediaState:
+                    d.status === "processing"
+                      ? "uploading"
+                      : d.status ?? m._mediaState,
+                  _mediaProgress:
+                    typeof d.progress === "number"
+                      ? d.progress
+                      : m._mediaProgress ?? 0,
+                  _failed: d.status === "failed" || d.status === "cancelled",
+                  _failureReason:
+                    d.failureReason ??
+                    (d.status === "cancelled" ? "Upload cancelled" : m._failureReason),
+                }
+              : m,
+          ),
+        );
+        return;
+      }
       if (msg.type === "chat_pin") {
         if (Number(d.conversationId) !== convId) return;
         setMessages((prev) =>
@@ -491,6 +571,11 @@ export function useChatThread() {
               reply_to_content: d.replyContent ?? null,
               reply_to_sender_name: d.replySenderName ?? null,
               clientMsgId: d.clientMsgId,
+              _mediaState: d.mediaState ?? null,
+              _mediaProgress:
+                typeof d.mediaProgress === "number" ? d.mediaProgress : 0,
+              _failureReason: d.failureReason ?? null,
+              media_job_id: d.mediaJobId ?? null,
             };
             return copy;
           }
@@ -511,6 +596,11 @@ export function useChatThread() {
             reply_to_id: d.replyToId ?? null,
             reply_to_content: d.replyContent ?? null,
             reply_to_sender_name: d.replySenderName ?? null,
+            _mediaState: d.mediaState ?? null,
+            _mediaProgress:
+              typeof d.mediaProgress === "number" ? d.mediaProgress : 0,
+            _failureReason: d.failureReason ?? null,
+            media_job_id: d.mediaJobId ?? null,
           },
         ];
       });
@@ -556,6 +646,123 @@ export function useChatThread() {
     setReplyTo(null);
     scrollToEnd(true);
   }, [text, user, convId, replyTo, scrollToEnd]);
+
+  const retryFailedMessage = useCallback(
+    (message: ChatMessage) => {
+      if (Number(message.id) < 0 && message.file_url) {
+        const id = Number(message.id);
+        const source = mediaUploadSources.current.get(id);
+        if (!source) return;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === id
+              ? {
+                  ...m,
+                  _pending: true,
+                  _failed: false,
+                  _mediaState: "queued",
+                  _mediaProgress: 0,
+                  _failureReason: null,
+                }
+              : m,
+          ),
+        );
+        const controller = new AbortController();
+        mediaUploadControllers.current.set(id, controller);
+        setUploading(true);
+        uploadChatFile(convId, source.uri, source.fileName, source.mimeType, {
+          signal: controller.signal,
+          onUploadProgress: (evt) => {
+            const total = evt.total || 0;
+            const progress =
+              total > 0
+                ? Math.max(
+                    0,
+                    Math.min(100, Math.round((evt.loaded / total) * 100)),
+                  )
+                : 0;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === id
+                  ? { ...m, _mediaState: "uploading", _mediaProgress: progress }
+                  : m,
+              ),
+            );
+          },
+        })
+          .then(({ data }) => {
+            setMessages((prev) => {
+              const replaced = prev.map((m) =>
+                m.id === id ? { ...data, _pending: false, _failed: false } : m,
+              );
+              const seen = new Set<number>();
+              return replaced.filter((m) => {
+                const key = Number(m.id);
+                if (!Number.isFinite(key)) return true;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+              });
+            });
+            mediaUploadControllers.current.delete(id);
+            mediaUploadSources.current.delete(id);
+            if (mediaUploadControllers.current.size === 0) setUploading(false);
+            scrollToEnd(true);
+          })
+          .catch((e: any) => {
+            mediaUploadControllers.current.delete(id);
+            if (mediaUploadControllers.current.size === 0) setUploading(false);
+            const cancelled =
+              e?.name === "CanceledError" ||
+              e?.code === "ERR_CANCELED" ||
+              e?.message === "canceled";
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === id
+                  ? {
+                      ...m,
+                      _pending: false,
+                      _failed: true,
+                      _mediaState: "failed",
+                      _failureReason: cancelled
+                        ? "Upload cancelled"
+                        : e?.response?.data?.error || "Could not send this media.",
+                    }
+                  : m,
+              ),
+            );
+          });
+        return;
+      }
+      if (!user) return;
+      const content = (message.content || "").trim();
+      const clientMsgId = message.clientMsgId || null;
+      if (!content || !clientMsgId) return;
+      const replyToId = message.reply_to_id || null;
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.clientMsgId === clientMsgId
+            ? {
+                ...m,
+                _failed: false,
+                _pending: true,
+                _failureReason: null,
+                created_at: new Date().toISOString(),
+              }
+            : m,
+        ),
+      );
+
+      socket.send("chat_message", {
+        conversationId: convId,
+        content,
+        clientMsgId,
+        ...(replyToId ? { replyToId } : {}),
+      });
+    },
+    [convId, scrollToEnd, user],
+  );
 
   const onChangeText = useCallback(
     (v: string) => {
@@ -638,22 +845,11 @@ export function useChatThread() {
     );
     const uri = recorder.uri;
     if (!uri) return;
-    try {
-      setUploading(true);
-      const fileName = `voice-${Date.now()}.m4a`;
-      const { data } = await uploadChatFile(convId, uri, fileName);
-      setMessages((prev) =>
-        prev.some((m) => m.id === data.id) ? prev : [...prev, data],
-      );
-      scrollToEnd(true);
-    } catch (e: any) {
-      alert(
-        "Send failed",
-        e?.response?.data?.error || "Could not send the voice message.",
-      );
-    } finally {
-      setUploading(false);
-    }
+    enqueueMediaUpload({
+      uri,
+      fileName: `voice-${Date.now()}.m4a`,
+      mimeType: "audio/mp4",
+    });
   }
 
   async function cancelRecording() {
@@ -671,19 +867,229 @@ export function useChatThread() {
     );
   }
 
+  const uploadSingleMedia = useCallback(
+    async (tempId: number, source: PendingMediaSource) => {
+      const controller = new AbortController();
+      mediaUploadControllers.current.set(tempId, controller);
+      setUploading(true);
+      try {
+        const { data } = await uploadChatFile(
+          convId,
+          source.uri,
+          source.fileName,
+          source.mimeType,
+          {
+            viewOnce: source.viewOnce,
+            caption: source.caption,
+            signal: controller.signal,
+            onUploadProgress: (evt) => {
+              const total = evt.total || 0;
+              const progress =
+                total > 0
+                  ? Math.max(
+                      0,
+                      Math.min(100, Math.round((evt.loaded / total) * 100)),
+                    )
+                  : 0;
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === tempId
+                    ? { ...m, _mediaState: "uploading", _mediaProgress: progress }
+                    : m,
+                ),
+              );
+            },
+          },
+        );
+        setMessages((prev) => {
+          const replaced = prev.map((m) =>
+            m.id === tempId ? { ...data, _pending: false, _failed: false } : m,
+          );
+          const seen = new Set<number>();
+          return replaced.filter((m) => {
+            const key = Number(m.id);
+            if (!Number.isFinite(key)) return true;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+        });
+        mediaUploadControllers.current.delete(tempId);
+        mediaUploadSources.current.delete(tempId);
+        if (mediaUploadControllers.current.size === 0) setUploading(false);
+        scrollToEnd(true);
+      } catch (e: any) {
+        mediaUploadControllers.current.delete(tempId);
+        if (mediaUploadControllers.current.size === 0) setUploading(false);
+        const cancelled =
+          e?.name === "CanceledError" ||
+          e?.code === "ERR_CANCELED" ||
+          e?.message === "canceled";
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === tempId
+              ? {
+                  ...m,
+                  _pending: false,
+                  _failed: true,
+                  _mediaState: "failed",
+                  _failureReason: cancelled
+                    ? "Upload cancelled"
+                    : e?.response?.data?.error || "Could not send this media.",
+                }
+              : m,
+          ),
+        );
+      }
+    },
+    [convId, scrollToEnd],
+  );
+
+  const enqueueMediaUpload = useCallback(
+    (source: PendingMediaSource) => {
+      const tempId = -(Date.now() + Math.floor(Math.random() * 1000));
+      mediaUploadSources.current.set(tempId, source);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: tempId,
+          sender_id: user?.id || 0,
+          sender_name: user?.full_name || "You",
+          content: source.caption || "",
+          created_at: new Date().toISOString(),
+          file_url: source.uri,
+          file_name: source.fileName,
+          file_type: source.mimeType || null,
+          file_size: null,
+          metadata: source.viewOnce ? { viewOnce: true, viewedBy: [] } : null,
+          reactions: [],
+          _pending: true,
+          _failed: false,
+          _mediaState: "queued",
+          _mediaProgress: 0,
+          _failureReason: null,
+        },
+      ]);
+      uploadSingleMedia(tempId, source);
+      scrollToEnd(true);
+    },
+    [scrollToEnd, uploadSingleMedia, user?.full_name, user?.id],
+  );
+
+  const draftStorageKey = useMemo(() => `chat:draft:${convId}`, [convId]);
+
+  // Restore per-conversation compose draft (text/reply/edit + pending media
+  // descriptors) so app restarts/backgrounding don't lose composer context.
+  useEffect(() => {
+    let cancelled = false;
+    draftHydrated.current = false;
+    pendingDraftReply.current = null;
+    pendingDraftEditing.current = null;
+    pendingDraftMedia.current = [];
+    SecureStore.getItemAsync(draftStorageKey)
+      .then((raw: string | null) => {
+        if (cancelled || !raw) {
+          draftHydrated.current = true;
+          return;
+        }
+        let parsed: ConversationDraft | null = null;
+        try {
+          parsed = JSON.parse(raw) as ConversationDraft;
+        } catch {
+          parsed = null;
+        }
+        if (!parsed) {
+          draftHydrated.current = true;
+          return;
+        }
+        if (typeof parsed.text === "string") setText(parsed.text);
+        pendingDraftReply.current = parsed.replyTo || null;
+        pendingDraftEditing.current = parsed.editing || null;
+        pendingDraftMedia.current = Array.isArray(parsed.mediaDrafts)
+          ? parsed.mediaDrafts
+          : [];
+        draftHydrated.current = true;
+      })
+      .catch(() => {
+        draftHydrated.current = true;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [draftStorageKey]);
+
+  useEffect(() => {
+    if (!draftHydrated.current) return;
+    if (pendingDraftMedia.current.length === 0) return;
+    const drafts = [...pendingDraftMedia.current];
+    pendingDraftMedia.current = [];
+    for (const d of drafts) {
+      enqueueMediaUpload(d);
+    }
+  }, [enqueueMediaUpload, convId]);
+
+  useEffect(() => {
+    if (!draftHydrated.current) return;
+    if (pendingDraftReply.current?.id) {
+      const target = messages.find((m) => m.id === pendingDraftReply.current!.id);
+      if (target) {
+        setReplyTo(target);
+        pendingDraftReply.current = null;
+      }
+    }
+    if (pendingDraftEditing.current?.id) {
+      const target = messages.find((m) => m.id === pendingDraftEditing.current!.id);
+      if (target) {
+        setEditingId(Number(target.id));
+        setText(
+          typeof pendingDraftEditing.current.text === "string"
+            ? pendingDraftEditing.current.text
+            : target.content || "",
+        );
+        pendingDraftEditing.current = null;
+      }
+    }
+  }, [messages]);
+
+  useEffect(() => {
+    if (!draftHydrated.current) return;
+    const mediaDrafts: PendingMediaSource[] = messages
+      .filter((m) => Number(m.id) < 0 && !!m.file_url)
+      .map((m) => ({
+        uri: String(m.file_url),
+        fileName: String(m.file_name || `draft-${Math.abs(Number(m.id))}`),
+        mimeType: m.file_type || undefined,
+      }));
+    const payload: ConversationDraft = {
+      text,
+      replyTo: replyTo
+        ? {
+            id: Number(replyTo.id),
+            content: replyTo.content || null,
+            sender_name: replyTo.sender_name || null,
+          }
+        : null,
+      editing: editingId
+        ? {
+            id: editingId,
+            text,
+          }
+        : null,
+      mediaDrafts,
+    };
+    if (!payload.text.trim() && !payload.replyTo && !payload.editing && payload.mediaDrafts.length === 0) {
+      SecureStore.deleteItemAsync(draftStorageKey).catch(() => {});
+      return;
+    }
+      SecureStore.setItemAsync(draftStorageKey, JSON.stringify(payload)).catch(() => {});
+  }, [draftStorageKey, text, replyTo, editingId, messages]);
+
   async function uploadPickedMedia(
     uri: string,
     fallbackName: string,
     mimeType?: string,
   ) {
-    setUploading(true);
-    try {
-      const { data } = await uploadChatFile(convId, uri, fallbackName, mimeType);
-      setMessages((prev) => (prev.some((m) => m.id === data.id) ? prev : [...prev, data]));
-      scrollToEnd(true);
-    } finally {
-      setUploading(false);
-    }
+    enqueueMediaUpload({ uri, fileName: fallbackName, mimeType });
   }
 
   async function attachFile() {
@@ -695,19 +1101,18 @@ export function useChatThread() {
     }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images"],
-      quality: 0.8,
+      quality: 1,
+      allowsMultipleSelection: true,
     });
-    if (result.canceled || !result.assets?.[0]?.uri) return;
-    try {
-      const asset = result.assets[0];
-      await uploadPickedMedia(
-        asset.uri,
-        asset.fileName || `photo-${Date.now()}.jpg`,
-        asset.mimeType || undefined,
-      );
-    } catch (e: any) {
-      alert("Upload failed", e?.message || "Could not attach this photo.");
-    }
+    if (result.canceled || !result.assets?.length) return;
+    // Route picked images through the Signal-style media editor.
+    setEditorItems(
+      result.assets.map((a) => ({
+        uri: a.uri,
+        width: a.width,
+        height: a.height,
+      })),
+    );
   }
 
   async function attachCamera() {
@@ -719,20 +1124,40 @@ export function useChatThread() {
     }
     const result = await ImagePicker.launchCameraAsync({
       mediaTypes: ["images"],
-      quality: 0.8,
+      quality: 1,
     });
     if (result.canceled || !result.assets?.[0]?.uri) return;
-    try {
-      const asset = result.assets[0];
-      await uploadPickedMedia(
-        asset.uri,
-        asset.fileName || `camera-${Date.now()}.jpg`,
-        asset.mimeType || undefined,
-      );
-    } catch (e: any) {
-      alert("Camera failed", e?.message || "Could not capture photo.");
-    }
+    const asset = result.assets[0];
+    // Route the captured photo through the Signal-style media editor.
+    setEditorItems([{ uri: asset.uri, width: asset.width, height: asset.height }]);
   }
+
+  // Called by the MediaEditor when the user taps Send. Each processed item is
+  // enqueued for upload carrying its view-once flag + caption.
+  const handleMediaEditorSend = useCallback(
+    (
+      results: {
+        uri: string;
+        fileName: string;
+        mimeType: string;
+        viewOnce: boolean;
+        caption?: string;
+      }[],
+    ) => {
+      results.forEach((r, i) => {
+        enqueueMediaUpload({
+          uri: r.uri,
+          fileName: r.fileName,
+          mimeType: r.mimeType,
+          viewOnce: r.viewOnce,
+          // Attach the caption to the first item only (matches Signal/web).
+          caption: i === 0 ? r.caption : undefined,
+        });
+      });
+      setEditorItems(null);
+    },
+    [enqueueMediaUpload],
+  );
 
   async function attachGifFromEmoji() {
     setTenorKind("gif");
@@ -776,26 +1201,102 @@ export function useChatThread() {
       });
       if (result.canceled || !result.assets?.[0]?.uri) return;
       const asset = result.assets[0];
-      setUploading(true);
-      const { data } = await uploadChatFile(
-        convId,
+      await uploadPickedMedia(
         asset.uri,
-        asset.name || undefined,
+        asset.name || `file-${Date.now()}`,
         asset.mimeType || undefined,
       );
-      setMessages((prev) =>
-        prev.some((m) => m.id === data.id) ? prev : [...prev, data],
-      );
-      scrollToEnd(true);
     } catch (e: any) {
       alert(
         "Upload failed",
         e?.response?.data?.error || "Could not send this file.",
       );
-    } finally {
-      setUploading(false);
     }
   }
+
+  const cancelMediaUpload = useCallback((message: ChatMessage) => {
+    const id = Number(message.id);
+    const mediaJobId = Number(message.media_job_id || 0);
+    if (mediaJobId > 0) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === message.id
+            ? {
+                ...m,
+                _pending: false,
+                _failed: true,
+                _mediaState: "failed",
+                _failureReason: "Upload cancelled",
+              }
+            : m,
+        ),
+      );
+      cancelChatMediaJob(mediaJobId).catch(() => {});
+      return;
+    }
+    if (!Number.isFinite(id) || id >= 0) return;
+    const controller = mediaUploadControllers.current.get(id);
+    controller?.abort();
+  }, []);
+
+  const retryMediaUpload = useCallback(
+    (message: ChatMessage) => {
+      const id = Number(message.id);
+      const mediaJobId = Number(message.media_job_id || 0);
+      if (mediaJobId > 0) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === message.id
+              ? {
+                  ...m,
+                  _pending: true,
+                  _failed: false,
+                  _mediaState: "queued",
+                  _mediaProgress: 0,
+                  _failureReason: null,
+                }
+              : m,
+          ),
+        );
+        retryChatMediaJob(mediaJobId).catch((e: any) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === message.id
+                ? {
+                    ...m,
+                    _pending: false,
+                    _failed: true,
+                    _mediaState: "failed",
+                    _failureReason:
+                      e?.response?.data?.error || "Retry failed",
+                  }
+                : m,
+            ),
+          );
+        });
+        return;
+      }
+      if (!Number.isFinite(id) || id >= 0) return;
+      const source = mediaUploadSources.current.get(id);
+      if (!source) return;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === id
+            ? {
+                ...m,
+                _pending: true,
+                _failed: false,
+                _mediaState: "queued",
+                _mediaProgress: 0,
+                _failureReason: null,
+              }
+            : m,
+        ),
+      );
+      uploadSingleMedia(id, source);
+    },
+    [uploadSingleMedia],
+  );
 
   function startEdit(message: ChatMessage) {
     // Tear down BOTH long-press surfaces. Editing can be triggered from the
@@ -1379,6 +1880,8 @@ export function useChatThread() {
     registerBubbleRef,
     openReactionBar,
     react,
+    cancelMediaUpload,
+    retryMediaUpload,
     // typing / reply
     peerTyping,
     replyTo,
@@ -1414,6 +1917,10 @@ export function useChatThread() {
     plusOpen,
     attachCamera,
     attachFile,
+    // media editor (Signal-style)
+    editorItems,
+    setEditorItems,
+    handleMediaEditorSend,
     attachGifFromEmoji,
     attachStickerFromEmoji,
     tenorOpen,
@@ -1429,6 +1936,7 @@ export function useChatThread() {
     computeBarPosition,
     onReactionBarLayout,
     startReply,
+    retryFailedMessage,
     copyMessage,
     openForwardFor,
     setReactTarget,

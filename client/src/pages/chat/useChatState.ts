@@ -20,6 +20,11 @@ import type { AnyRecord } from "../../types";
 
 type ChatMessage = AnyRecord & { id: number | string };
 type Conversation = AnyRecord & { id: number | string };
+type ChatDraft = {
+    input: string;
+    replyTo?: { id: number | string; content?: string | null; sender_name?: string | null } | null;
+    editing?: { id: number | string; content?: string | null } | null;
+};
 
 export default function useChatState() {
     const { user } = useAuth();
@@ -85,6 +90,8 @@ export default function useChatState() {
     const [convMembers, setConvMembers] = useState<AnyRecord[]>([]);
     const [deleteConfirm, setDeleteConfirm] = useState<AnyRecord | null>(null);
     const [convMenu, setConvMenu] = useState<AnyRecord | null>(null);
+    const pendingDraftReplyRef = useRef<ChatDraft["replyTo"]>(null);
+    const pendingDraftEditRef = useRef<ChatDraft["editing"]>(null);
 
     // Refs
     const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -145,6 +152,18 @@ export default function useChatState() {
                             forwarded_from_id: d.forwardedFromId,
                             format_type: d.formatType || "text",
                             metadata: d.metadata || null,
+                            media_job_id: d.mediaJobId || null,
+                            media_state: d.mediaState || null,
+                            media_progress:
+                                typeof d.mediaProgress === "number"
+                                    ? d.mediaProgress
+                                    : null,
+                            media_failure_reason: d.failureReason || null,
+                            _mediaState: d.mediaState || null,
+                            _mediaProgress:
+                                typeof d.mediaProgress === "number"
+                                    ? d.mediaProgress
+                                    : null,
                             delivered_to: [],
                             reactions: [],
                         };
@@ -250,6 +269,54 @@ export default function useChatState() {
                                 return n;
                             });
                         }, 3000);
+                    break;
+                }
+                case "chat_message_error": {
+                    const clientMsgId = d.clientMsgId as string | undefined;
+                    if (!clientMsgId) break;
+                    setMessages((prev) =>
+                        prev.map((m) =>
+                            m.id === clientMsgId
+                                ? {
+                                      ...m,
+                                      _failed: true,
+                                      _pending: false,
+                                      _failureReason:
+                                          (d.reason as string) ||
+                                          "Could not send message.",
+                                  }
+                                : m,
+                        ),
+                    );
+                    break;
+                }
+                case "chat_media_job": {
+                    if (activeConvRef.current?.id === d.conversationId) {
+                        setMessages((prev) =>
+                            prev.map((m) =>
+                                m.id === d.messageId
+                                    ? {
+                                          ...m,
+                                          media_job_id: d.mediaJobId || m.media_job_id,
+                                          media_state: d.status || m.media_state,
+                                          media_progress:
+                                              typeof d.progress === "number"
+                                                  ? d.progress
+                                                  : m.media_progress,
+                                          media_failure_reason:
+                                              d.failureReason || null,
+                                          _mediaState: d.status || m._mediaState,
+                                          _mediaProgress:
+                                              typeof d.progress === "number"
+                                                  ? d.progress
+                                                  : m._mediaProgress,
+                                          _failureReason:
+                                              d.failureReason || m._failureReason,
+                                      }
+                                    : m,
+                            ),
+                        );
+                    }
                     break;
                 }
                 case "chat_reaction": {
@@ -733,6 +800,71 @@ export default function useChatState() {
             console.error("Failed to load more messages", e);
         }
     };
+
+    const draftKey =
+        activeConv?.id != null ? `chat:draft:${String(activeConv.id)}` : null;
+
+    useEffect(() => {
+        pendingDraftReplyRef.current = null;
+        pendingDraftEditRef.current = null;
+        if (!draftKey) return;
+        try {
+            const raw = localStorage.getItem(draftKey);
+            if (!raw) return;
+            const parsed = JSON.parse(raw) as ChatDraft;
+            if (typeof parsed.input === "string") setInput(parsed.input);
+            if (parsed.replyTo) pendingDraftReplyRef.current = parsed.replyTo;
+            if (parsed.editing) pendingDraftEditRef.current = parsed.editing;
+        } catch {
+            // ignore malformed drafts
+        }
+    }, [draftKey]);
+
+    useEffect(() => {
+        if (!messages.length) return;
+        if (pendingDraftReplyRef.current?.id != null) {
+            const match = messages.find((m) => m.id === pendingDraftReplyRef.current!.id);
+            if (match) {
+                setReplyTo(match);
+                pendingDraftReplyRef.current = null;
+            }
+        }
+        if (pendingDraftEditRef.current?.id != null) {
+            const match = messages.find((m) => m.id === pendingDraftEditRef.current!.id);
+            if (match) {
+                setEditingMsg(match);
+                if (typeof pendingDraftEditRef.current.content === "string") {
+                    setInput(pendingDraftEditRef.current.content);
+                }
+                pendingDraftEditRef.current = null;
+            }
+        }
+    }, [messages]);
+
+    useEffect(() => {
+        if (!draftKey) return;
+        const payload: ChatDraft = {
+            input,
+            replyTo: replyTo
+                ? {
+                    id: replyTo.id,
+                    content: (replyTo.content as string) || null,
+                    sender_name: (replyTo.sender_name as string) || null,
+                }
+                : null,
+            editing: editingMsg
+                ? {
+                    id: editingMsg.id,
+                    content: (editingMsg.content as string) || null,
+                }
+                : null,
+        };
+        if (!payload.input.trim() && !payload.replyTo && !payload.editing) {
+            localStorage.removeItem(draftKey);
+            return;
+        }
+        localStorage.setItem(draftKey, JSON.stringify(payload));
+    }, [draftKey, input, replyTo, editingMsg]);
 
     return {
         user,

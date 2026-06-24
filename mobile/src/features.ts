@@ -480,9 +480,35 @@ export type ChatMessage = {
   reply_to_id?: number | null;
   reply_to_content?: string | null;
   reply_to_sender_name?: string | null;
+  // Arbitrary metadata JSONB (polls, view-once media disappearing flag, etc.).
+  metadata?: {
+    viewOnce?: boolean;
+    viewedBy?: number[];
+    pollId?: number;
+    [k: string]: unknown;
+  } | null;
   // Optimistic/local fields
   _pending?: boolean;
   clientMsgId?: string | null;
+  _failed?: boolean;
+  _failureReason?: string | null;
+  _mediaState?: "queued" | "uploading" | "failed";
+  _mediaProgress?: number;
+  media_job_id?: number | null;
+  media_state?: "queued" | "processing" | "completed" | "failed" | "cancelled" | null;
+  media_stage?:
+    | "queued"
+    | "prepare"
+    | "transform"
+    | "upload"
+    | "finalize"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | null;
+  media_progress?: number | null;
+  media_failure_reason?: string | null;
+  media_pipeline_meta?: Record<string, unknown> | null;
 };
 
 export function getConversations() {
@@ -553,6 +579,12 @@ export function uploadChatFile(
   uri: string,
   fileName?: string,
   mimeType?: string,
+  opts?: {
+    signal?: AbortSignal;
+    onUploadProgress?: (evt: { loaded: number; total?: number }) => void;
+    viewOnce?: boolean;
+    caption?: string;
+  },
 ) {
   const name = fileName || uri.split("/").pop() || "file";
   const match = /\.(\w+)$/.exec(name);
@@ -593,9 +625,31 @@ export function uploadChatFile(
   const mime = mimeType || MIME_BY_EXT[ext] || "application/octet-stream";
   const form = new FormData();
   form.append("file", { uri, name, type: mime } as any);
+  if (opts?.viewOnce) form.append("viewOnce", "true");
+  if (opts?.caption) form.append("content", opts.caption);
   return api.post<ChatMessage>(`/chat/conversations/${convId}/files`, form, {
     headers: { "Content-Type": "multipart/form-data" },
+    signal: opts?.signal,
+    onUploadProgress: opts?.onUploadProgress as
+      | ((progressEvent: unknown) => void)
+      | undefined,
   });
+}
+
+export function cancelChatMediaJob(mediaJobId: number) {
+  return api.post(`/chat/media-jobs/${mediaJobId}/cancel`);
+}
+
+/** Mark a view-once media message as consumed; returns the file URL on the
+ *  first view, or { viewed: true } once already consumed. */
+export function markMessageViewed(messageId: number) {
+  return api.post<{ fileUrl?: string; viewed?: boolean }>(
+    `/chat/messages/${messageId}/view`,
+  );
+}
+
+export function retryChatMediaJob(mediaJobId: number) {
+  return api.post(`/chat/media-jobs/${mediaJobId}/retry`);
 }
 
 export function editMessage(messageId: number, content: string) {

@@ -1,5 +1,50 @@
-.imgWrap { display: block; max-width: 280px; border-radius: var(--radius-sm); overflow: hidden; cursor: pointer; }
-.image { width: 100%; display: block; border-radius: var(--radius-sm); }
+.imgWrap { display: block; max-width: 280px; border-radius: 14px; overflow: hidden; cursor: pointer; }
+.image { width: 100%; display: block; border-radius: 14px; }
+
+/* ─── View-once card (Signal-style "tap to view") ─── */
+.viewOnceCard {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border: 1px solid var(--glass-border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-family: inherit;
+    transition: background 0.15s;
+}
+.viewOnceCard:hover:not(:disabled) {
+    background: var(--surface-hover);
+}
+.viewOnceDone {
+    cursor: default;
+    color: var(--text-muted);
+    font-style: italic;
+}
+.viewOnceIcon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 1.5px solid currentColor;
+    flex-shrink: 0;
+}
+.viewOnceLabel { font-weight: 500; }
+.viewOnceEye { opacity: 0.7; }
+.lbViewOnceNote {
+    position: absolute;
+    bottom: 20px;
+    color: #fff;
+    font-size: 0.8rem;
+    opacity: 0.8;
+    text-align: center;
+    width: 100%;
+}
 
 /* Lightbox overlay */
 .lightbox {
@@ -160,6 +205,30 @@
     color: var(--primary);
 }
 
+.videoWrap {
+    display: block;
+    max-width: 280px;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    border: 1px solid var(--glass-border);
+    background: var(--surface);
+}
+
+.videoThumb {
+    width: 100%;
+    display: block;
+    object-fit: cover;
+    aspect-ratio: 16 / 9;
+}
+
+.videoFallback {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px;
+    color: var(--text-secondary);
+}
+
 .file {
     display: flex;
     align-items: center;
@@ -188,6 +257,7 @@
 @media (max-width: 768px) {
     .imgWrap { max-width: 220px; }
     .audioPlayer { max-width: 260px; }
+    .videoWrap { max-width: 220px; }
     .file { max-width: 100%; }
     .lbClose {
         top: 12px;

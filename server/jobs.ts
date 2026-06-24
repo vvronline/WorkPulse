@@ -3,10 +3,11 @@
  * Falls back to setInterval when Redis is unavailable.
  */
 import { logger } from "./utils/logger";
-import { forEachTenant } from "./utils/tenantManager";
+import { forEachTenant, getTenantPool } from "./utils/tenantManager";
 import { masterQuery } from "./db";
 import { sendToUser } from "./utils/ws";
 import { pushNotifications } from "./services/pushNotifications";
+import { processChatMediaJob } from "./services/chatMediaPipeline";
 
 type Query = (sql: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount?: number | null }>;
 interface TenantDb { query: Query; }
@@ -24,6 +25,7 @@ let inspectorPruneQueue: any = null;
 let retentionCleanupQueue: any = null;
 let staleCallQueue: any = null;
 let sprintLifecycleQueue: any = null;
+let chatMediaQueue: any = null;
 let workers: any[] = [];
 let fallbackIntervals: NodeJS.Timeout[] = [];
 
@@ -50,6 +52,40 @@ const SPRINT_LIFECYCLE_SWEEP_MS = 60 * 60 * 1000;
 interface InitJobsOpts {
     autoClockOut: () => void | Promise<void>;
     cleanupTokens: () => void | Promise<void>;
+}
+
+type ChatMediaPipelineJob = {
+    tenantId: number;
+    tenantDbName: string;
+    tenantDbHost?: string | null;
+    mediaJobId: number;
+    messageId: number;
+    conversationId: number;
+};
+
+async function runChatMediaPipelineJob(job: ChatMediaPipelineJob): Promise<void> {
+    const pool = await getTenantPool(job.tenantDbName, job.tenantDbHost || null);
+    await processChatMediaJob({
+        query: pool.query as any,
+        tenantId: job.tenantId,
+        mediaJobId: job.mediaJobId,
+        messageId: job.messageId,
+        conversationId: job.conversationId,
+    });
+}
+
+async function enqueueChatMediaPipelineJob(job: ChatMediaPipelineJob): Promise<void> {
+    if (chatMediaQueue) {
+        await chatMediaQueue.add("chat-media-pipeline", job, {
+            attempts: 3,
+            backoff: { type: "exponential", delay: 1000 },
+            removeOnComplete: 1000,
+            removeOnFail: 1000,
+            jobId: `chat-media:${job.tenantId}:${job.mediaJobId}:${Date.now()}`,
+        });
+        return;
+    }
+    await runChatMediaPipelineJob(job);
 }
 
 /**
@@ -482,6 +518,21 @@ function initJobs({ autoClockOut, cleanupTokens }: InitJobsOpts): void {
     });
     workers.push(sprintLifecycleWorker);
 
+    // Chat media pipeline: staged media processing (prepare/transform/upload/finalize)
+    // so long-running work is durable + retryable outside request handlers.
+    chatMediaQueue = new Queue("chat-media-pipeline", { connection });
+    const chatMediaWorker = new Worker(
+        "chat-media-pipeline",
+        async (job: { data: ChatMediaPipelineJob }) => {
+            await runChatMediaPipelineJob(job.data);
+        },
+        { connection, concurrency: 2 },
+    );
+    chatMediaWorker.on("failed", (job: any, err: any) => {
+        logger.error({ err, jobId: job?.id }, "Chat media pipeline job failed");
+    });
+    workers.push(chatMediaWorker);
+
     // Run auto clock-out immediately on startup
     autoClockOut();
     // Run a sprint lifecycle pass immediately so a fresh boot picks up any
@@ -516,6 +567,16 @@ async function shutdownJobs(): Promise<void> {
     if (sprintLifecycleQueue) {
         try { await sprintLifecycleQueue.close(); } catch { /* ignore */ }
     }
+    if (chatMediaQueue) {
+        try { await chatMediaQueue.close(); } catch { /* ignore */ }
+    }
 }
 
-export { initJobs, shutdownJobs, pruneStaleInspectorUsers, runRetentionCleanup, expireStaleRingingCalls };
+export {
+    initJobs,
+    shutdownJobs,
+    pruneStaleInspectorUsers,
+    runRetentionCleanup,
+    expireStaleRingingCalls,
+    enqueueChatMediaPipelineJob,
+};

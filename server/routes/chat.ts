@@ -9,6 +9,8 @@ const { sendToUser } = require("../utils/ws");
 const redis = require("../redis");
 const { requireTenant, requireFeature } = require("../middleware/tenant");
 const { getUploadDir, getUploadUrl } = require("../utils/uploadPath");
+import { enqueueChatMediaPipelineJob } from "../jobs";
+import { broadcastMediaJobUpdate, processChatMediaJob } from "../services/chatMediaPipeline";
 
 const router = express.Router();
 router.use(requireTenant, requireFeature("chat"));
@@ -547,12 +549,14 @@ router.get("/conversations/:id/messages", auth, async (req: Request, res: Respon
                    m.edited_at, m.deleted_at, m.forwarded_from_id,
                    m.pinned_at, m.pinned_by,
                    m.format_type, m.metadata, m.delivered_to,
+                   cmj.id AS media_job_id, cmj.status AS media_state, cmj.stage AS media_stage, cmj.progress AS media_progress, cmj.failure_reason AS media_failure_reason, cmj.pipeline_meta AS media_pipeline_meta,
                    u.full_name AS sender_name, u.avatar AS sender_avatar, u.username AS sender_username,
                    rm.content AS reply_content, rm.sender_id AS reply_sender_id,
                    ru.full_name AS reply_sender_name,
                    CASE WHEN sm.message_id IS NOT NULL THEN true ELSE false END AS starred
             FROM messages m
             JOIN users u ON u.id = m.sender_id
+            LEFT JOIN chat_media_jobs cmj ON cmj.message_id = m.id
             LEFT JOIN messages rm ON rm.id = m.reply_to_id
             LEFT JOIN users ru ON ru.id = rm.sender_id
             LEFT JOIN starred_messages sm ON sm.message_id = m.id AND sm.user_id = $1
@@ -688,11 +692,22 @@ router.post("/conversations/:id/files", auth, loadUserContext, chatUpload.single
         const fileUrl = getUploadUrl(req.tenantId, req.userOrgId, "chat", req.file.filename);
         const content = req.body.content || null;
         const replyToId = req.body.replyToId ? parseInt(req.body.replyToId, 10) : null;
+        // View-once (disappearing media): the composer sends viewOnce="true".
+        // We persist it in the message metadata JSONB (no schema change) and
+        // strip the file URL for a recipient once they've opened it.
+        const viewOnce = String(req.body.viewOnce || "") === "true";
+        const metadata = viewOnce ? { viewOnce: true, viewedBy: [] as number[] } : null;
 
         const result = (await req.db!.query(
-            `INSERT INTO messages (conversation_id, sender_id, content, file_url, file_name, file_type, file_size, reply_to_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at`,
-            [convId, req.userId, content, fileUrl, safeName, req.file.mimetype, req.file.size, replyToId],
+            `INSERT INTO messages (conversation_id, sender_id, content, file_url, file_name, file_type, file_size, reply_to_id, metadata)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, created_at`,
+            [convId, req.userId, content, fileUrl, safeName, req.file.mimetype, req.file.size, replyToId, metadata ? JSON.stringify(metadata) : null],
+        )).rows[0];
+        const mediaJob = (await req.db!.query(
+            `INSERT INTO chat_media_jobs (message_id, conversation_id, sender_id, status, stage, progress, attempts, pipeline_meta)
+             VALUES ($1, $2, $3, 'queued', 'queued', 0, 1, '{}'::jsonb)
+             RETURNING id, status, stage, progress, pipeline_meta`,
+            [result.id, convId, req.userId],
         )).rows[0];
 
         await req.db!.query("UPDATE conversations SET updated_at = NOW() WHERE id = $1", [convId]);
@@ -724,6 +739,12 @@ router.post("/conversations/:id/files", auth, loadUserContext, chatUpload.single
             fileSize: req.file.size,
             replyToId,
             createdAt: result.created_at,
+            metadata,
+            mediaJobId: mediaJob.id,
+            mediaState: mediaJob.status,
+            mediaStage: mediaJob.stage,
+            mediaProgress: mediaJob.progress,
+            mediaPipelineMeta: mediaJob.pipeline_meta,
         };
 
         for (const p of participants) {
@@ -733,10 +754,175 @@ router.post("/conversations/:id/files", auth, loadUserContext, chatUpload.single
             }
         }
 
+        // Queue staged media processing in BullMQ (prepare -> transform ->
+        // upload -> finalize). Falls back to immediate processing when queues
+        // are unavailable.
+        setTimeout(() => {
+            const tenantDbName = String(req.tenant?.db_name || "");
+            const run = tenantDbName
+                ? enqueueChatMediaPipelineJob({
+                    tenantId: Number(req.tenant?.id || req.tenantId || 0),
+                    tenantDbName,
+                    tenantDbHost: (req.tenant?.db_host as string | null) || null,
+                    mediaJobId: mediaJob.id,
+                    messageId: result.id,
+                    conversationId: convId,
+                })
+                : processChatMediaJob({
+                    query: (req.db as unknown as DbLike).query,
+                    tenantId: req.tenantId ? Number(req.tenantId) : null,
+                    mediaJobId: mediaJob.id,
+                    messageId: result.id,
+                    conversationId: convId,
+                });
+            run.catch((err) => {
+                req.log.error({ err, mediaJobId: mediaJob.id }, "Media job pipeline failed");
+            });
+        }, 0);
+
         res.status(201).json(outMsg);
     } catch (err) {
         req.log.error({ err }, "File upload error");
         res.status(500).json({ error: "Failed to upload file" });
+    }
+});
+
+/**
+ * POST /api/chat/media-jobs/:id/cancel
+ * Best-effort cancellation for queued/processing media jobs.
+ */
+router.post("/media-jobs/:id/cancel", auth, async (req: Request, res: Response) => {
+    try {
+        const mediaJobId = parseInt(String(req.params.id), 10);
+        if (isNaN(mediaJobId)) return res.status(400).json({ error: "Invalid media job" });
+        const row = (await req.db!.query(
+            `SELECT id, message_id, conversation_id, sender_id, status
+               FROM chat_media_jobs
+              WHERE id = $1`,
+            [mediaJobId],
+        )).rows[0];
+        if (!row) return res.status(404).json({ error: "Media job not found" });
+        if (!(await verifyParticipant(row.conversation_id, req.userId, req.db as unknown as DbLike))) {
+            return res.status(403).json({ error: "Not a participant" });
+        }
+        if (!["queued", "processing"].includes(row.status)) {
+            return res.status(400).json({ error: "Media job cannot be cancelled" });
+        }
+        await req.db!.query(
+            `UPDATE chat_media_jobs
+                SET cancel_requested = TRUE,
+                    status = 'cancelled',
+                    stage = 'cancelled',
+                    progress = 0,
+                    failure_reason = 'cancelled-by-user',
+                    updated_at = NOW()
+              WHERE id = $1`,
+            [mediaJobId],
+        );
+        const participants = (await req.db!.query(
+            "SELECT user_id FROM conversation_participants WHERE conversation_id = $1",
+            [row.conversation_id],
+        )).rows;
+        broadcastMediaJobUpdate({
+            tenantId: req.tenantId ? Number(req.tenantId) : null,
+            participants,
+            messageId: row.message_id,
+            conversationId: row.conversation_id,
+            mediaJobId,
+            status: "cancelled",
+            stage: "cancelled",
+            progress: 0,
+            failureReason: "cancelled-by-user",
+            pipelineMeta: { stage: "cancelled" },
+        });
+        res.json({ ok: true });
+    } catch (err) {
+        req.log.error({ err }, "Cancel media job error");
+        res.status(500).json({ error: "Failed to cancel media job" });
+    }
+});
+
+/**
+ * POST /api/chat/media-jobs/:id/retry
+ * Retries a failed/cancelled media job and re-emits progress events.
+ */
+router.post("/media-jobs/:id/retry", auth, async (req: Request, res: Response) => {
+    try {
+        const mediaJobId = parseInt(String(req.params.id), 10);
+        if (isNaN(mediaJobId)) return res.status(400).json({ error: "Invalid media job" });
+        const row = (await req.db!.query(
+            `SELECT id, message_id, conversation_id, sender_id, status, attempts
+               FROM chat_media_jobs
+              WHERE id = $1`,
+            [mediaJobId],
+        )).rows[0];
+        if (!row) return res.status(404).json({ error: "Media job not found" });
+        if (!(await verifyParticipant(row.conversation_id, req.userId, req.db as unknown as DbLike))) {
+            return res.status(403).json({ error: "Not a participant" });
+        }
+        if (row.sender_id !== req.userId) {
+            return res.status(403).json({ error: "Only sender can retry media job" });
+        }
+        if (!["failed", "cancelled"].includes(row.status)) {
+            return res.status(400).json({ error: "Media job is not retryable" });
+        }
+
+        await req.db!.query(
+            `UPDATE chat_media_jobs
+                SET status = 'queued',
+                    stage = 'queued',
+                    progress = 0,
+                    failure_reason = NULL,
+                    cancel_requested = FALSE,
+                    attempts = COALESCE(attempts, 0) + 1,
+                    updated_at = NOW()
+              WHERE id = $1`,
+            [mediaJobId],
+        );
+        const participants = (await req.db!.query(
+            "SELECT user_id FROM conversation_participants WHERE conversation_id = $1",
+            [row.conversation_id],
+        )).rows;
+        broadcastMediaJobUpdate({
+            tenantId: req.tenantId ? Number(req.tenantId) : null,
+            participants,
+            messageId: row.message_id,
+            conversationId: row.conversation_id,
+            mediaJobId,
+            status: "queued",
+            stage: "queued",
+            progress: 0,
+            failureReason: null,
+            pipelineMeta: { stage: "queued" },
+        });
+
+        setTimeout(() => {
+            const tenantDbName = String(req.tenant?.db_name || "");
+            const run = tenantDbName
+                ? enqueueChatMediaPipelineJob({
+                    tenantId: Number(req.tenant?.id || req.tenantId || 0),
+                    tenantDbName,
+                    tenantDbHost: (req.tenant?.db_host as string | null) || null,
+                    mediaJobId,
+                    messageId: row.message_id,
+                    conversationId: row.conversation_id,
+                })
+                : processChatMediaJob({
+                    query: (req.db as unknown as DbLike).query,
+                    tenantId: req.tenantId ? Number(req.tenantId) : null,
+                    mediaJobId,
+                    messageId: row.message_id,
+                    conversationId: row.conversation_id,
+                });
+            run.catch((err) => {
+                req.log.error({ err, mediaJobId }, "Retry media job pipeline failed");
+            });
+        }, 0);
+
+        res.json({ ok: true, mediaJobId });
+    } catch (err) {
+        req.log.error({ err }, "Retry media job error");
+        res.status(500).json({ error: "Failed to retry media job" });
     }
 });
 
@@ -1547,6 +1733,71 @@ router.post("/messages/:id/delivered", auth, async (req: Request, res: Response)
     } catch (err) {
         req.log.error({ err }, "Delivery ack error");
         res.status(500).json({ error: "Failed" });
+    }
+});
+
+/**
+ * POST /api/chat/messages/:id/view
+ * Marks a view-once media message as consumed by the current viewer. After a
+ * recipient (not the sender) views it once, the file URL is no longer returned
+ * to them. Returns { fileUrl } on the first successful view so the client can
+ * display it full-screen, then { viewed: true } on subsequent calls.
+ */
+router.post("/messages/:id/view", auth, async (req: Request, res: Response) => {
+    try {
+        const msgId = parseInt(String(req.params.id), 10);
+        if (isNaN(msgId)) return res.status(400).json({ error: "Invalid message" });
+
+        const msg = (await req.db!.query(
+            "SELECT id, conversation_id, sender_id, file_url, metadata FROM messages WHERE id = $1 AND deleted_at IS NULL",
+            [msgId],
+        )).rows[0];
+        if (!msg) return res.status(404).json({ error: "Message not found" });
+        if (!(await verifyParticipant(msg.conversation_id, req.userId, req.db as unknown as DbLike))) {
+            return res.status(403).json({ error: "Not a participant" });
+        }
+
+        const metadata = msg.metadata || {};
+        if (!metadata.viewOnce) {
+            // Not a view-once message — just return the URL.
+            return res.json({ fileUrl: msg.file_url });
+        }
+
+        const viewedBy: number[] = Array.isArray(metadata.viewedBy) ? metadata.viewedBy : [];
+        // The sender can always re-open their own view-once media.
+        const isSender = msg.sender_id === req.userId;
+
+        if (!isSender && viewedBy.includes(req.userId as number)) {
+            return res.json({ viewed: true });
+        }
+
+        if (!isSender) {
+            const nextViewedBy = [...viewedBy, req.userId as number];
+            const nextMeta = { ...metadata, viewedBy: nextViewedBy };
+            await req.db!.query(
+                "UPDATE messages SET metadata = $1 WHERE id = $2",
+                [JSON.stringify(nextMeta), msgId],
+            );
+
+            // Tell the other participants this viewer has consumed the media so
+            // their UI can collapse to "Viewed".
+            const participants = (await req.db!.query(
+                "SELECT user_id FROM conversation_participants WHERE conversation_id = $1",
+                [msg.conversation_id],
+            )).rows;
+            for (const p of participants) {
+                sendToUser(req.tenantId, p.user_id, "chat_view_once", {
+                    messageId: msgId,
+                    conversationId: msg.conversation_id,
+                    viewerId: req.userId,
+                });
+            }
+        }
+
+        res.json({ fileUrl: msg.file_url });
+    } catch (err) {
+        req.log.error({ err }, "View-once consume error");
+        res.status(500).json({ error: "Failed to view media" });
     }
 });
 

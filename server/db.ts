@@ -1156,6 +1156,33 @@ async function initTenantSchema(q: SchemaQuery): Promise<void> {
         CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, created_at DESC)
     `);
     await q(`
+        CREATE TABLE IF NOT EXISTS chat_media_jobs (
+            id                SERIAL PRIMARY KEY,
+            message_id        INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE UNIQUE,
+            conversation_id   INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            sender_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            status            TEXT NOT NULL DEFAULT 'queued'
+                                CHECK (status IN ('queued','processing','completed','failed','cancelled')),
+            stage             TEXT NOT NULL DEFAULT 'queued'
+                                CHECK (stage IN ('queued','prepare','transform','upload','finalize','completed','failed','cancelled')),
+            progress          INTEGER NOT NULL DEFAULT 0,
+            attempts          INTEGER NOT NULL DEFAULT 0,
+            failure_reason    TEXT,
+            checksum_sha256   TEXT,
+            resumable_token   TEXT,
+            pipeline_meta     JSONB NOT NULL DEFAULT '{}'::jsonb,
+            cancel_requested  BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at        TIMESTAMPTZ DEFAULT NOW(),
+            updated_at        TIMESTAMPTZ DEFAULT NOW()
+        )
+    `);
+    await q(`ALTER TABLE chat_media_jobs ADD COLUMN IF NOT EXISTS stage TEXT NOT NULL DEFAULT 'queued'`);
+    await q(`ALTER TABLE chat_media_jobs ADD COLUMN IF NOT EXISTS checksum_sha256 TEXT`);
+    await q(`ALTER TABLE chat_media_jobs ADD COLUMN IF NOT EXISTS resumable_token TEXT`);
+    await q(`ALTER TABLE chat_media_jobs ADD COLUMN IF NOT EXISTS pipeline_meta JSONB NOT NULL DEFAULT '{}'::jsonb`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_chat_media_jobs_conv ON chat_media_jobs(conversation_id, created_at DESC)`);
+    await q(`CREATE INDEX IF NOT EXISTS idx_chat_media_jobs_sender ON chat_media_jobs(sender_id, created_at DESC)`);
+    await q(`
         CREATE TABLE IF NOT EXISTS message_reads (
             conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
             user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

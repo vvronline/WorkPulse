@@ -2,6 +2,7 @@ import { Pin, X } from "lucide-react";
 import { ChatAvatar, MessageBubble, PinnedMessages, SharedFilesPanel, StarredMessages } from "../../components/chat";
 import SystemMessage from "../../components/chat/SystemMessage";
 import MeetingCard from "../../components/chat/MeetingCard";
+import { buildTimelineRows } from "./timelineRows";
 import s from "./ChatMessages.module.css";
 
 interface ChatMessagesProps {
@@ -27,6 +28,8 @@ interface ChatMessagesProps {
     onForward: (...args: any[]) => void;
     onReact: (...args: any[]) => void;
     onStar: (...args: any[]) => void;
+    onRetry: (...args: any[]) => void;
+    onCancelUpload: (...args: any[]) => void;
     showPinned: boolean;
     onClosePinned: () => void;
     onJumpTo: (...args: any[]) => void;
@@ -61,6 +64,8 @@ export default function ChatMessages({
     onForward,
     onReact,
     onStar,
+    onRetry,
+    onCancelUpload,
     showPinned,
     onClosePinned,
     onJumpTo,
@@ -81,6 +86,7 @@ export default function ChatMessages({
                 new Date(b.pinned_at).getTime() - new Date(a.pinned_at).getTime(),
         );
     const latestPin = pinnedInView[0];
+    const rows = buildTimelineRows(messages);
 
     return (
         <div className={s.chatBody}>
@@ -142,86 +148,40 @@ export default function ChatMessages({
                         No messages yet. Say hello! 👋
                     </div>
                 )}
-                {messages.map((m, i) => {
-                    // Type-safe ownership check: sender_id / user.id can arrive as
-                    // string vs number, so a strict === wrongly returned false for
-                    // your own messages — hiding the Edit/Delete actions. Compare
-                    // as numbers so own-message actions show correctly.
-                    const isMine = Number(m.sender_id) === Number(user.id);
-                    const showDate =
-                        i === 0 ||
-                        new Date(m.created_at).toDateString() !==
-                            new Date(messages[i - 1].created_at).toDateString();
-                    const prev = messages[i - 1];
-                    // Consecutive messages from the same sender within 5 minutes
-                    // form a group (see docs/CHAT_DESIGN_SPEC.md §4).
-                    const isNewGroup =
-                        !prev ||
-                        prev.sender_id !== m.sender_id ||
-                        showDate ||
-                        new Date(m.created_at).getTime() - new Date(prev.created_at).getTime() > 300000;
-
-                    // System messages (call events, meeting events)
-                    if (m.format_type === "system") {
+                {rows.map((row) => {
+                    if (row.kind === "date") {
                         return (
-                            <div key={m.id} id={`msg-${m.id}`}>
-                                {showDate && (
-                                    <div className={s.dateDivider}>
-                                        <span>
-                                            {new Date(m.created_at).toLocaleDateString([], {
-                                                weekday: "short",
-                                                month: "short",
-                                                day: "numeric",
-                                            })}
-                                        </span>
-                                    </div>
-                                )}
-                                <SystemMessage msg={m} />
+                            <div key={row.key} className={s.dateDivider}>
+                                <span>{row.label}</span>
                             </div>
                         );
                     }
-
-                    // Meeting invite cards
-                    if (m.format_type === "meeting" && m.metadata?.meetingCode) {
+                    if (row.kind === "system") {
                         return (
-                            <div key={m.id} id={`msg-${m.id}`}>
-                                {showDate && (
-                                    <div className={s.dateDivider}>
-                                        <span>
-                                            {new Date(m.created_at).toLocaleDateString([], {
-                                                weekday: "short",
-                                                month: "short",
-                                                day: "numeric",
-                                            })}
-                                        </span>
-                                    </div>
-                                )}
+                            <div key={row.key} id={`msg-${row.msg.id}`}>
+                                <SystemMessage msg={row.msg as any} />
+                            </div>
+                        );
+                    }
+                    if (row.kind === "meeting") {
+                        return (
+                            <div key={row.key} id={`msg-${row.msg.id}`}>
                                 <div style={{ padding: "0 0.5rem" }}>
-                                    <MeetingCard msg={m} />
+                                    <MeetingCard msg={row.msg} />
                                 </div>
                             </div>
                         );
                     }
-
+                    const m = row.msg;
+                    const isMine = Number(m.sender_id) === Number(user.id);
                     return (
-                        <div key={m.id} id={`msg-${m.id}`}>
-                            {showDate && (
-                                <div className={s.dateDivider}>
-                                    <span>
-                                        {new Date(m.created_at).toLocaleDateString([], {
-                                            weekday: "short",
-                                            month: "short",
-                                            day: "numeric",
-                                        })}
-                                    </span>
-                                </div>
-                            )}
+                        <div key={row.key} id={`msg-${m.id}`}>
                             <MessageBubble
                                 msg={m}
                                 isMine={isMine}
                                 userId={user.id}
-                                showAvatar={isNewGroup}
-                                showName={isNewGroup && activeConv?.is_group}
+                                showAvatar={row.isNewGroup}
+                                showName={row.isNewGroup && activeConv?.is_group}
                                 onReply={onReply}
                                 onEdit={onEdit}
                                 onDelete={onDelete}
@@ -229,6 +189,8 @@ export default function ChatMessages({
                                 onForward={onForward}
                                 onReact={onReact}
                                 onStar={onStar}
+                                onRetry={onRetry}
+                                onCancelUpload={onCancelUpload}
                                 onJumpTo={onJumpTo}
                                 participantCount={convMembers.length || 2}
                                 readReceipts={readReceipts}

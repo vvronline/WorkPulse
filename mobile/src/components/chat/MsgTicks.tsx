@@ -1,6 +1,6 @@
 import { useMemo } from "react";
-import { StyleSheet, View } from "react-native";
-import { Check, CheckCheck, Clock } from "lucide-react-native";
+import { Pressable, StyleSheet, View } from "react-native";
+import { AlertTriangle, Check, CheckCheck, Clock, RefreshCw } from "lucide-react-native";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { ChatMessage } from "../../features";
@@ -25,6 +25,7 @@ export default function MsgTicks({
   readReceipts,
   userId,
   onAccent,
+  onRetry,
 }: {
   mine: boolean;
   msg: ChatMessage;
@@ -35,6 +36,7 @@ export default function MsgTicks({
   // translucent white and the "read" icon in a bright tint that pops against
   // the accent background.
   onAccent?: boolean;
+  onRetry?: () => void;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
@@ -46,6 +48,20 @@ export default function MsgTicks({
   // Signal's "read" emphasis: a bright tint on the accent bubble, the accent
   // color on a plain surface. NOT a separate WhatsApp-blue.
   const readColor = onAccent ? "#bfe7ff" : theme.primary;
+
+  if (msg._failed) {
+    return (
+      <Pressable
+        onPress={onRetry}
+        disabled={!onRetry}
+        style={styles.retryWrap}
+        hitSlop={6}
+      >
+        <AlertTriangle size={SIZE} color={theme.danger} />
+        <RefreshCw size={SIZE - 1} color={theme.danger} />
+      </Pressable>
+    );
+  }
 
   // Pending / optimistic (no server id yet) → clock.
   if (msg._pending || msg.id < 0) {
@@ -99,4 +115,5 @@ const makeStyles = (_theme: Theme) =>
   StyleSheet.create({
     // Nudge the icon to sit baseline-aligned with the inline timestamp text.
     wrap: { marginBottom: -1 },
+    retryWrap: { marginBottom: -1, flexDirection: "row", alignItems: "center", gap: 2 },
   });

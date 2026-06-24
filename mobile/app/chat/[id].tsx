@@ -16,6 +16,7 @@ import {
   EmojiKeyboard,
   TenorMediaPicker,
   AttachmentPicker,
+  MediaEditor,
   MessageActionsSheet,
   HeaderMenuSheet,
   useChatThread,
@@ -156,6 +157,16 @@ export default function ChatThread() {
         onPhoto={c.attachFile}
         onDocument={c.attachDocument}
       />
+
+      {/* Signal-style media editor — opened after capturing/picking an image.
+          Provides pen/crop/rotate/quality/view-once + caption before send. */}
+      {c.editorItems ? (
+        <MediaEditor
+          initialItems={c.editorItems}
+          onSend={c.handleMediaEditorSend}
+          onClose={() => c.setEditorItems(null)}
+        />
+      ) : null}
 
       {/* Long-press reaction + context overlay (Signal ConversationReactionOverlay):
           dim + lifted bubble + reaction pill (quick emoji + "+") + vertical
@@ -354,6 +365,9 @@ function ChatList({
             onLongPress={c.openReactionBar}
             onReact={c.react}
             onAddReaction={c.openReactionBar}
+            onRetry={c.retryFailedMessage}
+            onCancelUpload={c.cancelMediaUpload}
+            onRetryUpload={c.retryMediaUpload}
           />
         );
       }}

@@ -27,6 +27,8 @@ interface MessageBubbleProps {
     onForward?: (msg: any) => void;
     onReact?: (msgId: number | string, emoji: string) => void;
     onStar?: (msg: any) => void;
+    onRetry?: (msg: any) => void;
+    onCancelUpload?: (msg: any) => void;
     onJumpTo?: (id: number | string) => void;
     participantCount?: number;
     readReceipts?: any;
@@ -34,7 +36,7 @@ interface MessageBubbleProps {
 
 export default function MessageBubble({
     msg, isMine, userId, showAvatar, showName,
-    onReply, onEdit, onDelete, onPin, onForward, onReact, onStar, onJumpTo,
+    onReply, onEdit, onDelete, onPin, onForward, onReact, onStar, onRetry, onCancelUpload, onJumpTo,
     participantCount, readReceipts
 }: MessageBubbleProps) {
     const [showReactions, setShowReactions] = useState(false);
@@ -156,7 +158,19 @@ export default function MessageBubble({
     }
 
     const isPoll = msg.format_type === "poll" && msg.metadata?.pollId;
+    // Media-only message (image/video attachment with no caption text) renders
+    // edge-to-edge — no bubble padding/border/background (Signal-style).
+    const isImageType = typeof msg.file_type === "string" &&
+        (msg.file_type.startsWith("image/") || msg.file_type.startsWith("video/"));
+    const isViewOnceMedia = !!msg.metadata?.viewOnce;
+    const isMediaOnly = !!msg.file_url && isImageType && !isViewOnceMedia &&
+        !String(msg.content || "").trim() && !isPoll;
     const isPending = String(msg.id).startsWith("pending_");
+    const isFailed = !!msg._failed;
+    const isPendingMedia = String(msg.id).startsWith("pending_media_");
+    const mediaProgress = Number(msg._mediaProgress ?? msg.media_progress ?? 0);
+    const mediaState = String(msg._mediaState || msg.media_state || "");
+    const serverMediaActive = !!msg.media_job_id && (mediaState === "queued" || mediaState === "processing");
 
     const menuItems: ContextMenuItem[] = isPending ? [] : [
         isMine && !msg.file_url && !isPoll && { icon: <Pencil size={14} />, label: "Edit", onClick: () => onEdit?.(msg) },
@@ -193,7 +207,7 @@ export default function MessageBubble({
 
                 <div
                     ref={bubbleRef}
-                    className={`${s.bubble} ${isMine ? s.myBubble : s.theirBubble} ${msg.pinned_at ? s.pinned : ""} ${msg.starred ? s.starredBubble : ""} ${toolbarOpen ? s.toolbarActive : ""} ${isPending ? s.pendingBubble : ""}`}
+                    className={`${s.bubble} ${isMine ? s.myBubble : s.theirBubble} ${isMediaOnly ? s.mediaOnly : ""} ${msg.pinned_at ? s.pinned : ""} ${msg.starred ? s.starredBubble : ""} ${toolbarOpen ? s.toolbarActive : ""} ${isPending && !isFailed ? s.pendingBubble : ""} ${isFailed ? s.failedBubble : ""}`}
                     onContextMenu={isPending ? undefined : handleContext}
                 >
                     {msg.pinned_at && <div className={s.pinnedBadge}><Pin size={11} style={{ marginRight: 4 }} />Pinned</div>}
@@ -218,7 +232,39 @@ export default function MessageBubble({
                             fileType={msg.file_type}
                             fileSize={msg.file_size}
                             isMessage
+                            messageId={msg.id}
+                            viewOnce={!!msg.metadata?.viewOnce}
+                            viewOnceConsumed={
+                                Array.isArray(msg.metadata?.viewedBy) &&
+                                msg.metadata.viewedBy.includes(userId)
+                            }
+                            isMine={isMine}
                         />
+                    )}
+                    {(isPendingMedia || serverMediaActive) && (mediaState === "queued" || mediaState === "uploading" || mediaState === "processing") && (
+                        <div className={s.uploadProgressWrap}>
+                            <div className={s.uploadProgressBar}>
+                                <div className={s.uploadProgressFill} style={{ width: `${mediaProgress}%` }} />
+                            </div>
+                            <div className={s.uploadProgressMeta}>
+                                <span>{mediaState === "queued" ? "Queued" : `Uploading ${mediaProgress}%`}</span>
+                                {isPendingMedia ? (
+                                    <button type="button" className={s.uploadActionBtn} onClick={() => onCancelUpload?.(msg)}>
+                                        Cancel
+                                    </button>
+                                ) : null}
+                            </div>
+                        </div>
+                    )}
+                    {isPendingMedia && isFailed && (
+                        <div className={s.uploadProgressMeta}>
+                            <span className={s.uploadFailText}>
+                                {msg._failureReason || "Upload failed"}
+                            </span>
+                            <button type="button" className={s.uploadActionBtn} onClick={() => onRetry?.(msg)}>
+                                Retry
+                            </button>
+                        </div>
                     )}
 
                     {isPoll && <PollDisplay pollId={msg.metadata.pollId} userId={userId as number | string} isMine={isMine} />}
@@ -228,6 +274,20 @@ export default function MessageBubble({
                     )}
 
                     <div className={s.meta}>
+                        {isFailed && !isPendingMedia && (
+                            <button
+                                type="button"
+                                className={s.retryBtn}
+                                onClick={() => onRetry?.(msg)}
+                                title={
+                                    msg._failureReason
+                                        ? `Failed: ${msg._failureReason}. Click to retry.`
+                                        : "Failed to send. Click to retry."
+                                }
+                            >
+                                Failed — Retry
+                            </button>
+                        )}
                         <span className={s.time}>
                             {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                         </span>

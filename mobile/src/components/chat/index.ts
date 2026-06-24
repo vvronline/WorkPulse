@@ -16,6 +16,7 @@ export { default as HeaderMenuSheet } from "./HeaderMenuSheet";
 export { default as MessageBubble } from "./MessageBubble";
 export { default as TypingIndicator } from "./TypingIndicator";
 export { default as Composer } from "./Composer";
+export { default as MediaEditor } from "./MediaEditor";
 export { default as VoiceRecorderBar } from "./VoiceRecorderBar";
 export { useChatThread } from "./useChatThread";
 export * from "./chatUtils";

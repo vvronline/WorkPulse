@@ -75,14 +75,6 @@ const Composer = forwardRef<TextInput, {
         />
       ) : (
         <>
-          <Pressable
-            style={styles.cameraBtn}
-            onPress={onOpenCamera}
-            disabled={uploading || editing}
-            hitSlop={6}
-          >
-            <Camera size={20} color={theme.textSecondary} />
-          </Pressable>
           <View style={styles.pill}>
             <Pressable
               style={styles.emojiToggle}
@@ -112,20 +104,29 @@ const Composer = forwardRef<TextInput, {
               showSoftInputOnFocus={!emojiKeyboardOpen}
               multiline
             />
-            {/* Signal places the "+" attach button INSIDE the pill, on the
-                right edge of the text field. */}
-            <Pressable
-              style={styles.attachBtn}
-              onPress={onOpenAttach}
-              disabled={uploading || editing}
-              hitSlop={6}
-            >
-              {uploading ? (
-                <ActivityIndicator size="small" color={theme.textSecondary} />
-              ) : (
-                <Plus size={24} color={theme.textSecondary} />
-              )}
-            </Pressable>
+            {/* Signal-style: camera + mic live INSIDE the pill on the right.
+                They collapse while the user is typing so the send button can
+                take over. */}
+            {!text.trim() && !editing ? (
+              <>
+                <Pressable
+                  style={styles.innerIconBtn}
+                  onPress={onOpenCamera}
+                  disabled={uploading}
+                  hitSlop={6}
+                >
+                  <Camera size={22} color={theme.textSecondary} />
+                </Pressable>
+                <Pressable
+                  style={styles.innerIconBtn}
+                  onPress={onStartRecording}
+                  disabled={uploading}
+                  hitSlop={6}
+                >
+                  <Mic size={22} color={theme.textSecondary} />
+                </Pressable>
+              </>
+            ) : null}
           </View>
           {text.trim() || editing ? (
             <Pressable
@@ -135,12 +136,19 @@ const Composer = forwardRef<TextInput, {
               <Send size={18} color="#fff" />
             </Pressable>
           ) : (
+            /* "+" attach button now sits OUTSIDE the pill, on the right
+               (Signal-Android layout). */
             <Pressable
-              style={styles.sendBtn}
-              onPress={onStartRecording}
-              disabled={uploading}
+              style={styles.plusBtn}
+              onPress={onOpenAttach}
+              disabled={uploading || editing}
+              hitSlop={6}
             >
-              <Mic size={18} color="#fff" />
+              {uploading ? (
+                <ActivityIndicator size="small" color={theme.textSecondary} />
+              ) : (
+                <Plus size={24} color={theme.text} />
+              )}
             </Pressable>
           )}
         </>
@@ -166,23 +174,23 @@ const makeStyles = (theme: Theme) =>
       borderTopColor: theme.border,
       backgroundColor: theme.bgSecondary,
     },
-    attachBtn: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    cameraBtn: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
+    // "+" attach button — outside the pill, on the right (Signal-style).
+    plusBtn: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
       alignItems: "center",
       justifyContent: "center",
       backgroundColor: theme.surface,
       borderWidth: 1,
       borderColor: theme.glassBorder,
-      marginBottom: 2,
+    },
+    // Camera / mic icons that live inside the pill on the right.
+    innerIconBtn: {
+      width: 38,
+      height: 40,
+      alignItems: "center",
+      justifyContent: "center",
     },
     // Rounded "pill" holding the inline emoji toggle + the text input, so the
     // emoji button sits inside the field (Signal-style).
@@ -205,7 +213,7 @@ const makeStyles = (theme: Theme) =>
     input: {
       flex: 1,
       maxHeight: 118,
-      paddingRight: 16,
+      paddingRight: 4,
       paddingLeft: 4,
       paddingVertical: 10,
       color: theme.text,

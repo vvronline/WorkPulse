@@ -47,7 +47,7 @@ export default function Chat() {
     const {
         handleSend, handleFileUpload, handleVoiceSend, handleDrop,
         handleReply, handleEdit, handleDelete, handlePin, handleReact,
-        handleForward, handleStar, handleCreatePoll, handleEmojiInsert,
+        handleForward, handleStar, handleRetryMessage, handleCancelMediaUpload, handleCreatePoll, handleEmojiInsert,
         handleJumpTo, handleUnpin,
         handleDeleteConv, handlePinConv, handleFavConv, handleClearChat,
         openGroupEdit, handleTyping,
@@ -213,6 +213,8 @@ export default function Chat() {
                             onForward={handleForward}
                             onReact={handleReact}
                             onStar={handleStar}
+                            onRetry={handleRetryMessage}
+                            onCancelUpload={handleCancelMediaUpload}
                             showPinned={showPinned}
                             onClosePinned={() => setShowPinned(false)}
                             onJumpTo={jumpTo}

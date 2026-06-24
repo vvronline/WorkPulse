@@ -815,16 +815,33 @@ export const markConversationRead = (convId: number | string) =>
     API.post(`/chat/conversations/${convId}/read`);
 export const getReadStatus = (convId: number | string) =>
     API.get(`/chat/conversations/${convId}/read-status`);
-export const uploadChatFile = (convId: number | string, formData: FormData) =>
+export const uploadChatFile = (
+    convId: number | string,
+    formData: FormData,
+    opts?: {
+        signal?: AbortSignal;
+        onUploadProgress?: (evt: { loaded: number; total?: number }) => void;
+    },
+) =>
     API.post(`/chat/conversations/${convId}/files`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
+        signal: opts?.signal,
+        onUploadProgress: opts?.onUploadProgress as
+            | ((progressEvent: unknown) => void)
+            | undefined,
     });
+export const cancelChatMediaJob = (mediaJobId: number | string) =>
+    API.post(`/chat/media-jobs/${mediaJobId}/cancel`);
+export const retryChatMediaJob = (mediaJobId: number | string) =>
+    API.post(`/chat/media-jobs/${mediaJobId}/retry`);
 export const toggleReaction = (msgId: number | string, emoji: string) =>
     API.post(`/chat/messages/${msgId}/reactions`, { emoji });
 export const editMessage = (msgId: number | string, content: string) =>
     API.put(`/chat/messages/${msgId}`, { content });
 export const deleteMessage = (msgId: number | string) => API.delete(`/chat/messages/${msgId}`);
 export const togglePin = (msgId: number | string) => API.post(`/chat/messages/${msgId}/pin`);
+export const markMessageViewed = (msgId: number | string) =>
+    API.post<{ fileUrl?: string; viewed?: boolean }>(`/chat/messages/${msgId}/view`);
 export const getPinnedMessages = (convId: number | string) =>
     API.get(`/chat/conversations/${convId}/pinned`);
 export const searchMessages = (q: string, convId?: number | string) =>

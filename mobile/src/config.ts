@@ -50,6 +50,7 @@ export const SERVER_ORIGIN = API_BASE_URL.replace(/\/api\/?$/, "");
 /** Resolve a stored upload path (e.g. /uploads/...) to an absolute URL. */
 export function uploadUrl(path?: string | null): string | null {
   if (!path) return null;
+  if (/^(file|content|data|blob):/i.test(path)) return path;
   if (/^https?:\/\//.test(path)) return path;
   return `${SERVER_ORIGIN}${path.startsWith("/") ? "" : "/"}${path}`;
 }

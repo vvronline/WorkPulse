@@ -1,6 +1,6 @@
 {
   "name": "mobile",
-  "version": "1.1.22",
+  "version": "1.1.23",
   "main": "index.js",
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^15.0.1",
@@ -19,6 +19,7 @@
     "expo-document-picker": "~56.0.4",
     "expo-file-system": "~56.0.8",
     "expo-font": "^56.0.7",
+    "expo-image-manipulator": "~56.0.4",
     "expo-image-picker": "~56.0.16",
     "expo-intent-launcher": "~56.0.4",
     "expo-keep-awake": "~56.0.3",
@@ -40,6 +41,7 @@
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "4.25.2",
     "react-native-svg": "15.15.4",
+    "react-native-view-shot": "~4.0.3",
     "react-native-web": "^0.21.2",
     "react-native-webrtc": "^124.0.7",
     "react-native-webview": "13.16.1",

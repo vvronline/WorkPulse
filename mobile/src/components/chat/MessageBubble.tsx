@@ -40,6 +40,9 @@ export default function MessageBubble({
   onLongPress,
   onReact,
   onAddReaction,
+  onRetry,
+  onCancelUpload,
+  onRetryUpload,
 }: {
   message: ChatMessage;
   mine: boolean;
@@ -58,9 +61,25 @@ export default function MessageBubble({
   onLongPress: (message: ChatMessage, mine: boolean) => void;
   onReact: (message: ChatMessage, emoji: string) => void;
   onAddReaction: (message: ChatMessage, mine: boolean) => void;
+  onRetry?: (message: ChatMessage) => void;
+  onCancelUpload?: (message: ChatMessage) => void;
+  onRetryUpload?: (message: ChatMessage) => void;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+
+  // Media-only message (image/video attachment with no caption text, not a
+  // view-once pill) renders edge-to-edge — no bubble padding/background, like
+  // Signal.
+  const ft = typeof message.file_type === "string" ? message.file_type : "";
+  const isImageType = ft.startsWith("image/") || ft.startsWith("video/");
+  const isViewOnce = !!message.metadata?.viewOnce;
+  const isMediaOnly =
+    !!message.file_url &&
+    !deleted &&
+    isImageType &&
+    !isViewOnce &&
+    !String(message.content || "").trim();
 
   // Signal corner-radius grouping. Base radius is 18; the sender-side corner is
   // tightened to 4 on edges that connect to an adjacent message in the group.
@@ -100,6 +119,7 @@ export default function MessageBubble({
           style={[
             styles.bubble,
             mine ? styles.bubbleMine : styles.bubbleTheirs,
+            isMediaOnly && styles.bubbleMediaOnly,
             cornerStyle,
             message._pending && styles.bubblePending,
           ]}
@@ -111,7 +131,11 @@ export default function MessageBubble({
             <ReplyQuote message={message} />
           ) : null}
           {message.file_url && !deleted ? (
-            <FilePreview message={message} />
+            <FilePreview
+              message={message}
+              onCancelUpload={onCancelUpload}
+              onRetryUpload={onRetryUpload}
+            />
           ) : null}
           {/* Signal inline footer: the message text and the time+ticks live in
               a SINGLE wrapping row. When the last line of text plus the footer
@@ -143,6 +167,7 @@ export default function MessageBubble({
                 readReceipts={readReceipts}
                 userId={userId}
                 onAccent={mine}
+                onRetry={mine ? () => onRetry?.(message) : undefined}
               />
             </View>
           </View>
@@ -179,13 +204,20 @@ const makeStyles = (theme: Theme) =>
       paddingVertical: 7,
       gap: 2,
     },
-    // Own messages — solid brand accent fill (Signal blue), borderless.
+    // Own messages — clean neutral fill (no brand color), borderless.
     bubbleMine: {
-      backgroundColor: theme.chatOutBg,
+      backgroundColor: theme.bgElevated,
     },
-    // Incoming messages — flat dark surface, borderless.
+    // Incoming messages — flat neutral surface, borderless.
     bubbleTheirs: {
-      backgroundColor: theme.chatInBg,
+      backgroundColor: theme.surface,
+    },
+    // Media-only bubble: frameless, edge-to-edge image/video (Signal-style).
+    bubbleMediaOnly: {
+      backgroundColor: "transparent",
+      paddingHorizontal: 0,
+      paddingVertical: 0,
+      overflow: "hidden",
     },
     bubblePending: { opacity: 0.7 },
     sender: {

@@ -18,6 +18,10 @@ interface DeliveryStatusProps {
 export default function DeliveryStatus({ isMine, msg, participantCount, readReceipts, userId }: DeliveryStatusProps) {
     if (!isMine) return null;
 
+    if (msg._failed) {
+        return <span className={s.deliveryFailed} title={String(msg._failureReason || "Failed to send")}>!</span>;
+    }
+
     // Pending message — not yet confirmed by server
     if (String(msg.id).startsWith("pending_")) {
         return <span className={s.deliveryPending} title="Sending…">○</span>;

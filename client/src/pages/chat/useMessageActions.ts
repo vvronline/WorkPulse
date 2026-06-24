@@ -1,5 +1,8 @@
+import { useEffect, useRef } from "react";
 import {
     uploadChatFile,
+    cancelChatMediaJob,
+    retryChatMediaJob,
     toggleReaction,
     editMessage,
     deleteMessage,
@@ -12,6 +15,7 @@ import type { AnyRecord } from "../../types";
 
 type ChatState = ReturnType<typeof useChatState>;
 type Msg = AnyRecord & { id: number | string };
+type PendingMedia = { blob: Blob; name: string; type?: string | null };
 
 export default function useMessageActions(state: ChatState) {
     const {
@@ -33,6 +37,19 @@ export default function useMessageActions(state: ChatState) {
         mentionInputRef,
         pendingCounter,
     } = state;
+    const uploadControllersRef = useRef<Map<string, AbortController>>(new Map());
+    const pendingMediaRef = useRef<Map<string, PendingMedia>>(new Map());
+    const mediaPreviewUrlsRef = useRef<Map<string, string>>(new Map());
+
+    useEffect(() => {
+        return () => {
+            uploadControllersRef.current.forEach((c) => c.abort());
+            uploadControllersRef.current.clear();
+            pendingMediaRef.current.clear();
+            mediaPreviewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+            mediaPreviewUrlsRef.current.clear();
+        };
+    }, []);
 
     const handleSend = (e: React.FormEvent) => {
         e.preventDefault();
@@ -89,14 +106,266 @@ export default function useMessageActions(state: ChatState) {
         setReplyTo(null);
     };
 
-    const handleFileUpload = async (file: File) => {
+    const handleRetryMessage = (msg: Msg) => {
+        if (!activeConv) return;
+        const clientMsgId = String(msg.id || "");
+        const mediaJobId = Number(msg.media_job_id || 0);
+        const serverMediaState = String(msg.media_state || "");
+        if (
+            mediaJobId > 0 &&
+            (serverMediaState === "failed" || serverMediaState === "cancelled")
+        ) {
+            setMessages((prev) =>
+                prev.map((m) =>
+                    m.id === msg.id
+                        ? {
+                              ...m,
+                              _failed: false,
+                              _pending: true,
+                              _mediaState: "queued",
+                              _mediaProgress: 0,
+                              _failureReason: null,
+                          }
+                        : m,
+                ),
+            );
+            retryChatMediaJob(mediaJobId).catch((e: any) => {
+                setMessages((prev) =>
+                    prev.map((m) =>
+                        m.id === msg.id
+                            ? {
+                                  ...m,
+                                  _pending: false,
+                                  _failed: true,
+                                  _mediaState: "failed",
+                                  _failureReason:
+                                      e?.response?.data?.error || "Retry failed",
+                              }
+                            : m,
+                    ),
+                );
+            });
+            return;
+        }
+        if (clientMsgId.startsWith("pending_media_")) {
+            const media = pendingMediaRef.current.get(clientMsgId);
+            if (!media) return;
+            const form = new FormData();
+            form.append("file", media.blob, media.name);
+            const controller = new AbortController();
+            uploadControllersRef.current.set(clientMsgId, controller);
+            setMessages((prev) =>
+                prev.map((m) =>
+                    m.id === clientMsgId
+                        ? {
+                              ...m,
+                              _pending: true,
+                              _failed: false,
+                              _mediaState: "queued",
+                              _mediaProgress: 0,
+                              _failureReason: null,
+                              created_at: new Date().toISOString(),
+                          }
+                        : m,
+                ),
+            );
+            uploadChatFile(activeConv.id, form, {
+                signal: controller.signal,
+                onUploadProgress: (evt) => {
+                    const total = evt.total || 0;
+                    const pct =
+                        total > 0
+                            ? Math.max(0, Math.min(100, Math.round((evt.loaded / total) * 100)))
+                            : 0;
+                    setMessages((prev) =>
+                        prev.map((m) =>
+                            m.id === clientMsgId
+                                ? { ...m, _mediaState: "uploading", _mediaProgress: pct }
+                                : m,
+                        ),
+                    );
+                },
+            })
+                .then(({ data }) => {
+                    const localUrl = String(msg.file_url || "");
+                    if (localUrl.startsWith("blob:")) URL.revokeObjectURL(localUrl);
+                    mediaPreviewUrlsRef.current.delete(clientMsgId);
+                    setMessages((prev) => {
+                        const replaced = prev.map((m) =>
+                            m.id === clientMsgId ? { ...data, _pending: false } : m,
+                        );
+                        const seen = new Set<string>();
+                        return replaced.filter((m) => {
+                            const k = String(m.id);
+                            if (seen.has(k)) return false;
+                            seen.add(k);
+                            return true;
+                        });
+                    });
+                    pendingMediaRef.current.delete(clientMsgId);
+                    uploadControllersRef.current.delete(clientMsgId);
+                })
+                .catch((e: any) => {
+                    uploadControllersRef.current.delete(clientMsgId);
+                    const cancelled =
+                        e?.name === "CanceledError" || e?.code === "ERR_CANCELED";
+                    setMessages((prev) =>
+                        prev.map((m) =>
+                            m.id === clientMsgId
+                                ? {
+                                      ...m,
+                                      _pending: false,
+                                      _failed: true,
+                                      _mediaState: "failed",
+                                      _failureReason: cancelled
+                                          ? "Upload cancelled"
+                                          : e?.response?.data?.error || "Upload failed",
+                                  }
+                                : m,
+                        ),
+                    );
+                });
+            return;
+        }
+        if (!clientMsgId.startsWith("pending_")) return;
+        const content = String(msg.content || "").trim();
+        if (!content) return;
+
+        setMessages((prev) =>
+            prev.map((m) =>
+                m.id === clientMsgId
+                    ? {
+                          ...m,
+                          _failed: false,
+                          _pending: true,
+                          _failureReason: null,
+                          created_at: new Date().toISOString(),
+                      }
+                    : m,
+            ),
+        );
+
+        wsSend("chat_message", {
+            conversationId: activeConv.id,
+            content,
+            clientMsgId,
+            ...(msg.reply_to_id ? { replyToId: msg.reply_to_id } : {}),
+        });
+    };
+
+    const handleCancelMediaUpload = (msg: Msg) => {
+        const id = String(msg.id || "");
+        const mediaJobId = Number(msg.media_job_id || 0);
+        if (mediaJobId > 0) {
+            setMessages((prev) =>
+                prev.map((m) =>
+                    m.id === msg.id
+                        ? { ...m, _mediaState: "failed", _failed: true, _failureReason: "Upload cancelled" }
+                        : m,
+                ),
+            );
+            cancelChatMediaJob(mediaJobId).catch(() => {});
+            return;
+        }
+        if (!id.startsWith("pending_media_")) return;
+        const controller = uploadControllersRef.current.get(id);
+        controller?.abort();
+    };
+
+    const handleFileUpload = async (
+        file: File,
+        opts?: { viewOnce?: boolean; caption?: string },
+    ) => {
         if (!activeConv || !file) return;
+        const tempId = `pending_media_${++pendingCounter.current}`;
+        const localUrl = URL.createObjectURL(file);
+        const viewOnce = !!opts?.viewOnce;
+        const caption = opts?.caption?.trim() || "";
+        pendingMediaRef.current.set(tempId, {
+            blob: file,
+            name: file.name || "file",
+            type: file.type || undefined,
+        });
+        mediaPreviewUrlsRef.current.set(tempId, localUrl);
+        setMessages((prev) => [
+            ...prev,
+            {
+                id: tempId,
+                sender_id: user?.id,
+                sender_name: user?.full_name,
+                content: caption,
+                created_at: new Date().toISOString(),
+                file_url: localUrl,
+                file_name: file.name || "File",
+                file_type: file.type || null,
+                file_size: file.size,
+                metadata: viewOnce ? { viewOnce: true, viewedBy: [] } : null,
+                reactions: [],
+                _pending: true,
+                _failed: false,
+                _mediaState: "queued",
+                _mediaProgress: 0,
+                _failureReason: null,
+            },
+        ]);
         const formData = new FormData();
         formData.append("file", file);
+        if (viewOnce) formData.append("viewOnce", "true");
+        if (caption) formData.append("content", caption);
         try {
-            await uploadChatFile(activeConv.id, formData);
-        } catch {
-            /* ignore */
+            const controller = new AbortController();
+            uploadControllersRef.current.set(tempId, controller);
+            const { data } = await uploadChatFile(activeConv.id, formData, {
+                signal: controller.signal,
+                onUploadProgress: (evt) => {
+                    const total = evt.total || file.size || 0;
+                    const pct =
+                        total > 0
+                            ? Math.max(0, Math.min(100, Math.round((evt.loaded / total) * 100)))
+                            : 0;
+                    setMessages((prev) =>
+                        prev.map((m) =>
+                            m.id === tempId
+                                ? { ...m, _mediaState: "uploading", _mediaProgress: pct }
+                                : m,
+                        ),
+                    );
+                },
+            });
+            URL.revokeObjectURL(localUrl);
+            mediaPreviewUrlsRef.current.delete(tempId);
+            setMessages((prev) => {
+                const replaced = prev.map((m) =>
+                    m.id === tempId ? { ...data, _pending: false } : m,
+                );
+                const seen = new Set<string>();
+                return replaced.filter((m) => {
+                    const k = String(m.id);
+                    if (seen.has(k)) return false;
+                    seen.add(k);
+                    return true;
+                });
+            });
+            pendingMediaRef.current.delete(tempId);
+            uploadControllersRef.current.delete(tempId);
+        } catch (e: any) {
+            uploadControllersRef.current.delete(tempId);
+            const cancelled = e?.name === "CanceledError" || e?.code === "ERR_CANCELED";
+            setMessages((prev) =>
+                prev.map((m) =>
+                    m.id === tempId
+                        ? {
+                              ...m,
+                              _pending: false,
+                              _failed: true,
+                              _mediaState: "failed",
+                              _failureReason: cancelled
+                                  ? "Upload cancelled"
+                                  : e?.response?.data?.error || "Upload failed",
+                          }
+                        : m,
+                ),
+            );
         }
     };
 
@@ -106,9 +375,94 @@ export default function useMessageActions(state: ChatState) {
         ext = "webm",
     ) => {
         if (!activeConv) return;
+        const tempId = `pending_media_${++pendingCounter.current}`;
+        const mime = blob.type || `audio/${ext}`;
+        const fileName = `voice.${ext}`;
+        const localUrl = URL.createObjectURL(blob);
+        pendingMediaRef.current.set(tempId, {
+            blob,
+            name: fileName,
+            type: mime,
+        });
+        mediaPreviewUrlsRef.current.set(tempId, localUrl);
+        setMessages((prev) => [
+            ...prev,
+            {
+                id: tempId,
+                sender_id: user?.id,
+                sender_name: user?.full_name,
+                content: "",
+                created_at: new Date().toISOString(),
+                file_url: localUrl,
+                file_name: fileName,
+                file_type: mime,
+                file_size: 0,
+                reactions: [],
+                _pending: true,
+                _failed: false,
+                _mediaState: "queued",
+                _mediaProgress: 0,
+                _failureReason: null,
+            },
+        ]);
         const formData = new FormData();
-        formData.append("file", blob, `voice.${ext}`);
-        uploadChatFile(activeConv.id, formData).catch(() => {});
+        formData.append("file", blob, fileName);
+        const controller = new AbortController();
+        uploadControllersRef.current.set(tempId, controller);
+        uploadChatFile(activeConv.id, formData, {
+            signal: controller.signal,
+            onUploadProgress: (evt) => {
+                const total = evt.total || 0;
+                const pct =
+                    total > 0
+                        ? Math.max(0, Math.min(100, Math.round((evt.loaded / total) * 100)))
+                        : 0;
+                setMessages((prev) =>
+                    prev.map((m) =>
+                        m.id === tempId
+                            ? { ...m, _mediaState: "uploading", _mediaProgress: pct }
+                            : m,
+                    ),
+                );
+            },
+        })
+            .then(({ data }) => {
+                URL.revokeObjectURL(localUrl);
+                mediaPreviewUrlsRef.current.delete(tempId);
+                setMessages((prev) => {
+                    const replaced = prev.map((m) =>
+                        m.id === tempId ? { ...data, _pending: false } : m,
+                    );
+                    const seen = new Set<string>();
+                    return replaced.filter((m) => {
+                        const k = String(m.id);
+                        if (seen.has(k)) return false;
+                        seen.add(k);
+                        return true;
+                    });
+                });
+                pendingMediaRef.current.delete(tempId);
+                uploadControllersRef.current.delete(tempId);
+            })
+            .catch((e: any) => {
+                uploadControllersRef.current.delete(tempId);
+                const cancelled = e?.name === "CanceledError" || e?.code === "ERR_CANCELED";
+                setMessages((prev) =>
+                    prev.map((m) =>
+                        m.id === tempId
+                            ? {
+                                  ...m,
+                                  _pending: false,
+                                  _failed: true,
+                                  _mediaState: "failed",
+                                  _failureReason: cancelled
+                                      ? "Upload cancelled"
+                                      : e?.response?.data?.error || "Upload failed",
+                              }
+                            : m,
+                    ),
+                );
+            });
         setRecording(false);
     };
 
@@ -298,5 +652,7 @@ export default function useMessageActions(state: ChatState) {
         handleEmojiInsert,
         handleJumpTo,
         handleUnpin,
+        handleRetryMessage,
+        handleCancelMediaUpload,
     };
 }

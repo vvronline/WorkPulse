@@ -1354,6 +1354,43 @@ const MIGRATIONS: Migration[] = [
             await query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS biometric_login_enabled BOOLEAN NOT NULL DEFAULT TRUE`);
         },
     },
+    {
+        // Chat media pipeline foundation — durable per-message media job state so
+        // queued / processing / failed / cancelled can survive app reconnects and
+        // be reconciled over websocket progress events.
+        name: '2026_06_v17_chat_media_jobs_foundation',
+        async up(query) {
+            await query(`
+                CREATE TABLE IF NOT EXISTS chat_media_jobs (
+                    id                SERIAL PRIMARY KEY,
+                    message_id        INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE UNIQUE,
+                    conversation_id   INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                    sender_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    status            TEXT NOT NULL DEFAULT 'queued'
+                                        CHECK (status IN ('queued','processing','completed','failed','cancelled')),
+                    progress          INTEGER NOT NULL DEFAULT 0,
+                    attempts          INTEGER NOT NULL DEFAULT 0,
+                    failure_reason    TEXT,
+                    cancel_requested  BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at        TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at        TIMESTAMPTZ DEFAULT NOW()
+                )
+            `);
+            await query(`CREATE INDEX IF NOT EXISTS idx_chat_media_jobs_conv ON chat_media_jobs(conversation_id, created_at DESC)`);
+            await query(`CREATE INDEX IF NOT EXISTS idx_chat_media_jobs_sender ON chat_media_jobs(sender_id, created_at DESC)`);
+        },
+    },
+    {
+        // Chat media staged-pipeline metadata. Adds explicit stage + resumable/
+        // checksum fields so media processing can run as durable queued jobs.
+        name: '2026_06_v18_chat_media_pipeline_stages',
+        async up(query) {
+            await query(`ALTER TABLE chat_media_jobs ADD COLUMN IF NOT EXISTS stage TEXT NOT NULL DEFAULT 'queued'`);
+            await query(`ALTER TABLE chat_media_jobs ADD COLUMN IF NOT EXISTS checksum_sha256 TEXT`);
+            await query(`ALTER TABLE chat_media_jobs ADD COLUMN IF NOT EXISTS resumable_token TEXT`);
+            await query(`ALTER TABLE chat_media_jobs ADD COLUMN IF NOT EXISTS pipeline_meta JSONB NOT NULL DEFAULT '{}'::jsonb`);
+        },
+    },
 ];
 
 interface MigrationOpts {
