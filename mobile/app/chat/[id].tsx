@@ -14,6 +14,7 @@ import {
   ReactionOverlay,
   EmojiPicker,
   EmojiKeyboard,
+  TenorMediaPicker,
   AttachmentPicker,
   MessageActionsSheet,
   HeaderMenuSheet,
@@ -123,6 +124,7 @@ export default function ChatThread() {
             onChangeText={c.onChangeText}
             onSend={c.send}
             onSaveEdit={c.saveEdit}
+            onOpenCamera={c.attachCamera}
             onOpenAttach={() => c.setPlusOpen(true)}
             onToggleEmojiKeyboard={c.toggleEmojiKeyboard}
             onInputFocus={c.onComposerInputFocus}
@@ -137,6 +139,8 @@ export default function ChatThread() {
               height={c.emojiKeyboardHeight}
               onPick={c.insertEmoji}
               onBackspace={c.emojiBackspace}
+              onOpenGif={c.attachGifFromEmoji}
+              onOpenSticker={c.attachStickerFromEmoji}
             />
           ) : null}
         </View>
@@ -149,9 +153,7 @@ export default function ChatThread() {
       <AttachmentPicker
         visible={c.plusOpen}
         onClose={() => c.setPlusOpen(false)}
-        onCamera={c.attachCamera}
         onPhoto={c.attachFile}
-        onGifSticker={c.attachGifSticker}
         onDocument={c.attachDocument}
       />
 
@@ -194,6 +196,13 @@ export default function ChatThread() {
         mode={c.emojiMode}
         onPick={c.pickEmoji}
         onClose={c.closeEmojiPicker}
+      />
+
+      <TenorMediaPicker
+        visible={c.tenorOpen}
+        kind={c.tenorKind}
+        onClose={() => c.setTenorOpen(false)}
+        onPick={(item) => c.pickTenorMedia(item, c.tenorKind)}
       />
 
       {/* Message action sheet (forward / save / pin / edit / delete). */}

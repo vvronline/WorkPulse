@@ -1,5 +1,4 @@
 import {
-  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -10,18 +9,10 @@ import {
 import {
   Alert,
   AppState,
-  Image,
-  Modal,
   PermissionsAndroid,
   Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
   Vibration,
   View,
-  Dimensions,
 } from "react-native";
 import {
   setAudioModeAsync,
@@ -31,36 +22,13 @@ import {
 import { useKeepAwake } from "expo-keep-awake";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-} from "react-native-reanimated";
 import {
   mediaDevices,
   RTCPeerConnection,
   RTCSessionDescription,
   RTCIceCandidate,
-  RTCView,
   MediaStream,
 } from "react-native-webrtc";
-import {
-  Mic,
-  MicOff,
-  Phone,
-  PhoneOff,
-  Video as VideoIcon,
-  VideoOff,
-  SwitchCamera,
-  Signal,
-  MessageSquare,
-  MoreVertical,
-  Pause,
-  Play,
-  Volume2,
-} from "lucide-react-native";
-import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { socket } from "../../src/realtime/socket";
 import { endCallNavigation } from "../../src/realtime/callRouting";
@@ -100,309 +68,18 @@ import {
   callStateReducer,
   initialCallPhase,
 } from "../../src/realtime/callStateMachine";
-
-const FALLBACK_ICE = [
-  { urls: "stun:stun.l.google.com:19302" },
-  { urls: "stun:stun1.l.google.com:19302" },
-  { urls: "stun:stun2.l.google.com:19302" },
-  // Multiple TURN transports so the call can still relay when mobile UDP is
-  // blocked. The TCP/TLS (443?transport=tcp) entry is the lifeline on
-  // restrictive mobile carriers / corporate Wi-Fi where UDP/STUN never works.
-  {
-    urls: "turn:openrelay.metered.ca:80",
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  },
-  {
-    urls: "turn:openrelay.metered.ca:443",
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  },
-  {
-    urls: "turn:openrelay.metered.ca:443?transport=tcp",
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  },
-];
-
-// P1.8 — Deterministic ICE-config gating. A config has "real" (provisioned)
-// TURN only when the server returned managed credentials (Cloudflare Calls /
-// self-hosted coturn / a static 3rd-party provider) rather than the public
-// Open Relay fallback or STUN-only. The server's `mode` is authoritative
-// (cloudflare-calls | coturn-rest | static = real; public-fallback | stun-only
-// = fallback). When `mode` is absent (older server) we sniff the URLs for a
-// non-openrelay turn:/turns: entry. The FIRST offer/answer must never be
-// negotiated against the public-only fallback: on a network that requires a
-// relay this makes the first call hang ("Connecting…") even though a retry
-// works once the real creds are cached — the classic "fresh install: first
-// call doesn't connect" bug.
-const REAL_TURN_MODES = new Set(["cloudflare-calls", "coturn-rest", "static"]);
-function hasRealTurn(
-  cfg: { mode?: string; iceServers?: any[] } | null | undefined,
-): boolean {
-  if (!cfg) return false;
-  if (cfg.mode && REAL_TURN_MODES.has(cfg.mode)) return true;
-  const servers = cfg.iceServers || [];
-  for (const s of servers) {
-    const urls = Array.isArray(s?.urls) ? s.urls : [s?.urls];
-    for (const u of urls) {
-      if (typeof u !== "string") continue;
-      const lower = u.toLowerCase();
-      if (
-        (lower.startsWith("turn:") || lower.startsWith("turns:")) &&
-        !lower.includes("openrelay.metered.ca")
-      ) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-// P1.9 — Gate the public Open Relay TURN fallback. The server's /ice-config
-// returns `allowPublicFallback`; when it is FALSE the client must NOT relay
-// through the public openrelay.metered.ca service (a deployment that disabled
-// DISABLE_PUBLIC_TURN must not be silently bypassed by the client's hard-coded
-// FALLBACK_ICE). STUN is ALWAYS allowed; only public TURN URLs are stripped.
-// Returns the servers unchanged when public fallback is allowed.
-function applyPublicTurnPolicy(servers: any[], allowPublic: boolean): any[] {
-  if (allowPublic) return servers;
-  const out: any[] = [];
-  for (const s of servers || []) {
-    const urls = Array.isArray(s?.urls) ? s.urls : [s?.urls];
-    const kept = urls.filter(
-      (u: any) =>
-        typeof u === "string" &&
-        !u.toLowerCase().includes("openrelay.metered.ca"),
-    );
-    if (kept.length === 0) continue; // entry was entirely public TURN — drop it
-    out.push({ ...s, urls: kept.length === 1 ? kept[0] : kept });
-  }
-  return out;
-}
-
-type CallStatus =
-  | "ringing"
-  | "connecting"
-  | "connected"
-  | "reconnecting"
-  | "ended"
-  | "rejected";
-
-// ── Decoupled video renderers (Signal-Android model) ─────────────────────────
-// On react-native-webrtc each <RTCView> is backed by an Android SurfaceView/EGL
-// surface. Re-rendering it churns that native surface → flicker, dropped frames
-// and momentary freezes. Signal isolates its renderer from UI state so routine
-// updates (call timer, network badge, reactions) never touch the surface. We do
-// the same by extracting the surfaces into React.memo leaf components that take
-// ONLY primitive, stable props — so the per-second duration tick and the 3s
-// stats tick can never re-render the video surfaces.
-type VideoStyle = ReturnType<typeof makeStyles>["remoteVideo"];
-
-const RemoteVideo = memo(function RemoteVideo(props: {
-  url: string;
-  style: VideoStyle;
-}) {
-  return (
-    <RTCView
-      streamURL={props.url}
-      style={props.style}
-      objectFit="cover"
-      // Never mirror the remote feed — only a front-camera self-view should be
-      // mirrored. WebRTC transmits the TRUE (un-mirrored) image already.
-      mirror={false}
-      // Remote = base layer (zOrder 0); the PiP self-view sits above it.
-      zOrder={0}
-    />
-  );
-});
-
-const FullScreenSelfView = memo(function FullScreenSelfView(props: {
-  url: string;
-  mirror: boolean;
-  style: VideoStyle;
-}) {
-  return (
-    <RTCView
-      streamURL={props.url}
-      style={props.style}
-      objectFit="cover"
-      // Front-camera self-view → mirror like a real mirror (WhatsApp style).
-      mirror={props.mirror}
-      zOrder={0}
-    />
-  );
-});
-
-const PipSelfView = memo(function PipSelfView(props: {
-  url: string;
-  mirror: boolean;
-  style: any;
-}) {
-  return (
-    <RTCView
-      streamURL={props.url}
-      style={props.style}
-      objectFit="cover"
-      mirror={props.mirror}
-      // zOrder MUST stay 0 here. On react-native-webrtc a non-zero zOrder forces
-      // an Android SurfaceView with setZOrderMediaOverlay(true), which paints on
-      // its own hardware layer OUTSIDE the parent's rounded-corner clip — that is
-      // exactly why the self preview showed SQUARE corners no matter how the
-      // parent was rounded. zOrder={0} uses a TextureView, which composites in
-      // the normal view hierarchy and therefore RESPECTS the parent's
-      // `overflow:"hidden"` + `borderRadius` (rounded corners actually clip the
-      // video). The tile is still kept ABOVE the remote feed because its wrapper
-      // (`pipStyles.wrap`) carries `elevation: 8` + `zIndex: 5` AND is rendered
-      // AFTER the remote view in the tree — so dropping the media zOrder does not
-      // hide the self preview.
-      zOrder={0}
-    />
-  );
-});
-
-// ── Draggable PiP self-view (Signal model) ───────────────────────────────────
-// Signal lets you DRAG the local self-preview tile around and it SNAPS to the
-// nearest corner. We replicate that with react-native-gesture-handler (Pan) +
-// react-native-reanimated shared values. CRITICAL for the flicker fix: the drag
-// runs entirely on the UI thread via useAnimatedStyle, so moving the tile NEVER
-// re-renders the memoized <PipSelfView> (RTCView) underneath — the native video
-// surface is never reattached, so there is no flicker/freeze while dragging
-// (the whole reason the surfaces were isolated in the first place).
-const PIP_W = 110;
-const PIP_H = 160;
-const PIP_MARGIN = 16;
-// Vertical clearance above the bottom controls bar so a bottom-snapped tile
-// never overlaps the call buttons.
-const PIP_BOTTOM_CLEARANCE = 120;
-
-const PIP_RADIUS = 18;
-
-const pipStyles = StyleSheet.create({
-  // OUTER wrapper: owns ONLY the position + stacking (zIndex/elevation). On
-  // Android an elevated view composites on its OWN hardware layer, which BREAKS
-  // `overflow:"hidden"` clipping of rounded children — so elevation MUST live
-  // here and NOT on the clipping view, otherwise the self-view renders with
-  // SQUARE corners. No borderRadius/overflow here on purpose.
-  wrap: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    width: PIP_W,
-    height: PIP_H,
-    backgroundColor: "transparent",
-    // zIndex alone does NOT lift a view above a sibling on Android — elevation
-    // is required, otherwise the full-screen remote video paints over the
-    // self-preview once the call connects and the local tile "disappears".
-    zIndex: 5,
-    elevation: 8,
-  },
-  // CLIPPING view: a PLAIN, NON-elevated view that actually rounds + clips the
-  // RTCView surface. Keeping elevation OFF this view is what lets
-  // `overflow:"hidden"` mask the rounded corners on Android.
-  inner: {
-    width: "100%",
-    height: "100%",
-    borderRadius: PIP_RADIUS,
-    overflow: "hidden",
-    backgroundColor: "#000",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.3)",
-  },
-  // The RTCView style. We ALSO round the surface itself (not just the parent)
-  // because react-native-webrtc's native video surface does not reliably clip
-  // to a parent's borderRadius on its own — applying the radius here is the
-  // reliable Android fix for the square-corner self-view.
-  surface: {
-    flex: 1,
-    borderRadius: PIP_RADIUS,
-  },
-});
-
-const DraggablePipSelfView = memo(function DraggablePipSelfView(props: {
-  url: string;
-  mirror: boolean;
-  topInset: number;
-  bottomInset: number;
-}) {
-  const { width: screenW, height: screenH } = Dimensions.get("window");
-  // The four snap targets (top/bottom × left/right), clamped to safe-area.
-  const topY = props.topInset + 50;
-  const bottomY = screenH - props.bottomInset - PIP_H - PIP_BOTTOM_CLEARANCE;
-  const leftX = PIP_MARGIN;
-  const rightX = screenW - PIP_W - PIP_MARGIN;
-
-  // Start in the top-right corner (matches the previous fixed position).
-  const translateX = useSharedValue(rightX);
-  const translateY = useSharedValue(topY);
-  const startX = useSharedValue(rightX);
-  const startY = useSharedValue(topY);
-
-  const pan = Gesture.Pan()
-    .onStart(() => {
-      startX.value = translateX.value;
-      startY.value = translateY.value;
-    })
-    .onUpdate((e) => {
-      translateX.value = startX.value + e.translationX;
-      translateY.value = startY.value + e.translationY;
-    })
-    .onEnd(() => {
-      // Snap to the NEAREST corner by comparing the tile centre to the screen
-      // midpoints (Signal behaviour). Spring for a natural settle.
-      const centreX = translateX.value + PIP_W / 2;
-      const centreY = translateY.value + PIP_H / 2;
-      const snapX = centreX < screenW / 2 ? leftX : rightX;
-      const snapY = centreY < screenH / 2 ? topY : bottomY;
-      translateX.value = withSpring(snapX, { damping: 18, stiffness: 220 });
-      translateY.value = withSpring(snapY, { damping: 18, stiffness: 220 });
-    });
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: translateX.value },
-      { translateY: translateY.value },
-    ],
-  }));
-
-  return (
-    <GestureDetector gesture={pan}>
-      <Animated.View style={[pipStyles.wrap, animatedStyle]}>
-        {/* PLAIN, non-elevated clipping view rounds + masks the RTCView surface;
-            the RTCView itself also carries the radius (pipStyles.surface) since
-            the native video surface doesn't reliably clip to a parent alone. */}
-        <View style={pipStyles.inner}>
-          <PipSelfView
-            url={props.url}
-            mirror={props.mirror}
-            style={pipStyles.surface}
-          />
-        </View>
-      </Animated.View>
-    </GestureDetector>
-  );
-});
-
-// Self-contained call-duration timer. Owning its own state + interval here means
-// the once-per-second tick re-renders ONLY this tiny text node — never the
-// parent CallScreen (and therefore never the memoized video surfaces above).
-// This is the single biggest fix for the "connected video flickers/freezes"
-// bug, mirroring Signal keeping the renderer untouched by UI-state churn.
-const CallDuration = memo(function CallDuration(props: {
-  active: boolean;
-  style: any;
-}) {
-  const [duration, setDuration] = useState(0);
-  useEffect(() => {
-    if (!props.active) return;
-    setDuration(0);
-    const t = setInterval(() => setDuration((d) => d + 1), 1000);
-    return () => clearInterval(t);
-  }, [props.active]);
-  const m = Math.floor(duration / 60);
-  const s = duration % 60;
-  return <Text style={props.style}>{`${m}:${String(s).padStart(2, "0")}`}</Text>;
-});
+import { makeStyles } from "./[conversationId].styles";
+import CallScreenOverlay from "../../src/components/call/CallScreenOverlay";
+import {
+  CallDuration,
+} from "../../src/components/call/CallVideoPrimitives";
+import CallMediaStage from "../../src/components/call/CallMediaStage";
+import {
+  applyPublicTurnPolicy,
+  FALLBACK_ICE,
+  hasRealTurn,
+} from "../../src/realtime/callIceConfig";
+import { useMobileCallControls } from "../../src/components/call/useMobileCallControls";
 
 /**
  * Native audio/video call screen (react-native-webrtc). Mirrors the web call
@@ -3152,148 +2829,50 @@ export default function CallScreen() {
     rejectIncoming().catch(() => {});
   }, [autoDecline, mode, rejectIncoming, status]);
 
-  function toggleMute() {
-    setOnHold(false);
-    holdSnapshotRef.current = null;
-    const stream = localStreamRef.current;
-    if (!stream) return;
-    const next = !muted;
-    stream.getAudioTracks().forEach((t) => {
-      t.enabled = !next;
-    });
-    setMuted(next);
-    const target = peerIdRef.current;
-    if (target) {
-      socket.send("call_signal", {
-        conversationId,
-        callId: callIdRef.current,
-        targetUserId: target,
-        signal: { type: "audio-state", muted: next },
-      });
-    }
-  }
-
-  function toggleVideo() {
-    setOnHold(false);
-    holdSnapshotRef.current = null;
-    const stream = localStreamRef.current;
-    if (!stream) return;
-    const next = !videoOff;
-    stream.getVideoTracks().forEach((t) => {
-      t.enabled = !next;
-    });
-    setVideoOff(next);
-    // Inform the peer so they render avatar/black instead of a frozen frame.
-    const target = peerIdRef.current;
-    if (target) {
-      socket.send("call_signal", {
-        conversationId,
-        callId: callIdRef.current,
-        targetUserId: target,
-        signal: { type: "video-state", videoOff: next },
-      });
-    }
-  }
-
-  function switchCamera() {
-    const stream = localStreamRef.current;
-    stream?.getVideoTracks().forEach((t) => {
-      // react-native-webrtc track exposes _switchCamera()
-      (t as any)._switchCamera?.();
-    });
-    // Track facing so the self-view only mirrors for the front camera.
-    setUsingFrontCamera((v) => !v);
-  }
-
-  function toggleHold() {
-    const stream = localStreamRef.current;
-    if (!stream) return;
-    const next = !onHold;
-    if (next) {
-      holdSnapshotRef.current = { muted, videoOff };
-      stream.getAudioTracks().forEach((t) => {
-        t.enabled = false;
-      });
-      stream.getVideoTracks().forEach((t) => {
-        t.enabled = false;
-      });
-      setMuted(true);
-      setVideoOff(true);
-    } else {
-      const snap = holdSnapshotRef.current || { muted: false, videoOff: true };
-      stream.getAudioTracks().forEach((t) => {
-        t.enabled = !snap.muted;
-      });
-      stream.getVideoTracks().forEach((t) => {
-        t.enabled = !snap.videoOff;
-      });
-      setMuted(snap.muted);
-      setVideoOff(snap.videoOff);
-    }
-    const target = peerIdRef.current;
-    if (target) {
-      socket.send("call_signal", {
-        conversationId,
-        callId: callIdRef.current,
-        targetUserId: target,
-        signal: { type: "audio-state", muted: next ? true : muted },
-      });
-      socket.send("call_signal", {
-        conversationId,
-        callId: callIdRef.current,
-        targetUserId: target,
-        signal: { type: "video-state", videoOff: next ? true : videoOff },
-      });
-    }
-    setOnHold(next);
-  }
-
-  function toggleNoiseSuppression() {
-    const next = !noiseSuppressionEnabled;
-    const stream = localStreamRef.current;
-    if (stream) {
-      stream.getAudioTracks().forEach((track) => {
-        track
-          .applyConstraints?.({
-            echoCancellation: true,
-            autoGainControl: true,
-            noiseSuppression: next,
-          } as any)
-          .catch(() => {});
-      });
-    }
-    setNoiseSuppressionEnabled(next);
-  }
-
-  function toggleRecording() {
-    setRecording((v) => !v);
-  }
-
-  function toggleSpeaker() {
-    if (callType !== "voice") return;
-    setSpeakerOn((v) => !v);
-  }
-
-  function sendReaction(emoji: string) {
-    const targetUserId = peerIdRef.current;
-    if (!targetUserId) return;
-    socket.send("call_reaction", { conversationId, targetUserId, emoji });
-    const id = Date.now() + Math.random();
-    setFloatingReactions((prev) => [...prev, { id, emoji, fromSelf: true }]);
-    setTimeout(
-      () => setFloatingReactions((prev) => prev.filter((r) => r.id !== id)),
-      2500,
-    );
-    setShowReactionPicker(false);
-    setShowMore(false);
-  }
-
-  function sendChat() {
-    const content = chatText.trim();
-    if (!content) return;
-    socket.send("chat_message", { conversationId, content });
-    setChatText("");
-  }
+  const {
+    toggleMute,
+    toggleVideo,
+    switchCamera,
+    toggleHold,
+    toggleNoiseSuppression,
+    toggleRecording,
+    toggleSpeaker,
+    sendReaction,
+    sendChat,
+    toggleChatPanel,
+    openChatPanel,
+    closeChatPanel,
+    openMorePanel,
+    closeMorePanel,
+    openReactionPickerFromMore,
+    closeReactionPicker,
+  } = useMobileCallControls({
+    conversationId,
+    callType,
+    chatText,
+    noiseSuppressionEnabled,
+    muted,
+    videoOff,
+    onHold,
+    localStreamRef,
+    peerIdRef,
+    callIdRef,
+    holdSnapshotRef,
+    sendSocket: socket.send,
+    setOnHold,
+    setMuted,
+    setVideoOff,
+    setUsingFrontCamera,
+    setNoiseSuppressionEnabled,
+    setRecording,
+    setSpeakerOn,
+    setFloatingReactions,
+    setShowReactionPicker,
+    setShowMore,
+    setChatText,
+    setShowChat,
+    setChatUnread,
+  });
 
   const statusLabel =
     status === "ringing"
@@ -3404,706 +2983,72 @@ export default function CallScreen() {
     <View style={styles.screen}>
       <Stack.Screen options={{ headerShown: false }} />
 
-      {/* Main stage:
-          1. Connected with peer video               → remote video full-screen.
-          2. Pre-connect video call (outgoing ringing,
-             incoming ringing, or connecting w/o peer
-             video yet)                               → WhatsApp-style FULL-SCREEN
-             local self-view (we see ourselves before the peer's video arrives).
-          3. Otherwise                               → peer avatar. */}
-      {showRemoteVideo && remoteURL ? (
-        // Memoized leaf: only re-renders when the URL changes, so the per-second
-        // duration tick / 3s stats tick never churn this native surface.
-        <RemoteVideo url={remoteURL} style={styles.remoteVideo} />
-      ) : showFullScreenSelfPreview && localURL ? (
-        <FullScreenSelfView
-          url={localURL}
-          mirror={usingFrontCamera}
-          style={styles.remoteVideo}
-        />
-      ) : (
-        <View style={styles.avatarWrap}>
-          <View style={styles.avatar}>
-            {peerAvatarUrl ? (
-              <Image source={{ uri: peerAvatarUrl }} style={styles.avatarImg} />
-            ) : (
-              <Text style={styles.avatarText}>
-                {(peerName || "?")[0]?.toUpperCase()}
-              </Text>
-            )}
-          </View>
-        </View>
-      )}
+      <CallMediaStage
+        styles={styles}
+        isInPip={isInPip}
+        showRemoteVideo={showRemoteVideo}
+        remoteURL={remoteURL}
+        showFullScreenSelfPreview={showFullScreenSelfPreview}
+        localURL={localURL}
+        usingFrontCamera={usingFrontCamera}
+        peerAvatarUrl={peerAvatarUrl}
+        peerName={peerName}
+        showPipSelfPreview={showPipSelfPreview}
+        insets={insets}
+        status={status}
+        statusLabel={statusLabel}
+      />
 
-      {/* PiP self-view — shown for the connecting/connected phases. While the
-          incoming video call is still ringing the self-view is rendered
-          FULL-SCREEN above instead, then seamlessly remaps into this PiP the
-          moment the call is answered (same stream object, no re-acquire). */}
-      {!isInPip && showPipSelfPreview && localURL ? (
-        <DraggablePipSelfView
-          url={localURL}
-          mirror={usingFrontCamera}
-          topInset={insets.top}
-          bottomInset={insets.bottom}
-        />
-      ) : null}
-
-      {/* ── Picture-in-Picture compact overlay ──────────────────────────────
-          While the call window is shrunk into the OS PiP tile we hide ALL
-          controls/badges/headers below (Signal-Android parity) and show only:
-            • video call → the remote video full-bleed (already rendered above)
-            • voice call → a compact centered avatar + name (the main stage
-              already renders the avatar; we add the name + timer label here so
-              the tiny window still identifies who you're talking to).
-          Everything else is gated on `!isInPip` so the floating window stays
-          clean. */}
-      {isInPip && !showRemoteVideo ? (
-        <View style={styles.pipVoiceOverlay} pointerEvents="none">
-          <Text style={styles.pipVoiceName} numberOfLines={1}>
-            {peerName}
-          </Text>
-          {status === "connected" ? (
-            <CallDuration active style={styles.pipVoiceStatus} />
-          ) : (
-            <Text style={styles.pipVoiceStatus} numberOfLines={1}>
-              {statusLabel}
-            </Text>
-          )}
-        </View>
-      ) : null}
-
-      {/* Top status bar — connection quality + peer-mute, once connected
-          (mirrors the web CallOverlay top bar). */}
-      {!isInPip && status === "connected" ? (
-        <View style={[styles.topBar, { top: insets.top + 8 }]}>
-          <View style={styles.qualityBadge}>
-            <Signal size={13} color={qualityColor} />
-            <Text style={[styles.qualityLabel, { color: qualityColor }]}>
-              {qualityLabel}
-            </Text>
-          </View>
-          <View style={styles.statusBadgeRow}>
-            {onHold ? (
-              <View style={[styles.pill, styles.holdPill]}>
-                <Text style={styles.pillText}>On hold</Text>
-              </View>
-            ) : null}
-            {noiseSuppressionEnabled ? (
-              <View style={[styles.pill, styles.nsPill]}>
-                <Text style={styles.pillText}>NS</Text>
-              </View>
-            ) : null}
-            {recording ? (
-              <View style={[styles.pill, styles.recPill]}>
-                <Text style={styles.pillText}>REC</Text>
-              </View>
-            ) : null}
-          </View>
-          {peerMuted ? (
-            <View style={styles.muteBadge}>
-              <MicOff size={13} color="#fff" />
-              <Text style={styles.muteBadgeText}>Muted</Text>
-            </View>
-          ) : null}
-        </View>
-      ) : null}
-
-      {/* Header info */}
-      {!isInPip ? (
-        <View style={[styles.info, { top: insets.top + 60 }]}>
-          <Text style={styles.peerName}>{peerName}</Text>
-          {status === "connected" ? (
-            <CallDuration active={status === "connected"} style={styles.status} />
-          ) : (
-            <Text style={styles.status}>{statusLabel}</Text>
-          )}
-        </View>
-      ) : null}
-
-      {/* Peer poor-connection banner (Teams/Meet style). Surfaced when the
-          PEER reports their own link is poor, so a freeze/stutter is attributed
-          to the right side rather than looking like our fault. */}
-      {!isInPip && status === "connected" && peerQuality === "poor" ? (
-        <View style={[styles.peerQualityBanner, { top: insets.top + 110 }]}>
-          <Signal size={13} color="#fff" />
-          <Text style={styles.peerQualityText} numberOfLines={1}>
-            {peerName}&apos;s connection is unstable
-          </Text>
-        </View>
-      ) : null}
-
-      {/* Controls */}
-      {!isInPip ? (
-        mode === "incoming" && status === "ringing" ? (
-          <View style={[styles.incomingControls, { paddingBottom: Math.max(insets.bottom, 24) }]}>
-            <View style={styles.incomingBtnWrap}>
-              <Pressable style={styles.reject} onPress={rejectIncoming}>
-                <PhoneOff size={28} color="#fff" />
-              </Pressable>
-              <Text style={styles.ctrlLabel}>Decline</Text>
-            </View>
-            <View style={styles.incomingBtnWrap}>
-              <Pressable style={styles.accept} onPress={acceptIncoming}>
-                <Phone size={28} color="#fff" />
-              </Pressable>
-              <Text style={styles.ctrlLabel}>Accept</Text>
-            </View>
-          </View>
-        ) : (
-          <View style={[styles.controlsBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.controlsPill}
-              contentContainerStyle={styles.controlsScroll}
-            >
-              <Pressable
-                style={[styles.ctrl, muted && styles.ctrlActive]}
-                onPress={toggleMute}
-              >
-                {muted ? (
-                  <MicOff size={20} color="#fff" />
-                ) : (
-                  <Mic size={20} color="#fff" />
-                )}
-              </Pressable>
-              {showVideo ? (
-                <Pressable
-                  style={[styles.ctrl, videoOff && styles.ctrlActive]}
-                  onPress={toggleVideo}
-                >
-                  {videoOff ? (
-                    <VideoOff size={20} color="#fff" />
-                  ) : (
-                    <VideoIcon size={20} color="#fff" />
-                  )}
-                </Pressable>
-              ) : null}
-              {showVideo ? (
-                <Pressable style={styles.ctrl} onPress={switchCamera}>
-                  <SwitchCamera size={20} color="#fff" />
-                </Pressable>
-              ) : null}
-              {callType === "voice" ? (
-                <Pressable
-                  style={[styles.ctrl, speakerOn && styles.ctrlActive]}
-                  onPress={toggleSpeaker}
-                >
-                  <Volume2 size={20} color="#fff" />
-                </Pressable>
-              ) : null}
-              {status === "connected" ? (
-                <>
-                  <Pressable
-                    style={[styles.ctrl, onHold && styles.ctrlHold]}
-                    onPress={toggleHold}
-                  >
-                    {onHold ? (
-                      <Play size={20} color="#fff" />
-                    ) : (
-                      <Pause size={20} color="#fff" />
-                    )}
-                  </Pressable>
-                  <Pressable
-                    style={[styles.ctrl, showChat && styles.ctrlActive]}
-                    onPress={() => {
-                      setShowChat((v) => !v);
-                      setChatUnread(0);
-                    }}
-                  >
-                    <MessageSquare size={20} color="#fff" />
-                    {chatUnread > 0 && !showChat ? (
-                      <View style={styles.unreadDot}>
-                        <Text style={styles.unreadText}>
-                          {chatUnread > 9 ? "9+" : chatUnread}
-                        </Text>
-                      </View>
-                    ) : null}
-                  </Pressable>
-                  <Pressable
-                    style={[styles.ctrl, showMore && styles.ctrlActive]}
-                    onPress={() => setShowMore(true)}
-                  >
-                    <MoreVertical size={20} color="#fff" />
-                  </Pressable>
-                </>
-              ) : null}
-              <Pressable style={styles.ctrlEnd} onPress={() => endAndLeave(true)}>
-                <PhoneOff size={22} color="#fff" />
-              </Pressable>
-            </ScrollView>
-          </View>
-        )
-      ) : null}
-
-      {!isInPip
-        ? floatingReactions.map((r) => (
-            <View
-              key={r.id}
-              style={[
-                styles.floatingReaction,
-                r.fromSelf ? styles.floatingReactionSelf : styles.floatingReactionPeer,
-              ]}
-            >
-              <Text style={styles.floatingReactionText}>{r.emoji}</Text>
-            </View>
-          ))
-        : null}
-
-      <Modal
-        visible={!isInPip && showMore}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowMore(false)}
-      >
-        <Pressable style={styles.sheetBackdrop} onPress={() => setShowMore(false)}>
-          <Pressable style={styles.sheet}>
-            <Pressable style={styles.sheetItem} onPress={toggleHold}>
-              <Text style={styles.sheetItemText}>{onHold ? "Resume call" : "Hold call"}</Text>
-            </Pressable>
-            <Pressable style={styles.sheetItem} onPress={toggleNoiseSuppression}>
-              <Text style={styles.sheetItemText}>
-                {noiseSuppressionEnabled
-                  ? "Disable noise suppression"
-                  : "Enable noise suppression"}
-              </Text>
-            </Pressable>
-            <Pressable style={styles.sheetItem} onPress={toggleRecording}>
-              <Text style={styles.sheetItemText}>
-                {recording ? "Stop call recording" : "Record call"}
-              </Text>
-            </Pressable>
-            <Pressable
-              style={styles.sheetItem}
-              onPress={() => {
-                setShowMore(false);
-                setShowReactionPicker(true);
-              }}
-            >
-              <Text style={styles.sheetItemText}>Send reaction</Text>
-            </Pressable>
-            <Pressable
-              style={styles.sheetItem}
-              onPress={() => {
-                setShowMore(false);
-                setShowChat(true);
-                setChatUnread(0);
-              }}
-            >
-              <Text style={styles.sheetItemText}>Open chat</Text>
-            </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      <Modal
-        visible={!isInPip && showReactionPicker}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowReactionPicker(false)}
-      >
-        <Pressable
-          style={styles.sheetBackdrop}
-          onPress={() => setShowReactionPicker(false)}
-        >
-          <Pressable style={styles.reactionSheet}>
-            {["👍", "👏", "❤️", "😂", "🎉", "🤔"].map((emoji) => (
-              <Pressable
-                key={emoji}
-                style={styles.reactionBtn}
-                onPress={() => sendReaction(emoji)}
-              >
-                <Text style={styles.reactionBtnText}>{emoji}</Text>
-              </Pressable>
-            ))}
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      <Modal
-        visible={!isInPip && showChat}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowChat(false)}
-      >
-        <View style={styles.chatPanel}>
-          <View style={styles.chatHeader}>
-            <Text style={styles.chatTitle}>Call chat</Text>
-            <Pressable onPress={() => setShowChat(false)}>
-              <Text style={styles.chatClose}>Close</Text>
-            </Pressable>
-          </View>
-          <ScrollView style={styles.chatBody}>
-            {callMessages.map((m) => {
-              const mine = Number(m.senderId) !== Number(peerIdRef.current);
-              return (
-                <View
-                  key={String(m.id)}
-                  style={[styles.chatMsg, mine ? styles.chatMsgMine : styles.chatMsgPeer]}
-                >
-                  <Text style={styles.chatMsgSender}>
-                    {mine ? "You" : m.senderName || peerName}
-                  </Text>
-                  <Text style={styles.chatMsgText}>{m.content || ""}</Text>
-                </View>
-              );
-            })}
-          </ScrollView>
-          <View style={styles.chatComposer}>
-            <TextInput
-              style={styles.chatInput}
-              value={chatText}
-              onChangeText={setChatText}
-              placeholder="Type a message"
-              placeholderTextColor="rgba(255,255,255,0.45)"
-            />
-            <Pressable style={styles.chatSendBtn} onPress={sendChat}>
-              <Text style={styles.chatSendText}>Send</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
+      <CallScreenOverlay
+        styles={styles}
+        insets={insets}
+        isInPip={isInPip}
+        status={status}
+        mode={mode}
+        statusLabel={statusLabel}
+        peerName={peerName}
+        peerId={peerIdRef.current ? Number(peerIdRef.current) : null}
+        showVideo={showVideo}
+        callType={callType}
+        muted={muted}
+        videoOff={videoOff}
+        speakerOn={speakerOn}
+        onHold={onHold}
+        showChat={showChat}
+        showMore={showMore}
+        chatUnread={chatUnread}
+        noiseSuppressionEnabled={noiseSuppressionEnabled}
+        recording={recording}
+        peerMuted={peerMuted}
+        peerQuality={peerQuality}
+        qualityColor={qualityColor}
+        qualityLabel={qualityLabel}
+        floatingReactions={floatingReactions}
+        showReactionPicker={showReactionPicker}
+        callMessages={callMessages}
+        chatText={chatText}
+        onChangeChatText={setChatText}
+        onRejectIncoming={rejectIncoming}
+        onAcceptIncoming={acceptIncoming}
+        onToggleMute={toggleMute}
+        onToggleVideo={toggleVideo}
+        onSwitchCamera={switchCamera}
+        onToggleSpeaker={toggleSpeaker}
+        onToggleHold={toggleHold}
+        onOpenMore={openMorePanel}
+        onCloseMore={closeMorePanel}
+        onToggleChat={toggleChatPanel}
+        onOpenChat={openChatPanel}
+        onCloseChat={closeChatPanel}
+        onOpenReactionPicker={openReactionPickerFromMore}
+        onCloseReactionPicker={closeReactionPicker}
+        onToggleNoiseSuppression={toggleNoiseSuppression}
+        onToggleRecording={toggleRecording}
+        onSendReaction={sendReaction}
+        onSendChat={sendChat}
+        onEndCall={() => endAndLeave(true)}
+        CallDurationComponent={CallDuration}
+      />
     </View>
   );
 }
-
-const makeStyles = (theme: Theme) =>
-  StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#0a0a0a" },
-  remoteVideo: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "#000",
-  },
-  localVideo: {
-    position: "absolute",
-    top: 50,
-    right: 16,
-    width: 110,
-    height: 160,
-    borderRadius: 12,
-    backgroundColor: "#000",
-    overflow: "hidden",
-    // zIndex alone does NOT lift a view above a sibling on Android — elevation
-    // is required, otherwise the full-screen remote video paints over the
-    // self-preview once the call connects and the local tile "disappears".
-    zIndex: 5,
-    elevation: 8,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.25)",
-  },
-  avatarWrap: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatar: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: theme.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-  },
-  avatarImg: { width: "100%", height: "100%" },
-  avatarText: { color: "#fff", fontSize: 44, fontWeight: "700" },
-  info: {
-    position: "absolute",
-    top: 80,
-    left: 0,
-    right: 0,
-    alignItems: "center",
-    gap: 6,
-  },
-  peerName: { color: "#fff", fontSize: 24, fontWeight: "700" },
-  status: { color: "rgba(255,255,255,0.7)", fontSize: 15 },
-  /* ─── Picture-in-Picture compact voice overlay ─── */
-  pipVoiceOverlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: "center",
-    justifyContent: "flex-end",
-    paddingBottom: 10,
-  },
-  pipVoiceName: { color: "#fff", fontSize: 13, fontWeight: "700" },
-  pipVoiceStatus: { color: "rgba(255,255,255,0.7)", fontSize: 11 },
-  topBar: {
-    position: "absolute",
-    top: 44, // overridden inline with insets.top + 8
-    left: 16,
-    right: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    zIndex: 6,
-    elevation: 9,
-    gap: 8,
-  },
-  statusBadgeRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  pill: {
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    backgroundColor: "rgba(0,0,0,0.45)",
-  },
-  holdPill: { backgroundColor: "rgba(245,158,11,0.7)" },
-  nsPill: { backgroundColor: "rgba(59,130,246,0.7)" },
-  recPill: { backgroundColor: "rgba(239,68,68,0.75)" },
-  pillText: { color: "#fff", fontSize: 11, fontWeight: "700" },
-  qualityBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    backgroundColor: "rgba(0,0,0,0.45)",
-    borderRadius: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  qualityLabel: { fontSize: 12, fontWeight: "700" },
-  muteBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    backgroundColor: "rgba(239,68,68,0.85)",
-    borderRadius: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  muteBadgeText: { color: "#fff", fontSize: 12, fontWeight: "700" },
-  peerQualityBanner: {
-    position: "absolute",
-    alignSelf: "center",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    maxWidth: "85%",
-    backgroundColor: "rgba(239,68,68,0.9)",
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    zIndex: 7,
-    elevation: 9,
-  },
-  peerQualityText: { color: "#fff", fontSize: 12, fontWeight: "600", flexShrink: 1 },
-  /* ─── Controls bar (horizontal scrollable frosted pill, mirrors web mobile) ─── */
-  controlsBar: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    alignItems: "center",
-    zIndex: 10,
-    elevation: 10,
-  },
-  controlsPill: {
-    backgroundColor: "rgba(17,24,39,0.88)",
-    borderRadius: 32,
-    borderWidth: 1,
-    borderColor: "rgba(55,65,81,0.4)",
-    maxWidth: "100%" as any,
-  },
-  controlsScroll: {
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  /* ─── Incoming call layout ─── */
-  incomingControls: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    flexDirection: "row" as const,
-    justifyContent: "center" as const,
-    alignItems: "flex-end" as const,
-    gap: 80,
-  },
-  incomingBtnWrap: {
-    alignItems: "center" as const,
-    gap: 10,
-    paddingBottom: 8,
-  },
-  ctrlLabel: {
-    color: "rgba(255,255,255,0.8)",
-    fontSize: 12,
-    fontWeight: "600" as const,
-  },
-  ctrl: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.18)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  ctrlActive: { backgroundColor: "rgba(59,130,246,0.75)" },
-  ctrlHold: { backgroundColor: "rgba(245,158,11,0.75)" },
-  ctrlEnd: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: "#ef4444",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  reject: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: theme.danger,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  accept: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: theme.success,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  unreadDot: {
-    position: "absolute",
-    top: -2,
-    right: -2,
-    minWidth: 16,
-    height: 16,
-    paddingHorizontal: 3,
-    borderRadius: 8,
-    backgroundColor: "#ef4444",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  unreadText: { color: "#fff", fontSize: 10, fontWeight: "700" },
-  sheetBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
-    justifyContent: "flex-end",
-  },
-  sheet: {
-    backgroundColor: theme.bgSecondary,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    paddingHorizontal: 12,
-    paddingTop: 8,
-    paddingBottom: 18,
-    gap: 4,
-  },
-  sheetItem: {
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: "rgba(255,255,255,0.04)",
-  },
-  sheetItemText: { color: theme.text, fontSize: 15, fontWeight: "600" },
-  reactionSheet: {
-    marginTop: "auto",
-    backgroundColor: theme.bgSecondary,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    padding: 16,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    justifyContent: "center",
-  },
-  reactionBtn: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: "rgba(255,255,255,0.08)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  reactionBtnText: { fontSize: 26 },
-  floatingReaction: {
-    position: "absolute",
-    bottom: 110,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: "rgba(0,0,0,0.45)",
-  },
-  floatingReactionSelf: { right: 24 },
-  floatingReactionPeer: { left: 24 },
-  floatingReactionText: { fontSize: 28 },
-  chatPanel: {
-    flex: 1,
-    marginTop: 80,
-    backgroundColor: theme.bgSecondary,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-  },
-  chatHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.glassBorder,
-  },
-  chatTitle: { color: theme.text, fontSize: 16, fontWeight: "700" },
-  chatClose: { color: theme.primary, fontSize: 14, fontWeight: "600" },
-  chatBody: { flex: 1, paddingHorizontal: 12, paddingVertical: 10 },
-  chatMsg: {
-    maxWidth: "82%",
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    marginBottom: 8,
-  },
-  chatMsgMine: {
-    alignSelf: "flex-end",
-    backgroundColor: "rgba(59,130,246,0.22)",
-  },
-  chatMsgPeer: {
-    alignSelf: "flex-start",
-    backgroundColor: "rgba(255,255,255,0.08)",
-  },
-  chatMsgSender: {
-    color: "rgba(255,255,255,0.7)",
-    fontSize: 11,
-    marginBottom: 2,
-  },
-  chatMsgText: { color: "#fff", fontSize: 14 },
-  chatComposer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: theme.glassBorder,
-  },
-  chatInput: {
-    flex: 1,
-    minHeight: 40,
-    maxHeight: 100,
-    borderRadius: 20,
-    backgroundColor: "rgba(255,255,255,0.08)",
-    color: "#fff",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  chatSendBtn: {
-    borderRadius: 18,
-    backgroundColor: theme.primary,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  chatSendText: { color: "#fff", fontSize: 13, fontWeight: "700" },
-});

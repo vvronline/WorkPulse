@@ -11,6 +11,8 @@ const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_BASE_URL || "https://workpulse-prod.up.railway.app/api";
 const WS_BASE_URL =
   process.env.EXPO_PUBLIC_WS_BASE_URL || "wss://workpulse-prod.up.railway.app";
+const TENOR_API_KEY = process.env.EXPO_PUBLIC_TENOR_API_KEY || "";
+const TENOR_CLIENT_KEY = process.env.EXPO_PUBLIC_TENOR_CLIENT_KEY || "workpulse-chat";
 const ANDROID_GOOGLE_SERVICES_FILE =
   process.env.EXPO_ANDROID_GOOGLE_SERVICES_FILE ||
   process.env.GOOGLE_SERVICES_JSON ||
@@ -188,6 +190,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   extra: {
     API_BASE_URL,
     WS_BASE_URL,
+    TENOR_API_KEY,
+    TENOR_CLIENT_KEY,
     APP_VERSION,
     // P3.15 — surfaced to src/config.ts so nativeCallService can gate the
     // Android react-native-callkeep branch behind this feature flag.

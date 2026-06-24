@@ -11,6 +11,26 @@
     z-index: 200;
     animation: pickerSlideIn 0.18s ease-out;
 }
+.modeTabs {
+    display: flex;
+    gap: 6px;
+    padding: 8px 8px 0;
+}
+.modeTab {
+    border: 1px solid var(--glass-border);
+    background: var(--input-bg);
+    color: var(--text-secondary);
+    border-radius: 999px;
+    font-size: 0.74rem;
+    font-weight: 700;
+    padding: 5px 10px;
+    cursor: pointer;
+}
+.modeTabActive {
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+}
 @keyframes pickerSlideIn {
     from {
         opacity: 0;
@@ -95,7 +115,28 @@
 .toneSwatchActive {
     background: var(--primary);
 }
-
+.mediaRow {
+    display: flex;
+    gap: 8px;
+    padding: 0 8px 8px;
+}
+.mediaBtn {
+    border: 1px solid var(--glass-border);
+    background: var(--input-bg);
+    color: var(--text-secondary);
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 5px 10px;
+    cursor: pointer;
+}
+.mediaBtn:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+}
+.fileInput {
+    display: none;
+}
 /* ─── Sticky category bar ─── */
 .catTabs {
     display: flex;
@@ -152,6 +193,26 @@
     grid-template-columns: repeat(8, 1fr);
     gap: 2px;
     padding-bottom: 4px;
+}
+.tenorGrid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+    padding: 8px;
+}
+.tenorItem {
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--surface-hover);
+    padding: 0;
+    cursor: pointer;
+}
+.tenorImg {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+    display: block;
 }
 .emojiBtn {
     width: 36px;

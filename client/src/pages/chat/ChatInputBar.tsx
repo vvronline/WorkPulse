@@ -52,7 +52,6 @@ export default function ChatInputBar({
     const [plusOpen, setPlusOpen] = useState(false);
     const plusMenuRef = useRef<HTMLDivElement | null>(null);
     const cameraInputRef = useRef<HTMLInputElement | null>(null);
-    const gifStickerInputRef = useRef<HTMLInputElement | null>(null);
 
     useEffect(() => {
         if (!plusOpen) return;
@@ -105,16 +104,6 @@ export default function ChatInputBar({
                             className={s.fileInput}
                             accept="image/*"
                             capture="environment"
-                            onChange={(e) => {
-                                if (e.target.files?.[0]) onFileUpload(e.target.files[0]);
-                                e.target.value = "";
-                            }}
-                        />
-                        <input
-                            type="file"
-                            ref={gifStickerInputRef}
-                            className={s.fileInput}
-                            accept="image/gif,image/webp,image/png,image/jpeg"
                             onChange={(e) => {
                                 if (e.target.files?.[0]) onFileUpload(e.target.files[0]);
                                 e.target.value = "";
@@ -218,21 +207,6 @@ export default function ChatInputBar({
                                         type="button"
                                         className={s.plusMenuItem}
                                         onClick={() => {
-                                            cameraInputRef.current?.click();
-                                            setPlusOpen(false);
-                                        }}
-                                    >
-                                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                                            <rect x="2.5" y="5" width="13" height="10" rx="2" stroke="currentColor" strokeWidth="1.4" />
-                                            <path d="M6 5l1.2-2h3.6L12 5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-                                            <circle cx="9" cy="10" r="2.6" stroke="currentColor" strokeWidth="1.4" />
-                                        </svg>
-                                        Camera
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className={s.plusMenuItem}
-                                        onClick={() => {
                                             fileInputRef.current?.click();
                                             setPlusOpen(false);
                                         }}
@@ -248,25 +222,24 @@ export default function ChatInputBar({
                                         </svg>
                                         Attach file
                                     </button>
-                                    <button
-                                        type="button"
-                                        className={s.plusMenuItem}
-                                        onClick={() => {
-                                            gifStickerInputRef.current?.click();
-                                            setPlusOpen(false);
-                                        }}
-                                    >
-                                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                                            <rect x="2.5" y="3" width="13" height="12" rx="2" stroke="currentColor" strokeWidth="1.4" />
-                                            <path d="M6 8h6M6 11h4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-                                        </svg>
-                                        GIF / Sticker
-                                    </button>
                                 </div>
                             )}
                         </div>
 
                         <div className={s.inputBoxWrap}>
+                            <button
+                                type="button"
+                                className={s.cameraBtn}
+                                onClick={() => cameraInputRef.current?.click()}
+                                title="Camera"
+                                aria-label="Open camera"
+                            >
+                                <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                                    <rect x="2.5" y="5" width="13" height="10" rx="2" stroke="currentColor" strokeWidth="1.4" />
+                                    <path d="M6 5l1.2-2h3.6L12 5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                                    <circle cx="9" cy="10" r="2.6" stroke="currentColor" strokeWidth="1.4" />
+                                </svg>
+                            </button>
                             <button
                                 type="button"
                                 className={`${s.emojiToggle} ${showEmojiPicker ? s.emojiToggleActive : ""}`}
@@ -315,7 +288,11 @@ export default function ChatInputBar({
                             />
                             {showEmojiPicker && (
                                 <div className={s.emojiDock}>
-                                    <EmojiGifPicker onSelectEmoji={onEmojiInsert} onClose={onToggleEmoji} />
+                                    <EmojiGifPicker
+                                        onSelectEmoji={onEmojiInsert}
+                                        onSelectMediaFile={onFileUpload}
+                                        onClose={onToggleEmoji}
+                                    />
                                 </div>
                             )}
                         </div>

@@ -6,7 +6,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { Keyboard, Mic, Plus, Send, Smile } from "lucide-react-native";
+import { Camera, Keyboard, Mic, Plus, Send, Smile } from "lucide-react-native";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import { scrollFocusedIntoView } from "../../hooks/useKeyboardInset";
@@ -33,6 +33,7 @@ const Composer = forwardRef<TextInput, {
   onChangeText: (v: string) => void;
   onSend: () => void;
   onSaveEdit: () => void;
+  onOpenCamera: () => void;
   onOpenAttach: () => void;
   onToggleEmojiKeyboard: () => void;
   onInputFocus: () => void;
@@ -51,6 +52,7 @@ const Composer = forwardRef<TextInput, {
     onChangeText,
     onSend,
     onSaveEdit,
+    onOpenCamera,
     onOpenAttach,
     onToggleEmojiKeyboard,
     onInputFocus,
@@ -73,6 +75,14 @@ const Composer = forwardRef<TextInput, {
         />
       ) : (
         <>
+          <Pressable
+            style={styles.cameraBtn}
+            onPress={onOpenCamera}
+            disabled={uploading || editing}
+            hitSlop={6}
+          >
+            <Camera size={20} color={theme.textSecondary} />
+          </Pressable>
           <View style={styles.pill}>
             <Pressable
               style={styles.emojiToggle}
@@ -162,6 +172,17 @@ const makeStyles = (theme: Theme) =>
       borderRadius: 20,
       alignItems: "center",
       justifyContent: "center",
+    },
+    cameraBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      marginBottom: 2,
     },
     // Rounded "pill" holding the inline emoji toggle + the text input, so the
     // emoji button sits inside the field (Signal-style).

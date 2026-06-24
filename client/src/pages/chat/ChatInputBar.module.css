@@ -55,6 +55,25 @@
     transition: background var(--transition-fast), color 0.15s;
     flex-shrink: 0;
 }
+.cameraBtn {
+    width: 34px;
+    height: 34px;
+    margin: 0 0 2px 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: none;
+    cursor: pointer;
+    border-radius: 50%;
+    color: var(--text-muted);
+    transition: background var(--transition-fast), color 0.15s;
+    flex-shrink: 0;
+}
+.cameraBtn:hover {
+    background: var(--surface-hover);
+    color: var(--primary);
+}
 .emojiToggle:hover {
     background: var(--surface-hover);
     color: var(--primary);

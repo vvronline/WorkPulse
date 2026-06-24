@@ -1,12 +1,11 @@
 import { useMemo } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
-import { Camera, FileText, Image as ImageIcon, Sticker } from "lucide-react-native";
+import { FileText, Image as ImageIcon } from "lucide-react-native";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 
 /**
- * "+" composer attach sheet (Signal-style): Camera, Photo, GIF/Sticker,
- * and File/Document.
+ * "+" composer attach sheet (Signal-style): Photo + File/Document.
  *
  * Voice messages and Emoji are intentionally NOT in this sheet — they already
  * have first-class controls in the composer itself (the Mic send-button records
@@ -17,16 +16,12 @@ import { useTheme } from "../../theme/ThemeProvider";
 export default function AttachmentPicker({
   visible,
   onClose,
-  onCamera,
   onPhoto,
-  onGifSticker,
   onDocument,
 }: {
   visible: boolean;
   onClose: () => void;
-  onCamera: () => void;
   onPhoto: () => void;
-  onGifSticker: () => void;
   onDocument: () => void;
 }) {
   const theme = useTheme();
@@ -40,17 +35,9 @@ export default function AttachmentPicker({
     >
       <Pressable style={styles.plusOverlay} onPress={onClose}>
         <View style={styles.plusSheet}>
-          <Pressable style={styles.plusRow} onPress={onCamera}>
-            <Camera size={20} color={theme.text} />
-            <Text style={styles.plusText}>Camera</Text>
-          </Pressable>
           <Pressable style={styles.plusRow} onPress={onPhoto}>
             <ImageIcon size={20} color={theme.text} />
             <Text style={styles.plusText}>Photo</Text>
-          </Pressable>
-          <Pressable style={styles.plusRow} onPress={onGifSticker}>
-            <Sticker size={20} color={theme.text} />
-            <Text style={styles.plusText}>GIF / Sticker</Text>
           </Pressable>
           <Pressable style={styles.plusRow} onPress={onDocument}>
             <FileText size={20} color={theme.text} />

@@ -3,6 +3,8 @@
 interface ImportMetaEnv {
   readonly VITE_API_URL?: string;
   readonly VITE_WS_URL?: string;
+  readonly VITE_TENOR_API_KEY?: string;
+  readonly VITE_TENOR_CLIENT_KEY?: string;
   readonly [key: string]: string | boolean | undefined;
 }
 

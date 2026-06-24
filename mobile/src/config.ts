@@ -3,6 +3,8 @@ import Constants from "expo-constants";
 type Extra = {
   API_BASE_URL?: string;
   WS_BASE_URL?: string;
+  TENOR_API_KEY?: string;
+  TENOR_CLIENT_KEY?: string;
   // Feature flags (string "true"/"false" or boolean — coerced below).
   ANDROID_NATIVE_CALL_UI?: boolean | string;
 };
@@ -33,6 +35,9 @@ export const API_BASE_URL =
 /** WebSocket base, e.g. wss://workpulse-prod.up.railway.app */
 export const WS_BASE_URL =
   extra.WS_BASE_URL ?? "wss://workpulse-prod.up.railway.app";
+
+export const TENOR_API_KEY = extra.TENOR_API_KEY ?? "";
+export const TENOR_CLIENT_KEY = extra.TENOR_CLIENT_KEY ?? "workpulse-chat";
 
 /** Full WebSocket endpoint (server listens on /ws). */
 export function wsUrl(token: string): string {

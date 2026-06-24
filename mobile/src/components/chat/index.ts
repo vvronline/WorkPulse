@@ -9,6 +9,7 @@ export { default as PinnedBanner } from "./PinnedBanner";
 export { default as ReactionOverlay } from "./ReactionOverlay";
 export { default as EmojiPicker } from "./EmojiPicker";
 export { default as EmojiKeyboard } from "./EmojiKeyboard";
+export { default as TenorMediaPicker } from "./TenorMediaPicker";
 export { default as AttachmentPicker } from "./AttachmentPicker";
 export { default as MessageActionsSheet } from "./MessageActionsSheet";
 export { default as HeaderMenuSheet } from "./HeaderMenuSheet";

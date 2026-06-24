@@ -43,10 +43,14 @@ export default function EmojiKeyboard({
   height,
   onPick,
   onBackspace,
+  onOpenGif,
+  onOpenSticker,
 }: {
   height: number;
   onPick: (native: string) => void;
   onBackspace: () => void;
+  onOpenGif: () => void;
+  onOpenSticker: () => void;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
@@ -192,9 +196,17 @@ export default function EmojiKeyboard({
             <Text style={styles.toneText}>{SKIN_TONES[tone].swatch}</Text>
           </Pressable>
         </View>
+        <View style={styles.mediaRow}>
+          <Pressable style={styles.mediaBtn} onPress={onOpenGif}>
+            <Text style={styles.mediaBtnText}>GIF</Text>
+          </Pressable>
+          <Pressable style={styles.mediaBtn} onPress={onOpenSticker}>
+            <Text style={styles.mediaBtnText}>Sticker</Text>
+          </Pressable>
+        </View>
       </View>
     ),
-    [query, tone, styles, theme]
+    [onOpenGif, onOpenSticker, query, tone, styles, theme]
   );
 
   return (
@@ -315,6 +327,26 @@ const makeStyles = (theme: Theme) =>
       paddingHorizontal: 10,
       paddingTop: 8,
       paddingBottom: 4,
+    },
+    mediaRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      paddingHorizontal: 10,
+      paddingBottom: 6,
+    },
+    mediaBtn: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 14,
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.inputBorder,
+    },
+    mediaBtnText: {
+      color: theme.textSecondary,
+      fontSize: 12,
+      fontWeight: "700",
     },
     searchBox: {
       flex: 1,

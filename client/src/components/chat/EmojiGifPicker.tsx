@@ -23,21 +23,39 @@ import {
 
 interface EmojiGifPickerProps {
     onSelectEmoji: (emoji: string) => void;
+    onSelectMediaFile?: (file: File) => void;
     onClose: () => void;
     style?: React.CSSProperties;
 }
 
-export default function EmojiGifPicker({ onSelectEmoji, onClose, style }: EmojiGifPickerProps) {
+type PickerMode = "emoji" | "gif" | "sticker";
+type TenorItem = { id: string; previewUrl: string; mediaUrl: string };
+
+const TENOR_API_KEY = import.meta.env.VITE_TENOR_API_KEY as string | undefined;
+const TENOR_CLIENT_KEY =
+    (import.meta.env.VITE_TENOR_CLIENT_KEY as string | undefined) || "workpulse-chat";
+
+export default function EmojiGifPicker({
+    onSelectEmoji,
+    onSelectMediaFile,
+    onClose,
+    style,
+}: EmojiGifPickerProps) {
     const ref = useRef<HTMLDivElement | null>(null);
     const scrollRef = useRef<HTMLDivElement | null>(null);
     const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
+    const gifInputRef = useRef<HTMLInputElement | null>(null);
+    const stickerInputRef = useRef<HTMLInputElement | null>(null);
 
     const [query, setQuery] = useState("");
+    const [mode, setMode] = useState<PickerMode>("emoji");
     const [tone, setTone] = useState(getSkinTone);
     const [toneOpen, setToneOpen] = useState(false);
     const [activeCat, setActiveCat] = useState<EmojiCategory>("smileys");
     const [recents, setRecents] = useState<Emoji[]>(getRecentEmoji);
     const [emojiTone, setEmojiTone] = useState<{ emoji: Emoji; x: number; y: number } | null>(null);
+    const [tenorItems, setTenorItems] = useState<TenorItem[]>([]);
+    const [tenorLoading, setTenorLoading] = useState(false);
 
     const isTouch = typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches;
 
@@ -105,42 +123,176 @@ export default function EmojiGifPicker({ onSelectEmoji, onClose, style }: EmojiG
         }
     };
 
+    useEffect(() => {
+        if (mode === "emoji" || !TENOR_API_KEY) return;
+        const ctl = new AbortController();
+        const q = query.trim();
+        const endpoint = q.length
+            ? "search"
+            : "featured";
+        const searchParams = new URLSearchParams({
+            key: TENOR_API_KEY,
+            client_key: TENOR_CLIENT_KEY,
+            limit: "30",
+            media_filter: "tinygif,gif",
+            contentfilter: "medium",
+            locale: "en_US",
+            ...(q.length ? { q } : {}),
+            ...(mode === "sticker" ? { searchfilter: "sticker,-static" } : {}),
+        });
+        setTenorLoading(true);
+        fetch(`https://tenor.googleapis.com/v2/${endpoint}?${searchParams.toString()}`, {
+            signal: ctl.signal,
+        })
+            .then((r) => r.json())
+            .then((data) => {
+                const items = Array.isArray(data?.results) ? data.results : [];
+                const normalized: TenorItem[] = items
+                    .map((it: any) => {
+                        const tiny = it?.media_formats?.tinygif?.url;
+                        const full = it?.media_formats?.gif?.url || tiny;
+                        if (!tiny || !full || !it?.id) return null;
+                        return { id: String(it.id), previewUrl: tiny, mediaUrl: full };
+                    })
+                    .filter(Boolean);
+                setTenorItems(normalized);
+            })
+            .catch(() => setTenorItems([]))
+            .finally(() => setTenorLoading(false));
+        return () => ctl.abort();
+    }, [mode, query]);
+
+    const selectTenorItem = async (item: TenorItem) => {
+        if (!onSelectMediaFile) return;
+        try {
+            const res = await fetch(item.mediaUrl);
+            const blob = await res.blob();
+            const ext = blob.type.includes("webp") ? "webp" : "gif";
+            const file = new File([blob], `${mode}-${Date.now()}.${ext}`, {
+                type: blob.type || (ext === "webp" ? "image/webp" : "image/gif"),
+            });
+            onSelectMediaFile(file);
+            onClose();
+        } catch {
+            // ignore network conversion errors
+        }
+    };
+
     return (
         <div ref={ref} className={s.picker} style={style}>
+            <div className={s.modeTabs}>
+                <button
+                    type="button"
+                    className={`${s.modeTab} ${mode === "emoji" ? s.modeTabActive : ""}`}
+                    onClick={() => setMode("emoji")}
+                >
+                    Emoji
+                </button>
+                <button
+                    type="button"
+                    className={`${s.modeTab} ${mode === "gif" ? s.modeTabActive : ""}`}
+                    onClick={() => setMode("gif")}
+                >
+                    GIF
+                </button>
+                <button
+                    type="button"
+                    className={`${s.modeTab} ${mode === "sticker" ? s.modeTabActive : ""}`}
+                    onClick={() => setMode("sticker")}
+                >
+                    Sticker
+                </button>
+            </div>
             <div className={s.topRow}>
                 <input
                     className={s.search}
-                    placeholder="Search emoji..."
+                    placeholder={
+                        mode === "emoji"
+                            ? "Search emoji..."
+                            : mode === "gif"
+                              ? "Search GIFs..."
+                              : "Search stickers..."
+                    }
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     autoFocus={!isTouch}
                 />
-                <button
-                    type="button"
-                    className={s.toneBtn}
-                    title="Default skin tone"
-                    onClick={() => setToneOpen((v) => !v)}
-                >
-                    {SKIN_TONES[tone].swatch}
-                </button>
-                {toneOpen && (
-                    <div className={s.tonePopup}>
-                        {SKIN_TONES.map((t) => (
-                            <button
-                                key={t.key}
-                                type="button"
-                                className={`${s.toneSwatch} ${t.key === tone ? s.toneSwatchActive : ""}`}
-                                title={t.label}
-                                onClick={() => handleToneSelect(t.key)}
-                            >
-                                {t.swatch}
-                            </button>
-                        ))}
-                    </div>
-                )}
+                {mode === "emoji" ? (
+                    <>
+                        <button
+                            type="button"
+                            className={s.toneBtn}
+                            title="Default skin tone"
+                            onClick={() => setToneOpen((v) => !v)}
+                        >
+                            {SKIN_TONES[tone].swatch}
+                        </button>
+                        {toneOpen && (
+                            <div className={s.tonePopup}>
+                                {SKIN_TONES.map((t) => (
+                                    <button
+                                        key={t.key}
+                                        type="button"
+                                        className={`${s.toneSwatch} ${t.key === tone ? s.toneSwatchActive : ""}`}
+                                        title={t.label}
+                                        onClick={() => handleToneSelect(t.key)}
+                                    >
+                                        {t.swatch}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </>
+                ) : null}
             </div>
+            {mode === "emoji" && onSelectMediaFile && (
+                <div className={s.mediaRow}>
+                    <button
+                        type="button"
+                        className={s.mediaBtn}
+                        onClick={() => gifInputRef.current?.click()}
+                    >
+                        Local GIF
+                    </button>
+                    <button
+                        type="button"
+                        className={s.mediaBtn}
+                        onClick={() => stickerInputRef.current?.click()}
+                    >
+                        Local Sticker
+                    </button>
+                    <input
+                        ref={gifInputRef}
+                        type="file"
+                        accept="image/gif"
+                        className={s.fileInput}
+                        onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                                onSelectMediaFile(file);
+                                onClose();
+                            }
+                            e.target.value = "";
+                        }}
+                    />
+                    <input
+                        ref={stickerInputRef}
+                        type="file"
+                        accept="image/webp,image/png,image/jpeg"
+                        className={s.fileInput}
+                        onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                                onSelectMediaFile(file);
+                                onClose();
+                            }
+                            e.target.value = "";
+                        }}
+                    />
+                </div>
+            )}
 
-            {!query.trim() && (
+            {mode === "emoji" && !query.trim() && (
                 <div className={s.catTabs}>
                     {sections.map((c) => (
                         <button
@@ -156,7 +308,37 @@ export default function EmojiGifPicker({ onSelectEmoji, onClose, style }: EmojiG
                 </div>
             )}
 
-            {query.trim() ? (
+            {mode !== "emoji" ? (
+                !TENOR_API_KEY ? (
+                    <div className={s.noResults}>
+                        <span>Set VITE_TENOR_API_KEY to enable GIF/Sticker search.</span>
+                    </div>
+                ) : tenorLoading ? (
+                    <div className={s.noResults}>
+                        <span>Loading...</span>
+                    </div>
+                ) : tenorItems.length === 0 ? (
+                    <div className={s.noResults}>
+                        <span className={s.noResultsEmoji}>🔎</span>
+                        <span>No {mode === "gif" ? "GIFs" : "stickers"} found</span>
+                    </div>
+                ) : (
+                    <div className={s.scroll}>
+                        <div className={s.tenorGrid}>
+                            {tenorItems.map((item) => (
+                                <button
+                                    key={item.id}
+                                    type="button"
+                                    className={s.tenorItem}
+                                    onClick={() => selectTenorItem(item)}
+                                >
+                                    <img src={item.previewUrl} alt="" className={s.tenorImg} loading="lazy" />
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )
+            ) : query.trim() ? (
                 results.length === 0 ? (
                     <div className={s.noResults}>
                         <span className={s.noResultsEmoji}>🔍</span>

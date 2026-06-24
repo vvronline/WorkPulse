@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
 import * as Clipboard from "expo-clipboard";
 import {
   AudioModule,
@@ -108,6 +109,8 @@ export function useChatThread() {
   // the selected message ("react").
   const [emojiMode, setEmojiMode] = useState<"react" | "compose">("react");
   const [plusOpen, setPlusOpen] = useState(false);
+  const [tenorOpen, setTenorOpen] = useState(false);
+  const [tenorKind, setTenorKind] = useState<"gif" | "sticker">("gif");
   // Docked in-app emoji keyboard (Signal-style). When open we hide the system
   // keyboard and show EmojiKeyboard at the last-measured keyboard height so the
   // message list doesn't jump.
@@ -590,8 +593,13 @@ export function useChatThread() {
       // prepareToRecordAsync MUST resolve before record() — calling record()
       // on an unprepared recorder silently no-ops on Android, which is why the
       // Mic button "did nothing" (no recording bar, nothing sent).
-      await recorder.prepareToRecordAsync();
-      recorder.record();
+      try {
+        await recorder.prepareToRecordAsync();
+      } catch {
+        // Some Android devices/reporting paths expose a prepared recorder
+        // already; keep going and attempt to start recording.
+      }
+      await recorder.record();
       // Flip the recording UI ON synchronously — don't wait for the polled
       // `recorderState.isRecording` (which can miss the transition on Android,
       // leaving the mic tap with no visible recording bar). The composer's
@@ -663,87 +671,96 @@ export function useChatThread() {
     );
   }
 
+  async function uploadPickedMedia(
+    uri: string,
+    fallbackName: string,
+    mimeType?: string,
+  ) {
+    setUploading(true);
+    try {
+      const { data } = await uploadChatFile(convId, uri, fallbackName, mimeType);
+      setMessages((prev) => (prev.some((m) => m.id === data.id) ? prev : [...prev, data]));
+      scrollToEnd(true);
+    } finally {
+      setUploading(false);
+    }
+  }
+
   async function attachFile() {
     setPlusOpen(false);
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) return;
+    if (!perm.granted) {
+      alert("Permission needed", "Allow Photos access to share media.");
+      return;
+    }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images"],
       quality: 0.8,
     });
     if (result.canceled || !result.assets?.[0]?.uri) return;
-    setUploading(true);
     try {
       const asset = result.assets[0];
-      const { data } = await uploadChatFile(
-        convId,
+      await uploadPickedMedia(
         asset.uri,
-        asset.fileName || undefined,
+        asset.fileName || `photo-${Date.now()}.jpg`,
+        asset.mimeType || undefined,
       );
-      setMessages((prev) =>
-        prev.some((m) => m.id === data.id) ? prev : [...prev, data],
-      );
-      scrollToEnd(true);
-    } catch {
-      /* ignore */
-    } finally {
-      setUploading(false);
+    } catch (e: any) {
+      alert("Upload failed", e?.message || "Could not attach this photo.");
     }
   }
 
   async function attachCamera() {
     setPlusOpen(false);
     const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) return;
+    if (!perm.granted) {
+      alert("Permission needed", "Allow Camera access to take a photo.");
+      return;
+    }
     const result = await ImagePicker.launchCameraAsync({
       mediaTypes: ["images"],
       quality: 0.8,
     });
     if (result.canceled || !result.assets?.[0]?.uri) return;
-    setUploading(true);
     try {
       const asset = result.assets[0];
-      const { data } = await uploadChatFile(
-        convId,
+      await uploadPickedMedia(
         asset.uri,
         asset.fileName || `camera-${Date.now()}.jpg`,
+        asset.mimeType || undefined,
       );
-      setMessages((prev) =>
-        prev.some((m) => m.id === data.id) ? prev : [...prev, data],
-      );
-      scrollToEnd(true);
-    } catch {
-      /* ignore */
-    } finally {
-      setUploading(false);
+    } catch (e: any) {
+      alert("Camera failed", e?.message || "Could not capture photo.");
     }
   }
 
-  async function attachGifSticker() {
-    setPlusOpen(false);
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) return;
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      quality: 1,
-    });
-    if (result.canceled || !result.assets?.[0]?.uri) return;
-    setUploading(true);
+  async function attachGifFromEmoji() {
+    setTenorKind("gif");
+    setTenorOpen(true);
+  }
+
+  async function attachStickerFromEmoji() {
+    setTenorKind("sticker");
+    setTenorOpen(true);
+  }
+
+  async function pickTenorMedia(item: { mediaUrl: string }, kind: "gif" | "sticker") {
     try {
-      const asset = result.assets[0];
-      const { data } = await uploadChatFile(
-        convId,
-        asset.uri,
-        asset.fileName || `media-${Date.now()}`,
+      setTenorOpen(false);
+      const ext = kind === "sticker" ? "webp" : "gif";
+      const target = `${FileSystem.cacheDirectory}${kind}-${Date.now()}.${ext}`;
+      const dl = await FileSystem.downloadAsync(item.mediaUrl, target);
+      if (dl.status !== 200) {
+        alert("Upload failed", "Could not download selected media.");
+        return;
+      }
+      await uploadPickedMedia(
+        dl.uri,
+        `${kind}-${Date.now()}.${ext}`,
+        kind === "sticker" ? "image/webp" : "image/gif",
       );
-      setMessages((prev) =>
-        prev.some((m) => m.id === data.id) ? prev : [...prev, data],
-      );
-      scrollToEnd(true);
-    } catch {
-      /* ignore */
-    } finally {
-      setUploading(false);
+    } catch (e: any) {
+      alert("Upload failed", e?.message || "Could not attach selected media.");
     }
   }
 
@@ -1397,7 +1414,12 @@ export function useChatThread() {
     plusOpen,
     attachCamera,
     attachFile,
-    attachGifSticker,
+    attachGifFromEmoji,
+    attachStickerFromEmoji,
+    tenorOpen,
+    tenorKind,
+    setTenorOpen,
+    pickTenorMedia,
     attachDocument,
     setEmojiMode,
     setShowAllEmoji,
