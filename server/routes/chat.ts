@@ -476,6 +476,8 @@ router.get("/conversations", auth, async (req: Request, res: Response) => {
                 m.sender_name AS last_sender_name,
                 m.created_at AS last_message_at,
                 m.file_url  AS last_file_url,
+                m.file_type AS last_file_type,
+                m.file_name AS last_file_name,
                 m.deleted_at AS last_deleted,
                 COALESCE(mr.last_read_at, '1970-01-01'::timestamptz) AS last_read_at,
                 (SELECT COUNT(*)::int FROM messages msg
@@ -499,7 +501,9 @@ router.get("/conversations", auth, async (req: Request, res: Response) => {
             LEFT JOIN users self_u ON self_u.id = $1 AND c.is_group = FALSE AND cp2.user_id IS NULL
             LEFT JOIN meetings mtg ON mtg.conversation_id = c.id
             LEFT JOIN LATERAL (
-                SELECT lm.content, lm.sender_id, lm.created_at, lm.file_url, lm.deleted_at, usr.full_name AS sender_name
+                SELECT lm.content, lm.sender_id, lm.created_at, lm.file_url,
+                       lm.file_type, lm.file_name, lm.deleted_at,
+                       usr.full_name AS sender_name
                 FROM messages lm
                 JOIN users usr ON usr.id = lm.sender_id
                 WHERE lm.conversation_id = c.id

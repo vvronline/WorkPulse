@@ -11,7 +11,7 @@
 //
 // See docs/CHAT_DESIGN_SPEC.md §4.
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   Modal,
@@ -20,12 +20,14 @@ import {
   StyleSheet,
   Text,
   useWindowDimensions,
+  View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Copy,
   CornerUpLeft,
   Forward,
+  MoreHorizontal,
   Pencil,
   Pin,
   Plus,
@@ -104,7 +106,16 @@ export default function ReactionOverlay({
     }
   }, [visible, progress]);
 
-  // The action rows available for this message.
+  // Whether the secondary "More" menu (Reply/Forward/Copy/Save/Pin/Delete) is
+  // expanded. Reset whenever the overlay re-opens.
+  const [moreOpen, setMoreOpen] = useState(false);
+  useEffect(() => {
+    if (visible) setMoreOpen(false);
+  }, [visible]);
+
+  // Secondary-menu rows — everything EXCEPT Edit (which lives inline in the
+  // compact bar next to the 3-dot, mirroring the web client). This is the list
+  // revealed when the 3-dot "More" button is tapped.
   const actions = useMemo(() => {
     const rows: {
       key: string;
@@ -147,12 +158,6 @@ export default function ReactionOverlay({
     });
     if (isOwn) {
       rows.push({
-        key: "edit",
-        label: "Edit",
-        icon: <Pencil size={18} color={theme.text} />,
-        onPress: onEdit,
-      });
-      rows.push({
         key: "delete",
         label: "Delete",
         icon: <Trash2 size={18} color={theme.danger} />,
@@ -183,9 +188,10 @@ export default function ReactionOverlay({
     ? Math.min(a.x, winW - bubbleW - margin)
     : Math.max(margin, a.x);
 
-  // Keep the bubble roughly where it was, but ensure there's room for the pill
-  // above and the menu below. If the bubble sits too high, nudge it down.
-  const menuH = actions.length * MENU_ROW_H + 12;
+  // Compact action bar height (Signal/web-style: inline Edit + 3-dot). When
+  // "More" is expanded the secondary menu adds the action rows below it.
+  const BAR_H = 48;
+  const menuH = BAR_H + (moreOpen ? actions.length * MENU_ROW_H + 8 : 0);
   const neededTop = insets.top + margin + PILL_HEIGHT + PILL_GAP;
   const neededBottom = winH - insets.bottom - margin - menuH - MENU_GAP;
 
@@ -203,9 +209,9 @@ export default function ReactionOverlay({
   let pillLeft = a.mine ? bubbleLeft + bubbleW - pillW : bubbleLeft;
   pillLeft = Math.max(margin, Math.min(pillLeft, winW - pillW - margin));
 
-  // Action menu sits below the bubble, aligned to the sender side.
+  // Action bar sits below the bubble, aligned to the sender side.
   const menuTop = bubbleTop + bubbleH + MENU_GAP;
-  const menuW = 220;
+  const menuW = 240;
   let menuLeft = a.mine ? bubbleLeft + bubbleW - menuW : bubbleLeft;
   menuLeft = Math.max(margin, Math.min(menuLeft, winW - menuW - margin));
 
@@ -291,10 +297,12 @@ export default function ReactionOverlay({
           </Text>
         </Animated.View>
 
-        {/* Vertical context-action menu */}
+        {/* Compact action bar (web-client style): inline Edit pencil (own
+            messages only) + a 3-dot "More" button. Tapping More expands the
+            secondary menu (Reply/Forward/Copy/Save/Pin/Delete) below. */}
         <Animated.View
           style={[
-            styles.menu,
+            styles.actionWrap,
             {
               top: menuTop,
               left: menuLeft,
@@ -304,22 +312,53 @@ export default function ReactionOverlay({
             },
           ]}
         >
-          <ScrollView bounces={false} style={{ maxHeight: winH * 0.5 }}>
-            {actions.map((row) => (
-              <Pressable
-                key={row.key}
-                style={styles.menuRow}
-                onPress={row.onPress}
-              >
-                {row.icon}
-                <Text
-                  style={[styles.menuText, row.danger && { color: theme.danger }]}
-                >
-                  {row.label}
-                </Text>
+          <Pressable style={styles.bar} onPress={() => {}}>
+            {/* Quick actions on the bar: Reply + Forward for fast access. */}
+            <Pressable style={styles.barBtn} onPress={onReply} hitSlop={6}>
+              <CornerUpLeft size={20} color={theme.text} />
+            </Pressable>
+            <Pressable style={styles.barBtn} onPress={onForward} hitSlop={6}>
+              <Forward size={20} color={theme.text} />
+            </Pressable>
+            <View style={styles.barSpacer} />
+            {isOwn ? (
+              <Pressable style={styles.barBtn} onPress={onEdit} hitSlop={6}>
+                <Pencil size={20} color={theme.text} />
               </Pressable>
-            ))}
-          </ScrollView>
+            ) : null}
+            <Pressable
+              style={[styles.barBtn, moreOpen && styles.barBtnActive]}
+              onPress={() => setMoreOpen((v) => !v)}
+              hitSlop={6}
+            >
+              <MoreHorizontal size={22} color={theme.text} />
+            </Pressable>
+          </Pressable>
+
+          {moreOpen ? (
+            <ScrollView
+              bounces={false}
+              style={[styles.menu, { maxHeight: winH * 0.4 }]}
+            >
+              {actions.map((row) => (
+                <Pressable
+                  key={row.key}
+                  style={styles.menuRow}
+                  onPress={row.onPress}
+                >
+                  {row.icon}
+                  <Text
+                    style={[
+                      styles.menuText,
+                      row.danger && { color: theme.danger },
+                    ]}
+                  >
+                    {row.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          ) : null}
         </Animated.View>
       </Pressable>
     </Modal>
@@ -395,8 +434,35 @@ const makeStyles = (theme: Theme) =>
       marginTop: 2,
     },
     cloneTimeMine: { color: theme.chatOutMeta },
-    menu: {
+    actionWrap: {
       position: "absolute",
+    },
+    bar: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: theme.bgElevated,
+      borderRadius: theme.radiusFull,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      paddingHorizontal: 6,
+      height: 48,
+      shadowColor: "#000",
+      shadowOpacity: 0.35,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 6 },
+      elevation: 12,
+    },
+    barBtn: {
+      width: 40,
+      height: 40,
+      alignItems: "center",
+      justifyContent: "center",
+      borderRadius: 20,
+    },
+    barBtnActive: { backgroundColor: theme.surface },
+    barSpacer: { flex: 1 },
+    menu: {
+      marginTop: 6,
       backgroundColor: theme.bgElevated,
       borderRadius: 14,
       borderWidth: 1,

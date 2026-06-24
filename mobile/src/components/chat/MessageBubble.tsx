@@ -1,6 +1,14 @@
 import { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { Pin, Star } from "lucide-react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+  runOnJS,
+} from "react-native-reanimated";
+import { CornerUpLeft, Pin, Star } from "lucide-react-native";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { ChatMessage } from "../../features";
@@ -10,6 +18,11 @@ import FilePreview from "./FilePreview";
 import MessageContent from "./MessageContent";
 import ReactionChips from "./ReactionChips";
 import { fmtTime } from "./chatUtils";
+
+// Horizontal drag distance (px) past which releasing triggers a reply, and the
+// max the bubble is allowed to travel (Signal-style swipe-to-reply).
+const SWIPE_TRIGGER = 56;
+const SWIPE_MAX = 80;
 
 /**
  * A single chat message row (Signal-Android style). Own messages render as a
@@ -40,6 +53,7 @@ export default function MessageBubble({
   onLongPress,
   onReact,
   onAddReaction,
+  onReply,
   onRetry,
   onCancelUpload,
   onRetryUpload,
@@ -61,12 +75,60 @@ export default function MessageBubble({
   onLongPress: (message: ChatMessage, mine: boolean) => void;
   onReact: (message: ChatMessage, emoji: string) => void;
   onAddReaction: (message: ChatMessage, mine: boolean) => void;
+  // Swipe-to-reply (Signal-style): triggered when the bubble is dragged toward
+  // the center past the threshold and released.
+  onReply?: (message: ChatMessage) => void;
   onRetry?: (message: ChatMessage) => void;
   onCancelUpload?: (message: ChatMessage) => void;
   onRetryUpload?: (message: ChatMessage) => void;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+
+  // Swipe-to-reply gesture. Own (right-aligned) bubbles swipe LEFT; incoming
+  // (left-aligned) bubbles swipe RIGHT — both toward the screen center, like
+  // Signal. A reply icon fades/slides in behind the bubble as it moves; passing
+  // SWIPE_TRIGGER and releasing fires onReply.
+  const translateX = useSharedValue(0);
+  const iconProgress = useSharedValue(0);
+
+  const fireReply = () => {
+    if (deleted) return;
+    onReply?.(message);
+  };
+
+  const panGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX(mine ? [-12, 9999] : [-9999, 12])
+        .failOffsetY([-12, 12])
+        .enabled(!deleted && !!onReply)
+        .onUpdate((e) => {
+          // Clamp to the allowed direction only.
+          let tx = e.translationX;
+          if (mine) tx = Math.min(0, Math.max(-SWIPE_MAX, tx));
+          else tx = Math.max(0, Math.min(SWIPE_MAX, tx));
+          translateX.value = tx;
+          iconProgress.value = Math.min(1, Math.abs(tx) / SWIPE_TRIGGER);
+        })
+        .onEnd(() => {
+          if (Math.abs(translateX.value) >= SWIPE_TRIGGER) {
+            runOnJS(fireReply)();
+          }
+          translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
+          iconProgress.value = withTiming(0, { duration: 160 });
+        }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mine, deleted, onReply, message],
+  );
+
+  const bubbleAnim = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
+  const iconAnim = useAnimatedStyle(() => ({
+    opacity: iconProgress.value,
+    transform: [{ scale: 0.6 + iconProgress.value * 0.4 }],
+  }));
 
   // Media-only message (image/video attachment with no caption text, not a
   // view-once pill) renders edge-to-edge — no bubble padding/background, like
@@ -106,7 +168,22 @@ export default function MessageBubble({
         firstInGroup ? styles.rowGroupStart : styles.rowGrouped,
       ]}
     >
+      {/* Reply affordance revealed behind the bubble while swiping. */}
+      <Animated.View
+        style={[
+          styles.replyHint,
+          mine ? styles.replyHintMine : styles.replyHintTheirs,
+          iconAnim,
+        ]}
+        pointerEvents="none"
+      >
+        <View style={styles.replyHintCircle}>
+          <CornerUpLeft size={16} color={theme.text} />
+        </View>
+      </Animated.View>
       <View style={styles.bubbleCol}>
+        <GestureDetector gesture={panGesture}>
+          <Animated.View style={bubbleAnim}>
         <Pressable
           ref={(node) => {
             registerRef(message.id, node as unknown as View | null);
@@ -172,6 +249,8 @@ export default function MessageBubble({
             </View>
           </View>
         </Pressable>
+          </Animated.View>
+        </GestureDetector>
 
         {/* Reaction chips overlap the bottom edge of the bubble (Signal-style),
             rendered just below it and aligned toward the sender side. */}
@@ -190,6 +269,22 @@ export default function MessageBubble({
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
     bubbleRow: { flexDirection: "row", alignItems: "center" },
+    replyHint: {
+      position: "absolute",
+      top: 0,
+      bottom: 0,
+      justifyContent: "center",
+    },
+    replyHintMine: { right: 4 },
+    replyHintTheirs: { left: 4 },
+    replyHintCircle: {
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      backgroundColor: theme.surface,
+      alignItems: "center",
+      justifyContent: "center",
+    },
     rowMine: { justifyContent: "flex-end" },
     rowTheirs: { justifyContent: "flex-start" },
     // 8px between distinct groups, 2px between messages within a group.

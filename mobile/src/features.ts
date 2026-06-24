@@ -415,6 +415,8 @@ export type Conversation = {
   last_sender_id?: number | null;
   last_message_at?: string | null;
   last_file_url?: string | null;
+  last_file_type?: string | null;
+  last_file_name?: string | null;
   unread_count: number;
   member_count?: number | null;
   is_self_chat?: boolean;
@@ -485,6 +487,9 @@ export type ChatMessage = {
     viewOnce?: boolean;
     viewedBy?: number[];
     pollId?: number;
+    // Intrinsic media dimensions (Signal-style aspect-ratio sizing of images).
+    width?: number;
+    height?: number;
     [k: string]: unknown;
   } | null;
   // Optimistic/local fields
@@ -494,6 +499,8 @@ export type ChatMessage = {
   _failureReason?: string | null;
   _mediaState?: "queued" | "uploading" | "failed";
   _mediaProgress?: number;
+  // Live upload throughput (bytes/sec) shown Signal-style next to the ring.
+  _uploadSpeed?: number;
   media_job_id?: number | null;
   media_state?: "queued" | "processing" | "completed" | "failed" | "cancelled" | null;
   media_stage?:

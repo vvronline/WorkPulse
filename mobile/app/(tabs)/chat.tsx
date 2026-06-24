@@ -15,9 +15,12 @@ import {
 import { useFocusEffect, useRouter } from "expo-router";
 import {
   BellDot,
+  FileText,
+  Film,
+  Image as ImageIcon,
   MessageSquare,
   MessagesSquare,
-  MoreVertical,
+  Mic,
   Phone,
   PhoneIncoming,
   PhoneMissed,
@@ -342,14 +345,20 @@ export default function ChatScreen() {
 
   function renderConv(item: Conversation) {
     const name = convName(item);
-    const preview = item.last_file_url
-      ? "📎 Attachment"
-      : item.last_message || "No messages yet";
+    // Signal-style attachment preview: a type-specific icon + label instead of a
+    // generic "Attachment". Falls back to the text message / "No messages yet".
+    const attachment = item.last_file_url
+      ? attachmentPreview(item.last_file_type, item.last_file_name)
+      : null;
     return (
       <Pressable
         key={item.id}
         style={styles.row}
         onPress={() => openConv(item)}
+        // Signal-style: the per-row overflow menu is removed; the action sheet
+        // is revealed by long-pressing the conversation row instead.
+        onLongPress={() => setMenuConv(item)}
+        delayLongPress={300}
         android_ripple={{ color: theme.surfaceHover }}
       >
         <ChatAvatar
@@ -378,9 +387,18 @@ export default function ChatScreen() {
             <Text style={styles.time}>{timeAgo(item.last_message_at)}</Text>
           </View>
           <View style={styles.rowBottom}>
-            <Text style={styles.preview} numberOfLines={1}>
-              {preview}
-            </Text>
+            {attachment ? (
+              <View style={styles.previewRow}>
+                {attachment.icon}
+                <Text style={styles.preview} numberOfLines={1}>
+                  {attachment.label}
+                </Text>
+              </View>
+            ) : (
+              <Text style={styles.preview} numberOfLines={1}>
+                {item.last_message || "No messages yet"}
+              </Text>
+            )}
             {item.unread_count > 0 ? (
               <View style={styles.unread}>
                 <Text style={styles.unreadText}>
@@ -390,15 +408,55 @@ export default function ChatScreen() {
             ) : null}
           </View>
         </View>
-        <Pressable
-          style={styles.rowMore}
-          hitSlop={8}
-          onPress={() => setMenuConv(item)}
-        >
-          <MoreVertical size={18} color={theme.textMuted} />
-        </Pressable>
       </Pressable>
     );
+  }
+
+  // Map an attachment's mime/name to a Signal-style icon + label for the chat
+  // list preview line (📷 Photo / 🎥 Video / 🎙️ Voice message / 📄 <name>).
+  function attachmentPreview(
+    fileType?: string | null,
+    fileName?: string | null,
+  ): { icon: React.ReactNode; label: string } {
+    const t = (fileType || "").toLowerCase();
+    const name = (fileName || "").toLowerCase();
+    const ext = name.includes(".") ? name.split(".").pop() || "" : "";
+    const isImage =
+      t.startsWith("image/") ||
+      ["png", "jpg", "jpeg", "gif", "webp", "bmp", "heic"].includes(ext);
+    const isVideo =
+      t.startsWith("video/") || ["mp4", "mov", "webm", "mkv"].includes(ext);
+    const isAudio =
+      t.startsWith("audio/") ||
+      ["m4a", "mp3", "aac", "ogg", "wav"].includes(ext);
+    if (t === "image/gif" || ext === "gif") {
+      return {
+        icon: <ImageIcon size={13} color={theme.textSecondary} />,
+        label: "GIF",
+      };
+    }
+    if (isImage) {
+      return {
+        icon: <ImageIcon size={13} color={theme.textSecondary} />,
+        label: "Photo",
+      };
+    }
+    if (isVideo) {
+      return {
+        icon: <Film size={13} color={theme.textSecondary} />,
+        label: "Video",
+      };
+    }
+    if (isAudio) {
+      return {
+        icon: <Mic size={13} color={theme.textSecondary} />,
+        label: "Voice message",
+      };
+    }
+    return {
+      icon: <FileText size={13} color={theme.textSecondary} />,
+      label: fileName || "Document",
+    };
   }
 
   function renderSection(title: string, icon: React.ReactNode) {
@@ -914,6 +972,7 @@ const makeStyles = (theme: Theme) =>
     alignItems: "center",
     gap: 8,
   },
+  previewRow: { flex: 1, flexDirection: "row", alignItems: "center", gap: 5 },
   preview: { flex: 1, fontSize: 13, color: theme.textSecondary },
   unread: {
     minWidth: 20,
@@ -925,7 +984,6 @@ const makeStyles = (theme: Theme) =>
     paddingHorizontal: 6,
   },
   unreadText: { color: "#fff", fontSize: 11, fontWeight: "700" },
-  rowMore: { padding: 6 },
   callMeta: { flexDirection: "row", alignItems: "center", gap: 5 },
   callMetaText: { fontSize: 13, color: theme.textSecondary },
   callRight: { alignItems: "flex-end", gap: 4 },

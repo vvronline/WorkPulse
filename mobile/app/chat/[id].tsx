@@ -365,6 +365,7 @@ function ChatList({
             onLongPress={c.openReactionBar}
             onReact={c.react}
             onAddReaction={c.openReactionBar}
+            onReply={c.startReply}
             onRetry={c.retryFailedMessage}
             onCancelUpload={c.cancelMediaUpload}
             onRetryUpload={c.retryMediaUpload}

@@ -1,12 +1,13 @@
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Image,
-  Linking,
   Modal,
   Pressable,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { FileText, Timer, Eye, EyeOff, X } from "lucide-react-native";
@@ -16,8 +17,53 @@ import { useTheme } from "../../theme/ThemeProvider";
 import { uploadUrl } from "../../config";
 import { markMessageViewed } from "../../features";
 import VoicePlayer from "../VoicePlayer";
+import { AuthedImage } from "../AuthedImage";
 import type { ChatMessage } from "../../features";
 import { fmtSize, isAudioFile, isImageFile } from "./chatUtils";
+import { openAuthedFile } from "./openAuthedFile";
+
+/** Human-readable upload throughput, e.g. "1.2 MB/s" / "340 KB/s". */
+function fmtSpeed(bytesPerSec?: number): string {
+  if (!bytesPerSec || bytesPerSec <= 0) return "";
+  if (bytesPerSec < 1024) return `${Math.round(bytesPerSec)} B/s`;
+  if (bytesPerSec < 1024 * 1024)
+    return `${(bytesPerSec / 1024).toFixed(0)} KB/s`;
+  return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+}
+
+// Signal-style sent-image bounds. The image is sized by its intrinsic aspect
+// ratio, clamped between a minimum and these maximums so portrait/landscape/
+// square photos all read naturally inside the bubble (instead of a fixed,
+// distorting 200×150 box).
+const IMG_MAX_W_RATIO = 0.7; // ≤ 70% of screen width
+const IMG_MAX_H = 320;
+const IMG_MIN_W = 140;
+const IMG_MIN_H = 100;
+
+/** Compute the display box for a chat image from its intrinsic w/h. */
+function computeImageSize(
+  screenW: number,
+  width?: number | null,
+  height?: number | null,
+): { width: number; height: number } {
+  const maxW = Math.round(screenW * IMG_MAX_W_RATIO);
+  // No intrinsic size yet (e.g. remote message before metadata): use a sane
+  // 4:3-ish default box that still respects the max width.
+  if (!width || !height || width <= 0 || height <= 0) {
+    const w = Math.min(maxW, 240);
+    return { width: w, height: Math.round(w * 0.75) };
+  }
+  const ar = width / height;
+  let w = maxW;
+  let h = Math.round(w / ar);
+  if (h > IMG_MAX_H) {
+    h = IMG_MAX_H;
+    w = Math.round(h * ar);
+  }
+  w = Math.max(IMG_MIN_W, Math.min(w, maxW));
+  h = Math.max(IMG_MIN_H, Math.min(h, IMG_MAX_H));
+  return { width: w, height: h };
+}
 
 /**
  * Renders a message's attachment (mirrors the web FilePreview): inline image,
@@ -35,9 +81,11 @@ export default function FilePreview({
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const { user } = useAuth();
+  const { width: winWidth } = useWindowDimensions();
   const [viewer, setViewer] = useState<string | null>(null);
   const [consumed, setConsumed] = useState(false);
   const [loadingView, setLoadingView] = useState(false);
+  const [openingFile, setOpeningFile] = useState(false);
   if (!message.file_url) return null;
   const mediaStateRaw = message._mediaState || message.media_state || "";
   const mediaState = mediaStateRaw === "processing" ? "uploading" : mediaStateRaw;
@@ -107,6 +155,7 @@ export default function FilePreview({
           <UploadState
             mediaState={mediaState}
             mediaProgress={mediaProgress}
+            uploadSpeed={message._uploadSpeed}
             failureReason={message._failureReason}
             onCancel={() => onCancelUpload?.(message)}
             onRetry={() => onRetryUpload?.(message)}
@@ -117,20 +166,40 @@ export default function FilePreview({
   }
 
   if (isImageFile(message)) {
+    // Signal-style aspect-ratio sizing from the image's intrinsic dimensions
+    // (carried on the optimistic message metadata, falls back to a sane box).
+    const intrinsicW = Number(message.metadata?.width) || null;
+    const intrinsicH = Number(message.metadata?.height) || null;
+    const box = computeImageSize(winWidth, intrinsicW, intrinsicH);
+    const resolved = uploadUrl(message.file_url) || undefined;
+    // Optimistic local images (file:/content:) render with a plain <Image>;
+    // remote uploads go through AuthedImage so the Bearer token is attached
+    // (the server's /uploads route is behind auth — a tokenless GET 401s and
+    // RN caches the blank).
+    const isLocal = !!resolved && /^(file|content|data):/i.test(resolved);
     return (
       <View>
-        <Pressable onPress={() => setViewer(uploadUrl(message.file_url) || null)}>
-          <Image
-            source={{ uri: uploadUrl(message.file_url) || undefined }}
-            style={styles.fileImage}
-            resizeMode="cover"
-          />
+        <Pressable onPress={() => setViewer(resolved || null)}>
+          {isLocal ? (
+            <Image
+              source={{ uri: resolved }}
+              style={[styles.fileImage, box]}
+              resizeMode="cover"
+            />
+          ) : (
+            <AuthedImage
+              uri={resolved}
+              style={[styles.fileImage, box]}
+              resizeMode="cover"
+            />
+          )}
         </Pressable>
         <ImageViewerModal uri={viewer} onClose={() => setViewer(null)} />
         {mediaPending ? (
           <UploadState
             mediaState={mediaState}
             mediaProgress={mediaProgress}
+            uploadSpeed={message._uploadSpeed}
             failureReason={message._failureReason}
             onCancel={() => onCancelUpload?.(message)}
             onRetry={() => onRetryUpload?.(message)}
@@ -161,12 +230,26 @@ export default function FilePreview({
     <View>
       <Pressable
         style={styles.fileCard}
-        onPress={() => {
-          const u = uploadUrl(message.file_url);
-          if (u) Linking.openURL(u);
+        disabled={openingFile}
+        onPress={async () => {
+          if (openingFile) return;
+          setOpeningFile(true);
+          const res = await openAuthedFile(
+            message.file_url,
+            message.file_name,
+            message.file_type,
+          );
+          setOpeningFile(false);
+          if (!res.ok) {
+            Alert.alert("Could not open file", res.error || "Unknown error.");
+          }
         }}
       >
-        <FileText size={20} color={theme.primary} />
+        {openingFile ? (
+          <ActivityIndicator size="small" color={theme.primary} />
+        ) : (
+          <FileText size={20} color={theme.primary} />
+        )}
         <View style={{ flex: 1 }}>
           <Text style={styles.fileName} numberOfLines={1}>
             {message.file_name || "File"}
@@ -250,12 +333,14 @@ const viewerStyles = StyleSheet.create({
 function UploadState({
   mediaState,
   mediaProgress,
+  uploadSpeed,
   failureReason,
   onCancel,
   onRetry,
 }: {
   mediaState: string;
   mediaProgress: number;
+  uploadSpeed?: number;
   failureReason?: string | null;
   onCancel: () => void;
   onRetry: () => void;
@@ -266,6 +351,7 @@ function UploadState({
   const queued = mediaState === "queued";
   const failed = mediaState === "failed";
   if (!uploading && !queued && !failed) return null;
+  const speedLabel = uploading ? fmtSpeed(uploadSpeed) : "";
   return (
     <View style={styles.uploadWrap}>
       {(uploading || queued) && (
@@ -276,7 +362,11 @@ function UploadState({
                 <ActivityIndicator size="small" color={theme.primary} />
               ) : null}
               <Text style={styles.uploadLabel}>
-                {queued ? "Queued" : `Uploading ${mediaProgress}%`}
+                {queued
+                  ? "Queued"
+                  : `Uploading ${mediaProgress}%${
+                      speedLabel ? ` · ${speedLabel}` : ""
+                    }`}
               </Text>
             </View>
             <Pressable onPress={onCancel} hitSlop={6}>

@@ -56,6 +56,9 @@ type PendingMediaSource = {
   mimeType?: string;
   viewOnce?: boolean;
   caption?: string;
+  // Intrinsic image dimensions (Signal-style aspect-ratio sizing).
+  width?: number;
+  height?: number;
 };
 
 type ConversationDraft = {
@@ -184,6 +187,11 @@ export function useChatThread() {
   const bubbleRefs = useRef<Map<number, View>>(new Map());
   const mediaUploadControllers = useRef<Map<number, AbortController>>(new Map());
   const mediaUploadSources = useRef<Map<number, PendingMediaSource>>(new Map());
+  // Per-upload throughput sampler: last {timestamp, bytes} so we can derive a
+  // live bytes/sec speed for the Signal-style upload label.
+  const uploadProgressTs = useRef<Map<number, { t: number; loaded: number }>>(
+    new Map(),
+  );
   const pendingDraftReply = useRef<ConversationDraft["replyTo"]>(null);
   const pendingDraftEditing = useRef<ConversationDraft["editing"]>(null);
   const pendingDraftMedia = useRef<PendingMediaSource[]>([]);
@@ -419,32 +427,69 @@ export function useChatThread() {
       if (msg.type === "chat_media_job") {
         if (Number(d.conversationId) !== convId) return;
         setMessages((prev) =>
-          prev.map((m) =>
-            m.id === d.messageId
-              ? {
+          prev.map((m) => {
+            if (m.id !== d.messageId) return m;
+            // Once the HTTP upload has RESOLVED (the optimistic bubble was
+            // replaced by the server row → positive id + a persisted file_url
+            // that is NOT a local file: uri), the message is effectively
+            // "sent". The server-side media PIPELINE (queued→processing→
+            // completed) is a SEPARATE post-processing step; its non-terminal
+            // events must NOT drag a delivered message back to a "Queued"/
+            // "Uploading" spinner (the bug where a delivered+seen image stuck
+            // on "Queued" forever when the final `completed` event was missed
+            // on reconnect). For a sent message we therefore ONLY react to a
+            // terminal FAILURE; success/queued/processing are ignored.
+            const httpUploadDone =
+              Number(m.id) > 0 &&
+              !!m.file_url &&
+              !/^(file|content|data):/i.test(String(m.file_url));
+            if (httpUploadDone) {
+              if (d.status === "failed") {
+                return {
                   ...m,
-                  media_job_id: d.mediaJobId ?? m.media_job_id ?? null,
-                  media_state: d.status ?? m.media_state ?? null,
-                  media_progress:
-                    typeof d.progress === "number"
-                      ? d.progress
-                      : m.media_progress ?? null,
+                  media_state: "failed",
                   media_failure_reason: d.failureReason ?? null,
-                  _mediaState:
-                    d.status === "processing"
-                      ? "uploading"
-                      : d.status ?? m._mediaState,
-                  _mediaProgress:
-                    typeof d.progress === "number"
-                      ? d.progress
-                      : m._mediaProgress ?? 0,
-                  _failed: d.status === "failed" || d.status === "cancelled",
-                  _failureReason:
-                    d.failureReason ??
-                    (d.status === "cancelled" ? "Upload cancelled" : m._failureReason),
-                }
-              : m,
-          ),
+                  _mediaState: "failed",
+                  _failed: true,
+                  _failureReason: d.failureReason ?? m._failureReason ?? null,
+                };
+              }
+              // completed / queued / processing / cancelled → keep delivered.
+              return {
+                ...m,
+                media_job_id: d.mediaJobId ?? m.media_job_id ?? null,
+                media_state: "completed",
+                _mediaState: undefined,
+                _mediaProgress: 100,
+                _failed: false,
+              };
+            }
+            // Optimistic (not-yet-uploaded) message: reflect live pipeline.
+            return {
+              ...m,
+              media_job_id: d.mediaJobId ?? m.media_job_id ?? null,
+              media_state: d.status ?? m.media_state ?? null,
+              media_progress:
+                typeof d.progress === "number"
+                  ? d.progress
+                  : m.media_progress ?? null,
+              media_failure_reason: d.failureReason ?? null,
+              _mediaState:
+                d.status === "processing"
+                  ? "uploading"
+                  : d.status ?? m._mediaState,
+              _mediaProgress:
+                typeof d.progress === "number"
+                  ? d.progress
+                  : m._mediaProgress ?? 0,
+              _failed: d.status === "failed" || d.status === "cancelled",
+              _failureReason:
+                d.failureReason ??
+                (d.status === "cancelled"
+                  ? "Upload cancelled"
+                  : m._failureReason),
+            };
+          }),
         );
         return;
       }
@@ -891,16 +936,32 @@ export function useChatThread() {
                       Math.min(100, Math.round((evt.loaded / total) * 100)),
                     )
                   : 0;
+              // Live throughput (bytes/sec) for the Signal-style speed label.
+              const now = Date.now();
+              const prevTs = uploadProgressTs.current.get(tempId);
+              let speed = 0;
+              if (prevTs && now > prevTs.t) {
+                const dBytes = evt.loaded - prevTs.loaded;
+                const dt = (now - prevTs.t) / 1000;
+                if (dt > 0 && dBytes > 0) speed = dBytes / dt;
+              }
+              uploadProgressTs.current.set(tempId, { t: now, loaded: evt.loaded });
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === tempId
-                    ? { ...m, _mediaState: "uploading", _mediaProgress: progress }
+                    ? {
+                        ...m,
+                        _mediaState: "uploading",
+                        _mediaProgress: progress,
+                        _uploadSpeed: speed || m._uploadSpeed,
+                      }
                     : m,
                 ),
               );
             },
           },
         );
+        uploadProgressTs.current.delete(tempId);
         setMessages((prev) => {
           const replaced = prev.map((m) =>
             m.id === tempId ? { ...data, _pending: false, _failed: false } : m,
@@ -949,6 +1010,13 @@ export function useChatThread() {
     (source: PendingMediaSource) => {
       const tempId = -(Date.now() + Math.floor(Math.random() * 1000));
       mediaUploadSources.current.set(tempId, source);
+      // Carry intrinsic dimensions in metadata so the optimistic bubble sizes
+      // itself by aspect ratio immediately (Signal-style) — no reflow once the
+      // server row arrives.
+      const dimMeta =
+        source.width && source.height
+          ? { width: source.width, height: source.height }
+          : {};
       setMessages((prev) => [
         ...prev,
         {
@@ -961,7 +1029,11 @@ export function useChatThread() {
           file_name: source.fileName,
           file_type: source.mimeType || null,
           file_size: null,
-          metadata: source.viewOnce ? { viewOnce: true, viewedBy: [] } : null,
+          metadata: source.viewOnce
+            ? { viewOnce: true, viewedBy: [], ...dimMeta }
+            : Object.keys(dimMeta).length
+              ? dimMeta
+              : null,
           reactions: [],
           _pending: true,
           _failed: false,

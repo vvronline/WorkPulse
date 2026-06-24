@@ -1,22 +1,28 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
-import { AlertTriangle, Check, CheckCheck, Clock, RefreshCw } from "lucide-react-native";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+  withSequence,
+  Easing,
+} from "react-native-reanimated";
+import Svg, { Circle, Path } from "react-native-svg";
+import { AlertTriangle, Clock, RefreshCw } from "lucide-react-native";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { ChatMessage } from "../../features";
 
 /**
- * Signal-Android-style delivery status for the current user's own messages
- * (mirrors Signal's `DeliveryStatusView`). Signal uses ICONS, not text glyphs,
- * and read is NOT a separate blue tick — it's the SAME double-check, just
- * filled/highlighted so it stands out:
- *   clock        → pending (optimistic, not yet acked by the server)
- *   check        → sent
- *   check-check  → delivered (muted/outline)
- *   check-check  → read (highlighted — bright tint on the accent bubble, the
- *                  accent color on a plain surface)
+ * Signal-style delivery status for the current user's own messages. Signal uses
+ * a CHECK INSIDE A CIRCLE that gains a second ring once the message is read:
+ *   clock              → pending (optimistic, not yet acked by the server)
+ *   check ◯            → sent / delivered (check inside ONE circle)
+ *   check ◎ (2 rings)  → read (check inside TWO concentric circles, highlighted)
  *
- * Only own messages render a status (incoming messages return null).
+ * The tick "pops" in with a small scale animation the moment it transitions
+ * from pending → sent (mirrors Signal's status-change animation). Only own
+ * messages render a status (incoming messages return null).
  */
 export default function MsgTicks({
   mine,
@@ -40,14 +46,34 @@ export default function MsgTicks({
 }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  if (!mine) return null;
 
-  // Icon sizing + colors. ~13px sits inline with the 10px timestamp nicely.
-  const SIZE = 13;
-  const mutedColor = onAccent ? "rgba(255,255,255,0.7)" : theme.textMuted;
+  const SIZE = 15;
+  const mutedColor = onAccent ? "rgba(255,255,255,0.75)" : theme.textMuted;
   // Signal's "read" emphasis: a bright tint on the accent bubble, the accent
-  // color on a plain surface. NOT a separate WhatsApp-blue.
+  // color on a plain surface.
   const readColor = onAccent ? "#bfe7ff" : theme.primary;
+
+  // Resolve the delivery phase up-front so the animation hook (which must run
+  // unconditionally) can react to it.
+  const phase = resolvePhase(msg, participantCount, readReceipts, userId);
+
+  // Pop-in animation: scale 0.6 → 1.1 → 1 whenever the phase advances past
+  // pending (Signal animates the status glyph on change).
+  const scale = useSharedValue(1);
+  useEffect(() => {
+    if (phase === "sent" || phase === "read") {
+      scale.value = withSequence(
+        withTiming(0.6, { duration: 0 }),
+        withTiming(1.12, { duration: 140, easing: Easing.out(Easing.quad) }),
+        withTiming(1, { duration: 120, easing: Easing.inOut(Easing.quad) }),
+      );
+    }
+  }, [phase, scale]);
+  const animStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
+  if (!mine) return null;
 
   if (msg._failed) {
     return (
@@ -64,7 +90,7 @@ export default function MsgTicks({
   }
 
   // Pending / optimistic (no server id yet) → clock.
-  if (msg._pending || msg.id < 0) {
+  if (phase === "pending") {
     return (
       <View style={styles.wrap}>
         <Clock size={SIZE} color={mutedColor} />
@@ -72,8 +98,31 @@ export default function MsgTicks({
     );
   }
 
+  // Single-participant edge case where there are no "others" — show nothing
+  // (resolvePhase returns "hidden").
+  if (phase === "hidden") return null;
+
+  const doubleRing = phase === "read";
+  const color = doubleRing ? readColor : mutedColor;
+
+  return (
+    <Animated.View style={[styles.wrap, animStyle]}>
+      <CircledCheck size={SIZE} color={color} doubleRing={doubleRing} />
+    </Animated.View>
+  );
+}
+
+type Phase = "pending" | "sent" | "read" | "hidden";
+
+function resolvePhase(
+  msg: ChatMessage,
+  participantCount: number,
+  readReceipts: Record<number, string>,
+  userId?: number,
+): Phase {
+  if (msg._pending || msg.id < 0) return "pending";
   const others = (participantCount || 2) - 1;
-  if (others <= 0) return null;
+  if (others <= 0) return "hidden";
 
   const delivered = msg.delivered_to || [];
   const msgTime = new Date(msg.created_at).getTime();
@@ -82,32 +131,64 @@ export default function MsgTicks({
       Number(uid) !== userId && new Date(readAt).getTime() >= msgTime,
   );
 
-  // Read → highlighted double-check (Signal "filled read").
+  // Read → double ring (Signal's "read").
   if (
     otherReaders.length >= others ||
     (otherReaders.length > 0 && delivered.length >= others)
   ) {
-    return (
-      <View style={styles.wrap}>
-        <CheckCheck size={SIZE} color={readColor} strokeWidth={2.5} />
-      </View>
-    );
+    return "read";
   }
+  // Sent / delivered → single ring.
+  return "sent";
+}
 
-  // Delivered → muted/outline double-check.
-  if (delivered.length >= others || delivered.length > 0) {
-    return (
-      <View style={styles.wrap}>
-        <CheckCheck size={SIZE} color={mutedColor} />
-      </View>
-    );
-  }
-
-  // Sent → single check.
+/**
+ * A check mark inside a circle (Signal status glyph). When `doubleRing` is set
+ * a second, larger concentric ring is drawn around it (the "read" state).
+ */
+function CircledCheck({
+  size,
+  color,
+  doubleRing,
+}: {
+  size: number;
+  color: string;
+  doubleRing?: boolean;
+}) {
+  // viewBox is 24×24; the check path + rings are laid out within it.
   return (
-    <View style={styles.wrap}>
-      <Check size={SIZE} color={mutedColor} />
-    </View>
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      {doubleRing ? (
+        <Circle
+          cx={12}
+          cy={12}
+          r={11}
+          stroke={color}
+          strokeWidth={1.5}
+          fill="none"
+        />
+      ) : null}
+      <Circle
+        cx={12}
+        cy={12}
+        r={doubleRing ? 8 : 10}
+        stroke={color}
+        strokeWidth={1.7}
+        fill="none"
+      />
+      <Path
+        d={
+          doubleRing
+            ? "M8.2 12.2l2.4 2.4 4.8-5"
+            : "M7.5 12.3l2.8 2.8 5.6-6"
+        }
+        stroke={color}
+        strokeWidth={1.9}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+    </Svg>
   );
 }
 
