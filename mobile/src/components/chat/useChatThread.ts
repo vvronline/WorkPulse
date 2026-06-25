@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Keyboard, View, type FlatList, type TextInput, useWindowDimensions } from "react-native";
+import {
+  Keyboard,
+  Vibration,
+  View,
+  type FlatList,
+  type TextInput,
+  useWindowDimensions,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
@@ -11,9 +18,11 @@ import {
   AudioModule,
   RecordingPresets,
   setAudioModeAsync,
+  useAudioPlayer,
   useAudioRecorder,
   useAudioRecorderState,
 } from "expo-audio";
+import { getNotificationPreviewDataUri } from "../../utils/notificationSoundPreview";
 import { useAuth } from "../../auth/AuthContext";
 import { useDialog } from "../../hooks/useDialog";
 import {
@@ -252,6 +261,10 @@ export function useChatThread() {
   // record() and the live duration counter ticks smoothly.
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder, 100);
+  // Dedicated player for the short "reaction added" feedback tone (Signal-style
+  // haptic + subtle sound when you react). Separate from the recorder so it
+  // never fights the record audio session.
+  const reactionSoundPlayer = useAudioPlayer();
   // Explicit recording flag set SYNCHRONOUSLY the instant record() succeeds.
   // The polled `recorderState.isRecording` lags on Android (the 100ms poll can
   // miss the transition), so the recording bar "didn't appear" when the mic was
@@ -1505,6 +1518,13 @@ export function useChatThread() {
     [uploadSingleMedia],
   );
 
+  // Cancel an in-progress edit (Signal-style "X" on the editing strip). Clears
+  // the editing target and the prefilled draft text.
+  function cancelEdit() {
+    setEditingId(null);
+    setText("");
+  }
+
   function startEdit(message: ChatMessage) {
     // Tear down BOTH long-press surfaces. Editing can be triggered from the
     // long-press reaction overlay (driven by reactTarget/reactAnchor) OR the
@@ -1816,9 +1836,33 @@ export function useChatThread() {
       });
   }
 
+  // Short subtle tone played when a reaction is ADDED (Signal-style audible
+  // feedback). Uses the same synthesized data-URI mechanism as the realtime
+  // notification sounds so no audio asset is needed.
+  function playReactionSound() {
+    try {
+      const uri = getNotificationPreviewDataUri("reaction", "subtle");
+      if (!uri) return;
+      setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      }).catch(() => {});
+      reactionSoundPlayer.replace({ uri });
+      reactionSoundPlayer.play();
+    } catch {
+      /* no-op */
+    }
+  }
+
   async function react(message: ChatMessage, emoji: string) {
     if (message.deleted_at) return;
     setReactTarget(null);
+    // Determine whether this toggle ADDS a reaction (vs removes it) so the
+    // haptic + sound feedback only fires on add (Signal only buzzes/plays when
+    // you place a reaction, not when you clear one).
+    const willAdd = !(message.reactions || []).some(
+      (r) => r.userId === user?.id && r.emoji === emoji,
+    );
     // Optimistic toggle FIRST (mirrors web handleReact): the chip appears /
     // disappears instantly. Doing the API call before the state update caused
     // two bugs: (a) the reaction only showed after the network round-trip and
@@ -1845,6 +1889,15 @@ export function useChatThread() {
         };
       });
     setMessages(applyToggle);
+    // Haptic + subtle sound on ADD (Signal parity).
+    if (willAdd) {
+      try {
+        Vibration.vibrate(12);
+      } catch {
+        /* no-op */
+      }
+      playReactionSound();
+    }
     try {
       await toggleReaction(message.id, emoji);
     } catch {
@@ -1957,6 +2010,13 @@ export function useChatThread() {
   // Anchor the reaction bar to the long-pressed bubble (mirrors the web
   // MessageBubble). Measures the bubble's host node directly for reliability.
   function openReactionBar(item: ChatMessage, mine: boolean) {
+    // Crisp haptic the instant the reaction bar opens (Signal-Android fires a
+    // performHapticFeedback on long-press before the overlay animates in).
+    try {
+      Vibration.vibrate(12);
+    } catch {
+      /* no-op */
+    }
     const node = bubbleRefs.current.get(item.id) as unknown as {
       measureInWindow?: (
         cb: (x: number, y: number, width: number, height: number) => void,
@@ -2115,6 +2175,7 @@ export function useChatThread() {
     onChangeText,
     send,
     saveEdit,
+    cancelEdit,
     setPlusOpen,
     startRecording,
     cancelRecording,

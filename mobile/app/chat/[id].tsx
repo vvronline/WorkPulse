@@ -7,6 +7,7 @@ import { useMemo } from "react";
 import ChatAvatar from "../../src/components/ChatAvatar";
 import {
   ReplyPreview,
+  EditPreview,
   MessageBubble,
   TypingIndicator,
   Composer,
@@ -103,8 +104,14 @@ export default function ChatThread() {
           {c.peerTyping ? (
             <TypingIndicator name={c.name} avatar={c.headerAvatar} />
           ) : null}
-          {/* Reply composing strip */}
-          {c.replyTo ? (
+          {/* Editing strip (Signal-style) — shown while a message is being
+              edited so there's a clear "Editing message" indication + a way to
+              cancel. Takes precedence over the reply strip (editing clears any
+              pending reply). */}
+          {c.editingId != null ? (
+            <EditPreview text={c.text} onCancel={c.cancelEdit} />
+          ) : c.replyTo ? (
+            /* Reply composing strip */
             <ReplyPreview
               replyTo={c.replyTo}
               onCancel={() => c.setReplyTo(null)}

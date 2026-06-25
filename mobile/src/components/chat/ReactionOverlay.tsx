@@ -218,8 +218,10 @@ export default function ReactionOverlay({
   pillLeft = Math.max(margin, Math.min(pillLeft, winW - pillW - margin));
 
   // Secondary "more" menu sits below the bubble, aligned to the sender side.
+  // Sized snug to its short labels (Pin/Save/Forward/Copy/Delete) so there's no
+  // dead horizontal space (Signal sizes the context menu to its content).
   const menuTop = bubbleTop + bubbleH + MENU_GAP;
-  const menuW = 220;
+  const menuW = 184;
   let menuLeft = a.mine ? bubbleLeft + bubbleW - menuW : bubbleLeft;
   menuLeft = Math.max(margin, Math.min(menuLeft, winW - menuW - margin));
 
@@ -301,7 +303,9 @@ export default function ReactionOverlay({
           </ScrollView>
         </Animated.View>
 
-        {/* Lifted bubble clone */}
+        {/* Lifted bubble clone — rendered at the EXACT measured rect (no scale)
+            so the bubble keeps its original size when lifted (Signal lifts the
+            bubble 1:1; scaling it made the bubble appear to grow). */}
         <Animated.View
           style={[
             styles.bubbleClone,
@@ -310,9 +314,8 @@ export default function ReactionOverlay({
               top: bubbleTop,
               left: bubbleLeft,
               width: bubbleW,
-              minHeight: bubbleH,
+              height: bubbleH,
               opacity: progress,
-              transform: [{ scale: contentScale }],
             },
           ]}
         >

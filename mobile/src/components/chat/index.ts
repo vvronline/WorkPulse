@@ -2,6 +2,7 @@
 export { default as MsgTicks } from "./MsgTicks";
 export { default as ReplyQuote } from "./ReplyQuote";
 export { default as ReplyPreview } from "./ReplyPreview";
+export { default as EditPreview } from "./EditPreview";
 export { default as FilePreview } from "./FilePreview";
 export { default as MessageContent } from "./MessageContent";
 export { default as ReactionChips } from "./ReactionChips";
