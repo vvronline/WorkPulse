@@ -36,17 +36,18 @@ interface TimeEntry {
 interface OrgWorkConfig {
     work_hours_per_day: number;
     work_days: string;
+    min_hours_present?: number | string | null;
 }
 
 const VALID_WORK_MODES = ["office", "remote", "hybrid"];
 
 // Helper: fetch org config with Redis cache
 async function getOrgWorkConfig(orgId: number | null | undefined, db: DbLike, tenantId: number | string | undefined): Promise<OrgWorkConfig> {
-    if (!orgId) return { work_hours_per_day: 8, work_days: "1,2,3,4,5" };
+    if (!orgId) return { work_hours_per_day: 8, work_days: "1,2,3,4,5", min_hours_present: null };
     const cached = await redis.getOrgConfig(tenantId, orgId);
     if (cached) return cached;
-    const result = await db.query("SELECT work_hours_per_day, work_days FROM organizations WHERE id = $1", [orgId]);
-    const config = result.rows[0] || { work_hours_per_day: 8, work_days: "1,2,3,4,5" };
+    const result = await db.query("SELECT work_hours_per_day, work_days, min_hours_present FROM organizations WHERE id = $1", [orgId]);
+    const config = result.rows[0] || { work_hours_per_day: 8, work_days: "1,2,3,4,5", min_hours_present: null };
     await redis.setOrgConfig(tenantId, orgId, config);
     return config;
 }
@@ -973,6 +974,7 @@ router.get("/widgets", auth, async (req: Request, res: Response) => {
         const entriesRes = await req.db!.query(
             `SELECT * FROM time_entries
              WHERE user_id = $1 AND ${pgDateInTz("timestamp", tzMod)} >= ($2::date - INTERVAL '30 days')
+              AND (approval_status IS NULL OR approval_status != 'rejected')
              ORDER BY timestamp ASC`,
             [req.userId, today],
         );
@@ -996,13 +998,22 @@ router.get("/widgets", auth, async (req: Request, res: Response) => {
             leaveRes.rows.forEach((r: { date: string }) => { if (r.date >= monthStart) leaveCount++; });
         } catch (_) { /* ignore */ }
 
+        const orgRow = (await req.db!.query(
+            `SELECT u.org_id FROM users u WHERE u.id = $1`,
+            [req.userId],
+        )).rows[0];
+        const orgConfig = await getOrgWorkConfig(orgRow?.org_id, req.db as unknown as DbLike, req.tenantId);
         let totalFloorMin = 0; let workDays = 0; let targetMetDays = 0; let officeDays = 0; let remoteDays = 0;
-        let orgWhpd = 8;
-        if (req.userOrgId) {
-            const orgConfig = await getOrgWorkConfig(req.userOrgId, req.db as unknown as DbLike, req.tenantId);
-            if (orgConfig.work_hours_per_day) orgWhpd = orgConfig.work_hours_per_day;
-        }
+        const orgWhpd = orgConfig.work_hours_per_day || 8;
+        const minHoursPresent = (
+            orgConfig.min_hours_present != null
+            && Number(orgConfig.min_hours_present) >= 0
+        )
+            ? Number(orgConfig.min_hours_present)
+            : orgWhpd / 2;
+        const minPresentMinutes = minHoursPresent * 60;
         const TARGET = orgWhpd * 60;
+        const floorByDate: Record<string, number> = {};
 
         Object.keys(grouped).forEach((date) => {
             const dayEntries = grouped[date];
@@ -1010,6 +1021,7 @@ router.get("/widgets", auth, async (req: Request, res: Response) => {
             workDays++;
             const capMs = date >= today ? Date.now() : endOfLocalDayMs(date, offsetMin);
             const summary = computeDaySummary(dayEntries, true, capMs);
+            floorByDate[date] = summary.floorMinutes;
             totalFloorMin += summary.floorMinutes;
             if (summary.floorMinutes >= TARGET) targetMetDays++;
             if (summary.workMode === "remote") remoteDays++;
@@ -1031,20 +1043,23 @@ router.get("/widgets", auth, async (req: Request, res: Response) => {
         });
         const punctualityPercent = workDays > 0 ? Math.round((earlyDays / workDays) * 100) : 0;
 
-        let monthWorkDays = 0;
+        const workDaySet = parseWorkDays(orgConfig.work_days || null);
+        let monthPresentDays = 0;
         Object.keys(grouped).forEach((date) => {
-            if (date >= monthStart && date <= today && grouped[date].some((e) => e.entry_type === "clock_in")) {
-                monthWorkDays++;
+            if (date < monthStart || date > today) return;
+            const jsDow = new Date(date + "T00:00:00Z").getUTCDay();
+            if (!isJsDowWorkDay(jsDow, workDaySet)) return;
+            if ((floorByDate[date] || 0) >= minPresentMinutes) {
+                monthPresentDays++;
             }
         });
         const monthStartDate = new Date(monthStart + "T00:00:00Z");
         const todayDate = new Date(today + "T00:00:00Z");
-        const workDaySet = parseWorkDays(req.userOrgId ? (await getOrgWorkConfig(req.userOrgId, req.db as unknown as DbLike, req.tenantId)).work_days : null);
         let totalWeekdays = 0;
         for (let d = new Date(monthStartDate); d <= todayDate; d.setDate(d.getDate() + 1)) {
             if (isJsDowWorkDay(d.getUTCDay(), workDaySet)) totalWeekdays++;
         }
-        const presentDays = monthWorkDays + leaveCount;
+        const presentDays = monthPresentDays + leaveCount;
         const attendancePercent = totalWeekdays > 0 ? Math.min(100, Math.round((presentDays / totalWeekdays) * 100)) : 0;
 
         res.json({ avgFloorMinutes, punctualityPercent, attendancePercent, targetMetDays, workDays, totalWeekdays, leaveCount, officeDays, remoteDays });

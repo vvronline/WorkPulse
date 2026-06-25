@@ -31,6 +31,11 @@ import {
   clearPersistedPendingCall,
   loadPersistedPendingCall,
 } from "../realtime/pendingCall";
+import {
+  setPendingChat,
+  persistPendingChat,
+} from "../realtime/pendingChat";
+import { sendMessage, markConversationRead } from "../features";
 import { loadCallPrefs } from "./callPrefsStore";
 import { getToken } from "../auth/tokenStore";
 import {
@@ -1010,6 +1015,29 @@ class NotifeeService {
       ...(hasBadge ? { badgeCount } : {}),
       // Chat-avatar largeIcon (circular) — parity with the call notification.
       ...largeIconOpts,
+      // SIGNAL-PARITY status-bar actions. "Reply" attaches a RemoteInput so the
+      // user can type a reply inline from the notification shade without opening
+      // the app; "Mark as read" clears the unread state. Both are handled by
+      // handleMessageEvent (background + foreground). Only attach them when we
+      // know the target conversation (a reply needs somewhere to send).
+      ...(data.conversationId
+        ? {
+            actions: [
+              {
+                title: "Reply",
+                pressAction: { id: "reply" },
+                input: {
+                  allowFreeFormInput: true,
+                  placeholder: "Reply…",
+                },
+              },
+              {
+                title: "Mark as read",
+                pressAction: { id: "mark_read" },
+              },
+            ],
+          }
+        : {}),
     });
 
     // ── STEP 1: post the notification IMMEDIATELY (no avatar) ──────────────
@@ -1216,6 +1244,139 @@ class NotifeeService {
   }
 
   /**
+   * Handles a Notifee event (press / action press) for a CHAT-MESSAGE
+   * notification. Returns true if it handled the event. Used by both the
+   * foreground and background event handlers AFTER handleCallEvent declines
+   * (i.e. the notification is not a call).
+   *
+   * Three actions are supported (Signal-Android parity):
+   *   • body PRESS      → open the EXACT 1:1/group conversation (deep link +
+   *                        persisted pending-chat route for the cold-start case).
+   *   • "reply" action  → read the inline RemoteInput text, POST it to the
+   *                        conversation, mark it read, and update the notification
+   *                        in place to confirm ("You: …") before auto-cancelling.
+   *   • "mark_read"     → mark the conversation read and cancel the notification.
+   */
+  async handleMessageEvent(type: number, detail: any): Promise<boolean> {
+    const notifee = this.resolve();
+    if (!notifee) return false;
+
+    const data = (detail?.notification?.data || {}) as Record<string, string>;
+    const conversationId = data.conversationId;
+    // Only handle message notifications (calls are handled by handleCallEvent).
+    if (!conversationId || data.callId) return false;
+
+    const pressActionId: string | undefined =
+      detail?.pressAction?.id || detail?.notification?.android?.pressAction?.id;
+
+    const isPress = type === (this.EventType.PRESS ?? 1);
+    const isAction = type === (this.EventType.ACTION_PRESS ?? 2);
+    if (!isPress && !isAction) return false;
+
+    const convIdNum = Number(conversationId);
+    const notificationId =
+      detail?.notification?.id ||
+      (data.messageId ? messageNotificationId(data.messageId) : undefined);
+
+    // ── "Mark as read" action ────────────────────────────────────────────
+    if (pressActionId === "mark_read") {
+      try {
+        if (Number.isFinite(convIdNum)) await markConversationRead(convIdNum);
+      } catch (err) {
+        console.warn("[NotifeeService] Failed to mark conversation read:", err);
+      }
+      try {
+        if (notificationId) await notifee.cancelNotification(notificationId);
+      } catch {
+        /* best-effort */
+      }
+      return true;
+    }
+
+    // ── "Reply" action (inline RemoteInput) ──────────────────────────────
+    if (pressActionId === "reply") {
+      // Notifee delivers the typed text on detail.input (string) — older
+      // versions nested it under detail.input.text. Support both shapes.
+      const rawInput =
+        typeof detail?.input === "string"
+          ? detail.input
+          : (detail?.input?.text ?? "");
+      const replyText = String(rawInput || "").trim();
+
+      if (!replyText) {
+        // Nothing typed — leave the notification so the user can retry.
+        return true;
+      }
+
+      try {
+        if (Number.isFinite(convIdNum)) {
+          await sendMessage(convIdNum, replyText);
+          // Best-effort: also clear the unread state for the conversation.
+          await markConversationRead(convIdNum).catch(() => {});
+        }
+
+        // Update the notification IN PLACE to confirm the reply was sent
+        // ("You: <reply>"), mirroring Signal, then auto-cancel after a moment.
+        if (notificationId) {
+          try {
+            await notifee.displayNotification({
+              id: notificationId,
+              title: data.title || data.senderName || "Message",
+              body: `You: ${replyText}`,
+              data: { ...data } as Record<string, string>,
+              android: {
+                channelId: MESSAGE_CHANNEL_ID,
+                importance: this.AndroidImportance.HIGH ?? 4,
+                smallIcon: MESSAGE_SMALL_ICON,
+                pressAction: { id: "default", launchActivity: "default" },
+                // A confirmation, not a new alert — keep it quiet + dismissible.
+                onlyAlertOnce: true,
+                autoCancel: true,
+                timeoutAfter: 5000,
+              },
+            });
+          } catch {
+            // If the confirmation update fails, just cancel the original.
+            await notifee.cancelNotification(notificationId).catch(() => {});
+          }
+        }
+      } catch (err) {
+        console.warn("[NotifeeService] Failed to send reply from notification:", err);
+        // Leave the original notification in place so the user can retry by
+        // opening the app.
+      }
+      return true;
+    }
+
+    // ── Body PRESS → open the exact conversation ─────────────────────────
+    // Persist the pending-chat route FIRST so a COLD start (killed app) can
+    // route straight to /chat/[id] even though the deep link below is lost
+    // before expo-router mounts. app/index.tsx consumes it on boot.
+    try {
+      await persistPendingChat({ conversationId: String(conversationId) });
+    } catch {
+      /* best-effort */
+    }
+    setPendingChat({ conversationId: String(conversationId) });
+
+    // Mark the conversation read on open (matches in-app behaviour).
+    try {
+      if (Number.isFinite(convIdNum)) await markConversationRead(convIdNum);
+    } catch {
+      /* best-effort */
+    }
+
+    try {
+      // Deep link straight to the 1:1/group thread. Works for a warm or
+      // background-but-alive app; the persisted route above covers cold start.
+      await Linking.openURL(Linking.createURL(`chat/${conversationId}`));
+    } catch (err) {
+      console.warn("[NotifeeService] Failed to route to chat:", err);
+    }
+    return true;
+  }
+
+  /**
    * Reads Notifee's initial notification (the call notification that COLD-
    * launched the app) and returns a pending call route for it, or null. Called
    * once at app startup from the root layout so a killed-state notification tap
@@ -1309,7 +1470,10 @@ class NotifeeService {
     if (!notifee) return;
     try {
       notifee.onBackgroundEvent(async ({ type, detail }: { type: number; detail: any }) => {
-        await this.handleCallEvent(type, detail);
+        // Calls first; if it isn't a call notification, route the message
+        // notification (body tap → open chat, Reply/Mark-read actions).
+        const handled = await this.handleCallEvent(type, detail);
+        if (!handled) await this.handleMessageEvent(type, detail);
       });
     } catch (err) {
       console.warn("[NotifeeService] Failed to register background event handler:", err);
@@ -1325,7 +1489,10 @@ class NotifeeService {
     if (!notifee) return () => {};
     try {
       const unsub = notifee.onForegroundEvent(async ({ type, detail }: { type: number; detail: any }) => {
-        await this.handleCallEvent(type, detail);
+        // Calls first; if it isn't a call notification, route the message
+        // notification (body tap → open chat, Reply/Mark-read actions).
+        const handled = await this.handleCallEvent(type, detail);
+        if (!handled) await this.handleMessageEvent(type, detail);
       });
       return typeof unsub === "function" ? unsub : () => {};
     } catch (err) {

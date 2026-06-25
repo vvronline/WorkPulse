@@ -534,6 +534,22 @@ export function markConversationRead(convId: number) {
   return api.post(`/chat/conversations/${convId}/read`);
 }
 
+/**
+ * Send a plain-text chat message via the REST fallback endpoint.
+ *
+ * The in-app chat composer normally sends over the WebSocket, but the
+ * status-bar "Reply" action (notifeeService.handleMessageEvent) runs in a
+ * headless/background context where the socket is not connected — so it posts
+ * here instead. The server's POST /conversations/:id/messages route accepts
+ * `{ content, replyToId? }` and broadcasts the message exactly like the WS path.
+ */
+export function sendMessage(convId: number, content: string, replyToId?: number) {
+  return api.post(`/chat/conversations/${convId}/messages`, {
+    content,
+    ...(replyToId ? { replyToId } : {}),
+  });
+}
+
 // Acknowledge delivery of a received message so the sender sees the
 // "✓✓ delivered" tick (mirrors web client/src/api.ts ackDelivered).
 export function ackDelivered(messageId: number) {

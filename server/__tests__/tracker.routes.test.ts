@@ -402,3 +402,39 @@ describe("POST /api/tracker/break-end", () => {
         expect(res.status).toBe(400);
     });
 });
+
+describe("GET /api/tracker/widgets", () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+    });
+
+    test("does not count below-threshold work day as present when min_hours_present is set", async () => {
+        const today = new Date().toISOString().slice(0, 10);
+        const clockIn = `${today}T09:00:00.000Z`;
+        const clockOut = `${today}T13:34:00.000Z`; // 4h34m (274 minutes)
+
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ token_version: 0 }], rowCount: 1 }) // auth token check
+            .mockResolvedValueOnce({
+                rows: [
+                    { entry_type: "clock_in", timestamp: clockIn, work_mode: "office", approval_status: null },
+                    { entry_type: "clock_out", timestamp: clockOut, approval_status: null },
+                ],
+                rowCount: 2,
+            }) // entries
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // leaves
+            .mockResolvedValueOnce({ rows: [{ org_id: 1 }], rowCount: 1 }) // user org lookup
+            .mockResolvedValueOnce({
+                rows: [{ work_hours_per_day: 9, work_days: "1,2,3,4,5", min_hours_present: 7 }],
+                rowCount: 1,
+            }); // org config
+
+        const res = await request(app)
+            .get("/api/tracker/widgets")
+            .set("Cookie", authCookie())
+            .set("X-Timezone-Offset", "0");
+
+        expect(res.status).toBe(200);
+        expect(res.body.attendancePercent).toBe(0);
+    });
+});

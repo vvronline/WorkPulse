@@ -13,6 +13,11 @@ import {
 } from "../src/realtime/pendingCall";
 import { beginCallNavigation } from "../src/realtime/callRouting";
 import { notifeeService } from "../src/services/notifeeService";
+import {
+  consumePendingChat,
+  loadPersistedPendingChat,
+  clearPersistedPendingChat,
+} from "../src/realtime/pendingChat";
 
 /**
  * Entry route: route to tabs when authenticated, otherwise to login.
@@ -34,6 +39,15 @@ export default function Index() {
   // pending call (normal launch); route = launch straight into the call.
   const [callRoute, setCallRoute] = useState<PendingCallRoute | null | undefined>(
     undefined,
+  );
+
+  // Cold-start CHAT route: when the app was launched by TAPPING a message
+  // notification (killed app), notifeeService.handleMessageEvent persisted the
+  // target conversation. We consume it here and redirect STRAIGHT to the 1:1/
+  // group thread instead of landing on the chat LIST (the "tapping a message
+  // opens the common chat window, not that person's chat" bug). null = none.
+  const [chatConversationId, setChatConversationId] = useState<string | null>(
+    null,
   );
 
   useEffect(() => {
@@ -68,6 +82,22 @@ export default function Index() {
           await new Promise((r) => setTimeout(r, 100));
         }
       }
+      if (cancelled) return;
+
+      // No pending CALL → check for a pending CHAT-notification tap (cold start).
+      // The in-memory route (warm Notifee tap) takes precedence over the
+      // SecureStore-persisted one (survives full process death).
+      if (!route) {
+        let chat = consumePendingChat();
+        if (!chat) {
+          chat = await loadPersistedPendingChat();
+        }
+        if (chat?.conversationId && !cancelled) {
+          void clearPersistedPendingChat();
+          setChatConversationId(String(chat.conversationId));
+        }
+      }
+
       if (cancelled) return;
       setCallRoute(route ?? null);
     })();
@@ -150,6 +180,19 @@ export default function Index() {
   // PendingCallNavigator can route once login completes, then fall through.
   if (callRoute && !user) {
     setPendingCall(callRoute);
+  }
+
+  // Cold-start message-notification tap for an authenticated user → open the
+  // EXACT conversation directly (no chat-list detour).
+  if (chatConversationId && user) {
+    return (
+      <Redirect
+        href={{
+          pathname: "/chat/[id]",
+          params: { id: chatConversationId },
+        }}
+      />
+    );
   }
 
   return <Redirect href={user ? "/(tabs)" : "/login"} />;

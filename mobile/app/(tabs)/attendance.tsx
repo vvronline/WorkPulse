@@ -227,6 +227,10 @@ function OverviewTab() {
   );
 
   const minHoursPresent = useMemo(() => {
+    if (org?.min_hours_present != null && org.min_hours_present !== "") {
+      const v = Number(org.min_hours_present);
+      if (!isNaN(v) && v >= 0) return v;
+    }
     if (org?.work_hours_per_day) {
       const v = Number(org.work_hours_per_day) / 2;
       if (!isNaN(v) && v > 0) return v;
