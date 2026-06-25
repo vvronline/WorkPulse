@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -6,9 +6,11 @@ import Animated, {
   useSharedValue,
   withSpring,
   withTiming,
+  withSequence,
   runOnJS,
-  FadeInDown,
+  FadeIn,
   LinearTransition,
+  interpolateColor,
 } from "react-native-reanimated";
 import { CornerUpLeft, Pin, Star } from "lucide-react-native";
 import type { Theme } from "../../theme";
@@ -54,6 +56,10 @@ type MessageBubbleProps = {
   // on the connected edges so a group reads as a single stacked column.
   firstInGroup?: boolean;
   lastInGroup?: boolean;
+  // Signal in-conversation search: when this bubble is the active search match
+  // the row briefly flashes a highlight tint so the user can spot it after the
+  // list scrolls to it.
+  highlighted?: boolean;
   registerRef: (id: number, node: View | null) => void;
   onLongPress: (message: ChatMessage, mine: boolean) => void;
   onReact: (message: ChatMessage, emoji: string) => void;
@@ -77,6 +83,7 @@ function MessageBubbleImpl({
   userId,
   firstInGroup = true,
   lastInGroup = true,
+  highlighted = false,
   registerRef,
   onLongPress,
   onReact,
@@ -148,6 +155,25 @@ function MessageBubbleImpl({
     transform: [{ scale: 0.6 + iconProgress.value * 0.4 }],
   }));
 
+  // Signal search-match highlight: a brief background tint flash that fades back
+  // out so the matched message is easy to spot after the list scrolls to it.
+  const highlight = useSharedValue(0);
+  useEffect(() => {
+    if (highlighted) {
+      highlight.value = withSequence(
+        withTiming(1, { duration: 220 }),
+        withTiming(0, { duration: 900 }),
+      );
+    }
+  }, [highlighted, highlight]);
+  const highlightAnim = useAnimatedStyle(() => ({
+    backgroundColor: interpolateColor(
+      highlight.value,
+      [0, 1],
+      ["transparent", "rgba(35,131,226,0.22)"],
+    ),
+  }));
+
   // Media-only message (image/video attachment with no caption text, not a
   // view-once pill) renders edge-to-edge — no bubble padding/background, like
   // Signal.
@@ -179,17 +205,18 @@ function MessageBubbleImpl({
 
   return (
     <Animated.View
-      // Signal-style message enter: a freshly mounted bubble fades in while
-      // sliding up a few px (springy, not a hard pop). `LinearTransition`
-      // animates neighbours easing into place when a bubble grows (e.g. a
-      // reaction chip row appears) instead of snapping.
-      entering={FadeInDown.springify().damping(20).stiffness(180).mass(0.6)}
+      // Signal-style message enter: a freshly sent/received bubble simply FADES
+      // in (no spring/bounce) so it flows straight into place and stays put.
+      // `LinearTransition` animates neighbours easing into place when a bubble
+      // grows (e.g. a reaction chip row appears) instead of snapping.
+      entering={FadeIn.duration(180)}
       layout={LinearTransition.springify().damping(22).stiffness(200)}
       style={[
         styles.bubbleRow,
         mine ? styles.rowMine : styles.rowTheirs,
         // Tighter spacing between grouped messages, looser between groups.
         firstInGroup ? styles.rowGroupStart : styles.rowGrouped,
+        highlightAnim,
       ]}
     >
       {/* Reply affordance revealed behind the bubble while swiping. */}
@@ -484,7 +511,8 @@ function areEqual(prev: MessageBubbleProps, next: MessageBubbleProps): boolean {
     prev.readReceipts === next.readReceipts &&
     prev.userId === next.userId &&
     prev.firstInGroup === next.firstInGroup &&
-    prev.lastInGroup === next.lastInGroup
+    prev.lastInGroup === next.lastInGroup &&
+    prev.highlighted === next.highlighted
   );
 }
 

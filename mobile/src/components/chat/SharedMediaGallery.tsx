@@ -186,6 +186,11 @@ export default function SharedMediaGallery({
           <Empty label="No media yet" styles={styles} />
         ) : (
           <FlatList
+            // Distinct key per tab: switching tabs swaps a numColumns={3} grid
+            // for a single-column list. RN throws a FATAL "Changing numColumns
+            // on the fly is not supported" if the SAME FlatList instance changes
+            // numColumns — keying each list forces a fresh instance per tab.
+            key="media-grid"
             data={media}
             numColumns={COLS}
             keyExtractor={(f) => String(f.id)}
@@ -229,6 +234,7 @@ export default function SharedMediaGallery({
           <Empty label="No files yet" styles={styles} />
         ) : (
           <FlatList
+            key="files-list"
             data={docs}
             keyExtractor={(f) => String(f.id)}
             contentContainerStyle={{ paddingBottom: 24 }}
@@ -261,6 +267,7 @@ export default function SharedMediaGallery({
         <Empty label="No links yet" styles={styles} />
       ) : (
         <FlatList
+          key="links-list"
           data={links}
           keyExtractor={(l) => String(l.id)}
           contentContainerStyle={{ paddingBottom: 24 }}

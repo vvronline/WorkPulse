@@ -249,6 +249,18 @@ export function useChatThread() {
   const [starredIds, setStarredIds] = useState<Set<number>>(new Set());
   // Top-anchored overflow menu (Signal-style) open state.
   const [menuOpen, setMenuOpen] = useState(false);
+  // ── Signal-style IN-CONVERSATION search ──────────────────────────────────
+  // Instead of pushing a separate route, search runs in-place over the
+  // currently-loaded thread: the header swaps to a search bar and a bottom
+  // match-navigation bar steps through hits, scrolling the (inverted) list to
+  // each and flashing a highlight on the matched bubble.
+  const [searchMode, setSearchMode] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  // Matching message ids in OLDEST-FIRST order (same order as `messages`).
+  const [searchMatchIds, setSearchMatchIds] = useState<number[]>([]);
+  const [searchActiveIdx, setSearchActiveIdx] = useState(0);
+  // The message currently focused by search — drives the bubble highlight flash.
+  const [highlightedId, setHighlightedId] = useState<number | null>(null);
   // Header 3-dot menu + its panels (search / pinned / shared files / saved).
   const [headerSheet, setHeaderSheet] = useState<HeaderSheet>(null);
   const [sheetSearchQ, setSheetSearchQ] = useState("");
@@ -1690,6 +1702,95 @@ export function useChatThread() {
     }
   }
 
+  // ── Signal-style in-conversation search ───────────────────────────────────
+  // Open the in-place search bar (called from the overflow menu). Dismisses the
+  // keyboard-stealing emoji panel and clears any previous query/results.
+  function openSearch() {
+    setMenuOpen(false);
+    setSearchQuery("");
+    setSearchMatchIds([]);
+    setSearchActiveIdx(0);
+    setHighlightedId(null);
+    setSearchMode(true);
+  }
+
+  // Close search and clear all of its transient state.
+  function closeSearch() {
+    setSearchMode(false);
+    setSearchQuery("");
+    setSearchMatchIds([]);
+    setSearchActiveIdx(0);
+    setHighlightedId(null);
+    if (searchDebounce.current) clearTimeout(searchDebounce.current);
+  }
+
+  // Scroll the (inverted) list to a matched message and flash its highlight.
+  // Re-applies highlightedId even for the same id by briefly clearing it so the
+  // bubble's highlight effect re-fires when stepping onto the same match twice.
+  function focusMatch(messageId: number) {
+    jumpToMessage(messageId);
+    setHighlightedId(null);
+    // Next tick so the bubble sees a transition from null → id and re-flashes.
+    setTimeout(() => setHighlightedId(messageId), 30);
+  }
+
+  // Debounced query → server search scoped to this conversation. Results are
+  // mapped to the message ids that are present in the loaded thread (so we can
+  // scroll to them) and ordered oldest-first to match `messages`.
+  function onSearchQueryChange(v: string) {
+    setSearchQuery(v);
+    if (searchDebounce.current) clearTimeout(searchDebounce.current);
+    const q = v.trim();
+    if (q.length < 2) {
+      setSearchMatchIds([]);
+      setSearchActiveIdx(0);
+      setHighlightedId(null);
+      return;
+    }
+    searchDebounce.current = setTimeout(() => {
+      searchMessages(q, convId)
+        .then((r) => {
+          const ids = (r.data || []).map((m) => m.id);
+          // Keep only ids currently loaded in the thread and order them to
+          // match the message list (oldest → newest).
+          const present = messages
+            .filter((m) => ids.includes(m.id))
+            .map((m) => m.id);
+          setSearchMatchIds(present);
+          if (present.length > 0) {
+            // Signal lands on the NEWEST match first.
+            const startIdx = present.length - 1;
+            setSearchActiveIdx(startIdx);
+            focusMatch(present[startIdx]);
+          } else {
+            setSearchActiveIdx(0);
+            setHighlightedId(null);
+          }
+        })
+        .catch(() => {
+          setSearchMatchIds([]);
+          setSearchActiveIdx(0);
+          setHighlightedId(null);
+        });
+    }, 300);
+  }
+
+  // Step to the PREVIOUS (older) match — up arrow in Signal's search nav bar.
+  function searchPrev() {
+    if (searchMatchIds.length === 0) return;
+    const next = Math.max(0, searchActiveIdx - 1);
+    setSearchActiveIdx(next);
+    focusMatch(searchMatchIds[next]);
+  }
+
+  // Step to the NEXT (newer) match — down arrow.
+  function searchNext() {
+    if (searchMatchIds.length === 0) return;
+    const next = Math.min(searchMatchIds.length - 1, searchActiveIdx + 1);
+    setSearchActiveIdx(next);
+    focusMatch(searchMatchIds[next]);
+  }
+
   // ── Header 3-dot menu (mirrors the web ChatHeader overflow menu) ──
 
   function openHeaderPanel(panel: HeaderSheet) {
@@ -2208,6 +2309,17 @@ export function useChatThread() {
     openSharedMedia,
     openPinnedScreen,
     openSavedScreen,
+    // Signal-style in-conversation search
+    searchMode,
+    searchQuery,
+    searchMatchIds,
+    searchActiveIdx,
+    highlightedId,
+    openSearch,
+    closeSearch,
+    onSearchQueryChange,
+    searchPrev,
+    searchNext,
     // list
     loading,
     messages,

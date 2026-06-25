@@ -8,20 +8,23 @@ import type { ChatMessage } from "../../features";
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
-// Gentle zoom (no bounce, no layout slide). Starts/ends at 0.7 scale + fades so
-// chips softly zoom in when added and zoom out when removed — identical for text
-// and media bubbles. We deliberately DON'T use `layout` here: an image loads
-// after the chat opens and grows the bubble, and a layout transition would make
-// the pills "fall" to follow the new image height.
+// Pronounced Signal-style zoom (no layout slide). The chip pops in from a small
+// scale, overshoots slightly past 1, then settles — so adding a reaction is
+// clearly noticeable. Removal shrinks back down while fading. We deliberately
+// DON'T use `layout` here: an image loads after the chat opens and grows the
+// bubble, and a layout transition would make the pills "fall" to follow the new
+// image height.
 const CHIP_IN = new Keyframe({
-  0: { opacity: 0, transform: [{ scale: 0.7 }] },
+  0: { opacity: 0, transform: [{ scale: 0.3 }] },
+  60: { opacity: 1, transform: [{ scale: 1.18 }] },
   100: { opacity: 1, transform: [{ scale: 1 }] },
-}).duration(160);
+}).duration(260);
 
 const CHIP_OUT = new Keyframe({
   0: { opacity: 1, transform: [{ scale: 1 }] },
-  100: { opacity: 0, transform: [{ scale: 0.7 }] },
-}).duration(130);
+  40: { opacity: 1, transform: [{ scale: 1.12 }] },
+  100: { opacity: 0, transform: [{ scale: 0.3 }] },
+}).duration(200);
 
 /**
  * Reaction chips row rendered BELOW the bubble (mirrors the web ReactionBar /

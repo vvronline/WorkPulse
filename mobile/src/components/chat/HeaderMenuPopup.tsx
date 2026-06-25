@@ -8,23 +8,16 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
-import {
-  FolderOpen,
-  Pin,
-  Search,
-  Star,
-  Trash2,
-} from "lucide-react-native";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 
 /**
  * HeaderMenuPopup — a Signal-Android-style overflow menu anchored to the
- * top-right under the header's ⋮ button (replaces the old bottom sheet). A
- * transparent scrim dismisses on outside-tap; the menu card fades/scales in.
+ * top-right just BELOW the header's ⋮ button (never overlapping the header). A
+ * transparent scrim dismisses on outside-tap; the menu card fades in.
  *
- * Each item is a navigation/action trigger — the heavy panels (search, shared
- * media, saved) now live in the conversation profile screen.
+ * Signal's overflow menu is a compact, TEXT-ONLY popup (no leading icons), so
+ * the rows here are tightened and icon-free.
  */
 export default function HeaderMenuPopup({
   visible,
@@ -54,6 +47,11 @@ export default function HeaderMenuPopup({
     setTimeout(fn, 60);
   };
 
+  // Drop the card just UNDER the header bar. The native stack header is ~56dp
+  // tall and sits below the status-bar inset — anchoring at the inset alone
+  // (the old behaviour) made the card overlap the header.
+  const HEADER_HEIGHT = 56;
+
   return (
     <Modal
       visible={visible}
@@ -65,37 +63,28 @@ export default function HeaderMenuPopup({
         <Animated.View
           entering={FadeIn.duration(120)}
           exiting={FadeOut.duration(100)}
-          style={[styles.card, { top: insets.top + 6 }]}
+          style={[styles.card, { top: insets.top + HEADER_HEIGHT + 4 }]}
           // Stop the scrim's onPress from firing when tapping inside the card.
           onStartShouldSetResponder={() => true}
         >
+          <MenuRow label="Search" onPress={run(onSearch)} styles={styles} />
           <MenuRow
-            icon={<Search size={19} color={theme.text} />}
-            label="Search"
-            onPress={run(onSearch)}
-            styles={styles}
-          />
-          <MenuRow
-            icon={<Pin size={19} color={theme.text} />}
             label="Pinned messages"
             onPress={run(onPinned)}
             styles={styles}
           />
           <MenuRow
-            icon={<FolderOpen size={19} color={theme.text} />}
             label="Shared media"
             onPress={run(onSharedMedia)}
             styles={styles}
           />
           <MenuRow
-            icon={<Star size={19} color={theme.text} />}
             label="Saved messages"
             onPress={run(onSaved)}
             styles={styles}
           />
           <View style={styles.divider} />
           <MenuRow
-            icon={<Trash2 size={19} color={theme.danger} />}
             label="Clear chat"
             danger
             onPress={run(onClearChat)}
@@ -108,13 +97,11 @@ export default function HeaderMenuPopup({
 }
 
 function MenuRow({
-  icon,
   label,
   danger,
   onPress,
   styles,
 }: {
-  icon: React.ReactNode;
   label: string;
   danger?: boolean;
   onPress: () => void;
@@ -125,7 +112,6 @@ function MenuRow({
       style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
       onPress={onPress}
     >
-      {icon}
       <Text style={[styles.rowText, danger && styles.rowTextDanger]}>
         {label}
       </Text>
@@ -142,12 +128,12 @@ const makeStyles = (theme: Theme) =>
     card: {
       position: "absolute",
       right: 8,
-      minWidth: 220,
+      minWidth: 180,
       backgroundColor: theme.bgElevated,
-      borderRadius: 14,
+      borderRadius: 12,
       borderWidth: 1,
       borderColor: theme.glassBorder,
-      paddingVertical: 6,
+      paddingVertical: 4,
       shadowColor: "#000",
       shadowOpacity: 0.4,
       shadowRadius: 16,
@@ -155,15 +141,12 @@ const makeStyles = (theme: Theme) =>
       elevation: 12,
     },
     row: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 14,
       paddingHorizontal: 16,
-      paddingVertical: 13,
+      paddingVertical: 11,
     },
     rowPressed: { backgroundColor: theme.surfaceHover },
     rowText: {
-      fontSize: 15,
+      fontSize: 14,
       color: theme.text,
       fontFamily: theme.fontMedium,
     },
@@ -171,7 +154,7 @@ const makeStyles = (theme: Theme) =>
     divider: {
       height: 1,
       backgroundColor: theme.border,
-      marginVertical: 4,
-      marginHorizontal: 12,
+      marginVertical: 3,
+      marginHorizontal: 10,
     },
   });

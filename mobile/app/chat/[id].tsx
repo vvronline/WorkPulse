@@ -1,10 +1,20 @@
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { Stack } from "expo-router";
 import {
+  ArrowLeft,
   ChevronDown,
+  ChevronUp,
   MoreVertical,
   Phone,
   Video as VideoIcon,
+  X,
 } from "lucide-react-native";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
@@ -47,57 +57,99 @@ export default function ChatThread() {
   return (
     <View style={styles.screen}>
       <Stack.Screen
-        options={{
-          title: c.name || "Chat",
-          headerTitle: () => (
-            // Signal-style: tapping the title/avatar opens the conversation
-            // profile (Conversation Settings) screen.
-            <Pressable
-              style={styles.headerTitleWrap}
-              onPress={c.openInfo}
-              hitSlop={6}
-            >
-              <ChatAvatar
-                name={c.name}
-                avatar={c.headerAvatar}
-                size={32}
-                userStatus={c.peerUserId ? c.peerStatus : undefined}
-                ringColor={theme.bg}
-              />
-              <View style={{ flexShrink: 1 }}>
-                <Text style={styles.headerTitleText} numberOfLines={1}>
-                  {c.name || "Chat"}
-                </Text>
-                {c.headerSubtitle ? (
-                  <Text style={styles.headerSubtitle} numberOfLines={1}>
-                    {c.headerSubtitle}
-                  </Text>
-                ) : null}
-              </View>
-            </Pressable>
-          ),
-          // 1:1 calls only — the native call screen can't handle group calls
-          // yet, so hide the call buttons in group conversations. The 3-dot
-          // overflow menu (search / pinned / files / saved / clear chat) is
-          // available everywhere, mirroring the web ChatHeader.
-          headerRight: () => (
-            <View style={styles.headerActions}>
-              {!c.isGroupConv ? (
-                <>
-                  <Pressable onPress={() => c.startCall("voice")} hitSlop={8}>
-                    <Phone size={20} color={theme.primary} />
+        options={
+          c.searchMode
+            ? {
+                // Signal in-conversation search: the header becomes a search
+                // field with a back arrow (exit) and a clear "X". The match
+                // counter + up/down navigation live in a bottom bar.
+                headerTitle: () => (
+                  <View style={styles.searchHeader}>
+                    <TextInput
+                      style={styles.searchInput}
+                      placeholder="Search this chat…"
+                      placeholderTextColor={theme.textMuted}
+                      value={c.searchQuery}
+                      onChangeText={c.onSearchQueryChange}
+                      autoFocus
+                      returnKeyType="search"
+                    />
+                    {c.searchQuery.length > 0 ? (
+                      <Pressable
+                        onPress={() => c.onSearchQueryChange("")}
+                        hitSlop={8}
+                      >
+                        <X size={18} color={theme.textSecondary} />
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ),
+                headerLeft: () => (
+                  <Pressable onPress={c.closeSearch} hitSlop={8}>
+                    <ArrowLeft size={22} color={theme.text} />
                   </Pressable>
-                  <Pressable onPress={() => c.startCall("video")} hitSlop={8}>
-                    <VideoIcon size={20} color={theme.primary} />
+                ),
+                headerRight: () => null,
+              }
+            : {
+                title: c.name || "Chat",
+                headerTitle: () => (
+                  // Signal-style: tapping the title/avatar opens the
+                  // conversation profile (Conversation Settings) screen.
+                  <Pressable
+                    style={styles.headerTitleWrap}
+                    onPress={c.openInfo}
+                    hitSlop={6}
+                  >
+                    <ChatAvatar
+                      name={c.name}
+                      avatar={c.headerAvatar}
+                      size={32}
+                      userStatus={c.peerUserId ? c.peerStatus : undefined}
+                      ringColor={theme.bg}
+                    />
+                    <View style={{ flexShrink: 1 }}>
+                      <Text style={styles.headerTitleText} numberOfLines={1}>
+                        {c.name || "Chat"}
+                      </Text>
+                      {c.headerSubtitle ? (
+                        <Text style={styles.headerSubtitle} numberOfLines={1}>
+                          {c.headerSubtitle}
+                        </Text>
+                      ) : null}
+                    </View>
                   </Pressable>
-                </>
-              ) : null}
-              <Pressable onPress={() => c.setMenuOpen(true)} hitSlop={8}>
-                <MoreVertical size={20} color={theme.text} />
-              </Pressable>
-            </View>
-          ),
-        }}
+                ),
+                // 1:1 calls only — the native call screen can't handle group
+                // calls yet, so hide the call buttons in group conversations.
+                // The 3-dot overflow menu (search / pinned / files / saved /
+                // clear chat) is available everywhere, mirroring the web
+                // ChatHeader.
+                headerRight: () => (
+                  <View style={styles.headerActions}>
+                    {!c.isGroupConv ? (
+                      <>
+                        <Pressable
+                          onPress={() => c.startCall("voice")}
+                          hitSlop={8}
+                        >
+                          <Phone size={20} color={theme.primary} />
+                        </Pressable>
+                        <Pressable
+                          onPress={() => c.startCall("video")}
+                          hitSlop={8}
+                        >
+                          <VideoIcon size={20} color={theme.primary} />
+                        </Pressable>
+                      </>
+                    ) : null}
+                    <Pressable onPress={() => c.setMenuOpen(true)} hitSlop={8}>
+                      <MoreVertical size={20} color={theme.text} />
+                    </Pressable>
+                  </View>
+                ),
+              }
+        }
       />
       {c.loading ? (
         <View style={styles.center}>
@@ -116,6 +168,59 @@ export default function ChatThread() {
           ) : null}
 
           <ChatList c={c} styles={styles} theme={theme} />
+
+          {/* Signal in-conversation search match-navigation bar. Shows the
+              current match position and up/down arrows to step through results
+              (each step scrolls the list to the match + flashes its highlight). */}
+          {c.searchMode ? (
+            <View style={styles.searchNavBar}>
+              <Text style={styles.searchNavCount}>
+                {c.searchMatchIds.length > 0
+                  ? `${c.searchActiveIdx + 1} of ${c.searchMatchIds.length}`
+                  : c.searchQuery.trim().length < 2
+                    ? "Type to search"
+                    : "No results"}
+              </Text>
+              <View style={styles.searchNavBtns}>
+                <Pressable
+                  onPress={c.searchPrev}
+                  hitSlop={8}
+                  disabled={
+                    c.searchMatchIds.length === 0 || c.searchActiveIdx <= 0
+                  }
+                  style={styles.searchNavBtn}
+                >
+                  <ChevronUp
+                    size={22}
+                    color={
+                      c.searchMatchIds.length === 0 || c.searchActiveIdx <= 0
+                        ? theme.textMuted
+                        : theme.text
+                    }
+                  />
+                </Pressable>
+                <Pressable
+                  onPress={c.searchNext}
+                  hitSlop={8}
+                  disabled={
+                    c.searchMatchIds.length === 0 ||
+                    c.searchActiveIdx >= c.searchMatchIds.length - 1
+                  }
+                  style={styles.searchNavBtn}
+                >
+                  <ChevronDown
+                    size={22}
+                    color={
+                      c.searchMatchIds.length === 0 ||
+                      c.searchActiveIdx >= c.searchMatchIds.length - 1
+                        ? theme.textMuted
+                        : theme.text
+                    }
+                  />
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
 
           {c.peerTyping ? (
             <TypingIndicator name={c.name} avatar={c.headerAvatar} />
@@ -261,7 +366,7 @@ export default function ChatThread() {
       <HeaderMenuPopup
         visible={c.menuOpen}
         onClose={() => c.setMenuOpen(false)}
-        onSearch={c.openSearchScreen}
+        onSearch={c.openSearch}
         onPinned={c.openPinnedScreen}
         onSharedMedia={() => c.openSharedMedia("media")}
         onSaved={c.openSavedScreen}
@@ -412,6 +517,7 @@ function ChatList({
               userId={c.user?.id}
               firstInGroup={firstInGroup}
               lastInGroup={lastInGroup}
+              highlighted={c.highlightedId === item.id}
               registerRef={c.registerBubbleRef}
               onLongPress={c.openReactionBar}
               onReact={c.react}
@@ -462,6 +568,43 @@ const makeStyles = (theme: Theme) =>
     center: { flex: 1, alignItems: "center", justifyContent: "center" },
     headerActions: { flexDirection: "row", gap: 18, alignItems: "center" },
     headerTitleWrap: { flexDirection: "row", alignItems: "center", gap: 10 },
+    // Signal in-conversation search: header field + bottom match-nav bar.
+    searchHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      minWidth: 240,
+      flex: 1,
+    },
+    searchInput: {
+      flex: 1,
+      fontSize: 16,
+      color: theme.text,
+      paddingVertical: 4,
+      fontFamily: theme.fontRegular,
+    },
+    searchNavBar: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      backgroundColor: theme.bgSecondary,
+      borderTopWidth: 1,
+      borderTopColor: theme.border,
+    },
+    searchNavCount: {
+      fontSize: 13,
+      color: theme.textSecondary,
+      fontFamily: theme.fontMedium,
+    },
+    searchNavBtns: { flexDirection: "row", alignItems: "center", gap: 20 },
+    searchNavBtn: {
+      width: 32,
+      height: 32,
+      alignItems: "center",
+      justifyContent: "center",
+    },
     headerTitleText: {
       fontSize: 17,
       fontFamily: theme.fontBold,
