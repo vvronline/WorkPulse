@@ -1,16 +1,27 @@
 import { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import Animated, {
-  ZoomIn,
-  ZoomOut,
-  LinearTransition,
-} from "react-native-reanimated";
+import Animated, { Keyframe } from "react-native-reanimated";
 import { Plus } from "lucide-react-native";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { ChatMessage } from "../../features";
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+// Gentle zoom (no bounce, no layout slide). Starts/ends at 0.7 scale + fades so
+// chips softly zoom in when added and zoom out when removed — identical for text
+// and media bubbles. We deliberately DON'T use `layout` here: an image loads
+// after the chat opens and grows the bubble, and a layout transition would make
+// the pills "fall" to follow the new image height.
+const CHIP_IN = new Keyframe({
+  0: { opacity: 0, transform: [{ scale: 0.7 }] },
+  100: { opacity: 1, transform: [{ scale: 1 }] },
+}).duration(160);
+
+const CHIP_OUT = new Keyframe({
+  0: { opacity: 1, transform: [{ scale: 1 }] },
+  100: { opacity: 0, transform: [{ scale: 0.7 }] },
+}).duration(130);
 
 /**
  * Reaction chips row rendered BELOW the bubble (mirrors the web ReactionBar /
@@ -44,21 +55,19 @@ export default function ReactionChips({
   if (message.deleted_at || Object.keys(groups).length === 0) return null;
 
   return (
-    <Animated.View
-      layout={LinearTransition.springify().damping(20).stiffness(220)}
+    <View
       style={[
         styles.reactions,
         mine ? styles.reactionsMine : styles.reactionsTheirs,
       ]}
     >
       {Object.entries(groups).map(([emoji, g]) => (
-        // Signal-style pop: each chip springs in when added and zooms out when
-        // removed; `layout` slides siblings as counts/chips change.
+        // Gentle zoom in/out on add/remove — no layout slide, so reactions on
+        // images don't "fall" when the image loads and grows the bubble.
         <AnimatedPressable
           key={emoji}
-          entering={ZoomIn.springify().damping(14).stiffness(260)}
-          exiting={ZoomOut.duration(140)}
-          layout={LinearTransition.springify().damping(20).stiffness(220)}
+          entering={CHIP_IN}
+          exiting={CHIP_OUT}
           style={[styles.reactionChip, g.mine && styles.myReactionChip]}
           onPress={() => onToggle(message, emoji)}
         >
@@ -69,7 +78,7 @@ export default function ReactionChips({
       <Pressable style={styles.addReactionBtn} onPress={() => onAdd(message, mine)}>
         <Plus size={13} color={theme.textMuted} />
       </Pressable>
-    </Animated.View>
+    </View>
   );
 }
 

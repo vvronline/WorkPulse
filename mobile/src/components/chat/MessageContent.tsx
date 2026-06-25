@@ -36,7 +36,8 @@ export default function MessageContent({
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-    content: { fontSize: 15, color: theme.text, lineHeight: 20 },
+    // Signal-Android message body text (16sp, ~22sp line height).
+    content: { fontSize: 16, color: theme.text, lineHeight: 22 },
     contentMine: { color: "#fff" },
     deleted: { fontStyle: "italic", color: theme.textMuted },
   });

@@ -76,6 +76,22 @@ function ThemedStack() {
         options={{ ...headerScreen, title: "New Chat" }}
       />
       <Stack.Screen
+        name="chat/info"
+        options={{ ...headerScreen, title: "Conversation info" }}
+      />
+      <Stack.Screen
+        name="chat/shared"
+        options={{ ...headerScreen, title: "Shared media" }}
+      />
+      <Stack.Screen
+        name="chat/search"
+        options={{ ...headerScreen, title: "Search" }}
+      />
+      <Stack.Screen
+        name="chat/saved"
+        options={{ ...headerScreen, title: "Saved messages" }}
+      />
+      <Stack.Screen
         name="call/[conversationId]"
         options={{
           headerShown: false,

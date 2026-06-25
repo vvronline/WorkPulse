@@ -126,8 +126,22 @@ function MessageBubbleImpl({
     [mine, deleted, onReply, message],
   );
 
+  // Signal-style press feedback: while the finger is down the bubble eases to a
+  // slightly smaller scale, then springs back on release. Combined with the
+  // reaction overlay's scale-in this reads as one continuous "lift" gesture.
+  const pressScale = useSharedValue(1);
+  const onPressIn = () => {
+    pressScale.value = withTiming(0.97, { duration: 140 });
+  };
+  const onPressOut = () => {
+    pressScale.value = withSpring(1, { damping: 14, stiffness: 260 });
+  };
+
   const bubbleAnim = useAnimatedStyle(() => ({
-    transform: [{ translateX: translateX.value }],
+    transform: [
+      { translateX: translateX.value },
+      { scale: pressScale.value },
+    ],
   }));
   const iconAnim = useAnimatedStyle(() => ({
     opacity: iconProgress.value,
@@ -198,6 +212,8 @@ function MessageBubbleImpl({
           ref={(node) => {
             registerRef(message.id, node as unknown as View | null);
           }}
+          onPressIn={onPressIn}
+          onPressOut={onPressOut}
           onLongPress={() => {
             if (deleted) return;
             onLongPress(message, mine);
@@ -212,7 +228,13 @@ function MessageBubbleImpl({
           ]}
         >
           {!mine && firstInGroup && message.sender_name ? (
-            <Text style={styles.sender}>{message.sender_name}</Text>
+            // On media-only bubbles the container padding is stripped to let the
+            // image lift edge-to-edge — which clipped the sender name's first
+            // letter. Re-add horizontal padding to the name in that case so it
+            // clears the bubble edge.
+            <Text style={[styles.sender, isMediaOnly && styles.senderMedia]}>
+              {message.sender_name}
+            </Text>
           ) : null}
           {message.reply_to_id && !deleted ? (
             <ReplyQuote message={message} />
@@ -338,8 +360,9 @@ const makeStyles = (theme: Theme) =>
       position: "relative",
       alignSelf: "stretch",
       borderRadius: 18,
+      // Signal-Android conversation item padding (12dp horizontal, 8dp vertical).
       paddingHorizontal: 12,
-      paddingVertical: 7,
+      paddingVertical: 8,
       gap: 2,
     },
     // Own messages — clean neutral fill (no brand color), borderless.
@@ -359,10 +382,15 @@ const makeStyles = (theme: Theme) =>
     },
     bubblePending: { opacity: 0.7 },
     sender: {
-      fontSize: 11,
+      // Signal-Android group sender name (13sp).
+      fontSize: 13,
       fontFamily: theme.fontSemiBold,
       color: theme.primaryLight,
     },
+    // Media-only bubbles strip the container's horizontal padding so the image
+    // lifts edge-to-edge; re-add it on the sender name so its first letter
+    // isn't clipped against the bubble edge.
+    senderMedia: { paddingHorizontal: 12, paddingTop: 4 },
     // Signal inline footer: content + meta share one wrapping row so the
     // time/ticks tuck onto the last text line when there's room, else wrap to
     // the bottom-right.
@@ -383,13 +411,14 @@ const makeStyles = (theme: Theme) =>
       paddingLeft: 8,
     },
     edited: {
-      fontSize: 10,
+      // Signal-Android footer text (11sp).
+      fontSize: 11,
       color: theme.textMuted,
       fontStyle: "italic",
       fontFamily: theme.fontRegular,
     },
     editedMine: { color: theme.chatOutMeta },
-    time: { fontSize: 10, color: theme.textMuted, fontFamily: theme.fontRegular },
+    time: { fontSize: 11, color: theme.textMuted, fontFamily: theme.fontRegular },
     timeMine: { color: theme.chatOutMeta },
     // Media-only footer overlaid on the image bottom-right inside a translucent
     // dark pill (web parity — .mediaOnly .meta). Absolutely positioned so the

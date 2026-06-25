@@ -14,6 +14,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
+  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -36,7 +37,9 @@ import {
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { ChatMessage } from "../../features";
-import { EMOJIS } from "./chatUtils";
+import { uploadUrl } from "../../config";
+import { AuthedImage } from "../AuthedImage";
+import { EMOJIS, isImageFile } from "./chatUtils";
 import { fmtTime } from "./chatUtils";
 
 export interface ReactionAnchor {
@@ -230,6 +233,23 @@ export default function ReactionOverlay({
     (r) => r.userId === userId
   )?.emoji;
 
+  // Lifted-clone media handling. For image attachments the clone must show the
+  // actual photo (Signal parity) instead of the file name on a gray box — that
+  // was the bug where long-pressing an image hid it behind its name. A
+  // media-only image (no caption, not view-once) lifts edge-to-edge with a
+  // transparent container; an image WITH a caption keeps the bubble fill and
+  // stacks the caption under the photo.
+  const isViewOnce = !!message.metadata?.viewOnce;
+  const cloneIsImage =
+    !message.deleted_at && isImageFile(message) && !!message.file_url && !isViewOnce;
+  const cloneCaption = String(message.content || "").trim();
+  const cloneMediaOnly = cloneIsImage && !cloneCaption;
+  const cloneImageUri = cloneIsImage
+    ? uploadUrl(message.file_url) || undefined
+    : undefined;
+  const cloneImageIsLocal =
+    !!cloneImageUri && /^(file|content|data):/i.test(cloneImageUri);
+
   const scrimOpacity = progress.interpolate({
     inputRange: [0, 1],
     outputRange: [0, 1],
@@ -305,11 +325,22 @@ export default function ReactionOverlay({
 
         {/* Lifted bubble clone — rendered at the EXACT measured rect (no scale)
             so the bubble keeps its original size when lifted (Signal lifts the
-            bubble 1:1; scaling it made the bubble appear to grow). */}
+            bubble 1:1; scaling it made the bubble appear to grow).
+
+            For an image attachment we render the ACTUAL photo (Signal parity) so
+            the preview stays visible while the reaction toolbar is open —
+            previously the clone only rendered the file NAME on a gray box, which
+            hid the image. Media-only images lift edge-to-edge on a transparent
+            container; images with a caption keep the bubble fill and stack the
+            caption under the photo. */}
         <Animated.View
           style={[
             styles.bubbleClone,
-            a.mine ? styles.bubbleMine : styles.bubbleTheirs,
+            cloneMediaOnly
+              ? styles.bubbleCloneMedia
+              : a.mine
+                ? styles.bubbleMine
+                : styles.bubbleTheirs,
             {
               top: bubbleTop,
               left: bubbleLeft,
@@ -319,20 +350,64 @@ export default function ReactionOverlay({
             },
           ]}
         >
-          {!a.mine && message.sender_name ? (
-            <Text style={styles.sender}>{message.sender_name}</Text>
-          ) : null}
-          <Text
-            style={[styles.cloneText, a.mine && styles.cloneTextMine]}
-            numberOfLines={12}
-          >
-            {message.deleted_at
-              ? "This message was deleted"
-              : message.content || (message.file_name ?? "Attachment")}
-          </Text>
-          <Text style={[styles.cloneTime, a.mine && styles.cloneTimeMine]}>
-            {fmtTime(message.created_at)}
-          </Text>
+          {cloneIsImage && cloneImageUri ? (
+            <>
+              {cloneImageIsLocal ? (
+                <Image
+                  source={{ uri: cloneImageUri }}
+                  style={[
+                    styles.cloneImage,
+                    {
+                      width: cloneMediaOnly ? bubbleW : "100%",
+                      height: cloneMediaOnly
+                        ? bubbleH
+                        : Math.max(0, bubbleH - 28),
+                    },
+                  ]}
+                  resizeMode="cover"
+                />
+              ) : (
+                <AuthedImage
+                  uri={cloneImageUri}
+                  style={[
+                    styles.cloneImage,
+                    {
+                      width: cloneMediaOnly ? bubbleW : "100%",
+                      height: cloneMediaOnly
+                        ? bubbleH
+                        : Math.max(0, bubbleH - 28),
+                    },
+                  ]}
+                  resizeMode="cover"
+                />
+              )}
+              {!cloneMediaOnly ? (
+                <Text
+                  style={[styles.cloneText, a.mine && styles.cloneTextMine]}
+                  numberOfLines={3}
+                >
+                  {cloneCaption}
+                </Text>
+              ) : null}
+            </>
+          ) : (
+            <>
+              {!a.mine && message.sender_name ? (
+                <Text style={styles.sender}>{message.sender_name}</Text>
+              ) : null}
+              <Text
+                style={[styles.cloneText, a.mine && styles.cloneTextMine]}
+                numberOfLines={12}
+              >
+                {message.deleted_at
+                  ? "This message was deleted"
+                  : message.content || (message.file_name ?? "Attachment")}
+              </Text>
+              <Text style={[styles.cloneTime, a.mine && styles.cloneTimeMine]}>
+                {fmtTime(message.created_at)}
+              </Text>
+            </>
+          )}
         </Animated.View>
 
         {/* Secondary context menu (vertical list) — only when the 3-dots "more"
@@ -444,8 +519,9 @@ const makeStyles = (theme: Theme) =>
     bubbleClone: {
       position: "absolute",
       borderRadius: 18,
+      // Match the real bubble's Signal-Android padding (12dp × 8dp).
       paddingHorizontal: 12,
-      paddingVertical: 7,
+      paddingVertical: 8,
       shadowColor: "#000",
       shadowOpacity: 0.3,
       shadowRadius: 16,
@@ -454,11 +530,25 @@ const makeStyles = (theme: Theme) =>
     },
     bubbleMine: { backgroundColor: theme.chatOutBg },
     bubbleTheirs: { backgroundColor: theme.chatInBg },
-    sender: { fontSize: 11, fontWeight: "700", color: theme.primaryLight, marginBottom: 2 },
-    cloneText: { fontSize: 15, color: theme.text, lineHeight: 20 },
+    // Media-only image clone: no bubble fill/padding so the photo lifts
+    // edge-to-edge (Signal-style) and the gray bubble no longer covers it.
+    bubbleCloneMedia: {
+      backgroundColor: "transparent",
+      paddingHorizontal: 0,
+      paddingVertical: 0,
+      overflow: "hidden",
+    },
+    cloneImage: {
+      borderRadius: 14,
+      backgroundColor: theme.surface,
+    },
+    // Match the real bubble's Signal-Android sizing 1:1 so the lifted clone is
+    // pixel-identical (sender 13sp, body 16sp/22, footer 11sp).
+    sender: { fontSize: 13, fontWeight: "700", color: theme.primaryLight, marginBottom: 2 },
+    cloneText: { fontSize: 16, color: theme.text, lineHeight: 22 },
     cloneTextMine: { color: "#fff" },
     cloneTime: {
-      fontSize: 10,
+      fontSize: 11,
       color: theme.textMuted,
       alignSelf: "flex-end",
       marginTop: 2,

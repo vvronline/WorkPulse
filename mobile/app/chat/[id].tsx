@@ -28,9 +28,10 @@ import {
   AttachmentPicker,
   MediaEditor,
   MessageActionsSheet,
-  HeaderMenuSheet,
+  HeaderMenuPopup,
   useChatThread,
 } from "../../src/components/chat";
+import { fmtDaySeparator, isSameDay } from "../../src/components/chat/chatUtils";
 
 /**
  * Chat thread screen — a thin presentational orchestrator. All state, socket
@@ -49,7 +50,13 @@ export default function ChatThread() {
         options={{
           title: c.name || "Chat",
           headerTitle: () => (
-            <View style={styles.headerTitleWrap}>
+            // Signal-style: tapping the title/avatar opens the conversation
+            // profile (Conversation Settings) screen.
+            <Pressable
+              style={styles.headerTitleWrap}
+              onPress={c.openInfo}
+              hitSlop={6}
+            >
               <ChatAvatar
                 name={c.name}
                 avatar={c.headerAvatar}
@@ -67,7 +74,7 @@ export default function ChatThread() {
                   </Text>
                 ) : null}
               </View>
-            </View>
+            </Pressable>
           ),
           // 1:1 calls only — the native call screen can't handle group calls
           // yet, so hide the call buttons in group conversations. The 3-dot
@@ -85,7 +92,7 @@ export default function ChatThread() {
                   </Pressable>
                 </>
               ) : null}
-              <Pressable onPress={() => c.openHeaderPanel("menu")} hitSlop={8}>
+              <Pressable onPress={() => c.setMenuOpen(true)} hitSlop={8}>
                 <MoreVertical size={20} color={theme.text} />
               </Pressable>
             </View>
@@ -248,23 +255,16 @@ export default function ChatThread() {
         onDelete={() => c.actionTarget && c.doDelete(c.actionTarget)}
       />
 
-      {/* Header 3-dot menu + its panels (search / pinned / files / saved). */}
-      <HeaderMenuSheet
-        sheet={c.headerSheet}
-        name={c.name}
-        convId={c.convId}
-        loading={c.sheetLoading}
-        searchQ={c.sheetSearchQ}
-        searchResults={c.sheetSearchResults}
-        pinnedMsgs={c.pinnedMsgs}
-        sharedFiles={c.sharedFiles}
-        savedMsgs={c.savedMsgs}
-        onClose={() => c.setHeaderSheet(null)}
-        onOpenPanel={c.openHeaderPanel}
-        onSearchChange={c.onSheetSearchChange}
-        onJump={c.jumpFromSheet}
-        onUnpin={c.unpinFromBanner}
-        onUnstar={c.unstarFromSheet}
+      {/* Header 3-dot overflow menu (Signal-style, top-anchored popup). Items
+          navigate to the dedicated profile sub-screens (search / shared media /
+          pinned / saved) instead of opening cramped bottom-sheet panels. */}
+      <HeaderMenuPopup
+        visible={c.menuOpen}
+        onClose={() => c.setMenuOpen(false)}
+        onSearch={c.openSearchScreen}
+        onPinned={c.openPinnedScreen}
+        onSharedMedia={() => c.openSharedMedia("media")}
+        onSaved={c.openSavedScreen}
         onClearChat={c.doClearChat}
       />
 
@@ -329,7 +329,7 @@ function ChatList({
         const next = y > 400;
         if (next !== showScrollBtn) setShowScrollBtn(next);
       }}
-      scrollEventThrottle={32}
+      scrollEventThrottle={16}
       onScrollToIndexFailed={() => {
         setTimeout(() => c.scrollToEnd(false), 200);
       }}
@@ -347,13 +347,14 @@ function ChatList({
       // row scrolled — making the reaction look delayed. Disabling it
       // forces the chip to paint instantly (matches the web).
       removeClippedSubviews={false}
-      // Windowing tuned for chat: render a small initial batch so the thread
-      // paints fast on open, keep a modest render window, and recycle rows
-      // aggressively to cut memory/jank on long threads.
-      initialNumToRender={15}
-      maxToRenderPerBatch={10}
-      windowSize={11}
-      updateCellsBatchingPeriod={50}
+      // Windowing tuned for SMOOTH scrolling on long threads (Signal-Android
+      // feel): a small initial batch paints the thread fast on open, a larger
+      // render window keeps off-screen rows mounted so fast flings don't reveal
+      // blank gaps, and a short batching period commits new rows quickly.
+      initialNumToRender={12}
+      maxToRenderPerBatch={12}
+      windowSize={21}
+      updateCellsBatchingPeriod={30}
       // In an inverted list the FOOTER renders at the visual TOP, so the
       // "load earlier" spinner/button belongs here (not the header).
       ListFooterComponent={
@@ -393,27 +394,43 @@ function ChatList({
           ) <= 300000;
         const firstInGroup = !within(prev, item);
         const lastInGroup = !within(item, next);
+        // Signal-style day divider. The list is INVERTED so a row's visual TOP
+        // is rendered AFTER the bubble; `prev` (index+1) is the older message
+        // ABOVE. We show the divider when this message starts a new calendar
+        // day relative to the older neighbour (or it's the oldest message).
+        const showDaySeparator = !prev || !isSameDay(prev.created_at, item.created_at);
         return (
-          <MessageBubble
-            message={item}
-            mine={mine}
-            deleted={!!item.deleted_at}
-            starred={c.starredIds.has(item.id)}
-            pinned={!!item.pinned_at}
-            participantCount={c.participantCount}
-            readReceipts={c.readReceipts}
-            userId={c.user?.id}
-            firstInGroup={firstInGroup}
-            lastInGroup={lastInGroup}
-            registerRef={c.registerBubbleRef}
-            onLongPress={c.openReactionBar}
-            onReact={c.react}
-            onAddReaction={c.openReactionBar}
-            onReply={c.startReply}
-            onRetry={c.retryFailedMessage}
-            onCancelUpload={c.cancelMediaUpload}
-            onRetryUpload={c.retryMediaUpload}
-          />
+          <View>
+            <MessageBubble
+              message={item}
+              mine={mine}
+              deleted={!!item.deleted_at}
+              starred={c.starredIds.has(item.id)}
+              pinned={!!item.pinned_at}
+              participantCount={c.participantCount}
+              readReceipts={c.readReceipts}
+              userId={c.user?.id}
+              firstInGroup={firstInGroup}
+              lastInGroup={lastInGroup}
+              registerRef={c.registerBubbleRef}
+              onLongPress={c.openReactionBar}
+              onReact={c.react}
+              onAddReaction={c.openReactionBar}
+              onReply={c.startReply}
+              onRetry={c.retryFailedMessage}
+              onCancelUpload={c.cancelMediaUpload}
+              onRetryUpload={c.retryMediaUpload}
+            />
+            {showDaySeparator ? (
+              <View style={styles.daySeparator}>
+                <View style={styles.dayPill}>
+                  <Text style={styles.dayPillText}>
+                    {fmtDaySeparator(item.created_at)}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+          </View>
         );
       }}
     />
@@ -490,6 +507,26 @@ const makeStyles = (theme: Theme) =>
     // breathing-room gap on `paddingTop` so the newest bubble always clears the
     // composer / typing indicator with a consistent gap.
     list: { paddingHorizontal: 10, paddingTop: 24, paddingBottom: 8 },
+    // Signal-style centered day-divider pill rendered between messages on a
+    // day boundary. In the INVERTED list this sits visually ABOVE the first
+    // message of each day.
+    daySeparator: {
+      alignItems: "center",
+      marginVertical: 10,
+    },
+    dayPill: {
+      paddingHorizontal: 12,
+      paddingVertical: 4,
+      borderRadius: theme.radiusFull,
+      backgroundColor: theme.bgElevated,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+    },
+    dayPillText: {
+      fontSize: 11,
+      color: theme.textSecondary,
+      fontFamily: theme.fontSemiBold,
+    },
     loadOlderBtn: {
       alignSelf: "center",
       paddingHorizontal: 16,

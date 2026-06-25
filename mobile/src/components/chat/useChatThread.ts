@@ -55,6 +55,7 @@ import {
 } from "../../features";
 import { socket } from "../../realtime/socket";
 import { emitChatUnreadChanged, chatUnreadManager } from "../../realtime/chatUnreadEvents";
+import { subscribeChatJump } from "../../realtime/chatJumpEvents";
 import { useKeyboardInset } from "../../hooks/useKeyboardInset";
 import { hydrateEmojiStore } from "../../emoji/emojiStore";
 import {
@@ -246,6 +247,8 @@ export function useChatThread() {
   // Locally-tracked starred message ids (server list doesn't return per-message
   // starred state, so we reflect it optimistically after the action).
   const [starredIds, setStarredIds] = useState<Set<number>>(new Set());
+  // Top-anchored overflow menu (Signal-style) open state.
+  const [menuOpen, setMenuOpen] = useState(false);
   // Header 3-dot menu + its panels (search / pinned / shared files / saved).
   const [headerSheet, setHeaderSheet] = useState<HeaderSheet>(null);
   const [sheetSearchQ, setSheetSearchQ] = useState("");
@@ -414,6 +417,22 @@ export function useChatThread() {
     load();
     loadPinned();
   }, [load, loadPinned]);
+
+  // Cross-screen "jump to message": the in-conversation search / saved / pinned
+  // screens live on separate routes. When the user taps a result there, they
+  // pop back to this (already-mounted) thread and emit a jump event — subscribe
+  // here and scroll to the target once it lands.
+  useEffect(() => {
+    const off = subscribeChatJump((cid, messageId) => {
+      if (cid !== convId) return;
+      // Defer a touch so the back-navigation transition has fully settled.
+      setTimeout(() => jumpToMessage(messageId), 80);
+    });
+    return off;
+    // jumpToMessage is stable enough (reads refs + current messages); convId is
+    // the only real dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [convId]);
 
   // Load an older page of messages using the oldest real message id as a
   // cursor (mirrors the web loadMore). Triggered by the "load earlier"
@@ -1695,6 +1714,49 @@ export function useChatThread() {
     setHeaderSheet(panel);
   }
 
+  // ── Signal-style navigation: header → profile, overflow → sub-screens ──
+  const baseParams = {
+    id: String(convId),
+    name: name || "",
+    avatar: headerAvatar || "",
+    peerId: peerUserId ? String(peerUserId) : "",
+    isGroup: isGroupConv ? "1" : "0",
+    peerStatus: peerStatus || "",
+    memberCount: String(participantCount),
+  };
+
+  function openInfo() {
+    router.push({ pathname: "/chat/info", params: baseParams });
+  }
+
+  function openSearchScreen() {
+    router.push({
+      pathname: "/chat/search",
+      params: { id: String(convId), name: name || "" },
+    });
+  }
+
+  function openSharedMedia(tab: "media" | "files" | "links" = "media") {
+    router.push({
+      pathname: "/chat/shared",
+      params: { id: String(convId), name: name || "", tab },
+    });
+  }
+
+  function openPinnedScreen() {
+    router.push({
+      pathname: "/chat/saved",
+      params: { id: String(convId), name: name || "", mode: "pinned" },
+    });
+  }
+
+  function openSavedScreen() {
+    router.push({
+      pathname: "/chat/saved",
+      params: { id: String(convId), name: name || "", mode: "saved" },
+    });
+  }
+
   function onSheetSearchChange(v: string) {
     setSheetSearchQ(v);
     if (searchDebounce.current) clearTimeout(searchDebounce.current);
@@ -2011,9 +2073,11 @@ export function useChatThread() {
   // MessageBubble). Measures the bubble's host node directly for reliability.
   function openReactionBar(item: ChatMessage, mine: boolean) {
     // Crisp haptic the instant the reaction bar opens (Signal-Android fires a
-    // performHapticFeedback on long-press before the overlay animates in).
+    // performHapticFeedback(LONG_PRESS) on long-press before the overlay
+    // animates in). LONG_PRESS is a single short, firm tick — a ~20ms pulse
+    // reads closer to it than the previous 12ms blip.
     try {
-      Vibration.vibrate(12);
+      Vibration.vibrate(20);
     } catch {
       /* no-op */
     }
@@ -2136,6 +2200,14 @@ export function useChatThread() {
     headerSubtitle,
     startCall,
     openHeaderPanel,
+    // Signal-style overflow menu + navigation
+    menuOpen,
+    setMenuOpen,
+    openInfo,
+    openSearchScreen,
+    openSharedMedia,
+    openPinnedScreen,
+    openSavedScreen,
     // list
     loading,
     messages,

@@ -66,6 +66,64 @@ export function fmtDateTime(iso: string) {
   return `${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${fmtTime(iso)}`;
 }
 
+// True when two ISO timestamps fall on the same calendar day (local time).
+export function isSameDay(a?: string | null, b?: string | null): boolean {
+  if (!a || !b) return false;
+  const da = new Date(a);
+  const db = new Date(b);
+  if (isNaN(da.getTime()) || isNaN(db.getTime())) return false;
+  return (
+    da.getFullYear() === db.getFullYear() &&
+    da.getMonth() === db.getMonth() &&
+    da.getDate() === db.getDate()
+  );
+}
+
+// Signal-style day-divider label shown between messages on day boundaries:
+// "Today" / "Yesterday" / a weekday name within the last week / a full date.
+export function fmtDaySeparator(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const now = new Date();
+  const startOfToday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  ).getTime();
+  const startOfThat = new Date(
+    d.getFullYear(),
+    d.getMonth(),
+    d.getDate(),
+  ).getTime();
+  const dayMs = 86400000;
+  const diffDays = Math.round((startOfToday - startOfThat) / dayMs);
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Yesterday";
+  if (diffDays > 1 && diffDays < 7) {
+    return d.toLocaleDateString("en-US", { weekday: "long" });
+  }
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return d.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+}
+
+// Extract the first http(s) URL from a message's text (used by the Shared
+// media "Links" tab, mirroring Signal's link extraction).
+const URL_RE = /(https?:\/\/[^\s<>"']+)/i;
+export function extractFirstUrl(text?: string | null): string | null {
+  if (!text) return null;
+  const m = text.match(URL_RE);
+  return m ? m[1] : null;
+}
+
+export function hasUrl(text?: string | null): boolean {
+  return extractFirstUrl(text) != null;
+}
+
 // Human label for the peer's effective status shown under the chat name in
 // the header (mirrors the web ChatHeader STATUS_LABEL; "available" reads as
 // "Online" like the web's online fallback).
