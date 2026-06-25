@@ -41,6 +41,7 @@ export default function MsgTicks({
   readReceipts,
   userId,
   onAccent,
+  onMedia,
   onRetry,
 }: {
   mine: boolean;
@@ -50,13 +51,25 @@ export default function MsgTicks({
   userId?: number;
   // Own bubbles use a neutral fill; the read state pops in a brighter tint.
   onAccent?: boolean;
+  // When the ticks sit OVER media (an image/video) inside the translucent dark
+  // meta pill, force white glyphs and a dark punch-out for the read check so it
+  // stays visible against the photo (web parity — see MessageBubble.module.css
+  // .mediaOnly tick rules).
+  onMedia?: boolean;
   onRetry?: () => void;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
-  const mutedColor = onAccent ? "rgba(255,255,255,0.78)" : theme.textMuted;
-  const readColor = onAccent ? "#7cc4ff" : theme.primary;
+  const mutedColor = onMedia
+    ? "#fff"
+    : onAccent
+      ? "rgba(255,255,255,0.78)"
+      : theme.textMuted;
+  // Over media the read state is a WHITE filled disc with a dark check punched
+  // out; on a normal bubble it's an accent-tinted disc with a white check.
+  const readColor = onMedia ? "#fff" : onAccent ? "#7cc4ff" : theme.primary;
+  const readCheckColor = onMedia ? "rgba(0,0,0,0.6)" : "#fff";
 
   const phase = resolvePhase(msg, participantCount, readReceipts, userId);
 
@@ -144,14 +157,14 @@ export default function MsgTicks({
     );
   }
 
-  const color = phase === "read" ? readColor : mutedColor;
-  const ringed = phase === "read";
-  // sent → one tick; delivered/read → two ticks.
-  const doubleTick = phase === "delivered" || phase === "read";
-
   return (
     <Animated.View style={[styles.box, glyphAnim]}>
-      <DoubleTicks color={color} ringed={ringed} doubleTick={doubleTick} />
+      <TickGlyph
+        phase={phase}
+        mutedColor={mutedColor}
+        readColor={readColor}
+        readCheckColor={readCheckColor}
+      />
     </Animated.View>
   );
 }
@@ -185,30 +198,29 @@ function resolvePhase(
 }
 
 /**
- * Renders Signal's tick glyph: ONE tick (sent) or TWO offset ticks
- * (delivered/read). When `ringed`, EACH tick is enclosed in its own circle
- * (the "read" state) — two separate circled checks side by side.
+ * Web-parity delivery glyphs (mirrors the web DeliveryStatus.tsx SVGs):
+ *   sent      → a single bare check
+ *   delivered → a check inside a single circle
+ *   read      → a check inside a double circle, filled with the accent color
+ *               (the check is "punched out" of the filled disc)
  */
-function DoubleTicks({
-  color,
-  ringed,
-  doubleTick,
+function TickGlyph({
+  phase,
+  mutedColor,
+  readColor,
+  readCheckColor,
 }: {
-  color: string;
-  ringed: boolean;
-  doubleTick: boolean;
+  phase: Phase;
+  mutedColor: string;
+  readColor: string;
+  readCheckColor: string;
 }) {
-  // Single tick — width 16; double tick — wider canvas (the two ticks overlap
-  // slightly like Signal/WhatsApp).
-  if (!doubleTick) {
+  if (phase === "sent") {
     return (
-      <Svg width={16} height={16} viewBox="0 0 16 16" fill="none">
-        {ringed ? (
-          <Circle cx={8} cy={8} r={7} stroke={color} strokeWidth={1.2} />
-        ) : null}
+      <Svg width={15} height={15} viewBox="0 0 16 16" fill="none">
         <Path
-          d={ringed ? "M4.7 8.2l2.2 2.2L11.3 5.8" : "M3.5 8.5l3 3 6-7"}
-          stroke={color}
+          d="M3.5 8.5l3 3 6-7"
+          stroke={mutedColor}
           strokeWidth={1.6}
           strokeLinecap="round"
           strokeLinejoin="round"
@@ -216,49 +228,35 @@ function DoubleTicks({
       </Svg>
     );
   }
-  // Two ticks. When ringed, draw two separate circles each containing a check.
+  if (phase === "delivered") {
+    return (
+      <Svg width={15} height={15} viewBox="0 0 16 16" fill="none">
+        <Circle cx={8} cy={8} r={7} stroke={mutedColor} strokeWidth={1.3} />
+        <Path
+          d="M4.6 8.2l2.2 2.2L11.4 5.6"
+          stroke={mutedColor}
+          strokeWidth={1.5}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </Svg>
+    );
+  }
+  // read — double-circle filled disc with a check punched out of it.
   return (
-    <Svg width={22} height={16} viewBox="0 0 22 16" fill="none">
-      {ringed ? (
-        <>
-          {/* First circled check */}
-          <Circle cx={7} cy={8} r={6.4} stroke={color} strokeWidth={1.1} />
-          <Path
-            d="M4.2 8.1l1.8 1.8L9.7 6.2"
-            stroke={color}
-            strokeWidth={1.5}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-          {/* Second circled check, offset right */}
-          <Circle cx={15} cy={8} r={6.4} stroke={color} strokeWidth={1.1} />
-          <Path
-            d="M12.2 8.1l1.8 1.8L17.7 6.2"
-            stroke={color}
-            strokeWidth={1.5}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </>
-      ) : (
-        <>
-          {/* Two bare overlapping ticks (delivered). */}
-          <Path
-            d="M2.5 8.5l3 3 6-7"
-            stroke={color}
-            strokeWidth={1.6}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-          <Path
-            d="M9.5 8.5l3 3 6-7"
-            stroke={color}
-            strokeWidth={1.6}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </>
-      )}
+    <Svg width={15} height={15} viewBox="0 0 16 16" fill="none">
+      {/* Outer ring */}
+      <Circle cx={8} cy={8} r={7} stroke={readColor} strokeWidth={1.1} />
+      {/* Inner filled disc */}
+      <Circle cx={8} cy={8} r={5.2} fill={readColor} />
+      {/* Check punched out of the filled disc */}
+      <Path
+        d="M5.4 8.1l1.8 1.8L10.7 6"
+        stroke={readCheckColor}
+        strokeWidth={1.4}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </Svg>
   );
 }

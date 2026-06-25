@@ -226,22 +226,20 @@ export default function MessageBubble({
               fit within the bubble width, the time/ticks sit on the SAME line as
               the text (Signal's compact look); when they don't fit, the footer
               wraps to the bottom-right of the next line. The left margin keeps
-              the footer from visually colliding with the text. */}
-          <View style={styles.contentRow}>
-            <MessageContent message={message} mine={mine} />
-            <View style={styles.metaLine}>
-              {pinned ? (
-                <Pin size={10} color={mine ? theme.chatOutMeta : theme.textMuted} />
-              ) : null}
-              {starred ? (
-                <Star size={10} color={mine ? theme.chatOutMeta : theme.warning} />
-              ) : null}
+              the footer from visually colliding with the text.
+
+              For MEDIA-ONLY messages (an image/video with no caption) there is
+              no text row — the time + ticks are overlaid on the bottom-right of
+              the image inside a translucent dark pill (web parity), so the read
+              receipt is never cropped by the bubble's edge. */}
+          {isMediaOnly ? (
+            <View style={styles.mediaMeta} pointerEvents="box-none">
+              {pinned ? <Pin size={10} color="#fff" /> : null}
+              {starred ? <Star size={10} color="#fff" /> : null}
               {message.edited_at && !deleted ? (
-                <Text style={[styles.edited, mine && styles.editedMine]}>
-                  edited
-                </Text>
+                <Text style={styles.mediaMetaText}>edited</Text>
               ) : null}
-              <Text style={[styles.time, mine && styles.timeMine]}>
+              <Text style={styles.mediaMetaText}>
                 {fmtTime(message.created_at)}
               </Text>
               <MsgTicks
@@ -250,11 +248,40 @@ export default function MessageBubble({
                 participantCount={participantCount}
                 readReceipts={readReceipts}
                 userId={userId}
-                onAccent={mine}
+                onMedia
                 onRetry={mine ? () => onRetry?.(message) : undefined}
               />
             </View>
-          </View>
+          ) : (
+            <View style={styles.contentRow}>
+              <MessageContent message={message} mine={mine} />
+              <View style={styles.metaLine}>
+                {pinned ? (
+                  <Pin size={10} color={mine ? theme.chatOutMeta : theme.textMuted} />
+                ) : null}
+                {starred ? (
+                  <Star size={10} color={mine ? theme.chatOutMeta : theme.warning} />
+                ) : null}
+                {message.edited_at && !deleted ? (
+                  <Text style={[styles.edited, mine && styles.editedMine]}>
+                    edited
+                  </Text>
+                ) : null}
+                <Text style={[styles.time, mine && styles.timeMine]}>
+                  {fmtTime(message.created_at)}
+                </Text>
+                <MsgTicks
+                  mine={mine}
+                  msg={message}
+                  participantCount={participantCount}
+                  readReceipts={readReceipts}
+                  userId={userId}
+                  onAccent={mine}
+                  onRetry={mine ? () => onRetry?.(message) : undefined}
+                />
+              </View>
+            </View>
+          )}
         </Pressable>
           </Animated.View>
         </GestureDetector>
@@ -355,4 +382,24 @@ const makeStyles = (theme: Theme) =>
     editedMine: { color: theme.chatOutMeta },
     time: { fontSize: 10, color: theme.textMuted, fontFamily: theme.fontRegular },
     timeMine: { color: theme.chatOutMeta },
+    // Media-only footer overlaid on the image bottom-right inside a translucent
+    // dark pill (web parity — .mediaOnly .meta). Absolutely positioned so the
+    // read tick is never clipped by the bubble's overflow:hidden corners.
+    mediaMeta: {
+      position: "absolute",
+      right: 8,
+      bottom: 8,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 4,
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      borderRadius: 10,
+      backgroundColor: "rgba(0,0,0,0.45)",
+    },
+    mediaMetaText: {
+      fontSize: 10,
+      color: "#fff",
+      fontFamily: theme.fontRegular,
+    },
   });

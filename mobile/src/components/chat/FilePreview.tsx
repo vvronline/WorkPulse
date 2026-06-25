@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -16,6 +16,7 @@ import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import { uploadUrl } from "../../config";
 import { markMessageViewed } from "../../features";
+import { getToken } from "../../auth/tokenStore";
 import VoicePlayer from "../VoicePlayer";
 import { AuthedImage } from "../AuthedImage";
 import type { ChatMessage } from "../../features";
@@ -94,6 +95,56 @@ export default function FilePreview({
   const [consumed, setConsumed] = useState(false);
   const [loadingView, setLoadingView] = useState(false);
   const [openingFile, setOpeningFile] = useState(false);
+  // Measured intrinsic dimensions for images whose metadata lacks them (the
+  // common case for received images and many sent ones). Without this the
+  // bubble fell back to a fixed 4:3 landscape box (the "too wide" bug); now we
+  // fetch the real width/height so the image is sized by its true aspect ratio
+  // within the Signal/web envelope. Keyed by file_url so it re-measures when the
+  // optimistic local uri is replaced by the server url.
+  const [measured, setMeasured] = useState<{
+    url: string;
+    width: number;
+    height: number;
+  } | null>(null);
+
+  const metaW = Number(message.metadata?.width) || null;
+  const metaH = Number(message.metadata?.height) || null;
+  const resolvedForSize = uploadUrl(message.file_url || "") || undefined;
+  const needsMeasure =
+    isImageFile(message) && (!metaW || !metaH) && !!resolvedForSize;
+
+  useEffect(() => {
+    if (!needsMeasure || !resolvedForSize) return;
+    // Already measured for this exact url — skip.
+    if (measured && measured.url === resolvedForSize) return;
+    let active = true;
+    const isLocalUri = /^(file|content|data):/i.test(resolvedForSize);
+    const apply = (w: number, h: number) => {
+      if (!active || !w || !h) return;
+      setMeasured({ url: resolvedForSize, width: w, height: h });
+    };
+    if (isLocalUri) {
+      Image.getSize(resolvedForSize, apply, () => {});
+    } else {
+      // Remote uploads are behind Bearer auth — attach the token (same pattern
+      // as AuthedImage) so getSize doesn't 401.
+      getToken()
+        .then((token) => {
+          if (!active) return;
+          Image.getSizeWithHeaders(
+            resolvedForSize,
+            token ? { Authorization: `Bearer ${token}` } : {},
+            apply,
+            () => {},
+          );
+        })
+        .catch(() => {});
+    }
+    return () => {
+      active = false;
+    };
+  }, [needsMeasure, resolvedForSize, measured]);
+
   if (!message.file_url) return null;
   const mediaStateRaw = message._mediaState || message.media_state || "";
   const mediaState = mediaStateRaw === "processing" ? "uploading" : mediaStateRaw;
@@ -176,10 +227,17 @@ export default function FilePreview({
   }
 
   if (isImageFile(message)) {
-    // Signal-style aspect-ratio sizing from the image's intrinsic dimensions
-    // (carried on the optimistic message metadata, falls back to a sane box).
-    const intrinsicW = Number(message.metadata?.width) || null;
-    const intrinsicH = Number(message.metadata?.height) || null;
+    // Signal-style aspect-ratio sizing from the image's intrinsic dimensions.
+    // Prefer the metadata dimensions (carried on the optimistic message); fall
+    // back to the dimensions we measured via Image.getSize for images that
+    // arrive without metadata (received images / older messages). Only the
+    // last resort — no metadata AND no measurement yet — uses the neutral box.
+    const measuredForThis =
+      measured && measured.url === resolvedForSize ? measured : null;
+    const intrinsicW =
+      Number(message.metadata?.width) || measuredForThis?.width || null;
+    const intrinsicH =
+      Number(message.metadata?.height) || measuredForThis?.height || null;
     const box = computeImageSize(winWidth, intrinsicW, intrinsicH);
     const resolved = uploadUrl(message.file_url) || undefined;
     // Optimistic local images (file:/content:) render with a plain <Image>;

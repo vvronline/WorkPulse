@@ -11,7 +11,7 @@
 //
 // See docs/CHAT_DESIGN_SPEC.md §4.
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   Modal,
@@ -20,15 +20,17 @@ import {
   StyleSheet,
   Text,
   useWindowDimensions,
+  View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Copy,
   CornerUpLeft,
   Forward,
+  MoreHorizontal,
   Pencil,
   Pin,
-  Plus,
+  SmilePlus,
   Star,
   Trash2,
 } from "lucide-react-native";
@@ -91,6 +93,15 @@ export default function ReactionOverlay({
   const insets = useSafeAreaInsets();
   const { width: winW, height: winH } = useWindowDimensions();
 
+  // The web toolbar shows Reply + Edit INLINE and tucks the rest (Pin, Save,
+  // Forward, Copy, Delete) behind a "more" (3-dots) button that opens a small
+  // context menu. `moreOpen` toggles that secondary menu.
+  const [moreOpen, setMoreOpen] = useState(false);
+  // Reset the secondary menu whenever the overlay re-opens.
+  useEffect(() => {
+    if (visible) setMoreOpen(false);
+  }, [visible]);
+
   // Entrance animation (scrim fade + content scale/fade).
   const progress = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -104,10 +115,19 @@ export default function ReactionOverlay({
     }
   }, [visible, progress]);
 
-  // Signal's long-press context menu is a SINGLE vertical list (Reply, Forward,
-  // Copy, Save, Pin, Edit [own], Delete) shown below the lifted bubble — there
-  // is no intermediate icon bar. (The previous build rendered BOTH an icon bar
-  // and an expandable list, which read as "two bars".)
+  // Web's "canEdit": only own text messages (no attachment, not a poll) can be
+  // edited — so the inline pencil shows under the same rule. (Mobile flags polls
+  // via metadata.pollId rather than a format_type field.)
+  const canEdit =
+    isOwn &&
+    !message?.file_url &&
+    !message?.metadata?.pollId &&
+    !message?.deleted_at;
+
+  // Secondary "more" context menu (opened from the inline 3-dots). Reply + Edit
+  // live inline on the toolbar, so they're excluded here; this list carries the
+  // remaining actions (Forward, Copy, Save, Pin, Delete) — mirroring the web
+  // ContextMenu opened from the toolbar's "..." button.
   const actions = useMemo(() => {
     const rows: {
       key: string;
@@ -117,48 +137,36 @@ export default function ReactionOverlay({
       danger?: boolean;
     }[] = [];
     rows.push({
-      key: "reply",
-      label: "Reply",
-      icon: <CornerUpLeft size={20} color={theme.text} />,
-      onPress: onReply,
+      key: "pin",
+      label: message?.pinned_at ? "Unpin" : "Pin",
+      icon: <Pin size={18} color={theme.text} />,
+      onPress: onPin,
+    });
+    rows.push({
+      key: "star",
+      label: isStarred ? "Unsave" : "Save",
+      icon: <Star size={18} color={theme.text} />,
+      onPress: onStar,
     });
     rows.push({
       key: "forward",
       label: "Forward",
-      icon: <Forward size={20} color={theme.text} />,
+      icon: <Forward size={18} color={theme.text} />,
       onPress: onForward,
     });
     if (message?.content && !message?.deleted_at) {
       rows.push({
         key: "copy",
         label: "Copy",
-        icon: <Copy size={20} color={theme.text} />,
+        icon: <Copy size={18} color={theme.text} />,
         onPress: onCopy,
       });
     }
-    rows.push({
-      key: "star",
-      label: isStarred ? "Unsave" : "Save",
-      icon: <Star size={20} color={theme.text} />,
-      onPress: onStar,
-    });
-    rows.push({
-      key: "pin",
-      label: message?.pinned_at ? "Unpin" : "Pin",
-      icon: <Pin size={20} color={theme.text} />,
-      onPress: onPin,
-    });
     if (isOwn) {
-      rows.push({
-        key: "edit",
-        label: "Edit",
-        icon: <Pencil size={20} color={theme.text} />,
-        onPress: onEdit,
-      });
       rows.push({
         key: "delete",
         label: "Delete",
-        icon: <Trash2 size={20} color={theme.danger} />,
+        icon: <Trash2 size={18} color={theme.danger} />,
         onPress: onDelete,
         danger: true,
       });
@@ -186,11 +194,11 @@ export default function ReactionOverlay({
     ? Math.min(a.x, winW - bubbleW - margin)
     : Math.max(margin, a.x);
 
-  // Single Signal-style context menu (a vertical list). Its height is the row
-  // count plus the rounded container's vertical padding.
+  // Secondary "more" context menu (vertical list) — only shown when the 3-dots
+  // is tapped. Its height is the row count plus the container's padding.
   const menuH = actions.length * MENU_ROW_H + 10;
   const neededTop = insets.top + margin + PILL_HEIGHT + PILL_GAP;
-  const neededBottom = winH - insets.bottom - margin - menuH - MENU_GAP;
+  const neededBottom = winH - insets.bottom - margin - MENU_GAP;
 
   let bubbleTop = a.y;
   const bubbleH = a.height;
@@ -199,16 +207,21 @@ export default function ReactionOverlay({
     bubbleTop = Math.max(neededTop, neededBottom - bubbleH);
   }
 
-  // Reaction pill sits above the bubble, aligned to the sender side.
+  // Inline web-style toolbar sits above the bubble, aligned to the sender side.
+  // It carries: 6 quick emojis + a "more reactions" smiley, a divider, then
+  // reply, edit (own text only) and a 3-dots "more". The toolbar can be wider
+  // than the screen, so it scrolls horizontally and we clamp its box to the
+  // viewport width.
   const pillTop = bubbleTop - PILL_HEIGHT - PILL_GAP;
-  // Pill width ≈ 6 emoji (40) + "+" (40) + padding.
-  const pillW = Math.min(winW - margin * 2, EMOJIS.length * 40 + 52);
+  const toolbarItems =
+    EMOJIS.length + 1 /* more-reactions */ + 1 /* reply */ + (canEdit ? 1 : 0) + 1; /* more */
+  const pillW = Math.min(winW - margin * 2, toolbarItems * 40 + 24);
   let pillLeft = a.mine ? bubbleLeft + bubbleW - pillW : bubbleLeft;
   pillLeft = Math.max(margin, Math.min(pillLeft, winW - pillW - margin));
 
-  // Action bar sits below the bubble, aligned to the sender side.
+  // Secondary "more" menu sits below the bubble, aligned to the sender side.
   const menuTop = bubbleTop + bubbleH + MENU_GAP;
-  const menuW = 240;
+  const menuW = 220;
   let menuLeft = a.mine ? bubbleLeft + bubbleW - menuW : bubbleLeft;
   menuLeft = Math.max(margin, Math.min(menuLeft, winW - menuW - margin));
 
@@ -233,7 +246,10 @@ export default function ReactionOverlay({
       <Pressable style={StyleSheet.absoluteFill} onPress={close}>
         <Animated.View style={[styles.scrim, { opacity: scrimOpacity }]} />
 
-        {/* Reaction pill */}
+        {/* Inline web-style toolbar (mirrors the web MessageToolbar): six quick
+            emojis + a "more reactions" smiley, a divider, then reply, edit (own
+            text only) and a 3-dots "more". Scrolls horizontally if it can't fit
+            so nothing is clipped. */}
         <Animated.View
           style={[
             styles.pill,
@@ -246,21 +262,49 @@ export default function ReactionOverlay({
             },
           ]}
         >
-          {EMOJIS.map((e) => {
-            const active = myReaction === e;
-            return (
-              <Pressable
-                key={e}
-                style={[styles.pillEmojiBtn, active && styles.pillEmojiActive]}
-                onPress={() => onReact(e)}
-              >
-                <Text style={styles.pillEmoji}>{e}</Text>
+          <ScrollView
+            horizontal
+            bounces={false}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.toolbarRow}
+          >
+            {EMOJIS.map((e) => {
+              const active = myReaction === e;
+              return (
+                <Pressable
+                  key={e}
+                  style={[styles.pillEmojiBtn, active && styles.pillEmojiActive]}
+                  onPress={() => onReact(e)}
+                >
+                  <Text style={styles.pillEmoji}>{e}</Text>
+                </Pressable>
+              );
+            })}
+            {/* More reactions — opens the full emoji grid. */}
+            <Pressable style={styles.toolbarBtn} onPress={onOpenAllEmoji}>
+              <SmilePlus size={20} color={theme.textSecondary} />
+            </Pressable>
+
+            <View style={styles.toolbarDivider} />
+
+            {/* Reply */}
+            <Pressable style={styles.toolbarBtn} onPress={onReply}>
+              <CornerUpLeft size={19} color={theme.textSecondary} />
+            </Pressable>
+            {/* Edit — own text messages only (web canEdit). */}
+            {canEdit ? (
+              <Pressable style={styles.toolbarBtn} onPress={onEdit}>
+                <Pencil size={18} color={theme.textSecondary} />
               </Pressable>
-            );
-          })}
-          <Pressable style={styles.pillPlusBtn} onPress={onOpenAllEmoji}>
-            <Plus size={20} color={theme.textSecondary} />
-          </Pressable>
+            ) : null}
+            {/* More — toggles the secondary context menu below the bubble. */}
+            <Pressable
+              style={[styles.toolbarBtn, moreOpen && styles.toolbarBtnActive]}
+              onPress={() => setMoreOpen((v) => !v)}
+            >
+              <MoreHorizontal size={19} color={theme.textSecondary} />
+            </Pressable>
+          </ScrollView>
         </Animated.View>
 
         {/* Lifted bubble clone */}
@@ -294,42 +338,46 @@ export default function ReactionOverlay({
           </Text>
         </Animated.View>
 
-        {/* Single Signal-style context menu (vertical list) below the bubble. */}
-        <Animated.View
-          style={[
-            styles.actionWrap,
-            {
-              top: menuTop,
-              left: menuLeft,
-              width: menuW,
-              opacity: progress,
-              transform: [{ scale: contentScale }],
-            },
-          ]}
-        >
-          <ScrollView
-            bounces={false}
-            style={[styles.menu, { maxHeight: winH * 0.5 }]}
+        {/* Secondary context menu (vertical list) — only when the 3-dots "more"
+            is tapped. Mirrors the web ContextMenu opened from the toolbar's
+            "..." button. */}
+        {moreOpen ? (
+          <Animated.View
+            style={[
+              styles.actionWrap,
+              {
+                top: menuTop,
+                left: menuLeft,
+                width: menuW,
+                opacity: progress,
+                transform: [{ scale: contentScale }],
+              },
+            ]}
           >
-            {actions.map((row) => (
-              <Pressable
-                key={row.key}
-                style={styles.menuRow}
-                onPress={row.onPress}
-              >
-                {row.icon}
-                <Text
-                  style={[
-                    styles.menuText,
-                    row.danger && { color: theme.danger },
-                  ]}
+            <ScrollView
+              bounces={false}
+              style={[styles.menu, { maxHeight: winH * 0.5 }]}
+            >
+              {actions.map((row) => (
+                <Pressable
+                  key={row.key}
+                  style={styles.menuRow}
+                  onPress={row.onPress}
                 >
-                  {row.label}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-        </Animated.View>
+                  {row.icon}
+                  <Text
+                    style={[
+                      styles.menuText,
+                      row.danger && { color: theme.danger },
+                    ]}
+                  >
+                    {row.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </Animated.View>
+        ) : null}
       </Pressable>
     </Modal>
   );
@@ -347,20 +395,23 @@ const makeStyles = (theme: Theme) =>
     },
     pill: {
       position: "absolute",
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
       backgroundColor: theme.bgElevated,
       borderRadius: theme.radiusFull,
       borderWidth: 1,
       borderColor: theme.glassBorder,
       paddingHorizontal: 6,
       height: PILL_HEIGHT,
+      justifyContent: "center",
       shadowColor: "#000",
       shadowOpacity: 0.35,
       shadowRadius: 18,
       shadowOffset: { width: 0, height: 6 },
       elevation: 12,
+    },
+    // Horizontal toolbar row inside the (scrollable) pill.
+    toolbarRow: {
+      flexDirection: "row",
+      alignItems: "center",
     },
     pillEmojiBtn: {
       width: 38,
@@ -373,13 +424,25 @@ const makeStyles = (theme: Theme) =>
       backgroundColor: theme.primaryGlow,
     },
     pillEmoji: { fontSize: 24 },
-    pillPlusBtn: {
+    // Inline action button (more-reactions / reply / edit / more) — matches the
+    // web MessageToolbar's .toolbarBtn sizing.
+    toolbarBtn: {
       width: 38,
       height: 38,
       alignItems: "center",
       justifyContent: "center",
       borderRadius: 19,
+    },
+    toolbarBtnActive: {
       backgroundColor: theme.surface,
+    },
+    // Vertical divider between the reaction emojis and the action icons
+    // (web .toolbarDivider).
+    toolbarDivider: {
+      width: 1,
+      height: 22,
+      marginHorizontal: 4,
+      backgroundColor: theme.glassBorder,
     },
     bubbleClone: {
       position: "absolute",

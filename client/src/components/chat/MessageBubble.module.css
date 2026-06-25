@@ -101,9 +101,15 @@
     right: 8px;
     margin: 0;
     padding: 2px 8px;
-    background: rgba(0, 0, 0, 0.45);
+    background: rgba(0, 0, 0, 0.55);
     border-radius: 10px;
     backdrop-filter: blur(2px);
+    /* The read tick is a filled disc with the check "punched out" using this
+       variable as the punch-out color. Over the dark media pill we must NOT use
+       white (the disc is also forced white below) — otherwise it's a white check
+       on a white disc and the tick is invisible. Use the dark pill color so the
+       check reads against the white disc. */
+    --read-check-bg: rgba(0, 0, 0, 0.55);
 }
 .mediaOnly .time,
 .mediaOnly .edited {
@@ -115,7 +121,10 @@
 .mediaOnly .deliveryPartial {
     color: #fff;
 }
-/* SVG ticks over media: force white for contrast against the photo backdrop. */
+/* SVG ticks over media: force white for contrast against the photo backdrop.
+   The read tick's filled disc + outer ring are `currentColor` (white here); its
+   punched-out check uses --read-check-bg (set to the dark pill color above) so
+   the check stays visible on the white disc. */
 .mediaOnly .tick,
 .mediaOnly .tickSending,
 .mediaOnly .tickSent,
