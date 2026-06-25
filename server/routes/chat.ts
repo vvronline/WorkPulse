@@ -676,6 +676,163 @@ router.get("/conversations/:id/read-status", auth, async (req: Request, res: Res
 });
 
 /**
+ * POST /api/chat/conversations/:id/messages
+ *
+ * REST text-send path. In-app sends go over the WebSocket (`chat_message`), but
+ * a WS connection is NOT available from the mobile notification "Reply" action
+ * (the Notifee headless/background task has no live socket). Signal-Android
+ * solves the same problem by routing the inline notification reply through its
+ * HTTP send path; this endpoint is the equivalent. It mirrors the WS
+ * `chat_message` handler exactly (persist → bump conversation → update read
+ * cursor → fan-out `chat_message` over WS → bump unread → dispatch push) so a
+ * reply sent from the notification behaves identically to an in-app message and
+ * is delivered live to all participants.
+ */
+router.post("/conversations/:id/messages", auth, async (req: Request, res: Response) => {
+    try {
+        const convId = parseInt(String(req.params.id), 10);
+        if (isNaN(convId)) return res.status(400).json({ error: "Invalid conversation" });
+
+        if (!(await verifyParticipant(convId, req.userId, req.db as unknown as DbLike))) {
+            return res.status(403).json({ error: "Not a participant" });
+        }
+
+        const content = String(req.body.content ?? "").trim();
+        if (!content) return res.status(400).json({ error: "Message content required" });
+        if (content.length > 5000) {
+            return res.status(400).json({ error: "Message too long" });
+        }
+        const replyToId = req.body.replyToId ? parseInt(String(req.body.replyToId), 10) : null;
+
+        const result = (await req.db!.query(
+            `INSERT INTO messages (conversation_id, sender_id, content, reply_to_id)
+             VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
+            [convId, req.userId, content, replyToId],
+        )).rows[0];
+
+        await req.db!.query("UPDATE conversations SET updated_at = NOW() WHERE id = $1", [convId]);
+        await req.db!.query(
+            `INSERT INTO message_reads (conversation_id, user_id, last_read_at)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = $3`,
+            [convId, req.userId, result.created_at],
+        );
+
+        const sender = (await req.db!.query(
+            "SELECT full_name, avatar, username FROM users WHERE id = $1",
+            [req.userId],
+        )).rows[0];
+
+        // Reply context (so the recipient's bubble can render the quoted message).
+        let replyContent: string | null = null;
+        let replySenderName: string | null = null;
+        if (replyToId) {
+            const replyMsg = (await req.db!.query(
+                `SELECT m.content, u.full_name AS sender_name
+                 FROM messages m JOIN users u ON u.id = m.sender_id
+                 WHERE m.id = $1 AND m.conversation_id = $2`,
+                [replyToId, convId],
+            )).rows[0];
+            if (replyMsg) {
+                replyContent = replyMsg.content;
+                replySenderName = replyMsg.sender_name;
+            }
+        }
+
+        const participants = (await req.db!.query(
+            "SELECT user_id FROM conversation_participants WHERE conversation_id = $1",
+            [convId],
+        )).rows;
+
+        // WebSocket payload — camelCase (matches the WS chat_message handler so
+        // the client maps these to snake_case message fields identically).
+        const wsMsg = {
+            id: result.id,
+            conversationId: convId,
+            senderId: req.userId,
+            senderName: sender?.full_name,
+            senderAvatar: sender?.avatar,
+            senderUsername: sender?.username,
+            content,
+            replyToId,
+            replyContent,
+            replySenderName,
+            createdAt: result.created_at,
+        };
+
+        for (const p of participants) {
+            sendToUser(req.tenantId, p.user_id, "chat_message", wsMsg);
+            if (p.user_id !== req.userId) {
+                redis.incrUnread(req.tenantId, p.user_id, convId);
+                // Recipient total-unread badge + message push (best-effort; must
+                // not block the send). Mirrors the WS handler's push dispatch.
+                void (async () => {
+                    let unreadTotal: number | undefined;
+                    try {
+                        const row = (await req.db!.query(
+                            `SELECT COUNT(*)::int AS unread
+                               FROM messages m
+                               JOIN conversation_participants cp
+                                 ON cp.conversation_id = m.conversation_id
+                                AND cp.user_id = $1
+                               LEFT JOIN message_reads mr
+                                 ON mr.conversation_id = m.conversation_id
+                                AND mr.user_id = $1
+                              WHERE m.sender_id <> $1
+                                AND (mr.last_read_at IS NULL OR m.created_at > mr.last_read_at)`,
+                            [p.user_id],
+                        )).rows[0];
+                        unreadTotal = row?.unread ?? undefined;
+                    } catch (err: any) {
+                        req.log.warn({ err: err?.message, userId: p.user_id }, "Failed to compute total unread for badge");
+                    }
+                    try {
+                        const { pushNotifications } = require("../services/pushNotifications");
+                        await pushNotifications.sendMessageNotification(
+                            (req.db as unknown as DbLike).query,
+                            p.user_id,
+                            req.tenantId,
+                            {
+                                conversationId: convId,
+                                messageId: result.id,
+                                senderId: req.userId,
+                                senderName: sender?.full_name || "Unknown",
+                                senderAvatar: sender?.avatar,
+                                messagePreview: content.substring(0, 150),
+                                unreadCount: unreadTotal,
+                            },
+                        );
+                    } catch (err: any) {
+                        req.log.warn({ err: err?.message, userId: p.user_id, messageId: result.id }, "Failed to send message push notification");
+                    }
+                })();
+            }
+        }
+
+        // HTTP response — snake_case, matching GET /messages so the client can
+        // reconcile the optimistic bubble 1:1.
+        res.status(201).json({
+            id: result.id,
+            conversation_id: convId,
+            sender_id: req.userId,
+            sender_name: sender?.full_name,
+            sender_avatar: sender?.avatar,
+            sender_username: sender?.username,
+            content,
+            created_at: result.created_at,
+            reply_to_id: replyToId,
+            reply_to_content: replyContent,
+            reply_to_sender_name: replySenderName,
+            reactions: [],
+            delivered_to: [],
+        });
+    } catch (err) {
+        req.log.error({ err }, "Send message error");
+        res.status(500).json({ error: "Failed to send message" });
+    }
+});
+
+/**
  * POST /api/chat/conversations/:id/files
  */
 router.post("/conversations/:id/files", auth, loadUserContext, chatUpload.single("file"), async (req: Request, res: Response) => {
