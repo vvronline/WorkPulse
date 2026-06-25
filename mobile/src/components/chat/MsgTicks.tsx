@@ -40,7 +40,6 @@ export default function MsgTicks({
   participantCount,
   readReceipts,
   userId,
-  onAccent,
   onMedia,
   onRetry,
 }: {
@@ -49,8 +48,6 @@ export default function MsgTicks({
   participantCount: number;
   readReceipts: Record<number, string>;
   userId?: number;
-  // Own bubbles use a neutral fill; the read state pops in a brighter tint.
-  onAccent?: boolean;
   // When the ticks sit OVER media (an image/video) inside the translucent dark
   // meta pill, force white glyphs and a dark punch-out for the read check so it
   // stays visible against the photo (web parity — see MessageBubble.module.css
@@ -61,14 +58,14 @@ export default function MsgTicks({
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
-  const mutedColor = onMedia
-    ? "#fff"
-    : onAccent
-      ? "rgba(255,255,255,0.78)"
-      : theme.textMuted;
+  const mutedColor = onMedia ? "#fff" : theme.textMuted;
   // Over media the read state is a WHITE filled disc with a dark check punched
-  // out; on a normal bubble it's an accent-tinted disc with a white check.
-  const readColor = onMedia ? "#fff" : onAccent ? "#7cc4ff" : theme.primary;
+  // out; on a normal bubble it's an org-accent-tinted disc with a white check.
+  // The read tick tracks the tenant branding accent (web parity:
+  // .tickRead → var(--primary)). `theme.primary` is kept in sync with the org
+  // accent by ThemeProvider, so this stays consistent with the web client and
+  // live-updates on `branding_changed`.
+  const readColor = onMedia ? "#fff" : theme.primary;
   const readCheckColor = onMedia ? "rgba(0,0,0,0.6)" : "#fff";
 
   const phase = resolvePhase(msg, participantCount, readReceipts, userId);

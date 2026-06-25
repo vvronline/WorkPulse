@@ -185,7 +185,6 @@ export default function ChatThread() {
           c.setEmojiMode("react");
           c.setShowAllEmoji(true);
         }}
-        onReply={() => c.reactTarget && c.startReply(c.reactTarget)}
         onForward={() => c.reactTarget && c.openForwardFor(c.reactTarget)}
         onCopy={() => c.reactTarget && c.copyMessage(c.reactTarget)}
         onStar={() => c.reactTarget && c.doStar(c.reactTarget)}

@@ -276,7 +276,6 @@ export default function MessageBubble({
                   participantCount={participantCount}
                   readReceipts={readReceipts}
                   userId={userId}
-                  onAccent={mine}
                   onRetry={mine ? () => onRetry?.(message) : undefined}
                 />
               </View>

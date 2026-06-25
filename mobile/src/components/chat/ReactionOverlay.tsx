@@ -25,7 +25,6 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Copy,
-  CornerUpLeft,
   Forward,
   MoreHorizontal,
   Pencil,
@@ -62,7 +61,6 @@ export default function ReactionOverlay({
   userId,
   onReact,
   onOpenAllEmoji,
-  onReply,
   onForward,
   onCopy,
   onStar,
@@ -79,7 +77,6 @@ export default function ReactionOverlay({
   userId?: number;
   onReact: (emoji: string) => void;
   onOpenAllEmoji: () => void;
-  onReply: () => void;
   onForward: () => void;
   onCopy: () => void;
   onStar: () => void;
@@ -93,9 +90,10 @@ export default function ReactionOverlay({
   const insets = useSafeAreaInsets();
   const { width: winW, height: winH } = useWindowDimensions();
 
-  // The web toolbar shows Reply + Edit INLINE and tucks the rest (Pin, Save,
-  // Forward, Copy, Delete) behind a "more" (3-dots) button that opens a small
-  // context menu. `moreOpen` toggles that secondary menu.
+  // The toolbar shows Edit INLINE and tucks the rest (Pin, Save, Forward, Copy,
+  // Delete) behind a "more" (3-dots) button that opens a small context menu.
+  // (Reply is handled by swipe-to-reply on the bubble, so it's not in the bar.)
+  // `moreOpen` toggles that secondary menu.
   const [moreOpen, setMoreOpen] = useState(false);
   // Reset the secondary menu whenever the overlay re-opens.
   useEffect(() => {
@@ -124,8 +122,8 @@ export default function ReactionOverlay({
     !message?.metadata?.pollId &&
     !message?.deleted_at;
 
-  // Secondary "more" context menu (opened from the inline 3-dots). Reply + Edit
-  // live inline on the toolbar, so they're excluded here; this list carries the
+  // Secondary "more" context menu (opened from the inline 3-dots). Edit lives
+  // inline on the toolbar, so it's excluded here; this list carries the
   // remaining actions (Forward, Copy, Save, Pin, Delete) — mirroring the web
   // ContextMenu opened from the toolbar's "..." button.
   const actions = useMemo(() => {
@@ -209,12 +207,12 @@ export default function ReactionOverlay({
 
   // Inline web-style toolbar sits above the bubble, aligned to the sender side.
   // It carries: 6 quick emojis + a "more reactions" smiley, a divider, then
-  // reply, edit (own text only) and a 3-dots "more". The toolbar can be wider
-  // than the screen, so it scrolls horizontally and we clamp its box to the
-  // viewport width.
+  // edit (own text only) and a 3-dots "more". The toolbar can be wider than the
+  // screen, so it scrolls horizontally and we clamp its box to the viewport
+  // width. (Reply is via swipe-to-reply on the bubble, not the toolbar.)
   const pillTop = bubbleTop - PILL_HEIGHT - PILL_GAP;
   const toolbarItems =
-    EMOJIS.length + 1 /* more-reactions */ + 1 /* reply */ + (canEdit ? 1 : 0) + 1; /* more */
+    EMOJIS.length + 1 /* more-reactions */ + (canEdit ? 1 : 0) + 1; /* more */
   const pillW = Math.min(winW - margin * 2, toolbarItems * 40 + 24);
   let pillLeft = a.mine ? bubbleLeft + bubbleW - pillW : bubbleLeft;
   pillLeft = Math.max(margin, Math.min(pillLeft, winW - pillW - margin));
@@ -247,9 +245,9 @@ export default function ReactionOverlay({
         <Animated.View style={[styles.scrim, { opacity: scrimOpacity }]} />
 
         {/* Inline web-style toolbar (mirrors the web MessageToolbar): six quick
-            emojis + a "more reactions" smiley, a divider, then reply, edit (own
-            text only) and a 3-dots "more". Scrolls horizontally if it can't fit
-            so nothing is clipped. */}
+            emojis + a "more reactions" smiley, a divider, then edit (own text
+            only) and a 3-dots "more". Reply is via swipe-to-reply on the bubble.
+            Scrolls horizontally if it can't fit so nothing is clipped. */}
         <Animated.View
           style={[
             styles.pill,
@@ -287,10 +285,6 @@ export default function ReactionOverlay({
 
             <View style={styles.toolbarDivider} />
 
-            {/* Reply */}
-            <Pressable style={styles.toolbarBtn} onPress={onReply}>
-              <CornerUpLeft size={19} color={theme.textSecondary} />
-            </Pressable>
             {/* Edit — own text messages only (web canEdit). */}
             {canEdit ? (
               <Pressable style={styles.toolbarBtn} onPress={onEdit}>
@@ -424,8 +418,8 @@ const makeStyles = (theme: Theme) =>
       backgroundColor: theme.primaryGlow,
     },
     pillEmoji: { fontSize: 24 },
-    // Inline action button (more-reactions / reply / edit / more) — matches the
-    // web MessageToolbar's .toolbarBtn sizing.
+    // Inline action button (more-reactions / edit / more) — matches the web
+    // MessageToolbar's .toolbarBtn sizing.
     toolbarBtn: {
       width: 38,
       height: 38,
