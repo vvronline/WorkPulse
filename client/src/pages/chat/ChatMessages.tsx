@@ -1,4 +1,5 @@
-import { Pin, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ChevronDown, Pin, X } from "lucide-react";
 import { ChatAvatar, MessageBubble, PinnedMessages, SharedFilesPanel, StarredMessages } from "../../components/chat";
 import SystemMessage from "../../components/chat/SystemMessage";
 import MeetingCard from "../../components/chat/MeetingCard";
@@ -87,6 +88,28 @@ export default function ChatMessages({
         );
     const latestPin = pinnedInView[0];
     const rows = buildTimelineRows(messages);
+
+    // Signal-style "scroll to bottom" affordance. Tracks how far the user has
+    // scrolled up from the bottom of the messages container; once they're more
+    // than ~1.5 screens up a floating button fades in to jump back to the
+    // newest message smoothly.
+    const [showScrollBtn, setShowScrollBtn] = useState(false);
+    useEffect(() => {
+        const el = messagesContainerRef.current as HTMLDivElement | null;
+        if (!el) return;
+        const onScroll = () => {
+            const distanceFromBottom =
+                el.scrollHeight - el.scrollTop - el.clientHeight;
+            setShowScrollBtn(distanceFromBottom > 400);
+        };
+        onScroll();
+        el.addEventListener("scroll", onScroll, { passive: true });
+        return () => el.removeEventListener("scroll", onScroll);
+    }, [messagesContainerRef, activeConv?.id]);
+
+    const scrollToBottom = () => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    };
 
     return (
         <div className={s.chatBody}>
@@ -223,6 +246,19 @@ export default function ChatMessages({
                     })()}
                 <div ref={messagesEndRef} />
             </div>
+
+            {/* Floating "scroll to latest" button (Signal-style). Fades in once
+                the user scrolls up past ~1.5 screens; smooth-scrolls to the
+                newest message on click. */}
+            <button
+                type="button"
+                className={`${s.scrollToBottom} ${showScrollBtn ? s.scrollToBottomVisible : ""}`}
+                onClick={scrollToBottom}
+                title="Scroll to latest"
+                aria-label="Scroll to latest message"
+            >
+                <ChevronDown size={20} />
+            </button>
 
             {showPinned && (
                 <PinnedMessages

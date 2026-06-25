@@ -4,6 +4,51 @@
     display: flex;
     min-height: 0;
     overflow: hidden;
+    /* Anchor the floating scroll-to-bottom button. */
+    position: relative;
+}
+
+/* ─── Signal-style "scroll to latest" floating button ─── */
+.scrollToBottom {
+    position: absolute;
+    right: 18px;
+    bottom: 18px;
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-elevated);
+    color: var(--text);
+    border: 1px solid var(--separator);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+    cursor: pointer;
+    z-index: 6;
+    /* Hidden by default — fade + scale + lift in when scrolled up. */
+    opacity: 0;
+    transform: translateY(8px) scale(0.85);
+    pointer-events: none;
+    transition: opacity 0.2s cubic-bezier(0.2, 0.9, 0.3, 1),
+        transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1),
+        background var(--transition-fast);
+}
+.scrollToBottom:hover {
+    background: var(--surface-hover);
+}
+.scrollToBottomVisible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+    .scrollToBottom {
+        transition: opacity 0.15s linear;
+        transform: none;
+    }
+    .scrollToBottomVisible {
+        transform: none;
+    }
 }
 
 /* ─── Messages ─── */
@@ -98,6 +143,12 @@
     align-items: center;
     justify-content: center;
     padding: 16px 16px 8px;
+    /* Soft fade-in so day separators don't pop while scrolling history in. */
+    animation: dividerFade 0.3s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+@keyframes dividerFade {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 .dateDivider span {
     color: var(--text-muted);

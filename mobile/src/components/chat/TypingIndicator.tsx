@@ -55,6 +55,19 @@ export default function TypingIndicator({ name, avatar }: TypingIndicatorProps) 
   const dot2 = useBounce(200);
   const dot3 = useBounce(400);
 
+  // Signal-style soft mount: the whole row fades in and rises a few px (and the
+  // bubble scales up subtly) when typing starts, instead of popping in hard.
+  const mount = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.spring(mount, {
+      toValue: 1,
+      damping: 18,
+      stiffness: 180,
+      mass: 0.6,
+      useNativeDriver: true,
+    }).start();
+  }, [mount]);
+
   const translate = (v: Animated.Value) => ({
     transform: [
       {
@@ -66,15 +79,37 @@ export default function TypingIndicator({ name, avatar }: TypingIndicatorProps) 
     ],
   });
 
+  const rowAnim = {
+    opacity: mount,
+    transform: [
+      {
+        translateY: mount.interpolate({
+          inputRange: [0, 1],
+          outputRange: [8, 0],
+        }),
+      },
+    ],
+  };
+  const bubbleAnim = {
+    transform: [
+      {
+        scale: mount.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0.85, 1],
+        }),
+      },
+    ],
+  };
+
   return (
-    <View style={styles.row}>
+    <Animated.View style={[styles.row, rowAnim]}>
       <ChatAvatar name={name} avatar={avatar} size="sm" />
-      <View style={styles.bubble}>
+      <Animated.View style={[styles.bubble, bubbleAnim]}>
         <Animated.View style={[styles.dot, translate(dot1)]} />
         <Animated.View style={[styles.dot, translate(dot2)]} />
         <Animated.View style={[styles.dot, translate(dot3)]} />
-      </View>
-    </View>
+      </Animated.View>
+    </Animated.View>
   );
 }
 

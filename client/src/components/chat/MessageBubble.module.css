@@ -1,3 +1,8 @@
+/* ─── Signal "smooth" easing curve, reused across chat transitions ─── */
+:root {
+    --signal-ease: cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
 /* ─── Row layout ─── */
 .row {
     display: flex;
@@ -5,6 +10,25 @@
     padding: 3px 16px 3px 16px;
     margin-top: 0;
     position: relative;
+    /* Signal-style message enter: each row fades in while sliding up a few px.
+       Cheap (transform + opacity only) so long threads stay smooth. */
+    animation: messageEnter 0.26s var(--signal-ease, ease-out) both;
+}
+@keyframes messageEnter {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+/* Respect users who prefer less motion — disable the enter slide/fade. */
+@media (prefers-reduced-motion: reduce) {
+    .row {
+        animation: none;
+    }
 }
 .row.grouped {
     margin-top: 0;

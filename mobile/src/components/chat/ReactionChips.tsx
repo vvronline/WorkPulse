@@ -1,9 +1,16 @@
 import { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import Animated, {
+  ZoomIn,
+  ZoomOut,
+  LinearTransition,
+} from "react-native-reanimated";
 import { Plus } from "lucide-react-native";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { ChatMessage } from "../../features";
+
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 /**
  * Reaction chips row rendered BELOW the bubble (mirrors the web ReactionBar /
@@ -37,26 +44,32 @@ export default function ReactionChips({
   if (message.deleted_at || Object.keys(groups).length === 0) return null;
 
   return (
-    <View
+    <Animated.View
+      layout={LinearTransition.springify().damping(20).stiffness(220)}
       style={[
         styles.reactions,
         mine ? styles.reactionsMine : styles.reactionsTheirs,
       ]}
     >
       {Object.entries(groups).map(([emoji, g]) => (
-        <Pressable
+        // Signal-style pop: each chip springs in when added and zooms out when
+        // removed; `layout` slides siblings as counts/chips change.
+        <AnimatedPressable
           key={emoji}
+          entering={ZoomIn.springify().damping(14).stiffness(260)}
+          exiting={ZoomOut.duration(140)}
+          layout={LinearTransition.springify().damping(20).stiffness(220)}
           style={[styles.reactionChip, g.mine && styles.myReactionChip]}
           onPress={() => onToggle(message, emoji)}
         >
           <Text style={styles.reactionEmoji}>{emoji}</Text>
           <Text style={styles.reactionCount}>{g.count}</Text>
-        </Pressable>
+        </AnimatedPressable>
       ))}
       <Pressable style={styles.addReactionBtn} onPress={() => onAdd(message, mine)}>
         <Plus size={13} color={theme.textMuted} />
       </Pressable>
-    </View>
+    </Animated.View>
   );
 }
 

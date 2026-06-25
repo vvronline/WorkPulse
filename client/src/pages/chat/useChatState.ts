@@ -649,12 +649,35 @@ export default function useChatState() {
         return () => clearTimeout(timer);
     }, [search]);
 
-    // Scroll to bottom on new messages
+    // Scroll to bottom on new messages — Signal-style "smart" auto-scroll. We
+    // only follow the conversation to the newest message when the user is
+    // ALREADY near the bottom (or it's their own freshly-sent message). If they
+    // have scrolled up to read history we leave their position untouched so the
+    // view doesn't yank them down every time a message arrives (the floating
+    // "scroll to latest" button in ChatMessages lets them jump back manually).
+    const lastMessageId = messages.length
+        ? messages[messages.length - 1].id
+        : null;
     useEffect(() => {
-        if (messagesEndRef.current) {
-            messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+        const end = messagesEndRef.current;
+        const container = messagesContainerRef.current;
+        if (!end) return;
+        const last = messages[messages.length - 1];
+        const isOwn = last && Number(last.sender_id) === Number(user?.id);
+        let nearBottom = true;
+        if (container) {
+            const distanceFromBottom =
+                container.scrollHeight -
+                container.scrollTop -
+                container.clientHeight;
+            nearBottom = distanceFromBottom < 160;
         }
-    }, [messages]);
+        if (nearBottom || isOwn) {
+            end.scrollIntoView({ behavior: "smooth" });
+        }
+        // Keyed on the newest message id (not the whole array) so reactions /
+        // edits to older messages don't trigger a scroll.
+    }, [lastMessageId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ─── Core operations ───
 

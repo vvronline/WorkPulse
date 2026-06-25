@@ -1,9 +1,18 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { Stack } from "expo-router";
-import { MoreVertical, Phone, Video as VideoIcon } from "lucide-react-native";
+import {
+  ChevronDown,
+  MoreVertical,
+  Phone,
+  Video as VideoIcon,
+} from "lucide-react-native";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import Animated, {
+  FadeIn,
+  FadeOut,
+} from "react-native-reanimated";
 import ChatAvatar from "../../src/components/ChatAvatar";
 import {
   ReplyPreview,
@@ -281,6 +290,12 @@ function ChatList({
   styles: ReturnType<typeof makeStyles>;
   theme: Theme;
 }) {
+  // Signal-style "scroll to bottom" pill. In the INVERTED list, offset 0 is the
+  // visual bottom (newest message). Once the user scrolls up past a threshold a
+  // floating chevron fades in; tapping it smooth-scrolls back to the newest
+  // message.
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
+
   return (
     // NOTE: this list stays on the stock FlatList because it is INVERTED — the
     // Signal-Android bottom-pinned model below depends on `inverted`, which
@@ -288,6 +303,7 @@ function ChatList({
     // MessageBubble (see src/components/chat/MessageBubble.tsx) plus the
     // windowing props below; the conversation LIST (non-inverted) uses
     // FlashList instead. See app/(tabs)/chat.tsx.
+    <View style={styles.listWrap}>
     <FlatList
       ref={c.listRef as React.RefObject<FlatList<ChatMessage>>}
       // INVERTED list (Signal-Android model). The data is newest-first
@@ -305,6 +321,15 @@ function ChatList({
       // available column height.
       style={styles.listFlex}
       contentContainerStyle={styles.list}
+      // Track scroll distance from the visual bottom (offset 0 in an inverted
+      // list). Show the "scroll to bottom" pill once the user has scrolled up
+      // past ~1.5 screens of history.
+      onScroll={(e) => {
+        const y = e.nativeEvent.contentOffset.y;
+        const next = y > 400;
+        if (next !== showScrollBtn) setShowScrollBtn(next);
+      }}
+      scrollEventThrottle={32}
       onScrollToIndexFailed={() => {
         setTimeout(() => c.scrollToEnd(false), 200);
       }}
@@ -392,6 +417,25 @@ function ChatList({
         );
       }}
     />
+      {/* Floating "scroll to latest" pill (Signal-style). Fades in/out and
+          smooth-scrolls to the newest message when tapped. */}
+      {showScrollBtn ? (
+        <Animated.View
+          entering={FadeIn.duration(160)}
+          exiting={FadeOut.duration(160)}
+          style={styles.scrollBtnWrap}
+          pointerEvents="box-none"
+        >
+          <Pressable
+            style={styles.scrollBtn}
+            onPress={() => c.scrollToEnd(true)}
+            hitSlop={8}
+          >
+            <ChevronDown size={22} color={theme.text} />
+          </Pressable>
+        </Animated.View>
+      ) : null}
+    </View>
   );
 }
 
@@ -413,7 +457,32 @@ const makeStyles = (theme: Theme) =>
       maxWidth: 180,
       fontFamily: theme.fontRegular,
     },
+    // Wraps the FlatList so the floating scroll-to-bottom pill can be absolutely
+    // positioned over the visual bottom of the (inverted) list.
+    listWrap: { flex: 1, position: "relative" },
     listFlex: { flex: 1 },
+    // Floating "scroll to latest" pill anchored to the bottom-right, above the
+    // composer.
+    scrollBtnWrap: {
+      position: "absolute",
+      right: 14,
+      bottom: 12,
+    },
+    scrollBtn: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: theme.bgElevated,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      shadowColor: "#000",
+      shadowOpacity: 0.3,
+      shadowRadius: 6,
+      shadowOffset: { width: 0, height: 2 },
+      elevation: 4,
+    },
     // Signal-style message list padding. NOTE: the list is INVERTED (rotated
     // 180°), so contentContainerStyle padding is applied in the flipped space —
     // `paddingTop` here appears at the VISUAL BOTTOM (above the composer) and

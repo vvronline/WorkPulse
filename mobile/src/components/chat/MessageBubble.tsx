@@ -7,6 +7,8 @@ import Animated, {
   withSpring,
   withTiming,
   runOnJS,
+  FadeInDown,
+  LinearTransition,
 } from "react-native-reanimated";
 import { CornerUpLeft, Pin, Star } from "lucide-react-native";
 import type { Theme } from "../../theme";
@@ -162,7 +164,13 @@ function MessageBubbleImpl({
       };
 
   return (
-    <View
+    <Animated.View
+      // Signal-style message enter: a freshly mounted bubble fades in while
+      // sliding up a few px (springy, not a hard pop). `LinearTransition`
+      // animates neighbours easing into place when a bubble grows (e.g. a
+      // reaction chip row appears) instead of snapping.
+      entering={FadeInDown.springify().damping(20).stiffness(180).mass(0.6)}
+      layout={LinearTransition.springify().damping(22).stiffness(200)}
       style={[
         styles.bubbleRow,
         mine ? styles.rowMine : styles.rowTheirs,
@@ -297,7 +305,7 @@ function MessageBubbleImpl({
           onAdd={onAddReaction}
         />
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
