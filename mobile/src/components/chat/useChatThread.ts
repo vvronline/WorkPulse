@@ -152,9 +152,20 @@ export function useChatThread() {
     peerId?: string;
     isGroup?: string;
   }>();
-  const { id, name } = params;
-  const headerAvatar = params.avatar || null;
+  const { id } = params;
   const convId = Number(id);
+  // Header identity (name + avatar). Seeded from the route params for the
+  // common case (opened from the conversation list, which passes them), but
+  // held in STATE so it can be RESOLVED when missing — e.g. a notification tap
+  // cold-starts the app and only the conversationId is passed (no name/avatar),
+  // which previously left the header showing the generic "Chat" + "?" avatar.
+  // We backfill from the cached conversation list (synchronous) and a network
+  // refresh below. Mirrors Signal-Android's ConversationIntents, where the
+  // thread resolves the recipient from its id when launched from a notification.
+  const [name, setName] = useState<string | undefined>(params.name);
+  const [headerAvatar, setHeaderAvatar] = useState<string | null>(
+    params.avatar || null,
+  );
   // Group conversations get NO 1:1 call buttons — the native call screen is
   // strictly peer-to-peer (single remote stream), so initiating a "group call"
   // from here would produce a broken half-connected call. Mirrors the web,
@@ -210,6 +221,10 @@ export function useChatThread() {
   // the selected message ("react").
   const [emojiMode, setEmojiMode] = useState<"react" | "compose">("react");
   const [plusOpen, setPlusOpen] = useState(false);
+  // Signal-style in-app camera (full-screen). Opened from the composer camera
+  // button; supports tap-for-photo / hold-for-video + an in-camera recent-
+  // gallery strip (see CameraCapture).
+  const [cameraOpen, setCameraOpen] = useState(false);
   // Signal-style media editor: the picked/captured images awaiting edit + send.
   const [editorItems, setEditorItems] = useState<
     { uri: string; width?: number; height?: number }[] | null
@@ -493,25 +508,25 @@ export function useChatThread() {
   useEffect(() => {
     let active = true;
     const peerFromParam = params.peerId ? Number(params.peerId) : null;
-    if (peerFromParam) {
-      setPeerUserId(peerFromParam);
-      getChatPresence([peerFromParam])
-        .then((r) => {
-          if (active) setPeerStatus(r.data?.[peerFromParam]?.userStatus ?? null);
-        })
-        .catch(() => {});
-      return () => {
-        active = false;
-      };
-    }
-    // No peer id in the route params — resolve from the cached conversation
-    // list (synchronous, no network) so deep-links / older nav paths still
-    // light up the header badge without blocking the open.
-    const cachedConvs = getCachedConversations();
-    const conv = (cachedConvs || []).find((c) => c.id === convId);
-    if (conv) {
+    // Whether the route already supplied the header identity (opened from the
+    // conversation list). When it did NOT (e.g. a notification tap cold-start),
+    // we must RESOLVE name/avatar from the conversation so the header doesn't
+    // show the generic "Chat" + "?" avatar.
+    const haveIdentity = !!params.name;
+
+    // Apply a resolved conversation's identity (name / avatar / group flag /
+    // peer) to the header state. Used both from the synchronous cache lookup
+    // and the network fallback below. Only fills fields the route didn't give.
+    const applyConv = (conv: Conversation) => {
+      if (!active) return;
       if (conv.member_count) setParticipantCount(conv.member_count);
       setIsGroupConv(!!conv.is_group);
+      const resolvedName = conv.is_group
+        ? conv.group_name || "Group"
+        : conv.other_full_name || conv.other_username || "Chat";
+      const resolvedAvatar = conv.is_group ? null : conv.other_avatar || null;
+      if (!params.name && resolvedName) setName(resolvedName);
+      if (!params.avatar && resolvedAvatar) setHeaderAvatar(resolvedAvatar);
       if (!conv.is_group && conv.other_user_id) {
         const uid = conv.other_user_id;
         setPeerUserId(uid);
@@ -521,11 +536,51 @@ export function useChatThread() {
           })
           .catch(() => {});
       }
+    };
+
+    if (peerFromParam) {
+      setPeerUserId(peerFromParam);
+      getChatPresence([peerFromParam])
+        .then((r) => {
+          if (active) setPeerStatus(r.data?.[peerFromParam]?.userStatus ?? null);
+        })
+        .catch(() => {});
+      // The header name/avatar were supplied alongside the peer id — nothing to
+      // resolve. (This is the conversation-list open path.)
+      if (haveIdentity) {
+        return () => {
+          active = false;
+        };
+      }
     }
+
+    // Resolve identity from the cached conversation list FIRST (synchronous, no
+    // network) so deep-links / notification taps light up the header instantly
+    // when the cache is warm.
+    const cachedConvs = getCachedConversations();
+    const conv = (cachedConvs || []).find((c) => c.id === convId);
+    if (conv) {
+      applyConv(conv);
+    }
+
+    // If identity is STILL unresolved (cold cache after a notification cold-
+    // start — the #1 case for "tapping a message shows 'Chat' + '?'"), fetch
+    // the conversation list from the network and backfill. Mirrors Signal-
+    // Android resolving the recipient from its id on a notification launch.
+    if (!haveIdentity && !conv) {
+      getConversations()
+        .then((r) => {
+          if (!active) return;
+          const fresh = (r.data || []).find((c) => c.id === convId);
+          if (fresh) applyConv(fresh);
+        })
+        .catch(() => {});
+    }
+
     return () => {
       active = false;
     };
-  }, [convId, params.peerId]);
+  }, [convId, params.peerId, params.name, params.avatar]);
 
   // Keep the peer's header status live via the unified `user_status` event.
   useEffect(() => {
@@ -1378,22 +1433,65 @@ export function useChatThread() {
     );
   }
 
-  async function attachCamera() {
+  // Open the Signal-style in-app camera (full-screen). Replaces the old OS-only
+  // image picker so the user can TAP for a photo, HOLD for video, flip/flash and
+  // pick from a recent-gallery strip — none of which the OS launchCameraAsync
+  // (image-only) supported. The camera UI lives in CameraCapture, rendered as a
+  // full-screen Modal by the chat screen; its callbacks below route captures.
+  function attachCamera() {
     setPlusOpen(false);
-    const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) {
-      alert("Permission needed", "Allow Camera access to take a photo.");
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ["images"],
-      quality: 1,
-    });
-    if (result.canceled || !result.assets?.[0]?.uri) return;
-    const asset = result.assets[0];
-    // Route the captured photo through the Signal-style media editor.
-    setEditorItems([{ uri: asset.uri, width: asset.width, height: asset.height }]);
+    setCameraOpen(true);
   }
+
+  // A still PHOTO captured in the in-app camera → close the camera and route it
+  // through the Signal-style media editor (pen/crop/quality/view-once + caption).
+  const handleCameraPhoto = useCallback(
+    (item: { uri: string; width?: number; height?: number }) => {
+      setCameraOpen(false);
+      setEditorItems([{ uri: item.uri, width: item.width, height: item.height }]);
+    },
+    [],
+  );
+
+  // A recorded VIDEO from the in-app camera → close the camera and upload it
+  // directly (the media editor only handles still images).
+  const handleCameraVideo = useCallback(
+    (item: { uri: string; fileName: string; mimeType: string }) => {
+      setCameraOpen(false);
+      enqueueMediaUpload({
+        uri: item.uri,
+        fileName: item.fileName,
+        mimeType: item.mimeType,
+      });
+    },
+    [enqueueMediaUpload],
+  );
+
+  // A recent-gallery thumbnail tapped inside the in-app camera (or the "+"
+  // attach sheet). Images go through the editor; videos upload directly.
+  const handlePickRecentMedia = useCallback(
+    (item: {
+      uri: string;
+      width?: number;
+      height?: number;
+      kind: "image" | "video";
+      fileName?: string;
+      mimeType?: string;
+    }) => {
+      setCameraOpen(false);
+      setPlusOpen(false);
+      if (item.kind === "video") {
+        enqueueMediaUpload({
+          uri: item.uri,
+          fileName: item.fileName || `video-${Date.now()}.mp4`,
+          mimeType: item.mimeType || "video/mp4",
+        });
+      } else {
+        setEditorItems([{ uri: item.uri, width: item.width, height: item.height }]);
+      }
+    },
+    [enqueueMediaUpload],
+  );
 
   // Called by the MediaEditor when the user taps Send. Each processed item is
   // enqueued for upload carrying its view-once flag + caption.
@@ -2419,6 +2517,12 @@ export function useChatThread() {
     plusOpen,
     attachCamera,
     attachFile,
+    // in-app camera (Signal-style)
+    cameraOpen,
+    setCameraOpen,
+    handleCameraPhoto,
+    handleCameraVideo,
+    handlePickRecentMedia,
     // media editor (Signal-style)
     editorItems,
     setEditorItems,

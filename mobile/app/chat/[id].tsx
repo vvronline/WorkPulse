@@ -6,6 +6,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { Modal } from "react-native";
 import { Stack } from "expo-router";
 import {
   ArrowLeft,
@@ -39,6 +40,7 @@ import {
   MediaEditor,
   MessageActionsSheet,
   HeaderMenuPopup,
+  CameraCapture,
   useChatThread,
 } from "../../src/components/chat";
 import { fmtDaySeparator, isSameDay } from "../../src/components/chat/chatUtils";
@@ -275,16 +277,37 @@ export default function ChatThread() {
         </View>
       )}
 
-      {/* "+" composer menu — Photo + File/Document (Signal-style attach sheet).
-          Voice + Emoji are NOT here: they live in the composer itself (the Mic
-          send-button and the inline emoji toggle), so duplicating them in this
-          sheet was redundant. */}
+      {/* "+" composer menu — recent-media strip + Photo + File/Document
+          (Signal-style AttachmentKeyboard). Voice + Emoji are NOT here: they
+          live in the composer itself (the Mic send-button and the inline emoji
+          toggle), so duplicating them in this sheet was redundant. */}
       <AttachmentPicker
         visible={c.plusOpen}
         onClose={() => c.setPlusOpen(false)}
         onPhoto={c.attachFile}
         onDocument={c.attachDocument}
+        onPickRecent={c.handlePickRecentMedia}
+        onOpenCamera={c.attachCamera}
       />
+
+      {/* Signal-style full-screen in-app camera (tap=photo, hold=video, flip,
+          flash, recent-gallery strip). Rendered as a full-screen Modal so it
+          covers the chat while open. Captures route back through the hook:
+          photos → MediaEditor, videos/recent-gallery → upload. */}
+      <Modal
+        visible={c.cameraOpen}
+        animationType="slide"
+        onRequestClose={() => c.setCameraOpen(false)}
+        statusBarTranslucent
+      >
+        <CameraCapture
+          onClose={() => c.setCameraOpen(false)}
+          onCapturedPhoto={c.handleCameraPhoto}
+          onCapturedVideo={c.handleCameraVideo}
+          onPickRecent={c.handlePickRecentMedia}
+          onOpenGallery={c.attachFile}
+        />
+      </Modal>
 
       {/* Signal-style media editor — opened after capturing/picking an image.
           Provides pen/crop/rotate/quality/view-once + caption before send. */}

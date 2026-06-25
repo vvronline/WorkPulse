@@ -162,7 +162,25 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "expo-camera",
       {
         cameraPermission:
-          "Allow WorkPulse to access your camera for face enrollment and attendance verification.",
+          "Allow WorkPulse to access your camera to take photos and record videos for chat, face enrollment and attendance verification.",
+        // Required so the in-chat camera can RECORD VIDEO (audio track) on a
+        // long-press of the shutter, matching Signal's camera.
+        microphonePermission:
+          "Allow WorkPulse to access your microphone to record videos in chat.",
+        recordAudioAndroid: true,
+      },
+    ],
+    [
+      // Recent-gallery strips (the in-camera roll + the "+" attach sheet) read
+      // the device's recent photos/videos via expo-media-library, mirroring
+      // Signal's AttachmentKeyboard recent-media row + in-camera gallery shortcut.
+      "expo-media-library",
+      {
+        photosPermission:
+          "Allow WorkPulse to access your photos so you can share them in chat.",
+        savePhotosPermission:
+          "Allow WorkPulse to save photos and videos you capture in chat.",
+        isAccessMediaLocationEnabled: true,
       },
     ],
     [

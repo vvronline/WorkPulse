@@ -1,6 +1,6 @@
 {
   "name": "mobile",
-  "version": "1.1.39",
+  "version": "1.1.40",
   "main": "index.js",
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^15.0.1",
@@ -29,6 +29,7 @@
     "expo-linking": "~56.0.13",
     "expo-local-authentication": "~56.0.4",
     "expo-location": "~56.0.17",
+    "expo-media-library": "~56.0.4",
     "expo-notifications": "~56.0.13",
     "expo-router": "~56.2.9",
     "expo-secure-store": "~56.0.4",

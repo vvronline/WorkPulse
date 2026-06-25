@@ -22,5 +22,7 @@ export { default as TypingIndicator } from "./TypingIndicator";
 export { default as Composer } from "./Composer";
 export { default as MediaEditor } from "./MediaEditor";
 export { default as VoiceRecorderBar } from "./VoiceRecorderBar";
+export { default as CameraCapture } from "./CameraCapture";
+export { default as RecentMediaStrip } from "./RecentMediaStrip";
 export { useChatThread } from "./useChatThread";
 export * from "./chatUtils";
