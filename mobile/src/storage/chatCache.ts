@@ -9,6 +9,11 @@ import type { ChatMessage, Conversation } from "../features";
  * instead of blocking on a full-screen spinner while the network request runs.
  * The network `load()` then reconciles in the background.
  *
+ * Exposed as standalone, tree-shakeable functions (no wrapper object). All
+ * functions are SYNCHRONOUS so they can seed React state in `useMemo`/`useState`
+ * initializers on the very first render — making them async would reintroduce a
+ * spinner/flicker and defeat the instant-render behavior.
+ *
  * Three caches are kept per the chat UI's needs:
  *   • messages   — the most-recent page per conversation (newest history)
  *   • conversations — the whole conversation list
@@ -25,7 +30,7 @@ const CONVERSATIONS_KEY = "chat:conversations";
 const MAX_CACHED_MESSAGES = 50;
 
 /** userId → ISO last_read_at */
-type ReadStatusMap = Record<number, string>;
+export type ReadStatusMap = Record<number, string>;
 
 function readJSON<T>(key: string): T | null {
   const raw = storage.getString(key);
@@ -37,49 +42,60 @@ function readJSON<T>(key: string): T | null {
   }
 }
 
-export const chatCache = {
-  // ── Messages ──────────────────────────────────────────────────────────
-  getMessages(conversationId: number): ChatMessage[] | null {
-    return readJSON<ChatMessage[]>(`${THREAD_PREFIX}${conversationId}`);
-  },
+// ── Messages ────────────────────────────────────────────────────────────────
 
-  setMessages(conversationId: number, messages: ChatMessage[] | undefined): void {
-    if (!messages) {
-      storage.remove(`${THREAD_PREFIX}${conversationId}`);
-      return;
-    }
-    const trimmed = messages.slice(0, MAX_CACHED_MESSAGES);
-    storage.set(`${THREAD_PREFIX}${conversationId}`, JSON.stringify(trimmed));
-  },
+export function getCachedMessages(conversationId: number): ChatMessage[] | null {
+  return readJSON<ChatMessage[]>(`${THREAD_PREFIX}${conversationId}`);
+}
 
-  clearMessages(conversationId: number): void {
+export function setCachedMessages(
+  conversationId: number,
+  messages: ChatMessage[] | undefined,
+): void {
+  if (!messages) {
     storage.remove(`${THREAD_PREFIX}${conversationId}`);
+    return;
+  }
+  const trimmed = messages.slice(0, MAX_CACHED_MESSAGES);
+  storage.set(`${THREAD_PREFIX}${conversationId}`, JSON.stringify(trimmed));
+}
+
+export function clearCachedMessages(conversationId: number): void {
+  storage.remove(`${THREAD_PREFIX}${conversationId}`);
+  storage.remove(`${READ_STATUS_PREFIX}${conversationId}`);
+}
+
+// ── Read receipts (userId → ISO last_read_at) ────────────────────────────────
+
+export function getCachedReadStatus(
+  conversationId: number,
+): ReadStatusMap | null {
+  return readJSON<ReadStatusMap>(`${READ_STATUS_PREFIX}${conversationId}`);
+}
+
+export function setCachedReadStatus(
+  conversationId: number,
+  map: ReadStatusMap | undefined,
+): void {
+  if (!map) {
     storage.remove(`${READ_STATUS_PREFIX}${conversationId}`);
-  },
+    return;
+  }
+  storage.set(`${READ_STATUS_PREFIX}${conversationId}`, JSON.stringify(map));
+}
 
-  // ── Read receipts (userId → ISO last_read_at) ─────────────────────────
-  getReadStatus(conversationId: number): ReadStatusMap | null {
-    return readJSON<ReadStatusMap>(`${READ_STATUS_PREFIX}${conversationId}`);
-  },
+// ── Conversation list ────────────────────────────────────────────────────────
 
-  setReadStatus(conversationId: number, map: ReadStatusMap | undefined): void {
-    if (!map) {
-      storage.remove(`${READ_STATUS_PREFIX}${conversationId}`);
-      return;
-    }
-    storage.set(`${READ_STATUS_PREFIX}${conversationId}`, JSON.stringify(map));
-  },
+export function getCachedConversations(): Conversation[] | null {
+  return readJSON<Conversation[]>(CONVERSATIONS_KEY);
+}
 
-  // ── Conversation list ─────────────────────────────────────────────────
-  getConversations(): Conversation[] | null {
-    return readJSON<Conversation[]>(CONVERSATIONS_KEY);
-  },
-
-  setConversations(conversations: Conversation[] | undefined): void {
-    if (!conversations) {
-      storage.remove(CONVERSATIONS_KEY);
-      return;
-    }
-    storage.set(CONVERSATIONS_KEY, JSON.stringify(conversations));
-  },
-};
+export function setCachedConversations(
+  conversations: Conversation[] | undefined,
+): void {
+  if (!conversations) {
+    storage.remove(CONVERSATIONS_KEY);
+    return;
+  }
+  storage.set(CONVERSATIONS_KEY, JSON.stringify(conversations));
+}

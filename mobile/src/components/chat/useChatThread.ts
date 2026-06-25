@@ -48,7 +48,14 @@ import { socket } from "../../realtime/socket";
 import { emitChatUnreadChanged, chatUnreadManager } from "../../realtime/chatUnreadEvents";
 import { useKeyboardInset } from "../../hooks/useKeyboardInset";
 import { hydrateEmojiStore } from "../../emoji/emojiStore";
-import { chatCache } from "../../storage/chatCache";
+import {
+  getCachedMessages,
+  setCachedMessages,
+  clearCachedMessages,
+  getCachedReadStatus,
+  setCachedReadStatus,
+  getCachedConversations,
+} from "../../storage/chatCache";
 import { STATUS_LABEL, type HeaderSheet } from "./chatUtils";
 
 type PendingMediaSource = {
@@ -150,7 +157,7 @@ export function useChatThread() {
   // (Signal-style) instead of blocking on a full-screen spinner. The network
   // refresh in `load()` reconciles in the background. `loading` only stays true
   // on a true cold cache (first-ever open of this conversation).
-  const cachedMessages = useMemo(() => chatCache.getMessages(convId), [convId]);
+  const cachedMessages = useMemo(() => getCachedMessages(convId), [convId]);
   const [messages, setMessages] = useState<ChatMessage[]>(
     () => cachedMessages || [],
   );
@@ -218,7 +225,7 @@ export function useChatThread() {
   // fraction of a second after the chat opened. The network refresh below now
   // just confirms what's already shown instead of causing a visible flip.
   const cachedReceipts = useMemo(
-    () => chatCache.getReadStatus(convId),
+    () => getCachedReadStatus(convId),
     [convId],
   );
   const [readReceipts, setReadReceipts] = useState<Record<number, string>>(
@@ -363,7 +370,7 @@ export function useChatThread() {
       const { data } = await getMessages(convId);
       setMessages(data || []);
       // Persist the freshest page so the next open paints instantly from disk.
-      chatCache.setMessages(convId, data || []);
+      setCachedMessages(convId, data || []);
       setHasMore((data || []).length >= 50);
       markReadAndSync();
       // Seed read receipts so own messages show the correct tick immediately.
@@ -378,7 +385,7 @@ export function useChatThread() {
             }
           }
           setReadReceipts(map);
-          chatCache.setReadStatus(convId, map);
+          setCachedReadStatus(convId, map);
         })
         .catch(() => {});
       // Jump to the newest message once the list has content.
@@ -453,7 +460,7 @@ export function useChatThread() {
     // No peer id in the route params — resolve from the cached conversation
     // list (synchronous, no network) so deep-links / older nav paths still
     // light up the header badge without blocking the open.
-    const cachedConvs = chatCache.getConversations();
+    const cachedConvs = getCachedConversations();
     const conv = (cachedConvs || []).find((c) => c.id === convId);
     if (conv) {
       if (conv.member_count) setParticipantCount(conv.member_count);
@@ -502,7 +509,7 @@ export function useChatThread() {
             const next = { ...prev, [d.userId]: d.readAt };
             // Keep the on-device cache in sync so the read colour is correct on
             // the FIRST frame of the next open (no delivered→read flip).
-            chatCache.setReadStatus(convId, next);
+            setCachedReadStatus(convId, next);
             return next;
           });
         }
@@ -685,7 +692,7 @@ export function useChatThread() {
         setHasMore(false);
         // Drop the on-disk cache too so reopening doesn't resurrect the cleared
         // messages from the instant-render seed.
-        chatCache.clearMessages(convId);
+        clearCachedMessages(convId);
         return;
       }
       // Conversation deleted, or current user removed from the group —
@@ -1708,7 +1715,7 @@ export function useChatThread() {
               setMessages([]);
               setPinnedMsgs([]);
               setHasMore(false);
-              chatCache.clearMessages(convId);
+              clearCachedMessages(convId);
             })
             .catch((e: any) =>
               alert(

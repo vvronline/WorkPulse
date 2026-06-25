@@ -58,7 +58,12 @@ import {
 } from "../../src/features";
 import { useAuth, userHasFeature } from "../../src/auth/AuthContext";
 import { socket } from "../../src/realtime/socket";
-import { chatCache } from "../../src/storage/chatCache";
+import {
+  getCachedConversations,
+  getCachedMessages,
+  setCachedMessages,
+  setCachedConversations,
+} from "../../src/storage/chatCache";
 import ChatAvatar from "../../src/components/ChatAvatar";
 import {
   useKeyboardInset,
@@ -128,7 +133,7 @@ export default function ChatScreen() {
   // list paints instantly (Signal-style) instead of blocking on a spinner.
   // `load()` revalidates in the background. The spinner only shows on a true
   // cold cache (first-ever launch before any list has been fetched).
-  const cachedConvs = useMemo(() => chatCache.getConversations(), []);
+  const cachedConvs = useMemo(() => getCachedConversations(), []);
   const [items, setItems] = useState<Conversation[]>(() => cachedConvs || []);
   const [calls, setCalls] = useState<CallLogEntry[]>([]);
   const [loading, setLoading] = useState(
@@ -194,9 +199,9 @@ export default function ChatScreen() {
       )
       .slice(0, 5);
     recent.forEach((c) => {
-      if (chatCache.getMessages(c.id)) return; // already warm
+      if (getCachedMessages(c.id)) return; // already warm
       getMessages(c.id)
-        .then((r) => chatCache.setMessages(c.id, r.data || []))
+        .then((r) => setCachedMessages(c.id, r.data || []))
         .catch(() => {});
     });
   }, []);
@@ -206,7 +211,7 @@ export default function ChatScreen() {
       const { data } = await getConversations();
       setItems(data || []);
       // Persist so the next launch / tab return paints instantly from disk.
-      chatCache.setConversations(data || []);
+      setCachedConversations(data || []);
       loadPresence(data || []);
       prefetchRecent(data || []);
     } catch {
