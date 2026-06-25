@@ -206,9 +206,12 @@ async function chatMessage({ db, senderId, tenantId, data, ws, sendToUser }: Cha
 
     let replyContent: string | null = null;
     let replySenderName: string | null = null;
+    let replyFileUrl: string | null = null;
+    let replyFileType: string | null = null;
+    let replyFileName: string | null = null;
     if (replyToId) {
         const replyMsg = (await db.query(
-            `SELECT m.content, u.full_name AS sender_name
+            `SELECT m.content, m.file_url, m.file_type, m.file_name, u.full_name AS sender_name
              FROM messages m JOIN users u ON u.id = m.sender_id
              WHERE m.id = $1 AND m.conversation_id = $2`,
             [replyToId, conversationId],
@@ -216,6 +219,9 @@ async function chatMessage({ db, senderId, tenantId, data, ws, sendToUser }: Cha
         if (replyMsg) {
             replyContent = replyMsg.content;
             replySenderName = replyMsg.sender_name;
+            replyFileUrl = replyMsg.file_url;
+            replyFileType = replyMsg.file_type;
+            replyFileName = replyMsg.file_name;
         }
     }
 
@@ -231,6 +237,9 @@ async function chatMessage({ db, senderId, tenantId, data, ws, sendToUser }: Cha
         replyToId: replyToId || null,
         replyContent,
         replySenderName,
+        replyFileUrl,
+        replyFileType,
+        replyFileName,
         createdAt: result.created_at,
         clientMsgId: clientMsgId || null,
     };

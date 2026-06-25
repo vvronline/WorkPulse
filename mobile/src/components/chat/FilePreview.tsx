@@ -17,6 +17,7 @@ import { useTheme } from "../../theme/ThemeProvider";
 import { uploadUrl } from "../../config";
 import { markMessageViewed } from "../../features";
 import { getToken } from "../../auth/tokenStore";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import VoicePlayer from "../VoicePlayer";
 import { AuthedImage } from "../AuthedImage";
 import ZoomableImage from "./ZoomableImage";
@@ -366,7 +367,12 @@ function ImageViewerModal({
   const isLocal = /^(file|content|data):/i.test(uri);
   return (
     <Modal visible animationType="fade" transparent onRequestClose={onClose}>
-      <View style={viewerStyles.backdrop}>
+      {/* A Modal renders in a SEPARATE native view hierarchy that sits OUTSIDE
+          the app's root GestureHandlerRootView — so gesture-handler receives no
+          touches inside it (pinch/pan/double-tap silently do nothing). Wrapping
+          the modal body in its own GestureHandlerRootView restores the zoom
+          gestures. */}
+      <GestureHandlerRootView style={viewerStyles.backdrop}>
         <Pressable style={viewerStyles.closeBtn} onPress={onClose} hitSlop={10}>
           <X size={22} color="#fff" />
         </Pressable>
@@ -374,7 +380,7 @@ function ImageViewerModal({
         {viewOnce ? (
           <Text style={viewerStyles.note}>This photo can only be viewed once</Text>
         ) : null}
-      </View>
+      </GestureHandlerRootView>
     </Modal>
   );
 }

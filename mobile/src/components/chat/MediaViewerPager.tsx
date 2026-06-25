@@ -9,6 +9,7 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { X } from "lucide-react-native";
 import { uploadUrl } from "../../config";
 import { fmtDateTime } from "./chatUtils";
@@ -52,7 +53,9 @@ export default function MediaViewerPager({
 
   return (
     <Modal visible animationType="fade" transparent onRequestClose={onClose}>
-      <View style={styles.backdrop}>
+      {/* A Modal renders OUTSIDE the root GestureHandlerRootView, so the zoom
+          gestures need their own root inside the modal to receive touches. */}
+      <GestureHandlerRootView style={styles.backdrop}>
         {/* Top bar: caption + close. */}
         <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
           <View style={{ flex: 1 }}>
@@ -101,7 +104,7 @@ export default function MediaViewerPager({
             );
           }}
         />
-      </View>
+      </GestureHandlerRootView>
     </Modal>
   );
 }
