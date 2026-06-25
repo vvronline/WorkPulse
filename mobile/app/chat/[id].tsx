@@ -275,6 +275,12 @@ function ChatList({
   theme: Theme;
 }) {
   return (
+    // NOTE: this list stays on the stock FlatList because it is INVERTED — the
+    // Signal-Android bottom-pinned model below depends on `inverted`, which
+    // FlashList v2 dropped. The big perf win here comes from the memoized
+    // MessageBubble (see src/components/chat/MessageBubble.tsx) plus the
+    // windowing props below; the conversation LIST (non-inverted) uses
+    // FlashList instead. See app/(tabs)/chat.tsx.
     <FlatList
       ref={c.listRef as React.RefObject<FlatList<ChatMessage>>}
       // INVERTED list (Signal-Android model). The data is newest-first
@@ -309,6 +315,13 @@ function ChatList({
       // row scrolled — making the reaction look delayed. Disabling it
       // forces the chip to paint instantly (matches the web).
       removeClippedSubviews={false}
+      // Windowing tuned for chat: render a small initial batch so the thread
+      // paints fast on open, keep a modest render window, and recycle rows
+      // aggressively to cut memory/jank on long threads.
+      initialNumToRender={15}
+      maxToRenderPerBatch={10}
+      windowSize={11}
+      updateCellsBatchingPeriod={50}
       // In an inverted list the FOOTER renders at the visual TOP, so the
       // "load earlier" spinner/button belongs here (not the header).
       ListFooterComponent={

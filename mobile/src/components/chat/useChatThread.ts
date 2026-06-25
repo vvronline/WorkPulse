@@ -48,6 +48,7 @@ import { socket } from "../../realtime/socket";
 import { emitChatUnreadChanged, chatUnreadManager } from "../../realtime/chatUnreadEvents";
 import { useKeyboardInset } from "../../hooks/useKeyboardInset";
 import { hydrateEmojiStore } from "../../emoji/emojiStore";
+import { chatCache } from "../../storage/chatCache";
 import { STATUS_LABEL, type HeaderSheet } from "./chatUtils";
 
 type PendingMediaSource = {
@@ -145,8 +146,17 @@ export function useChatThread() {
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const { user } = useAuth();
   const { alert, confirm, dialog } = useDialog();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Seed from the on-device cache SYNCHRONOUSLY so the thread paints instantly
+  // (Signal-style) instead of blocking on a full-screen spinner. The network
+  // refresh in `load()` reconciles in the background. `loading` only stays true
+  // on a true cold cache (first-ever open of this conversation).
+  const cachedMessages = useMemo(() => chatCache.getMessages(convId), [convId]);
+  const [messages, setMessages] = useState<ChatMessage[]>(
+    () => cachedMessages || [],
+  );
+  const [loading, setLoading] = useState(
+    () => !cachedMessages || cachedMessages.length === 0,
+  );
   // Cursor pagination for older history (mirrors web loadMore).
   const [hasMore, setHasMore] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -339,6 +349,8 @@ export function useChatThread() {
     try {
       const { data } = await getMessages(convId);
       setMessages(data || []);
+      // Persist the freshest page so the next open paints instantly from disk.
+      chatCache.setMessages(convId, data || []);
       setHasMore((data || []).length >= 50);
       markReadAndSync();
       // Seed read receipts so own messages show the correct tick immediately.
@@ -398,32 +410,52 @@ export function useChatThread() {
     }
   }, [convId, hasMore, loadingOlder, messages]);
 
-  // Resolve the 1:1 peer's userId + initial status, participant count and a
-  // fallback avatar for the header badge.
+  // Resolve the 1:1 peer's status for the header badge.
+  //
+  // PERF: this used to fetch the ENTIRE conversation list (`getConversations`)
+  // on every chat open just to find this one conversation's peer id / group
+  // flag — a wasteful full round-trip on the critical open path. The peer id,
+  // name, avatar and group flag are ALREADY passed as route params from the
+  // conversation list (see `openConv` in app/(tabs)/chat.tsx), so we use those
+  // and only make the cheap presence call for the live status badge. If a peer
+  // id wasn't supplied (e.g. deep-link), we fall back to the cached
+  // conversation list instead of hitting the network.
   useEffect(() => {
     let active = true;
-    getConversations()
-      .then(({ data }) => {
-        if (!active) return;
-        const conv = (data || []).find((c) => c.id === convId);
-        if (!conv) return;
-        if (conv.member_count) setParticipantCount(conv.member_count);
-        setIsGroupConv(!!conv.is_group);
-        if (!conv.is_group && conv.other_user_id) {
-          const uid = conv.other_user_id;
-          setPeerUserId(uid);
-          getChatPresence([uid])
-            .then((r) => {
-              if (active) setPeerStatus(r.data?.[uid]?.userStatus ?? null);
-            })
-            .catch(() => {});
-        }
-      })
-      .catch(() => {});
+    const peerFromParam = params.peerId ? Number(params.peerId) : null;
+    if (peerFromParam) {
+      setPeerUserId(peerFromParam);
+      getChatPresence([peerFromParam])
+        .then((r) => {
+          if (active) setPeerStatus(r.data?.[peerFromParam]?.userStatus ?? null);
+        })
+        .catch(() => {});
+      return () => {
+        active = false;
+      };
+    }
+    // No peer id in the route params — resolve from the cached conversation
+    // list (synchronous, no network) so deep-links / older nav paths still
+    // light up the header badge without blocking the open.
+    const cachedConvs = chatCache.getConversations();
+    const conv = (cachedConvs || []).find((c) => c.id === convId);
+    if (conv) {
+      if (conv.member_count) setParticipantCount(conv.member_count);
+      setIsGroupConv(!!conv.is_group);
+      if (!conv.is_group && conv.other_user_id) {
+        const uid = conv.other_user_id;
+        setPeerUserId(uid);
+        getChatPresence([uid])
+          .then((r) => {
+            if (active) setPeerStatus(r.data?.[uid]?.userStatus ?? null);
+          })
+          .catch(() => {});
+      }
+    }
     return () => {
       active = false;
     };
-  }, [convId]);
+  }, [convId, params.peerId]);
 
   // Keep the peer's header status live via the unified `user_status` event.
   useEffect(() => {
@@ -629,6 +661,9 @@ export function useChatThread() {
         setMessages([]);
         setPinnedMsgs([]);
         setHasMore(false);
+        // Drop the on-disk cache too so reopening doesn't resurrect the cleared
+        // messages from the instant-render seed.
+        chatCache.clearMessages(convId);
         return;
       }
       // Conversation deleted, or current user removed from the group —
@@ -1651,6 +1686,7 @@ export function useChatThread() {
               setMessages([]);
               setPinnedMsgs([]);
               setHasMore(false);
+              chatCache.clearMessages(convId);
             })
             .catch((e: any) =>
               alert(

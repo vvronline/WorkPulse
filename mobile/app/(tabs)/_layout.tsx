@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Redirect, Tabs } from "expo-router";
 import { ActivityIndicator, AppState, View } from "react-native";
 import * as Notifications from "expo-notifications";
@@ -35,6 +35,9 @@ export default function TabsLayout() {
   // (mirrors the web sidebar's chat unread count). Driven by the conversations
   // list + live `chat_message` WS events so it updates without opening Chat.
   const [chatUnread, setChatUnread] = useState(0);
+  // Coalesce bursts of chat_* WS events into a single unread re-pull instead of
+  // one full getConversations() per event (a busy chat used to hammer this).
+  const unreadRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refreshUnread = useCallback(() => {
     getConversations()
@@ -65,12 +68,20 @@ export default function TabsLayout() {
       return;
     }
     refreshUnread();
+    const scheduleUnreadRefresh = () => {
+      if (unreadRefreshTimer.current) return;
+      unreadRefreshTimer.current = setTimeout(() => {
+        unreadRefreshTimer.current = null;
+        refreshUnread();
+      }, 400);
+    };
     // Any incoming chat message (for a conversation we're not actively in)
     // bumps the badge; we re-pull the authoritative unread totals so the count
-    // matches the server's per-conversation unread tracking.
+    // matches the server's per-conversation unread tracking. Debounced so a
+    // burst of messages doesn't trigger one full fetch each.
     const off = socket.subscribe((msg) => {
       if (msg.type.startsWith("chat_")) {
-        refreshUnread();
+        scheduleUnreadRefresh();
       }
     });
     const offUnreadChanged = subscribeChatUnreadChanged(() => {
@@ -93,6 +104,10 @@ export default function TabsLayout() {
       offUnreadChanged();
       unsubUnreadChange();
       sub.remove();
+      if (unreadRefreshTimer.current) {
+        clearTimeout(unreadRefreshTimer.current);
+        unreadRefreshTimer.current = null;
+      }
     };
   }, [user, chatEnabled, refreshUnread]);
 

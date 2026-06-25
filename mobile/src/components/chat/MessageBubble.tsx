@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -38,26 +38,7 @@ const SWIPE_MAX = 80;
  * long-press reaction bar. IMPORTANT: the ref MUST point at the host node so
  * `measureInWindow` can be invoked ON it — see the parent's `openReactionBar`.
  */
-export default function MessageBubble({
-  message,
-  mine,
-  deleted,
-  starred,
-  pinned,
-  participantCount,
-  readReceipts,
-  userId,
-  firstInGroup = true,
-  lastInGroup = true,
-  registerRef,
-  onLongPress,
-  onReact,
-  onAddReaction,
-  onReply,
-  onRetry,
-  onCancelUpload,
-  onRetryUpload,
-}: {
+type MessageBubbleProps = {
   message: ChatMessage;
   mine: boolean;
   deleted: boolean;
@@ -81,7 +62,28 @@ export default function MessageBubble({
   onRetry?: (message: ChatMessage) => void;
   onCancelUpload?: (message: ChatMessage) => void;
   onRetryUpload?: (message: ChatMessage) => void;
-}) {
+};
+
+function MessageBubbleImpl({
+  message,
+  mine,
+  deleted,
+  starred,
+  pinned,
+  participantCount,
+  readReceipts,
+  userId,
+  firstInGroup = true,
+  lastInGroup = true,
+  registerRef,
+  onLongPress,
+  onReact,
+  onAddReaction,
+  onReply,
+  onRetry,
+  onCancelUpload,
+  onRetryUpload,
+}: MessageBubbleProps) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
@@ -402,3 +404,53 @@ const makeStyles = (theme: Theme) =>
       fontFamily: theme.fontRegular,
     },
   });
+
+/**
+ * Memoized export. The message FlatList re-renders on every state change
+ * (incoming message, typing, reaction toggle, etc.), and without memoization
+ * EVERY mounted bubble re-rendered each time — the main cause of jank on long
+ * threads and low-end devices. This comparator re-renders a row ONLY when
+ * something it actually displays changes. The callback props are stable
+ * (useCallback in the parent hook), so they're intentionally not compared.
+ */
+function reactionsSig(m: ChatMessage): string {
+  const rs = m.reactions || [];
+  let s = "";
+  for (const r of rs) s += `${r.userId}${r.emoji},`;
+  return s;
+}
+
+function areEqual(prev: MessageBubbleProps, next: MessageBubbleProps): boolean {
+  const a = prev.message;
+  const b = next.message;
+  return (
+    a.id === b.id &&
+    a.content === b.content &&
+    a.created_at === b.created_at &&
+    a.edited_at === b.edited_at &&
+    a.deleted_at === b.deleted_at &&
+    a.pinned_at === b.pinned_at &&
+    a.file_url === b.file_url &&
+    a.file_type === b.file_type &&
+    a.file_name === b.file_name &&
+    a.media_state === b.media_state &&
+    a._pending === b._pending &&
+    a._failed === b._failed &&
+    a._mediaState === b._mediaState &&
+    a._mediaProgress === b._mediaProgress &&
+    reactionsSig(a) === reactionsSig(b) &&
+    prev.mine === next.mine &&
+    prev.deleted === next.deleted &&
+    prev.starred === next.starred &&
+    prev.pinned === next.pinned &&
+    prev.participantCount === next.participantCount &&
+    prev.readReceipts === next.readReceipts &&
+    prev.userId === next.userId &&
+    prev.firstInGroup === next.firstInGroup &&
+    prev.lastInGroup === next.lastInGroup
+  );
+}
+
+const MessageBubble = memo(MessageBubbleImpl, areEqual);
+
+export default MessageBubble;

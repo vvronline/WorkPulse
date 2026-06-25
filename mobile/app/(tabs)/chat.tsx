@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  FlatList,
   Modal,
   Pressable,
   RefreshControl,
@@ -12,6 +11,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { FlashList } from "@shopify/flash-list";
 import { useFocusEffect, useRouter } from "expo-router";
 import {
   Archive,
@@ -46,6 +46,7 @@ import {
   getAllCallHistory,
   getChatPresence,
   getConversations,
+  getMessages,
   markConversationRead,
   markConversationUnread,
   muteConversation,
@@ -57,6 +58,7 @@ import {
 } from "../../src/features";
 import { useAuth, userHasFeature } from "../../src/auth/AuthContext";
 import { socket } from "../../src/realtime/socket";
+import { chatCache } from "../../src/storage/chatCache";
 import ChatAvatar from "../../src/components/ChatAvatar";
 import {
   useKeyboardInset,
@@ -64,6 +66,13 @@ import {
 } from "../../src/hooks/useKeyboardInset";
 
 type Tab = "msgs" | "meetings" | "calls" | "unread";
+
+// A flattened row for the virtualized conversation list. Section headers and
+// conversation rows share one array so FlashList can recycle them efficiently
+// (FlashList doesn't take a ScrollView's mapped children — it needs flat data).
+type ListRow =
+  | { kind: "section"; key: string; title: string; icon: "pin" | "star" | "msg" }
+  | { kind: "conv"; key: string; conv: Conversation };
 
 type SearchUser = {
   id: number;
@@ -115,11 +124,22 @@ export default function ChatScreen() {
   // ChatSidebar, which only renders the Meetings tab when it's enabled).
   const meetingsEnabled = userHasFeature(user, "meetings");
   const kbInset = useKeyboardInset();
-  const [items, setItems] = useState<Conversation[]>([]);
+  // Seed the conversation list from the on-device cache SYNCHRONOUSLY so the
+  // list paints instantly (Signal-style) instead of blocking on a spinner.
+  // `load()` revalidates in the background. The spinner only shows on a true
+  // cold cache (first-ever launch before any list has been fetched).
+  const cachedConvs = useMemo(() => chatCache.getConversations(), []);
+  const [items, setItems] = useState<Conversation[]>(() => cachedConvs || []);
   const [calls, setCalls] = useState<CallLogEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(
+    () => !cachedConvs || cachedConvs.length === 0,
+  );
   const [refreshing, setRefreshing] = useState(false);
   const [tab, setTab] = useState<Tab>("msgs");
+  // Coalesce bursts of `chat_message` WS events into a single background
+  // refresh (a busy conversation used to trigger a full getConversations()
+  // fetch PER message). The ref holds the pending debounce timer.
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Search (people) — mirrors web ≥2-char threshold.
   const [showSearch, setShowSearch] = useState(false);
@@ -160,18 +180,60 @@ export default function ChatScreen() {
     }
   }, []);
 
+  // After the list loads, warm the message cache for the few most-recent
+  // conversations in the BACKGROUND (Signal prefetches recent threads). Tapping
+  // one then paints instantly from disk with no spinner. Bounded + best-effort
+  // so it never delays the list or hammers the server. Only fills cold entries.
+  const prefetchRecent = useCallback((convs: Conversation[]) => {
+    const recent = [...convs]
+      .filter((c) => !c.is_meeting_chat)
+      .sort(
+        (a, b) =>
+          new Date(b.last_message_at || 0).getTime() -
+          new Date(a.last_message_at || 0).getTime(),
+      )
+      .slice(0, 5);
+    recent.forEach((c) => {
+      if (chatCache.getMessages(c.id)) return; // already warm
+      getMessages(c.id)
+        .then((r) => chatCache.setMessages(c.id, r.data || []))
+        .catch(() => {});
+    });
+  }, []);
+
   const load = useCallback(async () => {
     try {
       const { data } = await getConversations();
       setItems(data || []);
+      // Persist so the next launch / tab return paints instantly from disk.
+      chatCache.setConversations(data || []);
       loadPresence(data || []);
+      prefetchRecent(data || []);
     } catch {
       /* ignore */
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [loadPresence]);
+  }, [loadPresence, prefetchRecent]);
+
+  // Coalesced background refresh — multiple `chat_message` events within a
+  // short window collapse into ONE getConversations() call instead of one per
+  // message (which previously hammered the server on busy chats).
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimer.current) return; // a refresh is already pending
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = null;
+      load();
+    }, 400);
+  }, [load]);
+
+  useEffect(
+    () => () => {
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    },
+    [],
+  );
 
   const loadCalls = useCallback(async () => {
     try {
@@ -200,7 +262,8 @@ export default function ChatScreen() {
     useCallback(() => {
       load();
       const off = socket.subscribe((msg) => {
-        if (msg.type === "chat_message") load();
+        // Debounced refresh instead of a full fetch per message.
+        if (msg.type === "chat_message") scheduleRefresh();
         // Keep peer status badges live (mirrors web userStatusMap upkeep).
         if (msg.type === "user_status" && msg.data?.userId) {
           setUserStatusMap((prev) => ({
@@ -210,7 +273,7 @@ export default function ChatScreen() {
         }
       });
       return off;
-    }, [load]),
+    }, [load, scheduleRefresh]),
   );
 
   // Debounced people search.
@@ -371,6 +434,37 @@ export default function ChatScreen() {
   const others = regular.filter((c) => !c.is_pinned && !c.is_favourite);
 
   const totalUnread = items.reduce((s, c) => s + (c.unread_count || 0), 0);
+
+  // Flatten the active tab's grouped conversations into a single typed row
+  // array for the virtualized FlashList (section headers + conversation rows).
+  const listRows = useMemo<ListRow[]>(() => {
+    const rows: ListRow[] = [];
+    if (tab === "msgs") {
+      if (pinned.length > 0) {
+        rows.push({ kind: "section", key: "sec-pin", title: "Pinned", icon: "pin" });
+        for (const c of pinned) rows.push({ kind: "conv", key: `c-${c.id}`, conv: c });
+      }
+      if (favourites.length > 0) {
+        rows.push({ kind: "section", key: "sec-fav", title: "Favourites", icon: "star" });
+        for (const c of favourites) rows.push({ kind: "conv", key: `c-${c.id}`, conv: c });
+      }
+      if ((pinned.length > 0 || favourites.length > 0) && others.length > 0) {
+        rows.push({ kind: "section", key: "sec-all", title: "All Messages", icon: "msg" });
+      }
+      for (const c of others) rows.push({ kind: "conv", key: `c-${c.id}`, conv: c });
+    } else if (tab === "meetings") {
+      for (const c of meetingConvs) rows.push({ kind: "conv", key: `c-${c.id}`, conv: c });
+    } else if (tab === "unread") {
+      for (const c of unreadConvs) rows.push({ kind: "conv", key: `c-${c.id}`, conv: c });
+    }
+    return rows;
+  }, [tab, pinned, favourites, others, meetingConvs, unreadConvs]);
+
+  function renderSectionIcon(icon: "pin" | "star" | "msg") {
+    if (icon === "pin") return <Pin size={13} color={theme.textMuted} />;
+    if (icon === "star") return <Star size={13} color={theme.warning} />;
+    return <MessageSquare size={13} color={theme.textMuted} />;
+  }
 
   function renderConv(item: Conversation) {
     const name = convName(item);
@@ -631,7 +725,7 @@ export default function ChatScreen() {
           )}
         </ScrollView>
       ) : tab === "calls" ? (
-        <FlatList
+        <FlashList
           data={calls}
           keyExtractor={(c) => String(c.id)}
           contentContainerStyle={styles.list}
@@ -642,7 +736,7 @@ export default function ChatScreen() {
               tintColor={theme.primary}
             />
           }
-          renderItem={({ item }) => {
+          renderItem={({ item }: { item: CallLogEntry }) => {
             const outgoing = item.caller_id === user?.id;
             const missed = item.status === "missed" && !outgoing;
             const display = item.is_group
@@ -703,7 +797,8 @@ export default function ChatScreen() {
             </View>
           }
         />
-      ) : (
+      ) : listRows.length === 0 ? (
+        // Empty states per tab (no rows to virtualize).
         <ScrollView
           contentContainerStyle={styles.list}
           refreshControl={
@@ -714,54 +809,44 @@ export default function ChatScreen() {
             />
           }
         >
-          {tab === "msgs" ? (
-            regular.length === 0 ? (
-              <View style={styles.empty}>
-                <MessagesSquare size={40} color={theme.textMuted} />
-                <Text style={styles.emptyText}>No conversations yet</Text>
-              </View>
-            ) : (
-              <>
-                {pinned.length > 0 ? (
-                  <>
-                    {renderSection("Pinned", <Pin size={13} color={theme.textMuted} />)}
-                    {pinned.map(renderConv)}
-                  </>
-                ) : null}
-                {favourites.length > 0 ? (
-                  <>
-                    {renderSection("Favourites", <Star size={13} color={theme.warning} />)}
-                    {favourites.map(renderConv)}
-                  </>
-                ) : null}
-                {(pinned.length > 0 || favourites.length > 0) &&
-                others.length > 0
-                  ? renderSection(
-                      "All Messages",
-                      <MessageSquare size={13} color={theme.textMuted} />,
-                    )
-                  : null}
-                {others.map(renderConv)}
-              </>
-            )
-          ) : tab === "meetings" ? (
-            meetingConvs.length === 0 ? (
-              <View style={styles.empty}>
-                <Video size={40} color={theme.textMuted} />
-                <Text style={styles.emptyText}>No meeting chats yet</Text>
-              </View>
-            ) : (
-              meetingConvs.map(renderConv)
-            )
-          ) : unreadConvs.length === 0 ? (
+          {tab === "meetings" ? (
+            <View style={styles.empty}>
+              <Video size={40} color={theme.textMuted} />
+              <Text style={styles.emptyText}>No meeting chats yet</Text>
+            </View>
+          ) : tab === "unread" ? (
             <View style={styles.empty}>
               <BellDot size={40} color={theme.textMuted} />
               <Text style={styles.emptyText}>You&apos;re all caught up!</Text>
             </View>
           ) : (
-            unreadConvs.map(renderConv)
+            <View style={styles.empty}>
+              <MessagesSquare size={40} color={theme.textMuted} />
+              <Text style={styles.emptyText}>No conversations yet</Text>
+            </View>
           )}
         </ScrollView>
+      ) : (
+        // Virtualized conversation list (FlashList) — section headers + rows
+        // share one recycled cell pool, so long lists scroll smoothly and the
+        // tab opens fast (no more mapping every row into a ScrollView).
+        <FlashList
+          data={listRows}
+          keyExtractor={(r) => r.key}
+          contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={theme.primary}
+            />
+          }
+          renderItem={({ item }: { item: ListRow }) =>
+            item.kind === "section"
+              ? renderSection(item.title, renderSectionIcon(item.icon))
+              : renderConv(item.conv)
+          }
+        />
       )}
 
       {!showSearch ? (
