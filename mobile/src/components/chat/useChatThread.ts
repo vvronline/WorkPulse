@@ -210,7 +210,20 @@ export function useChatThread() {
   );
   const [peerStatus, setPeerStatus] = useState<string | null>(null);
   // Delivery / read receipts (userId → ISO last_read_at) + participant count.
-  const [readReceipts, setReadReceipts] = useState<Record<number, string>>({});
+  // Seed from the on-device cache SYNCHRONOUSLY (same pattern as `messages`)
+  // so the read-receipt tick colour is correct on the FIRST frame. Without
+  // this, the cached messages painted instantly but `readReceipts` started
+  // empty and was only filled by the async `getReadStatus()` round-trip in
+  // `load()` — so the ticks flipped from delivered (muted) → read (accent) a
+  // fraction of a second after the chat opened. The network refresh below now
+  // just confirms what's already shown instead of causing a visible flip.
+  const cachedReceipts = useMemo(
+    () => chatCache.getReadStatus(convId),
+    [convId],
+  );
+  const [readReceipts, setReadReceipts] = useState<Record<number, string>>(
+    () => cachedReceipts || {},
+  );
   const [participantCount, setParticipantCount] = useState(2);
   // Pinned messages (banner at the top of the chat).
   const [pinnedMsgs, setPinnedMsgs] = useState<PinnedMessage[]>([]);
@@ -354,6 +367,8 @@ export function useChatThread() {
       setHasMore((data || []).length >= 50);
       markReadAndSync();
       // Seed read receipts so own messages show the correct tick immediately.
+      // Also persist them to the on-device cache so the NEXT open paints the
+      // read colour on the first frame (no delivered→read flip).
       getReadStatus(convId)
         .then((r) => {
           const map: Record<number, string> = {};
@@ -363,6 +378,7 @@ export function useChatThread() {
             }
           }
           setReadReceipts(map);
+          chatCache.setReadStatus(convId, map);
         })
         .catch(() => {});
       // Jump to the newest message once the list has content.
@@ -482,7 +498,13 @@ export function useChatThread() {
       if (msg.type === "chat_read_receipt") {
         if (Number(d.conversationId) !== convId) return;
         if (d.userId && d.readAt) {
-          setReadReceipts((prev) => ({ ...prev, [d.userId]: d.readAt }));
+          setReadReceipts((prev) => {
+            const next = { ...prev, [d.userId]: d.readAt };
+            // Keep the on-device cache in sync so the read colour is correct on
+            // the FIRST frame of the next open (no delivered→read flip).
+            chatCache.setReadStatus(convId, next);
+            return next;
+          });
         }
         return;
       }
