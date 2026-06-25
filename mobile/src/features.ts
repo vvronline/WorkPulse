@@ -484,6 +484,13 @@ export type ChatMessage = {
   reply_to_id?: number | null;
   reply_to_content?: string | null;
   reply_to_sender_name?: string | null;
+  // Quoted-message attachment preview (Signal-style): when the replied-to
+  // message carried media, these let the reply quote render a thumbnail + a
+  // media-type label ("Photo"/"Video"/"Voice message"/file name) instead of a
+  // generic "Attachment" string.
+  reply_to_file_url?: string | null;
+  reply_to_file_type?: string | null;
+  reply_to_file_name?: string | null;
   // Arbitrary metadata JSONB (polls, view-once media disappearing flag, etc.).
   metadata?: {
     viewOnce?: boolean;

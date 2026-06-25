@@ -125,6 +125,9 @@ function normalizeUploadedMessage(data: any): ChatMessage {
     reply_to_id: data.replyToId ?? data.reply_to_id ?? null,
     reply_to_content: data.replyContent ?? data.reply_to_content ?? null,
     reply_to_sender_name: data.replySenderName ?? data.reply_to_sender_name ?? null,
+    reply_to_file_url: data.replyFileUrl ?? data.reply_to_file_url ?? null,
+    reply_to_file_type: data.replyFileType ?? data.reply_to_file_type ?? null,
+    reply_to_file_name: data.replyFileName ?? data.reply_to_file_name ?? null,
     metadata: data.metadata ?? null,
     reactions: data.reactions ?? [],
     clientMsgId: data.clientMsgId ?? null,
@@ -773,6 +776,9 @@ export function useChatThread() {
               reply_to_id: d.replyToId ?? null,
               reply_to_content: d.replyContent ?? null,
               reply_to_sender_name: d.replySenderName ?? null,
+              reply_to_file_url: d.replyFileUrl ?? null,
+              reply_to_file_type: d.replyFileType ?? null,
+              reply_to_file_name: d.replyFileName ?? null,
               clientMsgId: d.clientMsgId,
               _mediaState: d.mediaState ?? null,
               _mediaProgress:
@@ -799,6 +805,9 @@ export function useChatThread() {
             reply_to_id: d.replyToId ?? null,
             reply_to_content: d.replyContent ?? null,
             reply_to_sender_name: d.replySenderName ?? null,
+            reply_to_file_url: d.replyFileUrl ?? null,
+            reply_to_file_type: d.replyFileType ?? null,
+            reply_to_file_name: d.replyFileName ?? null,
             _mediaState: d.mediaState ?? null,
             _mediaProgress:
               typeof d.mediaProgress === "number" ? d.mediaProgress : 0,
@@ -835,6 +844,9 @@ export function useChatThread() {
         reply_to_id: replyToId ?? null,
         reply_to_content: replyTo?.content ?? null,
         reply_to_sender_name: replyTo?.sender_name ?? null,
+        reply_to_file_url: replyTo?.file_url ?? null,
+        reply_to_file_type: replyTo?.file_type ?? null,
+        reply_to_file_name: replyTo?.file_name ?? null,
         _pending: true,
         clientMsgId,
       },
@@ -1579,9 +1591,19 @@ export function useChatThread() {
     const content = text.trim();
     if (!content) return;
     try {
-      const { data } = await editMessage(editingId, content);
+      // The server's PUT /chat/messages/:id returns only { ok: true } — it does
+      // NOT echo the edited content. Relying on `data.content` therefore blanked
+      // the message body (leaving just the "edited" label) until the chat was
+      // reopened. Apply the edit OPTIMISTICALLY from the text we just sent and
+      // stamp `edited_at` so the "edited" label + new content show immediately
+      // (Signal applies edits locally, never waiting for a content echo).
+      await editMessage(editingId, content);
       setMessages((prev) =>
-        prev.map((m) => (m.id === editingId ? { ...m, content: data.content } : m)),
+        prev.map((m) =>
+          m.id === editingId
+            ? { ...m, content, edited_at: new Date().toISOString() }
+            : m,
+        ),
       );
     } catch {
       /* ignore */
@@ -1700,6 +1722,25 @@ export function useChatThread() {
     } catch {
       /* ignore */
     }
+  }
+
+  // Signal-style "tap a quoted reply → jump to the original": scroll the list
+  // to the replied-to message and briefly flash its highlight (reuses the
+  // search-match highlight). The original lives at `reply_to_id`; if it isn't
+  // in the currently-loaded window we no-op gracefully (a best-effort jump,
+  // same as the search/pinned cross-screen jumps).
+  function jumpToReply(message: ChatMessage) {
+    const targetId = message.reply_to_id;
+    if (!targetId) return;
+    const exists = messages.some((m) => m.id === targetId);
+    if (!exists) return;
+    jumpToMessage(targetId);
+    // Flash the highlight: clear first so a transition null → id re-fires the
+    // bubble's highlight effect even if it was the same id last time.
+    setHighlightedId(null);
+    setTimeout(() => setHighlightedId(targetId), 60);
+    // Auto-clear the highlight after the flash so it doesn't stay tinted.
+    setTimeout(() => setHighlightedId(null), 1400);
   }
 
   // ── Signal-style in-conversation search ───────────────────────────────────
@@ -2349,6 +2390,7 @@ export function useChatThread() {
     latestPin,
     pinnedMsgs,
     jumpToMessage,
+    jumpToReply,
     unpinFromBanner,
     // composer
     text,

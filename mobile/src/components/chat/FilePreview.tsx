@@ -19,6 +19,7 @@ import { markMessageViewed } from "../../features";
 import { getToken } from "../../auth/tokenStore";
 import VoicePlayer from "../VoicePlayer";
 import { AuthedImage } from "../AuthedImage";
+import ZoomableImage from "./ZoomableImage";
 import type { ChatMessage } from "../../features";
 import { fmtSize, isAudioFile, isImageFile } from "./chatUtils";
 import { openAuthedFile } from "./openAuthedFile";
@@ -360,17 +361,20 @@ function ImageViewerModal({
   onClose: () => void;
 }) {
   if (!uri) return null;
+  // Pinch-to-zoom / pan / double-tap zoom (Signal MediaPreview parity). Tap at
+  // 1× to dismiss; the close button is always available.
+  const isLocal = /^(file|content|data):/i.test(uri);
   return (
     <Modal visible animationType="fade" transparent onRequestClose={onClose}>
-      <Pressable style={viewerStyles.backdrop} onPress={onClose}>
+      <View style={viewerStyles.backdrop}>
         <Pressable style={viewerStyles.closeBtn} onPress={onClose} hitSlop={10}>
           <X size={22} color="#fff" />
         </Pressable>
-        <Image source={{ uri }} style={viewerStyles.image} resizeMode="contain" />
+        <ZoomableImage uri={uri} isLocal={isLocal} onTap={onClose} />
         {viewOnce ? (
           <Text style={viewerStyles.note}>This photo can only be viewed once</Text>
         ) : null}
-      </Pressable>
+      </View>
     </Modal>
   );
 }

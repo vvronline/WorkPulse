@@ -421,7 +421,16 @@ function ChatList({
       inverted
       data={c.messagesReversed}
       extraData={c.listSignature}
-      keyExtractor={(m) => String(m.id)}
+      // Stable row identity across the optimistic→confirmed swap. An optimistic
+      // message starts with a temporary NEGATIVE id; when the server confirms it
+      // over the socket the row is replaced with the positive server id. Keying
+      // by `id` alone changed the key on that swap → FlatList unmounted the old
+      // row and mounted a new one, replaying the bubble's FadeIn entering
+      // animation (the visible "blink"/settle on send). The confirmed message
+      // keeps the same `clientMsgId`, so keying by it first keeps ONE row
+      // instance that updates in place — no remount, no second animation
+      // (Signal keeps a single view from "sending" through "sent").
+      keyExtractor={(m) => m.clientMsgId ?? String(m.id)}
       // `flex: 1` is load-bearing: without it the FlatList doesn't claim the
       // available column height.
       style={styles.listFlex}
@@ -526,6 +535,7 @@ function ChatList({
               onRetry={c.retryFailedMessage}
               onCancelUpload={c.cancelMediaUpload}
               onRetryUpload={c.retryMediaUpload}
+              onJumpToReply={c.jumpToReply}
             />
             {showDaySeparator ? (
               <View style={styles.daySeparator}>

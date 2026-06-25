@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import {
   FlatList,
-  Image,
   Modal,
   Pressable,
   StyleSheet,
@@ -11,9 +10,9 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { X } from "lucide-react-native";
-import { AuthedImage } from "../AuthedImage";
 import { uploadUrl } from "../../config";
 import { fmtDateTime } from "./chatUtils";
+import ZoomableImage from "./ZoomableImage";
 
 export type ViewerMediaItem = {
   id: number;
@@ -43,6 +42,10 @@ export default function MediaViewerPager({
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(), []);
   const [index, setIndex] = useState(initialIndex);
+  // While an image is pinched/zoomed past 1× we DISABLE horizontal paging so a
+  // pan moves the zoomed image instead of flipping to the next page (Signal
+  // MediaPreview parity).
+  const [zoomed, setZoomed] = useState(false);
 
   if (!items.length) return null;
   const current = items[Math.min(index, items.length - 1)];
@@ -70,6 +73,7 @@ export default function MediaViewerPager({
           data={items}
           horizontal
           pagingEnabled
+          scrollEnabled={!zoomed}
           showsHorizontalScrollIndicator={false}
           initialScrollIndex={initialIndex}
           getItemLayout={(_, i) => ({
@@ -86,23 +90,14 @@ export default function MediaViewerPager({
             const resolved = uploadUrl(item.file_url) || undefined;
             const isLocal = !!resolved && /^(file|content|data):/i.test(resolved);
             return (
-              <Pressable style={{ width, height }} onPress={onClose}>
-                <View style={styles.pageCenter}>
-                  {isLocal ? (
-                    <Image
-                      source={{ uri: resolved }}
-                      style={styles.image}
-                      resizeMode="contain"
-                    />
-                  ) : (
-                    <AuthedImage
-                      uri={resolved}
-                      style={styles.image}
-                      resizeMode="contain"
-                    />
-                  )}
-                </View>
-              </Pressable>
+              <View style={{ width, height }}>
+                <ZoomableImage
+                  uri={resolved}
+                  isLocal={isLocal}
+                  onZoomChange={setZoomed}
+                  onTap={onClose}
+                />
+              </View>
             );
           }}
         />

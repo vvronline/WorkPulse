@@ -70,6 +70,9 @@ type MessageBubbleProps = {
   onRetry?: (message: ChatMessage) => void;
   onCancelUpload?: (message: ChatMessage) => void;
   onRetryUpload?: (message: ChatMessage) => void;
+  // Signal-style: tapping the in-bubble quoted reply scrolls to + flashes the
+  // original message it is replying to.
+  onJumpToReply?: (message: ChatMessage) => void;
 };
 
 function MessageBubbleImpl({
@@ -92,6 +95,7 @@ function MessageBubbleImpl({
   onRetry,
   onCancelUpload,
   onRetryUpload,
+  onJumpToReply,
 }: MessageBubbleProps) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
@@ -264,7 +268,10 @@ function MessageBubbleImpl({
             </Text>
           ) : null}
           {message.reply_to_id && !deleted ? (
-            <ReplyQuote message={message} />
+            <ReplyQuote
+              message={message}
+              onPress={onJumpToReply ? () => onJumpToReply(message) : undefined}
+            />
           ) : null}
           {message.file_url && !deleted ? (
             <FilePreview

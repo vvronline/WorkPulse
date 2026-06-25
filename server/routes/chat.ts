@@ -559,6 +559,7 @@ router.get("/conversations/:id/messages", auth, async (req: Request, res: Respon
                    u.full_name AS sender_name, u.avatar AS sender_avatar, u.username AS sender_username,
                    rm.content AS reply_content, rm.sender_id AS reply_sender_id,
                    ru.full_name AS reply_sender_name,
+                   rm.file_url AS reply_file_url, rm.file_type AS reply_file_type, rm.file_name AS reply_file_name,
                    CASE WHEN sm.message_id IS NOT NULL THEN true ELSE false END AS starred
             FROM messages m
             JOIN users u ON u.id = m.sender_id
@@ -726,9 +727,12 @@ router.post("/conversations/:id/messages", auth, async (req: Request, res: Respo
         // Reply context (so the recipient's bubble can render the quoted message).
         let replyContent: string | null = null;
         let replySenderName: string | null = null;
+        let replyFileUrl: string | null = null;
+        let replyFileType: string | null = null;
+        let replyFileName: string | null = null;
         if (replyToId) {
             const replyMsg = (await req.db!.query(
-                `SELECT m.content, u.full_name AS sender_name
+                `SELECT m.content, m.file_url, m.file_type, m.file_name, u.full_name AS sender_name
                  FROM messages m JOIN users u ON u.id = m.sender_id
                  WHERE m.id = $1 AND m.conversation_id = $2`,
                 [replyToId, convId],
@@ -736,6 +740,9 @@ router.post("/conversations/:id/messages", auth, async (req: Request, res: Respo
             if (replyMsg) {
                 replyContent = replyMsg.content;
                 replySenderName = replyMsg.sender_name;
+                replyFileUrl = replyMsg.file_url;
+                replyFileType = replyMsg.file_type;
+                replyFileName = replyMsg.file_name;
             }
         }
 
@@ -757,6 +764,9 @@ router.post("/conversations/:id/messages", auth, async (req: Request, res: Respo
             replyToId,
             replyContent,
             replySenderName,
+            replyFileUrl,
+            replyFileType,
+            replyFileName,
             createdAt: result.created_at,
         };
 
@@ -823,6 +833,9 @@ router.post("/conversations/:id/messages", auth, async (req: Request, res: Respo
             reply_to_id: replyToId,
             reply_to_content: replyContent,
             reply_to_sender_name: replySenderName,
+            reply_to_file_url: replyFileUrl,
+            reply_to_file_type: replyFileType,
+            reply_to_file_name: replyFileName,
             reactions: [],
             delivered_to: [],
         });
@@ -883,6 +896,29 @@ router.post("/conversations/:id/files", auth, loadUserContext, chatUpload.single
 
         const sender = (await req.db!.query("SELECT full_name, avatar, username FROM users WHERE id = $1", [req.userId])).rows[0];
 
+        // Reply context (so the recipient's bubble can render the quoted message
+        // when replying WITH a file/image).
+        let replyContent: string | null = null;
+        let replySenderName: string | null = null;
+        let replyFileUrl: string | null = null;
+        let replyFileType: string | null = null;
+        let replyFileName: string | null = null;
+        if (replyToId) {
+            const replyMsg = (await req.db!.query(
+                `SELECT m.content, m.file_url, m.file_type, m.file_name, u.full_name AS sender_name
+                 FROM messages m JOIN users u ON u.id = m.sender_id
+                 WHERE m.id = $1 AND m.conversation_id = $2`,
+                [replyToId, convId],
+            )).rows[0];
+            if (replyMsg) {
+                replyContent = replyMsg.content;
+                replySenderName = replyMsg.sender_name;
+                replyFileUrl = replyMsg.file_url;
+                replyFileType = replyMsg.file_type;
+                replyFileName = replyMsg.file_name;
+            }
+        }
+
         const participants = (await req.db!.query(
             "SELECT user_id FROM conversation_participants WHERE conversation_id = $1",
             [convId],
@@ -903,6 +939,11 @@ router.post("/conversations/:id/files", auth, loadUserContext, chatUpload.single
             fileType: req.file.mimetype,
             fileSize: req.file.size,
             replyToId,
+            replyContent,
+            replySenderName,
+            replyFileUrl,
+            replyFileType,
+            replyFileName,
             createdAt: result.created_at,
             metadata,
             mediaJobId: mediaJob.id,
@@ -937,6 +978,11 @@ router.post("/conversations/:id/files", auth, loadUserContext, chatUpload.single
             file_type: req.file.mimetype,
             file_size: req.file.size,
             reply_to_id: replyToId,
+            reply_to_content: replyContent,
+            reply_to_sender_name: replySenderName,
+            reply_to_file_url: replyFileUrl,
+            reply_to_file_type: replyFileType,
+            reply_to_file_name: replyFileName,
             metadata,
             media_job_id: mediaJob.id,
             media_state: mediaJob.status,

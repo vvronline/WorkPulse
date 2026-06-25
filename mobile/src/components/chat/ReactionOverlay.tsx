@@ -199,7 +199,14 @@ export default function ReactionOverlay({
   // is tapped. Its height is the row count plus the container's padding.
   const menuH = actions.length * MENU_ROW_H + 10;
   const neededTop = insets.top + margin + PILL_HEIGHT + PILL_GAP;
-  const neededBottom = winH - insets.bottom - margin - MENU_GAP;
+  // Reserve room BELOW the bubble for the secondary "more" menu when it's open
+  // so the bubble lifts up far enough that the full action menu fits on screen.
+  // Previously only `MENU_GAP` was reserved, so for the newest (bottom) message
+  // the 3-dot menu ran off the bottom edge and its rows were cropped. Signal's
+  // ConversationReactionOverlay pushes the lifted bubble up to make space for
+  // the context menu — this mirrors that.
+  const reservedBelow = moreOpen ? menuH + MENU_GAP : MENU_GAP;
+  const neededBottom = winH - insets.bottom - margin - reservedBelow;
 
   let bubbleTop = a.y;
   const bubbleH = a.height;
