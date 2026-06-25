@@ -87,6 +87,13 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The default `packages` input is "tools platform-tools". The obsolete
+          # "tools" (SDK Tools) package pulls down the Android Emulator and now
+          # fails with "Error on ZipFile unknown archive". It isn't needed for a
+          # Gradle APK build, so only install platform-tools here. Gradle/Expo
+          # download the required build-tools + platform SDK automatically.
+          packages: platform-tools
 
       - name: Install mobile dependencies
         working-directory: mobile
