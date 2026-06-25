@@ -1,1505 +1,257 @@
+import notifee, {
+  AndroidImportance,
+  AndroidStyle,
+  AndroidVisibility,
+  AndroidCategory,
+  AndroidNotificationSetting,
+  EventType,
+  type Notification,
+} from '@notifee/react-native';
+import { Linking, Platform } from 'react-native';
+import { router } from 'expo-router';
+import { fetchWithAuth } from '../api/http';
+import { SERVER_ORIGIN } from '../config';
+
+export const ANDROID_CHANNELS = {
+  messages: {
+    id: 'messages',
+    name: 'Messages',
+    importance: AndroidImportance.HIGH,
+  },
+  calls: {
+    id: 'calls',
+    name: 'Calls',
+    importance: AndroidImportance.HIGH,
+  },
+} as const;
+
+let channelsCreated = false;
+
+export async function ensureChannels(): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  if (channelsCreated) return;
+
+  await notifee.createChannel({
+    id: ANDROID_CHANNELS.messages.id,
+    name: ANDROID_CHANNELS.messages.name,
+    importance: ANDROID_CHANNELS.messages.importance,
+    sound: 'default',
+    vibration: true,
+  });
+
+  await notifee.createChannel({
+    id: ANDROID_CHANNELS.calls.id,
+    name: ANDROID_CHANNELS.calls.name,
+    importance: ANDROID_CHANNELS.calls.importance,
+    sound: 'default',
+    vibration: true,
+    bypassDnd: true,
+  });
+
+  channelsCreated = true;
+}
+
+interface ChatMessageData {
+  type?: string;
+  conversationId: string;
+  senderName?: string;
+  senderAvatar?: string;
+  preview?: string;
+}
+
+function buildMessageNotification(data: ChatMessageData): Notification {
+  const title = data.senderName || 'New message';
+  const body = data.preview || 'You have a new message';
+
+  return {
+    id: `chat-${data.conversationId}`,
+    title,
+    body,
+    data: {
+      type: 'chat',
+      conversationId: data.conversationId,
+      // Persist sender identity on the notification so we can pass it straight
+      // to the chat screen when the notification is pressed (even on cold start).
+      ...(data.senderName ? { senderName: data.senderName } : {}),
+      ...(data.senderAvatar ? { senderAvatar: data.senderAvatar } : {}),
+    },
+    android: {
+      channelId: ANDROID_CHANNELS.messages.id,
+      importance: AndroidImportance.HIGH,
+      category: AndroidCategory.MESSAGE,
+      visibility: AndroidVisibility.PRIVATE,
+      pressAction: {
+        id: 'default',
+        launchActivity: 'default',
+      },
+      smallIcon: 'ic_notification',
+      timestamp: Date.now(),
+      showTimestamp: true,
+      actions: [
+        {
+          title: 'Reply',
+          pressAction: { id: 'reply' },
+          input: {
+            allowFreeFormInput: true,
+            placeholder: 'Type a reply...',
+          },
+        },
+        {
+          title: 'Mark as read',
+          pressAction: { id: 'mark-read' },
+        },
+      ],
+    },
+    ios: {
+      categoryId: 'message',
+      threadId: data.conversationId,
+    },
+  };
+}
+
+export async function displayMessageNotification(data: ChatMessageData): Promise<void> {
+  await ensureChannels();
+  const notification = buildMessageNotification(data);
+  await notifee.displayNotification(notification);
+}
+
+export function setupNotifeeForegroundHandler(): () => void {
+  return notifee.onForegroundEvent(async ({ type, detail }) => {
+    await handleNotifeeEvent(type, detail);
+  });
+}
+
+function openConversation(data: ChatMessageData): void {
+  router.push({
+    pathname: `/chat/${data.conversationId}`,
+    params: {
+      ...(data.senderName ? { name: data.senderName } : {}),
+      ...(data.senderAvatar ? { avatar: data.senderAvatar } : {}),
+    },
+  });
+}
+
 /**
- * Notifee wrapper for background/terminated-state call & message notifications.
- *
- * WHY NOTIFEE (and not expo-notifications) FOR BACKGROUND DELIVERY:
- * - On Android, when the app is terminated, FCM spawns a *headless* JS task
- *   (see `mobile/index.js`) — the React tree never mounts. `expo-notifications`
- *   relies on its handler/channels being configured during React init, so its
- *   `scheduleNotificationAsync` is unreliable (often silently no-ops) from a
- *   headless background task.
- * - Notifee is purpose-built to run from `setBackgroundMessageHandler` and is
- *   the standard way to render a **full-screen-intent** incoming-call screen
- *   over the lock screen even when the app is killed, plus reliable status-bar
- *   message notifications in the terminated state.
- *
- * This module is defensive: every call resolves the native module via `require`
- * and no-ops if it is unavailable (e.g. Expo Go / web), so importing it never
- * crashes the JS bundle.
+ * Handles the notification that launched the app from a killed/background state.
+ * Should be called once at app startup so the chat screen receives the sender
+ * name/avatar params instead of falling back to "Chat" / "?".
  */
-
-import { Platform } from "react-native";
-import * as Linking from "expo-linking";
-import * as FileSystem from "expo-file-system/legacy";
-import * as SecureStore from "expo-secure-store";
-import { uploadUrl } from "../config";
-import { nativeCallService } from "./nativeCallService";
-import type { NotificationPayload } from "./pushNotificationService";
-import {
-  setPendingCall,
-  pendingCallFromData,
-  persistPendingCall,
-  clearPersistedPendingCall,
-  loadPersistedPendingCall,
-} from "../realtime/pendingCall";
-import {
-  setPendingChat,
-  persistPendingChat,
-} from "../realtime/pendingChat";
-import { sendMessage, markConversationRead } from "../features";
-import { loadCallPrefs } from "./callPrefsStore";
-import { getToken } from "../auth/tokenStore";
-import {
-  startRinging,
-  stopRinging,
-  isCallRingerAvailable,
-  getPendingCallAction,
-  clearPendingCallAction,
-} from "../../modules/call-ringer";
-
-// Versioned channel IDs. Android notification channels are IMMUTABLE after
-// creation — recreating a channel with the same ID does NOT update its
-// importance/sound/visibility. If a device created "calls"/"messages" under an
-// earlier build with weaker settings, those stale settings would persist and
-// silently downgrade our call/message notifications. Bumping the ID forces the
-// OS to create a fresh channel with the corrected high-importance settings.
-// (Mirrors Signal-Android's `calls_v3` versioned-channel pattern.)
-//
-// Bumped v2 → v3 when we switched the calls channel SOUND from the Android
-// system default ("default") to our BUNDLED `res/raw/ringtone` resource (see
-// scripts/withAndroidRingtoneAssets + generate-call-sounds). A channel's sound
-// is IMMUTABLE after creation, so the ID MUST be bumped for the new ringtone to
-// take effect on devices that already created calls_v2.
-const CALL_CHANNEL_ID = "calls_v3";
-// The bundled raw resource name (file `res/raw/ringtone.wav`, referenced WITHOUT
-// extension). This is the default WorkPulse incoming-call ringtone (== the
-// "classic" option) used when the selected tone has no dedicated resource.
-const CALL_RINGTONE_RESOURCE = "ringtone";
-
-// SELECTED-RINGTONE SUPPORT (per-tone channels).
-// An Android channel's sound is IMMUTABLE after creation, so to ring the
-// killed/background status-bar call with the user's SELECTED ringtone we create
-// ONE channel per ringtone option, each whose sound is the matching bundled
-// `res/raw/ringtone_<id>` resource (generated by scripts/generate-call-sounds +
-// copied by withAndroidRingtoneAssets), and post the incoming-call notification
-// on the channel matching the user's choice (cached in callPrefsStore so the
-// headless path can read it).
-//
-// Keep this list in sync with the RINGTONES presets in app/profile.tsx and the
-// RINGTONE_NOTES map in scripts/generate-call-sounds.cjs. "none" is intentionally
-// excluded (it maps to the SILENT channel).
-const RINGTONE_IDS = [
-  "classic",
-  "calm",
-  "dynamic",
-  "urgent",
-  "boop",
-  "marimba",
-  "crystal",
-  "vapor",
-] as const;
-// Per-tone channel id. Versioned (_v3) alongside the default calls channel so a
-// settings change creates fresh channels with the right immutable sound.
-function callChannelIdForTone(toneId: string): string {
-  return `calls_${toneId}_v3`;
-}
-// Per-tone bundled raw resource name (file `res/raw/ringtone_<id>.wav`).
-function ringtoneResourceForTone(toneId: string): string {
-  return `ringtone_${toneId}`;
-}
-
-// Silent sibling of the calls channel, used when the user has muted all
-// notification sounds (`muteAll`). A channel's sound is IMMUTABLE after
-// creation, so a separate silent channel is the only way to post a non-ringing
-// incoming-call notification while still surfacing the full-screen call UI.
-const CALL_SILENT_CHANNEL_ID = "calls_silent_v2";
-const MESSAGE_CHANNEL_ID = "messages_v2";
-
-// Notification SMALL icon — a STATIC, compile-time `drawable` resource (a white-
-// on-transparent silhouette the OS tints). It MUST resolve: a notification
-// posted with no resolvable small icon is DROPPED SILENTLY (sound plays, no
-// status-bar entry) — the root cause of "messages: only sound, no banner". The
-// previous "ic_launcher" value only existed as an ADAPTIVE `mipmap`, which
-// Android rejects as a small icon. See scripts/withAndroidNotificationIcon.js +
-// res/drawable/notification_icon.xml.
-const MESSAGE_SMALL_ICON = "notification_icon";
-
-// SecureStore key holding the admin-set org branding logo URL. Cached by the
-// ThemeProvider (BRAND_LOGO_CACHE_KEY) so the killed/headless message handler —
-// which has NO React context / API access — can use the org logo as the message
-// notification LARGE icon fallback when a message has no sender avatar.
-const BRAND_LOGO_CACHE_KEY = "wp_brand_logo_url";
-
-type NotifeeModule = any;
-type AndroidImportanceEnum = Record<string, number>;
-type AndroidCategoryEnum = Record<string, string>;
-type AndroidVisibilityEnum = Record<string, number>;
-type EventTypeEnum = Record<string, number>;
-type AndroidNotificationSettingEnum = Record<string, number>;
-
-function callNotificationId(callId: string, conversationId: string): string {
-  return `wp-call-${conversationId}-${callId}`;
-}
-
-// ── Cancelled-call tombstones ───────────────────────────────────────────────
-// The `call_incoming` push and the `call_cancelled`/`call_ended` push can arrive
-// out of order (or the cancel can land WHILE the incoming display is still being
-// built in the headless task). Without a guard, a cancel that arrives first is a
-// no-op and the now-dead incoming call still rings a moment later (the "receiver
-// keeps ringing after the caller hung up" bug). We record recently cancelled/
-// ended call ids with a timestamp; displayIncomingCall consults this set and
-// SUPPRESSES a ring for a call that was just cancelled. Entries auto-expire so
-// the set never grows unbounded and a genuine later call with a reused id is not
-// blocked.
-const CANCELLED_CALL_TTL_MS = 30000;
-const cancelledCalls = new Map<string, number>();
-
-function callKey(callId: string, conversationId: string): string {
-  return `${conversationId}:${callId}`;
-}
-
-function markCallCancelled(callId?: string, conversationId?: string): void {
-  if (!callId || !conversationId) return;
-  const now = Date.now();
-  cancelledCalls.set(callKey(callId, conversationId), now);
-  // Opportunistic prune of expired entries.
-  for (const [key, ts] of cancelledCalls) {
-    if (now - ts > CANCELLED_CALL_TTL_MS) cancelledCalls.delete(key);
+export async function handleInitialNotification(): Promise<void> {
+  try {
+    const initial = await notifee.getInitialNotification();
+    const data = initial?.notification?.data as unknown as ChatMessageData | undefined;
+    if (initial && data?.conversationId && data?.type === 'chat') {
+      openConversation(data);
+    }
+  } catch (err) {
+    console.warn('[notifee] initial notification failed', err);
   }
 }
 
-function wasCallCancelled(callId?: string, conversationId?: string): boolean {
-  if (!callId || !conversationId) return false;
-  const ts = cancelledCalls.get(callKey(callId, conversationId));
-  if (ts == null) return false;
-  if (Date.now() - ts > CANCELLED_CALL_TTL_MS) {
-    cancelledCalls.delete(callKey(callId, conversationId));
-    return false;
-  }
-  return true;
-}
+async function handleNotifeeEvent(
+  type: EventType,
+  detail: { notification?: Notification; pressAction?: { id: string }; input?: string },
+): Promise<void> {
+  const { notification, pressAction, input } = detail;
+  if (!notification) return;
 
-function messageNotificationId(messageId: string): string {
-  return `wp-msg-${messageId}`;
-}
+  const data = notification.data as unknown as ChatMessageData | undefined;
+  const conversationId = data?.conversationId;
 
-// Notifee VALIDATES `vibrationPattern`: it MUST have an EVEN number of entries
-// (alternating wait/buzz durations) and createChannel()/displayNotification()
-// THROW on a malformed (odd-length) pattern. A throw inside createMessageChannel
-// means the messages channel is NEVER created, and Android then SILENTLY DROPS
-// every message notification (sound may play, but no status-bar/lock-screen
-// entry) — the root cause of "message push not appearing while calls work".
-// This guard returns the pattern only when it is safe, else undefined so the
-// caller omits the override entirely (never passes a bad pattern to Notifee).
-function safeVibrationPattern(
-  pattern: number[],
-): number[] | undefined {
-  if (!Array.isArray(pattern) || pattern.length === 0) return undefined;
-  if (pattern.length % 2 !== 0) return undefined;
-  if (pattern.some((v) => typeof v !== "number" || !Number.isFinite(v) || v < 0)) {
-    return undefined;
-  }
-  return pattern;
-}
-
-// Even-length message vibration pattern (wait 0, buzz 160, pause 80, buzz 160).
-// Mirrors the expo-notifications "messages" channel cadence. MUST stay
-// even-length (see safeVibrationPattern) or the messages channel won't create.
-const MESSAGE_VIBRATION_PATTERN = [0, 160, 80, 160];
-
-class NotifeeService {
-  private notifee: NotifeeModule | null = null;
-  private AndroidImportance: AndroidImportanceEnum = {};
-  private AndroidCategory: AndroidCategoryEnum = {};
-  private AndroidVisibility: AndroidVisibilityEnum = {};
-  private EventType: EventTypeEnum = {};
-  private AndroidNotificationSetting: AndroidNotificationSettingEnum = {};
-  private resolved = false;
-  private channelsEnsured = false;
-  private fsiPermissionChecked = false;
-
-  private resolve(): NotifeeModule | null {
-    if (this.resolved) return this.notifee;
-    this.resolved = true;
-    try {
-      const mod = require("@notifee/react-native");
-      this.notifee = mod?.default || mod;
-      this.AndroidImportance = mod?.AndroidImportance || {};
-      this.AndroidCategory = mod?.AndroidCategory || {};
-      this.AndroidVisibility = mod?.AndroidVisibility || {};
-      this.EventType = mod?.EventType || {};
-      this.AndroidNotificationSetting = mod?.AndroidNotificationSetting || {};
-    } catch {
-      this.notifee = null;
-      console.warn("[NotifeeService] @notifee/react-native unavailable; background call/message UI disabled.");
-    }
-    return this.notifee;
-  }
-
-  isAvailable(): boolean {
-    return this.resolve() != null;
-  }
-
-  /**
-   * Download a protected avatar to a LOCAL cache file so Notifee can render it
-   * as a `largeIcon`. Notifee fetches `largeIcon` URLs itself but CANNOT attach
-   * request headers, and our avatars live behind the server's `/uploads` auth
-   * middleware (401 without a Bearer token) — so a remote URL silently shows no
-   * avatar. We instead download it here WITH the Authorization header (mirroring
-   * the in-app AuthedImage component) and hand Notifee the resulting `file://`
-   * URI. Returns the local file URI, or null on any failure (caller then falls
-   * back to the app icon). Cached by a hash of the URL with a short TTL so a
-   * repeat sender doesn't re-download every message.
-   */
-  private async fetchAvatarToFile(
-    absoluteUrl: string,
-  ): Promise<string | null> {
-    if (Platform.OS !== "android") return null;
-    if (!absoluteUrl) return null;
-    try {
-      let token = "";
-      try {
-        token = (await getToken()) || "";
-      } catch {
-        // best-effort
-      }
-
-      const dir = `${FileSystem.cacheDirectory}msg_avatars/`;
-      try {
-        await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
-      } catch {
-        // already exists / best-effort
-      }
-      // Stable filename keyed by the URL so repeated messages from the same
-      // sender reuse the cached file instead of re-downloading.
-      const key = absoluteUrl.replace(/[^a-zA-Z0-9]/g, "_").slice(-120);
-      const target = `${dir}${key}.img`;
-
-      // Reuse a fresh cache entry (< 24h) to avoid a network round-trip per push.
-      try {
-        const info = await FileSystem.getInfoAsync(target);
-        const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-        if (
-          info.exists &&
-          typeof info.modificationTime === "number" &&
-          Date.now() - info.modificationTime * 1000 < ONE_DAY_MS
-        ) {
-          return info.uri;
-        }
-      } catch {
-        // fall through to a fresh download
-      }
-
-      const res = await FileSystem.downloadAsync(absoluteUrl, target, {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      });
-      if (res.status >= 200 && res.status < 300 && res.uri) {
-        return res.uri;
-      }
-      return null;
-    } catch (err) {
-      console.warn("[NotifeeService] Failed to fetch message avatar:", err);
-      return null;
-    }
-  }
-
-  /**
-   * Creates the Android notification channels Notifee will post into. Safe to
-   * call repeatedly; only does work once per process. Channels must exist before
-   * displaying notifications, including during killed-state delivery.
-   */
-  /**
-   * Creates (or recreates) the dedicated "messages" channel. Extracted so it
-   * can be called STANDALONE from displayMessage's self-heal path.
-   *
-   * ROOT-CAUSE FIX: previously every channel was created inside ONE try/catch in
-   * ensureChannels(). The very first createChannel (the calls channel, whose
-   * `sound` points at a bundled raw resource) is the most likely to throw — and
-   * when it did, control jumped to the outer catch and the MESSAGE channel below
-   * it NEVER got created. On Android O+ posting to a non-existent channel is
-   * dropped SILENTLY, so chat-message notifications never appeared — while CALLS
-   * kept working because the native CallRingService creates its own independent
-   * channel. Creating each channel in its OWN try/catch (and exposing the
-   * message channel here so displayMessage can recreate it on demand) guarantees
-   * the messages channel exists regardless of any other channel failing.
-   */
-  private async createMessageChannel(): Promise<boolean> {
-    const notifee = this.resolve();
-    if (!notifee || Platform.OS !== "android") return false;
-    // ROOT-CAUSE FIX ("message push not appearing while calls work"): the
-    // previous pattern was `[160, 80, 160]` — an ODD number of entries. Notifee
-    // VALIDATES vibrationPattern (must be EVEN length, all values >= 0) and
-    // THROWS on a malformed one, so createChannel() threw, the `messages_v2`
-    // channel was NEVER created, and Android then SILENTLY DROPPED every chat
-    // notification (no status-bar/lock-screen entry — locked or unlocked).
-    // Calls were unaffected because they are rendered by the native
-    // CallRingService, which creates its own channel and bypasses Notifee.
-    // We now route the pattern through safeVibrationPattern() so a future bad
-    // value can never silently kill the channel again — when it returns
-    // undefined we OMIT the override entirely (Notifee then uses the channel
-    // default) rather than passing an invalid pattern.
-    const vibrationPattern = safeVibrationPattern(MESSAGE_VIBRATION_PATTERN);
-    try {
-      await notifee.createChannel({
-        id: MESSAGE_CHANNEL_ID,
-        name: "Messages",
-        description: "Chat message alerts",
-        importance: this.AndroidImportance.HIGH ?? 4,
-        sound: "default",
-        vibration: true,
-        ...(vibrationPattern ? { vibrationPattern } : {}),
-        lights: true,
-        lightColor: "#FF6B6B",
-      });
-      return true;
-    } catch (e) {
-      console.warn("[NotifeeService] failed to create messages channel:", e);
-      // LAST-DITCH: retry WITHOUT the vibration pattern so a pattern-validation
-      // failure can never leave the messages channel uncreated (which would
-      // silently drop every chat notification).
-      try {
-        await notifee.createChannel({
-          id: MESSAGE_CHANNEL_ID,
-          name: "Messages",
-          description: "Chat message alerts",
-          importance: this.AndroidImportance.HIGH ?? 4,
-          sound: "default",
-          vibration: true,
-          lights: true,
-          lightColor: "#FF6B6B",
-        });
-        return true;
-      } catch (e2) {
-        console.warn(
-          "[NotifeeService] messages channel retry (no vibration) also failed:",
-          e2,
-        );
-        return false;
-      }
-    }
-  }
-
-  async ensureChannels(): Promise<void> {
-    const notifee = this.resolve();
-    if (!notifee || Platform.OS !== "android") return;
-    if (this.channelsEnsured) return;
-
-    // IMPORTANT: each channel is created in its OWN try/catch so a single
-    // failing channel (e.g. a missing bundled ringtone raw resource on the
-    // default calls channel) can NEVER prevent the others — most critically the
-    // MESSAGES channel — from being created. Lumping them under one try/catch
-    // was the root cause of "chat-message push never shows" (see
-    // createMessageChannel's note): the calls channel threw first and the
-    // messages createChannel that followed was skipped entirely.
-    try {
-      await notifee.createChannel({
-        id: CALL_CHANNEL_ID,
-        name: "Calls",
-        description: "Incoming call alerts",
-        importance: this.AndroidImportance.HIGH ?? 4,
-        // Ring with the BUNDLED WorkPulse ringtone (res/raw/ringtone) instead of
-        // the Android system default — this is what fixes "the status-bar call
-        // uses the system tone, not the app ringtone" in the killed/background
-        // state. The channel sound is immutable, hence the calls_v3 ID bump.
-        sound: CALL_RINGTONE_RESOURCE,
-        // Real-call cadence: short-long-short-long buzz pattern, repeated by the
-        // OS while the heads-up/FSI notification is alerting.
-        vibration: true,
-        vibrationPattern: [0, 700, 1000, 700],
-        bypassDnd: true,
-        lights: true,
-      });
-    } catch (e) {
-      console.warn("[NotifeeService] failed to create default calls channel:", e);
-    }
-
-    // Per-tone calls channels — ONE per selectable ringtone option, each
-    // whose (immutable) sound is the matching bundled res/raw/ringtone_<id>
-    // resource. displayIncomingCall posts on the channel matching the user's
-    // SELECTED ringtone so the status-bar/background ring uses their choice.
-    for (const toneId of RINGTONE_IDS) {
-      try {
-        await notifee.createChannel({
-          id: callChannelIdForTone(toneId),
-          name: `Calls (${toneId})`,
-          description: "Incoming call alerts",
-          importance: this.AndroidImportance.HIGH ?? 4,
-          sound: ringtoneResourceForTone(toneId),
-          vibration: true,
-          vibrationPattern: [0, 700, 1000, 700],
-          bypassDnd: true,
-          lights: true,
-        });
-      } catch (e) {
-        // A single bad tone (e.g. its raw resource missing) must not abort the
-        // remaining channels — the default CALL_CHANNEL_ID still rings.
-        console.warn(
-          `[NotifeeService] failed to create calls channel for ${toneId}:`,
-          e,
-        );
-      }
-    }
-
-    // Silent calls channel for when the user muted all sounds. Still
-    // HIGH-importance so the full-screen-intent call UI surfaces, but with no
-    // sound and no vibration so it honours `muteAll`.
-    try {
-      await notifee.createChannel({
-        id: CALL_SILENT_CHANNEL_ID,
-        name: "Calls (silent)",
-        description: "Incoming call alerts (muted)",
-        importance: this.AndroidImportance.HIGH ?? 4,
-        sound: undefined,
-        vibration: false,
-        bypassDnd: true,
-        lights: true,
-      });
-    } catch (e) {
-      console.warn("[NotifeeService] failed to create silent calls channel:", e);
-    }
-
-    // The MESSAGES channel — created in its own isolated path so it survives any
-    // calls-channel failure above (the root-cause fix).
-    const messageOk = await this.createMessageChannel();
-
-    // Only latch `channelsEnsured` once the critical messages channel exists so
-    // a transient failure (e.g. mid-boot) is retried on the next call rather
-    // than being permanently skipped.
-    if (messageOk) this.channelsEnsured = true;
-  }
-
-  /**
-   * Requests the runtime notification permission through Notifee as well as
-   * expo-notifications. Data-only FCM pushes can reach the app, but Android 13+
-   * will still block the visible Notifee call/message UI if POST_NOTIFICATIONS
-   * has not been granted to the native notification library.
-   */
-  async requestNotificationPermission(): Promise<boolean> {
-    const notifee = this.resolve();
-    if (!notifee) return false;
-    try {
-      if (typeof notifee.requestPermission !== "function") return true;
-      const settings = await notifee.requestPermission();
-      const authorizationStatus = settings?.authorizationStatus;
-      const DENIED = 0;
-      return authorizationStatus === undefined || authorizationStatus > DENIED;
-    } catch (err) {
-      console.warn("[NotifeeService] Failed to request notification permission:", err);
-      return false;
-    }
-  }
-
-  /**
-   * Ensures the Android 14+ (API 34) USE_FULL_SCREEN_INTENT permission is
-   * granted. On Android 14+, this permission is auto-revoked for apps that are
-   * NOT the default phone/alarm app, which DOWNGRADES our incoming-call
-   * notification: the looping ring sound still plays, but the full-screen
-   * Answer/Decline screen NEVER surfaces over the lock screen — the user is
-   * forced to open the app manually. This is the #1 cause of "only ringing, can't
-   * answer from the lock screen".
-   *
-   * Notifee exposes the current setting via `getNotificationSettings()`. When it
-   * is not ENABLED we deep-link the user to the dedicated system settings page
-   * (`android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT`) so they can grant it.
-   * No-ops on iOS / older Android and when Notifee is unavailable. Only prompts
-   * once per process to avoid nagging.
-   */
-  async ensureFullScreenIntentPermission(): Promise<void> {
-    const notifee = this.resolve();
-    if (!notifee || Platform.OS !== "android") return;
-    if (this.fsiPermissionChecked) return;
-    this.fsiPermissionChecked = true;
-
-    try {
-      if (typeof notifee.getNotificationSettings !== "function") return;
-      const settings = await notifee.getNotificationSettings();
-      const fsi = settings?.android?.fullScreenAction;
-
-      const ENABLED = this.AndroidNotificationSetting.ENABLED ?? 1;
-      const NOT_SUPPORTED = this.AndroidNotificationSetting.NOT_SUPPORTED ?? -1;
-
-      // Already granted, or the OS version predates the runtime FSI permission.
-      if (fsi === undefined || fsi === ENABLED || fsi === NOT_SUPPORTED) return;
-
-      // Prefer Notifee's helper that opens the exact FSI settings page.
-      if (typeof notifee.openSystemSettings === "function") {
-        // Some Notifee versions accept no args and open the app notification
-        // settings; the dedicated FSI intent below is more precise.
-      }
-
-      try {
-        await Linking.sendIntent(
-          "android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT",
-        );
-      } catch {
-        // Fallback: open the app's notification settings so the user can find
-        // the "Full screen notifications" toggle manually.
-        await Linking.openSettings().catch(() => {});
-      }
-    } catch (err) {
-      console.warn("[NotifeeService] Failed to ensure full-screen-intent permission:", err);
-    }
-  }
-
-  /**
-   * Starts the native CallRinger foreground service, which posts the branded
-   * CallStyle incoming-call notification (green Answer / red Decline + full-
-   * screen intent) AND plays the user's selected ringtone. Honours `muteAll` and
-   * the "none" ringtone (silent). Persists the pending-call route first so a
-   * LOCKED + KILLED cold launch routes straight to the call screen.
-   *
-   * Returns TRUE when the foreground service actually started, FALSE when the OS
-   * REFUSED the foreground-service start. On Android 12+ (API 31+) starting a
-   * phoneCall foreground service from a BACKGROUNDED-but-alive process throws
-   * ForegroundServiceStartNotAllowedException. The caller (displayIncomingCall)
-   * uses a `false` result to FALL BACK to the Notifee full-screen-intent call
-   * notification — which needs no foreground service — so a backgrounded
-   * incoming call is never left with no surface at all (the "desktop→android
-   * call silently dropped while the phone is backgrounded" regression).
-   */
-  private async startForegroundRinger(
-    data: NonNullable<NotificationPayload["data"]>,
-  ): Promise<boolean> {
-    const title =
-      data.title ||
-      (data.callType === "video"
-        ? "Incoming Video Call"
-        : "Incoming Voice Call");
-    const body = data.body || `${data.callerName || "Someone"} is calling...`;
-
-    const { muteAll, ringtone } = await loadCallPrefs();
-    const toneId = ringtone || "classic";
-    const isKnownTone = (RINGTONE_IDS as readonly string[]).includes(toneId);
-    const callSoundResource = isKnownTone
-      ? ringtoneResourceForTone(toneId)
-      : CALL_RINGTONE_RESOURCE;
-    const silentRing = muteAll || toneId === "none";
-
-    // Persist the pending route BEFORE starting the FGS — the full-screen intent
-    // can auto-launch a brand-new process and app/index.tsx reads the route on
-    // boot to route straight to /call (see displayIncomingCall's note).
-    const route = pendingCallFromData(data);
-    if (route) await persistPendingCall(route);
-
-    // Resolve the caller avatar to an ABSOLUTE URL. The server sends a relative
-    // upload path (e.g. `/uploads/...`) which the native AvatarLoader cannot
-    // fetch on its own. Pair it with the user's auth token so the native loader
-    // can pass `Authorization: Bearer <token>` (the avatar lives behind the
-    // server's `/uploads` auth middleware — without it the fetch 401s and no
-    // photo shows). Both are best-effort: on failure the notification simply
-    // falls back to the app icon.
-    const callerAvatarAbs = uploadUrl(data.callerAvatar || "") || "";
-    let token = "";
-    try {
-      token = (await getToken()) || "";
-    } catch {
-      // best-effort; no token → AvatarLoader falls back to the app icon.
-    }
-
-    try {
-      const started = startRinging({
-        ringtoneRes: silentRing ? "" : callSoundResource,
-        title,
-        body,
-        vibrate: !silentRing,
-        silent: silentRing,
-        callId: data.callId,
-        conversationId: data.conversationId,
-        callerId: data.callerId,
-        callerName: data.callerName || title,
-        callerAvatar: callerAvatarAbs,
-        token,
-        callType: data.callType || "voice",
-      });
-      if (!started) {
-        console.warn(
-          "[NotifeeService] Foreground ringer was refused (likely Android 12+ background FGS-start restriction); caller will fall back to the Notifee full-screen-intent notification.",
-        );
-      }
-      return started;
-    } catch (err) {
-      console.warn("[NotifeeService] Failed to start foreground ringer:", err);
-      return false;
-    }
-  }
-
-  /**
-   * Displays a full-screen-intent incoming-call notification on Android. This is
-   * what surfaces the WhatsApp/Teams-style incoming-call screen over the lock
-   * screen even when the app is terminated. Includes Answer/Decline actions
-   * handled by the background/foreground event handlers below.
-   */
-  async displayIncomingCall(data: NotificationPayload["data"]): Promise<void> {
-    if (!data?.callId || !data?.conversationId) return;
-
-    // SUPPRESS a ring for a call that was already cancelled/ended. The
-    // `call_incoming` and `call_cancelled` pushes can arrive out of order in the
-    // headless task; without this the receiver would still ring after the caller
-    // hung up. (Tombstones auto-expire — see wasCallCancelled.)
-    if (wasCallCancelled(data.callId, data.conversationId)) {
-      try {
-        stopRinging();
-      } catch {
-        /* best-effort */
-      }
+  if (type === EventType.ACTION_PRESS) {
+    if (pressAction?.id === 'reply' && input && conversationId) {
+      await sendReplyFromNotification(conversationId, input);
       return;
     }
-
-    const notifee = this.resolve();
-    // The native CallRinger foreground service (when present) OWNS the entire
-    // incoming-call surface: it posts a branded CallStyle notification with a
-    // green Answer / red Decline button + full-screen intent AND plays the ring.
-    // In that case Notifee must NOT post its own competing notification (the
-    // old behaviour produced a button-less ongoing notification that preempted
-    // the proper one). We start the ringer here and return ONLY IF IT ACTUALLY
-    // STARTED. Notifee is otherwise the FALLBACK — used when the native module
-    // is unavailable (Expo Go / iOS) OR when the OS REFUSED the foreground
-    // service start.
-    //
-    // REGRESSION FIX (desktop→android calls silently dropped while the phone is
-    // backgrounded): on Android 12+ starting the phoneCall foreground service
-    // from a BACKGROUNDED-but-alive process throws
-    // ForegroundServiceStartNotAllowedException. Previously this method
-    // unconditionally `return`ed after calling the ringer, so when that start
-    // was refused the incoming call had NO surface at all — no ring, no
-    // full-screen notification — and the call was missed. Now we only short-
-    // circuit when the ringer truly started; otherwise we fall through to the
-    // Notifee full-screen-intent CallStyle notification below, which requires no
-    // foreground service and reliably surfaces the call (and rings, since the
-    // FGS is NOT owning the sound in this path — see `ringerStarted` below).
-    let ringerStarted = false;
-    if (isCallRingerAvailable) {
-      ringerStarted = await this.startForegroundRinger(data);
-      if (ringerStarted) return;
-    }
-
-    if (!notifee) return;
-
-    await this.ensureChannels();
-
-    const title =
-      data.title ||
-      (data.callType === "video" ? "Incoming Video Call" : "Incoming Voice Call");
-    const body = data.body || `${data.callerName || "Someone"} is calling...`;
-    const id = callNotificationId(data.callId, data.conversationId);
-
-    // Honour the user's `muteAll` preference even in the killed/headless state.
-    // The prefs are persisted to SecureStore while the app is alive (see
-    // callPrefsStore) so they are readable here without an authenticated API
-    // call. When muted we post on the SILENT channel with no sound/vibration —
-    // the full-screen call UI still surfaces; it just doesn't ring/buzz.
-    const { muteAll, ringtone } = await loadCallPrefs();
-
-    // Resolve the per-tone channel + bundled ringtone resource for the user's
-    // SELECTED ringtone so the status-bar/background ring uses THEIR choice
-    // (not a single fixed tone). "none" → silent. An unknown/legacy id falls
-    // back to the default calls channel ("classic"). The per-tone channels are
-    // created in ensureChannels (their sound is immutable, hence per-tone).
-    const toneId = ringtone || "classic";
-    const isKnownTone = (RINGTONE_IDS as readonly string[]).includes(toneId);
-    const callChannelId =
-      muteAll || toneId === "none"
-        ? CALL_SILENT_CHANNEL_ID
-        : isKnownTone
-          ? callChannelIdForTone(toneId)
-          : CALL_CHANNEL_ID;
-    const callSoundResource = isKnownTone
-      ? ringtoneResourceForTone(toneId)
-      : CALL_RINGTONE_RESOURCE;
-    const silentRing = muteAll || toneId === "none";
-
-    // PHASE 3 — Signal/Teams-parity ringing via a foreground service.
-    // When the native CallRinger module is present AND its foreground service
-    // actually STARTED (ringerStarted), the FOREGROUND SERVICE owns the ring
-    // (looping selected ringtone via MediaPlayer + repeating Vibrator) and we
-    // already returned above — so this Notifee path only runs as the FALLBACK.
-    //
-    // In this fallback the foreground-service ringer is NOT owning the sound
-    // (it was unavailable OR the OS refused the start — see `ringerStarted`),
-    // so the Notifee notification itself MUST ring via its per-tone channel /
-    // loopSound. We therefore do NOT re-invoke startRinging here (that call
-    // already happened — and failed — inside startForegroundRinger) and we let
-    // `notifeeSilent` depend ONLY on the user's mute/“none” preference. This is
-    // the second half of the regression fix: a backgrounded-but-alive incoming
-    // call that couldn't start the FGS now surfaces AND rings via Notifee's
-    // full-screen-intent notification.
-    const ringerOwnsSound = ringerStarted;
-    // Effective channel/sound for the Notifee notification: silent whenever the
-    // ring is muted OR the foreground-service ringer is handling the sound.
-    const notifeeSilent = silentRing || ringerOwnsSound;
-    const effectiveChannelId = notifeeSilent
-      ? CALL_SILENT_CHANNEL_ID
-      : callChannelId;
-
-    // CRITICAL ORDERING (fixes the "dashboard flashes then switches to the call
-    // UI" bug on a LOCKED + KILLED device): persist the pending-call route to
-    // durable storage BEFORE we display the full-screen-intent notification.
-    // The FSI AUTO-launches MainActivity in a brand-new process the instant the
-    // notification is posted; app/index.tsx reads the persisted route on boot to
-    // route STRAIGHT to /call (no dashboard underneath). If we persisted AFTER
-    // displayNotification(), the freshly-launched activity could read storage
-    // before the write landed, find nothing, redirect to the dashboard, and
-    // only later switch to the call screen — the visible flash. Writing first
-    // closes that race.
-    const earlyRoute = pendingCallFromData(data);
-    if (earlyRoute) await persistPendingCall(earlyRoute);
-
-    try {
-      await notifee.displayNotification({
-        id,
-        title,
-        body,
-        data: { ...data } as Record<string, string>,
-        android: {
-          channelId: effectiveChannelId,
-          category: this.AndroidCategory.CALL ?? "call",
-          importance: this.AndroidImportance.HIGH ?? 4,
-          visibility: this.AndroidVisibility.PUBLIC ?? 1,
-          // Full-screen intent: launches the app's main activity full-screen
-          // over the lock screen even when terminated.
-          fullScreenAction: {
-            id: "default",
-            launchActivity: "default",
-          },
-          pressAction: {
-            id: "default",
-            launchActivity: "default",
-          },
-          // Persistent + (when not muted) looping sound + vibration so it rings
-          // like a real call. When `muteAll` is set we drop the sound, the loop
-          // and the vibration pattern so the call surfaces silently.
-          //
-          // NOTE: Notifee VALIDATES `android.vibrationPattern` — it must have an
-          // EVEN number of entries and every value must be > 0. A malformed
-          // pattern (e.g. an odd length or a leading 0) makes
-          // displayNotification() THROW, which the catch below swallows — so the
-          // incoming-call notification is silently dropped in the killed/
-          // background state (it then only appears once the app is opened). Keep
-          // this pattern even-length and all-positive. When muted we omit the
-          // override entirely (do NOT pass `undefined`).
-          ongoing: true,
-          autoCancel: false,
-          loopSound: !notifeeSilent,
-          // Ring with the user's SELECTED bundled ringtone (res/raw/ringtone_<id>),
-          // not the system default. loopSound replays it for the call's duration
-          // so it behaves like a real incoming-call ring in the status-bar/
-          // background state. vibrationPattern uses a real-call cadence (even
-          // length, all > 0 — Notifee rejects malformed patterns). When the ring
-          // is silent — muteAll, "none", OR the foreground-service ringer is
-          // handling the sound (notifeeSilent) — we omit the override so the OS
-          // channel doesn't ALSO ring (no double-ring).
-          ...(notifeeSilent
-            ? {}
-            : {
-                sound: callSoundResource,
-                vibrationPattern: [0, 700, 1000, 700],
-              }),
-          actions: [
-            {
-              title: "Answer",
-              pressAction: { id: "answer", launchActivity: "default" },
-            },
-            {
-              title: "Decline",
-              pressAction: { id: "decline" },
-            },
-          ],
-          timeoutAfter: 45000,
-        },
-      });
-
-      // Persist the call route so a LOCKED + KILLED device — where the
-      // full-screen-intent AUTO-launches MainActivity in a brand-new process
-      // (not a notification tap, so getInitialNotification() is null) — can
-      // still route to the incoming-call screen instead of the dashboard. The
-      // in-memory pending route does not survive that process death; SecureStore
-      // does. PendingCallNavigator loads + consumes it (if still fresh) on mount.
-      const route = pendingCallFromData(data);
-      if (route) await persistPendingCall(route);
-    } catch (err) {
-      console.warn("[NotifeeService] Failed to display incoming call:", err);
-      // DEFENSIVE FALLBACK: a single malformed android option (e.g. an invalid
-      // vibrationPattern) makes displayNotification() throw and would otherwise
-      // drop the incoming-call notification entirely in the killed/background
-      // state. Retry once with ONLY the essential fields so the ringing call
-      // still surfaces (full-screen intent + Answer/Decline) even if some
-      // optional styling field was rejected.
-      try {
-        await notifee.displayNotification({
-          id,
-          title,
-          body,
-          data: { ...data } as Record<string, string>,
-          android: {
-            channelId: muteAll ? CALL_SILENT_CHANNEL_ID : CALL_CHANNEL_ID,
-            category: this.AndroidCategory.CALL ?? "call",
-            importance: this.AndroidImportance.HIGH ?? 4,
-            visibility: this.AndroidVisibility.PUBLIC ?? 1,
-            fullScreenAction: { id: "default", launchActivity: "default" },
-            pressAction: { id: "default", launchActivity: "default" },
-            ongoing: true,
-            autoCancel: false,
-            actions: [
-              {
-                title: "Answer",
-                pressAction: { id: "answer", launchActivity: "default" },
-              },
-              {
-                title: "Decline",
-                pressAction: { id: "decline" },
-              },
-            ],
-            timeoutAfter: 45000,
-          },
-        });
-        const route = pendingCallFromData(data);
-        if (route) await persistPendingCall(route);
-      } catch (err2) {
-        console.warn(
-          "[NotifeeService] Fallback incoming-call display also failed:",
-          err2,
-        );
-      }
-    }
-  }
-
-  /**
-   * OPTION A — QUIET background heads-up incoming-call notification.
-   *
-   * Used when the app is merely BACKGROUNDED-but-alive (not killed). Unlike
-   * displayIncomingCall, this:
-   *   • does NOT start the foreground-service ringer (no looping ringtone),
-   *   • does NOT attach a fullScreenAction (no lock-screen takeover),
-   *   • is NOT ongoing/looping — it is a normal, dismissible heads-up banner.
-   * Tapping the body (or "Answer") deep-links into the app's call screen, where
-   * the in-app ring + accept/decline UI takes over. This implements the
-   * requested behaviour: when the app is in the background, only show a
-   * status-bar notification; the actual ringing + incoming-call UI appears when
-   * the user opens the app. The full-screen ringing path (displayIncomingCall)
-   * is still used for the killed/locked state so those calls are not missed.
-   */
-  async displayIncomingCallHeadsUp(
-    data: NotificationPayload["data"],
-  ): Promise<void> {
-    if (!data?.callId || !data?.conversationId) return;
-
-    // Same cancelled-call guard as displayIncomingCall: suppress a banner for a
-    // call that was already cancelled/ended (out-of-order push race).
-    if (wasCallCancelled(data.callId, data.conversationId)) {
-      try {
-        stopRinging();
-      } catch {
-        /* best-effort */
-      }
+    if (pressAction?.id === 'mark-read' && conversationId) {
+      await markConversationRead(conversationId);
       return;
     }
-
-    const notifee = this.resolve();
-    if (!notifee) return;
-
-    await this.ensureChannels();
-
-    const title =
-      data.title ||
-      (data.callType === "video"
-        ? "Incoming Video Call"
-        : "Incoming Voice Call");
-    const body = data.body || `${data.callerName || "Someone"} is calling...`;
-    const id = callNotificationId(data.callId, data.conversationId);
-
-    // Honour muteAll so a backgrounded heads-up never rings when the user has
-    // muted everything; otherwise use the user's SELECTED ringtone channel so
-    // the single heads-up alert tone matches their choice. We do NOT loop the
-    // sound — this is a one-shot heads-up, not a continuous ring.
-    const { muteAll, ringtone } = await loadCallPrefs();
-    const toneId = ringtone || "classic";
-    const isKnownTone = (RINGTONE_IDS as readonly string[]).includes(toneId);
-    const silent = muteAll || toneId === "none";
-    const channelId = silent
-      ? CALL_SILENT_CHANNEL_ID
-      : isKnownTone
-        ? callChannelIdForTone(toneId)
-        : CALL_CHANNEL_ID;
-    const soundResource = isKnownTone
-      ? ringtoneResourceForTone(toneId)
-      : CALL_RINGTONE_RESOURCE;
-
-    // Persist the pending-call route so tapping the notification (or its
-    // Answer action) opens straight into the call screen even after a process
-    // swap. PendingCallNavigator / the call screen consume it.
-    const route = pendingCallFromData(data);
-    if (route) await persistPendingCall(route);
-
-    try {
-      await notifee.displayNotification({
-        id,
-        title,
-        body,
-        data: { ...data } as Record<string, string>,
-        android: {
-          channelId,
-          category: this.AndroidCategory.CALL ?? "call",
-          importance: this.AndroidImportance.HIGH ?? 4,
-          visibility: this.AndroidVisibility.PUBLIC ?? 1,
-          // NO fullScreenAction → the call screen does NOT auto-launch over the
-          // lock screen. Tapping the body opens the app on demand.
-          pressAction: {
-            id: "default",
-            launchActivity: "default",
-          },
-          // A normal, dismissible heads-up — NOT ongoing, NOT looping.
-          ongoing: false,
-          autoCancel: true,
-          loopSound: false,
-          // One-shot alert tone (unless muted). No vibration loop.
-          ...(silent ? {} : { sound: soundResource }),
-          actions: [
-            {
-              title: "Answer",
-              pressAction: { id: "answer", launchActivity: "default" },
-            },
-            {
-              title: "Decline",
-              pressAction: { id: "decline" },
-            },
-          ],
-          timeoutAfter: 45000,
-        },
-      });
-    } catch (err) {
-      console.warn(
-        "[NotifeeService] Failed to display heads-up incoming call:",
-        err,
-      );
-    }
   }
 
-  /**
-   * Displays a standard status-bar message notification. Reliable in
-   * background/terminated state, unlike expo-notifications from a headless task.
-   *
-   * DELIVERY-FIRST, AVATAR-SECOND (Signal-Android parity / regression fix):
-   * The notification is POSTED IMMEDIATELY with NO avatar so it ALWAYS surfaces
-   * in every app state. The sender's circular avatar largeIcon is then fetched
-   * BEST-EFFORT with a hard timeout and, when it resolves, re-applied via a
-   * second `displayNotification` reusing the SAME notification id (Notifee
-   * updates the existing notification in place). This fixes "message push stopped
-   * working" — the previous implementation `await`-ed a network avatar download
-   * (SecureStore read + FileSystem.downloadAsync, NO timeout) in the CRITICAL
-   * path BEFORE posting. In the background/terminated state the FCM headless JS
-   * task has a very short OS-enforced lifetime; a slow/stalled download (or the
-   * task being killed mid-await) meant `displayNotification` never ran and the
-   * push was silently dropped. Signal-Android encodes the same lesson: post the
-   * notification synchronously, load the contact photo separately, never let the
-   * avatar block the notification from appearing.
-   */
-  async displayMessage(payload: NotificationPayload): Promise<void> {
-    const notifee = this.resolve();
-    if (!notifee) return;
-    const data = payload.data || {};
-    const title = payload.title || data.title || data.senderName || "New message";
-    const body = payload.body || data.body || "";
-    if (!title && !body) return;
-
-    await this.ensureChannels();
-
-    const id = data.messageId ? messageNotificationId(data.messageId) : undefined;
-    // Server-authoritative launcher/app-icon badge total (e.g. "3" unread).
-    const badgeCount = Number(data.badgeCount ?? data.unreadCount);
-    const hasBadge = Number.isFinite(badgeCount) && badgeCount >= 0;
-
-    // Build the base Android options ONCE so the initial (no-avatar) post and the
-    // later avatar-update post stay perfectly in sync.
-    const baseAndroid = (largeIconOpts: Record<string, unknown>) => ({
-      channelId: MESSAGE_CHANNEL_ID,
-      importance: this.AndroidImportance.HIGH ?? 4,
-      visibility: this.AndroidVisibility.PRIVATE ?? 0,
-      pressAction: { id: "default", launchActivity: "default" },
-      sound: "default",
-      // CRITICAL: an Android notification with NO resolvable small icon is
-      // DROPPED SILENTLY — the channel's sound still plays (the "ding") but NO
-      // status-bar / lockscreen entry ever appears. Point Notifee at the bundled
-      // monochrome `drawable` notification icon (NOT the adaptive `ic_launcher`
-      // mipmap, which Android rejects as a small icon → the silent-drop bug).
-      smallIcon: MESSAGE_SMALL_ICON,
-      // Drive the launcher dot/count from the running total.
-      ...(hasBadge ? { badgeCount } : {}),
-      // Chat-avatar largeIcon (circular) — parity with the call notification.
-      ...largeIconOpts,
-      // SIGNAL-PARITY status-bar actions. "Reply" attaches a RemoteInput so the
-      // user can type a reply inline from the notification shade without opening
-      // the app; "Mark as read" clears the unread state. Both are handled by
-      // handleMessageEvent (background + foreground). Only attach them when we
-      // know the target conversation (a reply needs somewhere to send).
-      ...(data.conversationId
-        ? {
-            actions: [
-              {
-                title: "Reply",
-                pressAction: { id: "reply" },
-                input: {
-                  allowFreeFormInput: true,
-                  placeholder: "Reply…",
-                },
-              },
-              {
-                title: "Mark as read",
-                pressAction: { id: "mark_read" },
-              },
-            ],
-          }
-        : {}),
-    });
-
-    // ── STEP 1: post the notification IMMEDIATELY (no avatar) ──────────────
-    // This is the actual delivery and must never be blocked by the network.
-    const postNotification = async (
-      largeIconOpts: Record<string, unknown>,
-    ): Promise<void> => {
-      try {
-        await notifee.displayNotification({
-          ...(id ? { id } : {}),
-          title,
-          body,
-          data: { ...data } as Record<string, string>,
-          android: baseAndroid(largeIconOpts),
-        });
-      } catch (err) {
-        // SELF-HEAL: the most likely failure is the MESSAGE channel not existing
-        // yet. Recreate it explicitly and retry; as a final fallback post on the
-        // always-present "default" channel so the message ALWAYS surfaces.
-        console.warn(
-          "[NotifeeService] message display failed; recreating channel + retrying:",
-          err,
-        );
-        try {
-          await this.createMessageChannel();
-          await notifee.displayNotification({
-            ...(id ? { id } : {}),
-            title,
-            body,
-            data: { ...data } as Record<string, string>,
-            android: {
-              channelId: MESSAGE_CHANNEL_ID,
-              importance: this.AndroidImportance.HIGH ?? 4,
-              pressAction: { id: "default", launchActivity: "default" },
-              sound: "default",
-              smallIcon: MESSAGE_SMALL_ICON,
-              ...largeIconOpts,
-              ...(hasBadge ? { badgeCount } : {}),
-            },
-          });
-        } catch (err2) {
-          try {
-            await notifee.displayNotification({
-              ...(id ? { id } : {}),
-              title,
-              body,
-              data: { ...data } as Record<string, string>,
-              android: {
-                channelId: "default",
-                importance: this.AndroidImportance.HIGH ?? 4,
-                pressAction: { id: "default", launchActivity: "default" },
-                sound: "default",
-                smallIcon: MESSAGE_SMALL_ICON,
-                ...largeIconOpts,
-              },
-            });
-          } catch (err3) {
-            console.warn("[NotifeeService] Failed to display message:", err3);
-          }
-        }
-      }
-    };
-
-    // Post NOW without the avatar so the message is guaranteed to appear.
-    await postNotification({});
-
-    // ── STEP 2: attach the large icon BEST-EFFORT (non-blocking) ──────────
-    // Avatar-first (option 1): use the SENDER's chat avatar when present; when
-    // the message has NO sender avatar, fall back to the admin-set ORG BRANDING
-    // logo (cached to SecureStore by the ThemeProvider — the headless task has
-    // no React context / API). Both are fetched with a HARD TIMEOUT so they can
-    // never hang the headless task, then re-posted with the SAME id to attach
-    // the circular largeIcon (Notifee updates the existing notification in
-    // place). Any failure/timeout simply leaves the already-posted notification.
-    const LARGE_ICON_TIMEOUT_MS = 3500;
-    const senderAvatarUrl = uploadUrl(data.senderAvatar || data.avatar || "");
-
-    // Resolve the large-icon source URL: sender avatar first, else the cached
-    // org logo. Both live behind the server's `/uploads` auth middleware, so
-    // fetchAvatarToFile downloads them WITH the Bearer token.
-    let largeIconUrl: string | null = senderAvatarUrl;
-    if (!largeIconUrl) {
-      try {
-        const cachedLogo = await SecureStore.getItemAsync(BRAND_LOGO_CACHE_KEY);
-        largeIconUrl = uploadUrl(cachedLogo || "");
-      } catch {
-        // best-effort — fall back to the app icon (no large icon)
-      }
-    }
-
-    if (largeIconUrl) {
-      try {
-        const localUri = await Promise.race<string | null>([
-          this.fetchAvatarToFile(largeIconUrl),
-          new Promise<null>((resolve) =>
-            setTimeout(() => resolve(null), LARGE_ICON_TIMEOUT_MS),
-          ),
-        ]);
-        if (localUri) {
-          await postNotification({
-            largeIcon: localUri,
-            circularLargeIcon: true,
-          });
-        }
-      } catch (err) {
-        // Best-effort: the notification was already delivered in step 1.
-        console.warn("[NotifeeService] large-icon attach skipped:", err);
-      }
-    }
-  }
-
-  /** Cancels a previously-displayed incoming-call notification (call ended/handled). */
-  async cancelCall(callId?: string, conversationId?: string): Promise<void> {
-    // Record a tombstone so that if a `call_incoming` push for this same call is
-    // still in flight (push ordering race), displayIncomingCall suppresses it
-    // instead of ringing a now-dead call (the "receiver keeps ringing after the
-    // caller hung up" bug).
-    markCallCancelled(callId, conversationId);
-    // PHASE 3 — stop the foreground-service ringer (looping ringtone + vibration)
-    // IMMEDIATELY so the ring ends the instant the call is answered/declined/
-    // cancelled/handled-elsewhere. No-op when the native module is unavailable.
-    try {
-      stopRinging();
-    } catch {
-      // best-effort
-    }
-    // Drop any persisted pending-call route so a future cold start never routes
-    // to a call that has already ended / been handled (avoids "ghost" call
-    // screens). Done regardless of Notifee availability.
-    await clearPersistedPendingCall();
-    // Also drop any native status-bar Answer/Decline action recorded by
-    // CallActionActivity so a warm-app action tap (already routed via the deep
-    // link) can't linger and auto-answer/decline a later cold-started call.
-    try {
-      clearPendingCallAction();
-    } catch {
-      // best-effort
-    }
-    const notifee = this.resolve();
-    if (!notifee || !callId || !conversationId) return;
-    try {
-      await notifee.cancelNotification(callNotificationId(callId, conversationId));
-    } catch (err) {
-      console.warn("[NotifeeService] Failed to cancel call notification:", err);
-    }
-  }
-
-  /**
-   * Handles a Notifee event (press / action press) for an incoming call.
-   * Returns true if the event was a call event it handled. Used by both the
-   * foreground and background event handlers.
-   */
-  async handleCallEvent(type: number, detail: any): Promise<boolean> {
-    const notifee = this.resolve();
-    if (!notifee) return false;
-
-    const pressActionId: string | undefined =
-      detail?.pressAction?.id || detail?.notification?.android?.pressAction?.id;
-    const data = (detail?.notification?.data || {}) as Record<string, string>;
-    if (!data.callId || !data.conversationId) return false;
-
-    const isPress = type === (this.EventType.PRESS ?? 1);
-    const isAction = type === (this.EventType.ACTION_PRESS ?? 2);
-    if (!isPress && !isAction) return false;
-
-    // Always clear the ringing notification once acted upon.
-    await this.cancelCall(data.callId, data.conversationId);
-
-    if (pressActionId === "decline") {
-      // Stash a pending "decline" route so a cold-started app still reconciles
-      // (the call screen auto-rejects on mount). nativeCallService also sends
-      // the raw reject for the genuinely-killed case.
-      const route = pendingCallFromData({ ...data, notificationAction: "decline_call" });
-      if (route) setPendingCall(route);
-      await nativeCallService.handleAction("reject", data);
-      return true;
-    }
-
-    if (pressActionId === "answer") {
-      // Stash a pending "answer" route so that when the app is launched COLD by
-      // this tap (Linking deep link is lost before expo-router mounts), the
-      // root layout still navigates to the call screen with autoAnswer=1.
-      const route = pendingCallFromData({ ...data, notificationAction: "accept_call" });
-      if (route) setPendingCall(route);
-      await nativeCallService.handleAction("answer", data);
-      return true;
-    }
-
-    // Body press → open the call screen in incoming mode without auto-answer.
-    // Stash a pending route too, so a cold start still reaches the call screen.
-    const route = pendingCallFromData(data);
-    if (route) setPendingCall(route);
-    try {
-      // Include peerName/peerAvatar so the call screen shows the caller's name
-      // (not the generic "Call" fallback) when this body-press deep link wins.
-      const peerName = encodeURIComponent(data.callerName || "");
-      const peerAvatar = encodeURIComponent(data.callerAvatar || "");
-      const href = `/call/${data.conversationId}?mode=incoming&callId=${data.callId}&callType=${data.callType || "voice"}&peerId=${data.callerId || ""}&peerName=${peerName}&peerAvatar=${peerAvatar}`;
-      await Linking.openURL(Linking.createURL(href));
-    } catch (err) {
-      console.warn("[NotifeeService] Failed to route answer:", err);
-    }
-    return true;
-  }
-
-  /**
-   * Handles a Notifee event (press / action press) for a CHAT-MESSAGE
-   * notification. Returns true if it handled the event. Used by both the
-   * foreground and background event handlers AFTER handleCallEvent declines
-   * (i.e. the notification is not a call).
-   *
-   * Three actions are supported (Signal-Android parity):
-   *   • body PRESS      → open the EXACT 1:1/group conversation (deep link +
-   *                        persisted pending-chat route for the cold-start case).
-   *   • "reply" action  → read the inline RemoteInput text, POST it to the
-   *                        conversation, mark it read, and update the notification
-   *                        in place to confirm ("You: …") before auto-cancelling.
-   *   • "mark_read"     → mark the conversation read and cancel the notification.
-   */
-  async handleMessageEvent(type: number, detail: any): Promise<boolean> {
-    const notifee = this.resolve();
-    if (!notifee) return false;
-
-    const data = (detail?.notification?.data || {}) as Record<string, string>;
-    const conversationId = data.conversationId;
-    // Only handle message notifications (calls are handled by handleCallEvent).
-    if (!conversationId || data.callId) return false;
-
-    const pressActionId: string | undefined =
-      detail?.pressAction?.id || detail?.notification?.android?.pressAction?.id;
-
-    const isPress = type === (this.EventType.PRESS ?? 1);
-    const isAction = type === (this.EventType.ACTION_PRESS ?? 2);
-    if (!isPress && !isAction) return false;
-
-    const convIdNum = Number(conversationId);
-    const notificationId =
-      detail?.notification?.id ||
-      (data.messageId ? messageNotificationId(data.messageId) : undefined);
-
-    // ── "Mark as read" action ────────────────────────────────────────────
-    if (pressActionId === "mark_read") {
-      try {
-        if (Number.isFinite(convIdNum)) await markConversationRead(convIdNum);
-      } catch (err) {
-        console.warn("[NotifeeService] Failed to mark conversation read:", err);
-      }
-      try {
-        if (notificationId) await notifee.cancelNotification(notificationId);
-      } catch {
-        /* best-effort */
-      }
-      return true;
-    }
-
-    // ── "Reply" action (inline RemoteInput) ──────────────────────────────
-    if (pressActionId === "reply") {
-      // Notifee delivers the typed text on detail.input (string) — older
-      // versions nested it under detail.input.text. Support both shapes.
-      const rawInput =
-        typeof detail?.input === "string"
-          ? detail.input
-          : (detail?.input?.text ?? "");
-      const replyText = String(rawInput || "").trim();
-
-      if (!replyText) {
-        // Nothing typed — leave the notification so the user can retry.
-        return true;
-      }
-
-      try {
-        if (Number.isFinite(convIdNum)) {
-          await sendMessage(convIdNum, replyText);
-          // Best-effort: also clear the unread state for the conversation.
-          await markConversationRead(convIdNum).catch(() => {});
-        }
-
-        // Update the notification IN PLACE to confirm the reply was sent
-        // ("You: <reply>"), mirroring Signal, then auto-cancel after a moment.
-        if (notificationId) {
-          try {
-            await notifee.displayNotification({
-              id: notificationId,
-              title: data.title || data.senderName || "Message",
-              body: `You: ${replyText}`,
-              data: { ...data } as Record<string, string>,
-              android: {
-                channelId: MESSAGE_CHANNEL_ID,
-                importance: this.AndroidImportance.HIGH ?? 4,
-                smallIcon: MESSAGE_SMALL_ICON,
-                pressAction: { id: "default", launchActivity: "default" },
-                // A confirmation, not a new alert — keep it quiet + dismissible.
-                onlyAlertOnce: true,
-                autoCancel: true,
-                timeoutAfter: 5000,
-              },
-            });
-          } catch {
-            // If the confirmation update fails, just cancel the original.
-            await notifee.cancelNotification(notificationId).catch(() => {});
-          }
-        }
-      } catch (err) {
-        console.warn("[NotifeeService] Failed to send reply from notification:", err);
-        // Leave the original notification in place so the user can retry by
-        // opening the app.
-      }
-      return true;
-    }
-
-    // ── Body PRESS → open the exact conversation ─────────────────────────
-    // Persist the pending-chat route FIRST so a COLD start (killed app) can
-    // route straight to /chat/[id] even though the deep link below is lost
-    // before expo-router mounts. app/index.tsx consumes it on boot.
-    try {
-      await persistPendingChat({ conversationId: String(conversationId) });
-    } catch {
-      /* best-effort */
-    }
-    setPendingChat({ conversationId: String(conversationId) });
-
-    // Mark the conversation read on open (matches in-app behaviour).
-    try {
-      if (Number.isFinite(convIdNum)) await markConversationRead(convIdNum);
-    } catch {
-      /* best-effort */
-    }
-
-    try {
-      // Deep link straight to the 1:1/group thread. Works for a warm or
-      // background-but-alive app; the persisted route above covers cold start.
-      await Linking.openURL(Linking.createURL(`chat/${conversationId}`));
-    } catch (err) {
-      console.warn("[NotifeeService] Failed to route to chat:", err);
-    }
-    return true;
-  }
-
-  /**
-   * Reads Notifee's initial notification (the call notification that COLD-
-   * launched the app) and returns a pending call route for it, or null. Called
-   * once at app startup from the root layout so a killed-state notification tap
-   * / Answer action routes to the call screen even though the headless deep
-   * link was lost before the router mounted.
-   */
-  async captureInitialCallRoute(): Promise<void> {
-    // FIRST: the native CallStyle status-bar notification path. When the user
-    // taps Answer/Decline on the foreground-service (CallRingService) call
-    // notification, CallActionActivity records the choice natively
-    // (PendingCallActionStore) and launches a deep link. On a COLD start the
-    // proven routing path (app/index.tsx) reads the SecureStore-PERSISTED
-    // pending-call route — which was written at RING time with autoAnswer="0"
-    // and no action — so it would open the call screen in plain RINGING mode and
-    // the deep link's action params are lost (Answer never connects, Decline
-    // never rejects). Here we read that native action and MERGE it into the
-    // in-memory pending route (which app/index.tsx prefers over the persisted
-    // one), so the call screen's autoAnswer/autoDecline effects fire. This is a
-    // no-op when the native module is unavailable or no action was recorded.
-    try {
-      const nativeAction = getPendingCallAction();
-      if (nativeAction) {
-        // The full call details (callType, peerName, peerAvatar, peerId) live in
-        // the persisted route written at ring time; the native record only has
-        // the action + identity. Merge them so the call screen has everything.
-        const persisted = await loadPersistedPendingCall();
-        const matches =
-          persisted &&
-          String(persisted.callId) === String(nativeAction.callId) &&
-          String(persisted.conversationId) ===
-            String(nativeAction.conversationId);
-        const base =
-          matches && persisted
-            ? persisted
-            : {
-                conversationId: String(nativeAction.conversationId),
-                callId: String(nativeAction.callId),
-                callType: "voice",
-                peerId: "",
-                peerName: "Incoming call",
-                peerAvatar: "",
-                autoAnswer: "0",
-              };
-        const merged = {
-          ...base,
-          autoAnswer: nativeAction.action === "answer" ? "1" : "0",
-          ...(nativeAction.action === "decline"
-            ? { action: "decline" }
-            : { action: undefined }),
-        };
-        setPendingCall(merged);
-        // Consumed — clear so a stale tap can't auto-answer a later call.
-        clearPendingCallAction();
-        return;
-      }
-    } catch (err) {
-      console.warn(
-        "[NotifeeService] Failed to read native pending call action:",
-        err,
-      );
-    }
-
-    const notifee = this.resolve();
-    if (!notifee || typeof notifee.getInitialNotification !== "function") return;
-    try {
-      const initial = await notifee.getInitialNotification();
-      if (!initial) return;
-      const data = (initial.notification?.data || {}) as Record<string, string>;
-      if (!data.callId || !data.conversationId) return;
-      const pressActionId: string | undefined = initial.pressAction?.id;
-      const action =
-        pressActionId === "answer"
-          ? "accept_call"
-          : pressActionId === "decline"
-            ? "decline_call"
-            : undefined;
-      const route = pendingCallFromData({ ...data, notificationAction: action });
-      if (route) setPendingCall(route);
-    } catch (err) {
-      console.warn("[NotifeeService] Failed to read initial notification:", err);
-    }
-  }
-
-  /**
-   * Registers the Notifee background event handler. MUST be called at the JS
-   * entry top-level (see `mobile/index.js`) so Answer/Decline work when the app
-   * is killed. Idempotent and safe if Notifee is unavailable.
-   */
-  registerBackgroundHandler(): void {
-    const notifee = this.resolve();
-    if (!notifee) return;
-    try {
-      notifee.onBackgroundEvent(async ({ type, detail }: { type: number; detail: any }) => {
-        // Calls first; if it isn't a call notification, route the message
-        // notification (body tap → open chat, Reply/Mark-read actions).
-        const handled = await this.handleCallEvent(type, detail);
-        if (!handled) await this.handleMessageEvent(type, detail);
-      });
-    } catch (err) {
-      console.warn("[NotifeeService] Failed to register background event handler:", err);
-    }
-  }
-
-  /**
-   * Registers the foreground event handler (call answer/decline while app is
-   * alive). Returns an unsubscribe function.
-   */
-  registerForegroundHandler(): () => void {
-    const notifee = this.resolve();
-    if (!notifee) return () => {};
-    try {
-      const unsub = notifee.onForegroundEvent(async ({ type, detail }: { type: number; detail: any }) => {
-        // Calls first; if it isn't a call notification, route the message
-        // notification (body tap → open chat, Reply/Mark-read actions).
-        const handled = await this.handleCallEvent(type, detail);
-        if (!handled) await this.handleMessageEvent(type, detail);
-      });
-      return typeof unsub === "function" ? unsub : () => {};
-    } catch (err) {
-      console.warn("[NotifeeService] Failed to register foreground event handler:", err);
-      return () => {};
-    }
+  if (type === EventType.PRESS && conversationId && data) {
+    openConversation(data);
   }
 }
 
-export const notifeeService = new NotifeeService();
+async function sendReplyFromNotification(conversationId: string, text: string): Promise<void> {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  try {
+    const res = await fetchWithAuth(
+      `${SERVER_ORIGIN}/api/chat/conversations/${conversationId}/messages`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: trimmed }),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(`Reply failed: ${res.status}`);
+    }
+  } catch (err) {
+    console.warn('[notifee] reply failed', err);
+  }
+}
+
+async function markConversationRead(conversationId: string): Promise<void> {
+  try {
+    await fetchWithAuth(
+      `${SERVER_ORIGIN}/api/chat/conversations/${conversationId}/messages/read`,
+      {
+        method: 'POST',
+      },
+    );
+  } catch (err) {
+    console.warn('[notifee] mark read failed', err);
+  }
+}
+
+export { handleNotifeeEvent };
+
+/**
+ * Requests POST_NOTIFICATIONS (Android 13+) / iOS notification permission via
+ * Notifee. Expo's permission alone is not enough for Notifee-rendered data
+ * pushes on Android 13+.
+ */
+export async function requestNotificationPermission(): Promise<void> {
+  try {
+    await notifee.requestPermission();
+  } catch (err) {
+    console.warn('[notifee] requestPermission failed', err);
+  }
+}
+
+/**
+ * Ensures the Android 14+ full-screen-intent permission so the incoming-call
+ * screen can surface over the lock screen. If it isn't granted yet, deep-links
+ * the user to the system settings page to grant it (best-effort).
+ */
+export async function ensureFullScreenIntentPermission(): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  try {
+    const settings = await notifee.getNotificationSettings();
+    // On Android 14+ the full-screen-intent permission is surfaced via the
+    // `alarm` setting. If it isn't enabled, deep-link the user to settings so
+    // the incoming-call screen can surface over the lock screen (best-effort).
+    if (settings.android?.alarm === AndroidNotificationSetting.DISABLED) {
+      await Linking.openSettings().catch(() => {});
+    }
+  } catch (err) {
+    console.warn('[notifee] ensureFullScreenIntentPermission failed', err);
+  }
+}
+
+/**
+ * Aggregated service object so callers can use a single, stable import
+ * (`notifeeService.*`) rather than many individual named imports.
+ */
+export const notifeeService = {
+  ensureChannels,
+  displayMessageNotification,
+  registerForegroundHandler: setupNotifeeForegroundHandler,
+  handleInitialNotification,
+  handleNotifeeEvent,
+  requestNotificationPermission,
+  ensureFullScreenIntentPermission,
+};

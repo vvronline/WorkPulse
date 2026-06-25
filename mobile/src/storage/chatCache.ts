@@ -1,63 +1,55 @@
-import { mmkvJson } from "./mmkv";
-import type { ChatMessage, Conversation } from "../features";
+import { storage } from './mmkv';
+import type { ChatMessage } from '../types/chat';
 
-/**
- * On-device chat cache (Signal-style instant render).
- *
- * The chat thread and conversation list read from this cache SYNCHRONOUSLY on
- * mount so the UI paints immediately with the last-known data, then refresh
- * from the network in the background. This eliminates the full-screen spinner
- * that previously blocked every chat open.
- *
- * Only a bounded number of recent messages are persisted per conversation to
- * keep the cache small and writes fast.
- */
+const THREAD_PREFIX = 'chat:thread:';
+const CONVERSATIONS_KEY = 'chat:conversations';
+const MAX_CACHED_MESSAGES = 50;
 
-const CONVERSATIONS_KEY = "chat:conversations";
-const messagesKey = (convId: number) => `chat:messages:${convId}`;
+interface CachedConversation {
+  id: string;
+  peerId?: string;
+  peerName?: string;
+  peerAvatar?: string;
+  peerTitle?: string;
+  lastMessage?: string;
+  lastMessageAt?: string;
+  unreadCount?: number;
+}
 
-// Cap how many messages we persist per conversation. The thread loads a 50-row
-// page from the server anyway; persisting the most recent ~80 covers the
-// initial view plus a little scrollback without bloating storage.
-const MAX_CACHED_MESSAGES = 80;
+export async function getCachedThread(conversationId: string): Promise<ChatMessage[] | null> {
+  const raw = storage.getString(`${THREAD_PREFIX}${conversationId}`);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as ChatMessage[];
+  } catch {
+    return null;
+  }
+}
 
-export const chatCache = {
-  /** Read the cached conversation list (null on cold cache). */
-  getConversations(): Conversation[] | null {
-    return mmkvJson.get<Conversation[]>(CONVERSATIONS_KEY);
-  },
+export async function setCachedThread(
+  conversationId: string,
+  messages: ChatMessage[] | undefined,
+): Promise<void> {
+  if (!messages) {
+    storage.remove(`${THREAD_PREFIX}${conversationId}`);
+    return;
+  }
+  const trimmed = messages.slice(0, MAX_CACHED_MESSAGES);
+  storage.set(`${THREAD_PREFIX}${conversationId}`, JSON.stringify(trimmed));
+}
 
-  /** Persist the conversation list. */
-  setConversations(conversations: Conversation[]): void {
-    mmkvJson.set(CONVERSATIONS_KEY, conversations);
-  },
+export async function getCachedConversations(): Promise<CachedConversation[] | null> {
+  const raw = storage.getString(CONVERSATIONS_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as CachedConversation[];
+  } catch {
+    return null;
+  }
+}
 
-  /** Read the cached message page for a conversation (null on cold cache). */
-  getMessages(convId: number): ChatMessage[] | null {
-    if (!Number.isFinite(convId)) return null;
-    return mmkvJson.get<ChatMessage[]>(messagesKey(convId));
-  },
-
-  /**
-   * Persist the most recent messages for a conversation. Drops optimistic
-   * (negative-id / pending) rows and trims to MAX_CACHED_MESSAGES so only
-   * confirmed, server-assigned messages are cached.
-   */
-  setMessages(convId: number, messages: ChatMessage[]): void {
-    if (!Number.isFinite(convId)) return;
-    const confirmed = messages.filter(
-      (m) => Number(m.id) > 0 && !m._pending && !m._failed,
-    );
-    const trimmed =
-      confirmed.length > MAX_CACHED_MESSAGES
-        ? confirmed.slice(confirmed.length - MAX_CACHED_MESSAGES)
-        : confirmed;
-    mmkvJson.set(messagesKey(convId), trimmed);
-  },
-
-  /** Drop a conversation's cached messages (e.g. after Clear Chat). */
-  clearMessages(convId: number): void {
-    if (!Number.isFinite(convId)) return;
-    mmkvJson.remove(messagesKey(convId));
-  },
-};
+export async function setCachedConversations(
+  conversations: CachedConversation[],
+): Promise<void> {
+  storage.set(CONVERSATIONS_KEY, JSON.stringify(conversations));
+}
