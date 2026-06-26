@@ -52,6 +52,15 @@ export default function VoicePlayer({ uri }: { uri: string }) {
   const [loaded, setLoaded] = useState(false);
   const [speedIdx, setSpeedIdx] = useState(0);
   const loadedUriRef = useRef<string | null>(null);
+  // Sticky duration. expo-audio's `status.duration` is not stable: it reports
+  // 0 while the clip is still buffering, and on some platforms it momentarily
+  // drops back to 0 after playback finishes (the didJustFinish → seekTo(0)
+  // cycle) or during the frequent status churn caused by the chat list
+  // re-rendering. Binding the total-time label straight to it therefore made
+  // the duration "reset to 0:00". We latch the largest non-zero duration we've
+  // ever seen for the current clip and render THAT, so the total time only ever
+  // goes from unknown (0:00) → known and never flickers back.
+  const [stickyDurationMs, setStickyDurationMs] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -66,6 +75,9 @@ export default function VoicePlayer({ uri }: { uri: string }) {
         });
         loadedUriRef.current = uri;
         setLoaded(true);
+        // New clip — forget the previous clip's latched duration so the label
+        // re-learns this one's length (and shows 0:00 until it's known).
+        setStickyDurationMs(0);
       } catch {
         /* source load failed — keep the button; a retry happens on next tap */
       }
@@ -85,8 +97,21 @@ export default function VoicePlayer({ uri }: { uri: string }) {
   }, [status?.didJustFinish, player]);
 
   const playing = status?.playing ?? false;
-  const duration = status?.duration ? status.duration * 1000 : 0;
+  const liveDuration = status?.duration ? status.duration * 1000 : 0;
   const position = status?.currentTime ? status.currentTime * 1000 : 0;
+
+  // Latch the largest non-zero duration reported for this clip so a momentary
+  // status report of 0 (buffering / finish / re-render churn) can't blank the
+  // total-time label back to 0:00.
+  useEffect(() => {
+    if (liveDuration > 0 && liveDuration > stickyDurationMs) {
+      setStickyDurationMs(liveDuration);
+    }
+  }, [liveDuration, stickyDurationMs]);
+
+  // Prefer the live value when present, else fall back to the latched one — so
+  // the duration only transitions unknown → known, never known → 0:00.
+  const duration = liveDuration > 0 ? liveDuration : stickyDurationMs;
   const pct = duration > 0 ? Math.min(1, position / duration) : 0;
 
   // Re-apply the playback rate whenever playback (re)starts — some platforms

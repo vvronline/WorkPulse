@@ -141,6 +141,38 @@ function normalizeUploadedMessage(data: any): ChatMessage {
 }
 
 /**
+ * Normalize the REST `GET /conversations/:id/messages` response into the
+ * canonical snake_case `reply_to_*` shape the mobile app renders from.
+ *
+ * ROOT CAUSE of "the reply quote flashes the quoted message then collapses to
+ * the generic word 'Message'": the mobile app (ReplyQuote, the optimistic-send
+ * path and the WS `chat_message` echo) all read the quoted-message fields as
+ * `reply_to_content` / `reply_to_sender_name` / `reply_to_file_*`. But the REST
+ * messages endpoint returns them aliased as `reply_content` /
+ * `reply_sender_name` / `reply_file_*` (kept that way for web parity). So when
+ * `load()` refreshed the thread and wholesale-replaced the optimistic/WS rows
+ * with the REST payload, `reply_to_content` became undefined and ReplyQuote's
+ * `snippet || mediaLabel || "Message"` fallback rendered "Message" — the
+ * fraction-of-a-second flicker the user saw.
+ *
+ * Mapping the REST aliases → the canonical `reply_to_*` here keeps the quote
+ * stable across the refresh. Idempotent: already-canonical rows pass through.
+ */
+function normalizeFetchedMessage(row: any): ChatMessage {
+  if (!row || typeof row !== "object") return row;
+  if (!row.reply_to_id) return row as ChatMessage;
+  return {
+    ...row,
+    reply_to_content: row.reply_to_content ?? row.reply_content ?? null,
+    reply_to_sender_name:
+      row.reply_to_sender_name ?? row.reply_sender_name ?? null,
+    reply_to_file_url: row.reply_to_file_url ?? row.reply_file_url ?? null,
+    reply_to_file_type: row.reply_to_file_type ?? row.reply_file_type ?? null,
+    reply_to_file_name: row.reply_to_file_name ?? row.reply_file_name ?? null,
+  } as ChatMessage;
+}
+
+/**
  * All state, side-effects and handlers for the chat thread screen. Extracted
  * from `app/chat/[id].tsx` so the screen is a thin presentational orchestrator
  * (mirrors the web ChatMessages container/hook split). Behavior-preserving.
@@ -433,10 +465,15 @@ export function useChatThread() {
   const load = useCallback(async () => {
     try {
       const { data } = await getMessages(convId);
-      setMessages(data || []);
+      // Map the REST reply aliases (reply_content / reply_sender_name /
+      // reply_file_*) to the canonical reply_to_* shape so the in-bubble quote
+      // doesn't collapse to the generic "Message" when this refresh replaces
+      // the optimistic / WS rows (see normalizeFetchedMessage).
+      const normalized = (data || []).map(normalizeFetchedMessage);
+      setMessages(normalized);
       // Persist the freshest page so the next open paints instantly from disk.
-      setCachedMessages(convId, data || []);
-      setHasMore((data || []).length >= 50);
+      setCachedMessages(convId, normalized);
+      setHasMore(normalized.length >= 50);
       markReadAndSync();
       // Seed read receipts so own messages show the correct tick immediately.
       // Also persist them to the on-device cache so the NEXT open paints the
@@ -495,7 +532,9 @@ export function useChatThread() {
     prependingRef.current = true;
     try {
       const { data } = await getMessages(convId, oldest.id);
-      const older = data || [];
+      // Same reply-alias normalization as load() so prepended history keeps its
+      // quoted-message text instead of collapsing to "Message".
+      const older = (data || []).map(normalizeFetchedMessage);
       setHasMore(older.length >= 50);
       if (older.length > 0) {
         setMessages((prev) => {
