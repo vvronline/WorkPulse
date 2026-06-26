@@ -84,6 +84,14 @@ export default function CameraCapture({
   const cameraRef = useRef<any>(null);
   const [facing, setFacing] = useState<"back" | "front">("back");
   const [flash, setFlash] = useState<"off" | "on">("off");
+  // The CameraView's native capture mode. expo-camera REQUIRES the view to
+  // already be in "video" mode before `recordAsync()` is called — flipping it
+  // synchronously alongside `recordAsync` (the old `mode={isRecording ? ...}`
+  // approach) left the native view still in "picture" mode when recordAsync
+  // fired, so the recording silently failed and was discarded on release. We
+  // now drive the mode through its OWN state, switch to "video" FIRST, wait a
+  // tick for the native view to apply it, THEN start recording.
+  const [cameraMode, setCameraMode] = useState<"picture" | "video">("picture");
   const [isRecording, setIsRecording] = useState(false);
   const [recordSecs, setRecordSecs] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -151,6 +159,17 @@ export default function CameraCapture({
         // video if mic is denied.
       }
     }
+    // expo-camera requires the CameraView to ALREADY be in "video" mode before
+    // recordAsync() is invoked. Flip the mode first, then yield to let React
+    // commit + the native view reconfigure before starting the recording —
+    // otherwise recordAsync fires while the view is still in "picture" mode and
+    // the clip is silently discarded on release (the bug being fixed).
+    setCameraMode("video");
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    if (!cameraRef.current) {
+      setCameraMode("picture");
+      return;
+    }
     recordingRef.current = true;
     setIsRecording(true);
     setRecordSecs(0);
@@ -173,6 +192,8 @@ export default function CameraCapture({
     } finally {
       recordingRef.current = false;
       setIsRecording(false);
+      // Return the view to picture mode so the next tap takes a photo.
+      setCameraMode("picture");
       if (recordTimer.current) {
         clearInterval(recordTimer.current);
         recordTimer.current = null;
@@ -233,7 +254,9 @@ export default function CameraCapture({
         style={StyleSheet.absoluteFill}
         facing={facing}
         flash={flash}
-        mode={isRecording ? "video" : "picture"}
+        // Driven by its OWN state (NOT `isRecording`) so it can switch to
+        // "video" BEFORE recordAsync() runs — see startRecording().
+        mode={cameraMode}
         videoQuality="1080p"
       />
 

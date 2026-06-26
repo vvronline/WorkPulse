@@ -204,6 +204,16 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       },
     ],
     "expo-sharing",
+    [
+      // Inline chat video player (Signal-style). Enables background playback +
+      // PiP so a video can keep playing when the user expands/leaves it, and
+      // declares the iOS audio-session usage for video with sound.
+      "expo-video",
+      {
+        supportsBackgroundPlayback: false,
+        supportsPictureInPicture: true,
+      },
+    ],
   ],
   extra: {
     API_BASE_URL,

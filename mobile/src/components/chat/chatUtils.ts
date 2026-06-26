@@ -37,6 +37,12 @@ export function isAudioFile(m: ChatMessage): boolean {
   return /\.(m4a|mp3|aac|ogg|wav|webm)$/.test(name);
 }
 
+export function isVideoFile(m: ChatMessage): boolean {
+  if (m.file_type && m.file_type.startsWith("video/")) return true;
+  const name = (m.file_name || m.file_url || "").toLowerCase();
+  return /\.(mp4|mov|m4v|3gp|mkv|avi|webm)$/.test(name);
+}
+
 export function fmtSize(bytes?: number | null): string {
   if (!bytes || bytes <= 0) return "";
   if (bytes < 1024) return `${bytes} B`;

@@ -80,8 +80,22 @@ export default function RecentMediaStrip({
         return;
       }
 
-      const perm = await MediaLibrary.requestPermissionsAsync();
-      if (!perm.granted) {
+      // Request READ access. On Android 13/14 and iOS 14+ the user can grant
+      // *limited* ("selected photos") access — in that case `perm.granted` is
+      // false even though photos ARE readable (`accessPrivileges === "limited"`).
+      // Treat limited access as allowed so the recent-media strip still shows
+      // (Signal surfaces the accessible subset rather than blocking). Pass
+      // `false` (writeOnly = false) to ask for read access explicitly.
+      let perm = await MediaLibrary.getPermissionsAsync(false);
+      if (perm.status === "undetermined" || (!perm.granted && perm.canAskAgain)) {
+        perm = await MediaLibrary.requestPermissionsAsync(false);
+      }
+      const allowed =
+        perm.granted === true ||
+        perm.status === "granted" ||
+        perm.accessPrivileges === "limited" ||
+        perm.accessPrivileges === "all";
+      if (!allowed) {
         setDenied(true);
         setItems([]);
         return;

@@ -22,8 +22,9 @@ import VoicePlayer from "../VoicePlayer";
 import { AuthedImage } from "../AuthedImage";
 import ZoomableImage from "./ZoomableImage";
 import type { ChatMessage } from "../../features";
-import { fmtSize, isAudioFile, isImageFile } from "./chatUtils";
+import { fmtSize, isAudioFile, isImageFile, isVideoFile } from "./chatUtils";
 import { openAuthedFile } from "./openAuthedFile";
+import InlineVideo, { VIDEO_AVAILABLE } from "./InlineVideo";
 
 /** Human-readable upload throughput, e.g. "1.2 MB/s" / "340 KB/s". */
 function fmtSpeed(bytesPerSec?: number): string {
@@ -269,6 +270,38 @@ export default function FilePreview({
           )}
         </Pressable>
         <ImageViewerModal uri={viewer} onClose={() => setViewer(null)} />
+        {mediaPending ? (
+          <UploadState
+            mediaState={mediaState}
+            mediaProgress={mediaProgress}
+            uploadSpeed={message._uploadSpeed}
+            failureReason={message._failureReason}
+            onCancel={() => onCancelUpload?.(message)}
+            onRetry={() => onRetryUpload?.(message)}
+          />
+        ) : null}
+      </View>
+    );
+  }
+
+  // ─── Video attachment: inline Signal-style media player ───
+  // Sized by the video's intrinsic dimensions within the same envelope as
+  // images. When the native expo-video module isn't available in this build we
+  // fall through to the generic file card below so the video is still openable.
+  if (isVideoFile(message) && VIDEO_AVAILABLE) {
+    const intrinsicW = Number(message.metadata?.width) || null;
+    const intrinsicH = Number(message.metadata?.height) || null;
+    const box = computeImageSize(winWidth, intrinsicW, intrinsicH);
+    const resolved = uploadUrl(message.file_url) || undefined;
+    const isLocal = !!resolved && /^(file|content|data):/i.test(resolved);
+    return (
+      <View>
+        <InlineVideo
+          uri={resolved || ""}
+          isLocal={isLocal}
+          style={[styles.fileImage, box]}
+          onLongPress={onLongPress}
+        />
         {mediaPending ? (
           <UploadState
             mediaState={mediaState}
