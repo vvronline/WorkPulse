@@ -179,6 +179,28 @@ function MessageBubble({
     return () => document.removeEventListener("pointerdown", handler);
   }, [toolbarOpen]);
 
+  const handleCopy = useCallback(() => {
+    const text = String(msg.content || "");
+    if (!text) return;
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {});
+    } else {
+      // Fallback for non-secure contexts / older browsers.
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+      } catch {
+        /* ignore */
+      }
+      document.body.removeChild(ta);
+    }
+  }, [msg.content]);
+
   if (msg.deleted_at) {
     return (
       <div
@@ -231,27 +253,6 @@ function MessageBubble({
     (localMediaState === "queued" || localMediaState === "uploading");
 
   const hasText = !!String(msg.content || "").trim();
-  const handleCopy = useCallback(() => {
-    const text = String(msg.content || "");
-    if (!text) return;
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).catch(() => {});
-    } else {
-      // Fallback for non-secure contexts / older browsers.
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      try {
-        document.execCommand("copy");
-      } catch {
-        /* ignore */
-      }
-      document.body.removeChild(ta);
-    }
-  }, [msg.content]);
 
   const menuItems: ContextMenuItem[] = isPending
     ? []

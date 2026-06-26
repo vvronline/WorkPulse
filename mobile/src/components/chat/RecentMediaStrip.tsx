@@ -51,11 +51,25 @@ type StripRow =
 
 // Resolve the native module defensively so the JS bundle never crashes when
 // it's unavailable (Expo Go / web). Returns null when absent.
+//
+// IMPORTANT: we import the LEGACY entry point. As of expo-media-library 56 the
+// default export switched to the new class-based (`Query`/`Asset`) API, and the
+// old functional helpers we rely on here — `getAssetsAsync`, `SortBy`,
+// `MediaType`, `presentPermissionsPickerAsync` — are now deprecated stubs on
+// the default export that THROW at runtime (see expo-media-library's
+// `legacyWarnings`). Pulling them from `/legacy` keeps them working (and is the
+// path expo's own migration warning points to). The permission response from
+// the legacy API still carries `accessPrivileges`, which drives our Signal-style
+// limited/full/none branching below.
 function getMediaLibrary(): any {
   try {
-    return require("expo-media-library");
+    return require("expo-media-library/legacy");
   } catch {
-    return null;
+    try {
+      return require("expo-media-library");
+    } catch {
+      return null;
+    }
   }
 }
 
