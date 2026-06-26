@@ -554,7 +554,7 @@ if (require.main === module) {
         setupWebSocket(httpServer);
 
         // Collaboration WebSocket server (Yjs/Hocuspocus) on /collab path
-        createCollaborationServer(httpServer);
+        await createCollaborationServer(httpServer);
 
         httpServer.listen(PORT, () => {
             logger.info({ port: PORT }, "Server running");

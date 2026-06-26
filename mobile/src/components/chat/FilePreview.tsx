@@ -26,15 +26,6 @@ import { fmtSize, isAudioFile, isImageFile, isVideoFile } from "./chatUtils";
 import { openAuthedFile } from "./openAuthedFile";
 import InlineVideo, { VIDEO_AVAILABLE } from "./InlineVideo";
 
-/** Human-readable upload throughput, e.g. "1.2 MB/s" / "340 KB/s". */
-function fmtSpeed(bytesPerSec?: number): string {
-  if (!bytesPerSec || bytesPerSec <= 0) return "";
-  if (bytesPerSec < 1024) return `${Math.round(bytesPerSec)} B/s`;
-  if (bytesPerSec < 1024 * 1024)
-    return `${(bytesPerSec / 1024).toFixed(0)} KB/s`;
-  return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
-}
-
 // Signal-style sent-image envelope — matched 1:1 to the web client's
 // FilePreview.module.css (.imgWrap / .image): max 280×330, min 120 wide, 80
 // tall. The image is sized by its intrinsic aspect ratio within that envelope
@@ -159,15 +150,27 @@ export default function FilePreview({
   }, [needsMeasure, resolvedForSize, measured]);
 
   if (!message.file_url) return null;
-  const mediaStateRaw = message._mediaState || message.media_state || "";
-  const mediaState = mediaStateRaw === "processing" ? "uploading" : mediaStateRaw;
-  const mediaPending =
+  const isLocalMediaUpload =
     Number(message.id) < 0 ||
-    mediaState === "queued" ||
-    mediaState === "uploading";
+    /^(file|content|data):/i.test(String(message.file_url));
+  const mediaStateRaw = isLocalMediaUpload
+    ? message._mediaState || message.media_state || ""
+    : "";
+  const mediaState =
+    mediaStateRaw === "processing" ? "uploading" : mediaStateRaw;
+  const mediaPending =
+    isLocalMediaUpload &&
+    (Number(message.id) < 0 ||
+      mediaState === "queued" ||
+      mediaState === "uploading" ||
+      mediaState === "failed" ||
+      !!message._failed);
   const mediaProgress = Math.max(
     0,
-    Math.min(100, Number(message._mediaProgress ?? message.media_progress ?? 0)),
+    Math.min(
+      100,
+      Number(message._mediaProgress ?? message.media_progress ?? 0),
+    ),
   );
 
   const isMine = Number(message.sender_id) === Number(user?.id);
@@ -219,12 +222,21 @@ export default function FilePreview({
               <Timer size={15} color={theme.text} />
             )}
           </View>
-          <Text style={[styles.viewOnceLabel, viewedState && styles.viewOnceLabelDone]}>
+          <Text
+            style={[
+              styles.viewOnceLabel,
+              viewedState && styles.viewOnceLabelDone,
+            ]}
+          >
             {viewedState ? "Viewed" : loadingView ? "Opening…" : "Photo"}
           </Text>
           {!viewedState ? <Eye size={14} color={theme.textMuted} /> : null}
         </Pressable>
-        <ImageViewerModal uri={viewer} viewOnce onClose={() => setViewer(null)} />
+        <ImageViewerModal
+          uri={viewer}
+          viewOnce
+          onClose={() => setViewer(null)}
+        />
         {mediaPending ? (
           <UploadState
             mediaState={mediaState}
@@ -437,7 +449,9 @@ function ImageViewerModal({
         </Pressable>
         <ZoomableImage uri={uri} isLocal={isLocal} onTap={onClose} />
         {viewOnce ? (
-          <Text style={viewerStyles.note}>This photo can only be viewed once</Text>
+          <Text style={viewerStyles.note}>
+            This photo can only be viewed once
+          </Text>
         ) : null}
       </GestureHandlerRootView>
     </Modal>
@@ -476,16 +490,14 @@ const viewerStyles = StyleSheet.create({
 function UploadState({
   mediaState,
   mediaProgress,
-  uploadSpeed,
   failureReason,
-  onCancel,
   onRetry,
 }: {
   mediaState: string;
   mediaProgress: number;
   uploadSpeed?: number;
   failureReason?: string | null;
-  onCancel: () => void;
+  onCancel?: () => void;
   onRetry: () => void;
 }) {
   const theme = useTheme();
@@ -494,30 +506,15 @@ function UploadState({
   const queued = mediaState === "queued";
   const failed = mediaState === "failed";
   if (!uploading && !queued && !failed) return null;
-  const speedLabel = uploading ? fmtSpeed(uploadSpeed) : "";
   return (
     <View style={styles.uploadWrap}>
       {(uploading || queued) && (
         <>
-          <View style={styles.uploadRow}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              {uploading ? (
-                <ActivityIndicator size="small" color={theme.primary} />
-              ) : null}
-              <Text style={styles.uploadLabel}>
-                {queued
-                  ? "Queued"
-                  : `Uploading ${mediaProgress}%${
-                      speedLabel ? ` · ${speedLabel}` : ""
-                    }`}
-              </Text>
-            </View>
-            <Pressable onPress={onCancel} hitSlop={6}>
-              <Text style={styles.uploadAction}>Cancel</Text>
-            </Pressable>
-          </View>
+          <ActivityIndicator size="small" color={theme.primary} />
           <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${mediaProgress}%` }]} />
+            <View
+              style={[styles.progressFill, { width: `${mediaProgress}%` }]}
+            />
           </View>
         </>
       )}
@@ -596,8 +593,11 @@ const makeStyles = (theme: Theme) =>
       justifyContent: "space-between",
       gap: 12,
     },
-    uploadLabel: { fontSize: 12, color: theme.textMuted },
-    uploadAction: { fontSize: 12, color: theme.primary, fontFamily: theme.fontSemiBold },
+    uploadAction: {
+      fontSize: 12,
+      color: theme.primary,
+      fontFamily: theme.fontSemiBold,
+    },
     uploadFail: { flex: 1, fontSize: 12, color: theme.danger },
     progressTrack: {
       width: "100%",

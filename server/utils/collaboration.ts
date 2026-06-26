@@ -8,8 +8,6 @@
  * Document naming convention: `notes:{tenantId}:{pageId}`
  * Each document maps to a single notebook page.
  */
-import { Hocuspocus } from "@hocuspocus/server";
-import { Database } from "@hocuspocus/extension-database";
 import { WebSocketServer } from "ws";
 import jwt from "jsonwebtoken";
 import type { Server as HttpServer } from "http";
@@ -59,7 +57,16 @@ async function getDbForTenant(tenantId: number | null): Promise<DbForTenant | nu
  * Create and configure the Hocuspocus collaboration server
  * and attach it to an existing HTTP server via WebSocket upgrade on /collab.
  */
-function createCollaborationServer(httpServer: HttpServer): Hocuspocus {
+type CollaborationServerInstance = {
+    handleConnection: (...args: any[]) => void;
+};
+
+async function createCollaborationServer(httpServer: HttpServer): Promise<CollaborationServerInstance> {
+    const [{ Hocuspocus }, { Database }] = await Promise.all([
+        import("@hocuspocus/server"),
+        import("@hocuspocus/extension-database"),
+    ]);
+
     const hocuspocus = new Hocuspocus({
         name: "workpulse-collab",
         quiet: true,
@@ -193,7 +200,7 @@ function createCollaborationServer(httpServer: HttpServer): Hocuspocus {
 
         wss.handleUpgrade(request, socket, head, (ws) => {
             // Hocuspocus handles auth via its protocol (token sent by @hocuspocus/provider)
-            hocuspocus.handleConnection(ws, request as unknown as Parameters<typeof hocuspocus.handleConnection>[1]);
+            hocuspocus.handleConnection(ws, request as any);
         });
     });
 
