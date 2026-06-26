@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  InteractionManager,
   Keyboard,
   Vibration,
   View,
@@ -533,9 +534,19 @@ export function useChatThread() {
     }
   }, [convId, markReadAndSync, scrollToEnd]);
 
+  // Defer the network refresh + its (large) setMessages re-render until AFTER
+  // the screen's open transition has settled. The cached page is already on
+  // screen (see cachedMessages), so this is a pure background reconcile — running
+  // it synchronously on mount used to fire a heavy re-render DURING the
+  // slide-in animation, which dropped frames and made the open feel laggy.
+  // InteractionManager runs it on the first idle frame after the transition,
+  // keeping the animation smooth (Signal-Android feel).
   useEffect(() => {
-    load();
-    loadPinned();
+    const task = InteractionManager.runAfterInteractions(() => {
+      load();
+      loadPinned();
+    });
+    return () => task.cancel();
   }, [load, loadPinned]);
 
   // Cross-screen "jump to message": the in-conversation search / saved / pinned
@@ -927,7 +938,10 @@ export function useChatThread() {
               reply_to_sender_name: d.replySenderName ?? null,
               reply_to_file_url: d.replyFileUrl ?? null,
               reply_to_file_type: d.replyFileType ?? null,
-              reply_to_file_name: d.replyFileName ?? null,
+              reply_to_file_name:
+                d.replyFileName ?? d.reply_to_file_name ?? null,
+              format_type: d.formatType ?? d.format_type ?? null,
+              metadata: d.metadata ?? null,
               clientMsgId: d.clientMsgId,
               _mediaState: d.mediaState ?? null,
               _mediaProgress:
@@ -956,7 +970,9 @@ export function useChatThread() {
             reply_to_sender_name: d.replySenderName ?? null,
             reply_to_file_url: d.replyFileUrl ?? null,
             reply_to_file_type: d.replyFileType ?? null,
-            reply_to_file_name: d.replyFileName ?? null,
+            reply_to_file_name: d.replyFileName ?? d.reply_to_file_name ?? null,
+            format_type: d.formatType ?? d.format_type ?? null,
+            metadata: d.metadata ?? null,
             _mediaState: d.mediaState ?? null,
             _mediaProgress:
               typeof d.mediaProgress === "number" ? d.mediaProgress : 0,

@@ -145,6 +145,10 @@ export default function CallScreen() {
     isReconnect,
     initialCallPhase,
   );
+  // Mirror `status` into a ref so reconnect handlers can read the latest phase
+  // without re-registering their socket listeners on every status change.
+  const statusRef = useRef(status);
+  statusRef.current = status;
   const [muted, setMuted] = useState(false);
   const [videoOff, setVideoOff] = useState(callType !== "video");
   // Front camera → mirror the self-view; rear → don't (otherwise the rear feed
@@ -1979,6 +1983,52 @@ export default function CallScreen() {
     );
   }, [mode, isReconnect, conversationId]);
 
+  // Reconnect-resilient readiness. If the WS drops mid-negotiation (a flaky
+  // push / cold-start / lock-screen answer is the worst case — the "shows
+  // Connecting… then drops" / "never connects" symptom), the single subscribe
+  // above is not enough: a fresh offer/ICE buffered by the server while we were
+  // briefly offline would never be replayed. So on EVERY socket (re)open, until
+  // the call is actually connected, re-announce that we are listening (and, if
+  // we have already accepted, that our PC is ready). The server replays buffered
+  // signals and re-asks the caller to re-offer on each of these — idempotent via
+  // Perfect Negotiation.
+  useEffect(() => {
+    if (mode === "outgoing" && !isReconnect) return;
+    const off = socket.onOpen(() => {
+      const callId = callIdRef.current;
+      if (!callId || !Number.isFinite(conversationId)) return;
+      const phase = statusRef.current;
+      if (phase === "connected" || phase === "ended" || phase === "rejected") {
+        return;
+      }
+      void socket.sendWithBackoff(
+        "call_subscribe",
+        { callId, conversationId },
+        {
+          timeoutMs: 4000,
+          maxAttempts: 5,
+          initialBackoffMs: 120,
+          maxBackoffMs: 800,
+          ensureConnected: true,
+        },
+      );
+      if (acceptedRef.current) {
+        void socket.sendWithBackoff(
+          "call_ready",
+          { callId, conversationId },
+          {
+            timeoutMs: 4000,
+            maxAttempts: 5,
+            initialBackoffMs: 120,
+            maxBackoffMs: 800,
+            ensureConnected: true,
+          },
+        );
+      }
+    });
+    return off;
+  }, [mode, isReconnect, conversationId]);
+
   // Signaling listener.
   useEffect(() => {
     const off = socket.subscribe((msg) => {
@@ -2392,6 +2442,10 @@ export default function CallScreen() {
         }
         case "chat_message": {
           if (Number(d.conversationId) !== conversationId) return;
+          // Ignore system rows (e.g. the inline call-history event the server
+          // emits as the call tears down) — they belong in the chat thread, not
+          // the in-call chat panel.
+          if (d.formatType === "system" || d.format_type === "system") break;
           const msgId =
             d.id ?? d.clientMsgId ?? `${Date.now()}-${Math.random()}`;
           setCallMessages((prev) => {
@@ -2849,6 +2903,16 @@ export default function CallScreen() {
     callIdRef,
     holdSnapshotRef,
     sendSocket: socket.send,
+    // Retrying sender for must-deliver state signals (video/audio state and
+    // reactions). `sendWithRetry` reconnects + re-sends if the socket was
+    // momentarily down, so a camera-off never leaves a frozen frame on the peer
+    // and reactions reliably reach the other screen.
+    sendSocketReliable: (event, payload) =>
+      socket.sendWithRetry(event, payload, {
+        timeoutMs: 4000,
+        retryEveryMs: 200,
+        ensureConnected: true,
+      }),
     setOnHold,
     setMuted,
     setVideoOff,

@@ -9,12 +9,18 @@ import {
   View,
 } from "react-native";
 import {
+  Disc,
+  MessageSquare,
   Mic,
   MicOff,
   MoreVertical,
+  Pause,
   Phone,
   PhoneOff,
+  Play,
   Signal,
+  Smile,
+  Sparkles,
   SwitchCamera,
   Video as VideoIcon,
   VideoOff,
@@ -160,6 +166,17 @@ export default function CallScreenOverlay({
 
   return (
     <>
+      {/* Readability scrims. The video-off fallback background follows the
+          device's light/dark scheme, so the white call name + controls need a
+          subtle dark fade behind them to stay legible on a light background
+          (and over bright video). Hidden in PiP. */}
+      {!isInPip ? (
+        <>
+          <View style={styles.topScrim} pointerEvents="none" />
+          <View style={styles.bottomScrim} pointerEvents="none" />
+        </>
+      ) : null}
+
       {!isInPip && status === "connected" ? (
         <View style={[styles.topBar, { top: insets.top + 8 }]}>
           <View style={styles.qualityBadge}>
@@ -174,7 +191,7 @@ export default function CallScreenOverlay({
                 <Text style={styles.pillText}>On hold</Text>
               </View>
             ) : null}
-            {noiseSuppressionEnabled ? (
+            {noiseSuppressionEnabled && callType !== "video" ? (
               <View style={[styles.pill, styles.nsPill]}>
                 <Text style={styles.pillText}>NS</Text>
               </View>
@@ -196,7 +213,9 @@ export default function CallScreenOverlay({
 
       {!isInPip ? (
         <View style={[styles.info, { top: insets.top + 60 }]}>
-          <Text style={styles.peerName}>{peerName}</Text>
+          <Text style={styles.peerName} numberOfLines={1}>
+            {peerName}
+          </Text>
           {status === "connected" ? (
             <CallDurationComponent active style={styles.status} />
           ) : (
@@ -357,36 +376,93 @@ export default function CallScreenOverlay({
       <Modal
         visible={!isInPip && showMore}
         transparent
-        animationType="fade"
+        animationType="slide"
         onRequestClose={onCloseMore}
       >
         <Pressable style={styles.sheetBackdrop} onPress={onCloseMore}>
           <Pressable style={styles.sheet}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetHeading}>More options</Text>
             <Pressable style={styles.sheetItem} onPress={onToggleHold}>
-              <Text style={styles.sheetItemText}>
-                {onHold ? "Resume call" : "Hold call"}
-              </Text>
+              <View style={styles.sheetIconWrap}>
+                {onHold ? (
+                  <Play size={20} color={CTRL_OFF} />
+                ) : (
+                  <Pause size={20} color={CTRL_OFF} />
+                )}
+              </View>
+              <View style={styles.sheetItemBody}>
+                <Text style={styles.sheetItemText}>
+                  {onHold ? "Resume call" : "Hold call"}
+                </Text>
+                <Text style={styles.sheetItemSub}>
+                  {onHold
+                    ? "Reconnect your audio and video"
+                    : "Pause your audio and video"}
+                </Text>
+              </View>
             </Pressable>
             <Pressable
               style={styles.sheetItem}
               onPress={onToggleNoiseSuppression}
             >
-              <Text style={styles.sheetItemText}>
-                {noiseSuppressionEnabled
-                  ? "Disable noise suppression"
-                  : "Enable noise suppression"}
-              </Text>
+              <View style={styles.sheetIconWrap}>
+                <Sparkles
+                  size={20}
+                  color={noiseSuppressionEnabled ? "#34d399" : CTRL_OFF}
+                />
+              </View>
+              <View style={styles.sheetItemBody}>
+                <Text style={styles.sheetItemText}>Noise suppression</Text>
+                <Text style={styles.sheetItemSub}>
+                  {noiseSuppressionEnabled ? "On" : "Off"}
+                </Text>
+              </View>
             </Pressable>
             <Pressable style={styles.sheetItem} onPress={onToggleRecording}>
-              <Text style={styles.sheetItemText}>
-                {recording ? "Stop call recording" : "Record call"}
-              </Text>
+              <View style={styles.sheetIconWrap}>
+                <Disc size={20} color={recording ? "#f87171" : CTRL_OFF} />
+              </View>
+              <View style={styles.sheetItemBody}>
+                <Text style={styles.sheetItemText}>
+                  {recording ? "Stop recording" : "Record call"}
+                </Text>
+                <Text style={styles.sheetItemSub}>
+                  {recording ? "Recording in progress" : "Capture this call"}
+                </Text>
+              </View>
             </Pressable>
             <Pressable style={styles.sheetItem} onPress={onOpenReactionPicker}>
-              <Text style={styles.sheetItemText}>Send reaction</Text>
+              <View style={styles.sheetIconWrap}>
+                <Smile size={20} color={CTRL_OFF} />
+              </View>
+              <View style={styles.sheetItemBody}>
+                <Text style={styles.sheetItemText}>Send reaction</Text>
+                <Text style={styles.sheetItemSub}>
+                  Float an emoji on screen
+                </Text>
+              </View>
             </Pressable>
-            <Pressable style={styles.sheetItem} onPress={onOpenChat}>
-              <Text style={styles.sheetItemText}>Open chat</Text>
+            <Pressable
+              style={[styles.sheetItem, styles.sheetItemLast]}
+              onPress={onOpenChat}
+            >
+              <View style={styles.sheetIconWrap}>
+                <MessageSquare size={20} color={CTRL_OFF} />
+                {chatUnread > 0 ? (
+                  <View style={styles.sheetUnreadDot}>
+                    <Text style={styles.unreadText}>
+                      {chatUnread > 9 ? "9+" : chatUnread}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+              <View style={styles.sheetItemBody}>
+                <Text style={styles.sheetItemText}>Open chat</Text>
+                <Text style={styles.sheetItemSub}>
+                  Message without leaving the call
+                </Text>
+              </View>
             </Pressable>
           </Pressable>
         </Pressable>

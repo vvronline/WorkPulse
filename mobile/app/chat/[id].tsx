@@ -1,5 +1,6 @@
 import {
   ActivityIndicator,
+  InteractionManager,
   Pressable,
   StyleSheet,
   Text,
@@ -24,7 +25,7 @@ import {
 } from "lucide-react-native";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import ChatAvatar from "../../src/components/ChatAvatar";
 import {
@@ -141,6 +142,10 @@ export default function ChatThread() {
                 }
               : {
                   title: c.name || "Chat",
+                  // Native-stack MERGES options across re-renders, so the
+                  // `headerLeft` (X) set while in selection mode would otherwise
+                  // linger after exiting. Reset it to the default back button.
+                  headerLeft: undefined,
                   headerTitle: () => (
                     // Signal-style: tapping the title/avatar opens the
                     // conversation profile (Conversation Settings) screen.
@@ -495,6 +500,7 @@ export default function ChatThread() {
  */
 import { FlatList } from "react-native";
 import type { ChatMessage } from "../../src/features";
+import CallSystemMessage from "../../src/components/chat/CallSystemMessage";
 
 function ChatList({
   c,
@@ -510,6 +516,20 @@ function ChatList({
   // floating chevron fades in; tapping it smooth-scrolls back to the newest
   // message.
   const [showScrollBtn, setShowScrollBtn] = useState(false);
+
+  // Gate the per-bubble FadeIn/LinearTransition animations. They stay OFF for
+  // the initial render so opening the conversation paints the whole visible
+  // thread at once and slides in cleanly (no per-row fade flicker fighting the
+  // navigation transition — the old cause of the laggy/flickery open). Once the
+  // open transition settles we flip this ON so genuinely new messages still
+  // fade into place, matching Signal-Android.
+  const [entryAnimReady, setEntryAnimReady] = useState(false);
+  useEffect(() => {
+    const task = InteractionManager.runAfterInteractions(() => {
+      setEntryAnimReady(true);
+    });
+    return () => task.cancel();
+  }, []);
 
   return (
     // NOTE: this list stays on the stock FlatList because it is INVERTED — the
@@ -625,6 +645,29 @@ function ChatList({
           // day relative to the older neighbour (or it's the oldest message).
           const showDaySeparator =
             !prev || !isSameDay(prev.created_at, item.created_at);
+          // Inline call-history row (Signal parity): a `system` message whose
+          // metadata describes a call renders as a centred call event instead
+          // of a chat bubble.
+          if (item.format_type === "system" && item.metadata?.type === "call") {
+            return (
+              <View>
+                <CallSystemMessage
+                  message={item}
+                  userId={c.user?.id}
+                  onCallBack={c.startCall}
+                />
+                {showDaySeparator ? (
+                  <View style={styles.daySeparator}>
+                    <View style={styles.dayPill}>
+                      <Text style={styles.dayPillText}>
+                        {fmtDaySeparator(item.created_at)}
+                      </Text>
+                    </View>
+                  </View>
+                ) : null}
+              </View>
+            );
+          }
           return (
             <View>
               <MessageBubble
@@ -651,6 +694,7 @@ function ChatList({
                 onCancelUpload={c.cancelMediaUpload}
                 onRetryUpload={c.retryMediaUpload}
                 onJumpToReply={c.jumpToReply}
+                animateEntry={entryAnimReady}
               />
               {showDaySeparator ? (
                 <View style={styles.daySeparator}>

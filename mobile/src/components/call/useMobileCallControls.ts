@@ -16,6 +16,12 @@ type ControlDeps = {
     videoOff: boolean;
   } | null>;
   sendSocket: (event: string, payload: any) => void;
+  // Reliable, retrying sender used for state signals that MUST reach the peer
+  // (video-state / audio-state / reaction). A dropped fire-and-forget frame is
+  // the root cause of a "stuck last frame" on the peer after camera-off and of
+  // reactions never appearing on the other screen. Falls back to sendSocket
+  // when not provided.
+  sendSocketReliable?: (event: string, payload: any) => void | Promise<unknown>;
   setOnHold: (value: boolean) => void;
   setMuted: (value: boolean) => void;
   setVideoOff: (value: boolean) => void;
@@ -40,6 +46,7 @@ type ControlDeps = {
 };
 
 export function useMobileCallControls(deps: ControlDeps) {
+  const sendReliable = deps.sendSocketReliable || deps.sendSocket;
   function toggleMute() {
     deps.setOnHold(false);
     deps.holdSnapshotRef.current = null;
@@ -52,7 +59,7 @@ export function useMobileCallControls(deps: ControlDeps) {
     deps.setMuted(next);
     const target = deps.peerIdRef.current;
     if (target) {
-      deps.sendSocket("call_signal", {
+      sendReliable("call_signal", {
         conversationId: deps.conversationId,
         callId: deps.callIdRef.current,
         targetUserId: target,
@@ -73,7 +80,7 @@ export function useMobileCallControls(deps: ControlDeps) {
     deps.setVideoOff(next);
     const target = deps.peerIdRef.current;
     if (target) {
-      deps.sendSocket("call_signal", {
+      sendReliable("call_signal", {
         conversationId: deps.conversationId,
         callId: deps.callIdRef.current,
         targetUserId: target,
@@ -123,13 +130,13 @@ export function useMobileCallControls(deps: ControlDeps) {
     }
     const target = deps.peerIdRef.current;
     if (target) {
-      deps.sendSocket("call_signal", {
+      sendReliable("call_signal", {
         conversationId: deps.conversationId,
         callId: deps.callIdRef.current,
         targetUserId: target,
         signal: { type: "audio-state", muted: next ? true : deps.muted },
       });
-      deps.sendSocket("call_signal", {
+      sendReliable("call_signal", {
         conversationId: deps.conversationId,
         callId: deps.callIdRef.current,
         targetUserId: target,
@@ -170,7 +177,7 @@ export function useMobileCallControls(deps: ControlDeps) {
   function sendReaction(emoji: string) {
     const targetUserId = deps.peerIdRef.current;
     if (!targetUserId) return;
-    deps.sendSocket("call_reaction", {
+    sendReliable("call_reaction", {
       conversationId: deps.conversationId,
       targetUserId,
       emoji,

@@ -76,7 +76,12 @@ type Tab = "msgs" | "meetings" | "calls" | "unread";
 // conversation rows share one array so FlashList can recycle them efficiently
 // (FlashList doesn't take a ScrollView's mapped children — it needs flat data).
 type ListRow =
-  | { kind: "section"; key: string; title: string; icon: "pin" | "star" | "msg" }
+  | {
+      kind: "section";
+      key: string;
+      title: string;
+      icon: "pin" | "star" | "msg";
+    }
   | { kind: "conv"; key: string; conv: Conversation };
 
 type SearchUser = {
@@ -394,12 +399,16 @@ export default function ChatScreen() {
 
   function doPin(c: Conversation) {
     setMenuConv(null);
-    pinConversation(c.id).then(load).catch(() => {});
+    pinConversation(c.id)
+      .then(load)
+      .catch(() => {});
   }
 
   function doFav(c: Conversation) {
     setMenuConv(null);
-    favouriteConversation(c.id).then(load).catch(() => {});
+    favouriteConversation(c.id)
+      .then(load)
+      .catch(() => {});
   }
 
   function doDelete(c: Conversation) {
@@ -411,7 +420,9 @@ export default function ChatScreen() {
 
   function doMute(c: Conversation) {
     setMenuConv(null);
-    muteConversation(c.id).then(load).catch(() => {});
+    muteConversation(c.id)
+      .then(load)
+      .catch(() => {});
   }
 
   function doArchive(c: Conversation) {
@@ -446,21 +457,41 @@ export default function ChatScreen() {
     const rows: ListRow[] = [];
     if (tab === "msgs") {
       if (pinned.length > 0) {
-        rows.push({ kind: "section", key: "sec-pin", title: "Pinned", icon: "pin" });
-        for (const c of pinned) rows.push({ kind: "conv", key: `c-${c.id}`, conv: c });
+        rows.push({
+          kind: "section",
+          key: "sec-pin",
+          title: "Pinned",
+          icon: "pin",
+        });
+        for (const c of pinned)
+          rows.push({ kind: "conv", key: `c-${c.id}`, conv: c });
       }
       if (favourites.length > 0) {
-        rows.push({ kind: "section", key: "sec-fav", title: "Favourites", icon: "star" });
-        for (const c of favourites) rows.push({ kind: "conv", key: `c-${c.id}`, conv: c });
+        rows.push({
+          kind: "section",
+          key: "sec-fav",
+          title: "Favourites",
+          icon: "star",
+        });
+        for (const c of favourites)
+          rows.push({ kind: "conv", key: `c-${c.id}`, conv: c });
       }
       if ((pinned.length > 0 || favourites.length > 0) && others.length > 0) {
-        rows.push({ kind: "section", key: "sec-all", title: "All Messages", icon: "msg" });
+        rows.push({
+          kind: "section",
+          key: "sec-all",
+          title: "All Messages",
+          icon: "msg",
+        });
       }
-      for (const c of others) rows.push({ kind: "conv", key: `c-${c.id}`, conv: c });
+      for (const c of others)
+        rows.push({ kind: "conv", key: `c-${c.id}`, conv: c });
     } else if (tab === "meetings") {
-      for (const c of meetingConvs) rows.push({ kind: "conv", key: `c-${c.id}`, conv: c });
+      for (const c of meetingConvs)
+        rows.push({ kind: "conv", key: `c-${c.id}`, conv: c });
     } else if (tab === "unread") {
-      for (const c of unreadConvs) rows.push({ kind: "conv", key: `c-${c.id}`, conv: c });
+      for (const c of unreadConvs)
+        rows.push({ kind: "conv", key: `c-${c.id}`, conv: c });
     }
     return rows;
   }, [tab, pinned, favourites, others, meetingConvs, unreadConvs]);
@@ -478,6 +509,13 @@ export default function ChatScreen() {
     const attachment = item.last_file_url
       ? attachmentPreview(item.last_file_type, item.last_file_name)
       : null;
+    // Signal-style call-history preview: when the latest message is a call
+    // system row, show a phone/video icon + summary (red for missed) instead
+    // of the raw system text.
+    const callPreview =
+      item.last_format_type === "system" && item.last_metadata?.type === "call"
+        ? callPreviewMeta(item.last_metadata)
+        : null;
     return (
       <Pressable
         key={item.id}
@@ -515,7 +553,20 @@ export default function ChatScreen() {
             <Text style={styles.time}>{timeAgo(item.last_message_at)}</Text>
           </View>
           <View style={styles.rowBottom}>
-            {attachment ? (
+            {callPreview ? (
+              <View style={styles.previewRow}>
+                {callPreview.icon}
+                <Text
+                  style={[
+                    styles.preview,
+                    callPreview.missed && { color: theme.danger },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {callPreview.label}
+                </Text>
+              </View>
+            ) : attachment ? (
               <View style={styles.previewRow}>
                 {attachment.icon}
                 <Text style={styles.preview} numberOfLines={1}>
@@ -584,6 +635,37 @@ export default function ChatScreen() {
     return {
       icon: <FileText size={13} color={theme.textSecondary} />,
       label: fileName || "Document",
+    };
+  }
+
+  // Map a call-history system message's metadata to a Signal-style icon +
+  // label for the conversation-list preview line.
+  function callPreviewMeta(meta: { callType?: string; status?: string }): {
+    icon: React.ReactNode;
+    label: string;
+    missed: boolean;
+  } {
+    const isVideo = meta.callType === "video";
+    const missed = meta.status === "missed";
+    if (missed) {
+      return {
+        icon: <PhoneMissed size={13} color={theme.danger} />,
+        label: `Missed ${isVideo ? "video" : "voice"} call`,
+        missed: true,
+      };
+    }
+    const label =
+      meta.status === "declined"
+        ? `${isVideo ? "Video" : "Voice"} call declined`
+        : `${isVideo ? "Video" : "Voice"} call`;
+    return {
+      icon: isVideo ? (
+        <Video size={13} color={theme.textSecondary} />
+      ) : (
+        <Phone size={13} color={theme.textSecondary} />
+      ),
+      label,
+      missed: false,
     };
   }
 
@@ -658,7 +740,12 @@ export default function ChatScreen() {
           <TabButton
             active={tab === "msgs"}
             label="Chat"
-            icon={<MessageSquare size={14} color={tab === "msgs" ? "#fff" : theme.textSecondary} />}
+            icon={
+              <MessageSquare
+                size={14}
+                color={tab === "msgs" ? "#fff" : theme.textSecondary}
+              />
+            }
             badge={totalUnread}
             onPress={() => setTab("msgs")}
           />
@@ -666,21 +753,39 @@ export default function ChatScreen() {
             <TabButton
               active={tab === "meetings"}
               label="Meet"
-              icon={<Video size={14} color={tab === "meetings" ? "#fff" : theme.textSecondary} />}
-              badge={meetingConvs.reduce((s, c) => s + (c.unread_count || 0), 0)}
+              icon={
+                <Video
+                  size={14}
+                  color={tab === "meetings" ? "#fff" : theme.textSecondary}
+                />
+              }
+              badge={meetingConvs.reduce(
+                (s, c) => s + (c.unread_count || 0),
+                0,
+              )}
               onPress={() => setTab("meetings")}
             />
           ) : null}
           <TabButton
             active={tab === "calls"}
             label="Calls"
-            icon={<Phone size={14} color={tab === "calls" ? "#fff" : theme.textSecondary} />}
+            icon={
+              <Phone
+                size={14}
+                color={tab === "calls" ? "#fff" : theme.textSecondary}
+              />
+            }
             onPress={() => setTab("calls")}
           />
           <TabButton
             active={tab === "unread"}
             label="Unread"
-            icon={<BellDot size={14} color={tab === "unread" ? "#fff" : theme.textSecondary} />}
+            icon={
+              <BellDot
+                size={14}
+                color={tab === "unread" ? "#fff" : theme.textSecondary}
+              />
+            }
             badge={unreadConvs.length}
             onPress={() => setTab("unread")}
           />
@@ -690,14 +795,13 @@ export default function ChatScreen() {
       {/* Search results */}
       {showSearch ? (
         <ScrollView
-          contentContainerStyle={[
-            styles.list,
-            { paddingBottom: 32 + kbInset },
-          ]}
+          contentContainerStyle={[styles.list, { paddingBottom: 32 + kbInset }]}
           keyboardShouldPersistTaps="handled"
         >
           {query.trim().length < 2 ? (
-            <Text style={styles.hint}>Type at least 2 characters to search.</Text>
+            <Text style={styles.hint}>
+              Type at least 2 characters to search.
+            </Text>
           ) : searching ? (
             <Text style={styles.hint}>Searching…</Text>
           ) : results.length === 0 ? (
@@ -778,9 +882,7 @@ export default function ChatScreen() {
                     >
                       {missed ? "Missed" : outgoing ? "Outgoing" : "Incoming"}
                       {item.call_type === "video" ? " video" : ""}
-                      {item.duration
-                        ? ` · ${callDuration(item.duration)}`
-                        : ""}
+                      {item.duration ? ` · ${callDuration(item.duration)}` : ""}
                     </Text>
                   </View>
                 </View>
@@ -1005,209 +1107,214 @@ function TabButton({
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg },
-  center: { alignItems: "center", justifyContent: "center" },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 8,
-    minHeight: 52,
-  },
-  heading: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: theme.text,
-    letterSpacing: -0.5,
-  },
-  headerBtns: { flexDirection: "row", gap: 6 },
-  headerIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  searchBar: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: theme.inputBg,
-    borderWidth: 1,
-    borderColor: theme.inputBorder,
-    borderRadius: theme.radiusFull,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  searchInput: { flex: 1, color: theme.text, fontSize: 15, paddingVertical: 0 },
-  tabs: {
-    flexDirection: "row",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
-  },
-  tabBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
-    paddingVertical: 8,
-    // Horizontal padding keeps the icon+label off the pill edges; the absolutely
-    // positioned badge (below) overlaps this padding instead of widening the row.
-    paddingHorizontal: 6,
-    borderRadius: theme.radiusFull,
-    backgroundColor: theme.surface,
-    // Anchor for the absolutely positioned unread badge so it floats in the
-    // top-right corner rather than pushing the centered content sideways.
-    position: "relative",
-    overflow: "hidden",
-  },
-  tabBtnActive: { backgroundColor: theme.primary },
-  // `flexShrink` lets the label give way gracefully (with numberOfLines={1}
-  // ellipsis) instead of forcing the row wider than its flex slot.
-  tabText: {
-    fontSize: 12,
-    color: theme.textSecondary,
-    fontWeight: "600",
-    flexShrink: 1,
-  },
-  tabTextActive: { color: "#fff" },
-  tabBadge: {
-    // Float the badge in the pill's top-right corner so an incoming notification
-    // never shifts or crowds the centered icon+label (the padding-break bug).
-    position: "absolute",
-    top: 2,
-    right: 4,
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: theme.danger,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 4,
-    borderWidth: 1,
-    borderColor: theme.bg,
-  },
-  tabBadgeText: { color: "#fff", fontSize: 9, fontWeight: "700" },
-  fab: {
-    position: "absolute",
-    right: 20,
-    bottom: 24,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: theme.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    elevation: 4,
-  },
-  list: { paddingHorizontal: 16, paddingBottom: 90, gap: 2 },
-  section: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    paddingTop: 14,
-    paddingBottom: 4,
-  },
-  sectionText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: theme.textMuted,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 4,
-  },
-  avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: theme.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarText: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  body: { flex: 1, gap: 3 },
-  rowTop: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  nameWrap: { flex: 1, flexDirection: "row", alignItems: "center", gap: 4 },
-  name: { flex: 1, fontSize: 15, fontWeight: "600", color: theme.text },
-  time: { fontSize: 11, color: theme.textMuted },
-  rowBottom: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 8,
-  },
-  previewRow: { flex: 1, flexDirection: "row", alignItems: "center", gap: 5 },
-  preview: { flex: 1, fontSize: 13, color: theme.textSecondary },
-  unread: {
-    minWidth: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: theme.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 6,
-  },
-  unreadText: { color: "#fff", fontSize: 11, fontWeight: "700" },
-  callMeta: { flexDirection: "row", alignItems: "center", gap: 5 },
-  callMetaText: { fontSize: 13, color: theme.textSecondary },
-  callRight: { alignItems: "flex-end", gap: 4 },
-  empty: { alignItems: "center", gap: 10, paddingTop: 80 },
-  emptyText: { color: theme.textMuted, fontSize: 14 },
-  hint: { color: theme.textMuted, fontSize: 13, paddingVertical: 16 },
-  // Signal-style bottom action sheet.
-  sheetOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "flex-end",
-  },
-  sheet: {
-    backgroundColor: theme.bgElevated,
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    paddingTop: 8,
-    paddingBottom: 28,
-  },
-  sheetHandle: {
-    alignSelf: "center",
-    width: 38,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: theme.glassBorder,
-    marginBottom: 8,
-  },
-  sheetHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 20,
-    paddingTop: 4,
-    paddingBottom: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.glassBorder,
-    marginBottom: 6,
-  },
-  sheetTitle: { flex: 1, fontSize: 16, fontWeight: "700", color: theme.text },
-  sheetRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 16,
-    paddingHorizontal: 22,
-    paddingVertical: 14,
-  },
-  sheetText: { fontSize: 15, color: theme.text, fontWeight: "500" },
-});
+    screen: { flex: 1, backgroundColor: theme.bg },
+    center: { alignItems: "center", justifyContent: "center" },
+    header: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: 16,
+      paddingTop: 12,
+      paddingBottom: 8,
+      minHeight: 52,
+    },
+    heading: {
+      fontSize: 24,
+      fontWeight: "800",
+      color: theme.text,
+      letterSpacing: -0.5,
+    },
+    headerBtns: { flexDirection: "row", gap: 6 },
+    headerIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    searchBar: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      backgroundColor: theme.inputBg,
+      borderWidth: 1,
+      borderColor: theme.inputBorder,
+      borderRadius: theme.radiusFull,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+    },
+    searchInput: {
+      flex: 1,
+      color: theme.text,
+      fontSize: 15,
+      paddingVertical: 0,
+    },
+    tabs: {
+      flexDirection: "row",
+      gap: 6,
+      paddingHorizontal: 12,
+      paddingBottom: 8,
+    },
+    tabBtn: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 4,
+      paddingVertical: 8,
+      // Horizontal padding keeps the icon+label off the pill edges; the absolutely
+      // positioned badge (below) overlaps this padding instead of widening the row.
+      paddingHorizontal: 6,
+      borderRadius: theme.radiusFull,
+      backgroundColor: theme.surface,
+      // Anchor for the absolutely positioned unread badge so it floats in the
+      // top-right corner rather than pushing the centered content sideways.
+      position: "relative",
+      overflow: "hidden",
+    },
+    tabBtnActive: { backgroundColor: theme.primary },
+    // `flexShrink` lets the label give way gracefully (with numberOfLines={1}
+    // ellipsis) instead of forcing the row wider than its flex slot.
+    tabText: {
+      fontSize: 12,
+      color: theme.textSecondary,
+      fontWeight: "600",
+      flexShrink: 1,
+    },
+    tabTextActive: { color: "#fff" },
+    tabBadge: {
+      // Float the badge in the pill's top-right corner so an incoming notification
+      // never shifts or crowds the centered icon+label (the padding-break bug).
+      position: "absolute",
+      top: 2,
+      right: 4,
+      minWidth: 16,
+      height: 16,
+      borderRadius: 8,
+      backgroundColor: theme.danger,
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: 4,
+      borderWidth: 1,
+      borderColor: theme.bg,
+    },
+    tabBadgeText: { color: "#fff", fontSize: 9, fontWeight: "700" },
+    fab: {
+      position: "absolute",
+      right: 20,
+      bottom: 24,
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      backgroundColor: theme.primary,
+      alignItems: "center",
+      justifyContent: "center",
+      elevation: 4,
+    },
+    list: { paddingHorizontal: 16, paddingBottom: 90, gap: 2 },
+    section: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 5,
+      paddingTop: 14,
+      paddingBottom: 4,
+    },
+    sectionText: {
+      fontSize: 12,
+      fontWeight: "700",
+      color: theme.textMuted,
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+    },
+    row: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      paddingVertical: 10,
+      paddingHorizontal: 4,
+    },
+    avatar: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      backgroundColor: theme.primary,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    avatarText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+    body: { flex: 1, gap: 3 },
+    rowTop: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+    },
+    nameWrap: { flex: 1, flexDirection: "row", alignItems: "center", gap: 4 },
+    name: { flex: 1, fontSize: 15, fontWeight: "600", color: theme.text },
+    time: { fontSize: 11, color: theme.textMuted },
+    rowBottom: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      gap: 8,
+    },
+    previewRow: { flex: 1, flexDirection: "row", alignItems: "center", gap: 5 },
+    preview: { flex: 1, fontSize: 13, color: theme.textSecondary },
+    unread: {
+      minWidth: 20,
+      height: 20,
+      borderRadius: 10,
+      backgroundColor: theme.primary,
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: 6,
+    },
+    unreadText: { color: "#fff", fontSize: 11, fontWeight: "700" },
+    callMeta: { flexDirection: "row", alignItems: "center", gap: 5 },
+    callMetaText: { fontSize: 13, color: theme.textSecondary },
+    callRight: { alignItems: "flex-end", gap: 4 },
+    empty: { alignItems: "center", gap: 10, paddingTop: 80 },
+    emptyText: { color: theme.textMuted, fontSize: 14 },
+    hint: { color: theme.textMuted, fontSize: 13, paddingVertical: 16 },
+    // Signal-style bottom action sheet.
+    sheetOverlay: {
+      flex: 1,
+      backgroundColor: "rgba(0,0,0,0.5)",
+      justifyContent: "flex-end",
+    },
+    sheet: {
+      backgroundColor: theme.bgElevated,
+      borderTopLeftRadius: 18,
+      borderTopRightRadius: 18,
+      paddingTop: 8,
+      paddingBottom: 28,
+    },
+    sheetHandle: {
+      alignSelf: "center",
+      width: 38,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: theme.glassBorder,
+      marginBottom: 8,
+    },
+    sheetHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      paddingHorizontal: 20,
+      paddingTop: 4,
+      paddingBottom: 12,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.glassBorder,
+      marginBottom: 6,
+    },
+    sheetTitle: { flex: 1, fontSize: 16, fontWeight: "700", color: theme.text },
+    sheetRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 16,
+      paddingHorizontal: 22,
+      paddingVertical: 14,
+    },
+    sheetText: { fontSize: 15, color: theme.text, fontWeight: "500" },
+  });

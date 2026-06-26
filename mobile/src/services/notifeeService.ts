@@ -31,10 +31,7 @@ import {
   clearPersistedPendingCall,
   loadPersistedPendingCall,
 } from "../realtime/pendingCall";
-import {
-  setPendingChat,
-  persistPendingChat,
-} from "../realtime/pendingChat";
+import { setPendingChat, persistPendingChat } from "../realtime/pendingChat";
 import { sendMessage, markConversationRead } from "../features";
 import { loadCallPrefs } from "./callPrefsStore";
 import { getToken } from "../auth/tokenStore";
@@ -180,12 +177,12 @@ function messageNotificationId(messageId: string): string {
 // entry) — the root cause of "message push not appearing while calls work".
 // This guard returns the pattern only when it is safe, else undefined so the
 // caller omits the override entirely (never passes a bad pattern to Notifee).
-function safeVibrationPattern(
-  pattern: number[],
-): number[] | undefined {
+function safeVibrationPattern(pattern: number[]): number[] | undefined {
   if (!Array.isArray(pattern) || pattern.length === 0) return undefined;
   if (pattern.length % 2 !== 0) return undefined;
-  if (pattern.some((v) => typeof v !== "number" || !Number.isFinite(v) || v < 0)) {
+  if (
+    pattern.some((v) => typeof v !== "number" || !Number.isFinite(v) || v < 0)
+  ) {
     return undefined;
   }
   return pattern;
@@ -220,7 +217,9 @@ class NotifeeService {
       this.AndroidNotificationSetting = mod?.AndroidNotificationSetting || {};
     } catch {
       this.notifee = null;
-      console.warn("[NotifeeService] @notifee/react-native unavailable; background call/message UI disabled.");
+      console.warn(
+        "[NotifeeService] @notifee/react-native unavailable; background call/message UI disabled.",
+      );
     }
     return this.notifee;
   }
@@ -240,9 +239,7 @@ class NotifeeService {
    * back to the app icon). Cached by a hash of the URL with a short TTL so a
    * repeat sender doesn't re-download every message.
    */
-  private async fetchAvatarToFile(
-    absoluteUrl: string,
-  ): Promise<string | null> {
+  private async fetchAvatarToFile(absoluteUrl: string): Promise<string | null> {
     if (Platform.OS !== "android") return null;
     if (!absoluteUrl) return null;
     try {
@@ -399,7 +396,10 @@ class NotifeeService {
         lights: true,
       });
     } catch (e) {
-      console.warn("[NotifeeService] failed to create default calls channel:", e);
+      console.warn(
+        "[NotifeeService] failed to create default calls channel:",
+        e,
+      );
     }
 
     // Per-tone calls channels — ONE per selectable ringtone option, each
@@ -444,7 +444,10 @@ class NotifeeService {
         lights: true,
       });
     } catch (e) {
-      console.warn("[NotifeeService] failed to create silent calls channel:", e);
+      console.warn(
+        "[NotifeeService] failed to create silent calls channel:",
+        e,
+      );
     }
 
     // The MESSAGES channel — created in its own isolated path so it survives any
@@ -473,7 +476,10 @@ class NotifeeService {
       const DENIED = 0;
       return authorizationStatus === undefined || authorizationStatus > DENIED;
     } catch (err) {
-      console.warn("[NotifeeService] Failed to request notification permission:", err);
+      console.warn(
+        "[NotifeeService] Failed to request notification permission:",
+        err,
+      );
       return false;
     }
   }
@@ -526,7 +532,10 @@ class NotifeeService {
         await Linking.openSettings().catch(() => {});
       }
     } catch (err) {
-      console.warn("[NotifeeService] Failed to ensure full-screen-intent permission:", err);
+      console.warn(
+        "[NotifeeService] Failed to ensure full-screen-intent permission:",
+        err,
+      );
     }
   }
 
@@ -668,7 +677,9 @@ class NotifeeService {
 
     const title =
       data.title ||
-      (data.callType === "video" ? "Incoming Video Call" : "Incoming Voice Call");
+      (data.callType === "video"
+        ? "Incoming Video Call"
+        : "Incoming Voice Call");
     const body = data.body || `${data.callerName || "Someone"} is calling...`;
     const id = callNotificationId(data.callId, data.conversationId);
 
@@ -986,13 +997,16 @@ class NotifeeService {
     const notifee = this.resolve();
     if (!notifee) return;
     const data = payload.data || {};
-    const title = payload.title || data.title || data.senderName || "New message";
+    const title =
+      payload.title || data.title || data.senderName || "New message";
     const body = payload.body || data.body || "";
     if (!title && !body) return;
 
     await this.ensureChannels();
 
-    const id = data.messageId ? messageNotificationId(data.messageId) : undefined;
+    const id = data.messageId
+      ? messageNotificationId(data.messageId)
+      : undefined;
     // Server-authoritative launcher/app-icon badge total (e.g. "3" unread).
     const badgeCount = Number(data.badgeCount ?? data.unreadCount);
     const hasBadge = Number.isFinite(badgeCount) && badgeCount >= 0;
@@ -1179,7 +1193,9 @@ class NotifeeService {
     const notifee = this.resolve();
     if (!notifee || !callId || !conversationId) return;
     try {
-      await notifee.cancelNotification(callNotificationId(callId, conversationId));
+      await notifee.cancelNotification(
+        callNotificationId(callId, conversationId),
+      );
     } catch (err) {
       console.warn("[NotifeeService] Failed to cancel call notification:", err);
     }
@@ -1210,7 +1226,10 @@ class NotifeeService {
       // Stash a pending "decline" route so a cold-started app still reconciles
       // (the call screen auto-rejects on mount). nativeCallService also sends
       // the raw reject for the genuinely-killed case.
-      const route = pendingCallFromData({ ...data, notificationAction: "decline_call" });
+      const route = pendingCallFromData({
+        ...data,
+        notificationAction: "decline_call",
+      });
       if (route) setPendingCall(route);
       await nativeCallService.handleAction("reject", data);
       return true;
@@ -1220,7 +1239,10 @@ class NotifeeService {
       // Stash a pending "answer" route so that when the app is launched COLD by
       // this tap (Linking deep link is lost before expo-router mounts), the
       // root layout still navigates to the call screen with autoAnswer=1.
-      const route = pendingCallFromData({ ...data, notificationAction: "accept_call" });
+      const route = pendingCallFromData({
+        ...data,
+        notificationAction: "accept_call",
+      });
       if (route) setPendingCall(route);
       await nativeCallService.handleAction("answer", data);
       return true;
@@ -1341,7 +1363,10 @@ class NotifeeService {
           }
         }
       } catch (err) {
-        console.warn("[NotifeeService] Failed to send reply from notification:", err);
+        console.warn(
+          "[NotifeeService] Failed to send reply from notification:",
+          err,
+        );
         // Leave the original notification in place so the user can retry by
         // opening the app.
       }
@@ -1377,11 +1402,18 @@ class NotifeeService {
   }
 
   /**
-   * Reads Notifee's initial notification (the call notification that COLD-
-   * launched the app) and returns a pending call route for it, or null. Called
-   * once at app startup from the root layout so a killed-state notification tap
-   * / Answer action routes to the call screen even though the headless deep
+   * Reads Notifee's initial notification (the notification that COLD-launched
+   * the app) and stashes a pending route for it. Called once at app startup so a
+   * killed-state notification tap routes correctly even though the headless deep
    * link was lost before the router mounted.
+   *
+   * Handles BOTH:
+   *   • CALL notifications  → a pending CALL route (Answer/Decline aware).
+   *   • MESSAGE notifications → a pending CHAT route, so a cold-start body tap
+   *     opens the EXACT conversation instead of landing on the dashboard.
+   *
+   * Both are read from the SAME `getInitialNotification()` call because Notifee
+   * only returns the launching notification ONCE — a second read returns null.
    */
   async captureInitialCallRoute(): Promise<void> {
     // FIRST: the native CallStyle status-bar notification path. When the user
@@ -1440,23 +1472,52 @@ class NotifeeService {
     }
 
     const notifee = this.resolve();
-    if (!notifee || typeof notifee.getInitialNotification !== "function") return;
+    if (!notifee || typeof notifee.getInitialNotification !== "function")
+      return;
     try {
       const initial = await notifee.getInitialNotification();
       if (!initial) return;
       const data = (initial.notification?.data || {}) as Record<string, string>;
-      if (!data.callId || !data.conversationId) return;
       const pressActionId: string | undefined = initial.pressAction?.id;
-      const action =
-        pressActionId === "answer"
-          ? "accept_call"
-          : pressActionId === "decline"
-            ? "decline_call"
-            : undefined;
-      const route = pendingCallFromData({ ...data, notificationAction: action });
-      if (route) setPendingCall(route);
+
+      // CALL notification cold-start tap → stash a pending call route.
+      if (data.callId && data.conversationId) {
+        const action =
+          pressActionId === "answer"
+            ? "accept_call"
+            : pressActionId === "decline"
+              ? "decline_call"
+              : undefined;
+        const route = pendingCallFromData({
+          ...data,
+          notificationAction: action,
+        });
+        if (route) setPendingCall(route);
+        return;
+      }
+
+      // MESSAGE notification cold-start tap → stash a pending chat route so
+      // app/index.tsx opens the exact conversation. On a killed app the
+      // launching tap is delivered via getInitialNotification() (NOT
+      // onBackgroundEvent), so handleMessageEvent never runs and nothing else
+      // persists the route — this is the only place it gets captured for a cold
+      // start. "reply"/"mark_read" action taps must NOT navigate into the thread.
+      if (
+        data.conversationId &&
+        !data.callId &&
+        pressActionId !== "reply" &&
+        pressActionId !== "mark_read"
+      ) {
+        setPendingChat({ conversationId: String(data.conversationId) });
+        await persistPendingChat({
+          conversationId: String(data.conversationId),
+        }).catch(() => {});
+      }
     } catch (err) {
-      console.warn("[NotifeeService] Failed to read initial notification:", err);
+      console.warn(
+        "[NotifeeService] Failed to read initial notification:",
+        err,
+      );
     }
   }
 
@@ -1469,14 +1530,19 @@ class NotifeeService {
     const notifee = this.resolve();
     if (!notifee) return;
     try {
-      notifee.onBackgroundEvent(async ({ type, detail }: { type: number; detail: any }) => {
-        // Calls first; if it isn't a call notification, route the message
-        // notification (body tap → open chat, Reply/Mark-read actions).
-        const handled = await this.handleCallEvent(type, detail);
-        if (!handled) await this.handleMessageEvent(type, detail);
-      });
+      notifee.onBackgroundEvent(
+        async ({ type, detail }: { type: number; detail: any }) => {
+          // Calls first; if it isn't a call notification, route the message
+          // notification (body tap → open chat, Reply/Mark-read actions).
+          const handled = await this.handleCallEvent(type, detail);
+          if (!handled) await this.handleMessageEvent(type, detail);
+        },
+      );
     } catch (err) {
-      console.warn("[NotifeeService] Failed to register background event handler:", err);
+      console.warn(
+        "[NotifeeService] Failed to register background event handler:",
+        err,
+      );
     }
   }
 
@@ -1488,15 +1554,20 @@ class NotifeeService {
     const notifee = this.resolve();
     if (!notifee) return () => {};
     try {
-      const unsub = notifee.onForegroundEvent(async ({ type, detail }: { type: number; detail: any }) => {
-        // Calls first; if it isn't a call notification, route the message
-        // notification (body tap → open chat, Reply/Mark-read actions).
-        const handled = await this.handleCallEvent(type, detail);
-        if (!handled) await this.handleMessageEvent(type, detail);
-      });
+      const unsub = notifee.onForegroundEvent(
+        async ({ type, detail }: { type: number; detail: any }) => {
+          // Calls first; if it isn't a call notification, route the message
+          // notification (body tap → open chat, Reply/Mark-read actions).
+          const handled = await this.handleCallEvent(type, detail);
+          if (!handled) await this.handleMessageEvent(type, detail);
+        },
+      );
       return typeof unsub === "function" ? unsub : () => {};
     } catch (err) {
-      console.warn("[NotifeeService] Failed to register foreground event handler:", err);
+      console.warn(
+        "[NotifeeService] Failed to register foreground event handler:",
+        err,
+      );
       return () => {};
     }
   }

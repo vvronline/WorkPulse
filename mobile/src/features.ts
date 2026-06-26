@@ -158,7 +158,12 @@ export function getBacklog(params?: Record<string, string>) {
   return api.get<{
     tasks: Task[];
     summary: BacklogSummary;
-    pagination: { limit: number; offset: number; total: number; hasMore: boolean };
+    pagination: {
+      limit: number;
+      offset: number;
+      total: number;
+      hasMore: boolean;
+    };
   }>("/tasks/backlog", { params });
 }
 
@@ -233,7 +238,11 @@ export type AgileConfig = {
   settings?: AgileSettings;
   workflowStates: WorkflowState[];
   workItemTypes?: WorkItemType[];
-  features?: { wipLimits?: boolean; storyPoints?: boolean; [k: string]: unknown };
+  features?: {
+    wipLimits?: boolean;
+    storyPoints?: boolean;
+    [k: string]: unknown;
+  };
   canEdit?: boolean;
 };
 
@@ -259,7 +268,12 @@ export type Leave = {
   date: string;
   duration: string;
   reason?: string | null;
-  status: "pending" | "approved" | "rejected" | "withdraw_pending" | "withdrawn";
+  status:
+    | "pending"
+    | "approved"
+    | "rejected"
+    | "withdraw_pending"
+    | "withdrawn";
 };
 
 export function getLeaveBalance(year?: number) {
@@ -417,6 +431,14 @@ export type Conversation = {
   last_file_url?: string | null;
   last_file_type?: string | null;
   last_file_name?: string | null;
+  last_format_type?: string | null;
+  last_metadata?: {
+    type?: string;
+    callType?: string;
+    status?: string;
+    duration?: number | null;
+    callerId?: number;
+  } | null;
   unread_count: number;
   member_count?: number | null;
   is_self_chat?: boolean;
@@ -491,6 +513,10 @@ export type ChatMessage = {
   reply_to_file_url?: string | null;
   reply_to_file_type?: string | null;
   reply_to_file_name?: string | null;
+  // Server message format: "text" (default), "system" (meeting/call events).
+  // A "system" message with metadata.type === "call" is rendered as a Signal-
+  // style inline call-history row in the thread.
+  format_type?: string | null;
   // Arbitrary metadata JSONB (polls, view-once media disappearing flag, etc.).
   metadata?: {
     viewOnce?: boolean;
@@ -499,6 +525,12 @@ export type ChatMessage = {
     // Intrinsic media dimensions (Signal-style aspect-ratio sizing of images).
     width?: number;
     height?: number;
+    // System call-history row (metadata.type === "call").
+    type?: string;
+    callType?: "voice" | "video";
+    status?: "ended" | "missed" | "declined";
+    duration?: number | null;
+    callerId?: number;
     [k: string]: unknown;
   } | null;
   // Optimistic/local fields
@@ -511,7 +543,13 @@ export type ChatMessage = {
   // Live upload throughput (bytes/sec) shown Signal-style next to the ring.
   _uploadSpeed?: number;
   media_job_id?: number | null;
-  media_state?: "queued" | "processing" | "completed" | "failed" | "cancelled" | null;
+  media_state?:
+    | "queued"
+    | "processing"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | null;
   media_stage?:
     | "queued"
     | "prepare"
@@ -550,7 +588,11 @@ export function markConversationRead(convId: number) {
  * here instead. The server's POST /conversations/:id/messages route accepts
  * `{ content, replyToId? }` and broadcasts the message exactly like the WS path.
  */
-export function sendMessage(convId: number, content: string, replyToId?: number) {
+export function sendMessage(
+  convId: number,
+  content: string,
+  replyToId?: number,
+) {
   return api.post(`/chat/conversations/${convId}/messages`, {
     content,
     ...(replyToId ? { replyToId } : {}),
@@ -565,7 +607,12 @@ export function ackDelivered(messageId: number) {
 
 export function searchChatUsers(q: string) {
   return api.get<
-    Array<{ id: number; username: string; full_name: string; avatar?: string | null }>
+    Array<{
+      id: number;
+      username: string;
+      full_name: string;
+      avatar?: string | null;
+    }>
   >("/chat/search", { params: { q } });
 }
 
@@ -724,9 +771,7 @@ export type ReadStatusRow = {
 };
 
 export function getReadStatus(convId: number) {
-  return api.get<ReadStatusRow[]>(
-    `/chat/conversations/${convId}/read-status`,
-  );
+  return api.get<ReadStatusRow[]>(`/chat/conversations/${convId}/read-status`);
 }
 
 export function starMessage(messageId: number) {
@@ -920,7 +965,10 @@ export async function warmIceConfig(): Promise<IceConfig | null> {
  * decline ALWAYS reaches the server and the caller stops ringing. Mirrors the
  * WS `call_reject` transition server-side.
  */
-export function rejectCallHttp(callId: number | string, conversationId: number | string) {
+export function rejectCallHttp(
+  callId: number | string,
+  conversationId: number | string,
+) {
   return api.post(`/chat/calls/${callId}/reject`, { conversationId });
 }
 
@@ -928,7 +976,10 @@ export function rejectCallHttp(callId: number | string, conversationId: number |
  * HTTP fallback for accepting an incoming call (parity with rejectCallHttp).
  * Mirrors the WS `call_accept` transition server-side.
  */
-export function acceptCallHttp(callId: number | string, conversationId: number | string) {
+export function acceptCallHttp(
+  callId: number | string,
+  conversationId: number | string,
+) {
   return api.post(`/chat/calls/${callId}/accept`, { conversationId });
 }
 
@@ -939,7 +990,10 @@ export function acceptCallHttp(callId: number | string, conversationId: number |
  * "Ongoing call — Return" banner keeps re-appearing. Mirrors the WS `call_end`
  * transition server-side; idempotent when the call is already terminal.
  */
-export function endCallHttp(callId: number | string, conversationId: number | string) {
+export function endCallHttp(
+  callId: number | string,
+  conversationId: number | string,
+) {
   return api.post(`/chat/calls/${callId}/end`, { conversationId });
 }
 
@@ -1008,7 +1062,12 @@ export function saveNotes(data: Notebook) {
 /* ── Tier 6 integrations (daily journal / 1-on-1 prefill, convert-to-task) ── */
 
 export type DailyPrefill = {
-  tasks?: Array<{ id: number; title: string; status: string; priority: string }>;
+  tasks?: Array<{
+    id: number;
+    title: string;
+    status: string;
+    priority: string;
+  }>;
   hoursWorked?: number | null;
   meetings?: Array<{ title?: string; scheduled_start?: string }>;
   events?: Array<{ title?: string; all_day?: boolean; start_time?: string }>;
@@ -1023,8 +1082,16 @@ export function getDailyPrefill() {
 export type OneOnOnePrefill = {
   report?: { id: number; fullName?: string } | null;
   tasks?: Array<{ status?: string; title?: string }>;
-  leaves?: Array<{ date?: string; leave_type?: string; duration?: string; status?: string }>;
-  sprint?: { name?: string; taskBreakdown?: Array<{ status: string; count: number }> } | null;
+  leaves?: Array<{
+    date?: string;
+    leave_type?: string;
+    duration?: string;
+    status?: string;
+  }>;
+  sprint?: {
+    name?: string;
+    taskBreakdown?: Array<{ status: string; count: number }>;
+  } | null;
   hoursThisWeek?: number | null;
   [k: string]: unknown;
 };
@@ -1034,10 +1101,13 @@ export function getOneOnOnePrefill(userId: number | string) {
 }
 
 export function convertNoteToTask(title: string, pageId: string) {
-  return api.post<{ task: { id: number; title: string } }>("/notes/convert-to-task", {
-    title,
-    pageId,
-  });
+  return api.post<{ task: { id: number; title: string } }>(
+    "/notes/convert-to-task",
+    {
+      title,
+      pageId,
+    },
+  );
 }
 
 export type NoteDirectReport = {
@@ -1073,7 +1143,8 @@ export function uploadAvatar(uri: string) {
   const name = uri.split("/").pop() || "avatar.jpg";
   const match = /\.(\w+)$/.exec(name);
   const ext = (match?.[1] || "jpg").toLowerCase();
-  const type = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+  const type =
+    ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
   const form = new FormData();
   // React Native FormData file shape.
   form.append("avatar", { uri, name, type } as any);
@@ -1431,8 +1502,18 @@ export function getSprints() {
 }
 
 export type SprintCycleTime = {
-  cycle: { avg: number | null; median: number | null; p90: number | null; n: number };
-  lead: { avg: number | null; median: number | null; p90: number | null; n: number };
+  cycle: {
+    avg: number | null;
+    median: number | null;
+    p90: number | null;
+    n: number;
+  };
+  lead: {
+    avg: number | null;
+    median: number | null;
+    p90: number | null;
+    n: number;
+  };
   tasks: Array<{
     id: number;
     title: string;
@@ -1498,10 +1579,7 @@ export function updateSprintRetrospective(
  * Move a backlog ticket into (or out of, when sprintId is null) a sprint.
  * Mirrors the web `assignTaskToSprint` — PATCH /tasks/:id/assign-sprint.
  */
-export function assignTaskToSprint(
-  taskId: number,
-  sprintId: number | null,
-) {
+export function assignTaskToSprint(taskId: number, sprintId: number | null) {
   return api.patch<Task>(`/tasks/${taskId}/assign-sprint`, {
     sprint_id: sprintId,
   });
@@ -1926,7 +2004,12 @@ export type MemberOverview = {
   };
   todayHours: number;
   todayBreakMin: number;
-  todayTasks: Array<{ id: number; title: string; status: string; priority: string }>;
+  todayTasks: Array<{
+    id: number;
+    title: string;
+    status: string;
+    priority: string;
+  }>;
   pendingRequests: number;
   monthLeaves: number;
   recentLeaves: MemberRecentLeave[];
@@ -2015,10 +2098,12 @@ export type OrgMember = {
 // `{ data, total, page, perPage }` — the member rows are under `data`, not
 // `members`.
 export function getOrgMembers(params?: Record<string, string>) {
-  return api.get<{ data: OrgMember[]; total: number; page: number; perPage: number }>(
-    "/org/members",
-    { params },
-  );
+  return api.get<{
+    data: OrgMember[];
+    total: number;
+    page: number;
+    perPage: number;
+  }>("/org/members", { params });
 }
 
 export type OrgDepartment = {

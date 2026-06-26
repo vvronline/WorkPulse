@@ -15,6 +15,7 @@ import { beginCallNavigation } from "../src/realtime/callRouting";
 import { notifeeService } from "../src/services/notifeeService";
 import {
   consumePendingChat,
+  peekPendingChat,
   loadPersistedPendingChat,
   clearPersistedPendingChat,
 } from "../src/realtime/pendingChat";
@@ -45,9 +46,9 @@ export default function Index() {
 
   // Tri-state: undefined = still checking for a cold-start call; null = no
   // pending call (normal launch); route = launch straight into the call.
-  const [callRoute, setCallRoute] = useState<PendingCallRoute | null | undefined>(
-    undefined,
-  );
+  const [callRoute, setCallRoute] = useState<
+    PendingCallRoute | null | undefined
+  >(undefined);
 
   // Cold-start CHAT route: when the app was launched by TAPPING a message
   // notification (killed app), notifeeService.handleMessageEvent persisted the
@@ -69,7 +70,7 @@ export default function Index() {
       await notifeeService.captureInitialCallRoute().catch(() => {});
       if (cancelled) return;
       let route = peekPendingCall();
-      if (!route) {
+      if (!route && !peekPendingChat()) {
         // Bounded retry for the SecureStore-persisted route. On a LOCKED +
         // KILLED device the full-screen-intent AUTO-launches this activity the
         // instant the notification is posted; although displayIncomingCall now

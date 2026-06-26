@@ -80,6 +80,13 @@ type MessageBubbleProps = {
   // Signal-style: tapping the in-bubble quoted reply scrolls to + flashes the
   // original message it is replying to.
   onJumpToReply?: (message: ChatMessage) => void;
+  // Whether this bubble may play its FadeIn enter / LinearTransition layout
+  // animation. The list keeps this FALSE for the initial batch so opening a
+  // conversation slides in as a complete, static screen (no per-row fade
+  // flicker competing with the navigation transition); it flips TRUE after the
+  // open settles so genuinely new incoming/sent messages still fade into place
+  // (Signal-Android behaviour).
+  animateEntry?: boolean;
 };
 
 function MessageBubbleImpl({
@@ -106,6 +113,7 @@ function MessageBubbleImpl({
   onCancelUpload,
   onRetryUpload,
   onJumpToReply,
+  animateEntry = true,
 }: MessageBubbleProps) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
@@ -239,8 +247,17 @@ function MessageBubbleImpl({
       // in (no spring/bounce) so it flows straight into place and stays put.
       // `LinearTransition` animates neighbours easing into place when a bubble
       // grows (e.g. a reaction chip row appears) instead of snapping.
-      entering={FadeIn.duration(180)}
-      layout={LinearTransition.springify().damping(22).stiffness(200)}
+      //
+      // Both are GATED on `animateEntry`: the list disables them for the initial
+      // batch so opening a conversation paints the whole thread at once (no
+      // per-row fade flicker during the slide-in). Once the open settles the
+      // list flips this on, so new messages and reaction-grow still animate.
+      entering={animateEntry ? FadeIn.duration(180) : undefined}
+      layout={
+        animateEntry
+          ? LinearTransition.springify().damping(22).stiffness(200)
+          : undefined
+      }
       style={[
         styles.bubbleRow,
         mine ? styles.rowMine : styles.rowTheirs,
