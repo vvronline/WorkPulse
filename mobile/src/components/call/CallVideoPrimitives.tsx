@@ -7,12 +7,13 @@ import Animated, {
   withSpring,
 } from "react-native-reanimated";
 import { RTCView } from "react-native-webrtc";
+import { RoundedSelfView } from "./RTCTextureView";
 
 const PIP_W = 110;
 const PIP_H = 160;
 const PIP_MARGIN = 16;
 const PIP_BOTTOM_CLEARANCE = 120;
-const PIP_RADIUS = 18;
+const PIP_RADIUS = 14;
 
 const pipStyles = StyleSheet.create({
   wrap: {
@@ -24,6 +25,12 @@ const pipStyles = StyleSheet.create({
     backgroundColor: "transparent",
     zIndex: 5,
     elevation: 8,
+    // Soft drop shadow so the tile reads as floating above the remote video,
+    // matching Signal's self-view.
+    shadowColor: "#000",
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
   },
   inner: {
     width: "100%",
@@ -32,11 +39,10 @@ const pipStyles = StyleSheet.create({
     overflow: "hidden",
     backgroundColor: "#000",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.3)",
+    borderColor: "rgba(255,255,255,0.18)",
   },
   surface: {
     flex: 1,
-    borderRadius: PIP_RADIUS,
   },
 });
 
@@ -76,13 +82,16 @@ const PipSelfView = memo(function PipSelfView(props: {
   mirror: boolean;
   style: any;
 }) {
+  // RoundedSelfView renders through a native TextureView on Android (so the
+  // parent's rounded clip actually applies to the video) and the regular
+  // RTCView on iOS, where it already clips correctly.
   return (
-    <RTCView
+    <RoundedSelfView
       streamURL={props.url}
       style={props.style}
       objectFit="cover"
       mirror={props.mirror}
-      zOrder={0}
+      zOrder={1}
     />
   );
 });
@@ -157,5 +166,7 @@ export const CallDuration = memo(function CallDuration(props: {
   }, [props.active]);
   const m = Math.floor(duration / 60);
   const s = duration % 60;
-  return <Text style={props.style}>{`${m}:${String(s).padStart(2, "0")}`}</Text>;
+  return (
+    <Text style={props.style}>{`${m}:${String(s).padStart(2, "0")}`}</Text>
+  );
 });

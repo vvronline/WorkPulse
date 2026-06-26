@@ -1,0 +1,373 @@
+diff --git a/android/src/main/java/com/oney/WebRTCModule/RTCTextureView.java b/android/src/main/java/com/oney/WebRTCModule/RTCTextureView.java
+new file mode 100644
+index 0000000..761f73a
+--- /dev/null
++++ b/android/src/main/java/com/oney/WebRTCModule/RTCTextureView.java
+@@ -0,0 +1,172 @@
++package com.oney.WebRTCModule;
++
++import android.content.Context;
++import android.util.Log;
++import android.widget.FrameLayout;
++
++import androidx.core.view.ViewCompat;
++
++import com.facebook.react.bridge.ReactContext;
++
++import org.webrtc.EglBase;
++import org.webrtc.MediaStream;
++import org.webrtc.VideoTrack;
++
++import java.util.List;
++import java.util.Objects;
++
++/**
++ * An RTCView variant backed by a {@link TextureViewRenderer} so the rendered
++ * video honours parent {@code borderRadius} / {@code overflow:hidden}. Intended
++ * for small, rounded local self-view tiles.
++ *
++ * It mirrors the stream -> track -> sink lifecycle of {@code WebRTCView} but
++ * is intentionally additive: the default {@code RTCVideoView} (SurfaceView) is
++ * left completely untouched, so the remote / full-screen video paths keep their
++ * more efficient SurfaceView rendering.
++ *
++ * Note: {@code ThreadUtils} below resolves to the package-local
++ * {@code com.oney.WebRTCModule.ThreadUtils} (which exposes {@code runOnExecutor})
++ * and intentionally not {@code org.webrtc.ThreadUtils}.
++ */
++public class RTCTextureView extends FrameLayout {
++    private static final String TAG = WebRTCModule.TAG;
++
++    private final TextureViewRenderer renderer;
++    private String streamURL;
++    private VideoTrack videoTrack;
++    private boolean rendererAttached = false;
++    private boolean mirror = false;
++
++    public RTCTextureView(Context context) {
++        super(context);
++        renderer = new TextureViewRenderer(context);
++        addView(renderer,
++                new FrameLayout.LayoutParams(
++                        FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
++    }
++
++    public void setMirror(boolean mirror) {
++        this.mirror = mirror;
++        renderer.setMirror(mirror);
++    }
++
++    public void setObjectFit(String objectFit) {
++        // "cover" is handled by the renderer's aspect-fill cropping. The prop is
++        // accepted for parity with RTCView; "contain" is not required for the
++        // rounded self-view tile.
++    }
++
++    public void setZOrder(int zOrder) {
++        // No-op: a TextureView composites inside the view hierarchy, so the
++        // SurfaceView z-order/overlay modes do not apply.
++    }
++
++    private VideoTrack getVideoTrackForStreamURL(String streamURL) {
++        VideoTrack track = null;
++
++        if (streamURL != null) {
++            ReactContext reactContext = (ReactContext) getContext();
++            WebRTCModule module = reactContext.getNativeModule(WebRTCModule.class);
++            MediaStream stream = module.getStreamForReactTag(streamURL);
++
++            if (stream != null) {
++                List<VideoTrack> videoTracks = stream.videoTracks;
++                if (!videoTracks.isEmpty()) {
++                    track = videoTracks.get(0);
++                }
++            }
++
++            if (track == null) {
++                Log.w(TAG, "No video stream for react tag: " + streamURL);
++            }
++        }
++
++        return track;
++    }
++
++    public void setStreamURL(String streamURL) {
++        if (!Objects.equals(streamURL, this.streamURL)) {
++            VideoTrack track = getVideoTrackForStreamURL(streamURL);
++
++            if (this.videoTrack != track) {
++                setVideoTrack(null);
++            }
++
++            this.streamURL = streamURL;
++            setVideoTrack(track);
++        }
++    }
++
++    private void setVideoTrack(VideoTrack track) {
++        VideoTrack oldVideoTrack = this.videoTrack;
++
++        if (oldVideoTrack != track) {
++            if (oldVideoTrack != null) {
++                removeRendererFromVideoTrack();
++            }
++
++            this.videoTrack = track;
++
++            if (track != null) {
++                tryAddRendererToVideoTrack();
++            }
++        }
++    }
++
++    private void tryAddRendererToVideoTrack() {
++        if (!rendererAttached && videoTrack != null && ViewCompat.isAttachedToWindow(this)) {
++            EglBase.Context sharedContext = EglUtils.getRootEglBaseContext();
++
++            if (sharedContext == null) {
++                Log.e(TAG, "Failed to render a VideoTrack: no root EGL context");
++                return;
++            }
++
++            renderer.init(sharedContext);
++            renderer.setMirror(mirror);
++
++            final VideoTrack track = videoTrack;
++            ThreadUtils.runOnExecutor(() -> {
++                try {
++                    track.addSink(renderer);
++                } catch (Throwable tr) {
++                    // The track may already have been released on the JS side.
++                    Log.e(TAG, "Failed to add renderer", tr);
++                }
++            });
++
++            rendererAttached = true;
++        }
++    }
++
++    private void removeRendererFromVideoTrack() {
++        if (rendererAttached) {
++            final VideoTrack track = videoTrack;
++            if (track != null) {
++                ThreadUtils.runOnExecutor(() -> {
++                    try {
++                        track.removeSink(renderer);
++                    } catch (Throwable tr) {
++                        // Already released — safe to ignore.
++                    }
++                });
++            }
++
++            renderer.release();
++            rendererAttached = false;
++        }
++    }
++
++    @Override
++    protected void onAttachedToWindow() {
++        super.onAttachedToWindow();
++        tryAddRendererToVideoTrack();
++    }
++
++    @Override
++    protected void onDetachedFromWindow() {
++        removeRendererFromVideoTrack();
++        super.onDetachedFromWindow();
++    }
++}
+diff --git a/android/src/main/java/com/oney/WebRTCModule/RTCTextureViewManager.java b/android/src/main/java/com/oney/WebRTCModule/RTCTextureViewManager.java
+new file mode 100644
+index 0000000..3f30a0f
+--- /dev/null
++++ b/android/src/main/java/com/oney/WebRTCModule/RTCTextureViewManager.java
+@@ -0,0 +1,44 @@
++package com.oney.WebRTCModule;
++
++import com.facebook.react.uimanager.SimpleViewManager;
++import com.facebook.react.uimanager.ThemedReactContext;
++import com.facebook.react.uimanager.annotations.ReactProp;
++
++/**
++ * ViewManager for {@link RTCTextureView}. Exposes the same JS props as the
++ * default {@code RTCVideoView} (streamURL / mirror / objectFit / zOrder) so it
++ * is a drop-in replacement where rounded corners are required.
++ */
++public class RTCTextureViewManager extends SimpleViewManager<RTCTextureView> {
++    private static final String REACT_CLASS = "RTCTextureView";
++
++    @Override
++    public String getName() {
++        return REACT_CLASS;
++    }
++
++    @Override
++    public RTCTextureView createViewInstance(ThemedReactContext context) {
++        return new RTCTextureView(context);
++    }
++
++    @ReactProp(name = "mirror")
++    public void setMirror(RTCTextureView view, boolean mirror) {
++        view.setMirror(mirror);
++    }
++
++    @ReactProp(name = "objectFit")
++    public void setObjectFit(RTCTextureView view, String objectFit) {
++        view.setObjectFit(objectFit);
++    }
++
++    @ReactProp(name = "streamURL")
++    public void setStreamURL(RTCTextureView view, String streamURL) {
++        view.setStreamURL(streamURL);
++    }
++
++    @ReactProp(name = "zOrder")
++    public void setZOrder(RTCTextureView view, int zOrder) {
++        view.setZOrder(zOrder);
++    }
++}
+diff --git a/android/src/main/java/com/oney/WebRTCModule/TextureViewRenderer.java b/android/src/main/java/com/oney/WebRTCModule/TextureViewRenderer.java
+new file mode 100644
+index 0000000..7f9f3c8
+--- /dev/null
++++ b/android/src/main/java/com/oney/WebRTCModule/TextureViewRenderer.java
+@@ -0,0 +1,124 @@
++package com.oney.WebRTCModule;
++
++import android.content.Context;
++import android.graphics.SurfaceTexture;
++import android.util.AttributeSet;
++import android.view.TextureView;
++
++import org.webrtc.EglBase;
++import org.webrtc.EglRenderer;
++import org.webrtc.GlRectDrawer;
++import org.webrtc.VideoFrame;
++import org.webrtc.VideoSink;
++
++import java.util.concurrent.CountDownLatch;
++
++/**
++ * A TextureView-based WebRTC video renderer.
++ *
++ * The default RTCView renders through a {@code SurfaceViewRenderer}, which draws
++ * onto a dedicated hardware overlay. Because that overlay lives outside the
++ * normal view hierarchy, parent {@code borderRadius} / {@code overflow:hidden} /
++ * opacity are ignored and the corners always stay square.
++ *
++ * A {@link TextureView} is an ordinary view in the hierarchy, so it can be
++ * clipped to rounded corners (and faded) like any other view. This is a Java
++ * port of GetStream's {@code VideoTextureViewRenderer} (Apache-2.0), trimmed to
++ * the aspect-fill ("cover") behaviour the rounded self-view tile needs.
++ */
++public class TextureViewRenderer extends TextureView implements VideoSink, TextureView.SurfaceTextureListener {
++    private final EglRenderer eglRenderer;
++    private boolean rendererInitialized = false;
++
++    public TextureViewRenderer(Context context) {
++        this(context, null);
++    }
++
++    public TextureViewRenderer(Context context, AttributeSet attrs) {
++        super(context, attrs);
++        this.eglRenderer = new EglRenderer("TextureViewRenderer");
++        setSurfaceTextureListener(this);
++        // Allow the clipped/rounded parent and any background to show through
++        // until the first frame arrives.
++        setOpaque(false);
++    }
++
++    public synchronized void init(EglBase.Context sharedContext) {
++        if (rendererInitialized) {
++            return;
++        }
++        eglRenderer.init(sharedContext, EglBase.CONFIG_PLAIN, new GlRectDrawer());
++        rendererInitialized = true;
++        // The SurfaceTexture may already be available if init() runs after the
++        // view was laid out; bind to it immediately so rendering can start.
++        if (isAvailable()) {
++            SurfaceTexture surfaceTexture = getSurfaceTexture();
++            if (surfaceTexture != null) {
++                eglRenderer.createEglSurface(surfaceTexture);
++            }
++        }
++    }
++
++    public void setMirror(boolean mirror) {
++        eglRenderer.setMirror(mirror);
++    }
++
++    public synchronized void release() {
++        if (!rendererInitialized) {
++            return;
++        }
++        rendererInitialized = false;
++        eglRenderer.release();
++    }
++
++    @Override
++    public void onFrame(VideoFrame frame) {
++        eglRenderer.onFrame(frame);
++    }
++
++    @Override
++    protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
++        super.onLayout(changed, left, top, right, bottom);
++        int width = right - left;
++        int height = bottom - top;
++        if (width > 0 && height > 0) {
++            // Driving the layout aspect ratio makes the EglRenderer crop the
++            // frame to fill the view (object-fit: cover) instead of stretching.
++            eglRenderer.setLayoutAspectRatio(width / (float) height);
++        }
++    }
++
++    @Override
++    public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
++        synchronized (this) {
++            if (rendererInitialized) {
++                eglRenderer.createEglSurface(surface);
++            }
++        }
++    }
++
++    @Override
++    public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) {
++        synchronized (this) {
++            if (rendererInitialized) {
++                final CountDownLatch latch = new CountDownLatch(1);
++                // Passing null here NPEs in the bundled WebRTC fork, so always
++                // hand it a real completion callback and wait for the surface to
++                // be released before the SurfaceTexture is torn down.
++                eglRenderer.releaseEglSurface(latch::countDown);
++                try {
++                    latch.await();
++                } catch (InterruptedException e) {
++                    Thread.currentThread().interrupt();
++                }
++            }
++        }
++        return true;
++    }
++
++    @Override
++    public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) {}
++
++    @Override
++    public void onSurfaceTextureUpdated(SurfaceTexture surface) {}
++}
+diff --git a/android/src/main/java/com/oney/WebRTCModule/WebRTCModulePackage.java b/android/src/main/java/com/oney/WebRTCModule/WebRTCModulePackage.java
+index d2b3752..862fc88 100644
+--- a/android/src/main/java/com/oney/WebRTCModule/WebRTCModulePackage.java
++++ b/android/src/main/java/com/oney/WebRTCModule/WebRTCModulePackage.java
+@@ -16,6 +16,9 @@ public class WebRTCModulePackage implements ReactPackage {
+ 
+     @Override
+     public List<ViewManager> createViewManagers(ReactApplicationContext reactContext) {
+-        return Arrays.<ViewManager>asList(new RTCVideoViewManager());
++        // RTCTextureView is an additive, TextureView-backed renderer used for
++        // small rounded self-view tiles (a SurfaceView cannot be clipped to
++        // rounded corners). The default RTCVideoView (SurfaceView) is untouched.
++        return Arrays.<ViewManager>asList(new RTCVideoViewManager(), new RTCTextureViewManager());
+     }
+ }

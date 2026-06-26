@@ -1,22 +1,39 @@
 import type { ComponentType } from "react";
-import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import {
-  MessageSquare,
+  useWindowDimensions,
+  Modal,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import {
   Mic,
   MicOff,
   MoreVertical,
-  Pause,
   Phone,
   PhoneOff,
-  Play,
   Signal,
   SwitchCamera,
   Video as VideoIcon,
   VideoOff,
+  Volume1,
   Volume2,
 } from "lucide-react-native";
 
-type CallStatus = "ringing" | "connecting" | "connected" | "reconnecting" | "ended" | "rejected";
+// Signal-style control glyph colours: white on the translucent (off) circle,
+// near-black on the solid white (toggled/on) circle.
+const CTRL_OFF = "#ffffff";
+const CTRL_ON = "#1b1b1b";
+
+type CallStatus =
+  | "ringing"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "ended"
+  | "rejected";
 
 type CallMessage = {
   id: string | number;
@@ -128,13 +145,28 @@ export default function CallScreenOverlay({
   onEndCall,
   CallDurationComponent,
 }: Props) {
+  // Keep the Signal-style control row from overflowing on narrow devices: the
+  // video row can show up to six 58px circles, so shrink them a touch when the
+  // screen is small.
+  const { width: screenWidth } = useWindowDimensions();
+  const compactControls = screenWidth < 380;
+  const ctrlDim = compactControls ? 50 : 58;
+  const ctrlIcon = compactControls ? 22 : 24;
+  const ctrlSizeStyle = {
+    width: ctrlDim,
+    height: ctrlDim,
+    borderRadius: ctrlDim / 2,
+  };
+
   return (
     <>
       {!isInPip && status === "connected" ? (
         <View style={[styles.topBar, { top: insets.top + 8 }]}>
           <View style={styles.qualityBadge}>
             <Signal size={13} color={qualityColor} />
-            <Text style={[styles.qualityLabel, { color: qualityColor }]}>{qualityLabel}</Text>
+            <Text style={[styles.qualityLabel, { color: qualityColor }]}>
+              {qualityLabel}
+            </Text>
           </View>
           <View style={styles.statusBadgeRow}>
             {onHold ? (
@@ -184,74 +216,124 @@ export default function CallScreenOverlay({
 
       {!isInPip ? (
         mode === "incoming" && status === "ringing" ? (
-          <View style={[styles.incomingControls, { paddingBottom: Math.max(insets.bottom, 24) }]}>
+          <View
+            style={[
+              styles.incomingControls,
+              { paddingBottom: Math.max(insets.bottom, 28) },
+            ]}
+          >
             <View style={styles.incomingBtnWrap}>
-              <Pressable style={styles.reject} onPress={onRejectIncoming}>
-                <PhoneOff size={28} color="#fff" />
+              <Pressable
+                style={styles.reject}
+                onPress={onRejectIncoming}
+                hitSlop={8}
+              >
+                <PhoneOff size={30} color="#fff" />
               </Pressable>
               <Text style={styles.ctrlLabel}>Decline</Text>
             </View>
             <View style={styles.incomingBtnWrap}>
-              <Pressable style={styles.accept} onPress={onAcceptIncoming}>
-                <Phone size={28} color="#fff" />
+              <Pressable
+                style={styles.accept}
+                onPress={onAcceptIncoming}
+                hitSlop={8}
+              >
+                <Phone size={30} color="#fff" />
               </Pressable>
               <Text style={styles.ctrlLabel}>Accept</Text>
             </View>
           </View>
         ) : (
-          <View style={[styles.controlsBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.controlsPill}
-              contentContainerStyle={styles.controlsScroll}
-            >
-              <Pressable style={[styles.ctrl, muted && styles.ctrlActive]} onPress={onToggleMute}>
-                {muted ? <MicOff size={20} color="#fff" /> : <Mic size={20} color="#fff" />}
+          <View
+            style={[
+              styles.controlsBar,
+              { paddingBottom: Math.max(insets.bottom, 20) },
+            ]}
+          >
+            <View style={styles.controlsRow}>
+              <Pressable
+                style={[styles.ctrl, ctrlSizeStyle, muted && styles.ctrlActive]}
+                onPress={onToggleMute}
+                hitSlop={6}
+              >
+                {muted ? (
+                  <MicOff size={ctrlIcon} color={CTRL_ON} />
+                ) : (
+                  <Mic size={ctrlIcon} color={CTRL_OFF} />
+                )}
               </Pressable>
               {showVideo ? (
                 <Pressable
-                  style={[styles.ctrl, videoOff && styles.ctrlActive]}
+                  style={[
+                    styles.ctrl,
+                    ctrlSizeStyle,
+                    videoOff && styles.ctrlActive,
+                  ]}
                   onPress={onToggleVideo}
+                  hitSlop={6}
                 >
-                  {videoOff ? <VideoOff size={20} color="#fff" /> : <VideoIcon size={20} color="#fff" />}
+                  {videoOff ? (
+                    <VideoOff size={ctrlIcon} color={CTRL_ON} />
+                  ) : (
+                    <VideoIcon size={ctrlIcon} color={CTRL_OFF} />
+                  )}
                 </Pressable>
               ) : null}
               {showVideo ? (
-                <Pressable style={styles.ctrl} onPress={onSwitchCamera}>
-                  <SwitchCamera size={20} color="#fff" />
-                </Pressable>
-              ) : null}
-              {callType === "voice" ? (
                 <Pressable
-                  style={[styles.ctrl, speakerOn && styles.ctrlActive]}
-                  onPress={onToggleSpeaker}
+                  style={[styles.ctrl, ctrlSizeStyle]}
+                  onPress={onSwitchCamera}
+                  hitSlop={6}
                 >
-                  <Volume2 size={20} color="#fff" />
+                  <SwitchCamera size={ctrlIcon} color={CTRL_OFF} />
                 </Pressable>
               ) : null}
-              {status === "connected" ? (
-                <>
-                  <Pressable style={[styles.ctrl, onHold && styles.ctrlHold]} onPress={onToggleHold}>
-                    {onHold ? <Play size={20} color="#fff" /> : <Pause size={20} color="#fff" />}
-                  </Pressable>
-                  <Pressable style={[styles.ctrl, showChat && styles.ctrlActive]} onPress={onToggleChat}>
-                    <MessageSquare size={20} color="#fff" />
-                    {chatUnread > 0 && !showChat ? (
-                      <View style={styles.unreadDot}>
-                        <Text style={styles.unreadText}>{chatUnread > 9 ? "9+" : chatUnread}</Text>
-                      </View>
-                    ) : null}
-                  </Pressable>
-                  <Pressable style={[styles.ctrl, showMore && styles.ctrlActive]} onPress={onOpenMore}>
-                    <MoreVertical size={20} color="#fff" />
-                  </Pressable>
-                </>
-              ) : null}
-              <Pressable style={styles.ctrlEnd} onPress={onEndCall}>
-                <PhoneOff size={22} color="#fff" />
+              <Pressable
+                style={[
+                  styles.ctrl,
+                  ctrlSizeStyle,
+                  speakerOn && styles.ctrlActive,
+                ]}
+                onPress={onToggleSpeaker}
+                hitSlop={6}
+              >
+                {speakerOn ? (
+                  <Volume2 size={ctrlIcon} color={CTRL_ON} />
+                ) : (
+                  <Volume1 size={ctrlIcon} color={CTRL_OFF} />
+                )}
               </Pressable>
-            </ScrollView>
+              {status === "connected" ? (
+                <Pressable
+                  style={[
+                    styles.ctrl,
+                    ctrlSizeStyle,
+                    showMore && styles.ctrlActive,
+                  ]}
+                  onPress={onOpenMore}
+                  hitSlop={6}
+                >
+                  <MoreVertical
+                    size={ctrlIcon}
+                    color={showMore ? CTRL_ON : CTRL_OFF}
+                  />
+                  {chatUnread > 0 && !showChat ? (
+                    <View style={styles.unreadDot}>
+                      <Text style={styles.unreadText}>
+                        {chatUnread > 9 ? "9+" : chatUnread}
+                      </Text>
+                    </View>
+                  ) : null}
+                </Pressable>
+              ) : null}
+              <Pressable
+                style={[styles.ctrlEnd, ctrlSizeStyle]}
+                onPress={onEndCall}
+                hitSlop={6}
+              >
+                <PhoneOff size={compactControls ? 24 : 26} color="#fff" />
+              </Pressable>
+            </View>
           </View>
         )
       ) : null}
@@ -262,7 +344,9 @@ export default function CallScreenOverlay({
               key={r.id}
               style={[
                 styles.floatingReaction,
-                r.fromSelf ? styles.floatingReactionSelf : styles.floatingReactionPeer,
+                r.fromSelf
+                  ? styles.floatingReactionSelf
+                  : styles.floatingReactionPeer,
               ]}
             >
               <Text style={styles.floatingReactionText}>{r.emoji}</Text>
@@ -270,15 +354,27 @@ export default function CallScreenOverlay({
           ))
         : null}
 
-      <Modal visible={!isInPip && showMore} transparent animationType="fade" onRequestClose={onCloseMore}>
+      <Modal
+        visible={!isInPip && showMore}
+        transparent
+        animationType="fade"
+        onRequestClose={onCloseMore}
+      >
         <Pressable style={styles.sheetBackdrop} onPress={onCloseMore}>
           <Pressable style={styles.sheet}>
             <Pressable style={styles.sheetItem} onPress={onToggleHold}>
-              <Text style={styles.sheetItemText}>{onHold ? "Resume call" : "Hold call"}</Text>
-            </Pressable>
-            <Pressable style={styles.sheetItem} onPress={onToggleNoiseSuppression}>
               <Text style={styles.sheetItemText}>
-                {noiseSuppressionEnabled ? "Disable noise suppression" : "Enable noise suppression"}
+                {onHold ? "Resume call" : "Hold call"}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={styles.sheetItem}
+              onPress={onToggleNoiseSuppression}
+            >
+              <Text style={styles.sheetItemText}>
+                {noiseSuppressionEnabled
+                  ? "Disable noise suppression"
+                  : "Enable noise suppression"}
               </Text>
             </Pressable>
             <Pressable style={styles.sheetItem} onPress={onToggleRecording}>
@@ -305,7 +401,11 @@ export default function CallScreenOverlay({
         <Pressable style={styles.sheetBackdrop} onPress={onCloseReactionPicker}>
           <Pressable style={styles.reactionSheet}>
             {["👍", "👏", "❤️", "😂", "🎉", "🤔"].map((emoji) => (
-              <Pressable key={emoji} style={styles.reactionBtn} onPress={() => onSendReaction(emoji)}>
+              <Pressable
+                key={emoji}
+                style={styles.reactionBtn}
+                onPress={() => onSendReaction(emoji)}
+              >
                 <Text style={styles.reactionBtnText}>{emoji}</Text>
               </Pressable>
             ))}
@@ -313,7 +413,12 @@ export default function CallScreenOverlay({
         </Pressable>
       </Modal>
 
-      <Modal visible={!isInPip && showChat} transparent animationType="slide" onRequestClose={onCloseChat}>
+      <Modal
+        visible={!isInPip && showChat}
+        transparent
+        animationType="slide"
+        onRequestClose={onCloseChat}
+      >
         <View style={styles.chatPanel}>
           <View style={styles.chatHeader}>
             <Text style={styles.chatTitle}>Call chat</Text>
@@ -325,8 +430,16 @@ export default function CallScreenOverlay({
             {callMessages.map((m) => {
               const mine = Number(m.senderId) !== Number(peerId);
               return (
-                <View key={String(m.id)} style={[styles.chatMsg, mine ? styles.chatMsgMine : styles.chatMsgPeer]}>
-                  <Text style={styles.chatMsgSender}>{mine ? "You" : m.senderName || peerName}</Text>
+                <View
+                  key={String(m.id)}
+                  style={[
+                    styles.chatMsg,
+                    mine ? styles.chatMsgMine : styles.chatMsgPeer,
+                  ]}
+                >
+                  <Text style={styles.chatMsgSender}>
+                    {mine ? "You" : m.senderName || peerName}
+                  </Text>
                   <Text style={styles.chatMsgText}>{m.content || ""}</Text>
                 </View>
               );

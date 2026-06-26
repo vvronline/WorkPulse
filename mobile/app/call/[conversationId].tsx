@@ -47,10 +47,7 @@ import {
   mergeNotificationPrefs,
 } from "../../src/utils/notificationPrefs";
 import { setShowWhenLocked } from "../../modules/lock-screen";
-import {
-  startActiveCall,
-  stopActiveCall,
-} from "../../modules/call-ringer";
+import { startActiveCall, stopActiveCall } from "../../modules/call-ringer";
 import {
   isPipSupported,
   setCallActive as setPipCallActive,
@@ -70,9 +67,7 @@ import {
 } from "../../src/realtime/callStateMachine";
 import { makeStyles } from "./[conversationId].styles";
 import CallScreenOverlay from "../../src/components/call/CallScreenOverlay";
-import {
-  CallDuration,
-} from "../../src/components/call/CallVideoPrimitives";
+import { CallDuration } from "../../src/components/call/CallVideoPrimitives";
 import CallMediaStage from "../../src/components/call/CallMediaStage";
 import {
   applyPublicTurnPolicy,
@@ -168,13 +163,15 @@ export default function CallScreen() {
   // per-second tick never re-renders this screen (and the video surfaces).
   // Connection quality derived from getStats() — good | fair | poor | unknown.
   // Mirrors the web CallOverlay NetworkStats badge.
-  const [connectionQuality, setConnectionQuality] =
-    useState<"good" | "fair" | "poor" | "unknown">("unknown");
+  const [connectionQuality, setConnectionQuality] = useState<
+    "good" | "fair" | "poor" | "unknown"
+  >("unknown");
   // The PEER's self-reported connection quality (received via the `quality-state`
   // signal). Drives a Teams-style "<name>'s connection is unstable" banner so
   // the user knows a freeze/stutter is the OTHER side's network, not theirs.
-  const [peerQuality, setPeerQuality] =
-    useState<"good" | "fair" | "poor" | "unknown">("unknown");
+  const [peerQuality, setPeerQuality] = useState<
+    "good" | "fair" | "poor" | "unknown"
+  >("unknown");
   // Last quality value we SENT to the peer — used to only emit `quality-state`
   // on a real change (not every 3s sample) so we don't spam the relay.
   const lastSentQualityRef = useRef<string | null>(null);
@@ -184,7 +181,10 @@ export default function CallScreen() {
   );
   const [noiseSuppressionEnabled, setNoiseSuppressionEnabled] = useState(true);
   const [recording, setRecording] = useState(false);
-  const [speakerOn, setSpeakerOn] = useState(false);
+  // Video calls default to the loudspeaker; voice calls to the earpiece. The
+  // audio-output toggle flips `speakerOn`, and the audio-mode effect below
+  // routes accordingly for both call types.
+  const [speakerOn, setSpeakerOn] = useState(callType === "video");
   const [showMore, setShowMore] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [chatText, setChatText] = useState("");
@@ -644,8 +644,7 @@ export default function CallScreen() {
           allowsRecording: status !== "ringing",
           shouldPlayInBackground: false,
           interruptionMode: "doNotMix",
-          shouldRouteThroughEarpiece:
-            status !== "ringing" && callType === "voice" ? !speakerOn : false,
+          shouldRouteThroughEarpiece: status !== "ringing" ? !speakerOn : false,
         });
       } catch {
         /* ignore runtime routing failures */
@@ -669,7 +668,9 @@ export default function CallScreen() {
   const ringingCategory = mode === "incoming" ? "ringtone" : "outgoing";
   const ringingToneId =
     ringingCategory === "ringtone"
-      ? notificationPrefs.ringtone || DEFAULT_NOTIFICATION_PREFS.ringtone || "classic"
+      ? notificationPrefs.ringtone ||
+        DEFAULT_NOTIFICATION_PREFS.ringtone ||
+        "classic"
       : notificationPrefs.outgoingTone ||
         DEFAULT_NOTIFICATION_PREFS.outgoingTone ||
         "ringback";
@@ -709,12 +710,7 @@ export default function CallScreen() {
       .catch(() => {
         /* no-op */
       });
-  }, [
-    ringPlayer,
-    ringingCategory,
-    ringingToneId,
-    shouldPlayRingingTone,
-  ]);
+  }, [ringPlayer, ringingCategory, ringingToneId, shouldPlayRingingTone]);
 
   useEffect(() => {
     if (!shouldPlayRingingTone || !ringStatus?.didJustFinish) return;
@@ -746,9 +742,7 @@ export default function CallScreen() {
   // and is cancelled when this screen mounts (see the cancelCall effect above),
   // so there is no double-buzz once the call UI owns the ring.
   const shouldVibrateRinging =
-    mode === "incoming" &&
-    status === "ringing" &&
-    !notificationPrefs.muteAll;
+    mode === "incoming" && status === "ringing" && !notificationPrefs.muteAll;
   useEffect(() => {
     if (!shouldVibrateRinging) {
       try {
@@ -1199,7 +1193,7 @@ export default function CallScreen() {
             ) {
               iceRestartAttemptedRef.current = true;
               (async () => {
-              try {
+                try {
                   const offer = await pc.createOffer({
                     iceRestart: true,
                     offerToReceiveAudio: true,
@@ -1772,9 +1766,7 @@ export default function CallScreen() {
           typeof (pc as any).getSenders === "function"
             ? (pc as any).getSenders()
             : [];
-        const videoSender = senders.find(
-          (s: any) => s.track?.kind === "video",
-        );
+        const videoSender = senders.find((s: any) => s.track?.kind === "video");
         if (videoSender && typeof videoSender.replaceTrack === "function") {
           // Swap the dead track for the live one — no renegotiation needed.
           await videoSender.replaceTrack(newTrack);
@@ -2370,11 +2362,7 @@ export default function CallScreen() {
           if (mode !== "outgoing") break;
           const pc = pcRef.current;
           const target = peerIdRef.current;
-          if (
-            pc &&
-            target &&
-            (pc as any).localDescription?.type === "offer"
-          ) {
+          if (pc && target && (pc as any).localDescription?.type === "offer") {
             socket.send("call_signal", {
               conversationId,
               callId: callIdRef.current,
@@ -2404,7 +2392,8 @@ export default function CallScreen() {
         }
         case "chat_message": {
           if (Number(d.conversationId) !== conversationId) return;
-          const msgId = d.id ?? d.clientMsgId ?? `${Date.now()}-${Math.random()}`;
+          const msgId =
+            d.id ?? d.clientMsgId ?? `${Date.now()}-${Math.random()}`;
           setCallMessages((prev) => {
             if (prev.some((m) => String(m.id) === String(msgId))) return prev;
             return [
@@ -2495,7 +2484,8 @@ export default function CallScreen() {
       startActiveCall({
         callType,
         title: peerName,
-        body: callType === "video" ? "Ongoing video call" : "Ongoing voice call",
+        body:
+          callType === "video" ? "Ongoing video call" : "Ongoing voice call",
         scheme: "workpulse",
       });
     } else {
@@ -2879,15 +2869,15 @@ export default function CallScreen() {
       ? mode === "incoming"
         ? "Incoming call…"
         : "Ringing…"
-        : status === "connecting"
-          ? "Connecting…"
-          : status === "reconnecting"
-            ? "Reconnecting…"
-            : status === "connected"
-              ? "Connected"
-              : status === "rejected"
-                ? "Call declined"
-                : "Call ended";
+      : status === "connecting"
+        ? "Connecting…"
+        : status === "reconnecting"
+          ? "Reconnecting…"
+          : status === "connected"
+            ? "Connected"
+            : status === "rejected"
+              ? "Call declined"
+              : "Call ended";
 
   const showVideo = callType === "video";
   // Only paint the remote video when the peer actually has their camera on AND
@@ -2900,8 +2890,7 @@ export default function CallScreen() {
     remoteStream
       .getVideoTracks()
       .some((t) => (t as any).readyState !== "ended");
-  const showRemoteVideo =
-    showVideo && hasLiveRemoteVideo && !remoteVideoOff;
+  const showRemoteVideo = showVideo && hasLiveRemoteVideo && !remoteVideoOff;
 
   // WhatsApp-style video UX (BOTH outgoing AND incoming): before the call is
   // connected with the peer's video, show OUR OWN camera FULL-SCREEN behind the

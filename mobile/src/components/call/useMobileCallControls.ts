@@ -11,7 +11,10 @@ type ControlDeps = {
   localStreamRef: MutableRefObject<any>;
   peerIdRef: MutableRefObject<number | null>;
   callIdRef: MutableRefObject<number | null>;
-  holdSnapshotRef: MutableRefObject<{ muted: boolean; videoOff: boolean } | null>;
+  holdSnapshotRef: MutableRefObject<{
+    muted: boolean;
+    videoOff: boolean;
+  } | null>;
   sendSocket: (event: string, payload: any) => void;
   setOnHold: (value: boolean) => void;
   setMuted: (value: boolean) => void;
@@ -21,7 +24,9 @@ type ControlDeps = {
   setRecording: (updater: (prev: boolean) => boolean) => void;
   setSpeakerOn: (updater: (prev: boolean) => boolean) => void;
   setFloatingReactions: (
-    updater: (prev: Array<{ id: number; emoji: string; fromSelf: boolean }>) => Array<{
+    updater: (
+      prev: Array<{ id: number; emoji: string; fromSelf: boolean }>,
+    ) => Array<{
       id: number;
       emoji: string;
       fromSelf: boolean;
@@ -90,7 +95,10 @@ export function useMobileCallControls(deps: ControlDeps) {
     if (!stream) return;
     const next = !deps.onHold;
     if (next) {
-      deps.holdSnapshotRef.current = { muted: deps.muted, videoOff: deps.videoOff };
+      deps.holdSnapshotRef.current = {
+        muted: deps.muted,
+        videoOff: deps.videoOff,
+      };
       stream.getAudioTracks().forEach((t: any) => {
         t.enabled = false;
       });
@@ -100,7 +108,10 @@ export function useMobileCallControls(deps: ControlDeps) {
       deps.setMuted(true);
       deps.setVideoOff(true);
     } else {
-      const snap = deps.holdSnapshotRef.current || { muted: false, videoOff: true };
+      const snap = deps.holdSnapshotRef.current || {
+        muted: false,
+        videoOff: true,
+      };
       stream.getAudioTracks().forEach((t: any) => {
         t.enabled = !snap.muted;
       });
@@ -150,7 +161,9 @@ export function useMobileCallControls(deps: ControlDeps) {
   }
 
   function toggleSpeaker() {
-    if (deps.callType !== "voice") return;
+    // Works for both voice and video calls. Voice calls default to the earpiece
+    // and video calls to the loudspeaker; this lets the user flip the route
+    // either way (the audio mode effect reacts to `speakerOn`).
     deps.setSpeakerOn((v) => !v);
   }
 
@@ -163,7 +176,10 @@ export function useMobileCallControls(deps: ControlDeps) {
       emoji,
     });
     const id = Date.now() + Math.random();
-    deps.setFloatingReactions((prev) => [...prev, { id, emoji, fromSelf: true }]);
+    deps.setFloatingReactions((prev) => [
+      ...prev,
+      { id, emoji, fromSelf: true },
+    ]);
     setTimeout(
       () =>
         deps.setFloatingReactions((prev) => prev.filter((r) => r.id !== id)),
@@ -176,7 +192,10 @@ export function useMobileCallControls(deps: ControlDeps) {
   function sendChat() {
     const content = deps.chatText.trim();
     if (!content) return;
-    deps.sendSocket("chat_message", { conversationId: deps.conversationId, content });
+    deps.sendSocket("chat_message", {
+      conversationId: deps.conversationId,
+      content,
+    });
     deps.setChatText("");
   }
 
