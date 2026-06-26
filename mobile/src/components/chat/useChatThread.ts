@@ -70,6 +70,10 @@ import {
   setCachedReadStatus,
   getCachedConversations,
 } from "../../storage/chatCache";
+import {
+  getLocalDeletedIds,
+  addLocalDeletedIds,
+} from "../../storage/chatLocalDeletes";
 import { STATUS_LABEL, type HeaderSheet } from "./chatUtils";
 
 type PendingMediaSource = {
@@ -231,6 +235,12 @@ export function useChatThread() {
   const [loading, setLoading] = useState(
     () => !cachedMessages || cachedMessages.length === 0,
   );
+  // "Delete for me" hidden ids (local-only, persisted per conversation). The
+  // source `messages` array stays intact for server reconciliation; the
+  // rendered list filters these out (see `messagesReversed`).
+  const [locallyDeleted, setLocallyDeleted] = useState<Set<number>>(
+    () => new Set(getLocalDeletedIds(convId)),
+  );
   // Cursor pagination for older history (mirrors web loadMore).
   const [hasMore, setHasMore] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -272,6 +282,14 @@ export function useChatThread() {
   const [editorItems, setEditorItems] = useState<
     { uri: string; width?: number; height?: number }[] | null
   >(null);
+  // Captured/picked VIDEO awaiting review in the Signal-style preview screen
+  // (caption + view-once + send/discard). Videos used to upload the instant the
+  // shutter was released, with no chance to review or cancel.
+  const [videoPreview, setVideoPreview] = useState<{
+    uri: string;
+    fileName: string;
+    mimeType: string;
+  } | null>(null);
   const [tenorOpen, setTenorOpen] = useState(false);
   const [tenorKind, setTenorKind] = useState<"gif" | "sticker">("gif");
   // Docked in-app emoji keyboard (Signal-style). When open we hide the system
@@ -1554,18 +1572,37 @@ export function useChatThread() {
     [],
   );
 
-  // A recorded VIDEO from the in-app camera → close the camera and upload it
-  // directly (the media editor only handles still images).
+  // A recorded VIDEO from the in-app camera → close the camera and open the
+  // Signal-style preview (review + caption + view-once + send/discard) instead
+  // of uploading immediately on shutter release.
   const handleCameraVideo = useCallback(
     (item: { uri: string; fileName: string; mimeType: string }) => {
       setCameraOpen(false);
-      enqueueMediaUpload({
+      setVideoPreview({
         uri: item.uri,
         fileName: item.fileName,
         mimeType: item.mimeType,
       });
     },
-    [enqueueMediaUpload],
+    [],
+  );
+
+  // Send the previewed video (from the VideoPreview screen) with its caption and
+  // view-once flag.
+  const sendVideoPreview = useCallback(
+    (opts: { caption?: string; viewOnce: boolean }) => {
+      const v = videoPreview;
+      setVideoPreview(null);
+      if (!v) return;
+      enqueueMediaUpload({
+        uri: v.uri,
+        fileName: v.fileName,
+        mimeType: v.mimeType,
+        viewOnce: opts.viewOnce,
+        caption: opts.caption,
+      });
+    },
+    [videoPreview, enqueueMediaUpload],
   );
 
   // A recent-gallery thumbnail tapped inside the in-app camera (or the "+"
@@ -1582,7 +1619,9 @@ export function useChatThread() {
       setCameraOpen(false);
       setPlusOpen(false);
       if (item.kind === "video") {
-        enqueueMediaUpload({
+        // Route videos through the review/caption preview (same as a recorded
+        // clip) rather than uploading on tap.
+        setVideoPreview({
           uri: item.uri,
           fileName: item.fileName || `video-${Date.now()}.mp4`,
           mimeType: item.mimeType || "video/mp4",
@@ -1593,7 +1632,7 @@ export function useChatThread() {
         ]);
       }
     },
-    [enqueueMediaUpload],
+    [],
   );
 
   // Called by the MediaEditor when the user taps Send. Each processed item is
@@ -1817,44 +1856,11 @@ export function useChatThread() {
   }
 
   function doDelete(message: ChatMessage) {
-    // Dismiss BOTH long-press surfaces (reaction overlay + action sheet) first,
-    // then confirm. Deleting used to fire immediately with no confirmation —
-    // mirror the web/desktop "delete for everyone" confirm flow. Defer the
-    // confirm slightly so the themed dialog never collides with the dismissing
-    // overlay/sheet modal (same pattern as doClearChat).
-    setReactTarget(null);
-    setReactAnchor(null);
-    setActionTarget(null);
-    setTimeout(() => {
-      confirm({
-        title: "Delete message",
-        message: "Delete this message for everyone? This cannot be undone.",
-        confirmText: "Delete",
-        isDanger: true,
-        onConfirm: () => {
-          deleteMessage(message.id)
-            .then(() =>
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === message.id
-                    ? {
-                        ...m,
-                        deleted_at: new Date().toISOString(),
-                        content: "",
-                        file_url: null,
-                        file_name: null,
-                        file_type: null,
-                        file_size: null,
-                        reactions: [],
-                      }
-                    : m,
-                ),
-              ),
-            )
-            .catch(() => alert("Error", "Could not delete message."));
-        },
-      });
-    }, 250);
+    // Open the delete chooser for this single message (WhatsApp/Telegram/Signal
+    // model). The chooser offers "Delete for everyone" (own messages only) and
+    // "Delete for me" (local hide). Replaces the old immediate delete-for-
+    // everyone confirm.
+    requestDelete([message]);
   }
 
   function doPin(message: ChatMessage) {
@@ -2537,50 +2543,96 @@ export function useChatThread() {
     setForwardMode(true);
   }
 
-  // Delete every selected (own) message for everyone (header delete icon).
-  function deleteSelected() {
-    const targets = selectedMessages.filter(
+  // ── Delete (WhatsApp/Telegram/Signal model) ───────────────────────────────
+  // A single chooser drives BOTH single-message deletes (long-press menu) and
+  // multi-select deletes (header trash). `deleteTargets` holds the messages the
+  // open chooser operates on; the chooser offers "Delete for everyone" (own
+  // messages only — the server rejects deleting others') and "Delete for me"
+  // (a local-only hide, persisted per device).
+  const [deleteTargets, setDeleteTargets] = useState<ChatMessage[] | null>(
+    null,
+  );
+  const deleteCanForEveryone = useMemo(
+    () =>
+      !!deleteTargets &&
+      deleteTargets.length > 0 &&
+      deleteTargets.every((m) => Number(m.sender_id) === Number(user?.id)),
+    [deleteTargets, user?.id],
+  );
+
+  // Open the delete chooser. Dismisses the long-press surfaces first, then opens
+  // the sheet on a short delay so the dismissing Modal never collides with it
+  // (same pattern the old confirm flow used).
+  function requestDelete(targets: (ChatMessage | null | undefined)[]) {
+    setReactTarget(null);
+    setReactAnchor(null);
+    setActionTarget(null);
+    const list = targets.filter(Boolean) as ChatMessage[];
+    if (list.length === 0) return;
+    setTimeout(() => setDeleteTargets(list), 250);
+  }
+
+  function closeDeleteSheet() {
+    setDeleteTargets(null);
+  }
+
+  // "Delete for everyone" — calls the server for each OWN target and marks it
+  // deleted locally (the peer gets a chat_delete socket event).
+  function deleteForEveryone() {
+    const targets = (deleteTargets || []).filter(
       (m) => Number(m.sender_id) === Number(user?.id),
     );
-    clearSelection();
+    setDeleteTargets(null);
     if (targets.length === 0) return;
-    setTimeout(() => {
-      confirm({
-        title: targets.length > 1 ? "Delete messages" : "Delete message",
-        message:
-          targets.length > 1
-            ? `Delete ${targets.length} messages for everyone? This cannot be undone.`
-            : "Delete this message for everyone? This cannot be undone.",
-        confirmText: "Delete",
-        isDanger: true,
-        onConfirm: () => {
-          Promise.all(
-            targets.map((m) =>
-              deleteMessage(m.id)
-                .then(() =>
-                  setMessages((prev) =>
-                    prev.map((x) =>
-                      x.id === m.id
-                        ? {
-                            ...x,
-                            deleted_at: new Date().toISOString(),
-                            content: "",
-                            file_url: null,
-                            file_name: null,
-                            file_type: null,
-                            file_size: null,
-                            reactions: [],
-                          }
-                        : x,
-                    ),
-                  ),
-                )
-                .catch(() => {}),
+    Promise.all(
+      targets.map((m) =>
+        deleteMessage(m.id)
+          .then(() =>
+            setMessages((prev) =>
+              prev.map((x) =>
+                x.id === m.id
+                  ? {
+                      ...x,
+                      deleted_at: new Date().toISOString(),
+                      content: "",
+                      file_url: null,
+                      file_name: null,
+                      file_type: null,
+                      file_size: null,
+                      reactions: [],
+                    }
+                  : x,
+              ),
             ),
-          );
-        },
-      });
-    }, 250);
+          )
+          .catch(() => {}),
+      ),
+    ).catch(() => alert("Error", "Could not delete message(s)."));
+  }
+
+  // "Delete for me" — hides the target message(s) on this device only and
+  // persists the hidden ids so they stay hidden across reloads.
+  function deleteForMe() {
+    const targets = deleteTargets || [];
+    setDeleteTargets(null);
+    if (targets.length === 0) return;
+    const ids = targets.map((m) => Number(m.id));
+    setLocallyDeleted((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => next.add(id));
+      return next;
+    });
+    addLocalDeletedIds(convId, ids);
+  }
+
+  // Delete every selected message (header delete icon). Opens the chooser for
+  // the whole selection — "Delete for everyone" applies to the own messages in
+  // it, "Delete for me" hides them all locally (so a mixed mine/theirs
+  // selection still has a working delete, which it previously lacked).
+  function deleteSelected() {
+    const targets = [...selectedMessages];
+    clearSelection();
+    requestDelete(targets);
   }
 
   // Enter multi-select mode seeded with one message (the long-press context
@@ -2692,7 +2744,11 @@ export function useChatThread() {
   // logic; the list renders this reversed view so index 0 is the newest message
   // pinned to the visual bottom — the keyboard or a new message can never push
   // it under the composer, and no scroll math is needed to "stick to bottom".
-  const messagesReversed = useMemo(() => [...messages].reverse(), [messages]);
+  const messagesReversed = useMemo(
+    () =>
+      [...messages].reverse().filter((m) => !locallyDeleted.has(Number(m.id))),
+    [messages, locallyDeleted],
+  );
 
   const latestPin = pinnedMsgs[0];
 
@@ -2791,6 +2847,12 @@ export function useChatThread() {
     copySelected,
     forwardSelected,
     deleteSelected,
+    // delete chooser (delete for everyone / delete for me)
+    deleteTargets,
+    deleteCanForEveryone,
+    deleteForEveryone,
+    deleteForMe,
+    closeDeleteSheet,
     // typing / reply
     peerTyping,
     replyTo,
@@ -2834,6 +2896,10 @@ export function useChatThread() {
     handleCameraPhoto,
     handleCameraVideo,
     handlePickRecentMedia,
+    // video preview (review before send)
+    videoPreview,
+    setVideoPreview,
+    sendVideoPreview,
     // media editor (Signal-style)
     editorItems,
     setEditorItems,

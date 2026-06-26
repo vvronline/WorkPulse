@@ -159,10 +159,7 @@ function MessageBubbleImpl({
   };
 
   const bubbleAnim = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: translateX.value },
-      { scale: pressScale.value },
-    ],
+    transform: [{ translateX: translateX.value }, { scale: pressScale.value }],
   }));
   const iconAnim = useAnimatedStyle(() => ({
     opacity: iconProgress.value,
@@ -206,6 +203,19 @@ function MessageBubbleImpl({
     isImageType &&
     !isViewOnce &&
     !String(message.content || "").trim();
+
+  // While a media attachment is still uploading (or failed mid-upload) the
+  // FilePreview shows a single progress/retry overlay on the card. Suppress the
+  // delivery-status ticks (and their "sending" spinner) in that window so the
+  // bubble shows exactly ONE indicator, matching WhatsApp/Signal.
+  const mediaUploadInProgress =
+    !!message.file_url &&
+    !deleted &&
+    (message._pending ||
+      message._failed ||
+      message._mediaState === "queued" ||
+      message._mediaState === "uploading" ||
+      message._mediaState === "failed");
 
   // Signal corner-radius grouping. Base radius is 18; the sender-side corner is
   // tightened to 4 on edges that connect to an adjacent message in the group.
@@ -269,60 +279,64 @@ function MessageBubbleImpl({
       <View style={styles.bubbleCol}>
         <GestureDetector gesture={panGesture}>
           <Animated.View style={bubbleAnim}>
-        <Pressable
-          ref={(node) => {
-            registerRef(message.id, node as unknown as View | null);
-          }}
-          onPressIn={onPressIn}
-          onPressOut={onPressOut}
-          onPress={() => {
-            // While in selection mode, a plain tap toggles this row in/out of
-            // the selection instead of doing nothing (Signal-style).
-            if (selectionActive) onPressSelect?.(message);
-          }}
-          onLongPress={() => {
-            if (deleted) return;
-            onLongPress(message, mine);
-          }}
-          delayLongPress={250}
-          style={[
-            styles.bubble,
-            mine ? styles.bubbleMine : styles.bubbleTheirs,
-            isMediaOnly && styles.bubbleMediaOnly,
-            cornerStyle,
-            message._pending && styles.bubblePending,
-          ]}
-        >
-          {!mine && firstInGroup && message.sender_name ? (
-            // On media-only bubbles the container padding is stripped to let the
-            // image lift edge-to-edge — which clipped the sender name's first
-            // letter. Re-add horizontal padding to the name in that case so it
-            // clears the bubble edge.
-            <Text style={[styles.sender, isMediaOnly && styles.senderMedia]}>
-              {message.sender_name}
-            </Text>
-          ) : null}
-          {message.reply_to_id && !deleted ? (
-            <ReplyQuote
-              message={message}
-              onPress={onJumpToReply ? () => onJumpToReply(message) : undefined}
-            />
-          ) : null}
-          {message.file_url && !deleted ? (
-            <FilePreview
-              message={message}
-              onCancelUpload={onCancelUpload}
-              onRetryUpload={onRetryUpload}
-              // Long-pressing an image/file must open the reaction bar (Signal
-              // parity). The inner image/file Pressable would otherwise swallow
-              // the gesture, so forward the bubble's long-press into it.
+            <Pressable
+              ref={(node) => {
+                registerRef(message.id, node as unknown as View | null);
+              }}
+              onPressIn={onPressIn}
+              onPressOut={onPressOut}
+              onPress={() => {
+                // While in selection mode, a plain tap toggles this row in/out of
+                // the selection instead of doing nothing (Signal-style).
+                if (selectionActive) onPressSelect?.(message);
+              }}
               onLongPress={() => {
                 if (deleted) return;
                 onLongPress(message, mine);
               }}
-            />
-          ) : null}
-          {/* Signal inline footer: the message text and the time+ticks live in
+              delayLongPress={250}
+              style={[
+                styles.bubble,
+                mine ? styles.bubbleMine : styles.bubbleTheirs,
+                isMediaOnly && styles.bubbleMediaOnly,
+                cornerStyle,
+                message._pending && styles.bubblePending,
+              ]}
+            >
+              {!mine && firstInGroup && message.sender_name ? (
+                // On media-only bubbles the container padding is stripped to let the
+                // image lift edge-to-edge — which clipped the sender name's first
+                // letter. Re-add horizontal padding to the name in that case so it
+                // clears the bubble edge.
+                <Text
+                  style={[styles.sender, isMediaOnly && styles.senderMedia]}
+                >
+                  {message.sender_name}
+                </Text>
+              ) : null}
+              {message.reply_to_id && !deleted ? (
+                <ReplyQuote
+                  message={message}
+                  onPress={
+                    onJumpToReply ? () => onJumpToReply(message) : undefined
+                  }
+                />
+              ) : null}
+              {message.file_url && !deleted ? (
+                <FilePreview
+                  message={message}
+                  onCancelUpload={onCancelUpload}
+                  onRetryUpload={onRetryUpload}
+                  // Long-pressing an image/file must open the reaction bar (Signal
+                  // parity). The inner image/file Pressable would otherwise swallow
+                  // the gesture, so forward the bubble's long-press into it.
+                  onLongPress={() => {
+                    if (deleted) return;
+                    onLongPress(message, mine);
+                  }}
+                />
+              ) : null}
+              {/* Signal inline footer: the message text and the time+ticks live in
               a SINGLE wrapping row. When the last line of text plus the footer
               fit within the bubble width, the time/ticks sit on the SAME line as
               the text (Signal's compact look); when they don't fit, the footer
@@ -333,56 +347,66 @@ function MessageBubbleImpl({
               no text row — the time + ticks are overlaid on the bottom-right of
               the image inside a translucent dark pill (web parity), so the read
               receipt is never cropped by the bubble's edge. */}
-          {isMediaOnly ? (
-            <View style={styles.mediaMeta} pointerEvents="box-none">
-              {pinned ? <Pin size={10} color="#fff" /> : null}
-              {starred ? <Star size={10} color="#fff" /> : null}
-              {message.edited_at && !deleted ? (
-                <Text style={styles.mediaMetaText}>edited</Text>
-              ) : null}
-              <Text style={styles.mediaMetaText}>
-                {fmtTime(message.created_at)}
-              </Text>
-              <MsgTicks
-                mine={mine}
-                msg={message}
-                participantCount={participantCount}
-                readReceipts={readReceipts}
-                userId={userId}
-                onMedia
-                onRetry={mine ? () => onRetry?.(message) : undefined}
-              />
-            </View>
-          ) : (
-            <View style={styles.contentRow}>
-              <MessageContent message={message} mine={mine} />
-              <View style={styles.metaLine}>
-                {pinned ? (
-                  <Pin size={10} color={mine ? theme.chatOutMeta : theme.textMuted} />
-                ) : null}
-                {starred ? (
-                  <Star size={10} color={mine ? theme.chatOutMeta : theme.warning} />
-                ) : null}
-                {message.edited_at && !deleted ? (
-                  <Text style={[styles.edited, mine && styles.editedMine]}>
-                    edited
-                  </Text>
-                ) : null}
-                <Text style={[styles.time, mine && styles.timeMine]}>
-                  {fmtTime(message.created_at)}
-                </Text>
-                <MsgTicks
-                  mine={mine}
-                  msg={message}
-                  participantCount={participantCount}
-                  readReceipts={readReceipts}
-                  userId={userId}
-                  onRetry={mine ? () => onRetry?.(message) : undefined}
-                />
-              </View>
-            </View>
-          )}
-        </Pressable>
+              {isMediaOnly ? (
+                mediaUploadInProgress ? null : (
+                  <View style={styles.mediaMeta} pointerEvents="box-none">
+                    {pinned ? <Pin size={10} color="#fff" /> : null}
+                    {starred ? <Star size={10} color="#fff" /> : null}
+                    {message.edited_at && !deleted ? (
+                      <Text style={styles.mediaMetaText}>edited</Text>
+                    ) : null}
+                    <Text style={styles.mediaMetaText}>
+                      {fmtTime(message.created_at)}
+                    </Text>
+                    <MsgTicks
+                      mine={mine}
+                      msg={message}
+                      participantCount={participantCount}
+                      readReceipts={readReceipts}
+                      userId={userId}
+                      onMedia
+                      onRetry={mine ? () => onRetry?.(message) : undefined}
+                    />
+                  </View>
+                )
+              ) : (
+                <View style={styles.contentRow}>
+                  <MessageContent message={message} mine={mine} />
+                  <View style={styles.metaLine}>
+                    {pinned ? (
+                      <Pin
+                        size={10}
+                        color={mine ? theme.chatOutMeta : theme.textMuted}
+                      />
+                    ) : null}
+                    {starred ? (
+                      <Star
+                        size={10}
+                        color={mine ? theme.chatOutMeta : theme.warning}
+                      />
+                    ) : null}
+                    {message.edited_at && !deleted ? (
+                      <Text style={[styles.edited, mine && styles.editedMine]}>
+                        edited
+                      </Text>
+                    ) : null}
+                    <Text style={[styles.time, mine && styles.timeMine]}>
+                      {fmtTime(message.created_at)}
+                    </Text>
+                    {mediaUploadInProgress ? null : (
+                      <MsgTicks
+                        mine={mine}
+                        msg={message}
+                        participantCount={participantCount}
+                        readReceipts={readReceipts}
+                        userId={userId}
+                        onRetry={mine ? () => onRetry?.(message) : undefined}
+                      />
+                    )}
+                  </View>
+                </View>
+              )}
+            </Pressable>
           </Animated.View>
         </GestureDetector>
 
@@ -507,7 +531,11 @@ const makeStyles = (theme: Theme) =>
       fontFamily: theme.fontRegular,
     },
     editedMine: { color: theme.chatOutMeta },
-    time: { fontSize: 11, color: theme.textMuted, fontFamily: theme.fontRegular },
+    time: {
+      fontSize: 11,
+      color: theme.textMuted,
+      fontFamily: theme.fontRegular,
+    },
     timeMine: { color: theme.chatOutMeta },
     // Media-only footer overlaid on the image bottom-right inside a translucent
     // dark pill (web parity — .mediaOnly .meta). Absolutely positioned so the

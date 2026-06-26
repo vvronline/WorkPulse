@@ -255,11 +255,7 @@ export default function InlineVideo({
   if (!VIDEO_AVAILABLE) return null;
 
   if (!source) {
-    return (
-      <View style={[styles.placeholder, style]}>
-        <ActivityIndicator size="small" color="#fff" />
-      </View>
-    );
+    return <View style={[styles.placeholder, style]} />;
   }
 
   return (
@@ -277,9 +273,7 @@ export default function InlineVideo({
             resizeMode="cover"
           />
         ) : (
-          <View style={styles.posterFallback}>
-            <ActivityIndicator size="small" color="rgba(255,255,255,0.7)" />
-          </View>
+          <View style={styles.posterFallback} />
         )}
         {/* Dark scrim so the play button + duration read on any frame. */}
         <View style={styles.scrim} pointerEvents="none" />

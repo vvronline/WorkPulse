@@ -10,7 +10,15 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { FileText, Timer, Eye, EyeOff, X } from "lucide-react-native";
+import {
+  FileText,
+  Timer,
+  Eye,
+  EyeOff,
+  X,
+  RefreshCw,
+} from "lucide-react-native";
+import Svg, { Circle } from "react-native-svg";
 import { useAuth } from "../../auth/AuthContext";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
@@ -290,18 +298,18 @@ export default function FilePreview({
               resizeMode="cover"
             />
           )}
+          {/* Single upload indicator overlaid INSIDE the media card (a circular
+              progress ring + cancel/retry) — no separate spinner/progress row. */}
+          {mediaPending ? (
+            <MediaUploadOverlay
+              mediaState={mediaState}
+              mediaProgress={mediaProgress}
+              onCancel={() => onCancelUpload?.(message)}
+              onRetry={() => onRetryUpload?.(message)}
+            />
+          ) : null}
         </Pressable>
         <ImageViewerModal uri={viewer} onClose={() => setViewer(null)} />
-        {mediaPending ? (
-          <UploadState
-            mediaState={mediaState}
-            mediaProgress={mediaProgress}
-            uploadSpeed={message._uploadSpeed}
-            failureReason={message._failureReason}
-            onCancel={() => onCancelUpload?.(message)}
-            onRetry={() => onRetryUpload?.(message)}
-          />
-        ) : null}
       </View>
     );
   }
@@ -340,12 +348,11 @@ export default function FilePreview({
             );
           }}
         />
+        {/* Single upload indicator overlaid INSIDE the media card. */}
         {mediaPending ? (
-          <UploadState
+          <MediaUploadOverlay
             mediaState={mediaState}
             mediaProgress={mediaProgress}
-            uploadSpeed={message._uploadSpeed}
-            failureReason={message._failureReason}
             onCancel={() => onCancelUpload?.(message)}
             onRetry={() => onRetryUpload?.(message)}
           />
@@ -531,6 +538,97 @@ function UploadState({
     </View>
   );
 }
+
+/**
+ * MediaUploadOverlay — the SINGLE upload indicator for an image/video bubble,
+ * overlaid in the CENTER of the media card (WhatsApp/Telegram/Signal model).
+ * While uploading it shows a circular determinate progress ring around a cancel
+ * (X) button; on failure it shows a tappable retry button. This replaces the
+ * old stack of separate spinners + a progress bar that competed with the
+ * delivery-status spinner and the video poster spinner.
+ */
+function MediaUploadOverlay({
+  mediaState,
+  mediaProgress,
+  onCancel,
+  onRetry,
+}: {
+  mediaState: string;
+  mediaProgress: number;
+  onCancel?: () => void;
+  onRetry: () => void;
+}) {
+  const failed = mediaState === "failed";
+  const size = 54;
+  const stroke = 3;
+  const r = (size - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const pct = Math.max(0, Math.min(100, mediaProgress));
+  return (
+    <View style={overlayStyles.root} pointerEvents="box-none">
+      <View style={overlayStyles.scrim} pointerEvents="none" />
+      {failed ? (
+        <Pressable style={overlayStyles.btn} onPress={onRetry} hitSlop={10}>
+          <RefreshCw size={24} color="#fff" />
+        </Pressable>
+      ) : (
+        <Pressable style={overlayStyles.btn} onPress={onCancel} hitSlop={10}>
+          <Svg width={size} height={size} style={StyleSheet.absoluteFill}>
+            <Circle
+              cx={size / 2}
+              cy={size / 2}
+              r={r}
+              stroke="rgba(255,255,255,0.35)"
+              strokeWidth={stroke}
+              fill="none"
+            />
+            <Circle
+              cx={size / 2}
+              cy={size / 2}
+              r={r}
+              stroke="#fff"
+              strokeWidth={stroke}
+              fill="none"
+              strokeDasharray={`${circ} ${circ}`}
+              strokeDashoffset={circ * (1 - pct / 100)}
+              strokeLinecap="round"
+              transform={`rotate(-90 ${size / 2} ${size / 2})`}
+            />
+          </Svg>
+          <X size={20} color="#fff" />
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
+const overlayStyles = StyleSheet.create({
+  root: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  scrim: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.28)",
+  },
+  btn: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.45)",
+  },
+});
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({

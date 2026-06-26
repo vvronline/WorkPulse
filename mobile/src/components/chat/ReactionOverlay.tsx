@@ -200,42 +200,53 @@ export default function ReactionOverlay({
     icon: <CheckSquare size={18} color={theme.text} />,
     onPress: onSelect,
   });
-  if (isOwn) {
-    actions.push({
-      key: "delete",
-      label: "Delete",
-      icon: <Trash2 size={18} color={theme.danger} />,
-      onPress: onDelete,
-      danger: true,
-    });
-  }
+  // Delete is available for EVERY message (WhatsApp/Telegram/Signal): own
+  // messages can be deleted for everyone, others can be deleted just for me.
+  // The downstream handler presents the applicable options.
+  actions.push({
+    key: "delete",
+    label: "Delete",
+    icon: <Trash2 size={18} color={theme.danger} />,
+    onPress: onDelete,
+    danger: true,
+  });
 
   // Action menu horizontal placement — aligned to the sender side, clamped.
   let menuLeft = a.mine ? bubbleLeft + bubbleW - MENU_WIDTH : bubbleLeft;
   menuLeft = Math.max(margin, Math.min(menuLeft, winW - MENU_WIDTH - margin));
 
-  // Vertical: prefer the pill above the bubble and the menu below it. When the
-  // bubble is too close to the top to fit the pill above, drop the pill below
-  // the bubble and stack the menu under the pill.
+  // Vertical placement. The reaction pill prefers to sit ABOVE the bubble with
+  // the action menu BELOW it. When that doesn't fit (e.g. the bubble is near the
+  // bottom of the screen), the pill and menu are stacked as a SINGLE group so
+  // the pill can never be clamped on top of — and hidden behind — the menu
+  // (the bug being fixed: long-pressing a bubble low in the thread put the
+  // reaction bar behind the options panel).
   const topLimit = insets.top + margin;
   const bottomLimit = winH - insets.bottom - margin;
+  const available = bottomLimit - topLimit;
+
+  // Natural menu height, capped to the available space.
+  let wantMenuH = Math.min(actions.length * MENU_ROW_H + 8, available);
+
   const pillFitsAbove = a.y - PILL_HEIGHT - PILL_GAP >= topLimit;
+  const menuFitsBelow = a.y + a.height + PILL_GAP + wantMenuH <= bottomLimit;
 
   let pillTop: number;
   let menuTop: number;
-  if (pillFitsAbove) {
+  if (pillFitsAbove && menuFitsBelow) {
+    // Preferred: pill hugs above the bubble, menu sits below it.
     pillTop = a.y - PILL_HEIGHT - PILL_GAP;
     menuTop = a.y + a.height + PILL_GAP;
   } else {
-    pillTop = a.y + a.height + PILL_GAP;
-    menuTop = pillTop + PILL_HEIGHT + PILL_GAP;
-  }
-
-  // Cap the menu height to the available space and clamp it on-screen.
-  const maxMenuH = bottomLimit - topLimit;
-  const wantMenuH = Math.min(actions.length * MENU_ROW_H + 8, maxMenuH);
-  if (menuTop + wantMenuH > bottomLimit) {
-    menuTop = Math.max(topLimit, bottomLimit - wantMenuH);
+    // Fallback: stack pill directly on top of the menu as one group and fit the
+    // whole group on-screen (prefer below the bubble, else above, else clamp).
+    wantMenuH = Math.min(wantMenuH, available - PILL_HEIGHT - PILL_GAP);
+    const groupH = PILL_HEIGHT + PILL_GAP + wantMenuH;
+    let groupTop = a.y + a.height + PILL_GAP;
+    if (groupTop + groupH > bottomLimit) groupTop = a.y - PILL_GAP - groupH;
+    groupTop = Math.max(topLimit, Math.min(groupTop, bottomLimit - groupH));
+    pillTop = groupTop;
+    menuTop = groupTop + PILL_HEIGHT + PILL_GAP;
   }
 
   const myReaction = (message.reactions || []).find(

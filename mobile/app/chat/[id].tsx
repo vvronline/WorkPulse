@@ -40,9 +40,11 @@ import {
   TenorMediaPicker,
   AttachmentPicker,
   MediaEditor,
+  DeleteOptionsSheet,
   MessageActionsSheet,
   HeaderMenuPopup,
   CameraCapture,
+  VideoPreview,
   useChatThread,
 } from "../../src/components/chat";
 import {
@@ -95,11 +97,12 @@ export default function ChatThread() {
                     <Pressable onPress={c.copySelected} hitSlop={8}>
                       <Copy size={20} color={theme.text} />
                     </Pressable>
-                    {c.selectionAllOwn ? (
-                      <Pressable onPress={c.deleteSelected} hitSlop={8}>
-                        <Trash2 size={20} color={theme.danger} />
-                      </Pressable>
-                    ) : null}
+                    {/* Delete is always available: mixed (mine + theirs)
+                        selections can be deleted for me, own-only selections
+                        also offer delete for everyone (handled in the sheet). */}
+                    <Pressable onPress={c.deleteSelected} hitSlop={8}>
+                      <Trash2 size={20} color={theme.danger} />
+                    </Pressable>
                   </View>
                 ),
               }
@@ -347,6 +350,7 @@ export default function ChatThread() {
         statusBarTranslucent
       >
         <CameraCapture
+          active={c.cameraOpen}
           onClose={() => c.setCameraOpen(false)}
           onCapturedPhoto={c.handleCameraPhoto}
           onCapturedVideo={c.handleCameraVideo}
@@ -362,6 +366,17 @@ export default function ChatThread() {
           initialItems={c.editorItems}
           onSend={c.handleMediaEditorSend}
           onClose={() => c.setEditorItems(null)}
+        />
+      ) : null}
+
+      {/* Video review screen — opened after recording/picking a video. Lets the
+          user watch, caption, set view-once, and Send or discard (instead of
+          firing the upload the instant the shutter is released). */}
+      {c.videoPreview ? (
+        <VideoPreview
+          uri={c.videoPreview.uri}
+          onSend={c.sendVideoPreview}
+          onClose={() => c.setVideoPreview(null)}
         />
       ) : null}
 
@@ -442,6 +457,17 @@ export default function ChatThread() {
         onPin={() => c.actionTarget && c.doPin(c.actionTarget)}
         onEdit={() => c.actionTarget && c.startEdit(c.actionTarget)}
         onDelete={() => c.actionTarget && c.doDelete(c.actionTarget)}
+      />
+
+      {/* Delete chooser — "Delete for everyone" (own messages) / "Delete for
+          me" (local hide). Drives both single-message and multi-select deletes. */}
+      <DeleteOptionsSheet
+        visible={!!c.deleteTargets}
+        count={c.deleteTargets?.length ?? 0}
+        canDeleteForEveryone={c.deleteCanForEveryone}
+        onDeleteForEveryone={c.deleteForEveryone}
+        onDeleteForMe={c.deleteForMe}
+        onClose={c.closeDeleteSheet}
       />
 
       {/* Header 3-dot overflow menu (Signal-style, top-anchored popup). Items

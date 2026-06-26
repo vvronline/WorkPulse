@@ -7,12 +7,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import {
-  RotateCcw,
-  X,
-  Zap,
-  ZapOff,
-} from "lucide-react-native";
+import { RotateCcw, X, Zap, ZapOff } from "lucide-react-native";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import RecentMediaStrip, { type RecentMediaItem } from "./RecentMediaStrip";
@@ -44,9 +39,14 @@ export default function CameraCapture({
   onCapturedVideo,
   onPickRecent,
   onOpenGallery,
+  active = true,
 }: {
   onClose: () => void;
-  onCapturedPhoto: (item: { uri: string; width?: number; height?: number }) => void;
+  onCapturedPhoto: (item: {
+    uri: string;
+    width?: number;
+    height?: number;
+  }) => void;
   onCapturedVideo: (item: {
     uri: string;
     fileName: string;
@@ -54,6 +54,9 @@ export default function CameraCapture({
   }) => void;
   onPickRecent: (item: RecentMediaItem) => void;
   onOpenGallery: () => void;
+  // True while the camera modal is actually open — forwarded to the recent-
+  // media strip so it re-queries each time the camera is opened.
+  active?: boolean;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
@@ -199,7 +202,14 @@ export default function CameraCapture({
         recordTimer.current = null;
       }
     }
-  }, [busy, isRecording, micPerm, onCapturedVideo, requestMicPerm, useMicrophonePermissions]);
+  }, [
+    busy,
+    isRecording,
+    micPerm,
+    onCapturedVideo,
+    requestMicPerm,
+    useMicrophonePermissions,
+  ]);
 
   // Release the shutter → stop a running recording.
   const stopRecording = useCallback(() => {
@@ -289,6 +299,7 @@ export default function CameraCapture({
           <View style={styles.stripWrap}>
             <RecentMediaStrip
               height={72}
+              active={active && !isRecording}
               onPick={onPickRecent}
               onOpenGallery={onOpenGallery}
             />
@@ -345,7 +356,12 @@ function formatSecs(s: number): string {
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
     root: { flex: 1, backgroundColor: "#000" },
-    center: { alignItems: "center", justifyContent: "center", padding: 24, gap: 16 },
+    center: {
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 24,
+      gap: 16,
+    },
     fallbackText: {
       color: "#fff",
       fontSize: 16,
@@ -358,7 +374,11 @@ const makeStyles = (theme: Theme) =>
       borderRadius: theme.radiusFull,
       backgroundColor: theme.primary,
     },
-    fallbackBtnText: { color: "#fff", fontSize: 15, fontFamily: theme.fontSemiBold },
+    fallbackBtnText: {
+      color: "#fff",
+      fontSize: 15,
+      fontFamily: theme.fontSemiBold,
+    },
     fallbackClose: {
       paddingHorizontal: 20,
       paddingVertical: 10,

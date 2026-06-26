@@ -54,6 +54,7 @@ export default function AttachmentPicker({
             <View style={styles.stripWrap}>
               <RecentMediaStrip
                 height={92}
+                active={visible}
                 onPick={onPickRecent}
                 onOpenGallery={onPhoto}
               />
