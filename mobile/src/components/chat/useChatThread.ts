@@ -8,7 +8,7 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
@@ -54,6 +54,7 @@ import {
   type StarredMessage,
 } from "../../features";
 import { socket } from "../../realtime/socket";
+import { setActiveConversation } from "../../realtime/activeConversation";
 import { emitChatUnreadChanged, chatUnreadManager } from "../../realtime/chatUnreadEvents";
 import { subscribeChatJump } from "../../realtime/chatJumpEvents";
 import { useKeyboardInset } from "../../hooks/useKeyboardInset";
@@ -410,6 +411,24 @@ export function useChatThread() {
       })
       .catch(() => {});
   }, [convId]);
+
+  // Track the conversation currently ON SCREEN so the push-notification handler
+  // can SUPPRESS the status-bar banner for messages that belong to the chat the
+  // user is already reading (WhatsApp/Signal/Teams parity — you never get a
+  // banner for the conversation that's open in the foreground). The server has
+  // no idea which screen the recipient is on, so it always sends a message push
+  // (correct — it guarantees delivery for backgrounded/offline devices); this
+  // lets the CLIENT make the "I'm already here, don't show a banner" decision in
+  // backgroundPushService.handleNotificationPayload. We use useFocusEffect (not
+  // a plain useEffect) so the id is cleared when this screen loses focus —
+  // navigating to a sub-screen (info/search/saved) or backing out to the list —
+  // and re-set when it regains focus, so banners resume the moment you leave.
+  useFocusEffect(
+    useCallback(() => {
+      setActiveConversation(convId);
+      return () => setActiveConversation(null);
+    }, [convId]),
+  );
 
   const load = useCallback(async () => {
     try {

@@ -2,6 +2,7 @@ import { AppState, Platform } from "react-native";
 import * as Notifications from "expo-notifications";
 import { nativeCallService } from "./nativeCallService";
 import { notifeeService } from "./notifeeService";
+import { isConversationActive } from "../realtime/activeConversation";
 import type { NotificationPayload } from "./pushNotificationService";
 import { buildNotificationPayload, pushNotificationService } from "./pushNotificationService";
 
@@ -241,6 +242,24 @@ class BackgroundPushService {
       return;
     }
 
+    // OPEN-CONVERSATION SUPPRESSION (WhatsApp/Signal/Teams parity):
+    // The server ALWAYS sends a message push to every other participant — it
+    // has no idea which screen the recipient is on (and that's correct: the
+    // push guarantees delivery for backgrounded/offline devices). But if the
+    // user is in the FOREGROUND and already has THIS conversation open, posting
+    // a status-bar banner for the message they're literally reading is noise.
+    // The chat screen records the open conversation via setActiveConversation
+    // (see useChatThread); when the app is foregrounded AND that id matches the
+    // incoming message's conversationId, we SKIP the banner. We still fall
+    // through to the badge-count update below so unread totals stay correct. The
+    // live in-thread message already renders via the WS `chat_message` event, so
+    // nothing is lost. Mirrors the incoming-call branch's foreground gate above.
+    const appIsForeground = AppState.currentState === "active";
+    const suppressForOpenConversation =
+      appIsForeground &&
+      data.type === "chat_message" &&
+      isConversationActive(data.conversationId);
+
     // Message / general notification. Use Notifee for reliable status-bar
     // delivery in the background/terminated state (expo-notifications is
     // unreliable from a headless task). Fall back to expo-notifications only
@@ -249,10 +268,12 @@ class BackgroundPushService {
     // leave approved, task assigned, mentions, …) — both now arrive DATA-ONLY
     // from the server so they reach here in every app state, including
     // foreground (where RN Firebase's onMessage does not auto-display them).
-    if (notifeeService.isAvailable()) {
-      await notifeeService.displayMessage(payload);
-    } else {
-      await this.presentDataNotification(payload);
+    if (!suppressForOpenConversation) {
+      if (notifeeService.isAvailable()) {
+        await notifeeService.displayMessage(payload);
+      } else {
+        await this.presentDataNotification(payload);
+      }
     }
 
     // Launcher badge: the server sends the authoritative total in
