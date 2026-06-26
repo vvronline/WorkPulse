@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
   FlatList,
   Image,
+  Linking,
   Pressable,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { Images as ImagesIcon, Play } from "lucide-react-native";
+import { ImageOff, Images as ImagesIcon, Play } from "lucide-react-native";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 
@@ -59,6 +61,12 @@ export default function RecentMediaStrip({
   const [items, setItems] = useState<RecentMediaItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [denied, setDenied] = useState(false);
+  // True when the OS will no longer surface the permission dialog (the user
+  // chose "Don't allow" previously). In that state requesting again is a no-op,
+  // so the action button must deep-link to the app's system settings instead.
+  const [canAskAgain, setCanAskAgain] = useState(true);
+  // While a permission request is in flight, disable the action button.
+  const [requesting, setRequesting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -96,6 +104,7 @@ export default function RecentMediaStrip({
         perm.accessPrivileges === "limited" ||
         perm.accessPrivileges === "all";
       if (!allowed) {
+        setCanAskAgain(perm.canAskAgain !== false);
         setDenied(true);
         setItems([]);
         return;
@@ -135,6 +144,57 @@ export default function RecentMediaStrip({
     load();
   }, [load]);
 
+  // When the user grants access from the OS Settings screen and returns to the
+  // app, re-load so the strip fills in without requiring the sheet to be
+  // re-opened (Signal re-checks on resume).
+  const wasDeniedRef = useRef(denied);
+  wasDeniedRef.current = denied;
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active" && wasDeniedRef.current) {
+        load();
+      }
+    });
+    return () => sub.remove();
+  }, [load]);
+
+  // Explicit user action from the denied tile: re-request, or (if the OS won't
+  // ask again) open the app's system settings so the user can flip it on.
+  const requestAccess = useCallback(async () => {
+    if (requesting) return;
+    setRequesting(true);
+    try {
+      let MediaLibrary: any = null;
+      try {
+        MediaLibrary = require("expo-media-library");
+      } catch {
+        MediaLibrary = null;
+      }
+      if (!MediaLibrary || !canAskAgain) {
+        await Linking.openSettings();
+        return;
+      }
+      const perm = await MediaLibrary.requestPermissionsAsync(false);
+      const allowed =
+        perm.granted === true ||
+        perm.status === "granted" ||
+        perm.accessPrivileges === "limited" ||
+        perm.accessPrivileges === "all";
+      if (allowed) {
+        await load();
+      } else {
+        setCanAskAgain(perm.canAskAgain !== false);
+        if (perm.canAskAgain === false) {
+          await Linking.openSettings();
+        }
+      }
+    } catch {
+      /* ignore */
+    } finally {
+      setRequesting(false);
+    }
+  }, [requesting, canAskAgain, load]);
+
   const thumbSize = height;
 
   // Leading tile that opens the full system gallery picker.
@@ -160,16 +220,31 @@ export default function RecentMediaStrip({
   }
 
   if (denied && items.length === 0) {
-    // No permission / no module — still offer the gallery picker fallback so
-    // the user can attach media via the OS picker.
+    // No permission / no module — show an ACTIONABLE tile (Signal parity) that
+    // re-requests access, or deep-links to Settings when the OS won't re-prompt.
+    // The leading Gallery tile remains so the OS picker is always reachable.
     return (
       <View style={[styles.container, { height }]}>
         {galleryTile}
-        <View style={[styles.center, { flex: 1, height: thumbSize }]}>
-          <Text style={styles.deniedText}>
-            Allow photo access to see recent media
+        <Pressable
+          style={[styles.allowTile, { height: thumbSize }]}
+          onPress={requestAccess}
+          disabled={requesting}
+        >
+          {requesting ? (
+            <ActivityIndicator size="small" color={theme.primary} />
+          ) : (
+            <ImageOff size={22} color={theme.textSecondary} />
+          )}
+          <Text style={styles.allowText}>
+            {canAskAgain ? "Allow access to recent media" : "Enable in Settings"}
           </Text>
-        </View>
+          {!requesting ? (
+            <Text style={styles.allowAction}>
+              {canAskAgain ? "Allow" : "Open Settings"}
+            </Text>
+          ) : null}
+        </Pressable>
       </View>
     );
   }
@@ -268,5 +343,23 @@ const makeStyles = (theme: Theme) =>
       color: theme.textMuted,
       fontFamily: theme.fontRegular,
       textAlign: "center",
+    },
+    allowTile: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+      paddingHorizontal: 12,
+    },
+    allowText: {
+      fontSize: 13,
+      color: theme.textSecondary,
+      fontFamily: theme.fontMedium,
+    },
+    allowAction: {
+      fontSize: 13,
+      color: theme.primary,
+      fontFamily: theme.fontSemiBold,
     },
   });

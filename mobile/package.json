@@ -1,6 +1,6 @@
 {
   "name": "mobile",
-  "version": "1.1.44",
+  "version": "1.1.45",
   "main": "index.js",
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^15.0.1",
@@ -36,6 +36,7 @@
     "expo-sharing": "~56.0.17",
     "expo-status-bar": "~56.0.4",
     "expo-video": "~56.1.4",
+    "expo-video-thumbnails": "~56.0.3",
     "lucide-react-native": "^1.17.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",

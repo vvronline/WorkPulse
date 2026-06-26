@@ -12,8 +12,13 @@ import {
   ArrowLeft,
   ChevronDown,
   ChevronUp,
+  Copy,
+  Forward,
   MoreVertical,
   Phone,
+  Pin,
+  Star,
+  Trash2,
   Video as VideoIcon,
   X,
 } from "lucide-react-native";
@@ -60,7 +65,45 @@ export default function ChatThread() {
     <View style={styles.screen}>
       <Stack.Screen
         options={
-          c.searchMode
+          c.selectionMode
+            ? {
+                // Signal-style selection action bar: a back/X to clear the
+                // selection + the selected count on the left, and the message
+                // actions (pin / save / forward / copy / delete) as icons on
+                // the right. Operates on the whole selection.
+                headerTitle: () => (
+                  <Text style={styles.headerTitleText} numberOfLines={1}>
+                    {c.selectedCount} selected
+                  </Text>
+                ),
+                headerLeft: () => (
+                  <Pressable onPress={c.clearSelection} hitSlop={8}>
+                    <X size={22} color={theme.text} />
+                  </Pressable>
+                ),
+                headerRight: () => (
+                  <View style={styles.headerActions}>
+                    <Pressable onPress={c.pinSelected} hitSlop={8}>
+                      <Pin size={20} color={theme.text} />
+                    </Pressable>
+                    <Pressable onPress={c.saveSelected} hitSlop={8}>
+                      <Star size={20} color={theme.text} />
+                    </Pressable>
+                    <Pressable onPress={c.forwardSelected} hitSlop={8}>
+                      <Forward size={20} color={theme.text} />
+                    </Pressable>
+                    <Pressable onPress={c.copySelected} hitSlop={8}>
+                      <Copy size={20} color={theme.text} />
+                    </Pressable>
+                    {c.selectionAllOwn ? (
+                      <Pressable onPress={c.deleteSelected} hitSlop={8}>
+                        <Trash2 size={20} color={theme.danger} />
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ),
+              }
+            : c.searchMode
             ? {
                 // Signal in-conversation search: the header becomes a search
                 // field with a back arrow (exit) and a clear "X". The match
@@ -319,29 +362,24 @@ export default function ChatThread() {
         />
       ) : null}
 
-      {/* Long-press reaction + context overlay (Signal ConversationReactionOverlay):
-          dim + lifted bubble + reaction pill (quick emoji + "+") + vertical
-          action menu. Hidden while the full emoji picker is open so the picker
-          isn't stuck BEHIND this Modal — but `reactTarget` stays alive so the
-          chosen emoji is still applied to the right message. */}
+      {/* Long-press reaction pill (Signal-style). Only the emoji + edit pill
+          remains — the pin/save/forward/copy/delete actions moved to the
+          selection action bar in the header (driven by selectionMode). Hidden
+          while the full emoji picker is open so the picker isn't stuck BEHIND
+          this Modal — but `reactTarget` stays alive so the chosen emoji is
+          still applied to the right message. */}
       <ReactionOverlay
         visible={!!c.reactTarget && !c.showAllEmoji}
         anchor={c.reactAnchor}
         message={c.reactTarget}
         isOwn={Number(c.reactTarget?.sender_id) === Number(c.user?.id)}
-        isStarred={!!c.reactTarget && c.starredIds.has(c.reactTarget.id)}
         userId={c.user?.id}
         onReact={(emoji) => c.reactTarget && c.react(c.reactTarget, emoji)}
         onOpenAllEmoji={() => {
           c.setEmojiMode("react");
           c.setShowAllEmoji(true);
         }}
-        onForward={() => c.reactTarget && c.openForwardFor(c.reactTarget)}
-        onCopy={() => c.reactTarget && c.copyMessage(c.reactTarget)}
-        onStar={() => c.reactTarget && c.doStar(c.reactTarget)}
-        onPin={() => c.reactTarget && c.doPin(c.reactTarget)}
         onEdit={() => c.reactTarget && c.startEdit(c.reactTarget)}
-        onDelete={() => c.reactTarget && c.doDelete(c.reactTarget)}
         onClose={() => {
           c.setReactTarget(null);
           c.setReactAnchor(null);
@@ -550,8 +588,11 @@ function ChatList({
               firstInGroup={firstInGroup}
               lastInGroup={lastInGroup}
               highlighted={c.highlightedId === item.id}
+              selected={c.selectedIds.has(item.id)}
+              selectionActive={c.selectionMode}
               registerRef={c.registerBubbleRef}
               onLongPress={c.openReactionBar}
+              onPressSelect={c.toggleSelect}
               onReact={c.react}
               onAddReaction={c.openReactionBar}
               onReply={c.startReply}

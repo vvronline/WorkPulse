@@ -109,6 +109,16 @@ export default function FilePreview({
     width: number;
     height: number;
   } | null>(null);
+  // Intrinsic dimensions of a video's poster frame (reported by InlineVideo via
+  // expo-video-thumbnails). Videos almost never carry metadata.width/height, so
+  // without this the box fell back to a 4:3 LANDSCAPE default — which made
+  // portrait videos render far too wide. Keyed by the resolved url so it
+  // re-measures when the optimistic local uri is swapped for the server url.
+  const [videoSize, setVideoSize] = useState<{
+    url: string;
+    width: number;
+    height: number;
+  } | null>(null);
 
   const metaW = Number(message.metadata?.width) || null;
   const metaH = Number(message.metadata?.height) || null;
@@ -289,18 +299,34 @@ export default function FilePreview({
   // images. When the native expo-video module isn't available in this build we
   // fall through to the generic file card below so the video is still openable.
   if (isVideoFile(message) && VIDEO_AVAILABLE) {
-    const intrinsicW = Number(message.metadata?.width) || null;
-    const intrinsicH = Number(message.metadata?.height) || null;
-    const box = computeImageSize(winWidth, intrinsicW, intrinsicH);
     const resolved = uploadUrl(message.file_url) || undefined;
     const isLocal = !!resolved && /^(file|content|data):/i.test(resolved);
+    // Prefer the metadata dimensions; fall back to the poster-frame dimensions
+    // reported by InlineVideo (the common case — videos rarely carry metadata).
+    const videoForThis =
+      videoSize && videoSize.url === resolved ? videoSize : null;
+    const intrinsicW =
+      Number(message.metadata?.width) || videoForThis?.width || null;
+    const intrinsicH =
+      Number(message.metadata?.height) || videoForThis?.height || null;
+    const box = computeImageSize(winWidth, intrinsicW, intrinsicH);
+    const durationMs = Number(message.metadata?.durationMs) || null;
     return (
       <View>
         <InlineVideo
           uri={resolved || ""}
           isLocal={isLocal}
           style={[styles.fileImage, box]}
+          durationMs={durationMs}
           onLongPress={onLongPress}
+          onPosterSize={({ width, height }) => {
+            if (!resolved || !width || !height) return;
+            setVideoSize((prev) =>
+              prev && prev.url === resolved && prev.width === width
+                ? prev
+                : { url: resolved, width, height },
+            );
+          }}
         />
         {mediaPending ? (
           <UploadState

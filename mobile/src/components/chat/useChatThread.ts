@@ -298,6 +298,13 @@ export function useChatThread() {
   // Locally-tracked starred message ids (server list doesn't return per-message
   // starred state, so we reflect it optimistically after the action).
   const [starredIds, setStarredIds] = useState<Set<number>>(new Set());
+  // ── Multi-select model (Signal-style) ─────────────────────────────────────
+  // Long-pressing a message enters selection mode; subsequent taps toggle more
+  // messages in/out. The header swaps to a selection action bar (pin / save /
+  // forward / copy / delete) that operates on this set. Selection is "active"
+  // whenever the set is non-empty.
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const selectionMode = selectedIds.size > 0;
   // Top-anchored overflow menu (Signal-style) open state.
   const [menuOpen, setMenuOpen] = useState(false);
   // ── Signal-style IN-CONVERSATION search ──────────────────────────────────
@@ -2172,17 +2179,38 @@ export function useChatThread() {
   function closeActionSheet() {
     setActionTarget(null);
     setForwardMode(false);
+    setForwardSelection([]);
   }
 
   function doForward(targetConvId: number) {
-    const msg = actionTarget;
-    if (!msg) return;
+    // Multi-select forward: if a selection was promoted to `forwardSelection`,
+    // fan the forward out across every selected message id. Otherwise fall back
+    // to the single `actionTarget` (reaction-overlay / action-sheet path).
+    const targets =
+      forwardSelection.length > 0
+        ? forwardSelection
+        : actionTarget
+          ? [actionTarget]
+          : [];
+    if (targets.length === 0) return;
     closeActionSheet();
-    forwardMessage(msg.id, [targetConvId])
+    clearSelection();
+    Promise.all(
+      targets.map((m) => forwardMessage(m.id, [targetConvId])),
+    )
       .then(() => {
         // Small defer so the result dialog never collides with the
         // dismissing modal.
-        setTimeout(() => alert("Forwarded", "Message forwarded."), 300);
+        setTimeout(
+          () =>
+            alert(
+              "Forwarded",
+              targets.length > 1
+                ? `${targets.length} messages forwarded.`
+                : "Message forwarded.",
+            ),
+          300,
+        );
       })
       .catch((e: any) => {
         setTimeout(
@@ -2367,8 +2395,159 @@ export function useChatThread() {
     });
   }
 
+  // ── Multi-select (Signal-style) ───────────────────────────────────────────
+  // Clear the selection and exit selection mode.
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
+
+  // Toggle a single message in/out of the selection (used on tap while in
+  // selection mode). Removing the last selected message exits selection mode.
+  function toggleSelect(message: ChatMessage) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(message.id)) next.delete(message.id);
+      else next.add(message.id);
+      return next;
+    });
+  }
+
+  // The currently-selected ChatMessage objects (oldest → newest order).
+  const selectedMessages = useMemo(
+    () => messages.filter((m) => selectedIds.has(m.id)),
+    [messages, selectedIds],
+  );
+  // Whether EVERY selected message is the current user's own message — gates
+  // the Delete-for-everyone action (you can only delete your own messages).
+  const selectionAllOwn = useMemo(
+    () =>
+      selectedMessages.length > 0 &&
+      selectedMessages.every((m) => Number(m.sender_id) === Number(user?.id)),
+    [selectedMessages, user?.id],
+  );
+
+  // Pin / unpin every selected message (header pin icon). Pin toggles per
+  // message; we simply call the pin endpoint for each and refresh the banner.
+  function pinSelected() {
+    const targets = [...selectedMessages];
+    clearSelection();
+    Promise.all(
+      targets.map((m) =>
+        pinMessage(m.id)
+          .then(({ data }) => {
+            const pinned = !!(data as { pinned?: boolean })?.pinned;
+            setMessages((prev) =>
+              prev.map((x) =>
+                x.id === m.id
+                  ? { ...x, pinned_at: pinned ? new Date().toISOString() : null }
+                  : x,
+              ),
+            );
+          })
+          .catch(() => {}),
+      ),
+    ).finally(() => loadPinned());
+  }
+
+  // Save (star) every selected message (header save icon).
+  function saveSelected() {
+    const targets = [...selectedMessages];
+    clearSelection();
+    Promise.all(
+      targets.map((m) =>
+        starMessage(m.id)
+          .then(({ data }) => {
+            const starred = !!(data as { starred?: boolean })?.starred;
+            setStarredIds((prev) => {
+              const next = new Set(prev);
+              if (starred) next.add(m.id);
+              else next.delete(m.id);
+              return next;
+            });
+          })
+          .catch(() => {}),
+      ),
+    ).then(() => {
+      setTimeout(() => alert("Saved", "Messages added to saved."), 200);
+    });
+  }
+
+  // Copy the text of every selected message to the clipboard, joined by
+  // newlines (header copy icon).
+  function copySelected() {
+    const text = selectedMessages
+      .map((m) => m.content || "")
+      .filter((s) => s.trim().length > 0)
+      .join("\n");
+    clearSelection();
+    if (text) Clipboard.setStringAsync(text).catch(() => {});
+  }
+
+  // Forward every selected message (header forward icon). Promotes the
+  // selection to `forwardSelection` and opens the forward picker; the actual
+  // fan-out happens in doForward (which loops the API per selected id).
+  const [forwardSelection, setForwardSelection] = useState<ChatMessage[]>([]);
+  function forwardSelected() {
+    const targets = [...selectedMessages];
+    if (targets.length === 0) return;
+    setForwardSelection(targets);
+    setActionTarget(targets[0]);
+    getConversations()
+      .then((r) => setConversations(r.data || []))
+      .catch(() => setConversations([]));
+    setForwardMode(true);
+  }
+
+  // Delete every selected (own) message for everyone (header delete icon).
+  function deleteSelected() {
+    const targets = selectedMessages.filter(
+      (m) => Number(m.sender_id) === Number(user?.id),
+    );
+    clearSelection();
+    if (targets.length === 0) return;
+    setTimeout(() => {
+      confirm({
+        title: targets.length > 1 ? "Delete messages" : "Delete message",
+        message:
+          targets.length > 1
+            ? `Delete ${targets.length} messages for everyone? This cannot be undone.`
+            : "Delete this message for everyone? This cannot be undone.",
+        confirmText: "Delete",
+        isDanger: true,
+        onConfirm: () => {
+          Promise.all(
+            targets.map((m) =>
+              deleteMessage(m.id)
+                .then(() =>
+                  setMessages((prev) =>
+                    prev.map((x) =>
+                      x.id === m.id
+                        ? {
+                            ...x,
+                            deleted_at: new Date().toISOString(),
+                            content: "",
+                            file_url: null,
+                            file_name: null,
+                            file_type: null,
+                            file_size: null,
+                            reactions: [],
+                          }
+                        : x,
+                    ),
+                  ),
+                )
+                .catch(() => {}),
+            ),
+          );
+        },
+      });
+    }, 250);
+  }
+
   // Anchor the reaction bar to the long-pressed bubble (mirrors the web
   // MessageBubble). Measures the bubble's host node directly for reliability.
+  // Long-press ALSO enters selection mode with this single message selected so
+  // the header swaps to the selection action bar (Signal-style).
   function openReactionBar(item: ChatMessage, mine: boolean) {
     // Crisp haptic the instant the reaction bar opens (Signal-Android fires a
     // performHapticFeedback(LONG_PRESS) on long-press before the overlay
@@ -2379,6 +2558,8 @@ export function useChatThread() {
     } catch {
       /* no-op */
     }
+    // Enter selection mode with just this message selected.
+    setSelectedIds(new Set([item.id]));
     const node = bubbleRefs.current.get(item.id) as unknown as {
       measureInWindow?: (
         cb: (x: number, y: number, width: number, height: number) => void,
@@ -2538,6 +2719,18 @@ export function useChatThread() {
     react,
     cancelMediaUpload,
     retryMediaUpload,
+    // multi-select (Signal-style)
+    selectedIds,
+    selectionMode,
+    selectionAllOwn,
+    selectedCount: selectedIds.size,
+    toggleSelect,
+    clearSelection,
+    pinSelected,
+    saveSelected,
+    copySelected,
+    forwardSelected,
+    deleteSelected,
     // typing / reply
     peerTyping,
     replyTo,

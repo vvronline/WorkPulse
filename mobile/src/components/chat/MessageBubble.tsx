@@ -12,7 +12,7 @@ import Animated, {
   LinearTransition,
   interpolateColor,
 } from "react-native-reanimated";
-import { CornerUpLeft, Pin, Star } from "lucide-react-native";
+import { Check, CornerUpLeft, Pin, Star } from "lucide-react-native";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { ChatMessage } from "../../features";
@@ -60,8 +60,15 @@ type MessageBubbleProps = {
   // the row briefly flashes a highlight tint so the user can spot it after the
   // list scrolls to it.
   highlighted?: boolean;
+  // Signal-style multi-select: `selected` marks this row as part of the current
+  // selection (persistent tint + check), `selectionActive` means selection mode
+  // is on (so a plain tap toggles selection instead of doing nothing).
+  selected?: boolean;
+  selectionActive?: boolean;
   registerRef: (id: number, node: View | null) => void;
   onLongPress: (message: ChatMessage, mine: boolean) => void;
+  // Tap handler used while in selection mode to toggle this row in/out.
+  onPressSelect?: (message: ChatMessage) => void;
   onReact: (message: ChatMessage, emoji: string) => void;
   onAddReaction: (message: ChatMessage, mine: boolean) => void;
   // Swipe-to-reply (Signal-style): triggered when the bubble is dragged toward
@@ -87,8 +94,11 @@ function MessageBubbleImpl({
   firstInGroup = true,
   lastInGroup = true,
   highlighted = false,
+  selected = false,
+  selectionActive = false,
   registerRef,
   onLongPress,
+  onPressSelect,
   onReact,
   onAddReaction,
   onReply,
@@ -178,6 +188,12 @@ function MessageBubbleImpl({
     ),
   }));
 
+  // Persistent selection tint (Signal-style): selected rows keep a soft accent
+  // wash across the full row so multi-selection is clearly visible.
+  const selectionRowStyle = selected
+    ? { backgroundColor: "rgba(35,131,226,0.16)" }
+    : null;
+
   // Media-only message (image/video attachment with no caption text, not a
   // view-once pill) renders edge-to-edge — no bubble padding/background, like
   // Signal.
@@ -220,9 +236,23 @@ function MessageBubbleImpl({
         mine ? styles.rowMine : styles.rowTheirs,
         // Tighter spacing between grouped messages, looser between groups.
         firstInGroup ? styles.rowGroupStart : styles.rowGrouped,
+        selectionRowStyle,
         highlightAnim,
       ]}
     >
+      {/* Selection check indicator (Signal-style) shown on the leading edge of
+          the row while in selection mode. */}
+      {selectionActive ? (
+        <View
+          style={[
+            styles.selectCircle,
+            selected && styles.selectCircleOn,
+            mine ? styles.selectCircleMine : styles.selectCircleTheirs,
+          ]}
+        >
+          {selected ? <Check size={14} color="#fff" /> : null}
+        </View>
+      ) : null}
       {/* Reply affordance revealed behind the bubble while swiping. */}
       <Animated.View
         style={[
@@ -245,6 +275,11 @@ function MessageBubbleImpl({
           }}
           onPressIn={onPressIn}
           onPressOut={onPressOut}
+          onPress={() => {
+            // While in selection mode, a plain tap toggles this row in/out of
+            // the selection instead of doing nothing (Signal-style).
+            if (selectionActive) onPressSelect?.(message);
+          }}
           onLongPress={() => {
             if (deleted) return;
             onLongPress(message, mine);
@@ -386,6 +421,26 @@ const makeStyles = (theme: Theme) =>
     },
     rowMine: { justifyContent: "flex-end" },
     rowTheirs: { justifyContent: "flex-start" },
+    // Signal-style selection check circle shown on the row's leading edge while
+    // selection mode is active.
+    selectCircle: {
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      borderWidth: 2,
+      borderColor: theme.textMuted,
+      alignItems: "center",
+      justifyContent: "center",
+      marginHorizontal: 6,
+    },
+    selectCircleOn: {
+      backgroundColor: theme.primary,
+      borderColor: theme.primary,
+    },
+    // The check sits before the bubble on both sides; ordering is handled by the
+    // row's flex direction so these are mostly future-proofing hooks.
+    selectCircleMine: {},
+    selectCircleTheirs: {},
     // 8px between distinct groups, 2px between messages within a group.
     rowGroupStart: { marginTop: 6 },
     rowGrouped: { marginTop: 2 },
@@ -519,7 +574,9 @@ function areEqual(prev: MessageBubbleProps, next: MessageBubbleProps): boolean {
     prev.userId === next.userId &&
     prev.firstInGroup === next.firstInGroup &&
     prev.lastInGroup === next.lastInGroup &&
-    prev.highlighted === next.highlighted
+    prev.highlighted === next.highlighted &&
+    prev.selected === next.selected &&
+    prev.selectionActive === next.selectionActive
   );
 }
 
